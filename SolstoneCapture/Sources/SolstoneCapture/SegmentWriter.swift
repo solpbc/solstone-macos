@@ -80,8 +80,8 @@ public final class SegmentWriter {
     /// - Parameters:
     ///   - displayInfos: Information about displays to capture
     ///   - filter: The content filter to use (for window exclusion)
-    ///   - startMics: If true, mic recording is handled externally (by CaptureManager)
-    public func start(displayInfos: [DisplayInfo], filter: SCContentFilter, startMics: Bool = true) async throws {
+    ///   - mics: Microphone devices to pre-register tracks for (uid, name)
+    public func start(displayInfos: [DisplayInfo], filter: SCContentFilter, mics: [(uid: String, name: String)] = []) async throws {
         // Create screenshot capturers for each display
         for info in displayInfos {
             let videoURL = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
@@ -112,6 +112,14 @@ public final class SegmentWriter {
         // Add system audio track (track 0 - never dropped)
         let systemTrackIndex = try audioWriter.addTrack(type: .systemAudio)
 
+        // Pre-register ALL mic tracks BEFORE starting stream
+        // This ensures tracks exist before AVAssetWriter.startWriting() is called
+        for (uid, name) in mics {
+            let trackIndex = try audioWriter.addTrack(type: .microphone(name: name, deviceUID: uid))
+            externalMicTracks[uid] = trackIndex
+            Log.info("Pre-registered mic '\(name)' as track \(trackIndex)")
+        }
+
         // Create stream output that routes system audio to multi-track writer
         // Note: All mics (including built-in) are captured via ExternalMicCapture
         let output = MultiTrackStreamOutput(
@@ -135,7 +143,7 @@ public final class SegmentWriter {
         // Add stream output for system audio only
         try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
 
-        // Start audio stream
+        // Start audio stream (mic tracks already registered, safe to start)
         try await stream.startCapture()
 
         // Record start time for external mic buffer timing
@@ -153,11 +161,18 @@ public final class SegmentWriter {
     // MARK: - External Microphone Management
 
     /// Registers an external microphone and creates a track for it
+    /// Returns existing track if already pre-registered during start()
     /// - Parameters:
     ///   - deviceUID: The unique identifier of the audio device
     ///   - name: Display name of the device
     /// - Returns: The track index for this microphone
     public func registerExternalMic(deviceUID: String, name: String) throws -> Int {
+        // Return existing track if already pre-registered
+        if let trackIndex = externalMicTracks[deviceUID] {
+            return trackIndex
+        }
+
+        // Fallback for hot-plugged mics (may fail if writer already started)
         guard let writer = multiTrackWriter else {
             throw SegmentError.failedToCreateAudioOutput
         }

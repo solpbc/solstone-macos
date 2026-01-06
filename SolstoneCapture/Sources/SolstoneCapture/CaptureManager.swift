@@ -341,15 +341,26 @@ public final class CaptureManager {
             segmentStartTime: Date()
         )
 
-        // Start video/audio capture (creates SegmentWriter)
-        try await startNewSegmentWithDirectory(segmentDir, timePrefix: timePrefix)
+        // Collect available mics BEFORE starting segment
+        // Tracks must be registered before SCStream starts sending audio
+        let availableMics = MicrophoneMonitor.listInputDevices()
+            .filter { !disabledMicUIDs.contains($0.uid) }
+            .prefix(4)
+            .map { ($0.uid, $0.name) }
 
-        // Start external mic captures after segment is ready
+        // Start video/audio capture (creates SegmentWriter with pre-registered mic tracks)
+        try await startNewSegmentWithDirectory(segmentDir, timePrefix: timePrefix, mics: Array(availableMics))
+
+        // Start external mic captures (tracks already registered)
         try startExternalMics()
     }
 
     /// Starts recording to a pre-created segment directory (used during rotation)
-    private func startNewSegmentWithDirectory(_ segmentDir: URL, timePrefix: String) async throws {
+    /// - Parameters:
+    ///   - segmentDir: Directory to write segment files to
+    ///   - timePrefix: Time prefix for file naming
+    ///   - mics: Microphone devices to pre-register tracks for
+    private func startNewSegmentWithDirectory(_ segmentDir: URL, timePrefix: String, mics: [(uid: String, name: String)] = []) async throws {
         guard let filter = contentFilter else {
             throw CaptureError.notInitialized
         }
@@ -367,8 +378,9 @@ public final class CaptureManager {
         currentSegment = segment
 
         // Start recording - convert to DisplayInfo for sendable compliance
+        // Mics are pre-registered before stream starts to avoid race condition
         let displayInfos = displays.map { DisplayInfo(from: $0) }
-        try await segment.start(displayInfos: displayInfos, filter: filter, startMics: false)
+        try await segment.start(displayInfos: displayInfos, filter: filter, mics: mics)
 
         // Mark stream as ready after a short delay to allow capture to stabilize.
         // The 500ms delay ensures ScreenCaptureKit's stream is fully initialized
@@ -498,9 +510,15 @@ public final class CaptureManager {
             completedSegmentURL = nil
         }
 
+        // Collect available mics BEFORE starting new segment
+        let availableMics = MicrophoneMonitor.listInputDevices()
+            .filter { !disabledMicUIDs.contains($0.uid) }
+            .prefix(4)
+            .map { ($0.uid, $0.name) }
+
         // Start recording to new segment
         do {
-            try await startNewSegmentWithDirectory(newSegmentDir, timePrefix: newTimePrefix)
+            try await startNewSegmentWithDirectory(newSegmentDir, timePrefix: newTimePrefix, mics: Array(availableMics))
             try startExternalMics()
         } catch {
             state = .error("Failed to start new segment: \(error.localizedDescription)")
