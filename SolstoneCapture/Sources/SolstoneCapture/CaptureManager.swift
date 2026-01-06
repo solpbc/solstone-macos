@@ -223,22 +223,30 @@ public final class CaptureManager {
     /// Handles audio device additions/removals
     /// Adds/removes mics from current segment dynamically (no rotation needed)
     public func handleDeviceChange(added: [AudioInputDevice], removed: [AudioInputDevice]) async {
-        guard state.isRecording, let segment = currentSegment else { return }
+        guard state.isRecording else { return }
 
         // Add new enabled mics to current segment
-        for device in added where !disabledMicUIDs.contains(device.uid) {
-            do {
-                try segment.addMicrophone(device)
-                Log.info("Added mic mid-segment: \(device.name)")
-            } catch {
-                Log.warn("Failed to add mic \(device.name): \(error)")
+        if let segment = currentSegment {
+            for device in added where !disabledMicUIDs.contains(device.uid) {
+                do {
+                    try segment.addMicrophone(device)
+                    Log.info("Added mic mid-segment: \(device.name)")
+                } catch {
+                    Log.warn("Failed to add mic \(device.name): \(error)")
+                }
+            }
+
+            // Remove disconnected mics from current segment
+            for device in removed where segment.hasMicrophone(deviceUID: device.uid) {
+                segment.removeMicrophone(deviceUID: device.uid)
+                Log.info("Removed mic mid-segment: \(device.name)")
             }
         }
 
-        // Remove disconnected mics from current segment
-        for device in removed where segment.hasMicrophone(deviceUID: device.uid) {
-            segment.removeMicrophone(deviceUID: device.uid)
-            Log.info("Removed mic mid-segment: \(device.name)")
+        // Always stop captures for removed devices, even if segment doesn't have them
+        // This handles the case where a device disconnects during/after segment rotation
+        for device in removed {
+            micCaptureManager.stopCapture(deviceUID: device.uid)
         }
     }
 

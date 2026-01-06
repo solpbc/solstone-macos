@@ -95,6 +95,9 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         let capture = captures[deviceUID]
         lock.unlock()
 
+        if capture == nil {
+            Log.warn("setCallback: No capture found for deviceUID \(deviceUID)")
+        }
         capture?.onAudioBuffer = callback
     }
 

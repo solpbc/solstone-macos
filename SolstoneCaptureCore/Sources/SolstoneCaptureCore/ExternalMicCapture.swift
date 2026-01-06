@@ -44,6 +44,8 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private var receivedFirstBuffer = false
     private var recordingStartTime: Date?
     private var firstBufferTime: CMTime?
+    private var bufferCount: Int = 0
+    private var lastBufferLogTime: Date?
 
     /// Gain multiplier to boost mic audio
     /// 4.0 = +12dB boost
@@ -259,8 +261,20 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private func processAndSend(buffer: AVAudioPCMBuffer, monoFormat: AVAudioFormat) {
         guard isRunning else { return }
 
+        // Track buffer count for diagnostics
+        bufferCount += 1
+
         // Get callback with lock - if nil, discard the buffer
         let callback = onAudioBuffer
+
+        // Log periodic status (every 10 seconds)
+        let now = Date()
+        if lastBufferLogTime == nil || now.timeIntervalSince(lastBufferLogTime!) >= 10 {
+            let hasCallback = callback != nil
+            Log.info("\(device.name): buffer heartbeat - \(bufferCount) buffers, callback=\(hasCallback)")
+            lastBufferLogTime = now
+        }
+
         guard callback != nil else { return }
 
         // Convert to mono if needed and resample to target rate
@@ -277,14 +291,9 @@ public final class ExternalMicCapture: @unchecked Sendable {
             }
         }
 
-        // Calculate presentation time relative to first buffer
-        let currentTime = CMClockGetTime(CMClockGetHostTimeClock())
-        let presentationTime: CMTime
-        if let firstTime = firstBufferTime {
-            presentationTime = CMTimeSubtract(currentTime, firstTime)
-        } else {
-            presentationTime = .zero
-        }
+        // Pass absolute host clock time - SingleTrackAudioWriter needs this to
+        // calculate proper offset from segment start for track alignment
+        let presentationTime = CMClockGetTime(CMClockGetHostTimeClock())
 
         // Send to callback (use captured callback, not property, to avoid race)
         callback?(monoBuffer, presentationTime)
