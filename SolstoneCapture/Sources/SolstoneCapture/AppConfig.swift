@@ -77,6 +77,9 @@ public struct AppConfig: Codable, Sendable {
     /// When true, syncing is paused (uploads skipped, but segments still recorded locally)
     public var syncPaused: Bool
 
+    /// When true, use 1-minute segments instead of 5-minute (for testing)
+    public var debugSegments: Bool
+
     /// Default exclusions written on first run
     public static let defaultExclusions: [AppEntry] = [
         AppEntry(bundleID: "com.1password.1password", name: "1Password"),
@@ -90,7 +93,8 @@ public struct AppConfig: Codable, Sendable {
         excludePrivateBrowsing: Bool = true,
         serverURL: String? = nil,
         localRetentionMB: Int = 200,
-        syncPaused: Bool = false
+        syncPaused: Bool = false,
+        debugSegments: Bool = false
     ) {
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
@@ -98,6 +102,7 @@ public struct AppConfig: Codable, Sendable {
         self.serverURL = serverURL
         self.localRetentionMB = localRetentionMB
         self.syncPaused = syncPaused
+        self.debugSegments = debugSegments
     }
 
     /// Custom decoder for backward compatibility and Keychain migration
@@ -109,6 +114,7 @@ public struct AppConfig: Codable, Sendable {
         serverURL = try container.decodeIfPresent(String.self, forKey: .serverURL)
         localRetentionMB = try container.decodeIfPresent(Int.self, forKey: .localRetentionMB) ?? 200
         syncPaused = try container.decodeIfPresent(Bool.self, forKey: .syncPaused) ?? false
+        debugSegments = try container.decodeIfPresent(Bool.self, forKey: .debugSegments) ?? false
 
         // Migrate legacy serverKey from JSON to Keychain
         if let legacyKey = try container.decodeIfPresent(String.self, forKey: .serverKey),
@@ -129,6 +135,7 @@ public struct AppConfig: Codable, Sendable {
         // Note: serverKey deliberately not encoded - stored in Keychain
         try container.encode(localRetentionMB, forKey: .localRetentionMB)
         try container.encode(syncPaused, forKey: .syncPaused)
+        try container.encode(debugSegments, forKey: .debugSegments)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -139,6 +146,7 @@ public struct AppConfig: Codable, Sendable {
         case serverKey  // Only used for decoding legacy configs
         case localRetentionMB
         case syncPaused
+        case debugSegments
     }
 
     // MARK: - File Paths

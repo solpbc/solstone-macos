@@ -50,6 +50,7 @@ Both use Swift Package Manager with Swift 6.1 and require macOS 15.0+.
 - **AppState.swift** - Observable application state, coordinates all managers
 - **CaptureManager.swift** - Orchestrates continuous recording with segment rotation
 - **SegmentWriter.swift** - Manages individual 5-minute recording segments
+- **PerSourceAudioManager.swift** - Manages per-source audio writers, handles dynamic mic join/leave
 - **UploadService.swift** - Handles segment upload with sync and retry logic
 - **MuteManager.swift** - Tracks audio/video mute state with timed unmute
 - **StorageManager.swift** - File organization and segment directory creation
@@ -57,11 +58,10 @@ Both use Swift Package Manager with Swift 6.1 and require macOS 15.0+.
 
 ### SolstoneCaptureCore (Recording Layer)
 - **VideoWriter** - HEVC hardware encoding to .mp4
-- **MultiTrackAudioWriter** - Multi-track M4A recording (system audio + mics)
-- **MultiTrackStreamOutput** - SCStreamOutput routing to MultiTrackAudioWriter
+- **SingleTrackAudioWriter** - Single-source M4A recording with timing metadata
+- **AudioRemixer** - Combines individual M4A files into multi-track output with silence detection
+- **SystemAudioStreamOutput** - SCStreamOutput routing system audio to SingleTrackAudioWriter
 - **ExternalMicCapture** - AVAudioEngine capture for all microphones
-- **SilentTrackRemover** - Removes silent tracks from M4A at segment end
-- **SilenceDetector** - RMS-based silence detection per audio track
 - **MicrophoneMonitor** - CoreAudio device enumeration
 - **WindowMask** - Filters out specific app windows from capture
 
@@ -69,9 +69,11 @@ Both use Swift Package Manager with Swift 6.1 and require macOS 15.0+.
 
 - **5-Minute Segments**: Recording splits at clock boundaries (:00, :05, :10, etc.)
 - **Multi-Display**: Captures all connected displays simultaneously
-- **Multi-Track Audio**: Records to single M4A with tracks for system audio + each mic
-- **Mic Change Rotation**: Segment rotation triggers when enabled mics connect/disconnect
-- **Silent Track Removal**: Empty mic tracks automatically removed at segment end
+- **Per-Source Audio Files**: Each audio source (system + mics) records to individual M4A during segment
+- **Dynamic Mic Join/Leave**: Mics can connect/disconnect mid-segment without rotation
+- **Audio Remix on Segment End**: Individual M4A files combined into single multi-track output
+- **Timing Offset Tracking**: Each source tracks start/end time for proper remix alignment
+- **Silent Track Detection**: RMS-based silence detection during remix, silent tracks skipped
 - **Window Exclusion**: Filters out password managers and private browser windows
 
 ## File Paths
@@ -84,5 +86,7 @@ Config: `~/Library/Application Support/Solstone/config.json`
 - Uses @Observable (macOS 14+ Observation framework)
 - MainActor isolation for UI-related state
 - SCDisplay is not Sendable; DisplayInfo struct used for cross-actor communication
-- Segment rotation triggers on display changes and sleep/wake events
-- Silent mic tracks automatically discarded to save space
+- Segment rotation triggers on display changes and sleep/wake events (NOT mic changes)
+- Audio sources write to individual M4A files during segment, remixed at end
+- Interleaved track reading during remix ensures AVAssetWriter receives data from all tracks together
+- Silent mic tracks automatically detected via RMS analysis and skipped during remix

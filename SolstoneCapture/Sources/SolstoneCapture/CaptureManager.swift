@@ -48,6 +48,10 @@ public final class CaptureManager {
     private var contentFilter: SCContentFilter?
     private let verbose: Bool
 
+    /// Persistent mic capture manager - keeps AVAudioEngine instances alive across segment rotations
+    /// This prevents audio playback interference during rotation
+    private let micCaptureManager = MicrophoneCaptureManager()
+
     /// Window exclusion detector for filtering out specific app windows
     private let windowExclusionDetector: WindowExclusionDetector?
 
@@ -68,12 +72,6 @@ public final class CaptureManager {
 
     /// CoreAudio listener block for default mic changes (nonisolated for deinit)
     nonisolated(unsafe) private var defaultMicListenerBlock: AudioObjectPropertyListenerBlock?
-
-    /// External mic captures (deviceUID -> capture)
-    private var externalMicCaptures: [String: ExternalMicCapture] = [:]
-
-    /// Current set of enabled mic UIDs being recorded
-    private var currentRecordingMicUIDs: Set<String> = []
 
     /// UIDs of microphones to exclude from recording (disabled mics)
     private var disabledMicUIDs: Set<String> = []
@@ -223,25 +221,24 @@ public final class CaptureManager {
     }
 
     /// Handles audio device additions/removals
-    /// Triggers segment rotation if enabled mics change
+    /// Adds/removes mics from current segment dynamically (no rotation needed)
     public func handleDeviceChange(added: [AudioInputDevice], removed: [AudioInputDevice]) async {
-        guard state.isRecording else { return }
+        guard state.isRecording, let segment = currentSegment else { return }
 
-        // Filter by enabled mics
-        let enabledAdded = added.filter { !disabledMicUIDs.contains($0.uid) }
-        let enabledRemoved = removed.filter { currentRecordingMicUIDs.contains($0.uid) }
-
-        if !enabledAdded.isEmpty {
-            Log.info("Enabled mic(s) added: \(enabledAdded.map { $0.name }.joined(separator: ", "))")
+        // Add new enabled mics to current segment
+        for device in added where !disabledMicUIDs.contains(device.uid) {
+            do {
+                try segment.addMicrophone(device)
+                Log.info("Added mic mid-segment: \(device.name)")
+            } catch {
+                Log.warn("Failed to add mic \(device.name): \(error)")
+            }
         }
-        if !enabledRemoved.isEmpty {
-            Log.info("Enabled mic(s) removed: \(enabledRemoved.map { $0.name }.joined(separator: ", "))")
-        }
 
-        // Rotate segment if enabled mics changed
-        if !enabledAdded.isEmpty || !enabledRemoved.isEmpty {
-            Log.info("Mic configuration changed, rotating segment")
-            await rotateSegment()
+        // Remove disconnected mics from current segment
+        for device in removed where segment.hasMicrophone(deviceUID: device.uid) {
+            segment.removeMicrophone(deviceUID: device.uid)
+            Log.info("Removed mic mid-segment: \(device.name)")
         }
     }
 
@@ -257,13 +254,6 @@ public final class CaptureManager {
         segmentTimer?.invalidate()
         segmentTimer = nil
 
-        // Stop external mic captures
-        stopExternalMics()
-
-        // Capture silence info before finishing segment
-        let silenceInfo = currentSegment?.getSilenceInfo() ?? [:]
-        let trackInfo = currentSegment?.getTrackInfo() ?? []
-
         // Finish current segment and rename to actual duration
         var completedSegmentURL: URL?
         if let segment = currentSegment {
@@ -271,14 +261,17 @@ public final class CaptureManager {
             currentSegment = nil
         }
 
+        // Stop all persistent mic captures (only when fully stopping recording)
+        micCaptureManager.stopAll()
+
         state = .idle
         onStateChanged?(state)
 
         Log.info("Stopped recording")
 
-        // Process silent tracks and upload in background (don't block stop)
-        if let url = completedSegmentURL {
-            await processAndUpload(url, silenceInfo: silenceInfo, trackInfo: trackInfo)
+        // Trigger upload callback
+        if let url = completedSegmentURL, let callback = onSegmentComplete {
+            await callback(url)
         }
     }
 
@@ -290,13 +283,6 @@ public final class CaptureManager {
         segmentTimer?.invalidate()
         segmentTimer = nil
 
-        // Stop external mic captures
-        stopExternalMics()
-
-        // Capture silence info before finishing segment
-        let silenceInfo = currentSegment?.getSilenceInfo() ?? [:]
-        let trackInfo = currentSegment?.getTrackInfo() ?? []
-
         // Finish current segment and rename to actual duration
         var completedSegmentURL: URL?
         if let segment = currentSegment {
@@ -304,14 +290,17 @@ public final class CaptureManager {
             currentSegment = nil
         }
 
+        // Stop all persistent mic captures during pause
+        micCaptureManager.stopAll()
+
         state = .paused
         onStateChanged?(state)
 
         Log.info("Paused recording")
 
-        // Process silent tracks and upload in background (don't block pause)
-        if let url = completedSegmentURL {
-            await processAndUpload(url, silenceInfo: silenceInfo, trackInfo: trackInfo)
+        // Trigger upload callback
+        if let url = completedSegmentURL, let callback = onSegmentComplete {
+            await callback(url)
         }
     }
 
@@ -328,9 +317,24 @@ public final class CaptureManager {
         Log.info("Resumed recording")
     }
 
+    /// Update segment duration based on debug setting
+    /// - Parameter enabled: If true, use 1-minute segments; if false, use 5-minute segments
+    public func setDebugSegments(_ enabled: Bool) async {
+        let newDuration: TimeInterval = enabled ? 60 : 300
+        if SegmentWriter.segmentDuration != newDuration {
+            SegmentWriter.segmentDuration = newDuration
+            Log.info("Segment duration changed to \(Int(newDuration))s")
+
+            // Trigger immediate rotation if recording
+            if state.isRecording {
+                await rotateSegment()
+            }
+        }
+    }
+
     // MARK: - Private Methods
 
-    /// Starts a new recording segment (first segment only - creates directory and starts mics)
+    /// Starts a new recording segment
     private func startNewSegment() async throws {
         guard contentFilter != nil else {
             throw CaptureError.notInitialized
@@ -341,26 +345,21 @@ public final class CaptureManager {
             segmentStartTime: Date()
         )
 
-        // Collect available mics BEFORE starting segment
-        // Tracks must be registered before SCStream starts sending audio
+        // Collect available mics
         let availableMics = MicrophoneMonitor.listInputDevices()
             .filter { !disabledMicUIDs.contains($0.uid) }
             .prefix(4)
-            .map { ($0.uid, $0.name) }
 
-        // Start video/audio capture (creates SegmentWriter with pre-registered mic tracks)
+        // Start video/audio capture
         try await startNewSegmentWithDirectory(segmentDir, timePrefix: timePrefix, mics: Array(availableMics))
-
-        // Start external mic captures (tracks already registered)
-        startExternalMics()
     }
 
-    /// Starts recording to a pre-created segment directory (used during rotation)
+    /// Starts recording to a pre-created segment directory
     /// - Parameters:
     ///   - segmentDir: Directory to write segment files to
     ///   - timePrefix: Time prefix for file naming
-    ///   - mics: Microphone devices to pre-register tracks for
-    private func startNewSegmentWithDirectory(_ segmentDir: URL, timePrefix: String, mics: [(uid: String, name: String)] = []) async throws {
+    ///   - mics: Microphone devices to start recording
+    private func startNewSegmentWithDirectory(_ segmentDir: URL, timePrefix: String, mics: [AudioInputDevice] = []) async throws {
         guard let filter = contentFilter else {
             throw CaptureError.notInitialized
         }
@@ -378,9 +377,13 @@ public final class CaptureManager {
         currentSegment = segment
 
         // Start recording - convert to DisplayInfo for sendable compliance
-        // Mics are pre-registered before stream starts to avoid race condition
         let displayInfos = displays.map { DisplayInfo(from: $0) }
-        try await segment.start(displayInfos: displayInfos, filter: filter, mics: mics)
+        try await segment.start(
+            displayInfos: displayInfos,
+            filter: filter,
+            mics: mics,
+            micCaptureManager: micCaptureManager
+        )
 
         // Mark stream as ready after a short delay to allow capture to stabilize.
         // The 500ms delay ensures ScreenCaptureKit's stream is fully initialized
@@ -394,60 +397,6 @@ public final class CaptureManager {
 
         // Schedule segment rotation
         scheduleSegmentRotation()
-    }
-
-    // MARK: - External Microphone Management
-
-    /// Starts external mic captures and registers them with the current segment
-    /// Mic failures are non-fatal - we continue with whatever mics succeed
-    private func startExternalMics() {
-        guard let segment = currentSegment else { return }
-
-        // Get available input devices, excluding disabled ones
-        let devices = MicrophoneMonitor.listInputDevices()
-            .filter { !disabledMicUIDs.contains($0.uid) }
-
-        // Limit to 4 external mics
-        let maxMics = 4
-        let micsToStart = Array(devices.prefix(maxMics))
-
-        var startedCount = 0
-        for device in micsToStart {
-            do {
-                // Register mic with segment to create a track
-                _ = try segment.registerExternalMic(deviceUID: device.uid, name: device.name)
-
-                // Create capture and wire up callback
-                let capture = ExternalMicCapture(device: device, verbose: verbose)
-                capture.onAudioBuffer = { [weak segment] buffer, time in
-                    segment?.appendExternalMicAudio(buffer, deviceUID: device.uid, presentationTime: time)
-                }
-
-                // Start capture
-                try capture.start()
-                externalMicCaptures[device.uid] = capture
-                currentRecordingMicUIDs.insert(device.uid)
-                startedCount += 1
-            } catch {
-                Log.warn("Failed to start mic '\(device.name)': \(error.localizedDescription)")
-            }
-        }
-
-        if startedCount > 0 {
-            Log.info("Started \(startedCount) external mic capture(s)")
-        } else if !micsToStart.isEmpty {
-            Log.warn("Failed to start any microphones")
-        }
-    }
-
-    /// Stops all external mic captures
-    private func stopExternalMics() {
-        for (uid, capture) in externalMicCaptures {
-            capture.stop()
-            Log.debug("Stopped external mic: \(uid)", verbose: verbose)
-        }
-        externalMicCaptures.removeAll()
-        currentRecordingMicUIDs.removeAll()
     }
 
     private func scheduleSegmentRotation() {
@@ -494,13 +443,6 @@ public final class CaptureManager {
 
         Log.info("Rotating segment...")
 
-        // Stop external mic captures first
-        stopExternalMics()
-
-        // Capture silence info before finishing segment
-        let silenceInfo = currentSegment?.getSilenceInfo() ?? [:]
-        let trackInfo = currentSegment?.getTrackInfo() ?? []
-
         // Create new segment directory
         let newSegmentDir: URL
         let newTimePrefix: String
@@ -521,71 +463,26 @@ public final class CaptureManager {
             completedSegmentURL = nil
         }
 
-        // Collect available mics BEFORE starting new segment
+        // Collect available mics for new segment
         let availableMics = MicrophoneMonitor.listInputDevices()
             .filter { !disabledMicUIDs.contains($0.uid) }
             .prefix(4)
-            .map { ($0.uid, $0.name) }
 
         // Start recording to new segment
         do {
             try await startNewSegmentWithDirectory(newSegmentDir, timePrefix: newTimePrefix, mics: Array(availableMics))
-            startExternalMics()
         } catch {
             state = .error("Failed to start new segment: \(error.localizedDescription)")
             onStateChanged?(state)
             Log.error("Failed to start new segment: \(error)")
         }
 
-        // Process and upload in background (non-blocking)
-        if let url = completedSegmentURL {
+        // Trigger upload callback in background (non-blocking)
+        if let url = completedSegmentURL, let callback = onSegmentComplete {
             Task {
-                await processAndUpload(url, silenceInfo: silenceInfo, trackInfo: trackInfo)
+                await callback(url)
             }
         }
-    }
-
-    /// Processes silent track removal and triggers upload callback
-    private func processAndUpload(
-        _ segmentURL: URL,
-        silenceInfo: [Int: Bool] = [:],
-        trackInfo: [AudioTrackInfo] = []
-    ) async {
-        // Remove silent tracks if needed
-        if !silenceInfo.isEmpty {
-            let remover = SilentTrackRemover(verbose: verbose)
-            let audioFile = findAudioFile(in: segmentURL)
-
-            if let audioURL = audioFile {
-                do {
-                    let removed = try await remover.removeSilentTracks(
-                        from: audioURL,
-                        silenceInfo: silenceInfo,
-                        trackInfo: trackInfo
-                    )
-                    if removed > 0 {
-                        Log.info("Removed \(removed) silent track(s)")
-                    }
-                } catch {
-                    Log.warn("Failed to remove silent tracks: \(error)")
-                    // Continue with upload anyway
-                }
-            }
-        }
-
-        // Trigger upload
-        if let callback = onSegmentComplete {
-            await callback(segmentURL)
-        }
-    }
-
-    /// Finds the audio file in a segment directory
-    private func findAudioFile(in segmentDir: URL) -> URL? {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: segmentDir, includingPropertiesForKeys: nil) else {
-            return nil
-        }
-        return files.first { $0.pathExtension == "m4a" }
     }
 
     private func handleDisplayChange() async {
@@ -653,13 +550,6 @@ public final class CaptureManager {
         segmentTimer?.invalidate()
         segmentTimer = nil
 
-        // Stop external mic captures
-        stopExternalMics()
-
-        // Capture silence info before finishing segment
-        let silenceInfo = currentSegment?.getSilenceInfo() ?? [:]
-        let trackInfo = currentSegment?.getTrackInfo() ?? []
-
         let completedSegmentURL: URL?
         if let segment = currentSegment {
             completedSegmentURL = await segment.finishAndRename()
@@ -673,7 +563,7 @@ public final class CaptureManager {
 
         // Use beginActivity to request time for upload before system suspends
         // Fire async to avoid blocking MainActor during sleep transition
-        if let url = completedSegmentURL {
+        if let url = completedSegmentURL, let callback = onSegmentComplete {
             // Request system to delay sudden termination for our upload activity
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.suddenTerminationDisabled, .automaticTerminationDisabled],
@@ -682,7 +572,7 @@ public final class CaptureManager {
 
             Task {
                 Log.info("Starting processing and upload in background before sleep")
-                await processAndUpload(url, silenceInfo: silenceInfo, trackInfo: trackInfo)
+                await callback(url)
                 Log.info("Processing and upload completed before sleep")
                 ProcessInfo.processInfo.endActivity(activity)
             }
@@ -783,11 +673,9 @@ public final class CaptureManager {
 
         // Check if default mic actually changed
         if newDefaultMicID != currentDefaultMicID {
-            Log.info("Default microphone changed, rotating segment")
+            Log.info("Default microphone changed (no rotation - mics handled dynamically)")
             currentDefaultMicID = newDefaultMicID
-
-            // Rotate segment to pick up new mic configuration
-            await rotateSegment()
+            // No rotation needed - mics are handled dynamically via handleDeviceChange
         }
     }
 

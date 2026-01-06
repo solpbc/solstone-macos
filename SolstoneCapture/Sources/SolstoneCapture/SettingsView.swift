@@ -241,8 +241,29 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
             }
 
+            GroupBox("Debug") {
+                Toggle("1-minute segments", isOn: debugSegmentsBinding)
+                    .help("Use 1-minute segments instead of 5-minute for testing")
+                    .padding(.vertical, 4)
+            }
+
             Spacer()
         }
+    }
+
+    private var debugSegmentsBinding: Binding<Bool> {
+        Binding(
+            get: { appState.config.debugSegments },
+            set: { newValue in
+                var config = appState.config
+                config.debugSegments = newValue
+                appState.updateConfig(config)
+
+                Task {
+                    await appState.captureManager?.setDebugSegments(newValue)
+                }
+            }
+        )
     }
 
     // MARK: - Upload Status

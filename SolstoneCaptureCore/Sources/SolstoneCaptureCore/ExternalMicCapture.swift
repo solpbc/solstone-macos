@@ -6,9 +6,11 @@ import Accelerate
 import CoreAudio
 import CoreMedia
 import Foundation
+import ObjCHelpers
 
 /// Captures audio from an external microphone and sends it to a callback
-/// Used for routing external mic audio to MultiTrackAudioWriter
+/// Used for routing external mic audio to per-source audio writers
+/// The callback can be changed while the engine is running (for segment rotation)
 public final class ExternalMicCapture: @unchecked Sendable {
     /// The device being captured
     public let device: AudioInputDevice
@@ -16,14 +18,29 @@ public final class ExternalMicCapture: @unchecked Sendable {
     /// Native sample rate of the device
     public let nativeSampleRate: Double
 
-    /// Callback for processed audio buffers
-    public var onAudioBuffer: ((_ buffer: AVAudioPCMBuffer, _ time: CMTime) -> Void)?
+    /// Callback for processed audio buffers - can be changed while running
+    /// Uses synchronized access to allow swapping during segment rotation
+    public var onAudioBuffer: ((_ buffer: AVAudioPCMBuffer, _ time: CMTime) -> Void)? {
+        get {
+            callbackLock.lock()
+            defer { callbackLock.unlock() }
+            return _onAudioBuffer
+        }
+        set {
+            callbackLock.lock()
+            defer { callbackLock.unlock() }
+            _onAudioBuffer = newValue
+        }
+    }
+    private var _onAudioBuffer: ((_ buffer: AVAudioPCMBuffer, _ time: CMTime) -> Void)?
+    private let callbackLock = NSLock()
 
     private let engine: AVAudioEngine
     private let writerQueue = DispatchQueue(label: "com.solstone.extmic.writer", qos: .userInitiated)
     private let verbose: Bool
 
     private var isRunning = false
+    private var isRecovering = false  // Prevents recursive recovery attempts
     private var receivedFirstBuffer = false
     private var recordingStartTime: Date?
     private var firstBufferTime: CMTime?
@@ -47,6 +64,20 @@ public final class ExternalMicCapture: @unchecked Sendable {
         self.engine = AVAudioEngine()
         self.verbose = verbose
         self.nativeSampleRate = Self.getDeviceSampleRate(device.id) ?? 48_000
+
+        // Listen for audio configuration changes (e.g., AirPods connecting)
+        // When the system default device changes, AVAudioEngine internally resets
+        // even for pinned devices, so we need to re-initialize
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleConfigChange),
+            name: .AVAudioEngineConfigurationChange,
+            object: engine
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     /// Start capturing from this microphone
@@ -62,22 +93,23 @@ public final class ExternalMicCapture: @unchecked Sendable {
         // Access inputNode first to ensure engine is initialized
         let inputNode = engine.inputNode
 
-        // Force audioUnit initialization by accessing format
-        _ = inputNode.outputFormat(forBus: 0)
+        // Always explicitly set the input device to pin this engine to the specific hardware.
+        // Without this, AVAudioEngine follows the system default, which causes issues when
+        // the default changes (e.g., AirPods connect and become the new default).
+        try setInputDevice(device.id)
 
-        // Check if this device is the system default
-        let defaultDeviceID = MicrophoneMonitor.getDefaultInputDeviceID()
-        let isDefaultDevice = (device.id == defaultDeviceID)
+        // Prepare the engine - this acquires hardware resources and syncs with device
+        engine.prepare()
 
-        if isDefaultDevice {
-            Log.info("\(device.name): using as system default (deviceID \(device.id))")
-        } else {
-            try setInputDevice(device.id)
+        // Use inputFormat (what hardware actually provides) instead of outputFormat
+        // outputFormat can return cached/default values, but inputFormat reflects actual hardware
+        let hardwareFormat = inputNode.inputFormat(forBus: 0)
+        Log.info("\(device.name): hardware format \(hardwareFormat.sampleRate)Hz, \(hardwareFormat.channelCount)ch")
+
+        // Validate format - newly connected devices may not be ready yet
+        guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
+            throw ExternalMicCaptureError.invalidFormat(device.name)
         }
-
-        // Get the input node format
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        Log.info("\(device.name): input format \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount)ch")
 
         // Create a mono format for output
         guard
@@ -91,16 +123,22 @@ public final class ExternalMicCapture: @unchecked Sendable {
             throw ExternalMicCaptureError.failedToCreateFormat
         }
 
-        // Install tap on input node
+        // Install tap BEFORE starting the engine, using the HARDWARE format
+        // This prevents "sampleRate == inputHWFormat.sampleRate" crashes
         let bufferSize: AVAudioFrameCount = 4096
 
-        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) {
-            [weak self] buffer, _ in
-            self?.handleAudioBuffer(buffer, monoFormat: monoFormat)
+        do {
+            try ObjCExceptionCatcher.`try` {
+                inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: hardwareFormat) {
+                    [weak self] buffer, _ in
+                    self?.handleAudioBuffer(buffer, monoFormat: monoFormat)
+                }
+            }
+        } catch {
+            throw ExternalMicCaptureError.installTapFailed(device.name, error.localizedDescription)
         }
 
-        // Prepare and start the engine
-        engine.prepare()
+        // Now start the engine with tap in place
         try engine.start()
         isRunning = true
 
@@ -119,6 +157,39 @@ public final class ExternalMicCapture: @unchecked Sendable {
         }
 
         Log.debug("Stopped external mic capture: \(device.name)", verbose: verbose)
+    }
+
+    /// Handle audio configuration changes (e.g., AirPods connecting as default device)
+    /// AVAudioEngine internally resets when the system default changes, breaking pinned devices
+    @objc private func handleConfigChange() {
+        writerQueue.async { [weak self] in
+            guard let self = self else { return }
+            guard self.isRunning, !self.isRecovering else { return }
+
+            self.isRecovering = true
+            Log.info("\(self.device.name): Config change detected, re-pinning to hardware...")
+
+            // Teardown current state
+            self.engine.stop()
+            do {
+                try ObjCExceptionCatcher.`try` {
+                    self.engine.inputNode.removeTap(onBus: 0)
+                }
+            } catch {
+                // Tap may already be gone, that's fine
+            }
+
+            // Re-initialize with our pinned device
+            do {
+                self.isRunning = false  // Allow startCapture to proceed
+                try self.startCapture()
+                Log.info("\(self.device.name): Successfully recovered after config change")
+            } catch {
+                Log.error("\(self.device.name): Failed to recover after config change: \(error)")
+            }
+
+            self.isRecovering = false
+        }
     }
 
     /// Returns how long the mic has been recording (from first buffer to now)
@@ -187,7 +258,10 @@ public final class ExternalMicCapture: @unchecked Sendable {
     /// Process buffer and send to callback
     private func processAndSend(buffer: AVAudioPCMBuffer, monoFormat: AVAudioFormat) {
         guard isRunning else { return }
-        guard onAudioBuffer != nil else { return }
+
+        // Get callback with lock - if nil, discard the buffer
+        let callback = onAudioBuffer
+        guard callback != nil else { return }
 
         // Convert to mono if needed and resample to target rate
         guard let monoBuffer = convertToMono(buffer, targetFormat: monoFormat) else {
@@ -212,8 +286,8 @@ public final class ExternalMicCapture: @unchecked Sendable {
             presentationTime = .zero
         }
 
-        // Send to callback
-        onAudioBuffer?(monoBuffer, presentationTime)
+        // Send to callback (use captured callback, not property, to avoid race)
+        callback?(monoBuffer, presentationTime)
     }
 
     /// Convert buffer to mono at target sample rate
@@ -290,6 +364,8 @@ public final class ExternalMicCapture: @unchecked Sendable {
         case failedToSetDevice(AudioDeviceID, OSStatus)
         case noAudioUnit
         case failedToCreateFormat
+        case invalidFormat(String)
+        case installTapFailed(String, String)
 
         public var errorDescription: String? {
             switch self {
@@ -299,6 +375,10 @@ public final class ExternalMicCapture: @unchecked Sendable {
                 return "Input node has no audio unit"
             case .failedToCreateFormat:
                 return "Failed to create audio format"
+            case let .invalidFormat(deviceName):
+                return "Device '\(deviceName)' has invalid audio format (not ready)"
+            case let .installTapFailed(deviceName, reason):
+                return "Failed to install audio tap on '\(deviceName)': \(reason)"
             }
         }
     }

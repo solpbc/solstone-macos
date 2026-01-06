@@ -131,6 +131,12 @@ public final class AppState {
         // Load configuration
         config = AppConfig.loadOrCreateDefault()
 
+        // Apply debug segments setting if enabled
+        if config.debugSegments {
+            SegmentWriter.segmentDuration = 60
+            Log.info("Debug segments enabled: using 60s duration")
+        }
+
         // Check current login item status
         isLoginItemEnabled = SMAppService.mainApp.status == .enabled
 

@@ -14,7 +14,12 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "ObjCHelpers",
+            publicHeadersPath: "include"
+        ),
+        .target(
             name: "SolstoneCaptureCore",
+            dependencies: ["ObjCHelpers"],
             linkerSettings: [
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("CoreMedia"),

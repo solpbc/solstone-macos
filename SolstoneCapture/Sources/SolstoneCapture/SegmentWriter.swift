@@ -41,22 +41,16 @@ public final class SegmentWriter {
     public let timePrefix: String
 
     private var screenshotCapturers: [CGDirectDisplayID: ScreenshotCapturer] = [:]
-    private var multiTrackOutput: MultiTrackStreamOutput?
-    private var multiTrackWriter: MultiTrackAudioWriter?
+    private var audioManager: PerSourceAudioManager?
+    private var systemAudioOutput: SystemAudioStreamOutput?
     private(set) var audioStream: SCStream?
     private let verbose: Bool
 
     /// Time when capture actually started (for computing actual duration)
     private var captureStartTime: Date?
 
-    /// Track indices for external mics (deviceUID -> trackIndex)
-    private var externalMicTracks: [String: Int] = [:]
-
-    /// Recording start time for external mic timing
-    private var recordingStartTime: CMTime?
-
-    /// Segment duration in seconds (5 minutes)
-    public static let segmentDuration: TimeInterval = 300
+    /// Segment duration in seconds (default 5 minutes, can be changed for debug mode)
+    public static var segmentDuration: TimeInterval = 300
 
     /// Frame rate for video capture
     public static let frameRate: Double = 1.0
@@ -80,8 +74,14 @@ public final class SegmentWriter {
     /// - Parameters:
     ///   - displayInfos: Information about displays to capture
     ///   - filter: The content filter to use (for window exclusion)
-    ///   - mics: Microphone devices to pre-register tracks for (uid, name)
-    public func start(displayInfos: [DisplayInfo], filter: SCContentFilter, mics: [(uid: String, name: String)] = []) async throws {
+    ///   - mics: Initial microphone devices to start recording (optional)
+    ///   - micCaptureManager: Shared capture manager for persistent mic engines (optional)
+    public func start(
+        displayInfos: [DisplayInfo],
+        filter: SCContentFilter,
+        mics: [AudioInputDevice] = [],
+        micCaptureManager: MicrophoneCaptureManager? = nil
+    ) async throws {
         // Create screenshot capturers for each display
         for info in displayInfos {
             let videoURL = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
@@ -100,34 +100,37 @@ public final class SegmentWriter {
             screenshotCapturers[info.displayID] = capturer
         }
 
-        // Create multi-track audio writer (single _audio.m4a with all tracks)
-        let audioURL = outputDirectory.appendingPathComponent("\(timePrefix)_audio.m4a")
-        let audioWriter = try MultiTrackAudioWriter(
-            url: audioURL,
-            duration: Self.segmentDuration,
-            verbose: verbose
-        )
-        self.multiTrackWriter = audioWriter
-
-        // Add system audio track (track 0 - never dropped)
-        let systemTrackIndex = try audioWriter.addTrack(type: .systemAudio)
-
-        // Pre-register ALL mic tracks BEFORE starting stream
-        // This ensures tracks exist before AVAssetWriter.startWriting() is called
-        for (uid, name) in mics {
-            let trackIndex = try audioWriter.addTrack(type: .microphone(name: name, deviceUID: uid))
-            externalMicTracks[uid] = trackIndex
-            Log.info("Pre-registered mic '\(name)' as track \(trackIndex)")
+        // Create per-source audio manager (with shared capture manager if provided)
+        let manager: PerSourceAudioManager
+        if let captureManager = micCaptureManager {
+            manager = PerSourceAudioManager(
+                outputDirectory: outputDirectory,
+                timePrefix: timePrefix,
+                captureManager: captureManager,
+                verbose: verbose
+            )
+        } else {
+            manager = PerSourceAudioManager(
+                outputDirectory: outputDirectory,
+                timePrefix: timePrefix,
+                verbose: verbose
+            )
         }
+        self.audioManager = manager
 
-        // Create stream output that routes system audio to multi-track writer
-        // Note: All mics (including built-in) are captured via ExternalMicCapture
-        let output = MultiTrackStreamOutput(
-            audioWriter: audioWriter,
-            systemTrackIndex: systemTrackIndex,
-            verbose: verbose
-        )
-        self.multiTrackOutput = output
+        // Record segment start time
+        let segmentStartTime = CMClockGetTime(CMClockGetHostTimeClock())
+        manager.setSegmentStartTime(segmentStartTime)
+
+        // Start system audio writer
+        _ = try manager.startSystemAudio()
+
+        // Create stream output that routes system audio to manager
+        let output = SystemAudioStreamOutput(verbose: verbose)
+        output.onAudioBuffer = { [weak manager] buffer in
+            manager?.appendSystemAudio(buffer)
+        }
+        self.systemAudioOutput = output
 
         // Configure audio stream for system audio only
         let config = SCStreamConfiguration()
@@ -143,11 +146,17 @@ public final class SegmentWriter {
         // Add stream output for system audio only
         try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
 
-        // Start audio stream (mic tracks already registered, safe to start)
+        // Start audio stream
         try await stream.startCapture()
 
-        // Record start time for external mic buffer timing
-        recordingStartTime = CMClockGetTime(CMClockGetHostTimeClock())
+        // Start initial microphones
+        for device in mics {
+            do {
+                _ = try manager.addMicrophone(device)
+            } catch {
+                Log.warn("Failed to start mic \(device.name): \(error)")
+            }
+        }
 
         // Start all screenshot capturers
         for (_, capturer) in screenshotCapturers {
@@ -158,53 +167,31 @@ public final class SegmentWriter {
         Log.info("Started segment using SCScreenshotManager (1fps periodic capture): \(outputDirectory.lastPathComponent)")
     }
 
-    // MARK: - External Microphone Management
+    // MARK: - Dynamic Microphone Management
 
-    /// Registers an external microphone and creates a track for it
-    /// Returns existing track if already pre-registered during start()
-    /// - Parameters:
-    ///   - deviceUID: The unique identifier of the audio device
-    ///   - name: Display name of the device
-    /// - Returns: The track index for this microphone
-    public func registerExternalMic(deviceUID: String, name: String) throws -> Int {
-        // Return existing track if already pre-registered
-        if let trackIndex = externalMicTracks[deviceUID] {
-            return trackIndex
-        }
-
-        // Fallback for hot-plugged mics (may fail if writer already started)
-        guard let writer = multiTrackWriter else {
+    /// Add a microphone during recording (no segment rotation needed)
+    /// - Parameter device: The audio input device to add
+    public func addMicrophone(_ device: AudioInputDevice) throws {
+        guard let manager = audioManager else {
             throw SegmentError.failedToCreateAudioOutput
         }
-
-        let trackIndex = try writer.addTrack(type: .microphone(name: name, deviceUID: deviceUID))
-        externalMicTracks[deviceUID] = trackIndex
-        Log.info("Registered external mic '\(name)' as track \(trackIndex)")
-        return trackIndex
+        _ = try manager.addMicrophone(device)
     }
 
-    /// Appends audio from an external microphone
-    /// - Parameters:
-    ///   - buffer: The PCM audio buffer
-    ///   - deviceUID: The device UID to identify the track
-    ///   - presentationTime: The presentation timestamp
-    public func appendExternalMicAudio(_ buffer: AVAudioPCMBuffer, deviceUID: String, presentationTime: CMTime) {
-        guard let writer = multiTrackWriter,
-              let trackIndex = externalMicTracks[deviceUID] else {
-            return
-        }
-
-        writer.appendPCMBuffer(buffer, toTrack: trackIndex, presentationTime: presentationTime)
+    /// Remove a microphone during recording (graceful stop)
+    /// - Parameter deviceUID: The device UID to remove
+    public func removeMicrophone(deviceUID: String) {
+        audioManager?.removeMicrophone(deviceUID: deviceUID)
     }
 
-    /// Returns silence information for all audio tracks
-    public func getSilenceInfo() -> [Int: Bool] {
-        return multiTrackWriter?.getSilenceInfo() ?? [:]
+    /// Check if a microphone is currently being recorded
+    public func hasMicrophone(deviceUID: String) -> Bool {
+        return audioManager?.hasMicrophone(deviceUID: deviceUID) ?? false
     }
 
-    /// Returns track information for all audio tracks
-    public func getTrackInfo() -> [AudioTrackInfo] {
-        return multiTrackWriter?.getTrackInfo() ?? []
+    /// Get list of currently active microphone UIDs
+    public func activeMicrophoneUIDs() -> [String] {
+        return audioManager?.activeMicrophoneUIDs() ?? []
     }
 
     /// Updates the content filter for window exclusion
@@ -221,8 +208,7 @@ public final class SegmentWriter {
         }
     }
 
-    /// Finishes recording and closes all files
-    /// Note: External mic recording is handled by CaptureManager
+    /// Finishes recording, remixes audio, and closes all files
     public func finish() async {
         // Stop all screenshot capturers first
         Log.info("Stopping \(screenshotCapturers.count) screenshot capturer(s)...")
@@ -235,26 +221,33 @@ public final class SegmentWriter {
         if let stream = audioStream {
             do {
                 try await stream.stopCapture()
+            } catch let error as NSError
+                where error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && error.code == -3808
+            {
+                // Stream already stopped (e.g., by macOS during display change) - ignore
+                Log.debug("Audio stream already stopped", verbose: verbose)
             } catch {
                 Log.warn("Error stopping audio stream: \(error)")
             }
             self.audioStream = nil
         }
 
-        // Finish multi-track audio
-        if let output = multiTrackOutput {
-            _ = output.finish()
-            // Wait for audio completion using withCheckedContinuation
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                DispatchQueue.global().async {
-                    _ = output.sema.wait(timeout: .now() + 5)
-                    continuation.resume()
-                }
+        // Finish audio manager and remix to single file
+        if let manager = audioManager {
+            let audioURL = outputDirectory.appendingPathComponent("\(timePrefix)_audio.m4a")
+            do {
+                let result = try await manager.finishAndRemix(
+                    to: audioURL,
+                    skipSilent: true,
+                    deleteSourceFiles: true
+                )
+                Log.info("Audio remix complete: \(result.tracksWritten) tracks, \(result.silentTracksSkipped) silent skipped")
+            } catch {
+                Log.error("Audio remix failed: \(error)")
             }
         }
 
         // Finish all screenshot capturers (video writers)
-        // Note: capturers were already stopped above, now just finish the video writers
         Log.info("Finishing \(screenshotCapturers.count) video output(s)...")
         for (displayID, capturer) in screenshotCapturers {
             Log.info("Waiting for video finish on display \(displayID)...")
