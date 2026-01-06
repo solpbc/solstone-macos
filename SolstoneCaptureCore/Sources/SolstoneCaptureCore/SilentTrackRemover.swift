@@ -64,6 +64,15 @@ public final class SilentTrackRemover: Sendable {
         let tempURL = url.deletingLastPathComponent()
             .appendingPathComponent(UUID().uuidString + ".m4a")
 
+        // Track whether we should clean up the temp file (disabled on success path)
+        var cleanupTempFile = true
+        defer {
+            if cleanupTempFile {
+                Log.warn("Cleaning up temp file after silent track removal failure")
+                try? FileManager.default.removeItem(at: tempURL)
+            }
+        }
+
         // Create asset writer
         let writer = try AVAssetWriter(url: tempURL, fileType: .m4a)
 
@@ -126,15 +135,39 @@ public final class SilentTrackRemover: Sendable {
 
         writer.startSession(atSourceTime: .zero)
 
-        // Process each track sequentially (simpler and avoids concurrency issues)
-        for pair in trackPairs {
-            while let sampleBuffer = pair.reader.copyNextSampleBuffer() {
-                while !pair.writer.isReadyForMoreMediaData {
-                    try await Task.sleep(nanoseconds: 10_000_000) // 10ms
+        // Process tracks interleaved - AVAssetWriter needs data from all tracks roughly together
+        var finishedTracks = Set<Int>()
+        var pendingSamples = [Int: CMSampleBuffer]()
+
+        while finishedTracks.count < trackPairs.count {
+            for (idx, pair) in trackPairs.enumerated() {
+                guard !finishedTracks.contains(idx) else { continue }
+
+                // Get pending sample or read new one
+                let sampleBuffer: CMSampleBuffer?
+                if let pending = pendingSamples[idx] {
+                    sampleBuffer = pending
+                } else {
+                    sampleBuffer = pair.reader.copyNextSampleBuffer()
                 }
-                pair.writer.append(sampleBuffer)
+
+                if let buffer = sampleBuffer {
+                    if pair.writer.isReadyForMoreMediaData {
+                        pair.writer.append(buffer)
+                        pendingSamples.removeValue(forKey: idx)
+                    } else {
+                        // Hold onto sample for next iteration
+                        pendingSamples[idx] = buffer
+                    }
+                } else {
+                    // No more samples for this track
+                    pair.writer.markAsFinished()
+                    finishedTracks.insert(idx)
+                }
             }
-            pair.writer.markAsFinished()
+
+            // Small yield to prevent tight loop
+            try await Task.sleep(nanoseconds: 1_000_000) // 1ms
         }
 
         // Wait for writing to complete
@@ -145,6 +178,9 @@ public final class SilentTrackRemover: Sendable {
         }
 
         reader.cancelReading()
+
+        // Disable cleanup - we're about to move the file into place
+        cleanupTempFile = false
 
         // Replace original file with processed file
         let fm = FileManager.default

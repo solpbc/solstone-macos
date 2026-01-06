@@ -352,7 +352,7 @@ public final class CaptureManager {
         try await startNewSegmentWithDirectory(segmentDir, timePrefix: timePrefix, mics: Array(availableMics))
 
         // Start external mic captures (tracks already registered)
-        try startExternalMics()
+        startExternalMics()
     }
 
     /// Starts recording to a pre-created segment directory (used during rotation)
@@ -399,7 +399,8 @@ public final class CaptureManager {
     // MARK: - External Microphone Management
 
     /// Starts external mic captures and registers them with the current segment
-    private func startExternalMics() throws {
+    /// Mic failures are non-fatal - we continue with whatever mics succeed
+    private func startExternalMics() {
         guard let segment = currentSegment else { return }
 
         // Get available input devices, excluding disabled ones
@@ -410,23 +411,33 @@ public final class CaptureManager {
         let maxMics = 4
         let micsToStart = Array(devices.prefix(maxMics))
 
+        var startedCount = 0
         for device in micsToStart {
-            // Register mic with segment to create a track
-            _ = try segment.registerExternalMic(deviceUID: device.uid, name: device.name)
+            do {
+                // Register mic with segment to create a track
+                _ = try segment.registerExternalMic(deviceUID: device.uid, name: device.name)
 
-            // Create capture and wire up callback
-            let capture = ExternalMicCapture(device: device, verbose: verbose)
-            capture.onAudioBuffer = { [weak segment] buffer, time in
-                segment?.appendExternalMicAudio(buffer, deviceUID: device.uid, presentationTime: time)
+                // Create capture and wire up callback
+                let capture = ExternalMicCapture(device: device, verbose: verbose)
+                capture.onAudioBuffer = { [weak segment] buffer, time in
+                    segment?.appendExternalMicAudio(buffer, deviceUID: device.uid, presentationTime: time)
+                }
+
+                // Start capture
+                try capture.start()
+                externalMicCaptures[device.uid] = capture
+                currentRecordingMicUIDs.insert(device.uid)
+                startedCount += 1
+            } catch {
+                Log.warn("Failed to start mic '\(device.name)': \(error.localizedDescription)")
             }
-
-            // Start capture
-            try capture.start()
-            externalMicCaptures[device.uid] = capture
-            currentRecordingMicUIDs.insert(device.uid)
         }
 
-        Log.info("Started \(micsToStart.count) external mic capture(s)")
+        if startedCount > 0 {
+            Log.info("Started \(startedCount) external mic capture(s)")
+        } else if !micsToStart.isEmpty {
+            Log.warn("Failed to start any microphones")
+        }
     }
 
     /// Stops all external mic captures
@@ -519,7 +530,7 @@ public final class CaptureManager {
         // Start recording to new segment
         do {
             try await startNewSegmentWithDirectory(newSegmentDir, timePrefix: newTimePrefix, mics: Array(availableMics))
-            try startExternalMics()
+            startExternalMics()
         } catch {
             state = .error("Failed to start new segment: \(error.localizedDescription)")
             onStateChanged?(state)
