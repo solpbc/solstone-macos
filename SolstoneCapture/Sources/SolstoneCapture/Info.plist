@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Solstone Capture</string>
+    <key>CFBundleDisplayName</key>
+    <string>Solstone Capture</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.solstone.capture</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>SolstoneCapture</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>15.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Solstone Capture needs screen recording permission to capture your displays.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Solstone Capture needs microphone permission to record audio.</string>
+    <key>NSSystemAudioRecordingUsageDescription</key>
+    <string>Solstone Capture needs permission to record system audio.</string>
+</dict>
+</plist>
