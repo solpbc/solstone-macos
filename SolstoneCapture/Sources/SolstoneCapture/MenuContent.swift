@@ -190,8 +190,8 @@ struct MenuContent: View {
     }
 
     private var uploadStatusText: String {
-        let status = appState.uploadService.status
-        let pending = appState.uploadService.pendingCount
+        let status = appState.uploadCoordinator.status
+        let pending = appState.uploadCoordinator.pendingCount
 
         switch status {
         case .notSynced:

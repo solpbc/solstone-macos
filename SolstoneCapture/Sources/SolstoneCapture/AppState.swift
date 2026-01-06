@@ -16,7 +16,7 @@ public final class AppState {
     public let storageManager = StorageManager()
     public let audioDeviceMonitor = AudioDeviceMonitor()
     public private(set) var captureManager: CaptureManager!
-    public private(set) var uploadService: UploadService!
+    public private(set) var uploadCoordinator: UploadCoordinator!
     public private(set) var config: AppConfig
 
     // MARK: - State
@@ -97,7 +97,7 @@ public final class AppState {
     /// Update and save configuration
     public func updateConfig(_ newConfig: AppConfig) {
         config = newConfig
-        uploadService.updateConfig(newConfig)
+        uploadCoordinator.updateConfig(newConfig)
         do {
             try newConfig.save()
         } catch {
@@ -141,7 +141,7 @@ public final class AppState {
             verbose: false
         )
 
-        uploadService = UploadService(storageManager: storageManager, config: config)
+        uploadCoordinator = UploadCoordinator(storageManager: storageManager, config: config)
 
         // Wire up callbacks
         captureManager.onStateChanged = { [weak self] state in
@@ -150,8 +150,8 @@ public final class AppState {
             }
         }
 
-        captureManager.onSegmentComplete = { [weak self] url in
-            await self?.handleSegmentComplete(url)
+        captureManager.onSegmentComplete = { [weak self] _ in
+            self?.uploadCoordinator.triggerSync()
         }
 
         muteManager.onMuteStateChanged = { [weak self] in
@@ -179,8 +179,8 @@ public final class AppState {
         }
 
         // Start upload sync in background
-        Task.detached { [uploadService] in
-            await uploadService.syncOnStartup()
+        Task.detached { [uploadCoordinator] in
+            await uploadCoordinator?.syncOnStartup()
         }
     }
 
@@ -257,21 +257,6 @@ public final class AppState {
         case .error(let message):
             stopUIUpdateTimer()
             errorMessage = message
-        }
-    }
-
-    private func handleSegmentComplete(_ url: URL) async {
-        // Upload segment to remote server
-        let result = await uploadService.uploadSegment(at: url)
-        switch result {
-        case .success:
-            Log.info("Segment uploaded successfully")
-        case .failure(let error):
-            Log.warn("Segment upload failed: \(error)")
-        case .skipped:
-            Log.info("Segment already on server")
-        case .notConfigured:
-            break // Upload not configured, silent
         }
     }
 

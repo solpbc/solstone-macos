@@ -249,8 +249,8 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var uploadStatusView: some View {
-        let status = appState.uploadService.status
-        let pending = appState.uploadService.pendingCount
+        let status = appState.uploadCoordinator.status
+        let pending = appState.uploadCoordinator.pendingCount
 
         HStack {
             statusIcon(for: status)
@@ -263,7 +263,7 @@ struct SettingsView: View {
         }
     }
 
-    private func statusIcon(for status: UploadService.Status) -> some View {
+    private func statusIcon(for status: UploadCoordinator.Status) -> some View {
         let (name, color): (String, Color) = switch status {
         case .notSynced:
             ("questionmark.circle", .gray)
@@ -283,7 +283,7 @@ struct SettingsView: View {
             .foregroundStyle(color)
     }
 
-    private func statusText(for status: UploadService.Status) -> String {
+    private func statusText(for status: UploadCoordinator.Status) -> String {
         switch status {
         case .notSynced:
             return "Connecting..."
@@ -327,7 +327,7 @@ struct SettingsView: View {
         testResult = .none
 
         Task {
-            let error = await UploadService.testConnection(serverURL: serverURL, serverKey: serverKey)
+            let error = await UploadCoordinator.testConnection(serverURL: serverURL, serverKey: serverKey)
             await MainActor.run {
                 if let error = error {
                     testResult = .failure(error)
