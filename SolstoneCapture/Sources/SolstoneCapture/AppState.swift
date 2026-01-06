@@ -179,6 +179,15 @@ public final class AppState {
         // Sync microphone priority list with available devices
         syncMicrophonePriorityList()
 
+        // Recover any incomplete segments from previous sessions
+        Task.detached {
+            let recovery = IncompleteSegmentRecovery(verbose: false)
+            let recovered = await recovery.recoverAll()
+            if recovered > 0 {
+                Log.info("Recovered \(recovered) incomplete segment(s)")
+            }
+        }
+
         // Auto-start recording on launch
         Task { @MainActor in
             await self.startRecording()
