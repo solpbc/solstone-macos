@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import AVFAudio
+import CoreMedia
 import Foundation
 @preconcurrency import ScreenCaptureKit
 import SolstoneCaptureCore
@@ -39,12 +41,19 @@ public final class SegmentWriter {
     public let timePrefix: String
 
     private var screenshotCapturers: [CGDirectDisplayID: ScreenshotCapturer] = [:]
-    private var audioOutput: AudioStreamOutput?
+    private var multiTrackOutput: MultiTrackStreamOutput?
+    private var multiTrackWriter: MultiTrackAudioWriter?
     private(set) var audioStream: SCStream?
     private let verbose: Bool
 
     /// Time when capture actually started (for computing actual duration)
     private var captureStartTime: Date?
+
+    /// Track indices for external mics (deviceUID -> trackIndex)
+    private var externalMicTracks: [String: Int] = [:]
+
+    /// Recording start time for external mic timing
+    private var recordingStartTime: CMTime?
 
     /// Segment duration in seconds (5 minutes)
     public static let segmentDuration: TimeInterval = 300
@@ -91,36 +100,46 @@ public final class SegmentWriter {
             screenshotCapturers[info.displayID] = capturer
         }
 
-        // Create system audio output (named _system.m4a; remixed audio will be _audio.m4a)
-        let audioURL = outputDirectory.appendingPathComponent("\(timePrefix)_system.m4a")
-        guard let audio = AudioStreamOutput.create(
-            audioURL: audioURL,
+        // Create multi-track audio writer (single _audio.m4a with all tracks)
+        let audioURL = outputDirectory.appendingPathComponent("\(timePrefix)_audio.m4a")
+        let audioWriter = try MultiTrackAudioWriter(
+            url: audioURL,
             duration: Self.segmentDuration,
             verbose: verbose
-        ) else {
-            throw SegmentError.failedToCreateAudioOutput
-        }
-        audioOutput = audio
+        )
+        self.multiTrackWriter = audioWriter
 
-        // Configure audio-only stream
-        // We still need SCStream for system audio capture (SCScreenshotManager is image-only)
+        // Add system audio track (track 0 - never dropped)
+        let systemTrackIndex = try audioWriter.addTrack(type: .systemAudio)
+
+        // Create stream output that routes system audio to multi-track writer
+        // Note: All mics (including built-in) are captured via ExternalMicCapture
+        let output = MultiTrackStreamOutput(
+            audioWriter: audioWriter,
+            systemTrackIndex: systemTrackIndex,
+            verbose: verbose
+        )
+        self.multiTrackOutput = output
+
+        // Configure audio stream for system audio only
         let config = SCStreamConfiguration()
         config.sampleRate = 48_000
         config.channelCount = 1
         config.capturesAudio = true
-        config.captureMicrophone = false  // Mic recording handled by CaptureManager
+        config.captureMicrophone = false  // All mics via ExternalMicCapture
 
-        // Create audio-only stream
+        // Create audio stream
         let stream = SCStream(filter: filter, configuration: config, delegate: nil)
         self.audioStream = stream
 
-        // Add audio output only (no video outputs - we use screenshots instead)
-        if let audioOutput = audioOutput {
-            try stream.addStreamOutput(audioOutput, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
-        }
+        // Add stream output for system audio only
+        try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
 
         // Start audio stream
         try await stream.startCapture()
+
+        // Record start time for external mic buffer timing
+        recordingStartTime = CMClockGetTime(CMClockGetHostTimeClock())
 
         // Start all screenshot capturers
         for (_, capturer) in screenshotCapturers {
@@ -129,6 +148,48 @@ public final class SegmentWriter {
 
         captureStartTime = Date()
         Log.info("Started segment using SCScreenshotManager (1fps periodic capture): \(outputDirectory.lastPathComponent)")
+    }
+
+    // MARK: - External Microphone Management
+
+    /// Registers an external microphone and creates a track for it
+    /// - Parameters:
+    ///   - deviceUID: The unique identifier of the audio device
+    ///   - name: Display name of the device
+    /// - Returns: The track index for this microphone
+    public func registerExternalMic(deviceUID: String, name: String) throws -> Int {
+        guard let writer = multiTrackWriter else {
+            throw SegmentError.failedToCreateAudioOutput
+        }
+
+        let trackIndex = try writer.addTrack(type: .microphone(name: name, deviceUID: deviceUID))
+        externalMicTracks[deviceUID] = trackIndex
+        Log.info("Registered external mic '\(name)' as track \(trackIndex)")
+        return trackIndex
+    }
+
+    /// Appends audio from an external microphone
+    /// - Parameters:
+    ///   - buffer: The PCM audio buffer
+    ///   - deviceUID: The device UID to identify the track
+    ///   - presentationTime: The presentation timestamp
+    public func appendExternalMicAudio(_ buffer: AVAudioPCMBuffer, deviceUID: String, presentationTime: CMTime) {
+        guard let writer = multiTrackWriter,
+              let trackIndex = externalMicTracks[deviceUID] else {
+            return
+        }
+
+        writer.appendPCMBuffer(buffer, toTrack: trackIndex, presentationTime: presentationTime)
+    }
+
+    /// Returns silence information for all audio tracks
+    public func getSilenceInfo() -> [Int: Bool] {
+        return multiTrackWriter?.getSilenceInfo() ?? [:]
+    }
+
+    /// Returns track information for all audio tracks
+    public func getTrackInfo() -> [AudioTrackInfo] {
+        return multiTrackWriter?.getTrackInfo() ?? []
     }
 
     /// Updates the content filter for window exclusion
@@ -146,7 +207,7 @@ public final class SegmentWriter {
     }
 
     /// Finishes recording and closes all files
-    /// Note: Mic recording is handled by CaptureManager and hot-swapped during rotation
+    /// Note: External mic recording is handled by CaptureManager
     public func finish() async {
         // Stop all screenshot capturers first
         Log.info("Stopping \(screenshotCapturers.count) screenshot capturer(s)...")
@@ -165,13 +226,13 @@ public final class SegmentWriter {
             self.audioStream = nil
         }
 
-        // Finish audio (system audio)
-        if let audioOutput = audioOutput {
-            _ = audioOutput.finish()
+        // Finish multi-track audio
+        if let output = multiTrackOutput {
+            _ = output.finish()
             // Wait for audio completion using withCheckedContinuation
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 DispatchQueue.global().async {
-                    _ = audioOutput.sema.wait(timeout: .now() + 5)
+                    _ = output.sema.wait(timeout: .now() + 5)
                     continuation.resume()
                 }
             }
@@ -186,9 +247,9 @@ public final class SegmentWriter {
                 capturer.finish { result in
                     Log.info("Video finish callback fired for display \(displayID)")
                     switch result {
-                    case .success(let (url, frameCount)):
+                    case let .success((url, frameCount)):
                         Log.info("Saved video for display \(displayID): \(url.lastPathComponent) (\(frameCount) frames)")
-                    case .failure(let error):
+                    case let .failure(error):
                         Log.warn("Error finishing video for display \(displayID): \(error)")
                     }
                     continuation.resume()
@@ -220,7 +281,7 @@ public final class SegmentWriter {
         let fm = FileManager.default
 
         // Rename files inside the directory to add duration
-        // From: 143022_system.m4a -> 143022_127_system.m4a
+        // From: 143022_audio.m4a -> 143022_127_audio.m4a
         do {
             let files = try fm.contentsOfDirectory(at: outputDirectory, includingPropertiesForKeys: nil)
             for fileURL in files {

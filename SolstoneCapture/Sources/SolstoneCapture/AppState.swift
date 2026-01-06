@@ -154,13 +154,16 @@ public final class AppState {
             await self?.handleSegmentComplete(url)
         }
 
-        captureManager.getMicrophonePriority = { [weak self] in
-            self?.config.microphonePriority.map { $0.name } ?? []
-        }
-
         muteManager.onMuteStateChanged = { [weak self] in
             Task { @MainActor in
                 await self?.handleMuteStateChange()
+            }
+        }
+
+        // Wire up audio device change notifications
+        audioDeviceMonitor.onDeviceChange = { [weak self] added, removed in
+            Task { @MainActor in
+                await self?.captureManager.handleDeviceChange(added: added, removed: removed)
             }
         }
 
