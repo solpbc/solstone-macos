@@ -51,14 +51,12 @@ make clean
 
 - **SolstoneCaptureCore** - Shared Swift package with recording components:
   - VideoWriter - HEVC hardware encoding to .mp4
-  - AudioWriter - System audio capture to M4A
-  - StreamOutput - SCStreamOutput protocol implementations (VideoStreamOutput, AudioStreamOutput)
-  - MultiMicRecorder - Records from multiple microphones simultaneously with hot-swap rotation
-  - MicrophoneInput - Individual microphone input handling via CoreAudio
-  - MicAudioWriter - AAC encoding for microphone audio
-  - MicrophoneMonitor - CoreAudio device enumeration and monitoring
-  - SilenceDetector - Detects silent audio to discard inactive mic tracks
-  - AudioRemixer - Combines system audio and mic audio into multi-track M4A
+  - MultiTrackAudioWriter - Multi-track M4A recording (system audio + mics)
+  - MultiTrackStreamOutput - SCStreamOutput routing to MultiTrackAudioWriter
+  - ExternalMicCapture - AVAudioEngine capture for all microphones
+  - SilentTrackRemover - Removes silent tracks from M4A at segment end
+  - SilenceDetector - RMS-based silence detection per audio track
+  - MicrophoneMonitor - CoreAudio device enumeration
   - WindowMask - WindowExclusionDetector for filtering out specific app windows
   - Log/FileLogger - Logging utilities
 
@@ -67,7 +65,9 @@ make clean
 - **Status Bar App**: No dock icon, menu bar only (LSUIElement = true)
 - **5-Minute Segments**: Continuous recording split at clock boundaries (aligned to :00, :05, :10, etc.)
 - **Multi-Display**: Captures all connected displays simultaneously
-- **Multi-Microphone**: Records from up to 4 microphones with priority-based selection, silence detection, and per-mic disable
+- **Multi-Track Audio**: Records to single M4A with tracks for system audio and each microphone
+- **Mic Change Detection**: Segment rotation triggers when enabled mics connect/disconnect
+- **Silent Track Removal**: Empty mic tracks automatically removed at segment end
 - **Mute Controls**: Separate audio/video mute with timed auto-unmute
 - **Auto-Start**: SMAppService integration for login item support
 - **Window Exclusion**: Filters out specified apps (e.g., password managers) and private browser windows
@@ -84,11 +84,10 @@ Segments are stored in:
         └── HHMMSS_DDD_audio.m4a                 # Multi-track: system audio + mic(s)
 ```
 
-After segment completion, audio files are remixed:
-- System audio and microphone audio are combined into a single `_audio.m4a` file
-- For stable segments (no mic changes): 2 tracks (system + highest priority mic)
-- For changed segments (mic joins/leaves): N+1 tracks (system + all active mics)
-- Original individual audio files are deleted after successful remix
+Audio is recorded directly to a single multi-track M4A:
+- Track 0: System audio (always present, via SCStream)
+- Track 1+: All microphones (via AVAudioEngine/ExternalMicCapture)
+- Silent mic tracks are removed at segment end
 
 Configuration stored at:
 ```
@@ -116,6 +115,6 @@ Configuration stored at:
 - MainActor isolation is used for UI-related state
 - SCDisplay is not Sendable, so DisplayInfo struct is used for cross-actor communication
 - Segment rotation happens automatically at 5-minute clock boundaries
-- Display changes and sleep/wake events trigger immediate segment rotation
-- MultiMicRecorder persists across segments with hot-swap file rotation
-- Silent mic tracks are automatically discarded to save space
+- Display changes, sleep/wake events, and mic connect/disconnect trigger immediate segment rotation
+- MultiTrackAudioWriter records all audio sources to a single M4A file
+- SilentTrackRemover re-encodes to remove empty mic tracks at segment end

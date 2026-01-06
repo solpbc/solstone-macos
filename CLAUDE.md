@@ -57,19 +57,21 @@ Both use Swift Package Manager with Swift 6.1 and require macOS 15.0+.
 
 ### SolstoneCaptureCore (Recording Layer)
 - **VideoWriter** - HEVC hardware encoding to .mp4
-- **AudioWriter** - System audio capture to M4A (48kHz mono AAC)
-- **MultiMicRecorder** - Records from multiple microphones with hot-swap rotation
-- **AudioRemixer** - Combines system audio and mic audio into multi-track M4A
-- **SilenceDetector** - Detects silent audio to discard inactive mic tracks
-- **StreamOutput** - SCStreamOutput protocol implementations
+- **MultiTrackAudioWriter** - Multi-track M4A recording (system audio + mics)
+- **MultiTrackStreamOutput** - SCStreamOutput routing to MultiTrackAudioWriter
+- **ExternalMicCapture** - AVAudioEngine capture for all microphones
+- **SilentTrackRemover** - Removes silent tracks from M4A at segment end
+- **SilenceDetector** - RMS-based silence detection per audio track
+- **MicrophoneMonitor** - CoreAudio device enumeration
 - **WindowMask** - Filters out specific app windows from capture
 
 ## Key Design Patterns
 
 - **5-Minute Segments**: Recording splits at clock boundaries (:00, :05, :10, etc.)
 - **Multi-Display**: Captures all connected displays simultaneously
-- **Multi-Microphone**: Records up to 4 mics with priority-based selection and silence detection
-- **Hot-Swap**: MultiMicRecorder persists across segments for seamless file rotation
+- **Multi-Track Audio**: Records to single M4A with tracks for system audio + each mic
+- **Mic Change Rotation**: Segment rotation triggers when enabled mics connect/disconnect
+- **Silent Track Removal**: Empty mic tracks automatically removed at segment end
 - **Window Exclusion**: Filters out password managers and private browser windows
 
 ## File Paths
