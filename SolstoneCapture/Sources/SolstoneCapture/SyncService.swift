@@ -184,8 +184,6 @@ public actor SyncService {
                         day: day,
                         segment: segment
                     )
-                } else {
-                    Log.upload("Segment \(segment) verified on server")
                 }
 
                 checked += 1
