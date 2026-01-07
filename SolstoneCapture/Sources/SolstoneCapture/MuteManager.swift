@@ -46,13 +46,23 @@ public final class MuteManager {
 
     // MARK: - Observable State
 
-    public private(set) var audioMute = MuteState()
+    public private(set) var audioMute = MuteState() {
+        didSet { _isAudioMuted = audioMute.isMuted }
+    }
     public private(set) var videoMute = MuteState()
+
+    /// Thread-safe accessor for audio mute state (for audio capture closures)
+    @ObservationIgnored nonisolated(unsafe) private var _isAudioMuted: Bool = false
+    nonisolated public var isAudioMuted: Bool { _isAudioMuted }
 
     // MARK: - Timers
 
     private var audioTimer: Timer?
     private var videoTimer: Timer?
+    private var uiRefreshTimer: Timer?
+
+    /// Triggers UI refresh for time remaining display (incremented every second when muted)
+    public private(set) var refreshTick: Int = 0
 
     // MARK: - Callbacks
 
@@ -97,6 +107,7 @@ public final class MuteManager {
         // Persist mute state
         saveMuteState()
 
+        updateUIRefreshTimer()
         onMuteStateChanged?()
     }
 
@@ -114,6 +125,7 @@ public final class MuteManager {
         }
 
         saveMuteState()
+        updateUIRefreshTimer()
         onMuteStateChanged?()
     }
 
@@ -128,6 +140,7 @@ public final class MuteManager {
         videoMute = MuteState()
 
         saveMuteState()
+        updateUIRefreshTimer()
         onMuteStateChanged?()
     }
 
@@ -140,6 +153,9 @@ public final class MuteManager {
             if audioExpiration > Date() {
                 audioMute = MuteState(isMuted: true, expirationDate: audioExpiration)
                 scheduleTimer(for: .audio, expiration: audioExpiration)
+            } else {
+                // Expired - clear persisted state
+                defaults.removeObject(forKey: "audioMuteExpiration")
             }
         } else if defaults.bool(forKey: "audioMuteIndefinite") {
             audioMute = MuteState(isMuted: true, expirationDate: nil)
@@ -150,12 +166,16 @@ public final class MuteManager {
             if videoExpiration > Date() {
                 videoMute = MuteState(isMuted: true, expirationDate: videoExpiration)
                 scheduleTimer(for: .video, expiration: videoExpiration)
+            } else {
+                // Expired - clear persisted state
+                defaults.removeObject(forKey: "videoMuteExpiration")
             }
         } else if defaults.bool(forKey: "videoMuteIndefinite") {
             videoMute = MuteState(isMuted: true, expirationDate: nil)
         }
 
         if isAnyMuted {
+            updateUIRefreshTimer()
             onMuteStateChanged?()
         }
     }
@@ -183,6 +203,28 @@ public final class MuteManager {
     }
 
     // MARK: - Private Methods
+
+    private func startUIRefreshTimer() {
+        guard uiRefreshTimer == nil else { return }
+        uiRefreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshTick += 1
+            }
+        }
+    }
+
+    private func stopUIRefreshTimer() {
+        uiRefreshTimer?.invalidate()
+        uiRefreshTimer = nil
+    }
+
+    private func updateUIRefreshTimer() {
+        if isAnyMuted {
+            startUIRefreshTimer()
+        } else {
+            stopUIRefreshTimer()
+        }
+    }
 
     private func scheduleTimer(for type: MuteType, expiration: Date?) {
         guard let expiration = expiration else { return }

@@ -157,6 +157,8 @@ struct MenuContent: View {
 
     @ViewBuilder
     private func muteStatusRow(for type: MuteManager.MuteType) -> some View {
+        // Reference refreshTick to trigger view updates
+        let _ = appState.muteManager.refreshTick
         if let timeText = appState.muteManager.formatTimeRemaining(for: type) {
             let typeName = type == .audio ? "Audio" : "Video"
             Text("\(typeName) Muted (\(timeText))")
