@@ -180,8 +180,18 @@ public final class AppState {
             }
         }
 
+        // Direct segment completion (stop/pause/sleep) - triggers upload
         captureManager.onSegmentComplete = { [weak self] _ in
             self?.uploadCoordinator.triggerSync()
+        }
+
+        // Background remix completion (rotation) - triggers upload
+        Task {
+            await RemixQueue.shared.setOnSegmentComplete { [weak self] _ in
+                await MainActor.run {
+                    self?.uploadCoordinator.triggerSync()
+                }
+            }
         }
 
         muteManager.onMuteStateChanged = { [weak self] in

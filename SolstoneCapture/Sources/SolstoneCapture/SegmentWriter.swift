@@ -30,6 +30,15 @@ public struct DisplayInfo: Sendable {
     }
 }
 
+/// Result from finishing capture (used for background remix)
+public struct SegmentCaptureResult: Sendable {
+    public let segmentDirectory: URL
+    public let timePrefix: String
+    public let captureStartTime: Date
+    public let audioInputs: [AudioRemixerInput]
+    public let debugKeepRejected: Bool
+}
+
 /// Manages recording for a single 5-minute segment
 /// Thread safety: Always accessed from MainActor context (via CaptureManager)
 @MainActor
@@ -282,6 +291,70 @@ public final class SegmentWriter {
         Log.info("All video outputs finished")
 
         Log.debug("Finished segment: \(outputDirectory.lastPathComponent)", verbose: verbose)
+    }
+
+    /// Finishes capture and returns data for background remix
+    /// Does NOT wait for remix - returns immediately after streams stop
+    /// Use this for segment rotation to minimize gap between segments
+    public func finishCapture() async -> SegmentCaptureResult? {
+        // Stop all screenshot capturers first
+        Log.info("Stopping \(screenshotCapturers.count) screenshot capturer(s) for background remix...")
+        for (displayID, capturer) in screenshotCapturers {
+            Log.debug("Stopping capturer for display \(displayID)...", verbose: verbose)
+            await capturer.stop()
+        }
+
+        // Stop audio stream
+        if let stream = audioStream {
+            do {
+                try await stream.stopCapture()
+            } catch let error as NSError
+                where error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && error.code == -3808
+            {
+                // Stream already stopped (e.g., by macOS during display change) - ignore
+                Log.debug("Audio stream already stopped", verbose: verbose)
+            } catch {
+                Log.warn("Error stopping audio stream: \(error)")
+            }
+            self.audioStream = nil
+        }
+
+        // Finish audio writers (but don't remix - returns inputs for background remix)
+        var audioInputs: [AudioRemixerInput] = []
+        if let manager = audioManager {
+            audioInputs = await manager.finishAll()
+        }
+
+        // Finish all screenshot capturers (video writers)
+        Log.debug("Finishing \(screenshotCapturers.count) video output(s)...", verbose: verbose)
+        for (displayID, capturer) in screenshotCapturers {
+            await withCheckedContinuation { continuation in
+                capturer.finish { result in
+                    switch result {
+                    case let .success((url, frameCount)):
+                        Log.debug("Saved video for display \(displayID): \(url.lastPathComponent) (\(frameCount) frames)", verbose: self.verbose)
+                    case let .failure(error):
+                        Log.warn("Error finishing video for display \(displayID): \(error)")
+                    }
+                    continuation.resume()
+                }
+            }
+        }
+
+        guard let startTime = captureStartTime else {
+            Log.warn("No capture start time recorded")
+            return nil
+        }
+
+        Log.info("Capture finished, queued for background remix: \(outputDirectory.lastPathComponent)")
+
+        return SegmentCaptureResult(
+            segmentDirectory: outputDirectory,
+            timePrefix: timePrefix,
+            captureStartTime: startTime,
+            audioInputs: audioInputs,
+            debugKeepRejected: debugKeepRejectedAudio
+        )
     }
 
     /// Finishes recording and renames segment to reflect actual duration

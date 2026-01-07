@@ -463,7 +463,7 @@ public final class CaptureManager {
 
         Log.info("Rotating segment...")
 
-        // Create new segment directory
+        // Create new segment directory FIRST
         let newSegmentDir: URL
         let newTimePrefix: String
         do {
@@ -475,12 +475,10 @@ public final class CaptureManager {
             return
         }
 
-        // Finish and rename the old segment
-        let completedSegmentURL: URL?
+        // Finish capture on old segment (non-blocking - doesn't wait for remix)
+        var captureResult: SegmentCaptureResult?
         if let segment = currentSegment {
-            completedSegmentURL = await segment.finishAndRename()
-        } else {
-            completedSegmentURL = nil
+            captureResult = await segment.finishCapture()
         }
 
         // Collect available mics for new segment
@@ -488,7 +486,7 @@ public final class CaptureManager {
             .filter { !disabledMicUIDs.contains($0.uid) }
             .prefix(4)
 
-        // Start recording to new segment
+        // Start recording to new segment IMMEDIATELY (no waiting for remix)
         do {
             try await startNewSegmentWithDirectory(newSegmentDir, timePrefix: newTimePrefix, mics: Array(availableMics))
         } catch {
@@ -497,11 +495,17 @@ public final class CaptureManager {
             Log.error("Failed to start new segment: \(error)")
         }
 
-        // Trigger upload callback in background (non-blocking)
-        if let url = completedSegmentURL, let callback = onSegmentComplete {
-            Task {
-                await callback(url)
-            }
+        // Enqueue remix for background processing
+        // RemixQueue will handle: remix, file rename, directory rename, and upload trigger
+        if let result = captureResult {
+            let job = RemixQueue.RemixJob(
+                segmentDirectory: result.segmentDirectory,
+                timePrefix: result.timePrefix,
+                captureStartTime: result.captureStartTime,
+                audioInputs: result.audioInputs,
+                debugKeepRejected: result.debugKeepRejected
+            )
+            await RemixQueue.shared.enqueue(job)
         }
     }
 
