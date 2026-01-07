@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-import Accelerate
 import AVFoundation
 import CoreMedia
 import Foundation
@@ -23,31 +22,22 @@ public struct AudioRemixerInput: Sendable {
 public struct AudioRemixerResult: Sendable {
     /// Number of tracks written to output
     public let tracksWritten: Int
-    /// Number of silent tracks skipped
-    public let silentTracksSkipped: Int
-    /// Number of tracks skipped due to no speech
-    public let noSpeechTracksSkipped: Int
+    /// Number of tracks skipped (no audio or no speech)
+    public let tracksSkipped: Int
     /// URLs of source files that were processed
     public let sourceFiles: [URL]
 
-    public init(tracksWritten: Int, silentTracksSkipped: Int, noSpeechTracksSkipped: Int = 0, sourceFiles: [URL]) {
+    public init(tracksWritten: Int, tracksSkipped: Int, sourceFiles: [URL]) {
         self.tracksWritten = tracksWritten
-        self.silentTracksSkipped = silentTracksSkipped
-        self.noSpeechTracksSkipped = noSpeechTracksSkipped
+        self.tracksSkipped = tracksSkipped
         self.sourceFiles = sourceFiles
     }
 }
 
 /// Combines multiple single-track M4A files into a single multi-track M4A
-/// Handles timing alignment, silence filtering, and speech detection
+/// Handles timing alignment and speech detection
 public final class AudioRemixer: Sendable {
     private let verbose: Bool
-
-    /// RMS threshold for silence detection (default: 0.01 ≈ -40dB)
-    private let silenceThreshold: Float
-
-    /// Minimum duration of non-silent audio to consider track meaningful (default: 0.5s)
-    private let meaningfulAudioDuration: Double
 
     /// If true, move rejected files to rejected/ subfolder instead of deleting
     private let debugKeepRejected: Bool
@@ -62,13 +52,9 @@ public final class AudioRemixer: Sendable {
 
     public init(
         verbose: Bool = false,
-        silenceThreshold: Float = 0.01,
-        meaningfulAudioDuration: Double = 0.5,
         debugKeepRejected: Bool = false
     ) {
         self.verbose = verbose
-        self.silenceThreshold = silenceThreshold
-        self.meaningfulAudioDuration = meaningfulAudioDuration
         self.debugKeepRejected = debugKeepRejected
     }
 
@@ -83,60 +69,57 @@ public final class AudioRemixer: Sendable {
         to outputURL: URL,
         deleteSourceFiles: Bool = true
     ) async throws -> AudioRemixerResult {
+        let remixStart = ContinuousClock.now
+
         guard !inputs.isEmpty else {
             throw AudioRemixerError.noInputs
         }
 
         let outputDirectory = outputURL.deletingLastPathComponent()
 
-        // Filter inputs - skip tracks with no audio, silent mic tracks, or mic tracks without speech
+        // Filter inputs - skip tracks with no audio or no speech
+        let filterStart = ContinuousClock.now
         var tracksToProcess: [(input: AudioRemixerInput, asset: AVURLAsset)] = []
-        var silentCount = 0
-        var noSpeechCount = 0
+        var skippedCount = 0
 
         for input in inputs {
             // Skip tracks that never received any audio
             guard input.timingInfo.hasAudio else {
                 Log.info("Dropping track with no audio: \(input.timingInfo.trackType.displayName)")
-                silentCount += 1
+                skippedCount += 1
                 continue
             }
 
             // Check if file exists
             guard FileManager.default.fileExists(atPath: input.url.path) else {
                 Log.warn("Audio file not found: \(input.url.lastPathComponent)")
-                silentCount += 1
+                skippedCount += 1
                 continue
             }
 
             let asset = AVURLAsset(url: input.url)
 
-            // Check for silence
-            let hasMeaningfulAudio = await analyzeForSilence(asset: asset)
-            if !hasMeaningfulAudio {
-                Log.info("Dropping silent track: \(input.timingInfo.trackType.displayName)")
-                handleRejectedFile(input.url, reason: "silent", outputDirectory: outputDirectory)
-                silentCount += 1
-                continue
-            }
-
-            // Check for speech
+            // Check for speech using SoundAnalysis
             let hasSpeech = await analyzeForSpeech(url: input.url)
             if !hasSpeech {
                 Log.info("Dropping track with no speech: \(input.timingInfo.trackType.displayName)")
                 handleRejectedFile(input.url, reason: "no-speech", outputDirectory: outputDirectory)
-                noSpeechCount += 1
+                skippedCount += 1
                 continue
             }
 
             tracksToProcess.append((input, asset))
         }
 
+        let filterDuration = filterStart.duration(to: .now)
+        Log.info("Speech analysis completed in \(filterDuration.formatted(.units(allowed: [.seconds, .milliseconds]))): \(tracksToProcess.count) to process, \(skippedCount) skipped")
+
         guard !tracksToProcess.isEmpty else {
             throw AudioRemixerError.noTracksToWrite
         }
 
         // Create temporary output URL
+        let writeStart = ContinuousClock.now
         let tempURL = outputURL.deletingLastPathComponent()
             .appendingPathComponent(UUID().uuidString + ".m4a")
 
@@ -299,122 +282,23 @@ public final class AudioRemixer: Sendable {
             }
         }
 
+        let writeDuration = writeStart.duration(to: .now)
+        let totalDuration = remixStart.duration(to: .now)
+        Log.info("Remix write completed in \(writeDuration.formatted(.units(allowed: [.seconds, .milliseconds]))), total remix time: \(totalDuration.formatted(.units(allowed: [.seconds, .milliseconds])))")
+
         return AudioRemixerResult(
             tracksWritten: trackPairs.count,
-            silentTracksSkipped: silentCount,
-            noSpeechTracksSkipped: noSpeechCount,
+            tracksSkipped: skippedCount,
             sourceFiles: sourceURLs
         )
     }
 
     // MARK: - Private
 
-    /// Analyze an asset to determine if it has meaningful audio
-    private func analyzeForSilence(asset: AVURLAsset) async -> Bool {
-        do {
-            let tracks = try await asset.loadTracks(withMediaType: .audio)
-            guard let track = tracks.first else { return false }
-
-            let reader = try AVAssetReader(asset: asset)
-
-            let output = AVAssetReaderTrackOutput(
-                track: track,
-                outputSettings: [
-                    AVFormatIDKey: kAudioFormatLinearPCM,
-                    AVLinearPCMBitDepthKey: 32,
-                    AVLinearPCMIsFloatKey: true,
-                    AVLinearPCMIsNonInterleaved: false,
-                ]
-            )
-
-            if reader.canAdd(output) {
-                reader.add(output)
-            }
-
-            guard reader.startReading() else { return false }
-
-            var totalNonSilentDuration: Double = 0
-
-            while let sampleBuffer = output.copyNextSampleBuffer() {
-                let bufferDuration = analyzeBufferForSilence(sampleBuffer)
-                if bufferDuration > 0 {
-                    totalNonSilentDuration += bufferDuration
-                }
-
-                // Early exit if we've found enough non-silent audio
-                if totalNonSilentDuration >= meaningfulAudioDuration {
-                    reader.cancelReading()
-                    return true
-                }
-            }
-
-            reader.cancelReading()
-            return totalNonSilentDuration >= meaningfulAudioDuration
-
-        } catch {
-            Log.warn("Failed to analyze audio for silence: \(error)")
-            // If analysis fails, assume it has audio to be safe
-            return true
-        }
-    }
-
-    /// Analyze a sample buffer and return the duration if it's non-silent, 0 otherwise
-    private func analyzeBufferForSilence(_ sampleBuffer: CMSampleBuffer) -> Double {
-        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return 0 }
-
-        var length: Int = 0
-        var dataPointer: UnsafeMutablePointer<Int8>?
-
-        let status = CMBlockBufferGetDataPointer(
-            blockBuffer,
-            atOffset: 0,
-            lengthAtOffsetOut: nil,
-            totalLengthOut: &length,
-            dataPointerOut: &dataPointer
-        )
-
-        guard status == noErr, let dataPointer = dataPointer else { return 0 }
-
-        // Get format description for sample rate
-        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)
-        else { return 0 }
-
-        let sampleRate = asbd.pointee.mSampleRate
-        let bytesPerSample = Int(asbd.pointee.mBytesPerFrame)
-        let sampleCount = length / max(bytesPerSample, 1)
-
-        guard sampleCount > 0 else { return 0 }
-
-        let bufferDuration = Double(sampleCount) / sampleRate
-
-        // Calculate RMS for float samples
-        if asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
-            let rms = dataPointer.withMemoryRebound(to: Float.self, capacity: sampleCount) { floatPointer in
-                var rmsValue: Float = 0
-                vDSP_rmsqv(floatPointer, 1, &rmsValue, vDSP_Length(sampleCount))
-                return rmsValue
-            }
-
-            if rms >= silenceThreshold {
-                return bufferDuration
-            }
-        }
-
-        return 0
-    }
-
-    /// Analyze an audio file for speech presence using on-device recognition
+    /// Analyze an audio file for speech presence using SoundAnalysis
     private func analyzeForSpeech(url: URL) async -> Bool {
         let detector = SpeechDetector.shared
-
-        // If speech detection isn't available, fall back to allowing the track
-        guard detector.isAvailable else {
-            Log.debug("Speech detection not available, allowing track", verbose: verbose)
-            return true
-        }
-
-        let result = await detector.detectSpeech(in: url, timeout: 10.0)
+        let result = await detector.detectSpeech(in: url)
 
         switch result {
         case .speechDetected:

@@ -150,7 +150,7 @@ public final class IncompleteSegmentRecovery: Sendable {
                         to: consolidatedAudioURL,
                         deleteSourceFiles: true
                     )
-                    Log.info("Remixed \(result.tracksWritten) track(s), skipped \(result.silentTracksSkipped) silent, \(result.noSpeechTracksSkipped) no-speech")
+                    Log.info("Remixed \(result.tracksWritten) track(s), skipped \(result.tracksSkipped)")
                 }
             } catch {
                 Log.warn("Audio remix failed for \(dirName): \(error)")

@@ -203,23 +203,6 @@ public final class AppState {
         // Sync microphone priority list with available devices
         syncMicrophonePriorityList()
 
-        // Request speech recognition authorization for audio track filtering
-        Task { @MainActor in
-            let status = await SpeechDetector.requestAuthorization()
-            switch status {
-            case .authorized:
-                Log.info("Speech recognition authorized")
-            case .denied:
-                Log.warn("Speech recognition denied - speech filtering disabled")
-            case .restricted:
-                Log.warn("Speech recognition restricted - speech filtering disabled")
-            case .notDetermined:
-                Log.warn("Speech recognition authorization not determined")
-            @unknown default:
-                Log.warn("Speech recognition authorization unknown status")
-            }
-        }
-
         // Recover any incomplete segments from previous sessions
         Task.detached {
             let recovery = IncompleteSegmentRecovery(verbose: false)

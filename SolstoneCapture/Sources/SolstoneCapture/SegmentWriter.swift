@@ -255,7 +255,7 @@ public final class SegmentWriter {
                     debugKeepRejected: debugKeepRejectedAudio,
                     deleteSourceFiles: true
                 )
-                Log.info("Audio remix complete: \(result.tracksWritten) tracks, \(result.silentTracksSkipped) silent skipped, \(result.noSpeechTracksSkipped) no-speech skipped")
+                Log.info("Audio remix complete: \(result.tracksWritten) tracks, \(result.tracksSkipped) skipped")
             } catch {
                 Log.error("Audio remix failed: \(error)")
             }
