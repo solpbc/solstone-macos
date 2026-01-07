@@ -148,10 +148,9 @@ public final class IncompleteSegmentRecovery: Sendable {
                     let result = try await remixer.remix(
                         inputs: inputs,
                         to: consolidatedAudioURL,
-                        skipSilent: true,
                         deleteSourceFiles: true
                     )
-                    Log.info("Remixed \(result.tracksWritten) track(s), skipped \(result.silentTracksSkipped) silent")
+                    Log.info("Remixed \(result.tracksWritten) track(s), skipped \(result.silentTracksSkipped) silent, \(result.noSpeechTracksSkipped) no-speech")
                 }
             } catch {
                 Log.warn("Audio remix failed for \(dirName): \(error)")

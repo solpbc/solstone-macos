@@ -23,6 +23,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     private let verbose: Bool
     private let lock = NSLock()
 
+    /// Closure to check if audio is muted (samples discarded when true)
+    private let isAudioMuted: () -> Bool
+
     /// Shared capture manager for persistent mic captures
     private let captureManager: MicrophoneCaptureManager?
 
@@ -34,19 +37,27 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         outputDirectory: URL,
         timePrefix: String,
         captureManager: MicrophoneCaptureManager,
+        isAudioMuted: @escaping @Sendable () -> Bool = { false },
         verbose: Bool = false
     ) {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
         self.captureManager = captureManager
+        self.isAudioMuted = isAudioMuted
         self.verbose = verbose
     }
 
     /// Initialize without shared capture manager (legacy - creates/destroys captures each segment)
-    public init(outputDirectory: URL, timePrefix: String, verbose: Bool = false) {
+    public init(
+        outputDirectory: URL,
+        timePrefix: String,
+        isAudioMuted: @escaping @Sendable () -> Bool = { false },
+        verbose: Bool = false
+    ) {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
         self.captureManager = nil
+        self.isAudioMuted = isAudioMuted
         self.verbose = verbose
     }
 
@@ -87,6 +98,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
     /// Append system audio sample buffer
     public func appendSystemAudio(_ sampleBuffer: CMSampleBuffer) {
+        // Discard samples when muted
+        guard !isAudioMuted() else { return }
+
         lock.lock()
         guard let source = sourceWriters["system"], !source.finished else {
             lock.unlock()
@@ -126,12 +140,14 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         lock.unlock()
 
         // Use shared capture manager if available (keeps engine running across segments)
+        let isMuted = isAudioMuted
         if let captureManager = captureManager {
             // Start capture if not already running
             try captureManager.startCapture(for: device)
 
             // Wire callback to this segment's writer
             captureManager.setCallback(for: device.uid) { [weak writer] buffer, time in
+                guard !isMuted() else { return }
                 writer?.appendPCMBuffer(buffer, presentationTime: time)
             }
             Log.info("Wired mic callback: \(device.name)")
@@ -139,6 +155,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             // Legacy path: create capture per segment
             let capture = ExternalMicCapture(device: device, verbose: verbose)
             capture.onAudioBuffer = { [weak writer] buffer, time in
+                guard !isMuted() else { return }
                 writer?.appendPCMBuffer(buffer, presentationTime: time)
             }
             try capture.start()
@@ -261,12 +278,12 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// Finish all writers, remix to single file, and optionally delete source files
     /// - Parameters:
     ///   - outputURL: The final combined audio file URL
-    ///   - skipSilent: Skip silent mic tracks during remix
+    ///   - debugKeepRejected: Move rejected tracks to rejected/ subfolder instead of deleting
     ///   - deleteSourceFiles: Delete individual source files after remix
     /// - Returns: The remix result
     public func finishAndRemix(
         to outputURL: URL,
-        skipSilent: Bool = true,
+        debugKeepRejected: Bool = false,
         deleteSourceFiles: Bool = true
     ) async throws -> AudioRemixerResult {
         let inputs = await finishAll()
@@ -275,11 +292,10 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             throw AudioRemixerError.noInputs
         }
 
-        let remixer = AudioRemixer(verbose: verbose)
+        let remixer = AudioRemixer(verbose: verbose, debugKeepRejected: debugKeepRejected)
         return try await remixer.remix(
             inputs: inputs,
             to: outputURL,
-            skipSilent: skipSilent,
             deleteSourceFiles: deleteSourceFiles
         )
     }

@@ -28,5 +28,7 @@
     <string>Solstone Capture needs microphone permission to record audio.</string>
     <key>NSSystemAudioRecordingUsageDescription</key>
     <string>Solstone Capture needs permission to record system audio.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Solstone Capture uses on-device speech recognition to detect audio tracks containing speech.</string>
 </dict>
 </plist>

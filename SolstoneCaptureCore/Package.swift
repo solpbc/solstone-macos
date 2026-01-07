@@ -24,7 +24,8 @@ let package = Package(
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("CoreMedia"),
                 .linkedFramework("AVFoundation"),
-                .linkedFramework("CoreAudio")
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("Speech")
             ]
         )
     ]

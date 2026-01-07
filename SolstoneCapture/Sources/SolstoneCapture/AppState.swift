@@ -6,6 +6,22 @@ import SwiftUI
 import ServiceManagement
 import SolstoneCaptureCore
 
+/// Thread-safe holder for a debug setting value
+/// Allows Sendable closures to read the current value
+final class DebugSettingHolder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: Bool
+
+    var value: Bool {
+        get { lock.withLock { _value } }
+        set { lock.withLock { _value = newValue } }
+    }
+
+    init(value: Bool) {
+        self._value = value
+    }
+}
+
 /// Observable state for the entire application
 @MainActor
 @Observable
@@ -18,6 +34,7 @@ public final class AppState {
     public private(set) var captureManager: CaptureManager!
     public private(set) var uploadCoordinator: UploadCoordinator!
     public private(set) var config: AppConfig
+    private var debugAudioHolder: DebugSettingHolder!
 
     // MARK: - State
 
@@ -98,6 +115,7 @@ public final class AppState {
     public func updateConfig(_ newConfig: AppConfig) {
         config = newConfig
         uploadCoordinator.updateConfig(newConfig)
+        debugAudioHolder.value = newConfig.debugKeepRejectedAudio
         do {
             try newConfig.save()
         } catch {
@@ -140,12 +158,18 @@ public final class AppState {
         // Check current login item status
         isLoginItemEnabled = SMAppService.mainApp.status == .enabled
 
+        // Create a thread-safe holder for the debug setting
+        // This value is read at segment creation time on MainActor
+        let debugAudioHolder = DebugSettingHolder(value: config.debugKeepRejectedAudio)
         captureManager = CaptureManager(
             storageManager: storageManager,
+            isAudioMuted: { [muteManager] in muteManager.isAudioMuted },
+            debugKeepRejectedAudio: { debugAudioHolder.value },
             excludedAppNames: config.excludedAppNames,
             excludePrivateBrowsing: config.excludePrivateBrowsing,
             verbose: false
         )
+        self.debugAudioHolder = debugAudioHolder
 
         uploadCoordinator = UploadCoordinator(storageManager: storageManager, config: config)
 
@@ -178,6 +202,23 @@ public final class AppState {
 
         // Sync microphone priority list with available devices
         syncMicrophonePriorityList()
+
+        // Request speech recognition authorization for audio track filtering
+        Task { @MainActor in
+            let status = await SpeechDetector.requestAuthorization()
+            switch status {
+            case .authorized:
+                Log.info("Speech recognition authorized")
+            case .denied:
+                Log.warn("Speech recognition denied - speech filtering disabled")
+            case .restricted:
+                Log.warn("Speech recognition restricted - speech filtering disabled")
+            case .notDetermined:
+                Log.warn("Speech recognition authorization not determined")
+            @unknown default:
+                Log.warn("Speech recognition authorization unknown status")
+            }
+        }
 
         // Recover any incomplete segments from previous sessions
         Task.detached {

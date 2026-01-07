@@ -242,9 +242,13 @@ struct SettingsView: View {
             }
 
             GroupBox("Debug") {
-                Toggle("1-minute segments", isOn: debugSegmentsBinding)
-                    .help("Use 1-minute segments instead of 5-minute for testing")
-                    .padding(.vertical, 4)
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("1-minute segments", isOn: debugSegmentsBinding)
+                        .help("Use 1-minute segments instead of 5-minute for testing")
+                    Toggle("Keep rejected audio", isOn: debugKeepRejectedBinding)
+                        .help("Move rejected mic tracks to rejected/ folder instead of deleting")
+                }
+                .padding(.vertical, 4)
             }
 
             Spacer()
@@ -262,6 +266,17 @@ struct SettingsView: View {
                 Task {
                     await appState.captureManager?.setDebugSegments(newValue)
                 }
+            }
+        )
+    }
+
+    private var debugKeepRejectedBinding: Binding<Bool> {
+        Binding(
+            get: { appState.config.debugKeepRejectedAudio },
+            set: { newValue in
+                var config = appState.config
+                config.debugKeepRejectedAudio = newValue
+                appState.updateConfig(config)
             }
         )
     }

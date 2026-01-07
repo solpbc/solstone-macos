@@ -80,6 +80,9 @@ public struct AppConfig: Codable, Sendable {
     /// When true, use 1-minute segments instead of 5-minute (for testing)
     public var debugSegments: Bool
 
+    /// When true, move rejected audio tracks to rejected/ folder instead of deleting
+    public var debugKeepRejectedAudio: Bool
+
     /// Default exclusions written on first run
     public static let defaultExclusions: [AppEntry] = [
         AppEntry(bundleID: "com.1password.1password", name: "1Password"),
@@ -94,7 +97,8 @@ public struct AppConfig: Codable, Sendable {
         serverURL: String? = nil,
         localRetentionMB: Int = 200,
         syncPaused: Bool = false,
-        debugSegments: Bool = false
+        debugSegments: Bool = false,
+        debugKeepRejectedAudio: Bool = false
     ) {
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
@@ -103,6 +107,7 @@ public struct AppConfig: Codable, Sendable {
         self.localRetentionMB = localRetentionMB
         self.syncPaused = syncPaused
         self.debugSegments = debugSegments
+        self.debugKeepRejectedAudio = debugKeepRejectedAudio
     }
 
     /// Custom decoder for backward compatibility and Keychain migration
@@ -115,6 +120,7 @@ public struct AppConfig: Codable, Sendable {
         localRetentionMB = try container.decodeIfPresent(Int.self, forKey: .localRetentionMB) ?? 200
         syncPaused = try container.decodeIfPresent(Bool.self, forKey: .syncPaused) ?? false
         debugSegments = try container.decodeIfPresent(Bool.self, forKey: .debugSegments) ?? false
+        debugKeepRejectedAudio = try container.decodeIfPresent(Bool.self, forKey: .debugKeepRejectedAudio) ?? false
 
         // Migrate legacy serverKey from JSON to Keychain
         if let legacyKey = try container.decodeIfPresent(String.self, forKey: .serverKey),
@@ -136,6 +142,7 @@ public struct AppConfig: Codable, Sendable {
         try container.encode(localRetentionMB, forKey: .localRetentionMB)
         try container.encode(syncPaused, forKey: .syncPaused)
         try container.encode(debugSegments, forKey: .debugSegments)
+        try container.encode(debugKeepRejectedAudio, forKey: .debugKeepRejectedAudio)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -147,6 +154,7 @@ public struct AppConfig: Codable, Sendable {
         case localRetentionMB
         case syncPaused
         case debugSegments
+        case debugKeepRejectedAudio
     }
 
     // MARK: - File Paths

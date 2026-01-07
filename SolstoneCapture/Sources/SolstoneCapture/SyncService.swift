@@ -461,8 +461,9 @@ public actor SyncService {
                     continue
                 }
 
-                // Skip incomplete segments
-                if segmentDir.lastPathComponent.hasSuffix(".incomplete") {
+                // Skip incomplete and failed segments
+                let dirName = segmentDir.lastPathComponent
+                if dirName.hasSuffix(".incomplete") || dirName.hasSuffix(".failed") {
                     continue
                 }
 

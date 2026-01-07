@@ -25,18 +25,21 @@ public struct AudioRemixerResult: Sendable {
     public let tracksWritten: Int
     /// Number of silent tracks skipped
     public let silentTracksSkipped: Int
+    /// Number of tracks skipped due to no speech
+    public let noSpeechTracksSkipped: Int
     /// URLs of source files that were processed
     public let sourceFiles: [URL]
 
-    public init(tracksWritten: Int, silentTracksSkipped: Int, sourceFiles: [URL]) {
+    public init(tracksWritten: Int, silentTracksSkipped: Int, noSpeechTracksSkipped: Int = 0, sourceFiles: [URL]) {
         self.tracksWritten = tracksWritten
         self.silentTracksSkipped = silentTracksSkipped
+        self.noSpeechTracksSkipped = noSpeechTracksSkipped
         self.sourceFiles = sourceFiles
     }
 }
 
 /// Combines multiple single-track M4A files into a single multi-track M4A
-/// Handles timing alignment and silence filtering
+/// Handles timing alignment, silence filtering, and speech detection
 public final class AudioRemixer: Sendable {
     private let verbose: Bool
 
@@ -45,6 +48,9 @@ public final class AudioRemixer: Sendable {
 
     /// Minimum duration of non-silent audio to consider track meaningful (default: 0.5s)
     private let meaningfulAudioDuration: Double
+
+    /// If true, move rejected files to rejected/ subfolder instead of deleting
+    private let debugKeepRejected: Bool
 
     /// Audio settings for output (AAC, 48kHz, mono)
     private static nonisolated(unsafe) let audioSettings: [String: Any] = [
@@ -57,38 +63,41 @@ public final class AudioRemixer: Sendable {
     public init(
         verbose: Bool = false,
         silenceThreshold: Float = 0.01,
-        meaningfulAudioDuration: Double = 0.5
+        meaningfulAudioDuration: Double = 0.5,
+        debugKeepRejected: Bool = false
     ) {
         self.verbose = verbose
         self.silenceThreshold = silenceThreshold
         self.meaningfulAudioDuration = meaningfulAudioDuration
+        self.debugKeepRejected = debugKeepRejected
     }
 
     /// Remix multiple tracks into a single output file
     /// - Parameters:
     ///   - inputs: Array of track inputs with timing info
     ///   - outputURL: Destination M4A file
-    ///   - skipSilent: If true, skip tracks with no meaningful audio (except system audio)
     ///   - deleteSourceFiles: If true, delete source files after successful remix
     /// - Returns: Remix result with track counts
     public func remix(
         inputs: [AudioRemixerInput],
         to outputURL: URL,
-        skipSilent: Bool = true,
         deleteSourceFiles: Bool = true
     ) async throws -> AudioRemixerResult {
         guard !inputs.isEmpty else {
             throw AudioRemixerError.noInputs
         }
 
-        // Filter inputs - skip tracks with no audio or silent mic tracks
+        let outputDirectory = outputURL.deletingLastPathComponent()
+
+        // Filter inputs - skip tracks with no audio, silent mic tracks, or mic tracks without speech
         var tracksToProcess: [(input: AudioRemixerInput, asset: AVURLAsset)] = []
         var silentCount = 0
+        var noSpeechCount = 0
 
         for input in inputs {
             // Skip tracks that never received any audio
             guard input.timingInfo.hasAudio else {
-                Log.info("Skipping track with no audio: \(input.timingInfo.trackType.displayName)")
+                Log.info("Dropping track with no audio: \(input.timingInfo.trackType.displayName)")
                 silentCount += 1
                 continue
             }
@@ -102,20 +111,28 @@ public final class AudioRemixer: Sendable {
 
             let asset = AVURLAsset(url: input.url)
 
-            // System audio is never skipped for silence
+            // System audio is always included
             if case .systemAudio = input.timingInfo.trackType {
                 tracksToProcess.append((input, asset))
                 continue
             }
 
-            // For mic tracks, check for silence if skipSilent is enabled
-            if skipSilent {
-                let hasMeaningfulAudio = await analyzeForSilence(asset: asset)
-                if !hasMeaningfulAudio {
-                    Log.info("Skipping silent track: \(input.timingInfo.trackType.displayName)")
-                    silentCount += 1
-                    continue
-                }
+            // For mic tracks, check for silence
+            let hasMeaningfulAudio = await analyzeForSilence(asset: asset)
+            if !hasMeaningfulAudio {
+                Log.info("Dropping silent track: \(input.timingInfo.trackType.displayName)")
+                handleRejectedFile(input.url, reason: "silent", outputDirectory: outputDirectory)
+                silentCount += 1
+                continue
+            }
+
+            // Check for speech
+            let hasSpeech = await analyzeForSpeech(url: input.url)
+            if !hasSpeech {
+                Log.info("Dropping track with no speech: \(input.timingInfo.trackType.displayName)")
+                handleRejectedFile(input.url, reason: "no-speech", outputDirectory: outputDirectory)
+                noSpeechCount += 1
+                continue
             }
 
             tracksToProcess.append((input, asset))
@@ -291,6 +308,7 @@ public final class AudioRemixer: Sendable {
         return AudioRemixerResult(
             tracksWritten: trackPairs.count,
             silentTracksSkipped: silentCount,
+            noSpeechTracksSkipped: noSpeechCount,
             sourceFiles: sourceURLs
         )
     }
@@ -390,6 +408,61 @@ public final class AudioRemixer: Sendable {
         }
 
         return 0
+    }
+
+    /// Analyze an audio file for speech presence using on-device recognition
+    private func analyzeForSpeech(url: URL) async -> Bool {
+        let detector = SpeechDetector.shared
+
+        // If speech detection isn't available, fall back to allowing the track
+        guard detector.isAvailable else {
+            Log.debug("Speech detection not available, allowing track", verbose: verbose)
+            return true
+        }
+
+        let result = await detector.detectSpeech(in: url, timeout: 10.0)
+
+        switch result {
+        case .speechDetected:
+            Log.debug("Speech detected in: \(url.lastPathComponent)", verbose: verbose)
+            return true
+        case .noSpeech:
+            Log.debug("No speech in: \(url.lastPathComponent)", verbose: verbose)
+            return false
+        case .unavailable(let reason):
+            Log.debug("Speech detection unavailable (\(reason)), allowing track", verbose: verbose)
+            return true  // Fail open - if detection fails, include the track
+        }
+    }
+
+    /// Handle a rejected audio file - either delete or move to rejected/ subfolder
+    private func handleRejectedFile(_ url: URL, reason: String, outputDirectory: URL) {
+        let fm = FileManager.default
+
+        guard fm.fileExists(atPath: url.path) else { return }
+
+        if debugKeepRejected {
+            // Move to rejected/ subfolder
+            let rejectedDir = outputDirectory.appendingPathComponent("rejected")
+            do {
+                try fm.createDirectory(at: rejectedDir, withIntermediateDirectories: true)
+                let destURL = rejectedDir.appendingPathComponent("\(reason)_\(url.lastPathComponent)")
+                try fm.moveItem(at: url, to: destURL)
+                Log.debug("Moved rejected file to: \(destURL.lastPathComponent)", verbose: verbose)
+            } catch {
+                Log.warn("Failed to move rejected file: \(error)")
+                // Fall back to deletion
+                try? fm.removeItem(at: url)
+            }
+        } else {
+            // Delete the file
+            do {
+                try fm.removeItem(at: url)
+                Log.debug("Deleted rejected file: \(url.lastPathComponent)", verbose: verbose)
+            } catch {
+                Log.warn("Failed to delete rejected file: \(error)")
+            }
+        }
     }
 
     /// Retime a sample buffer by adding an offset to its presentation time

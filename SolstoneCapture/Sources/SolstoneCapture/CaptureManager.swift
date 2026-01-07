@@ -55,6 +55,12 @@ public final class CaptureManager {
     /// Window exclusion detector for filtering out specific app windows
     private let windowExclusionDetector: WindowExclusionDetector?
 
+    /// Closure to check if audio is muted (passed to SegmentWriter)
+    private let isAudioMuted: @Sendable () -> Bool
+
+    /// Closure to check debug setting for keeping rejected audio tracks
+    private let debugKeepRejectedAudio: @Sendable () -> Bool
+
     /// Currently excluded windows (for change detection)
     private var currentExcludedWindowIDs: Set<CGWindowID> = []
 
@@ -94,11 +100,15 @@ public final class CaptureManager {
 
     public init(
         storageManager: StorageManager,
+        isAudioMuted: @escaping @Sendable () -> Bool = { false },
+        debugKeepRejectedAudio: @escaping @Sendable () -> Bool = { false },
         excludedAppNames: [String] = [],
         excludePrivateBrowsing: Bool = true,
         verbose: Bool = false
     ) {
         self.storageManager = storageManager
+        self.isAudioMuted = isAudioMuted
+        self.debugKeepRejectedAudio = debugKeepRejectedAudio
         self.verbose = verbose
 
         // Create window exclusion detector if we have apps to exclude or private browsing detection
@@ -380,6 +390,8 @@ public final class CaptureManager {
         let segment = SegmentWriter(
             outputDirectory: segmentDir,
             timePrefix: timePrefix,
+            isAudioMuted: isAudioMuted,
+            debugKeepRejectedAudio: debugKeepRejectedAudio(),
             verbose: verbose
         )
         currentSegment = segment
