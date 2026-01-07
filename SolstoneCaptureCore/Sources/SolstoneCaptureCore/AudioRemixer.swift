@@ -111,13 +111,7 @@ public final class AudioRemixer: Sendable {
 
             let asset = AVURLAsset(url: input.url)
 
-            // System audio is always included
-            if case .systemAudio = input.timingInfo.trackType {
-                tracksToProcess.append((input, asset))
-                continue
-            }
-
-            // For mic tracks, check for silence
+            // Check for silence
             let hasMeaningfulAudio = await analyzeForSilence(asset: asset)
             if !hasMeaningfulAudio {
                 Log.info("Dropping silent track: \(input.timingInfo.trackType.displayName)")
