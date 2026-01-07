@@ -73,6 +73,9 @@ public final class CaptureManager {
     /// Track if we were recording before sleep (for resume on wake)
     private var wasRecordingBeforeSleep: Bool = false
 
+    /// Track if we were recording before screen lock (for resume on unlock)
+    private var wasRecordingBeforeLock: Bool = false
+
     /// Current default microphone device ID (for change detection)
     private var currentDefaultMicID: AudioDeviceID?
 
@@ -171,6 +174,27 @@ public final class CaptureManager {
         ) { [weak self] _ in
             Task { @MainActor in
                 await self?.updateWindowExclusions()
+            }
+        }
+
+        // Listen for screen lock/unlock events
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.screenIsLocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.handleScreenLocked()
+            }
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.screenIsUnlocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.handleScreenUnlocked()
             }
         }
     }
@@ -540,7 +564,16 @@ public final class CaptureManager {
         }
     }
 
-    // MARK: - Sleep/Wake Handling
+    // MARK: - Sleep/Wake/Lock Handling
+
+    /// Check if the screen is currently locked
+    private func isScreenLocked() -> Bool {
+        guard let dict = CGSessionCopyCurrentDictionary() as? [String: Any],
+              let locked = dict["CGSSessionScreenIsLocked"] as? Bool else {
+            return false
+        }
+        return locked
+    }
 
     /// Wait for at least one audio input device to become available
     /// - Parameter timeout: Maximum time to wait in seconds
@@ -612,6 +645,13 @@ public final class CaptureManager {
         guard wasRecordingBeforeSleep else { return }
         wasRecordingBeforeSleep = false
 
+        // If screen is locked, defer resume to unlock handler
+        guard !isScreenLocked() else {
+            Log.info("Screen is locked after wake, deferring to unlock handler")
+            wasRecordingBeforeLock = true
+            return
+        }
+
         do {
             // Wait for audio devices to become available (up to 5 seconds)
             await waitForAudioDevices(timeout: 5.0)
@@ -637,6 +677,77 @@ public final class CaptureManager {
             state = .error("Failed to resume after wake: \(error.localizedDescription)")
             onStateChanged?(state)
             Log.error("Failed to resume capture after wake: \(error)")
+        }
+    }
+
+    private func handleScreenLocked() async {
+        Log.info("Screen locked")
+
+        // Remember if we were actively recording
+        wasRecordingBeforeLock = state.isRecording
+
+        guard state.isRecording else { return }
+
+        // Finish current segment gracefully before lock
+        segmentTimer?.invalidate()
+        segmentTimer = nil
+
+        let completedSegmentURL: URL?
+        if let segment = currentSegment {
+            completedSegmentURL = await segment.finishAndRename()
+            currentSegment = nil
+        } else {
+            completedSegmentURL = nil
+        }
+
+        // Stop all persistent mic captures during lock
+        micCaptureManager.stopAll()
+
+        state = .paused
+        onStateChanged?(state)
+
+        // Trigger upload callback
+        if let url = completedSegmentURL, let callback = onSegmentComplete {
+            Task {
+                await callback(url)
+            }
+        }
+
+        Log.info("Capture paused for screen lock")
+    }
+
+    private func handleScreenUnlocked() async {
+        Log.info("Screen unlocked")
+
+        // Only resume if we were recording before lock
+        guard wasRecordingBeforeLock else { return }
+        wasRecordingBeforeLock = false
+
+        do {
+            // Wait for audio devices to become available (up to 5 seconds)
+            await waitForAudioDevices(timeout: 5.0)
+
+            // Refresh display list
+            let content = try await SCShareableContent.current
+            displays = content.displays
+
+            if let firstDisplay = displays.first {
+                contentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
+            }
+
+            // Update current default mic (may have changed)
+            currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
+
+            // Start fresh segment
+            try await startNewSegment()
+
+            state = .recording
+            onStateChanged?(state)
+            Log.info("Capture resumed after unlock")
+        } catch {
+            state = .error("Failed to resume after unlock: \(error.localizedDescription)")
+            onStateChanged?(state)
+            Log.error("Failed to resume capture after unlock: \(error)")
         }
     }
 
