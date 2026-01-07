@@ -90,3 +90,20 @@ Config: `~/Library/Application Support/Solstone/config.json`
 - Audio sources write to individual M4A files during segment, remixed at end
 - Interleaved track reading during remix ensures AVAssetWriter receives data from all tracks together
 - Silent mic tracks automatically detected via RMS analysis and skipped during remix
+
+## Logging
+
+Uses macOS unified logging (`os.Logger`) with subsystem `com.solstone.capture`.
+
+```bash
+# Stream logs in real-time
+log stream --predicate 'subsystem == "com.solstone.capture"'
+
+# Show recent logs (last hour)
+log show --predicate 'subsystem == "com.solstone.capture"' --last 1h
+
+# Filter by category (general or upload)
+log stream --predicate 'subsystem == "com.solstone.capture" AND category == "upload"'
+```
+
+Or use Console.app and filter by subsystem `com.solstone.capture`.

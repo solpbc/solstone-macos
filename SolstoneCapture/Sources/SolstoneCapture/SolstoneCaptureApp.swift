@@ -9,9 +9,8 @@ struct SolstoneCaptureApp: App {
     @State private var appState = AppState()
 
     init() {
-        // Configure unbuffered output for logging
+        // Configure unbuffered output for stderr
         Stderr.setUnbuffered()
-        FileLogger.shared.start()
     }
 
     var body: some Scene {
