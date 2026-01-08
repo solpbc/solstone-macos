@@ -19,22 +19,12 @@ struct MenuContent: View {
 
         // Mute controls
         Section {
-            muteAudioMenu
-            muteVideoMenu
-
-            if appState.muteManager.isAnyMuted {
-                Button("Unmute All") {
-                    appState.muteManager.unmuteAll()
-                }
-            }
+            muteMenu
         }
 
         // Active mute status
-        if appState.muteManager.audioMute.isMuted {
-            muteStatusRow(for: .audio)
-        }
-        if appState.muteManager.videoMute.isMuted {
-            muteStatusRow(for: .video)
+        if appState.muteManager.isMuted {
+            muteStatusRow
         }
 
         Divider()
@@ -95,59 +85,33 @@ struct MenuContent: View {
         if !appState.isRecording || appState.isPaused {
             return "Not Recording"
         }
-
-        if appState.muteManager.audioMute.isMuted {
-            return "Recording (video-only)"
-        } else {
-            return "Recording"
-        }
+        return "Recording"
     }
 
     // MARK: - Mute Menus
 
     @ViewBuilder
-    private var muteAudioMenu: some View {
-        if appState.muteManager.audioMute.isMuted {
-            Button("Unmute Audio") {
-                appState.muteManager.unmute(.audio)
+    private var muteMenu: some View {
+        if appState.muteManager.isMuted {
+            Button("Unmute") {
+                appState.muteManager.unmute()
             }
         } else {
-            Menu("Mute Audio") {
+            Menu("Mute") {
                 Button("15 minutes") {
-                    appState.muteManager.mute(.audio, for: .minutes(15))
+                    appState.muteManager.mute(for: .minutes(15))
                 }
                 Button("30 minutes") {
-                    appState.muteManager.mute(.audio, for: .minutes(30))
+                    appState.muteManager.mute(for: .minutes(30))
                 }
                 Button("1 hour") {
-                    appState.muteManager.mute(.audio, for: .minutes(60))
+                    appState.muteManager.mute(for: .minutes(60))
+                }
+                Button("Until tomorrow morning") {
+                    appState.muteManager.mute(for: .untilTomorrowMorning)
                 }
                 Button("Until unmute") {
-                    appState.muteManager.mute(.audio, for: .indefinite)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var muteVideoMenu: some View {
-        if appState.muteManager.videoMute.isMuted {
-            Button("Unmute Video") {
-                appState.muteManager.unmute(.video)
-            }
-        } else {
-            Menu("Mute Video") {
-                Button("15 minutes") {
-                    appState.muteManager.mute(.video, for: .minutes(15))
-                }
-                Button("30 minutes") {
-                    appState.muteManager.mute(.video, for: .minutes(30))
-                }
-                Button("1 hour") {
-                    appState.muteManager.mute(.video, for: .minutes(60))
-                }
-                Button("Until unmute") {
-                    appState.muteManager.mute(.video, for: .indefinite)
+                    appState.muteManager.mute(for: .indefinite)
                 }
             }
         }
@@ -156,12 +120,11 @@ struct MenuContent: View {
     // MARK: - Mute Status Row
 
     @ViewBuilder
-    private func muteStatusRow(for type: MuteManager.MuteType) -> some View {
+    private var muteStatusRow: some View {
         // Reference refreshTick to trigger view updates
         let _ = appState.muteManager.refreshTick
-        if let timeText = appState.muteManager.formatTimeRemaining(for: type) {
-            let typeName = type == .audio ? "Audio" : "Video"
-            Text("\(typeName) Muted (\(timeText))")
+        if let timeText = appState.muteManager.formatTimeRemaining() {
+            Text("Muted (\(timeText))")
                 .font(.caption)
                 .foregroundColor(.orange)
         }

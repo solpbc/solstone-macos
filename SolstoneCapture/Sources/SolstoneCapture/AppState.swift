@@ -61,10 +61,10 @@ public final class AppState {
         if errorMessage != nil {
             return "exclamationmark.circle.fill"
         }
-        if muteManager.isFullyMuted || isPaused {
+        if isPaused {
             return "pause.circle.fill"
         }
-        if muteManager.isAnyMuted {
+        if muteManager.isMuted {
             return "circle.lefthalf.filled"
         }
         if isRecording {
@@ -80,9 +80,6 @@ public final class AppState {
         }
         if isPaused {
             return "Paused"
-        }
-        if muteManager.isFullyMuted {
-            return "Muted"
         }
         if isRecording {
             return "Recording"
@@ -194,12 +191,6 @@ public final class AppState {
                 await MainActor.run {
                     self?.uploadCoordinator.triggerSync()
                 }
-            }
-        }
-
-        muteManager.onMuteStateChanged = { [weak self] in
-            Task { @MainActor in
-                await self?.handleMuteStateChange()
             }
         }
 
@@ -315,19 +306,4 @@ public final class AppState {
         }
     }
 
-    private func handleMuteStateChange() async {
-        if muteManager.isFullyMuted {
-            // Both audio and video muted - pause capture
-            if isRecording && !isPaused {
-                await captureManager.pauseRecording()
-            }
-        } else if isPaused {
-            // At least one is unmuted - resume capture
-            do {
-                try await captureManager.resumeRecording()
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-        }
-    }
 }
