@@ -52,6 +52,9 @@ public final class CaptureManager {
     /// This prevents audio playback interference during rotation
     private let micCaptureManager = MicrophoneCaptureManager()
 
+    /// Persistent system audio capture manager - keeps SCStream alive across segment rotations
+    private let systemAudioCaptureManager = SystemAudioCaptureManager()
+
     /// Window exclusion detector for filtering out specific app windows
     private let windowExclusionDetector: WindowExclusionDetector?
 
@@ -303,8 +306,9 @@ public final class CaptureManager {
             currentSegment = nil
         }
 
-        // Stop all persistent mic captures (only when fully stopping recording)
+        // Stop all persistent captures (only when fully stopping recording)
         micCaptureManager.stopAll()
+        await systemAudioCaptureManager.stop()
 
         state = .idle
         onStateChanged?(state)
@@ -332,8 +336,9 @@ public final class CaptureManager {
             currentSegment = nil
         }
 
-        // Stop all persistent mic captures during pause
+        // Stop all persistent captures during pause
         micCaptureManager.stopAll()
+        await systemAudioCaptureManager.stop()
 
         state = .paused
         onStateChanged?(state)
@@ -426,7 +431,8 @@ public final class CaptureManager {
             displayInfos: displayInfos,
             filter: filter,
             mics: mics,
-            micCaptureManager: micCaptureManager
+            micCaptureManager: micCaptureManager,
+            systemAudioCaptureManager: systemAudioCaptureManager
         )
 
         // Mark stream as ready after a short delay to allow capture to stabilize.
@@ -700,8 +706,9 @@ public final class CaptureManager {
             completedSegmentURL = nil
         }
 
-        // Stop all persistent mic captures during lock
+        // Stop all persistent captures during lock
         micCaptureManager.stopAll()
+        await systemAudioCaptureManager.stop()
 
         state = .paused
         onStateChanged?(state)
@@ -840,6 +847,9 @@ public final class CaptureManager {
         )
 
         do {
+            // Update system audio stream filter
+            try await systemAudioCaptureManager.updateContentFilter(newFilter)
+            // Update video (screenshot) filters
             try await segment.updateContentFilter(newFilter)
             if !excludedWindows.isEmpty {
                 Log.debug("Updated filter to exclude \(excludedWindows.count) window(s)", verbose: verbose)

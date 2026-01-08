@@ -51,8 +51,7 @@ public final class SegmentWriter {
 
     private var screenshotCapturers: [CGDirectDisplayID: ScreenshotCapturer] = [:]
     private var audioManager: PerSourceAudioManager?
-    private var systemAudioOutput: SystemAudioStreamOutput?
-    private(set) var audioStream: SCStream?
+    private var systemAudioCaptureManager: SystemAudioCaptureManager?
     private let verbose: Bool
 
     /// Closure to check if audio is muted (passed to PerSourceAudioManager)
@@ -97,11 +96,13 @@ public final class SegmentWriter {
     ///   - filter: The content filter to use (for window exclusion)
     ///   - mics: Initial microphone devices to start recording (optional)
     ///   - micCaptureManager: Shared capture manager for persistent mic engines (optional)
+    ///   - systemAudioCaptureManager: Shared capture manager for persistent system audio stream (optional)
     public func start(
         displayInfos: [DisplayInfo],
         filter: SCContentFilter,
         mics: [AudioInputDevice] = [],
-        micCaptureManager: MicrophoneCaptureManager? = nil
+        micCaptureManager: MicrophoneCaptureManager? = nil,
+        systemAudioCaptureManager: SystemAudioCaptureManager? = nil
     ) async throws {
         // Create screenshot capturers for each display
         for info in displayInfos {
@@ -148,29 +149,16 @@ public final class SegmentWriter {
         // Start system audio writer
         _ = try manager.startSystemAudio()
 
-        // Create stream output that routes system audio to manager
-        let output = SystemAudioStreamOutput(verbose: verbose)
-        output.onAudioBuffer = { [weak manager] buffer in
-            manager?.appendSystemAudio(buffer)
+        // Store reference to persistent system audio manager
+        self.systemAudioCaptureManager = systemAudioCaptureManager
+
+        // Start persistent system audio stream and wire callback to this segment's manager
+        if let sysAudioManager = systemAudioCaptureManager {
+            try await sysAudioManager.start(filter: filter)
+            sysAudioManager.setCallback { [weak manager] buffer in
+                manager?.appendSystemAudio(buffer)
+            }
         }
-        self.systemAudioOutput = output
-
-        // Configure audio stream for system audio only
-        let config = SCStreamConfiguration()
-        config.sampleRate = 48_000
-        config.channelCount = 1
-        config.capturesAudio = true
-        config.captureMicrophone = false  // All mics via ExternalMicCapture
-
-        // Create audio stream
-        let stream = SCStream(filter: filter, configuration: config, delegate: nil)
-        self.audioStream = stream
-
-        // Add stream output for system audio only
-        try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
-
-        // Start audio stream
-        try await stream.startCapture()
 
         // Start initial microphones
         for device in mics {
@@ -217,14 +205,10 @@ public final class SegmentWriter {
         return audioManager?.activeMicrophoneUIDs() ?? []
     }
 
-    /// Updates the content filter for window exclusion
+    /// Updates the content filter for window exclusion (video only)
+    /// Note: System audio filter is managed by CaptureManager via SystemAudioCaptureManager
     /// - Parameter filter: The new content filter
     public func updateContentFilter(_ filter: SCContentFilter) async throws {
-        // Update audio stream filter
-        if let stream = audioStream {
-            try await stream.updateContentFilter(filter)
-        }
-
         // Update all screenshot capturers
         for (_, capturer) in screenshotCapturers {
             capturer.updateContentFilter(filter)
@@ -240,20 +224,8 @@ public final class SegmentWriter {
             await capturer.stop()
         }
 
-        // Stop audio stream
-        if let stream = audioStream {
-            do {
-                try await stream.stopCapture()
-            } catch let error as NSError
-                where error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && error.code == -3808
-            {
-                // Stream already stopped (e.g., by macOS during display change) - ignore
-                Log.debug("Audio stream already stopped", verbose: verbose)
-            } catch {
-                Log.warn("Error stopping audio stream: \(error)")
-            }
-            self.audioStream = nil
-        }
+        // Clear system audio callback (stream keeps running for next segment)
+        systemAudioCaptureManager?.clearCallback()
 
         // Finish audio manager and remix to single file
         if let manager = audioManager {
@@ -304,20 +276,8 @@ public final class SegmentWriter {
             await capturer.stop()
         }
 
-        // Stop audio stream
-        if let stream = audioStream {
-            do {
-                try await stream.stopCapture()
-            } catch let error as NSError
-                where error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && error.code == -3808
-            {
-                // Stream already stopped (e.g., by macOS during display change) - ignore
-                Log.debug("Audio stream already stopped", verbose: verbose)
-            } catch {
-                Log.warn("Error stopping audio stream: \(error)")
-            }
-            self.audioStream = nil
-        }
+        // Clear system audio callback (stream keeps running for next segment)
+        systemAudioCaptureManager?.clearCallback()
 
         // Finish audio writers (but don't remix - returns inputs for background remix)
         var audioInputs: [AudioRemixerInput] = []
