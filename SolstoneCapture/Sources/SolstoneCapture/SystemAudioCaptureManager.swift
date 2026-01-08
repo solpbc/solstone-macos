@@ -44,12 +44,16 @@ public final class SystemAudioCaptureManager {
         let output = SystemAudioStreamOutput(verbose: verbose)
         self.streamOutput = output
 
-        // Configure audio stream for system audio only
+        // Configure audio stream for system audio only (minimize video overhead)
         let config = SCStreamConfiguration()
         config.sampleRate = 48_000
         config.channelCount = 1
         config.capturesAudio = true
         config.captureMicrophone = false  // All mics via ExternalMicCapture
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 1)  // 1 fps max
+        config.width = 2  // Minimum valid dimensions
+        config.height = 2
+        config.queueDepth = 1  // Minimize buffered frames
 
         // Create and configure stream
         Log.debug("[SystemAudio] Creating SCStream with config: 48kHz, 1ch, audio=true, mic=false", verbose: verbose)

@@ -267,11 +267,11 @@ public final class ExternalMicCapture: @unchecked Sendable {
         // Get callback with lock - if nil, discard the buffer
         let callback = onAudioBuffer
 
-        // Log periodic status (every 10 seconds) - debug only
+        // Log periodic status (every 60 seconds)
         let now = Date()
-        if lastBufferLogTime == nil || now.timeIntervalSince(lastBufferLogTime!) >= 10 {
-            let hasCallback = callback != nil
-            Log.debug("\(device.name): buffer heartbeat - \(bufferCount) buffers, callback=\(hasCallback)", verbose: true)
+        if lastBufferLogTime == nil || now.timeIntervalSince(lastBufferLogTime!) >= 60 {
+            Log.info("[Mic:\(device.name)] \(bufferCount) buffers in last minute")
+            bufferCount = 0
             lastBufferLogTime = now
         }
 

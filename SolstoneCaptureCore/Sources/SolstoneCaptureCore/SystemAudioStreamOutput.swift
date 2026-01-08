@@ -29,12 +29,10 @@ public final class SystemAudioStreamOutput: NSObject, SCStreamOutput, @unchecked
     public func stream(_: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of outputType: SCStreamOutputType) {
         switch outputType {
         case .audio:
-            if verbose {
-                logLock.lock()
-                systemAudioBufferCount += 1
-                logAudioBuffersIfNeeded()
-                logLock.unlock()
-            }
+            logLock.lock()
+            systemAudioBufferCount += 1
+            logAudioBuffersIfNeeded()
+            logLock.unlock()
             onAudioBuffer?(sb)
 
         default:
@@ -42,12 +40,12 @@ public final class SystemAudioStreamOutput: NSObject, SCStreamOutput, @unchecked
         }
     }
 
-    /// Logs audio buffer counts every ~1 second (must be called with logLock held)
+    /// Logs audio buffer counts every 60 seconds (must be called with logLock held)
     private func logAudioBuffersIfNeeded() {
         let now = Date()
         if let lastLog = lastAudioLogTime {
-            if now.timeIntervalSince(lastLog) >= 1.0 {
-                Log.debug("System audio buffers in last ~1s: \(systemAudioBufferCount)", verbose: true)
+            if now.timeIntervalSince(lastLog) >= 60.0 {
+                Log.info("[SystemAudio] \(systemAudioBufferCount) buffers in last minute")
                 systemAudioBufferCount = 0
                 lastAudioLogTime = now
             }
