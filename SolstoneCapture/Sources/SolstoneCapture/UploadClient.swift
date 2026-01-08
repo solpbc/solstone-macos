@@ -7,7 +7,8 @@ import SolstoneCaptureCore
 
 /// File info returned by the server for a segment
 public struct ServerFileInfo: Sendable {
-    public let name: String      // Simplified name, e.g., "audio.m4a"
+    public let name: String           // Simplified name, e.g., "audio.m4a"
+    public let submittedName: String  // Original filename as uploaded
     public let sha256: String
     public let size: Int
 }
@@ -172,8 +173,9 @@ public struct UploadClient: Sendable {
                                   let size = file["size"] as? Int else {
                                 return nil
                             }
+                            let submittedName = file["submitted_name"] as? String ?? name
                             let sha256 = file["sha256"] as? String ?? ""
-                            return ServerFileInfo(name: name, sha256: sha256, size: size)
+                            return ServerFileInfo(name: name, submittedName: submittedName, sha256: sha256, size: size)
                         }
 
                         return ServerSegmentInfo(

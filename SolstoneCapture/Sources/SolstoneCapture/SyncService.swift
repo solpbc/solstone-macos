@@ -217,21 +217,18 @@ public actor SyncService {
             return true
         }
 
-        // Build map of server files by simplified name
+        // Build map of server files by submitted name (original filename as uploaded)
         var serverFileMap: [String: ServerFileInfo] = [:]
         for file in serverSegment.files {
-            serverFileMap[file.name] = file
+            serverFileMap[file.submittedName] = file
         }
 
         // Check each file we would upload against server
-        // Server normalizes filenames by replacing spaces with underscores
         for localFile in filesToUpload {
             let localFilename = localFile.lastPathComponent
-            let simplifiedName = client.stripSegmentPrefix(localFilename, segment: segment)
-            let normalizedName = simplifiedName.replacingOccurrences(of: " ", with: "_")
 
-            guard serverFileMap[normalizedName] != nil else {
-                Log.upload("Segment \(segment): file \(normalizedName) not on server")
+            guard serverFileMap[localFilename] != nil else {
+                Log.upload("Segment \(segment): file \(localFilename) not on server")
                 return true
             }
         }
