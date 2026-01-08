@@ -26,6 +26,9 @@ final class DebugSettingHolder: @unchecked Sendable {
 @MainActor
 @Observable
 public final class AppState {
+    /// Shared instance for app-wide access (set during init)
+    nonisolated(unsafe) public static var shared: AppState?
+
     // MARK: - Managers
 
     public let muteManager = MuteManager()
@@ -231,6 +234,9 @@ public final class AppState {
         Task.detached { [uploadCoordinator] in
             await uploadCoordinator?.syncOnStartup()
         }
+
+        // Set shared instance for app-wide access (e.g., termination handler)
+        AppState.shared = self
     }
 
     // MARK: - Recording Control

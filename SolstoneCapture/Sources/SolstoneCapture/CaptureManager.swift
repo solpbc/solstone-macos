@@ -88,6 +88,10 @@ public final class CaptureManager {
     /// UIDs of microphones to exclude from recording (disabled mics)
     private var disabledMicUIDs: Set<String> = []
 
+    /// Observer tokens for screen lock/unlock notifications (must be removed in deinit)
+    nonisolated(unsafe) private var screenLockedObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var screenUnlockedObserver: NSObjectProtocol?
+
     public private(set) var state: State = .idle
 
     /// Called when a segment completes (for upload)
@@ -181,7 +185,7 @@ public final class CaptureManager {
         }
 
         // Listen for screen lock/unlock events
-        DistributedNotificationCenter.default().addObserver(
+        screenLockedObserver = DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name("com.apple.screenIsLocked"),
             object: nil,
             queue: .main
@@ -191,7 +195,7 @@ public final class CaptureManager {
             }
         }
 
-        DistributedNotificationCenter.default().addObserver(
+        screenUnlockedObserver = DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name("com.apple.screenIsUnlocked"),
             object: nil,
             queue: .main
@@ -204,6 +208,14 @@ public final class CaptureManager {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+
+        // Remove DistributedNotificationCenter observers (separate from NotificationCenter)
+        if let observer = screenLockedObserver {
+            DistributedNotificationCenter.default().removeObserver(observer)
+        }
+        if let observer = screenUnlockedObserver {
+            DistributedNotificationCenter.default().removeObserver(observer)
+        }
 
         // Inline cleanup for default mic monitoring (can't call actor-isolated method from deinit)
         if let block = defaultMicListenerBlock {
