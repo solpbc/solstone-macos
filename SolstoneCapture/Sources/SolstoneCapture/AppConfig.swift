@@ -86,6 +86,9 @@ public struct AppConfig: Codable, Sendable {
     /// Microphone gain multiplier (1.0 to 8.0). Default: 2.0
     public var microphoneGain: Float
 
+    /// When true, silence music-only portions of system audio during remix. Default: true
+    public var silenceMusic: Bool
+
     /// Default exclusions written on first run
     public static let defaultExclusions: [AppEntry] = [
         AppEntry(bundleID: "com.1password.1password", name: "1Password"),
@@ -102,7 +105,8 @@ public struct AppConfig: Codable, Sendable {
         syncPaused: Bool = false,
         debugSegments: Bool = false,
         debugKeepRejectedAudio: Bool = false,
-        microphoneGain: Float = 2.0
+        microphoneGain: Float = 2.0,
+        silenceMusic: Bool = true
     ) {
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
@@ -113,6 +117,7 @@ public struct AppConfig: Codable, Sendable {
         self.debugSegments = debugSegments
         self.debugKeepRejectedAudio = debugKeepRejectedAudio
         self.microphoneGain = microphoneGain
+        self.silenceMusic = silenceMusic
     }
 
     /// Custom decoder for backward compatibility and Keychain migration
@@ -127,6 +132,7 @@ public struct AppConfig: Codable, Sendable {
         debugSegments = try container.decodeIfPresent(Bool.self, forKey: .debugSegments) ?? false
         debugKeepRejectedAudio = try container.decodeIfPresent(Bool.self, forKey: .debugKeepRejectedAudio) ?? false
         microphoneGain = try container.decodeIfPresent(Float.self, forKey: .microphoneGain) ?? 2.0
+        silenceMusic = try container.decodeIfPresent(Bool.self, forKey: .silenceMusic) ?? true
 
         // Migrate legacy serverKey from JSON to Keychain
         if let legacyKey = try container.decodeIfPresent(String.self, forKey: .serverKey),
@@ -150,6 +156,7 @@ public struct AppConfig: Codable, Sendable {
         try container.encode(debugSegments, forKey: .debugSegments)
         try container.encode(debugKeepRejectedAudio, forKey: .debugKeepRejectedAudio)
         try container.encode(microphoneGain, forKey: .microphoneGain)
+        try container.encode(silenceMusic, forKey: .silenceMusic)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -163,6 +170,7 @@ public struct AppConfig: Codable, Sendable {
         case debugSegments
         case debugKeepRejectedAudio
         case microphoneGain
+        case silenceMusic
     }
 
     // MARK: - File Paths

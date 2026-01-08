@@ -38,6 +38,7 @@ public final class AppState {
     public private(set) var uploadCoordinator: UploadCoordinator!
     public private(set) var config: AppConfig
     private var debugAudioHolder: DebugSettingHolder!
+    private var silenceMusicHolder: DebugSettingHolder!
 
     // MARK: - State
 
@@ -117,6 +118,7 @@ public final class AppState {
         config = newConfig
         uploadCoordinator.updateConfig(newConfig)
         debugAudioHolder.value = newConfig.debugKeepRejectedAudio
+        silenceMusicHolder.value = newConfig.silenceMusic
 
         // Update mic gain immediately if it changed
         if newConfig.microphoneGain != oldGain {
@@ -165,19 +167,21 @@ public final class AppState {
         // Check current login item status
         isLoginItemEnabled = SMAppService.mainApp.status == .enabled
 
-        // Create a thread-safe holder for the debug setting
-        // This value is read at segment creation time on MainActor
+        // Create thread-safe holders for settings that are read at segment creation time
         let debugAudioHolder = DebugSettingHolder(value: config.debugKeepRejectedAudio)
+        let silenceMusicHolder = DebugSettingHolder(value: config.silenceMusic)
         captureManager = CaptureManager(
             storageManager: storageManager,
             isAudioMuted: { [muteManager] in muteManager.isAudioMuted },
             debugKeepRejectedAudio: { debugAudioHolder.value },
+            silenceMusic: { silenceMusicHolder.value },
             excludedAppNames: config.excludedAppNames,
             excludePrivateBrowsing: config.excludePrivateBrowsing,
             microphoneGain: config.microphoneGain,
             verbose: false
         )
         self.debugAudioHolder = debugAudioHolder
+        self.silenceMusicHolder = silenceMusicHolder
 
         uploadCoordinator = UploadCoordinator(storageManager: storageManager, config: config)
 

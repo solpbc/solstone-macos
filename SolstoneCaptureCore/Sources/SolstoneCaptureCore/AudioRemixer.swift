@@ -63,11 +63,13 @@ public final class AudioRemixer: Sendable {
     ///   - inputs: Array of track inputs with timing info
     ///   - outputURL: Destination M4A file
     ///   - deleteSourceFiles: If true, delete source files after successful remix
+    ///   - silenceMusic: If true, silence music-only portions in system audio tracks
     /// - Returns: Remix result with track counts
     public func remix(
         inputs: [AudioRemixerInput],
         to outputURL: URL,
-        deleteSourceFiles: Bool = true
+        deleteSourceFiles: Bool = true,
+        silenceMusic: Bool = true
     ) async throws -> AudioRemixerResult {
         let remixStart = ContinuousClock.now
 
@@ -81,6 +83,8 @@ public final class AudioRemixer: Sendable {
         let filterStart = ContinuousClock.now
         var tracksToProcess: [(input: AudioRemixerInput, asset: AVURLAsset)] = []
         var skippedCount = 0
+        // Silence ranges for system audio tracks (keyed by index in tracksToProcess)
+        var silenceRangesMap: [Int: [CMTimeRange]] = [:]
 
         for input in inputs {
             // Skip tracks that never received any audio
@@ -99,13 +103,22 @@ public final class AudioRemixer: Sendable {
 
             let asset = AVURLAsset(url: input.url)
 
-            // Check for speech using SoundAnalysis
-            let hasSpeech = await analyzeForSpeech(url: input.url)
-            if !hasSpeech {
+            // Analyze for speech using SystemAudioAnalyzer
+            let result = await SystemAudioAnalyzer.shared.analyze(url: input.url)
+            if !result.hasSpeech {
                 Log.info("Dropping track with no speech: \(input.timingInfo.trackType.displayName)")
                 handleRejectedFile(input.url, reason: "no-speech", outputDirectory: outputDirectory)
                 skippedCount += 1
                 continue
+            }
+
+            // For system audio, store silence ranges if music silencing is enabled
+            if silenceMusic, case .systemAudio = input.timingInfo.trackType {
+                let trackIndex = tracksToProcess.count
+                if !result.silenceRanges.isEmpty {
+                    silenceRangesMap[trackIndex] = result.silenceRanges
+                    Log.debug("System audio has \(result.silenceRanges.count) silence range(s)", verbose: verbose)
+                }
             }
 
             tracksToProcess.append((input, asset))
@@ -219,8 +232,20 @@ public final class AudioRemixer: Sendable {
                     sampleBuffer = pair.reader.copyNextSampleBuffer()
                 }
 
-                if let buffer = sampleBuffer {
+                if var buffer = sampleBuffer {
                     if pair.writer.isReadyForMoreMediaData {
+                        // Apply music silencing for system audio tracks
+                        if silenceMusic,
+                           case .systemAudio = pair.trackType,
+                           let silenceRanges = silenceRangesMap[idx] {
+                            let sampleTime = CMSampleBufferGetPresentationTimeStamp(buffer)
+                            if silenceRanges.contains(where: { CMTimeRangeContainsTime($0, time: sampleTime) }) {
+                                if let zeroed = zeroBuffer(buffer) {
+                                    buffer = zeroed
+                                }
+                            }
+                        }
+
                         // Retime buffer to apply start offset
                         if let retimedBuffer = retimeBuffer(buffer, offset: pair.startOffset) {
                             pair.writer.append(retimedBuffer)
@@ -295,24 +320,6 @@ public final class AudioRemixer: Sendable {
 
     // MARK: - Private
 
-    /// Analyze an audio file for speech presence using SoundAnalysis
-    private func analyzeForSpeech(url: URL) async -> Bool {
-        let detector = SpeechDetector.shared
-        let result = await detector.detectSpeech(in: url)
-
-        switch result {
-        case .speechDetected:
-            Log.debug("Speech detected in: \(url.lastPathComponent)", verbose: verbose)
-            return true
-        case .noSpeech:
-            Log.debug("No speech in: \(url.lastPathComponent)", verbose: verbose)
-            return false
-        case .unavailable(let reason):
-            Log.debug("Speech detection unavailable (\(reason)), allowing track", verbose: verbose)
-            return true  // Fail open - if detection fails, include the track
-        }
-    }
-
     /// Handle a rejected audio file - either delete or move to rejected/ subfolder
     private func handleRejectedFile(_ url: URL, reason: String, outputDirectory: URL) {
         let fm = FileManager.default
@@ -364,6 +371,60 @@ public final class AudioRemixer: Sendable {
         )
 
         return status == noErr ? newSampleBuffer : nil
+    }
+
+    /// Create a zeroed (silent) copy of a sample buffer, preserving timing
+    private func zeroBuffer(_ sampleBuffer: CMSampleBuffer) -> CMSampleBuffer? {
+        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) else {
+            return nil
+        }
+
+        let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
+        guard numSamples > 0 else { return nil }
+
+        // Get timing info from original buffer
+        var timingInfo = CMSampleTimingInfo()
+        CMSampleBufferGetSampleTimingInfo(sampleBuffer, at: 0, timingInfoOut: &timingInfo)
+
+        // Get audio format details
+        let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee
+        let bytesPerSample = Int(asbd?.mBytesPerFrame ?? 4)  // Float32 = 4 bytes
+        let dataSize = numSamples * bytesPerSample
+
+        // Allocate zeroed memory that CMBlockBuffer will own
+        guard let silentMemory = calloc(1, dataSize) else { return nil }
+
+        // Create block buffer that owns the memory
+        var blockBuffer: CMBlockBuffer?
+        let status = CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault,
+            memoryBlock: silentMemory,
+            blockLength: dataSize,
+            blockAllocator: kCFAllocatorMalloc,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: dataSize,
+            flags: 0,
+            blockBufferOut: &blockBuffer
+        )
+
+        guard status == noErr, let block = blockBuffer else {
+            free(silentMemory)
+            return nil
+        }
+
+        var silentBuffer: CMSampleBuffer?
+        CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+            allocator: kCFAllocatorDefault,
+            dataBuffer: block,
+            formatDescription: formatDesc,
+            sampleCount: numSamples,
+            presentationTimeStamp: timingInfo.presentationTimeStamp,
+            packetDescriptions: nil,
+            sampleBufferOut: &silentBuffer
+        )
+
+        return silentBuffer
     }
 }
 

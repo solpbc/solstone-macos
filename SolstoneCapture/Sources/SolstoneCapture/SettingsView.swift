@@ -204,6 +204,18 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
+            GroupBox("Audio Processing") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Silence music in system audio", isOn: silenceMusicBinding)
+                        .help("When enabled, music-only portions of system audio are silenced during remix")
+
+                    Text("Silences portions of system audio where music is detected but no speech.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+
             Spacer()
         }
     }
@@ -214,6 +226,17 @@ struct SettingsView: View {
             set: { newValue in
                 var config = appState.config
                 config.microphoneGain = newValue
+                appState.updateConfig(config)
+            }
+        )
+    }
+
+    private var silenceMusicBinding: Binding<Bool> {
+        Binding(
+            get: { appState.config.silenceMusic },
+            set: { newValue in
+                var config = appState.config
+                config.silenceMusic = newValue
                 appState.updateConfig(config)
             }
         )

@@ -14,6 +14,7 @@ public actor RemixQueue {
         let captureStartTime: Date
         let audioInputs: [AudioRemixerInput]
         let debugKeepRejected: Bool
+        let silenceMusic: Bool
     }
 
     /// Pending jobs waiting to be processed
@@ -84,7 +85,8 @@ public actor RemixQueue {
                 let result = try await remixer.remix(
                     inputs: job.audioInputs,
                     to: audioOutputURL,
-                    deleteSourceFiles: true
+                    deleteSourceFiles: true,
+                    silenceMusic: job.silenceMusic
                 )
                 Log.info("Remix complete: \(result.tracksWritten) tracks, \(result.tracksSkipped) skipped")
             } catch AudioRemixerError.noTracksToWrite {

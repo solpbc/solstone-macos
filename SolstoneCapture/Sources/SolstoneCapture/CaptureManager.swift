@@ -64,6 +64,9 @@ public final class CaptureManager {
     /// Closure to check debug setting for keeping rejected audio tracks
     private let debugKeepRejectedAudio: @Sendable () -> Bool
 
+    /// Closure to check if music silencing is enabled
+    private let silenceMusic: @Sendable () -> Bool
+
     /// Currently excluded windows (for change detection)
     private var currentExcludedWindowIDs: Set<CGWindowID> = []
 
@@ -112,6 +115,7 @@ public final class CaptureManager {
         storageManager: StorageManager,
         isAudioMuted: @escaping @Sendable () -> Bool = { false },
         debugKeepRejectedAudio: @escaping @Sendable () -> Bool = { false },
+        silenceMusic: @escaping @Sendable () -> Bool = { true },
         excludedAppNames: [String] = [],
         excludePrivateBrowsing: Bool = true,
         microphoneGain: Float = 2.0,
@@ -120,6 +124,7 @@ public final class CaptureManager {
         self.storageManager = storageManager
         self.isAudioMuted = isAudioMuted
         self.debugKeepRejectedAudio = debugKeepRejectedAudio
+        self.silenceMusic = silenceMusic
         self.verbose = verbose
         self.micCaptureManager = MicrophoneCaptureManager(gain: microphoneGain, verbose: verbose)
 
@@ -441,6 +446,7 @@ public final class CaptureManager {
             timePrefix: timePrefix,
             isAudioMuted: isAudioMuted,
             debugKeepRejectedAudio: debugKeepRejectedAudio(),
+            silenceMusic: silenceMusic(),
             verbose: verbose
         )
         currentSegment = segment
@@ -553,7 +559,8 @@ public final class CaptureManager {
                 timePrefix: result.timePrefix,
                 captureStartTime: result.captureStartTime,
                 audioInputs: result.audioInputs,
-                debugKeepRejected: result.debugKeepRejected
+                debugKeepRejected: result.debugKeepRejected,
+                silenceMusic: result.silenceMusic
             )
             await RemixQueue.shared.enqueue(job)
         }

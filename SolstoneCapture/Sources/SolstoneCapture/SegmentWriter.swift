@@ -37,6 +37,7 @@ public struct SegmentCaptureResult: Sendable {
     public let captureStartTime: Date
     public let audioInputs: [AudioRemixerInput]
     public let debugKeepRejected: Bool
+    public let silenceMusic: Bool
 }
 
 /// Manages recording for a single 5-minute segment
@@ -60,6 +61,9 @@ public final class SegmentWriter {
     /// When true, move rejected audio tracks to rejected/ subfolder instead of deleting
     private let debugKeepRejectedAudio: Bool
 
+    /// When true, silence music-only portions of system audio during remix
+    private let silenceMusic: Bool
+
     /// Time when capture actually started (for computing actual duration)
     private var captureStartTime: Date?
 
@@ -75,18 +79,21 @@ public final class SegmentWriter {
     ///   - timePrefix: Time prefix for file naming (e.g., "143022")
     ///   - isAudioMuted: Closure to check if audio is muted
     ///   - debugKeepRejectedAudio: Move rejected audio tracks to rejected/ subfolder instead of deleting
+    ///   - silenceMusic: Silence music-only portions of system audio during remix
     ///   - verbose: Enable verbose logging
     public init(
         outputDirectory: URL,
         timePrefix: String,
         isAudioMuted: @escaping @Sendable () -> Bool = { false },
         debugKeepRejectedAudio: Bool = false,
+        silenceMusic: Bool = true,
         verbose: Bool = false
     ) {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
         self.isAudioMuted = isAudioMuted
         self.debugKeepRejectedAudio = debugKeepRejectedAudio
+        self.silenceMusic = silenceMusic
         self.verbose = verbose
     }
 
@@ -234,7 +241,8 @@ public final class SegmentWriter {
                 let result = try await manager.finishAndRemix(
                     to: audioURL,
                     debugKeepRejected: debugKeepRejectedAudio,
-                    deleteSourceFiles: true
+                    deleteSourceFiles: true,
+                    silenceMusic: silenceMusic
                 )
                 Log.info("Audio remix complete: \(result.tracksWritten) tracks, \(result.tracksSkipped) skipped")
             } catch {
@@ -313,7 +321,8 @@ public final class SegmentWriter {
             timePrefix: timePrefix,
             captureStartTime: startTime,
             audioInputs: audioInputs,
-            debugKeepRejected: debugKeepRejectedAudio
+            debugKeepRejected: debugKeepRejectedAudio,
+            silenceMusic: silenceMusic
         )
     }
 
