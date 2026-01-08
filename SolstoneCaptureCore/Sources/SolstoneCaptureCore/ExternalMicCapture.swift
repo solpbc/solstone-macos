@@ -47,9 +47,15 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private var bufferCount: Int = 0
     private var lastBufferLogTime: Date?
 
-    /// Gain multiplier to boost mic audio
-    /// 4.0 = +12dB boost
-    private let gainMultiplier: Float = 4.0
+    /// Gain multiplier to boost mic audio (1.0 to 8.0)
+    /// Note: Float read/write is atomic on Apple platforms, no lock needed
+    public var gainMultiplier: Float {
+        didSet {
+            // Clamp to valid range
+            if gainMultiplier < 1.0 { gainMultiplier = 1.0 }
+            else if gainMultiplier > 8.0 { gainMultiplier = 8.0 }
+        }
+    }
 
     /// Target sample rate for output (48kHz standard)
     private let targetSampleRate: Double = 48_000
@@ -57,13 +63,16 @@ public final class ExternalMicCapture: @unchecked Sendable {
     /// Creates a new external mic capture
     /// - Parameters:
     ///   - device: The audio input device to capture from
+    ///   - gain: Gain multiplier for mic audio (1.0 to 8.0). Default: 2.0
     ///   - verbose: Enable verbose logging
     public init(
         device: AudioInputDevice,
+        gain: Float = 2.0,
         verbose: Bool = false
     ) {
         self.device = device
         self.engine = AVAudioEngine()
+        self.gainMultiplier = max(1.0, min(8.0, gain))
         self.verbose = verbose
         self.nativeSampleRate = Self.getDeviceSampleRate(device.id) ?? 48_000
 

@@ -50,7 +50,7 @@ public final class CaptureManager {
 
     /// Persistent mic capture manager - keeps AVAudioEngine instances alive across segment rotations
     /// This prevents audio playback interference during rotation
-    private let micCaptureManager = MicrophoneCaptureManager()
+    private let micCaptureManager: MicrophoneCaptureManager
 
     /// Persistent system audio capture manager - keeps SCStream alive across segment rotations
     private let systemAudioCaptureManager = SystemAudioCaptureManager()
@@ -114,12 +114,14 @@ public final class CaptureManager {
         debugKeepRejectedAudio: @escaping @Sendable () -> Bool = { false },
         excludedAppNames: [String] = [],
         excludePrivateBrowsing: Bool = true,
+        microphoneGain: Float = 2.0,
         verbose: Bool = false
     ) {
         self.storageManager = storageManager
         self.isAudioMuted = isAudioMuted
         self.debugKeepRejectedAudio = debugKeepRejectedAudio
         self.verbose = verbose
+        self.micCaptureManager = MicrophoneCaptureManager(gain: microphoneGain, verbose: verbose)
 
         // Create window exclusion detector if we have apps to exclude or private browsing detection
         if !excludedAppNames.isEmpty || excludePrivateBrowsing {
@@ -389,6 +391,12 @@ public final class CaptureManager {
                 await rotateSegment()
             }
         }
+    }
+
+    /// Update microphone gain (takes effect immediately on active captures)
+    /// - Parameter gain: New gain multiplier (1.0 to 8.0)
+    public func setMicrophoneGain(_ gain: Float) {
+        micCaptureManager.updateGain(gain)
     }
 
     // MARK: - Private Methods

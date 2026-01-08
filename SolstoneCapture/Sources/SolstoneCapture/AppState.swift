@@ -113,9 +113,16 @@ public final class AppState {
 
     /// Update and save configuration
     public func updateConfig(_ newConfig: AppConfig) {
+        let oldGain = config.microphoneGain
         config = newConfig
         uploadCoordinator.updateConfig(newConfig)
         debugAudioHolder.value = newConfig.debugKeepRejectedAudio
+
+        // Update mic gain immediately if it changed
+        if newConfig.microphoneGain != oldGain {
+            captureManager.setMicrophoneGain(newConfig.microphoneGain)
+        }
+
         do {
             try newConfig.save()
         } catch {
@@ -167,6 +174,7 @@ public final class AppState {
             debugKeepRejectedAudio: { debugAudioHolder.value },
             excludedAppNames: config.excludedAppNames,
             excludePrivateBrowsing: config.excludePrivateBrowsing,
+            microphoneGain: config.microphoneGain,
             verbose: false
         )
         self.debugAudioHolder = debugAudioHolder

@@ -14,8 +14,10 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     private var captures: [String: ExternalMicCapture] = [:]
     private let lock = NSLock()
     private let verbose: Bool
+    private var gain: Float
 
-    public init(verbose: Bool = false) {
+    public init(gain: Float = 2.0, verbose: Bool = false) {
+        self.gain = gain
         self.verbose = verbose
     }
 
@@ -46,7 +48,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
             }
 
             // Create fresh capture for each attempt
-            let capture = ExternalMicCapture(device: device, verbose: verbose)
+            let capture = ExternalMicCapture(device: device, gain: gain, verbose: verbose)
 
             do {
                 try capture.start()
@@ -150,5 +152,20 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
             capture.stop()
         }
         Log.info("Stopped all mic captures")
+    }
+
+    /// Update gain on all active captures (takes effect immediately)
+    /// Also stores for future captures
+    /// - Parameter newGain: New gain multiplier (1.0 to 8.0)
+    public func updateGain(_ newGain: Float) {
+        lock.lock()
+        self.gain = newGain
+        let allCaptures = Array(captures.values)
+        lock.unlock()
+
+        for capture in allCaptures {
+            capture.gainMultiplier = newGain
+        }
+        Log.info("Updated mic gain to \(newGain)x on \(allCaptures.count) capture(s)")
     }
 }

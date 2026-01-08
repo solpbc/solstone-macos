@@ -29,6 +29,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// Shared capture manager for persistent mic captures
     private let captureManager: MicrophoneCaptureManager?
 
+    /// Microphone gain for legacy path (when captureManager is nil)
+    private let gain: Float
+
     /// Completed track inputs for remix (populated during finishAll)
     private var completedInputs: [AudioRemixerInput] = []
 
@@ -43,6 +46,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
         self.captureManager = captureManager
+        self.gain = 2.0  // Not used when captureManager is provided
         self.isAudioMuted = isAudioMuted
         self.verbose = verbose
     }
@@ -51,12 +55,14 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     public init(
         outputDirectory: URL,
         timePrefix: String,
+        gain: Float = 2.0,
         isAudioMuted: @escaping @Sendable () -> Bool = { false },
         verbose: Bool = false
     ) {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
         self.captureManager = nil
+        self.gain = gain
         self.isAudioMuted = isAudioMuted
         self.verbose = verbose
     }
@@ -153,7 +159,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             Log.info("Wired mic callback: \(device.name)")
         } else {
             // Legacy path: create capture per segment
-            let capture = ExternalMicCapture(device: device, verbose: verbose)
+            let capture = ExternalMicCapture(device: device, gain: gain, verbose: verbose)
             capture.onAudioBuffer = { [weak writer] buffer, time in
                 guard !isMuted() else { return }
                 writer?.appendPCMBuffer(buffer, presentationTime: time)

@@ -188,8 +188,35 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
+            GroupBox("Microphone Gain") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Boost microphone input level. Changes take effect immediately.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Picker("Gain", selection: microphoneGainBinding) {
+                        ForEach(1...8, id: \.self) { value in
+                            Text("\(value)x").tag(Float(value))
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                .padding(.vertical, 4)
+            }
+
             Spacer()
         }
+    }
+
+    private var microphoneGainBinding: Binding<Float> {
+        Binding(
+            get: { appState.config.microphoneGain },
+            set: { newValue in
+                var config = appState.config
+                config.microphoneGain = newValue
+                appState.updateConfig(config)
+            }
+        )
     }
 
     private func moveMicrophones(from: IndexSet, to: Int) {
