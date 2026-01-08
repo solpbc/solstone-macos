@@ -47,7 +47,6 @@ public final class UploadCoordinator {
                 serverURL: config.serverURL,
                 serverKey: config.serverKey,
                 localRetentionMB: config.localRetentionMB,
-                microphonePriority: config.microphonePriority,
                 syncPaused: config.syncPaused
             )
         }
@@ -68,7 +67,6 @@ public final class UploadCoordinator {
                 serverURL: newConfig.serverURL,
                 serverKey: newConfig.serverKey,
                 localRetentionMB: newConfig.localRetentionMB,
-                microphonePriority: newConfig.microphonePriority,
                 syncPaused: newConfig.syncPaused
             )
 

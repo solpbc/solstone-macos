@@ -29,7 +29,6 @@ public actor SyncService {
     private var serverURL: String?
     private var serverKey: String?
     private var localRetentionMB: Int = 200
-    private var microphonePriority: [MicrophoneEntry] = []
     private var syncPaused: Bool = false
 
     // MARK: - State
@@ -65,13 +64,11 @@ public actor SyncService {
         serverURL: String?,
         serverKey: String?,
         localRetentionMB: Int,
-        microphonePriority: [MicrophoneEntry],
         syncPaused: Bool
     ) {
         self.serverURL = serverURL
         self.serverKey = serverKey
         self.localRetentionMB = localRetentionMB
-        self.microphonePriority = microphonePriority
         self.syncPaused = syncPaused
     }
 
@@ -206,6 +203,14 @@ public actor SyncService {
         segment: String,
         serverSegment: ServerSegmentInfo?
     ) -> Bool {
+        // Get files we would actually upload (video + combined audio only)
+        let filesToUpload = selectFilesForUpload(segmentDirectory: segmentURL)
+
+        // If no files to upload, segment is "complete" (nothing to do)
+        guard !filesToUpload.isEmpty else {
+            return false
+        }
+
         // If no server segment, definitely need upload
         guard let serverSegment = serverSegment, !serverSegment.files.isEmpty else {
             Log.upload("Segment \(segment): not on server")
@@ -218,21 +223,15 @@ public actor SyncService {
             serverFileMap[file.name] = file
         }
 
-        // Get local media files
-        let fm = FileManager.default
-        guard let localFiles = try? fm.contentsOfDirectory(at: segmentURL, includingPropertiesForKeys: nil) else {
-            return true
-        }
-
-        let mediaFiles = localFiles.filter { $0.pathExtension == "mp4" || $0.pathExtension == "m4a" }
-
-        // Check each local file against server (strip segment prefix for comparison)
-        for localFile in mediaFiles {
+        // Check each file we would upload against server
+        // Server normalizes filenames by replacing spaces with underscores
+        for localFile in filesToUpload {
             let localFilename = localFile.lastPathComponent
             let simplifiedName = client.stripSegmentPrefix(localFilename, segment: segment)
+            let normalizedName = simplifiedName.replacingOccurrences(of: " ", with: "_")
 
-            guard serverFileMap[simplifiedName] != nil else {
-                Log.upload("Segment \(segment): file \(simplifiedName) not on server")
+            guard serverFileMap[normalizedName] != nil else {
+                Log.upload("Segment \(segment): file \(normalizedName) not on server")
                 return true
             }
         }
@@ -316,100 +315,32 @@ public actor SyncService {
     // MARK: - File Selection
 
     /// Select files to upload from a segment directory
+    /// Only uploads: video files (*_display_*_screen.mp4) and combined audio (*_audio.m4a)
+    /// Skips: individual source audio files (*_audio_system.m4a, *_audio_<device>.m4a, *_mic_*.m4a)
     private func selectFilesForUpload(segmentDirectory: URL) -> [URL] {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: segmentDirectory, includingPropertiesForKeys: nil) else {
             return []
         }
 
-        let allMediaFiles = files.filter { $0.pathExtension == "mp4" || $0.pathExtension == "m4a" }
-        guard !allMediaFiles.isEmpty else {
-            return []
-        }
+        let segment = segmentDirectory.lastPathComponent
 
-        // Separate mic files from other media files
-        let micFiles = allMediaFiles.filter { $0.lastPathComponent.contains("_mic") }
-        let nonMicFiles = allMediaFiles.filter { !$0.lastPathComponent.contains("_mic") }
+        var result: [URL] = []
 
-        // Select which mic files to upload
-        let selectedMicFiles = selectMicFilesForUpload(from: micFiles, segmentDirectory: segmentDirectory)
+        for file in files {
+            let name = file.lastPathComponent
 
-        return nonMicFiles + selectedMicFiles
-    }
+            // Include video files
+            if name.hasSuffix("_screen.mp4") {
+                result.append(file)
+                continue
+            }
 
-    /// Mic metadata entry from mics.json
-    private struct MicEntry: Codable {
-        let name: String
-        let file: String
-        let startOffset: Double
-        let duration: Double
-    }
-
-    /// Mics metadata from segment
-    private struct MicsMetadata: Codable {
-        let segmentDuration: Double
-        let mics: [MicEntry]
-    }
-
-    /// Select mic files to upload based on priority and completeness
-    private func selectMicFilesForUpload(
-        from allMicFiles: [URL],
-        segmentDirectory: URL
-    ) -> [URL] {
-        // Read mics.json metadata
-        let metadataURL = segmentDirectory.appendingPathComponent("mics.json")
-        guard let data = try? Data(contentsOf: metadataURL),
-              let metadata = try? JSONDecoder().decode(MicsMetadata.self, from: data) else {
-            // No metadata - fallback to first mic file
-            Log.upload("No mics.json found, using first mic file")
-            return allMicFiles.isEmpty ? [] : [allMicFiles[0]]
-        }
-
-        guard !metadata.mics.isEmpty else {
-            return []
-        }
-
-        // Create lookup from filename to URL
-        var fileURLsByName: [String: URL] = [:]
-        for url in allMicFiles {
-            fileURLsByName[url.lastPathComponent] = url
-        }
-
-        // Sort mics by priority
-        let priorityOrder = microphonePriority.map { $0.name }
-        let sortedMics = metadata.mics.sorted { mic1, mic2 in
-            let idx1 = priorityOrder.firstIndex(of: mic1.name) ?? Int.max
-            let idx2 = priorityOrder.firstIndex(of: mic2.name) ?? Int.max
-            return idx1 < idx2
-        }
-
-        // Get highest priority mic that has a file
-        guard let topMic = sortedMics.first(where: { fileURLsByName[$0.file] != nil }),
-              let topMicURL = fileURLsByName[topMic.file] else {
-            return allMicFiles.isEmpty ? [] : [allMicFiles[0]]
-        }
-
-        // Check if top mic has complete coverage
-        let startThreshold: Double = 5.0
-        let durationThreshold: Double = 0.9
-
-        let isComplete = topMic.startOffset <= startThreshold &&
-                         topMic.duration >= (metadata.segmentDuration * durationThreshold)
-
-        if isComplete {
-            Log.upload("Mic \(topMic.name) has full coverage, uploading single mic")
-            return [topMicURL]
-        }
-
-        // Top mic is partial - also include next-priority mic
-        Log.upload("Mic \(topMic.name) is partial, including backup")
-
-        var result = [topMicURL]
-        for mic in sortedMics where mic.file != topMic.file {
-            if let url = fileURLsByName[mic.file] {
-                result.append(url)
-                Log.upload("Adding backup mic: \(mic.name)")
-                break
+            // Include combined audio file (exact pattern: SEGMENT_audio.m4a)
+            // Skip individual source files like SEGMENT_audio_system.m4a or SEGMENT_audio_<device>.m4a
+            if name == "\(segment)_audio.m4a" {
+                result.append(file)
+                continue
             }
         }
 
