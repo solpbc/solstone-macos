@@ -13,10 +13,20 @@ public final class SystemAudioStreamOutput: NSObject, SCStreamOutput, @unchecked
 
     private let verbose: Bool
 
-    // Verbose logging state
+    // Buffer counting for logging and health checks
     private var systemAudioBufferCount: Int = 0
+    private var totalBufferCount: Int = 0
     private var lastAudioLogTime: Date?
     private let logLock = NSLock()
+
+    /// Returns total buffers received and resets the counter (for health checks)
+    public func getAndResetBufferCount() -> Int {
+        logLock.lock()
+        defer { logLock.unlock() }
+        let count = totalBufferCount
+        totalBufferCount = 0
+        return count
+    }
 
     /// Creates a system audio stream output
     /// - Parameter verbose: Enable verbose logging
@@ -31,6 +41,7 @@ public final class SystemAudioStreamOutput: NSObject, SCStreamOutput, @unchecked
         case .audio:
             logLock.lock()
             systemAudioBufferCount += 1
+            totalBufferCount += 1
             logAudioBuffersIfNeeded()
             logLock.unlock()
             onAudioBuffer?(sb)
