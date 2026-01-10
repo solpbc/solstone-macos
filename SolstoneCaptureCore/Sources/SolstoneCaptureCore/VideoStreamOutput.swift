@@ -31,9 +31,19 @@ public final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Senda
         case .screen:
             logLock.lock()
             frameCount += 1
+            let currentCount = frameCount
             logFramesIfNeeded()
             logLock.unlock()
-            onVideoFrame?(sb)
+
+            if let callback = onVideoFrame {
+                if currentCount <= 3 {
+                    Log.info("[VideoStream] Frame \(currentCount) dispatching to callback")
+                }
+                callback(sb)
+            } else if currentCount <= 5 {
+                // Log first few frames without callback to help diagnose wiring issues
+                Log.warn("[VideoStream] Frame \(currentCount) received but no callback set")
+            }
 
         default:
             // Ignore audio and other types

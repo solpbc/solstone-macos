@@ -8,8 +8,8 @@ import SolstoneCaptureCore
 
 /// Writes video frames received from a persistent SCStream to an MP4 file
 /// Frames are received via appendFrame() callback, not captured directly
-@MainActor
-public final class VideoFrameWriter {
+/// Thread-safe: frames come sequentially from SCStream, VideoWriter has internal locking
+public final class VideoFrameWriter: @unchecked Sendable {
     public let displayID: CGDirectDisplayID
     private let videoWriter: VideoWriter
     private let verbose: Bool
@@ -59,6 +59,12 @@ public final class VideoFrameWriter {
     /// Append a video frame from the stream
     /// - Parameter sampleBuffer: The CMSampleBuffer containing the video frame
     public func appendFrame(_ sampleBuffer: CMSampleBuffer) {
+        // Log first few frames to confirm callback is working
+        let currentFrame = frameIndex + skippedFrames + 1
+        if currentFrame <= 3 {
+            Log.info("VideoFrameWriter: Display \(displayID) received frame \(currentFrame)")
+        }
+
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             Log.warn("VideoFrameWriter: Failed to get pixel buffer from sample buffer for display \(displayID)")
             return

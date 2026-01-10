@@ -15,7 +15,25 @@ public final class PersistentVideoCaptureManager {
     private struct DisplayStream {
         let stream: SCStream
         let output: VideoStreamOutput
+        let delegate: StreamDelegate
         let filter: SCContentFilter
+    }
+
+    /// Stream delegate to handle errors
+    private final class StreamDelegate: NSObject, SCStreamDelegate, @unchecked Sendable {
+        let onError: (Error) -> Void
+        let displayID: CGDirectDisplayID
+
+        init(displayID: CGDirectDisplayID, onError: @escaping (Error) -> Void) {
+            self.displayID = displayID
+            self.onError = onError
+            super.init()
+        }
+
+        func stream(_ stream: SCStream, didStopWithError error: Error) {
+            Log.error("[VideoCapture] Stream for display \(displayID) stopped with error: \(error)")
+            onError(error)
+        }
     }
 
     private var displayStreams: [CGDirectDisplayID: DisplayStream] = [:]
@@ -57,6 +75,11 @@ public final class PersistentVideoCaptureManager {
         // Create stream output
         let output = VideoStreamOutput(verbose: verbose)
 
+        // Create delegate to handle stream errors
+        let delegate = StreamDelegate(displayID: displayID) { error in
+            Log.error("[VideoCapture] Display \(displayID) stream error callback: \(error)")
+        }
+
         // Configure video stream
         let config = SCStreamConfiguration()
         config.width = display.width
@@ -66,20 +89,20 @@ public final class PersistentVideoCaptureManager {
         config.showsCursor = false
         config.scalesToFit = true
         config.minimumFrameInterval = CMTime(value: 1, timescale: 1)  // 1 FPS
-        config.queueDepth = 1  // Minimize buffering
+        config.queueDepth = 3  // Allow some buffering for frame delivery
         config.capturesAudio = false  // Video only - audio handled separately
 
-        Log.debug("[VideoCapture] Creating stream for display \(displayID): \(display.width)x\(display.height)", verbose: verbose)
+        Log.info("[VideoCapture] Creating stream for display \(displayID): \(display.width)x\(display.height)")
 
         // Create and configure stream
-        let stream = SCStream(filter: filter, configuration: config, delegate: nil)
+        let stream = SCStream(filter: filter, configuration: config, delegate: delegate)
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
 
         // Start capture
-        Log.debug("[VideoCapture] Starting capture for display \(displayID)...", verbose: verbose)
+        Log.info("[VideoCapture] Starting capture for display \(displayID)...")
         try await stream.startCapture()
 
-        displayStreams[displayID] = DisplayStream(stream: stream, output: output, filter: filter)
+        displayStreams[displayID] = DisplayStream(stream: stream, output: output, delegate: delegate, filter: filter)
         Log.info("[VideoCapture] Started stream for display \(displayID)")
     }
 
@@ -116,11 +139,11 @@ public final class PersistentVideoCaptureManager {
     ///   - callback: The callback to receive video frames
     public func setCallback(for displayID: CGDirectDisplayID, callback: @escaping (CMSampleBuffer) -> Void) {
         guard let displayStream = displayStreams[displayID] else {
-            Log.warn("[VideoCapture] setCallback called for unknown display \(displayID)")
+            Log.warn("[VideoCapture] setCallback called for unknown display \(displayID), available: \(Array(displayStreams.keys))")
             return
         }
         displayStream.output.onVideoFrame = callback
-        Log.debug("[VideoCapture] Wired callback for display \(displayID)", verbose: verbose)
+        Log.info("[VideoCapture] Wired callback for display \(displayID)")
     }
 
     /// Clear all callbacks (called during segment rotation)

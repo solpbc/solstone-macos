@@ -116,6 +116,7 @@ public final class SegmentWriter {
     ) async throws {
         // Store reference to persistent video capture manager
         self.videoCaptureManager = videoCaptureManager
+        Log.info("SegmentWriter: start() called with \(displayInfos.count) displays, videoCaptureManager=\(videoCaptureManager != nil ? "present" : "nil")")
 
         // Create video frame writers for each display
         for info in displayInfos {
@@ -134,12 +135,14 @@ public final class SegmentWriter {
             videoFrameWriters[info.displayID] = writer
 
             // Wire callback from persistent video stream to this writer
+            // Called synchronously on SCStream callback thread - VideoFrameWriter is thread-safe
             if let videoManager = videoCaptureManager {
+                Log.info("SegmentWriter: Wiring callback for display \(info.displayID)")
                 videoManager.setCallback(for: info.displayID) { [weak writer] buffer in
-                    Task { @MainActor in
-                        writer?.appendFrame(buffer)
-                    }
+                    writer?.appendFrame(buffer)
                 }
+            } else {
+                Log.warn("SegmentWriter: videoCaptureManager is nil, cannot wire callback for display \(info.displayID)")
             }
         }
 
