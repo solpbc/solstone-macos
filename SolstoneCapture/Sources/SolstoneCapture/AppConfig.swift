@@ -58,10 +58,13 @@ public struct AppConfig: Codable, Sendable {
     public var serverURL: String?
 
     /// API key for remote server authentication - stored securely in Keychain
-    /// Note: This is a computed property backed by KeychainManager
+    /// Cached to avoid repeated keychain access (loaded on init, synced on set)
+    private var _cachedServerKey: String?
+
     public var serverKey: String? {
-        get { KeychainManager.loadServerKey() }
+        get { _cachedServerKey }
         set {
+            _cachedServerKey = newValue
             if let key = newValue {
                 KeychainManager.saveServerKey(key)
             } else {
@@ -112,6 +115,7 @@ public struct AppConfig: Codable, Sendable {
         self.excludedApps = excludedApps
         self.excludePrivateBrowsing = excludePrivateBrowsing
         self.serverURL = serverURL
+        self._cachedServerKey = KeychainManager.loadServerKey()
         self.localRetentionMB = localRetentionMB
         self.syncPaused = syncPaused
         self.debugSegments = debugSegments
@@ -141,6 +145,9 @@ public struct AppConfig: Codable, Sendable {
             KeychainManager.saveServerKey(legacyKey)
             Log.info("Migrated server key from config file to Keychain")
         }
+
+        // Cache the server key (either migrated or existing)
+        _cachedServerKey = KeychainManager.loadServerKey()
     }
 
     /// Custom encoder to exclude serverKey (stored in Keychain, not JSON)
