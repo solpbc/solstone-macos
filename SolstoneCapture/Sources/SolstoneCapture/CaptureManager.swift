@@ -55,6 +55,9 @@ public final class CaptureManager {
     /// Persistent system audio capture manager - keeps SCStream alive across segment rotations
     private let systemAudioCaptureManager = SystemAudioCaptureManager()
 
+    /// Persistent video capture manager - keeps video SCStreams alive across segment rotations
+    private let videoCaptureManager = PersistentVideoCaptureManager()
+
     /// Window exclusion detector for filtering out specific app windows
     private let windowExclusionDetector: WindowExclusionDetector?
 
@@ -261,8 +264,11 @@ public final class CaptureManager {
             throw CaptureError.noDisplaysAvailable
         }
 
-        // Create content filter for all displays
+        // Create content filter for system audio (uses first display)
         contentFilter = SCContentFilter(display: displays[0], excludingApplications: [], exceptingWindows: [])
+
+        // Start persistent video streams for all displays
+        try await videoCaptureManager.start(displays: displays)
 
         // Start first segment
         try await startNewSegment()
@@ -328,6 +334,7 @@ public final class CaptureManager {
         // Stop all persistent captures (only when fully stopping recording)
         micCaptureManager.stopAll()
         await systemAudioCaptureManager.stop()
+        await videoCaptureManager.stop()
 
         state = .idle
         onStateChanged?(state)
@@ -358,6 +365,7 @@ public final class CaptureManager {
         // Stop all persistent captures during pause
         micCaptureManager.stopAll()
         await systemAudioCaptureManager.stop()
+        await videoCaptureManager.stop()
 
         state = .paused
         onStateChanged?(state)
@@ -373,6 +381,9 @@ public final class CaptureManager {
     /// Resumes recording after pause
     public func resumeRecording() async throws {
         guard state.isPaused else { return }
+
+        // Restart persistent video streams (stopped during pause)
+        try await videoCaptureManager.start(displays: displays)
 
         // Start new segment
         try await startNewSegment()
@@ -458,7 +469,8 @@ public final class CaptureManager {
             filter: filter,
             mics: mics,
             micCaptureManager: micCaptureManager,
-            systemAudioCaptureManager: systemAudioCaptureManager
+            systemAudioCaptureManager: systemAudioCaptureManager,
+            videoCaptureManager: videoCaptureManager
         )
 
         // Mark stream as ready after a short delay to allow capture to stabilize.
@@ -855,7 +867,6 @@ public final class CaptureManager {
         guard state.isRecording,
               isStreamReady,
               let detector = windowExclusionDetector,
-              let segment = currentSegment,
               !displays.isEmpty else { return }
 
         // Detect windows to exclude
@@ -867,7 +878,7 @@ public final class CaptureManager {
 
         currentExcludedWindowIDs = newExcludedIDs
 
-        // Create new filter with excluded windows
+        // Create new filter with excluded windows (for system audio)
         let newFilter = SCContentFilter(
             display: displays[0],
             excludingWindows: excludedWindows
@@ -876,8 +887,8 @@ public final class CaptureManager {
         do {
             // Update system audio stream filter
             try await systemAudioCaptureManager.updateContentFilter(newFilter)
-            // Update video (screenshot) filters
-            try await segment.updateContentFilter(newFilter)
+            // Update video stream filters (one per display)
+            try await videoCaptureManager.updateExcludedWindows(excludedWindows, displays: displays)
             if !excludedWindows.isEmpty {
                 Log.debug("Updated filter to exclude \(excludedWindows.count) window(s)", verbose: verbose)
             }

@@ -50,9 +50,10 @@ public final class SegmentWriter {
     /// The time prefix for file naming (e.g., "143022")
     public let timePrefix: String
 
-    private var screenshotCapturers: [CGDirectDisplayID: ScreenshotCapturer] = [:]
+    private var videoFrameWriters: [CGDirectDisplayID: VideoFrameWriter] = [:]
     private var audioManager: PerSourceAudioManager?
     private var systemAudioCaptureManager: SystemAudioCaptureManager?
+    private var videoCaptureManager: PersistentVideoCaptureManager?
     private let verbose: Bool
 
     /// Closure to check if audio is muted (passed to PerSourceAudioManager)
@@ -100,33 +101,46 @@ public final class SegmentWriter {
     /// Starts recording to this segment
     /// - Parameters:
     ///   - displayInfos: Information about displays to capture
-    ///   - filter: The content filter to use (for window exclusion)
+    ///   - filter: The content filter to use (for system audio window exclusion)
     ///   - mics: Initial microphone devices to start recording (optional)
     ///   - micCaptureManager: Shared capture manager for persistent mic engines (optional)
     ///   - systemAudioCaptureManager: Shared capture manager for persistent system audio stream (optional)
+    ///   - videoCaptureManager: Shared capture manager for persistent video streams (optional)
     public func start(
         displayInfos: [DisplayInfo],
         filter: SCContentFilter,
         mics: [AudioInputDevice] = [],
         micCaptureManager: MicrophoneCaptureManager? = nil,
-        systemAudioCaptureManager: SystemAudioCaptureManager? = nil
+        systemAudioCaptureManager: SystemAudioCaptureManager? = nil,
+        videoCaptureManager: PersistentVideoCaptureManager? = nil
     ) async throws {
-        // Create screenshot capturers for each display
+        // Store reference to persistent video capture manager
+        self.videoCaptureManager = videoCaptureManager
+
+        // Create video frame writers for each display
         for info in displayInfos {
             let videoURL = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
 
-            let capturer = try ScreenshotCapturer(
+            let writer = try VideoFrameWriter(
                 displayID: info.displayID,
                 videoURL: videoURL,
                 width: info.width,
                 height: info.height,
                 frameRate: Self.frameRate,
                 duration: Self.segmentDuration,
-                contentFilter: filter,
                 verbose: verbose
             )
 
-            screenshotCapturers[info.displayID] = capturer
+            videoFrameWriters[info.displayID] = writer
+
+            // Wire callback from persistent video stream to this writer
+            if let videoManager = videoCaptureManager {
+                videoManager.setCallback(for: info.displayID) { [weak writer] buffer in
+                    Task { @MainActor in
+                        writer?.appendFrame(buffer)
+                    }
+                }
+            }
         }
 
         // Create per-source audio manager (with shared capture manager if provided)
@@ -176,13 +190,8 @@ public final class SegmentWriter {
             }
         }
 
-        // Start all screenshot capturers
-        for (_, capturer) in screenshotCapturers {
-            capturer.start()
-        }
-
         captureStartTime = Date()
-        Log.info("Started segment using SCScreenshotManager (1fps periodic capture): \(outputDirectory.lastPathComponent)")
+        Log.info("Started segment with persistent video streams: \(outputDirectory.lastPathComponent)")
     }
 
     // MARK: - Dynamic Microphone Management
@@ -212,24 +221,13 @@ public final class SegmentWriter {
         return audioManager?.activeMicrophoneUIDs() ?? []
     }
 
-    /// Updates the content filter for window exclusion (video only)
-    /// Note: System audio filter is managed by CaptureManager via SystemAudioCaptureManager
-    /// - Parameter filter: The new content filter
-    public func updateContentFilter(_ filter: SCContentFilter) async throws {
-        // Update all screenshot capturers
-        for (_, capturer) in screenshotCapturers {
-            capturer.updateContentFilter(filter)
-        }
-    }
+    // Note: Video content filters are now managed by PersistentVideoCaptureManager
+    // System audio filter is managed by CaptureManager via SystemAudioCaptureManager
 
     /// Finishes recording, remixes audio, and closes all files
     public func finish() async {
-        // Stop all screenshot capturers first
-        Log.info("Stopping \(screenshotCapturers.count) screenshot capturer(s)...")
-        for (displayID, capturer) in screenshotCapturers {
-            Log.info("Stopping capturer for display \(displayID)...")
-            await capturer.stop()
-        }
+        // Clear video callbacks first (streams keep running for next segment)
+        videoCaptureManager?.clearCallbacks()
 
         // Clear system audio callback (stream keeps running for next segment)
         systemAudioCaptureManager?.clearCallback()
@@ -250,12 +248,12 @@ public final class SegmentWriter {
             }
         }
 
-        // Finish all screenshot capturers (video writers)
-        Log.info("Finishing \(screenshotCapturers.count) video output(s)...")
-        for (displayID, capturer) in screenshotCapturers {
+        // Finish all video frame writers
+        Log.info("Finishing \(videoFrameWriters.count) video output(s)...")
+        for (displayID, writer) in videoFrameWriters {
             Log.info("Waiting for video finish on display \(displayID)...")
             await withCheckedContinuation { continuation in
-                capturer.finish { result in
+                writer.finish { result in
                     Log.info("Video finish callback fired for display \(displayID)")
                     switch result {
                     case let .success((url, frameCount)):
@@ -277,12 +275,8 @@ public final class SegmentWriter {
     /// Does NOT wait for remix - returns immediately after streams stop
     /// Use this for segment rotation to minimize gap between segments
     public func finishCapture() async -> SegmentCaptureResult? {
-        // Stop all screenshot capturers first
-        Log.info("Stopping \(screenshotCapturers.count) screenshot capturer(s) for background remix...")
-        for (displayID, capturer) in screenshotCapturers {
-            Log.debug("Stopping capturer for display \(displayID)...", verbose: verbose)
-            await capturer.stop()
-        }
+        // Clear video callbacks first (streams keep running for next segment)
+        videoCaptureManager?.clearCallbacks()
 
         // Clear system audio callback (stream keeps running for next segment)
         systemAudioCaptureManager?.clearCallback()
@@ -293,11 +287,11 @@ public final class SegmentWriter {
             audioInputs = await manager.finishAll()
         }
 
-        // Finish all screenshot capturers (video writers)
-        Log.debug("Finishing \(screenshotCapturers.count) video output(s)...", verbose: verbose)
-        for (displayID, capturer) in screenshotCapturers {
+        // Finish all video frame writers
+        Log.debug("Finishing \(videoFrameWriters.count) video output(s)...", verbose: verbose)
+        for (displayID, writer) in videoFrameWriters {
             await withCheckedContinuation { continuation in
-                capturer.finish { result in
+                writer.finish { result in
                     switch result {
                     case let .success((url, frameCount)):
                         Log.debug("Saved video for display \(displayID): \(url.lastPathComponent) (\(frameCount) frames)", verbose: self.verbose)
@@ -379,13 +373,13 @@ public final class SegmentWriter {
 
     /// Errors that can occur during segment recording
     public enum SegmentError: Error, LocalizedError {
-        case failedToCreateScreenshotCapturer(displayID: CGDirectDisplayID)
+        case failedToCreateVideoWriter(displayID: CGDirectDisplayID)
         case failedToCreateAudioOutput
 
         public var errorDescription: String? {
             switch self {
-            case .failedToCreateScreenshotCapturer(let displayID):
-                return "Failed to create screenshot capturer for display \(displayID)"
+            case .failedToCreateVideoWriter(let displayID):
+                return "Failed to create video writer for display \(displayID)"
             case .failedToCreateAudioOutput:
                 return "Failed to create audio output"
             }
