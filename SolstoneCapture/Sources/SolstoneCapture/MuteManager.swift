@@ -132,23 +132,34 @@ public final class MuteManager {
         }
     }
 
-    /// Format remaining time as a human-readable string
+    /// Format remaining time as a human-readable string with natural units
     public func formatTimeRemaining() -> String? {
         guard muteState.isMuted else { return nil }
 
         if muteState.isIndefinite {
-            return "indefinitely"
+            return nil  // No time to display for indefinite mute
         }
 
         guard let remaining = muteState.timeRemaining else { return nil }
 
-        let mins = Int(remaining) / 60
-        let secs = Int(remaining) % 60
+        let totalSeconds = Int(remaining)
+        let hours = totalSeconds / 3600
+        let mins = (totalSeconds % 3600) / 60
 
-        if mins > 0 {
-            return String(format: "%d:%02d remaining", mins, secs)
+        if hours > 0 {
+            if mins > 30 {
+                return "\(hours + 1) hrs"
+            } else if hours == 1 && mins == 0 {
+                return "1 hr"
+            } else if mins > 0 {
+                return "\(hours) hrs \(mins) mins"
+            } else {
+                return "\(hours) hrs"
+            }
+        } else if mins > 0 {
+            return mins == 1 ? "1 min" : "\(mins) mins"
         } else {
-            return "\(secs)s remaining"
+            return "\(totalSeconds) secs"
         }
     }
 

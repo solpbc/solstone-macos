@@ -22,11 +22,6 @@ struct MenuContent: View {
             muteMenu
         }
 
-        // Active mute status
-        if appState.muteManager.isMuted {
-            muteStatusRow
-        }
-
         Divider()
 
         // Recording control
@@ -93,8 +88,16 @@ struct MenuContent: View {
     @ViewBuilder
     private var muteMenu: some View {
         if appState.muteManager.isMuted {
-            Button("Unmute") {
-                appState.muteManager.unmute()
+            // Reference refreshTick to trigger view updates
+            let _ = appState.muteManager.refreshTick
+            if let timeText = appState.muteManager.formatTimeRemaining() {
+                Button("Unmute (\(timeText) remaining)") {
+                    appState.muteManager.unmute()
+                }
+            } else {
+                Button("Unmute") {
+                    appState.muteManager.unmute()
+                }
             }
         } else {
             Menu("Mute") {
@@ -114,19 +117,6 @@ struct MenuContent: View {
                     appState.muteManager.mute(for: .indefinite)
                 }
             }
-        }
-    }
-
-    // MARK: - Mute Status Row
-
-    @ViewBuilder
-    private var muteStatusRow: some View {
-        // Reference refreshTick to trigger view updates
-        let _ = appState.muteManager.refreshTick
-        if let timeText = appState.muteManager.formatTimeRemaining() {
-            Text("Muted (\(timeText))")
-                .font(.caption)
-                .foregroundColor(.orange)
         }
     }
 
