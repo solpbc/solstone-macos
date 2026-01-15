@@ -29,6 +29,9 @@ struct SettingsView: View {
     @State private var testResult: TestResult = .none
     @State private var isTesting = false
 
+    // Title pattern exclusion editing
+    @State private var newTitlePattern = ""
+
     enum TestResult: Equatable {
         case none
         case success
@@ -78,11 +81,14 @@ struct SettingsView: View {
             microphoneTab
                 .tabItem { Label("Microphones", systemImage: "mic") }
 
+            privacyTab
+                .tabItem { Label("Privacy", systemImage: "eye.slash") }
+
             statusTab
                 .tabItem { Label("Status", systemImage: "info.circle") }
         }
         .padding(20)
-        .frame(minWidth: 450, minHeight: 320)
+        .frame(minWidth: 500, minHeight: 380)
         .onAppear {
             appState.syncMicrophonePriorityList()
         }
@@ -258,6 +264,90 @@ struct SettingsView: View {
         var newConfig = appState.config
         newConfig.toggleMicrophoneDisabled(uid: uid)
         appState.updateConfig(newConfig)
+    }
+
+    // MARK: - Privacy Tab
+
+    private var privacyTab: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            GroupBox("Title Pattern Exclusions") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Exclude any window whose title contains these keywords.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if appState.config.excludedTitlePatterns.isEmpty {
+                        Text("No patterns configured")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 20)
+                    } else {
+                        List {
+                            ForEach(Array(appState.config.excludedTitlePatterns.enumerated()), id: \.offset) { index, pattern in
+                                HStack {
+                                    Text(pattern)
+                                    Spacer()
+                                    Button(action: { deleteTitlePattern(at: index) }) {
+                                        Image(systemName: "minus.circle")
+                                            .foregroundStyle(.red)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Remove pattern")
+                                }
+                            }
+                        }
+                        .listStyle(.bordered)
+                        .frame(minHeight: 60, maxHeight: 120)
+                    }
+
+                    HStack {
+                        TextField("reddit, facebook, etc.", text: $newTitlePattern)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { addTitlePattern() }
+                        Button("Add") { addTitlePattern() }
+                            .disabled(newTitlePattern.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            GroupBox("Private Browsing") {
+                Toggle("Exclude private/incognito browser windows", isOn: excludePrivateBrowsingBinding)
+                    .help("Automatically excludes Safari Private, Chrome Incognito, and Firefox Private Browsing windows")
+                    .padding(.vertical, 4)
+            }
+
+            Spacer()
+        }
+    }
+
+    private var excludePrivateBrowsingBinding: Binding<Bool> {
+        Binding(
+            get: { appState.config.excludePrivateBrowsing },
+            set: { newValue in
+                var config = appState.config
+                config.excludePrivateBrowsing = newValue
+                appState.updateConfig(config)
+            }
+        )
+    }
+
+    private func addTitlePattern() {
+        let pattern = newTitlePattern.trimmingCharacters(in: .whitespaces)
+        guard !pattern.isEmpty else { return }
+
+        var config = appState.config
+        if !config.excludedTitlePatterns.contains(where: { $0.lowercased() == pattern.lowercased() }) {
+            config.excludedTitlePatterns.append(pattern)
+            appState.updateConfig(config)
+        }
+        newTitlePattern = ""
+    }
+
+    private func deleteTitlePattern(at index: Int) {
+        var config = appState.config
+        config.excludedTitlePatterns.remove(at: index)
+        appState.updateConfig(config)
     }
 
     // MARK: - Status Tab

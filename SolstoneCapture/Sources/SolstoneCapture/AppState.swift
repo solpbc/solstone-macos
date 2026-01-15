@@ -114,15 +114,26 @@ public final class AppState {
 
     /// Update and save configuration
     public func updateConfig(_ newConfig: AppConfig) {
-        let oldGain = config.microphoneGain
+        let oldConfig = config
         config = newConfig
         uploadCoordinator.updateConfig(newConfig)
         debugAudioHolder.value = newConfig.debugKeepRejectedAudio
         silenceMusicHolder.value = newConfig.silenceMusic
 
         // Update mic gain immediately if it changed
-        if newConfig.microphoneGain != oldGain {
+        if newConfig.microphoneGain != oldConfig.microphoneGain {
             captureManager.setMicrophoneGain(newConfig.microphoneGain)
+        }
+
+        // Update window exclusions immediately if they changed
+        if newConfig.excludedAppNames != oldConfig.excludedAppNames ||
+           newConfig.excludePrivateBrowsing != oldConfig.excludePrivateBrowsing ||
+           newConfig.excludedTitlePatterns != oldConfig.excludedTitlePatterns {
+            captureManager.updateWindowExclusions(
+                excludedAppNames: newConfig.excludedAppNames,
+                excludePrivateBrowsing: newConfig.excludePrivateBrowsing,
+                excludedTitlePatterns: newConfig.excludedTitlePatterns
+            )
         }
 
         do {
@@ -177,6 +188,7 @@ public final class AppState {
             silenceMusic: { silenceMusicHolder.value },
             excludedAppNames: config.excludedAppNames,
             excludePrivateBrowsing: config.excludePrivateBrowsing,
+            excludedTitlePatterns: config.excludedTitlePatterns,
             microphoneGain: config.microphoneGain,
             verbose: false
         )

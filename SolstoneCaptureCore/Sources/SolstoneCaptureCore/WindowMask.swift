@@ -9,6 +9,11 @@ import CoreGraphics
 public final class WindowExclusionDetector: @unchecked Sendable {
     private let targetAppNames: Set<String>  // Lowercase for case-insensitive matching
     private let detectPrivateBrowsing: Bool
+    private let titlePatterns: [String]  // Patterns to match in any window title
+
+    /// Track last log time for periodic summaries
+    private var lastLogTime: Date = .distantPast
+    private let logInterval: TimeInterval = 10.0
 
     /// Browser names for private browsing detection
     private static let browserNames: Set<String> = ["safari", "google chrome", "firefox"]
@@ -17,9 +22,11 @@ public final class WindowExclusionDetector: @unchecked Sendable {
     /// - Parameters:
     ///   - appNames: Application names to match (case-insensitive, exact match)
     ///   - detectPrivateBrowsing: Whether to also detect private/incognito browser windows
-    public init(appNames: [String], detectPrivateBrowsing: Bool = false) {
+    ///   - titlePatterns: Patterns to match in any window title - exclude window if any pattern matches
+    public init(appNames: [String], detectPrivateBrowsing: Bool = false, titlePatterns: [String] = []) {
         self.targetAppNames = Set(appNames.map { $0.lowercased() })
         self.detectPrivateBrowsing = detectPrivateBrowsing
+        self.titlePatterns = titlePatterns.map { $0.lowercased() }
     }
 
     /// Detects windows to exclude and returns their SCWindow objects
@@ -51,6 +58,7 @@ public final class WindowExclusionDetector: @unchecked Sendable {
         }
 
         var excludedIDs = Set<CGWindowID>()
+        var excludedDescriptions: [String] = []
 
         for window in windowList {
             // Only consider normal layer windows (layer 0)
@@ -63,18 +71,39 @@ public final class WindowExclusionDetector: @unchecked Sendable {
             let windowTitle = window[kCGWindowName as String] as? String ?? ""
 
             // Check if this is a target window (excluded app)
-            var shouldExclude = targetAppNames.contains(ownerNameLower)
-
-            // Also check for private browsing windows if enabled
-            if !shouldExclude && detectPrivateBrowsing {
-                shouldExclude = Self.isPrivateBrowserWindow(ownerName: ownerNameLower, windowTitle: windowTitle)
+            var exclusionReason: String? = nil
+            if targetAppNames.contains(ownerNameLower) {
+                exclusionReason = "excluded app"
             }
 
-            if shouldExclude {
-                if let windowID = window[kCGWindowNumber as String] as? CGWindowID {
-                    excludedIDs.insert(windowID)
+            // Check for title pattern matches in any window
+            if exclusionReason == nil && !titlePatterns.isEmpty {
+                let titleLower = windowTitle.lowercased()
+                if let matchedPattern = titlePatterns.first(where: { titleLower.contains($0) }) {
+                    exclusionReason = "matched '\(matchedPattern)'"
                 }
             }
+
+            // Also check for private browsing windows if enabled
+            if exclusionReason == nil && detectPrivateBrowsing {
+                if Self.isPrivateBrowserWindow(ownerName: ownerNameLower, windowTitle: windowTitle) {
+                    exclusionReason = "private browsing"
+                }
+            }
+
+            if let reason = exclusionReason {
+                if let windowID = window[kCGWindowNumber as String] as? CGWindowID {
+                    excludedIDs.insert(windowID)
+                    excludedDescriptions.append("\(ownerName): \(reason)")
+                }
+            }
+        }
+
+        // Log periodically if we have exclusions
+        if !excludedIDs.isEmpty && Date().timeIntervalSince(lastLogTime) >= logInterval {
+            lastLogTime = Date()
+            let summary = excludedDescriptions.joined(separator: ", ")
+            Log.info("Hiding windows: \(summary)")
         }
 
         return excludedIDs

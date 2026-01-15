@@ -44,6 +44,7 @@ public final class CaptureManager {
     private let storageManager: StorageManager
     private var currentSegment: SegmentWriter?
     private var segmentTimer: Timer?
+    private var windowExclusionTimer: Timer?
     private var displays: [SCDisplay] = []
     private var contentFilter: SCContentFilter?
     private let verbose: Bool
@@ -56,7 +57,7 @@ public final class CaptureManager {
     private let systemAudioCaptureManager = SystemAudioCaptureManager()
 
     /// Window exclusion detector for filtering out specific app windows
-    private let windowExclusionDetector: WindowExclusionDetector?
+    private var windowExclusionDetector: WindowExclusionDetector?
 
     /// Closure to check if audio is muted (passed to SegmentWriter)
     private let isAudioMuted: @Sendable () -> Bool
@@ -118,6 +119,7 @@ public final class CaptureManager {
         silenceMusic: @escaping @Sendable () -> Bool = { true },
         excludedAppNames: [String] = [],
         excludePrivateBrowsing: Bool = true,
+        excludedTitlePatterns: [String] = [],
         microphoneGain: Float = 2.0,
         verbose: Bool = false
     ) {
@@ -128,11 +130,12 @@ public final class CaptureManager {
         self.verbose = verbose
         self.micCaptureManager = MicrophoneCaptureManager(gain: microphoneGain, verbose: verbose)
 
-        // Create window exclusion detector if we have apps to exclude or private browsing detection
-        if !excludedAppNames.isEmpty || excludePrivateBrowsing {
+        // Create window exclusion detector if we have apps to exclude, title patterns, or private browsing detection
+        if !excludedAppNames.isEmpty || !excludedTitlePatterns.isEmpty || excludePrivateBrowsing {
             self.windowExclusionDetector = WindowExclusionDetector(
                 appNames: excludedAppNames,
-                detectPrivateBrowsing: excludePrivateBrowsing
+                detectPrivateBrowsing: excludePrivateBrowsing,
+                titlePatterns: excludedTitlePatterns
             )
         } else {
             self.windowExclusionDetector = nil
@@ -314,9 +317,11 @@ public final class CaptureManager {
         // Stop monitoring for microphone changes
         stopDefaultMicMonitoring()
 
-        // Cancel segment timer
+        // Cancel timers
         segmentTimer?.invalidate()
         segmentTimer = nil
+        windowExclusionTimer?.invalidate()
+        windowExclusionTimer = nil
 
         // Finish current segment and rename to actual duration
         var completedSegmentURL: URL?
@@ -404,6 +409,29 @@ public final class CaptureManager {
         micCaptureManager.updateGain(gain)
     }
 
+    /// Update window exclusion settings (takes effect immediately)
+    /// - Parameters:
+    ///   - excludedAppNames: App names to always exclude
+    ///   - excludePrivateBrowsing: Whether to exclude private browser windows
+    ///   - excludedTitlePatterns: Patterns to match in any window title
+    public func updateWindowExclusions(
+        excludedAppNames: [String],
+        excludePrivateBrowsing: Bool,
+        excludedTitlePatterns: [String]
+    ) {
+        if !excludedAppNames.isEmpty || !excludedTitlePatterns.isEmpty || excludePrivateBrowsing {
+            windowExclusionDetector = WindowExclusionDetector(
+                appNames: excludedAppNames,
+                detectPrivateBrowsing: excludePrivateBrowsing,
+                titlePatterns: excludedTitlePatterns
+            )
+            Log.info("Updated window exclusions: \(excludedAppNames.count) apps, \(excludedTitlePatterns.count) title patterns, privateBrowsing=\(excludePrivateBrowsing)")
+        } else {
+            windowExclusionDetector = nil
+            Log.info("Cleared window exclusions")
+        }
+    }
+
     // MARK: - Private Methods
 
     /// Starts a new recording segment
@@ -469,6 +497,7 @@ public final class CaptureManager {
             try? await Task.sleep(nanoseconds: 500_000_000)
             isStreamReady = true
             await updateWindowExclusions()
+            startWindowExclusionTimer()
         }
 
         // Schedule segment rotation
@@ -849,6 +878,16 @@ public final class CaptureManager {
     }
 
     // MARK: - Window Exclusion
+
+    /// Starts a timer to periodically check for window exclusions
+    private func startWindowExclusionTimer() {
+        windowExclusionTimer?.invalidate()
+        windowExclusionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.updateWindowExclusions()
+            }
+        }
+    }
 
     /// Updates the content filter to exclude detected windows
     private func updateWindowExclusions() async {

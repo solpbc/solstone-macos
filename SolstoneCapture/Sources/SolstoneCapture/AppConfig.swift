@@ -49,6 +49,10 @@ public struct AppConfig: Codable, Sendable {
     /// Apps to exclude from screen capture (windows will be masked)
     public var excludedApps: [AppEntry]
 
+    /// Title patterns - exclude any window whose title contains these patterns
+    /// Example: "reddit" will exclude any window with "reddit" in the title
+    public var excludedTitlePatterns: [String]
+
     /// Exclude private/incognito browser windows (Safari, Chrome, Firefox)
     public var excludePrivateBrowsing: Bool
 
@@ -102,6 +106,7 @@ public struct AppConfig: Codable, Sendable {
     public init(
         microphonePriority: [MicrophoneEntry] = [],
         excludedApps: [AppEntry] = [],
+        excludedTitlePatterns: [String] = [],
         excludePrivateBrowsing: Bool = true,
         serverURL: String? = nil,
         localRetentionMB: Int = 200,
@@ -113,6 +118,7 @@ public struct AppConfig: Codable, Sendable {
     ) {
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
+        self.excludedTitlePatterns = excludedTitlePatterns
         self.excludePrivateBrowsing = excludePrivateBrowsing
         self.serverURL = serverURL
         self._cachedServerKey = KeychainManager.loadServerKey()
@@ -129,6 +135,7 @@ public struct AppConfig: Codable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         microphonePriority = try container.decodeIfPresent([MicrophoneEntry].self, forKey: .microphonePriority) ?? []
         excludedApps = try container.decodeIfPresent([AppEntry].self, forKey: .excludedApps) ?? []
+        excludedTitlePatterns = try container.decodeIfPresent([String].self, forKey: .excludedTitlePatterns) ?? []
         excludePrivateBrowsing = try container.decodeIfPresent(Bool.self, forKey: .excludePrivateBrowsing) ?? true
         serverURL = try container.decodeIfPresent(String.self, forKey: .serverURL)
         localRetentionMB = try container.decodeIfPresent(Int.self, forKey: .localRetentionMB) ?? 200
@@ -155,6 +162,7 @@ public struct AppConfig: Codable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(microphonePriority, forKey: .microphonePriority)
         try container.encode(excludedApps, forKey: .excludedApps)
+        try container.encode(excludedTitlePatterns, forKey: .excludedTitlePatterns)
         try container.encode(excludePrivateBrowsing, forKey: .excludePrivateBrowsing)
         try container.encodeIfPresent(serverURL, forKey: .serverURL)
         // Note: serverKey deliberately not encoded - stored in Keychain
@@ -169,6 +177,7 @@ public struct AppConfig: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case microphonePriority
         case excludedApps
+        case excludedTitlePatterns
         case excludePrivateBrowsing
         case serverURL
         case serverKey  // Only used for decoding legacy configs
