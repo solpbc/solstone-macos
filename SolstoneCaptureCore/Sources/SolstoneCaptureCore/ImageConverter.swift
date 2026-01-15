@@ -4,14 +4,22 @@
 import Foundation
 import CoreGraphics
 import CoreVideo
-import Accelerate
+@preconcurrency import Accelerate
 
 /// Converts CGImage to CVPixelBuffer in YCbCr 4:2:0 bi-planar format for HEVC encoding
+/// Uses vImage for SIMD-accelerated colorspace conversion
 public final class ImageConverter: @unchecked Sendable {
     private let width: Int
     private let height: Int
     private var pixelBufferPool: CVPixelBufferPool?
     private let lock = NSLock()
+
+    /// Reusable ARGB buffer for intermediate conversion
+    private var argbBuffer: vImage_Buffer?
+    private var argbData: UnsafeMutableRawPointer?
+
+    /// Cached vImage conversion matrix (expensive to generate)
+    private var conversionMatrix: vImage_ARGBToYpCbCr?
 
     /// Creates an image converter for the specified dimensions
     /// - Parameters:
@@ -21,6 +29,21 @@ public final class ImageConverter: @unchecked Sendable {
         self.width = width
         self.height = height
         self.pixelBufferPool = createPixelBufferPool(width: width, height: height)
+
+        // Pre-allocate ARGB buffer
+        let bytesPerRow = width * 4
+        let dataSize = bytesPerRow * height
+        self.argbData = UnsafeMutableRawPointer.allocate(byteCount: dataSize, alignment: 16)
+        self.argbBuffer = vImage_Buffer(
+            data: argbData,
+            height: vImagePixelCount(height),
+            width: vImagePixelCount(width),
+            rowBytes: bytesPerRow
+        )
+    }
+
+    deinit {
+        argbData?.deallocate()
     }
 
     /// Converts a CGImage to a CVPixelBuffer in YCbCr 4:2:0 bi-planar format
@@ -61,8 +84,8 @@ public final class ImageConverter: @unchecked Sendable {
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
 
-        // Convert CGImage to YCbCr 4:2:0
-        guard convertToYCbCr(image: image, pixelBuffer: buffer) else {
+        // Convert CGImage to YCbCr 4:2:0 using vImage
+        guard convertToYCbCrWithVImage(image: image, pixelBuffer: buffer) else {
             Log.error("ImageConverter: Failed to convert image to YCbCr")
             return nil
         }
@@ -99,18 +122,22 @@ public final class ImageConverter: @unchecked Sendable {
         return pool
     }
 
-    /// Converts CGImage to YCbCr 4:2:0 bi-planar format in the pixel buffer
-    /// Uses ITU-R BT.709 color matrix (standard for HD video)
-    private func convertToYCbCr(image: CGImage, pixelBuffer: CVPixelBuffer) -> Bool {
+    /// Converts CGImage to YCbCr 4:2:0 bi-planar format using vImage
+    /// Uses SIMD-accelerated conversion for optimal performance
+    private func convertToYCbCrWithVImage(image: CGImage, pixelBuffer: CVPixelBuffer) -> Bool {
+        guard var argbBuffer = argbBuffer else { return false }
+
         let imageWidth = image.width
         let imageHeight = image.height
+        let outWidth = min(imageWidth, width)
+        let outHeight = min(imageHeight, height)
 
-        // Create ARGB context to draw the CGImage
-        let bytesPerRow = imageWidth * 4
+        // Draw CGImage into our pre-allocated ARGB buffer
+        let bytesPerRow = width * 4
         guard let context = CGContext(
-            data: nil,
-            width: imageWidth,
-            height: imageHeight,
+            data: argbBuffer.data,
+            width: outWidth,
+            height: outHeight,
             bitsPerComponent: 8,
             bytesPerRow: bytesPerRow,
             space: CGColorSpaceCreateDeviceRGB(),
@@ -119,12 +146,11 @@ public final class ImageConverter: @unchecked Sendable {
             return false
         }
 
-        // Draw image (flipping vertically as CGImage origin is bottom-left)
-        context.draw(image, in: CGRect(x: 0, y: 0, width: imageWidth, height: imageHeight))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: outWidth, height: outHeight))
 
-        guard let argbData = context.data else {
-            return false
-        }
+        // Update buffer dimensions for actual image size
+        argbBuffer.width = vImagePixelCount(outWidth)
+        argbBuffer.height = vImagePixelCount(outHeight)
 
         // Get pointers to Y and CbCr planes
         guard let yPlane = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0),
@@ -135,95 +161,71 @@ public final class ImageConverter: @unchecked Sendable {
         let yBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
         let cbcrBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
 
-        // Use the actual output dimensions (may differ from image dimensions)
-        let outWidth = min(imageWidth, width)
-        let outHeight = min(imageHeight, height)
+        // Create vImage buffers for output planes
+        var yBuffer = vImage_Buffer(
+            data: yPlane,
+            height: vImagePixelCount(outHeight),
+            width: vImagePixelCount(outWidth),
+            rowBytes: yBytesPerRow
+        )
 
-        let srcPtr = argbData.assumingMemoryBound(to: UInt8.self)
-        let yPtr = yPlane.assumingMemoryBound(to: UInt8.self)
-        let cbcrPtr = cbcrPlane.assumingMemoryBound(to: UInt8.self)
+        var cbcrBuffer = vImage_Buffer(
+            data: cbcrPlane,
+            height: vImagePixelCount(outHeight / 2),
+            width: vImagePixelCount(outWidth / 2),
+            rowBytes: cbcrBytesPerRow
+        )
 
-        // ITU-R BT.709 coefficients for full range (0-255)
-        // Y  = 0.2126 * R + 0.7152 * G + 0.0722 * B
-        // Cb = -0.1146 * R - 0.3854 * G + 0.5 * B + 128
-        // Cr = 0.5 * R - 0.4187 * G - 0.0813 * B + 128
+        // Use vImage to convert ARGB to YCbCr 4:2:0
+        // BGRA (byte order 32 little with skip first) -> Y'CbCr
+        // permuteMap reorders BGRA to ARGB for vImage (which expects ARGB)
+        let permuteMap: [UInt8] = [3, 2, 1, 0]  // BGRA -> ARGB
 
-        // Process each row
-        for y in 0..<outHeight {
-            let srcRowOffset = y * bytesPerRow
-            let yRowOffset = y * yBytesPerRow
+        // Create conversion matrix on first use (expensive, so cache it)
+        if conversionMatrix == nil {
+            var info = vImage_YpCbCrPixelRange(
+                Yp_bias: 0,
+                CbCr_bias: 128,
+                YpRangeMax: 255,
+                CbCrRangeMax: 255,
+                YpMax: 255,
+                YpMin: 0,
+                CbCrMax: 255,
+                CbCrMin: 0
+            )
 
-            // Process Y for every pixel
-            for x in 0..<outWidth {
-                // BGRA format (byte order 32 little with skip first = BGRA in memory)
-                let pixelOffset = srcRowOffset + x * 4
-                let b = Int(srcPtr[pixelOffset])
-                let g = Int(srcPtr[pixelOffset + 1])
-                let r = Int(srcPtr[pixelOffset + 2])
-                // Alpha at pixelOffset + 3, ignored
+            var matrix = vImage_ARGBToYpCbCr()
+            let error = vImageConvert_ARGBToYpCbCr_GenerateConversion(
+                kvImage_ARGBToYpCbCrMatrix_ITU_R_709_2,
+                &info,
+                &matrix,
+                kvImageARGB8888,
+                kvImage420Yp8_CbCr8,
+                vImage_Flags(kvImageNoFlags)
+            )
 
-                // Calculate Y using fixed-point arithmetic (8-bit precision)
-                // Y = 16 + 65.481 * R + 128.553 * G + 24.966 * B (for limited range)
-                // For full range: Y = 0.2126 * R + 0.7152 * G + 0.0722 * B
-                let yVal = (54 * r + 183 * g + 18 * b) >> 8  // Approximation of BT.709
-                yPtr[yRowOffset + x] = UInt8(min(255, max(0, yVal)))
+            guard error == kvImageNoError else {
+                Log.error("ImageConverter: Failed to generate conversion matrix: \(error)")
+                return false
             }
+            conversionMatrix = matrix
         }
 
-        // Process CbCr for every 2x2 block (4:2:0 subsampling)
-        let cbcrHeight = outHeight / 2
-        let cbcrWidth = outWidth / 2
+        guard var matrix = conversionMatrix else { return false }
 
-        for y in 0..<cbcrHeight {
-            let srcRow0Offset = (y * 2) * bytesPerRow
-            let srcRow1Offset = (y * 2 + 1) * bytesPerRow
-            let cbcrRowOffset = y * cbcrBytesPerRow
+        // Convert BGRA to YCbCr 4:2:0 with permutation
+        let error = vImageConvert_ARGB8888To420Yp8_CbCr8(
+            &argbBuffer,
+            &yBuffer,
+            &cbcrBuffer,
+            &matrix,
+            permuteMap,
+            vImage_Flags(kvImageNoFlags)
+        )
 
-            for x in 0..<cbcrWidth {
-                // Average 2x2 block of pixels for Cb and Cr
-                var rSum = 0
-                var gSum = 0
-                var bSum = 0
-
-                // Top-left
-                var pixelOffset = srcRow0Offset + (x * 2) * 4
-                bSum += Int(srcPtr[pixelOffset])
-                gSum += Int(srcPtr[pixelOffset + 1])
-                rSum += Int(srcPtr[pixelOffset + 2])
-
-                // Top-right
-                pixelOffset = srcRow0Offset + (x * 2 + 1) * 4
-                bSum += Int(srcPtr[pixelOffset])
-                gSum += Int(srcPtr[pixelOffset + 1])
-                rSum += Int(srcPtr[pixelOffset + 2])
-
-                // Bottom-left
-                pixelOffset = srcRow1Offset + (x * 2) * 4
-                bSum += Int(srcPtr[pixelOffset])
-                gSum += Int(srcPtr[pixelOffset + 1])
-                rSum += Int(srcPtr[pixelOffset + 2])
-
-                // Bottom-right
-                pixelOffset = srcRow1Offset + (x * 2 + 1) * 4
-                bSum += Int(srcPtr[pixelOffset])
-                gSum += Int(srcPtr[pixelOffset + 1])
-                rSum += Int(srcPtr[pixelOffset + 2])
-
-                // Average
-                let r = rSum / 4
-                let g = gSum / 4
-                let b = bSum / 4
-
-                // Calculate Cb and Cr (BT.709 full range)
-                // Cb = 128 - 0.1146 * R - 0.3854 * G + 0.5 * B
-                // Cr = 128 + 0.5 * R - 0.4187 * G - 0.0813 * B
-                let cb = 128 + ((-29 * r - 99 * g + 128 * b) >> 8)
-                let cr = 128 + ((128 * r - 107 * g - 21 * b) >> 8)
-
-                // CbCr interleaved
-                cbcrPtr[cbcrRowOffset + x * 2] = UInt8(min(255, max(0, cb)))
-                cbcrPtr[cbcrRowOffset + x * 2 + 1] = UInt8(min(255, max(0, cr)))
-            }
+        guard error == kvImageNoError else {
+            Log.error("ImageConverter: vImage conversion failed: \(error)")
+            return false
         }
 
         return true
