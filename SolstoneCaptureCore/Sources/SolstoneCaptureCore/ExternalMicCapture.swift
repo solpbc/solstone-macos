@@ -39,6 +39,10 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private let writerQueue = DispatchQueue(label: "com.solstone.extmic.writer", qos: .userInitiated)
     private let verbose: Bool
 
+    /// Cached audio converter for format conversion (expensive to create)
+    private var cachedConverter: AVAudioConverter?
+    private var cachedSourceFormat: AVAudioFormat?
+
     private var isRunning = false
     private var isRecovering = false  // Prevents recursive recovery attempts
     private var receivedFirstBuffer = false
@@ -190,6 +194,10 @@ public final class ExternalMicCapture: @unchecked Sendable {
                 // Tap may already be gone, that's fine
             }
 
+            // Clear cached converter (format may have changed)
+            self.cachedConverter = nil
+            self.cachedSourceFormat = nil
+
             // Re-initialize with our pinned device
             do {
                 self.isRunning = false  // Allow startCapture to proceed
@@ -292,12 +300,16 @@ public final class ExternalMicCapture: @unchecked Sendable {
             return
         }
 
-        // Apply gain to boost audio levels
+        // Apply gain to boost audio levels using vDSP (SIMD-accelerated)
         if let monoData = monoBuffer.floatChannelData {
             let monoFrameCount = Int(monoBuffer.frameLength)
-            for i in 0..<monoFrameCount {
-                monoData[0][i] = min(1.0, max(-1.0, monoData[0][i] * gainMultiplier))
-            }
+            var gain = gainMultiplier
+            // Multiply all samples by gain
+            vDSP_vsmul(monoData[0], 1, &gain, monoData[0], 1, vDSP_Length(monoFrameCount))
+            // Clamp to [-1.0, 1.0]
+            var minVal: Float = -1.0
+            var maxVal: Float = 1.0
+            vDSP_vclip(monoData[0], 1, &minVal, &maxVal, monoData[0], 1, vDSP_Length(monoFrameCount))
         }
 
         // Pass absolute host clock time - SingleTrackAudioWriter needs this to
@@ -309,6 +321,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
     }
 
     /// Convert buffer to mono at target sample rate
+    /// Uses cached AVAudioConverter for efficiency
     private func convertToMono(_ buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
         let sourceFormat = buffer.format
 
@@ -322,9 +335,23 @@ public final class ExternalMicCapture: @unchecked Sendable {
             return nil
         }
 
-        // Create converter
-        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
-            return nil
+        // Get or create converter (cache it for reuse)
+        let converter: AVAudioConverter
+        if let cached = cachedConverter,
+           let cachedFormat = cachedSourceFormat,
+           cachedFormat.sampleRate == sourceFormat.sampleRate,
+           cachedFormat.channelCount == sourceFormat.channelCount {
+            // Reuse cached converter
+            converter = cached
+        } else {
+            // Create new converter and cache it
+            guard let newConverter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+                return nil
+            }
+            cachedConverter = newConverter
+            cachedSourceFormat = sourceFormat
+            converter = newConverter
+            Log.debug("\(device.name): Created audio converter \(sourceFormat.sampleRate)Hz -> \(targetFormat.sampleRate)Hz", verbose: verbose)
         }
 
         // Calculate output frame count
