@@ -29,8 +29,9 @@ struct SettingsView: View {
     @State private var testResult: TestResult = .none
     @State private var isTesting = false
 
-    // Title pattern exclusion editing
+    // Privacy tab state
     @State private var newTitlePattern = ""
+    @State private var newExcludedApp = ""
 
     enum TestResult: Equatable {
         case none
@@ -269,55 +270,95 @@ struct SettingsView: View {
     // MARK: - Privacy Tab
 
     private var privacyTab: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            GroupBox("Title Pattern Exclusions") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Exclude any window whose title contains these keywords.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if appState.config.excludedTitlePatterns.isEmpty {
-                        Text("No patterns configured")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                GroupBox("Excluded Apps") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Always hide all windows from these apps.")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.vertical, 20)
-                    } else {
-                        List {
-                            ForEach(Array(appState.config.excludedTitlePatterns.enumerated()), id: \.offset) { index, pattern in
-                                HStack {
-                                    Text(pattern)
-                                    Spacer()
-                                    Button(action: { deleteTitlePattern(at: index) }) {
-                                        Image(systemName: "minus.circle")
-                                            .foregroundStyle(.red)
+
+                        if appState.config.excludedApps.isEmpty {
+                            Text("No apps excluded")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 12)
+                        } else {
+                            VStack(spacing: 4) {
+                                ForEach(Array(appState.config.excludedApps.enumerated()), id: \.offset) { index, app in
+                                    HStack {
+                                        Text(app.name)
+                                        Spacer()
+                                        Button(action: { deleteExcludedApp(at: index) }) {
+                                            Image(systemName: "minus.circle")
+                                                .foregroundStyle(.red)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Remove app")
                                     }
-                                    .buttonStyle(.plain)
-                                    .help("Remove pattern")
+                                    .padding(.vertical, 2)
                                 }
                             }
                         }
-                        .listStyle(.bordered)
-                        .frame(minHeight: 60, maxHeight: 120)
-                    }
 
-                    HStack {
-                        TextField("reddit, facebook, etc.", text: $newTitlePattern)
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit { addTitlePattern() }
-                        Button("Add") { addTitlePattern() }
-                            .disabled(newTitlePattern.trimmingCharacters(in: .whitespaces).isEmpty)
+                        HStack {
+                            TextField("App name (e.g., Slack)", text: $newExcludedApp)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { addExcludedApp() }
+                            Button("Add") { addExcludedApp() }
+                                .disabled(newExcludedApp.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
                     }
-                }
-                .padding(.vertical, 4)
-            }
-
-            GroupBox("Private Browsing") {
-                Toggle("Exclude private/incognito browser windows", isOn: excludePrivateBrowsingBinding)
-                    .help("Automatically excludes Safari Private, Chrome Incognito, and Firefox Private Browsing windows")
                     .padding(.vertical, 4)
-            }
+                }
 
-            Spacer()
+                GroupBox("Title Patterns") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Hide windows whose title contains these keywords.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        if appState.config.excludedTitlePatterns.isEmpty {
+                            Text("No patterns configured")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 12)
+                        } else {
+                            VStack(spacing: 4) {
+                                ForEach(Array(appState.config.excludedTitlePatterns.enumerated()), id: \.offset) { index, pattern in
+                                    HStack {
+                                        Text(pattern)
+                                        Spacer()
+                                        Button(action: { deleteTitlePattern(at: index) }) {
+                                            Image(systemName: "minus.circle")
+                                                .foregroundStyle(.red)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Remove pattern")
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                            }
+                        }
+
+                        HStack {
+                            TextField("reddit, facebook, etc.", text: $newTitlePattern)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { addTitlePattern() }
+                            Button("Add") { addTitlePattern() }
+                                .disabled(newTitlePattern.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                GroupBox("Private Browsing") {
+                    Toggle("Exclude private/incognito browser windows", isOn: excludePrivateBrowsingBinding)
+                        .help("Automatically excludes Safari Private, Chrome Incognito, and Firefox Private Browsing windows")
+                        .padding(.vertical, 4)
+                }
+            }
+            .padding(.vertical, 4)
         }
     }
 
@@ -347,6 +388,27 @@ struct SettingsView: View {
     private func deleteTitlePattern(at index: Int) {
         var config = appState.config
         config.excludedTitlePatterns.remove(at: index)
+        appState.updateConfig(config)
+    }
+
+    private func addExcludedApp() {
+        let name = newExcludedApp.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+
+        var config = appState.config
+        // Check if already excluded (case-insensitive)
+        if !config.excludedApps.contains(where: { $0.name.lowercased() == name.lowercased() }) {
+            // Use a simple bundle ID based on the name
+            let bundleID = "user.excluded.\(name.lowercased().replacingOccurrences(of: " ", with: "-"))"
+            config.excludedApps.append(AppEntry(bundleID: bundleID, name: name))
+            appState.updateConfig(config)
+        }
+        newExcludedApp = ""
+    }
+
+    private func deleteExcludedApp(at index: Int) {
+        var config = appState.config
+        config.excludedApps.remove(at: index)
         appState.updateConfig(config)
     }
 

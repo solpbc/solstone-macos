@@ -7,45 +7,32 @@ import SolstoneCaptureCore
 /// Handles app termination to ensure pending remixes complete
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
+        Log.info("Termination: starting shutdown...")
+
         // Request time to complete pending work before termination
         let activity = ProcessInfo.processInfo.beginActivity(
             options: [.suddenTerminationDisabled, .automaticTerminationDisabled],
             reason: "Completing pending work before termination"
         )
+        defer { ProcessInfo.processInfo.endActivity(activity) }
 
-        // Use a run loop approach to avoid deadlocking MainActor
-        // We need to let the main run loop process events while waiting
-        let done = UnsafeMutablePointer<Bool>.allocate(capacity: 1)
-        done.initialize(to: false)
-        defer {
-            done.deinitialize(count: 1)
-            done.deallocate()
-        }
+        // Recording is already stopped by MenuContent's quit handler.
+        // Just wait for any pending remix jobs using a semaphore.
+        let semaphore = DispatchSemaphore(value: 0)
 
-        Task { @MainActor in
-            // Clear callback to prevent issues during remix
+        Task.detached {
+            // Clear the callback to prevent issues during final remix
             await RemixQueue.shared.setOnSegmentComplete(nil)
-
-            // Stop recording - this finishes current segment
-            await AppState.shared?.captureManager?.stopRecording()
-
-            // Wait for any pending remixes
             await RemixQueue.shared.waitForCompletion()
-
-            done.pointee = true
+            semaphore.signal()
         }
 
-        // Spin the run loop while waiting, with timeout
-        let deadline = Date().addingTimeInterval(30)
-        while !done.pointee && Date() < deadline {
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
+        let result = semaphore.wait(timeout: .now() + 30)
+        if result == .timedOut {
+            Log.warn("Timeout waiting for remix queue during termination")
+        } else {
+            Log.info("Termination: shutdown complete")
         }
-
-        if !done.pointee {
-            Log.warn("Timeout waiting for shutdown during termination")
-        }
-
-        ProcessInfo.processInfo.endActivity(activity)
     }
 }
 
