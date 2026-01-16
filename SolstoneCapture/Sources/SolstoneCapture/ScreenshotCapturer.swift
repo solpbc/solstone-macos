@@ -4,6 +4,7 @@
 import Foundation
 @preconcurrency import ScreenCaptureKit
 import CoreMedia
+import CoreVideo
 import SolstoneCaptureCore
 
 /// Captures periodic screenshots for a single display using SCScreenshotManager
@@ -11,7 +12,6 @@ import SolstoneCaptureCore
 public final class ScreenshotCapturer {
     public let displayID: CGDirectDisplayID
     private let videoWriter: VideoWriter
-    private let imageConverter: ImageConverter
     private let verbose: Bool
 
     private var contentFilter: SCContentFilter
@@ -60,9 +60,6 @@ public final class ScreenshotCapturer {
             duration: duration
         )
 
-        // Create image converter for this display's dimensions
-        self.imageConverter = ImageConverter(width: width, height: height)
-
         // Configure screenshot capture
         let config = SCStreamConfiguration()
         config.width = width
@@ -94,24 +91,31 @@ public final class ScreenshotCapturer {
         Log.info("ScreenshotCapturer: Started for display \(displayID)")
     }
 
-    /// Computes a fast hash of a CGImage by sampling pixels
+    /// Computes a fast hash of a CVPixelBuffer by sampling the Y plane
     /// Uses FNV-1a hash on sampled pixel data for speed
-    private func computeFrameHash(_ image: CGImage) -> UInt64 {
-        guard let dataProvider = image.dataProvider,
-              let data = dataProvider.data,
-              CFDataGetLength(data) > 0 else {
+    private func computeFrameHash(_ pixelBuffer: CVPixelBuffer) -> UInt64 {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        // For YCbCr bi-planar format, plane 0 is the Y (luma) plane
+        guard let baseAddress = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else {
             return 0
         }
 
-        let length = CFDataGetLength(data)
-        let ptr = CFDataGetBytePtr(data)
+        let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+        let height = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
+        let length = bytesPerRow * height
 
-        // FNV-1a hash with sampling (every 1024th byte for speed)
+        guard length > 0 else { return 0 }
+
+        let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
+
+        // FNV-1a hash with sampling (every ~1024th byte for speed)
         var hash: UInt64 = 14695981039346656037  // FNV offset basis
         let sampleInterval = max(1, length / 4096)  // Sample ~4096 points
 
         for i in stride(from: 0, to: length, by: sampleInterval) {
-            hash ^= UInt64(ptr![i])
+            hash ^= UInt64(ptr[i])
             hash = hash &* 1099511628211  // FNV prime
         }
 
@@ -124,14 +128,20 @@ public final class ScreenshotCapturer {
             let captureStart = ContinuousClock.now
 
             do {
-                // Capture screenshot
-                let image = try await SCScreenshotManager.captureImage(
+                // Capture screenshot as sample buffer (returns pixel buffer in requested format)
+                let sampleBuffer = try await SCScreenshotManager.captureSampleBuffer(
                     contentFilter: contentFilter,
                     configuration: configuration
                 )
 
+                // Extract pixel buffer from sample buffer
+                guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                    Log.warn("ScreenshotCapturer: No image buffer in sample buffer for display \(displayID)")
+                    continue
+                }
+
                 // Check if frame has changed
-                let currentHash = computeFrameHash(image)
+                let currentHash = computeFrameHash(pixelBuffer)
                 if currentHash == previousFrameHash && previousFrameHash != 0 {
                     // Frame unchanged, skip encoding
                     skippedFrames += 1
@@ -142,19 +152,15 @@ public final class ScreenshotCapturer {
                     // Frame changed, encode it
                     previousFrameHash = currentHash
 
-                    if let pixelBuffer = imageConverter.convert(image) {
-                        // Calculate presentation time based on elapsed time
-                        let elapsed = Date().timeIntervalSince(captureStartTime)
-                        let pts = CMTime(seconds: elapsed, preferredTimescale: 600)
+                    // Calculate presentation time based on elapsed time
+                    let elapsed = Date().timeIntervalSince(captureStartTime)
+                    let pts = CMTime(seconds: elapsed, preferredTimescale: 600)
 
-                        videoWriter.appendFrame(pixelBuffer, presentationTime: pts)
-                        frameIndex += 1
+                    videoWriter.appendFrame(pixelBuffer, presentationTime: pts)
+                    frameIndex += 1
 
-                        if verbose {
-                            Log.debug("ScreenshotCapturer: Display \(displayID) frame #\(frameIndex) at \(String(format: "%.3f", elapsed))s", verbose: true)
-                        }
-                    } else {
-                        Log.warn("ScreenshotCapturer: Failed to convert image for display \(displayID)")
+                    if verbose {
+                        Log.debug("ScreenshotCapturer: Display \(displayID) frame #\(frameIndex) at \(String(format: "%.3f", elapsed))s", verbose: true)
                     }
                 }
             } catch {
