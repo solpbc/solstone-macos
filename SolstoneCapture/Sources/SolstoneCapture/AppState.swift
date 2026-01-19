@@ -46,14 +46,6 @@ public final class AppState {
     public private(set) var isPaused = false
     public private(set) var errorMessage: String?
 
-    /// Time remaining in current segment (updated by timer for UI refresh)
-    public private(set) var segmentTimeRemaining: TimeInterval = 0
-
-    /// Current segment index
-    public private(set) var segmentIndex: Int = 0
-
-    /// Timer for updating segment time display
-    private var uiUpdateTimer: Timer?
 
     // MARK: - Computed Properties
 
@@ -262,41 +254,15 @@ public final class AppState {
             isRecording = true
             isPaused = false
             errorMessage = nil
-            startUIUpdateTimer()
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
     public func stopRecording() async {
-        stopUIUpdateTimer()
         await captureManager.stopRecording()
         isRecording = false
         isPaused = false
-    }
-
-    // MARK: - UI Update Timer
-
-    private func startUIUpdateTimer() {
-        stopUIUpdateTimer()
-        updateSegmentInfo()
-        uiUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.updateSegmentInfo()
-            }
-        }
-    }
-
-    private func stopUIUpdateTimer() {
-        uiUpdateTimer?.invalidate()
-        uiUpdateTimer = nil
-        segmentTimeRemaining = 0
-        segmentIndex = 0
-    }
-
-    private func updateSegmentInfo() {
-        segmentTimeRemaining = captureManager.segmentTimeRemaining
-        // Note: segmentIndex no longer tracked per-session, each segment is independent
     }
 
     public func toggleRecording() async {
@@ -312,20 +278,16 @@ public final class AppState {
     private func handleCaptureStateChange(_ state: CaptureManager.State) {
         switch state {
         case .idle:
-            stopUIUpdateTimer()
             isRecording = false
             isPaused = false
         case .recording:
             isRecording = true
             isPaused = false
             errorMessage = nil
-            startUIUpdateTimer()
         case .paused:
-            stopUIUpdateTimer()
             isRecording = true
             isPaused = true
         case .error(let message):
-            stopUIUpdateTimer()
             errorMessage = message
         }
     }

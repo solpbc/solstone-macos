@@ -188,11 +188,13 @@ public final class SystemAudioCaptureManager {
     private func startHealthCheck() {
         stopHealthCheck()
 
-        healthCheckTimer = Timer.scheduledTimer(withTimeInterval: healthCheckInterval, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: healthCheckInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.performHealthCheck()
             }
         }
+        timer.tolerance = 10.0  // Allow coalescing to reduce energy impact
+        healthCheckTimer = timer
         Log.debug("[SystemAudio] Started health check timer (interval: \(Int(healthCheckInterval))s)", verbose: verbose)
     }
 

@@ -882,11 +882,13 @@ public final class CaptureManager {
     /// Starts a timer to periodically check for window exclusions
     private func startWindowExclusionTimer() {
         windowExclusionTimer?.invalidate()
-        windowExclusionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.updateWindowExclusions()
             }
         }
+        timer.tolerance = 2.0  // Allow coalescing to reduce energy impact
+        windowExclusionTimer = timer
     }
 
     /// Updates the content filter to exclude detected windows

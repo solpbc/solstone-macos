@@ -167,11 +167,13 @@ public final class MuteManager {
 
     private func startUIRefreshTimer() {
         guard uiRefreshTimer == nil else { return }
-        uiRefreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshTick += 1
             }
         }
+        timer.tolerance = 0.5  // Allow coalescing to reduce energy impact
+        uiRefreshTimer = timer
     }
 
     private func stopUIRefreshTimer() {

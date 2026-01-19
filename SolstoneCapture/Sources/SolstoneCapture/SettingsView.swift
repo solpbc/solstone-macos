@@ -423,15 +423,14 @@ struct SettingsView: View {
                     }
 
                     if appState.isRecording && !appState.isPaused {
-                        LabeledContent("Segment") {
-                            Text("\(appState.segmentIndex + 1)")
-                        }
-
-                        LabeledContent("Time Remaining") {
-                            let remaining = appState.segmentTimeRemaining
-                            let mins = Int(remaining) / 60
-                            let secs = Int(remaining) % 60
-                            Text(String(format: "%d:%02d", mins, secs))
+                        // TimelineView only updates when visible, avoiding background timer
+                        TimelineView(.periodic(from: .now, by: 1.0)) { _ in
+                            LabeledContent("Time Remaining") {
+                                let remaining = appState.captureManager.segmentTimeRemaining
+                                let mins = Int(remaining) / 60
+                                let secs = Int(remaining) % 60
+                                Text(String(format: "%d:%02d", mins, secs))
+                            }
                         }
                     }
                 }
