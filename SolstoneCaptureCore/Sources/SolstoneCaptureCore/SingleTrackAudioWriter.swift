@@ -65,6 +65,19 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     private var lastBufferTime: CMTime?
     private let lock = NSLock()
 
+    // Silence batching state
+    private var silenceStartTime: CMTime?
+    private var silenceAccumulatedSamples: Int = 0
+    private var lastSilentBufferFormat: CMFormatDescription?
+    private var lastSilentBufferSampleRate: Double = 48000
+
+    /// RMS threshold below which audio is considered silent (approx -60dB)
+    /// Very conservative to avoid cutting real audio
+    private static let silenceThreshold: Float = 0.001
+
+    /// Maximum silence duration before forcing a flush (1 second worth of samples at 48kHz)
+    private static let maxSilenceSamples: Int = 48000
+
     public var onComplete: (() -> Void)?
 
     /// Audio settings for output (AAC, 48kHz, mono)
@@ -111,6 +124,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     }
 
     /// Appends audio from a CMSampleBuffer (from SCStream)
+    /// Uses silence batching to reduce encoder invocations during quiet periods
     /// - Parameter sampleBuffer: The audio sample buffer
     public func appendAudio(_ sampleBuffer: CMSampleBuffer) {
         lock.lock()
@@ -134,15 +148,186 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         lastBufferTime = currentTime
 
         let firstTime = firstBufferTime ?? currentTime
+        let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
+
+        // Check if this buffer is silent
+        let isSilent = isBufferSilent(sampleBuffer)
+
+        if isSilent {
+            // Start or continue silence accumulation
+            if silenceStartTime == nil {
+                silenceStartTime = currentTime
+            }
+            silenceAccumulatedSamples += numSamples
+
+            // Cache format for creating silent buffer later
+            if let format = CMSampleBufferGetFormatDescription(sampleBuffer) {
+                lastSilentBufferFormat = format
+                if let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee {
+                    lastSilentBufferSampleRate = asbd.mSampleRate
+                }
+            }
+
+            // Check if we should flush (max silence duration reached)
+            if silenceAccumulatedSamples >= Self.maxSilenceSamples {
+                flushSilence(firstTime: firstTime)
+            }
+
+            lock.unlock()
+            return
+        }
+
+        // Non-silent buffer - flush any accumulated silence first
+        if silenceAccumulatedSamples > 0 {
+            flushSilence(firstTime: firstTime)
+        }
+
         lock.unlock()
 
-        // Write to track with adjusted timing (relative to first buffer)
+        // Write the non-silent buffer
         if input.isReadyForMoreMediaData {
             let adjustedTime = CMTimeSubtract(currentTime, firstTime)
             if let retimedBuffer = createRetimedSampleBuffer(sampleBuffer, newTime: adjustedTime) {
                 input.append(retimedBuffer)
             }
         }
+    }
+
+    /// Check if a sample buffer contains silence (RMS below threshold)
+    private func isBufferSilent(_ sampleBuffer: CMSampleBuffer) -> Bool {
+        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
+            return false
+        }
+
+        var length = 0
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        let status = CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
+
+        guard status == noErr, let data = dataPointer, length > 0 else {
+            return false
+        }
+
+        // Determine sample format from format description
+        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee else {
+            return false
+        }
+
+        // Calculate RMS based on format
+        let rms: Float
+        if asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+            // Float format
+            let floatPtr = UnsafeRawPointer(data).assumingMemoryBound(to: Float.self)
+            let sampleCount = length / MemoryLayout<Float>.size
+            var sumSquares: Float = 0
+            for i in 0..<sampleCount {
+                let sample = floatPtr[i]
+                sumSquares += sample * sample
+            }
+            rms = sqrt(sumSquares / Float(max(1, sampleCount)))
+        } else if asbd.mBitsPerChannel == 16 {
+            // Int16 format
+            let int16Ptr = UnsafeRawPointer(data).assumingMemoryBound(to: Int16.self)
+            let sampleCount = length / MemoryLayout<Int16>.size
+            var sumSquares: Float = 0
+            for i in 0..<sampleCount {
+                let sample = Float(int16Ptr[i]) / 32768.0
+                sumSquares += sample * sample
+            }
+            rms = sqrt(sumSquares / Float(max(1, sampleCount)))
+        } else {
+            // Unknown format, assume not silent
+            return false
+        }
+
+        return rms < Self.silenceThreshold
+    }
+
+    /// Flush accumulated silence as a single silent buffer
+    /// Must be called with lock held
+    private func flushSilence(firstTime: CMTime) {
+        guard silenceAccumulatedSamples > 0,
+              let startTime = silenceStartTime,
+              let formatDesc = lastSilentBufferFormat else {
+            silenceStartTime = nil
+            silenceAccumulatedSamples = 0
+            return
+        }
+
+        // Create a single silent buffer for the accumulated duration
+        let adjustedTime = CMTimeSubtract(startTime, firstTime)
+
+        if let silentBuffer = createSilentBuffer(
+            sampleCount: silenceAccumulatedSamples,
+            presentationTime: adjustedTime,
+            formatDescription: formatDesc,
+            sampleRate: lastSilentBufferSampleRate
+        ) {
+            if input.isReadyForMoreMediaData {
+                input.append(silentBuffer)
+            }
+        }
+
+        // Reset silence state
+        silenceStartTime = nil
+        silenceAccumulatedSamples = 0
+    }
+
+    /// Create a silent CMSampleBuffer with the given parameters
+    private func createSilentBuffer(sampleCount: Int, presentationTime: CMTime, formatDescription: CMFormatDescription, sampleRate: Double) -> CMSampleBuffer? {
+        guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)?.pointee else {
+            return nil
+        }
+
+        let bytesPerSample = Int(asbd.mBytesPerFrame)
+        let dataSize = sampleCount * bytesPerSample
+
+        // Allocate zeroed memory
+        guard let silentMemory = calloc(1, dataSize) else { return nil }
+
+        // Create block buffer that owns the memory
+        var blockBuffer: CMBlockBuffer?
+        var status = CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault,
+            memoryBlock: silentMemory,
+            blockLength: dataSize,
+            blockAllocator: kCFAllocatorMalloc,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: dataSize,
+            flags: 0,
+            blockBufferOut: &blockBuffer
+        )
+
+        guard status == noErr, let block = blockBuffer else {
+            free(silentMemory)
+            return nil
+        }
+
+        // Create sample buffer
+        var silentBuffer: CMSampleBuffer?
+        var timing = CMSampleTimingInfo(
+            duration: CMTimeMake(value: Int64(sampleCount), timescale: Int32(sampleRate)),
+            presentationTimeStamp: presentationTime,
+            decodeTimeStamp: CMTime.invalid
+        )
+
+        status = CMSampleBufferCreate(
+            allocator: kCFAllocatorDefault,
+            dataBuffer: block,
+            dataReady: true,
+            makeDataReadyCallback: nil,
+            refcon: nil,
+            formatDescription: formatDescription,
+            sampleCount: sampleCount,
+            sampleTimingEntryCount: 1,
+            sampleTimingArray: &timing,
+            sampleSizeEntryCount: 0,
+            sampleSizeArray: nil,
+            sampleBufferOut: &silentBuffer
+        )
+
+        return status == noErr ? silentBuffer : nil
     }
 
     /// Appends audio from an AVAudioPCMBuffer (from AVAudioEngine/external mics)
@@ -162,6 +347,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     /// Finishes writing and returns timing info
     /// - Returns: Timing information for remix alignment
     public func finish() async -> AudioTrackTimingInfo {
+        // extractTimingState also flushes any pending silence
         let (firstTime, lastTime, startTime, wasStarted) = extractTimingState()
 
         // Only mark input as finished if we actually started writing
@@ -226,8 +412,15 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     // MARK: - Private
 
     /// Extract timing state for use in async contexts (lock cannot be held across await)
+    /// Also flushes any pending silence before marking as finished
     private func extractTimingState() -> (firstTime: CMTime?, lastTime: CMTime?, startTime: CMTime, wasStarted: Bool) {
         lock.lock()
+
+        // Flush any pending silence before finishing
+        if let firstTime = firstBufferTime, silenceAccumulatedSamples > 0 {
+            flushSilence(firstTime: firstTime)
+        }
+
         isFinished = true
         let firstTime = firstBufferTime
         let lastTime = lastBufferTime
