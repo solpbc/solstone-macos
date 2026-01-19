@@ -178,7 +178,7 @@ public final class SegmentWriter {
 
         // Start all screenshot capturers
         for (_, capturer) in screenshotCapturers {
-            capturer.start()
+            await capturer.start()
         }
 
         captureStartTime = Date()
@@ -218,7 +218,7 @@ public final class SegmentWriter {
     public func updateContentFilter(_ filter: SCContentFilter) async throws {
         // Update all screenshot capturers
         for (_, capturer) in screenshotCapturers {
-            capturer.updateContentFilter(filter)
+            await capturer.updateContentFilter(filter)
         }
     }
 
