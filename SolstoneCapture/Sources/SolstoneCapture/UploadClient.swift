@@ -202,7 +202,8 @@ public struct UploadClient: Sendable {
         segmentURL: URL,
         day: String,
         segment: String,
-        mediaFiles: [URL]
+        mediaFiles: [URL],
+        metadataJSON: String? = nil
     ) async -> UploadResult {
         let urlString = "\(serverURL)/app/remote/ingest/\(serverKey)"
         guard let url = URL(string: urlString) else {
@@ -235,6 +236,12 @@ public struct UploadClient: Sendable {
             try fileHandle.writeMultipartField(boundary: boundary, name: "segment", value: segment)
             try fileHandle.writeMultipartField(boundary: boundary, name: "day", value: day)
             try fileHandle.writeMultipartField(boundary: boundary, name: "platform", value: "darwin")
+
+            // Write metadata if provided
+            if let metadataJSON = metadataJSON {
+                try fileHandle.writeMultipartField(boundary: boundary, name: "meta", value: metadataJSON)
+                Log.upload("  + meta: \(metadataJSON.prefix(200))...")
+            }
 
             // Stream each file to temp file
             for fileURL in mediaFiles {

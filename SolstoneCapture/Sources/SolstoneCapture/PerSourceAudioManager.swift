@@ -17,6 +17,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     }
 
     private var sourceWriters: [String: SourceWriter] = [:]  // keyed by source ID
+    private var micMetadata: [String: AudioInputDevice] = [:]  // keyed by device UID
     private let outputDirectory: URL
     private let timePrefix: String
     private var segmentStartTime: CMTime?
@@ -149,6 +150,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         )
 
         sourceWriters[sourceID] = SourceWriter(writer: writer)
+        micMetadata[sourceID] = device
         lock.unlock()
 
         // Use shared capture manager if available (keeps engine running across segments)
@@ -285,7 +287,17 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         lock.lock()
         sourceWriters.removeAll()
         completedInputs.removeAll()
+        micMetadata.removeAll()
         lock.unlock()
+    }
+
+    /// Get metadata for all mics that were active during this segment
+    /// Returns array of mic metadata dictionaries suitable for JSON serialization
+    public func getMicMetadata() -> [[String: Any]] {
+        lock.lock()
+        let mics = Array(micMetadata.values)
+        lock.unlock()
+        return mics.map { $0.toMetadata() }
     }
 
     /// Finish all writers, remix to single file, and optionally delete source files

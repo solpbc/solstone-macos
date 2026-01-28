@@ -38,6 +38,7 @@ public struct SegmentCaptureResult: Sendable {
     public let audioInputs: [AudioRemixerInput]
     public let debugKeepRejected: Bool
     public let silenceMusic: Bool
+    public let micMetadataJSON: String?
 }
 
 /// Manages recording for a single 5-minute segment
@@ -287,6 +288,21 @@ public final class SegmentWriter {
         // Clear system audio callback (stream keeps running for next segment)
         systemAudioCaptureManager?.clearCallback()
 
+        // Capture mic metadata BEFORE finishAll() clears the state
+        let micMetadata = getMicMetadata()
+        let micMetadataJSON: String?
+        if !micMetadata.isEmpty {
+            let metadata: [String: Any] = ["mics": micMetadata]
+            if let data = try? JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
+               let jsonString = String(data: data, encoding: .utf8) {
+                micMetadataJSON = jsonString
+            } else {
+                micMetadataJSON = nil
+            }
+        } else {
+            micMetadataJSON = nil
+        }
+
         // Finish audio writers (but don't remix - returns inputs for background remix)
         var audioInputs: [AudioRemixerInput] = []
         if let manager = audioManager {
@@ -322,14 +338,28 @@ public final class SegmentWriter {
             captureStartTime: startTime,
             audioInputs: audioInputs,
             debugKeepRejected: debugKeepRejectedAudio,
-            silenceMusic: silenceMusic
+            silenceMusic: silenceMusic,
+            micMetadataJSON: micMetadataJSON
         )
+    }
+
+    /// Get mic metadata collected during this segment
+    public func getMicMetadata() -> [[String: Any]] {
+        return audioManager?.getMicMetadata() ?? []
     }
 
     /// Finishes recording and renames segment to reflect actual duration
     /// - Returns: URL to the renamed segment directory, or original if rename failed
     public func finishAndRename() async -> URL {
+        // Capture mic metadata before finish() clears the audio manager state
+        let micMetadata = getMicMetadata()
+
         await finish()
+
+        // Write metadata file if we have mic metadata
+        if !micMetadata.isEmpty {
+            writeMetadataFile(mics: micMetadata)
+        }
 
         // Calculate actual duration
         guard let startTime = captureStartTime else {
@@ -374,6 +404,20 @@ public final class SegmentWriter {
         } catch {
             Log.warn("Failed to rename segment directory: \(error)")
             return outputDirectory
+        }
+    }
+
+    /// Write metadata file to segment directory
+    private func writeMetadataFile(mics: [[String: Any]]) {
+        let metaURL = outputDirectory.appendingPathComponent("\(timePrefix)_meta.json")
+        let metadata: [String: Any] = ["mics": mics]
+
+        do {
+            let data = try JSONSerialization.data(withJSONObject: metadata, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: metaURL)
+            Log.debug("Wrote metadata file: \(metaURL.lastPathComponent)", verbose: verbose)
+        } catch {
+            Log.warn("Failed to write metadata file: \(error)")
         }
     }
 

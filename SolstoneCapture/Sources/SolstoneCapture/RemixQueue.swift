@@ -15,6 +15,7 @@ public actor RemixQueue {
         let audioInputs: [AudioRemixerInput]
         let debugKeepRejected: Bool
         let silenceMusic: Bool
+        let micMetadataJSON: String?
     }
 
     /// Pending jobs waiting to be processed
@@ -94,6 +95,17 @@ public actor RemixQueue {
             } catch {
                 Log.error("Background remix failed: \(error)")
                 // Continue with rename anyway - video is still valid
+            }
+        }
+
+        // Write metadata file if we have mic metadata
+        if let metadataJSON = job.micMetadataJSON {
+            let metaURL = job.segmentDirectory.appendingPathComponent("\(segmentKey)_meta.json")
+            do {
+                try metadataJSON.write(to: metaURL, atomically: true, encoding: .utf8)
+                Log.debug("Wrote metadata file: \(metaURL.lastPathComponent)", verbose: false)
+            } catch {
+                Log.warn("Failed to write metadata file: \(error)")
             }
         }
 

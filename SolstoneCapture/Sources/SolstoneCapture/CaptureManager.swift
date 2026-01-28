@@ -589,7 +589,8 @@ public final class CaptureManager {
                 captureStartTime: result.captureStartTime,
                 audioInputs: result.audioInputs,
                 debugKeepRejected: result.debugKeepRejected,
-                silenceMusic: result.silenceMusic
+                silenceMusic: result.silenceMusic,
+                micMetadataJSON: result.micMetadataJSON
             )
             await RemixQueue.shared.enqueue(job)
         }

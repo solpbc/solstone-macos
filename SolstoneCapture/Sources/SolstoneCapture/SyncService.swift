@@ -174,12 +174,14 @@ public actor SyncService {
 
                 if segmentNeedsUpload(segmentURL: segmentURL, segment: segment, serverSegment: serverSegment) {
                     Log.upload("Segment \(segment) needs upload...")
+                    let metadataJSON = readSegmentMetadataJSON(segmentURL: segmentURL, segment: segment)
                     await uploadSegmentWithRetry(
                         serverURL: serverURL,
                         serverKey: serverKey,
                         segmentURL: segmentURL,
                         day: day,
-                        segment: segment
+                        segment: segment,
+                        metadataJSON: metadataJSON
                     )
                 }
 
@@ -243,7 +245,8 @@ public actor SyncService {
         serverKey: String,
         segmentURL: URL,
         day: String,
-        segment: String
+        segment: String,
+        metadataJSON: String?
     ) async {
         var attempts = 0
 
@@ -270,7 +273,8 @@ public actor SyncService {
                 segmentURL: segmentURL,
                 day: day,
                 segment: segment,
-                mediaFiles: mediaFiles
+                mediaFiles: mediaFiles,
+                metadataJSON: metadataJSON
             )
 
             switch result {
@@ -411,6 +415,27 @@ public actor SyncService {
         let dayFolder = segmentURL.deletingLastPathComponent().lastPathComponent
         let day = dayFolder.replacingOccurrences(of: "-", with: "")
         return (day, segmentFolder)
+    }
+
+    /// Read metadata file from segment directory as JSON string
+    /// Returns nil if no metadata file exists or if reading fails
+    private func readSegmentMetadataJSON(segmentURL: URL, segment: String) -> String? {
+        // Metadata file is named SEGMENT_meta.json
+        let metaURL = segmentURL.appendingPathComponent("\(segment)_meta.json")
+
+        guard FileManager.default.fileExists(atPath: metaURL.path) else {
+            return nil
+        }
+
+        do {
+            let data = try Data(contentsOf: metaURL)
+            // Return as string (already JSON formatted)
+            return String(data: data, encoding: .utf8)
+        } catch {
+            Log.upload("Failed to read metadata file: \(error)")
+        }
+
+        return nil
     }
 
     // MARK: - Storage Cleanup

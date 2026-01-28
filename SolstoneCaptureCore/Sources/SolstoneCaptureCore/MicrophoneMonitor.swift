@@ -4,11 +4,63 @@
 import Foundation
 import CoreAudio
 
+/// Transport type for audio devices
+public enum AudioTransportType: String, Sendable {
+    case builtin = "built-in"
+    case usb = "usb"
+    case bluetooth = "bluetooth"
+    case virtual = "virtual"
+    case aggregate = "aggregate"
+    case thunderbolt = "thunderbolt"
+    case firewire = "firewire"
+    case pci = "pci"
+    case displayPort = "displayport"
+    case avb = "avb"
+    case airplay = "airplay"
+    case hdmi = "hdmi"
+    case continuityWired = "continuity-wired"
+    case continuityWireless = "continuity-wireless"
+    case unknown = "unknown"
+}
+
 /// Represents an available audio input device
 public struct AudioInputDevice: Sendable {
     public let id: AudioDeviceID
     public let name: String
     public let uid: String
+    public let manufacturer: String?
+    public let sampleRate: Double
+    public let transportType: AudioTransportType
+
+    /// Heuristic classification for device type (e.g., "speakerphone")
+    public var facet: String? {
+        let speakerphoneKeywords = [
+            "jabra", "poly", "polycom", "yealink", "konftel",
+            "emeet", "speakerphone", "speak ", "sync "
+        ]
+        let searchText = (name + " " + (manufacturer ?? "")).lowercased()
+        if speakerphoneKeywords.contains(where: { searchText.contains($0) }) {
+            return "speakerphone"
+        }
+        return nil
+    }
+
+    /// Convert to dictionary for JSON serialization
+    public func toMetadata() -> [String: Any] {
+        var meta: [String: Any] = [
+            "device_name": name,
+            "device_uid": uid,
+            "sample_rate": Int(sampleRate),
+            "transport_type": transportType.rawValue
+        ]
+        if let manufacturer = manufacturer {
+            meta["manufacturer"] = manufacturer
+        }
+        if let facet = facet {
+            meta["facet"] = facet
+        }
+        return meta
+    }
 }
 
 /// Monitors microphone device status using CoreAudio
@@ -73,7 +125,19 @@ public final class MicrophoneMonitor: @unchecked Sendable {
             // Get device UID
             guard let uid = getDeviceUID(deviceID: deviceID) else { return nil }
 
-            return AudioInputDevice(id: deviceID, name: name, uid: uid)
+            // Get additional metadata
+            let manufacturer = getDeviceManufacturer(deviceID: deviceID)
+            let sampleRate = getDeviceSampleRate(deviceID: deviceID) ?? 48000.0
+            let transportType = getDeviceTransportType(deviceID: deviceID)
+
+            return AudioInputDevice(
+                id: deviceID,
+                name: name,
+                uid: uid,
+                manufacturer: manufacturer,
+                sampleRate: sampleRate,
+                transportType: transportType
+            )
         }
     }
 
@@ -246,5 +310,84 @@ public final class MicrophoneMonitor: @unchecked Sendable {
         guard status == noErr, let cfUID = uid?.takeRetainedValue() else { return nil }
 
         return cfUID as String
+    }
+
+    private static func getDeviceManufacturer(deviceID: AudioDeviceID) -> String? {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceManufacturerCFString,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        var manufacturer: Unmanaged<CFString>?
+        var dataSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+
+        let status = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, &manufacturer)
+        guard status == noErr, let cfManufacturer = manufacturer?.takeRetainedValue() else { return nil }
+
+        return cfManufacturer as String
+    }
+
+    private static func getDeviceSampleRate(deviceID: AudioDeviceID) -> Double? {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        var sampleRate: Float64 = 0
+        var dataSize = UInt32(MemoryLayout<Float64>.size)
+
+        let status = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, &sampleRate)
+        guard status == noErr else { return nil }
+
+        return sampleRate
+    }
+
+    private static func getDeviceTransportType(deviceID: AudioDeviceID) -> AudioTransportType {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        var transportType: UInt32 = 0
+        var dataSize = UInt32(MemoryLayout<UInt32>.size)
+
+        let status = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, &transportType)
+        guard status == noErr else { return .unknown }
+
+        switch transportType {
+        case kAudioDeviceTransportTypeBuiltIn:
+            return .builtin
+        case kAudioDeviceTransportTypeUSB:
+            return .usb
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
+            return .bluetooth
+        case kAudioDeviceTransportTypeVirtual:
+            return .virtual
+        case kAudioDeviceTransportTypeAggregate:
+            return .aggregate
+        case kAudioDeviceTransportTypeThunderbolt:
+            return .thunderbolt
+        case kAudioDeviceTransportTypeFireWire:
+            return .firewire
+        case kAudioDeviceTransportTypePCI:
+            return .pci
+        case kAudioDeviceTransportTypeDisplayPort:
+            return .displayPort
+        case kAudioDeviceTransportTypeAVB:
+            return .avb
+        case kAudioDeviceTransportTypeAirPlay:
+            return .airplay
+        case kAudioDeviceTransportTypeHDMI:
+            return .hdmi
+        case kAudioDeviceTransportTypeContinuityCaptureWired:
+            return .continuityWired
+        case kAudioDeviceTransportTypeContinuityCaptureWireless:
+            return .continuityWireless
+        default:
+            return .unknown
+        }
     }
 }
