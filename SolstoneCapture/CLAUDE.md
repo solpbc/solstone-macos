@@ -89,10 +89,8 @@ Audio is recorded directly to a single multi-track M4A:
 - Track 1+: All microphones (via AVAudioEngine/ExternalMicCapture)
 - Silent mic tracks are removed at segment end
 
-Configuration stored at:
-```
-~/Library/Application Support/Solstone/config.json
-```
+Configuration stored in UserDefaults (standard macOS preferences).
+Server API key stored securely in Keychain.
 
 ## Technical Details
 

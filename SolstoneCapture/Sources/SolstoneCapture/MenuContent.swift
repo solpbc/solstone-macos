@@ -101,14 +101,22 @@ struct MenuContent: View {
             }
         } else {
             Menu("Mute") {
-                Button("15 minutes") {
-                    appState.muteManager.mute(for: .minutes(15))
+                let now = Date()
+                let nextQuarter = MuteManager.nextQuarterHour(after: now)
+                let secondQuarter = MuteManager.secondQuarterHour(after: now)
+                let nextHour = MuteManager.nextFullHour(after: now)
+                let nextMins = Int(nextQuarter.timeIntervalSince(now) / 60)
+                let secondMins = Int(secondQuarter.timeIntervalSince(now) / 60)
+                let hourMins = Int(nextHour.timeIntervalSince(now) / 60)
+
+                Button("Until \(MuteManager.formatTime(nextQuarter)) (~\(nextMins) mins)") {
+                    appState.muteManager.mute(for: .until(nextQuarter))
                 }
-                Button("30 minutes") {
-                    appState.muteManager.mute(for: .minutes(30))
+                Button("Until \(MuteManager.formatTime(secondQuarter)) (~\(secondMins) mins)") {
+                    appState.muteManager.mute(for: .until(secondQuarter))
                 }
-                Button("1 hour") {
-                    appState.muteManager.mute(for: .minutes(60))
+                Button("Until \(MuteManager.formatTime(nextHour)) (~\(hourMins) mins)") {
+                    appState.muteManager.mute(for: .until(nextHour))
                 }
                 Button("Until tomorrow morning") {
                     appState.muteManager.mute(for: .untilTomorrowMorning)

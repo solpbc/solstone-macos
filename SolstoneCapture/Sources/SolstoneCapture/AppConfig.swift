@@ -41,8 +41,27 @@ public struct AppEntry: Codable, Equatable, Sendable {
 }
 
 /// Configuration for SolstoneCapture
-/// Stored at ~/Library/Application Support/Solstone/config.json
-public struct AppConfig: Codable, Sendable {
+/// Stored in UserDefaults
+public struct AppConfig: Sendable {
+    // MARK: - UserDefaults Keys
+
+    private enum Keys {
+        static let microphonePriority = "microphonePriority"
+        static let excludedApps = "excludedApps"
+        static let excludedTitlePatterns = "excludedTitlePatterns"
+        static let excludePrivateBrowsing = "excludePrivateBrowsing"
+        static let serverURL = "serverURL"
+        static let localRetentionMB = "localRetentionMB"
+        static let syncPaused = "syncPaused"
+        static let debugSegments = "debugSegments"
+        static let debugKeepRejectedAudio = "debugKeepRejectedAudio"
+        static let microphoneGain = "microphoneGain"
+        static let silenceMusic = "silenceMusic"
+        static let didMigrateFromJSON = "didMigrateFromJSON"
+    }
+
+    // MARK: - Properties
+
     /// Ordered list of microphones (first = highest priority)
     public var microphonePriority: [MicrophoneEntry]
 
@@ -62,13 +81,9 @@ public struct AppConfig: Codable, Sendable {
     public var serverURL: String?
 
     /// API key for remote server authentication - stored securely in Keychain
-    /// Cached to avoid repeated keychain access (loaded on init, synced on set)
-    private var _cachedServerKey: String?
-
     public var serverKey: String? {
-        get { _cachedServerKey }
+        get { KeychainManager.loadServerKey() }
         set {
-            _cachedServerKey = newValue
             if let key = newValue {
                 KeychainManager.saveServerKey(key)
             } else {
@@ -121,7 +136,6 @@ public struct AppConfig: Codable, Sendable {
         self.excludedTitlePatterns = excludedTitlePatterns
         self.excludePrivateBrowsing = excludePrivateBrowsing
         self.serverURL = serverURL
-        self._cachedServerKey = KeychainManager.loadServerKey()
         self.localRetentionMB = localRetentionMB
         self.syncPaused = syncPaused
         self.debugSegments = debugSegments
@@ -130,161 +144,154 @@ public struct AppConfig: Codable, Sendable {
         self.silenceMusic = silenceMusic
     }
 
-    /// Custom decoder for backward compatibility and Keychain migration
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        microphonePriority = try container.decodeIfPresent([MicrophoneEntry].self, forKey: .microphonePriority) ?? []
-        excludedApps = try container.decodeIfPresent([AppEntry].self, forKey: .excludedApps) ?? []
-        excludedTitlePatterns = try container.decodeIfPresent([String].self, forKey: .excludedTitlePatterns) ?? []
-        excludePrivateBrowsing = try container.decodeIfPresent(Bool.self, forKey: .excludePrivateBrowsing) ?? true
-        serverURL = try container.decodeIfPresent(String.self, forKey: .serverURL)
-        localRetentionMB = try container.decodeIfPresent(Int.self, forKey: .localRetentionMB) ?? 200
-        syncPaused = try container.decodeIfPresent(Bool.self, forKey: .syncPaused) ?? false
-        debugSegments = try container.decodeIfPresent(Bool.self, forKey: .debugSegments) ?? false
-        debugKeepRejectedAudio = try container.decodeIfPresent(Bool.self, forKey: .debugKeepRejectedAudio) ?? false
-        microphoneGain = try container.decodeIfPresent(Float.self, forKey: .microphoneGain) ?? 2.0
-        silenceMusic = try container.decodeIfPresent(Bool.self, forKey: .silenceMusic) ?? true
-
-        // Migrate legacy serverKey from JSON to Keychain
-        if let legacyKey = try container.decodeIfPresent(String.self, forKey: .serverKey),
-           !legacyKey.isEmpty,
-           KeychainManager.loadServerKey() == nil {
-            KeychainManager.saveServerKey(legacyKey)
-            Log.info("Migrated server key from config file to Keychain")
-        }
-
-        // Cache the server key (either migrated or existing)
-        _cachedServerKey = KeychainManager.loadServerKey()
-    }
-
-    /// Custom encoder to exclude serverKey (stored in Keychain, not JSON)
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(microphonePriority, forKey: .microphonePriority)
-        try container.encode(excludedApps, forKey: .excludedApps)
-        try container.encode(excludedTitlePatterns, forKey: .excludedTitlePatterns)
-        try container.encode(excludePrivateBrowsing, forKey: .excludePrivateBrowsing)
-        try container.encodeIfPresent(serverURL, forKey: .serverURL)
-        // Note: serverKey deliberately not encoded - stored in Keychain
-        try container.encode(localRetentionMB, forKey: .localRetentionMB)
-        try container.encode(syncPaused, forKey: .syncPaused)
-        try container.encode(debugSegments, forKey: .debugSegments)
-        try container.encode(debugKeepRejectedAudio, forKey: .debugKeepRejectedAudio)
-        try container.encode(microphoneGain, forKey: .microphoneGain)
-        try container.encode(silenceMusic, forKey: .silenceMusic)
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case microphonePriority
-        case excludedApps
-        case excludedTitlePatterns
-        case excludePrivateBrowsing
-        case serverURL
-        case serverKey  // Only used for decoding legacy configs
-        case localRetentionMB
-        case syncPaused
-        case debugSegments
-        case debugKeepRejectedAudio
-        case microphoneGain
-        case silenceMusic
-    }
-
-    // MARK: - File Paths
-
-    /// Base directory for Solstone app data
-    private static var baseDirectory: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("Solstone")
-    }
-
-    /// Config file path
-    public static var configPath: URL {
-        baseDirectory.appendingPathComponent("config.json")
-    }
-
-    /// Legacy sck-cli config path for migration
-    private static var legacyConfigPath: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".sck-cli.json")
-    }
-
     // MARK: - Load/Save
 
-    /// Loads config from disk
-    /// Returns default config if file doesn't exist or is invalid
+    /// Loads config from UserDefaults
     public static func load() -> AppConfig {
-        // Try to load from our config path
-        if FileManager.default.fileExists(atPath: configPath.path) {
-            do {
-                let data = try Data(contentsOf: configPath)
-                let config = try JSONDecoder().decode(AppConfig.self, from: data)
-                return config
-            } catch {
-                Log.warn("Failed to load config: \(error.localizedDescription)")
-            }
+        let defaults = UserDefaults.standard
+
+        // Load microphonePriority from JSON data
+        var microphonePriority: [MicrophoneEntry] = []
+        if let data = defaults.data(forKey: Keys.microphonePriority) {
+            microphonePriority = (try? JSONDecoder().decode([MicrophoneEntry].self, from: data)) ?? []
         }
 
-        return AppConfig()
+        // Load excludedApps from JSON data
+        var excludedApps: [AppEntry] = []
+        if let data = defaults.data(forKey: Keys.excludedApps) {
+            excludedApps = (try? JSONDecoder().decode([AppEntry].self, from: data)) ?? []
+        }
+
+        return AppConfig(
+            microphonePriority: microphonePriority,
+            excludedApps: excludedApps,
+            excludedTitlePatterns: defaults.stringArray(forKey: Keys.excludedTitlePatterns) ?? [],
+            excludePrivateBrowsing: defaults.object(forKey: Keys.excludePrivateBrowsing) as? Bool ?? true,
+            serverURL: defaults.string(forKey: Keys.serverURL),
+            localRetentionMB: defaults.object(forKey: Keys.localRetentionMB) as? Int ?? 200,
+            syncPaused: defaults.bool(forKey: Keys.syncPaused),
+            debugSegments: defaults.bool(forKey: Keys.debugSegments),
+            debugKeepRejectedAudio: defaults.bool(forKey: Keys.debugKeepRejectedAudio),
+            microphoneGain: defaults.object(forKey: Keys.microphoneGain) as? Float ?? 2.0,
+            silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true
+        )
     }
 
     /// Loads config or creates with defaults if missing
-    /// Also migrates from sck-cli config if present
+    /// Also migrates from config.json if present
     public static func loadOrCreateDefault() -> AppConfig {
-        // Ensure directory exists
-        try? FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        let defaults = UserDefaults.standard
 
-        // Check for migration from sck-cli config
-        if !FileManager.default.fileExists(atPath: configPath.path) {
-            if let migrated = migrateFromLegacy() {
+        // Check for migration from JSON config
+        if !defaults.bool(forKey: Keys.didMigrateFromJSON) {
+            if let migrated = migrateFromJSON() {
                 return migrated
             }
+            // Mark migration as complete even if no file existed
+            defaults.set(true, forKey: Keys.didMigrateFromJSON)
         }
 
-        // Load existing or create default
-        if FileManager.default.fileExists(atPath: configPath.path) {
+        // Check if we have any config stored
+        if defaults.object(forKey: Keys.excludePrivateBrowsing) != nil {
             return load()
         }
 
         // Create default config
         var config = AppConfig()
         config.excludedApps = defaultExclusions
-
-        do {
-            try config.save()
-            Log.info("Created default config at \(configPath.path)")
-        } catch {
-            Log.warn("Failed to save default config: \(error.localizedDescription)")
-        }
+        try? config.save()
+        Log.info("Created default config in UserDefaults")
 
         return config
     }
 
-    /// Saves config to disk
+    /// Saves config to UserDefaults
     public func save() throws {
-        // Ensure directory exists
-        try FileManager.default.createDirectory(at: Self.baseDirectory, withIntermediateDirectories: true)
+        let defaults = UserDefaults.standard
 
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(self)
-        try data.write(to: Self.configPath, options: .atomic)
+        // Save complex types as JSON data
+        if let data = try? JSONEncoder().encode(microphonePriority) {
+            defaults.set(data, forKey: Keys.microphonePriority)
+        }
+        if let data = try? JSONEncoder().encode(excludedApps) {
+            defaults.set(data, forKey: Keys.excludedApps)
+        }
+
+        defaults.set(excludedTitlePatterns, forKey: Keys.excludedTitlePatterns)
+        defaults.set(excludePrivateBrowsing, forKey: Keys.excludePrivateBrowsing)
+        defaults.set(serverURL, forKey: Keys.serverURL)
+        defaults.set(localRetentionMB, forKey: Keys.localRetentionMB)
+        defaults.set(syncPaused, forKey: Keys.syncPaused)
+        defaults.set(debugSegments, forKey: Keys.debugSegments)
+        defaults.set(debugKeepRejectedAudio, forKey: Keys.debugKeepRejectedAudio)
+        defaults.set(microphoneGain, forKey: Keys.microphoneGain)
+        defaults.set(silenceMusic, forKey: Keys.silenceMusic)
     }
 
-    /// Migrates from legacy sck-cli config if present
-    private static func migrateFromLegacy() -> AppConfig? {
-        guard FileManager.default.fileExists(atPath: legacyConfigPath.path) else {
-            return nil
+    // MARK: - Migration from JSON
+
+    /// Legacy JSON config path
+    private static var legacyConfigPath: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("Solstone/config.json")
+    }
+
+    /// Legacy sck-cli config path
+    private static var legacySckCliPath: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".sck-cli.json")
+    }
+
+    /// Migrates from legacy JSON config if present
+    private static func migrateFromJSON() -> AppConfig? {
+        let defaults = UserDefaults.standard
+
+        // Try main config path first, then legacy sck-cli path
+        let pathsToTry = [legacyConfigPath, legacySckCliPath]
+
+        for path in pathsToTry {
+            guard FileManager.default.fileExists(atPath: path.path) else {
+                continue
+            }
+
+            do {
+                let data = try Data(contentsOf: path)
+                let legacyConfig = try JSONDecoder().decode(LegacyJSONConfig.self, from: data)
+
+                let config = AppConfig(
+                    microphonePriority: legacyConfig.microphonePriority ?? [],
+                    excludedApps: legacyConfig.excludedApps ?? [],
+                    excludedTitlePatterns: legacyConfig.excludedTitlePatterns ?? [],
+                    excludePrivateBrowsing: legacyConfig.excludePrivateBrowsing ?? true,
+                    serverURL: legacyConfig.serverURL,
+                    localRetentionMB: legacyConfig.localRetentionMB ?? 200,
+                    syncPaused: legacyConfig.syncPaused ?? false,
+                    debugSegments: legacyConfig.debugSegments ?? false,
+                    debugKeepRejectedAudio: legacyConfig.debugKeepRejectedAudio ?? false,
+                    microphoneGain: legacyConfig.microphoneGain ?? 2.0,
+                    silenceMusic: legacyConfig.silenceMusic ?? true
+                )
+
+                // Migrate serverKey from JSON to Keychain if present
+                if let key = legacyConfig.serverKey, !key.isEmpty, KeychainManager.loadServerKey() == nil {
+                    KeychainManager.saveServerKey(key)
+                    Log.info("Migrated server key from JSON to Keychain")
+                }
+
+                try config.save()
+                defaults.set(true, forKey: Keys.didMigrateFromJSON)
+                Log.info("Migrated config from \(path.path) to UserDefaults")
+
+                // Optionally rename old file to indicate migration
+                let backupPath = path.appendingPathExtension("migrated")
+                try? FileManager.default.moveItem(at: path, to: backupPath)
+
+                return config
+            } catch {
+                Log.warn("Failed to migrate config from \(path.path): \(error.localizedDescription)")
+            }
         }
 
-        do {
-            let data = try Data(contentsOf: legacyConfigPath)
-            let config = try JSONDecoder().decode(AppConfig.self, from: data)
-            try config.save()
-            Log.info("Migrated config from \(legacyConfigPath.path)")
-            return config
-        } catch {
-            Log.warn("Failed to migrate legacy config: \(error.localizedDescription)")
-            return nil
-        }
+        return nil
     }
 
     // MARK: - Microphone Methods
@@ -373,4 +380,21 @@ public struct AppConfig: Codable, Sendable {
         }
         return true
     }
+}
+
+// MARK: - Legacy JSON Config for Migration
+
+private struct LegacyJSONConfig: Codable {
+    var microphonePriority: [MicrophoneEntry]?
+    var excludedApps: [AppEntry]?
+    var excludedTitlePatterns: [String]?
+    var excludePrivateBrowsing: Bool?
+    var serverURL: String?
+    var serverKey: String?
+    var localRetentionMB: Int?
+    var syncPaused: Bool?
+    var debugSegments: Bool?
+    var debugKeepRejectedAudio: Bool?
+    var microphoneGain: Float?
+    var silenceMusic: Bool?
 }

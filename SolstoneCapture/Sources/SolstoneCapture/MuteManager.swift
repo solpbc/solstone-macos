@@ -9,26 +9,15 @@ import Foundation
 public final class MuteManager {
     /// Duration options for muting
     public enum MuteDuration: Sendable {
-        case minutes(Int)
+        case until(Date)
         case untilTomorrowMorning
         case indefinite
-
-        public var displayName: String {
-            switch self {
-            case .minutes(let mins):
-                return "\(mins) min"
-            case .untilTomorrowMorning:
-                return "Until tomorrow morning"
-            case .indefinite:
-                return "Until unmute"
-            }
-        }
 
         /// Calculate the expiration date for this duration
         public var expirationDate: Date? {
             switch self {
-            case .minutes(let mins):
-                return Date().addingTimeInterval(TimeInterval(mins * 60))
+            case .until(let date):
+                return date
             case .untilTomorrowMorning:
                 let calendar = Calendar.current
                 var components = calendar.dateComponents([.year, .month, .day], from: Date())
@@ -41,6 +30,54 @@ public final class MuteManager {
                 return nil
             }
         }
+    }
+
+    // MARK: - Quarter Hour Helpers
+
+    /// Returns the next quarter hour (e.g., if now is 14:32, returns 14:45)
+    public static func nextQuarterHour(after date: Date = Date()) -> Date {
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        let minute = components.minute ?? 0
+        let nextQuarter = ((minute / 15) + 1) * 15
+
+        var newComponents = components
+        if nextQuarter >= 60 {
+            newComponents.minute = 0
+            newComponents.second = 0
+            return calendar.date(from: newComponents)!.addingTimeInterval(3600)
+        } else {
+            newComponents.minute = nextQuarter
+            newComponents.second = 0
+            return calendar.date(from: newComponents)!
+        }
+    }
+
+    /// Returns the second quarter hour from now
+    public static func secondQuarterHour(after date: Date = Date()) -> Date {
+        let first = nextQuarterHour(after: date)
+        return nextQuarterHour(after: first)
+    }
+
+    /// Returns the next full hour after the second quarter hour
+    /// (e.g., if now is 15:55, next quarter is 16:00, second is 16:15, so this returns 17:00)
+    /// (e.g., if now is 15:32, next quarter is 15:45, second is 16:00, so this returns 17:00)
+    public static func nextFullHour(after date: Date = Date()) -> Date {
+        let secondQuarter = secondQuarterHour(after: date)
+        let calendar = Calendar.current
+        // Get the hour component and add 1 to get the next full hour after second quarter
+        var components = calendar.dateComponents([.year, .month, .day, .hour], from: secondQuarter)
+        components.hour! += 1
+        components.minute = 0
+        components.second = 0
+        return calendar.date(from: components)!
+    }
+
+    /// Formats a time as HH:mm (e.g., "14:45")
+    public static func formatTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
     }
 
     /// State of a mute

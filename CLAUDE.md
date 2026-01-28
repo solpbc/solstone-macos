@@ -79,7 +79,8 @@ Both use Swift Package Manager with Swift 6.1 and require macOS 15.0+.
 ## File Paths
 
 Segments: `~/Library/Application Support/Solstone/captures/YYYY-MM-DD/HHMMSS_DDD/`
-Config: `~/Library/Application Support/Solstone/config.json`
+Config: UserDefaults (standard macOS preferences storage)
+Server Key: Keychain
 
 ## Technical Notes
 
