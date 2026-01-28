@@ -36,6 +36,11 @@ public actor SyncService {
     private var isSyncing = false
     private var syncTask: Task<Void, Never>?
 
+    // MARK: - Synced Days Cache
+
+    private let syncedDaysKey = "syncedDays"
+    private var syncedDays: Set<String> = []
+
     // MARK: - Event Stream
 
     private let progressContinuation: AsyncStream<ProgressEvent>.Continuation
@@ -55,6 +60,12 @@ public actor SyncService {
         var continuation: AsyncStream<ProgressEvent>.Continuation!
         self.progressStream = AsyncStream { continuation = $0 }
         self.progressContinuation = continuation
+
+        // Load cached synced days
+        if let data = UserDefaults.standard.data(forKey: syncedDaysKey),
+           let days = try? JSONDecoder().decode(Set<String>.self, from: data) {
+            self.syncedDays = days
+        }
     }
 
     // MARK: - Configuration
@@ -98,7 +109,8 @@ public actor SyncService {
     // MARK: - Full Sync
 
     /// Perform full sync: walk all days newest to oldest, upload missing segments
-    public func sync() async {
+    /// - Parameter forceFullSync: When true, ignores cached synced days and checks all days
+    public func sync(forceFullSync: Bool = false) async {
         guard !syncPaused else {
             Log.upload("Sync paused, skipping")
             return
@@ -139,8 +151,23 @@ public actor SyncService {
         let totalSegments = segmentsByDay.values.reduce(0) { $0 + $1.count }
         var checked = 0
 
+        // Get today's date for comparison (never cache today)
+        let today: String = {
+            let f = DateFormatter()
+            f.dateFormat = "yyyyMMdd"
+            return f.string(from: Date())
+        }()
+
         // Walk days from newest to oldest
         for (day, localSegments) in segmentsByDay.sorted(by: { $0.key > $1.key }) {
+            // Skip past days that are already fully synced (unless forcing)
+            if day != today && syncedDays.contains(day) && !forceFullSync {
+                Log.upload("Day \(day): skipping (already synced)")
+                checked += localSegments.count
+                progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
+                continue
+            }
+
             progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
 
             // Query server for all segments on this day
@@ -165,6 +192,9 @@ public actor SyncService {
                 }
             }
 
+            // Track if any segments needed upload this day
+            var anyNeededUpload = false
+
             // Walk local segments newest to oldest (already sorted descending)
             for segmentURL in localSegments {
                 let (_, segment) = convertSegmentPath(segmentURL)
@@ -173,6 +203,7 @@ public actor SyncService {
                 let serverSegment = serverByKey[segment]
 
                 if segmentNeedsUpload(segmentURL: segmentURL, segment: segment, serverSegment: serverSegment) {
+                    anyNeededUpload = true
                     Log.upload("Segment \(segment) needs upload...")
                     let metadataJSON = readSegmentMetadataJSON(segmentURL: segmentURL, segment: segment)
                     await uploadSegmentWithRetry(
@@ -187,6 +218,11 @@ public actor SyncService {
 
                 checked += 1
                 progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
+            }
+
+            // Mark past days as synced if all segments were already on server
+            if day != today && !anyNeededUpload {
+                markDaySynced(day)
             }
         }
 
@@ -527,5 +563,28 @@ public actor SyncService {
             }
         }
         return size
+    }
+
+    // MARK: - Synced Days Persistence
+
+    /// Save synced days to UserDefaults
+    private func saveSyncedDays() {
+        if let data = try? JSONEncoder().encode(syncedDays) {
+            UserDefaults.standard.set(data, forKey: syncedDaysKey)
+        }
+    }
+
+    /// Mark a day as fully synced
+    private func markDaySynced(_ day: String) {
+        syncedDays.insert(day)
+        saveSyncedDays()
+        Log.upload("Marked day \(day) as fully synced")
+    }
+
+    /// Clear the synced days cache (for force re-sync)
+    public func clearSyncedDaysCache() {
+        syncedDays.removeAll()
+        UserDefaults.standard.removeObject(forKey: syncedDaysKey)
+        Log.upload("Cleared synced days cache")
     }
 }

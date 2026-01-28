@@ -438,8 +438,14 @@ struct SettingsView: View {
             }
 
             GroupBox("Upload") {
-                uploadStatusView
-                    .padding(.vertical, 4)
+                VStack(alignment: .leading, spacing: 8) {
+                    uploadStatusView
+                    Button("Force Full Sync") {
+                        appState.uploadCoordinator.forceFullSync()
+                    }
+                    .help("Re-check all days, including previously synced ones")
+                }
+                .padding(.vertical, 4)
             }
 
             GroupBox("Debug") {

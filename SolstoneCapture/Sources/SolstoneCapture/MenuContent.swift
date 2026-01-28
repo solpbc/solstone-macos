@@ -145,30 +145,7 @@ struct MenuContent: View {
                     config.syncPaused = true
                     appState.updateConfig(config)
                 }
-                Text("Upload: \(uploadStatusText)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
             }
-        }
-    }
-
-    private var uploadStatusText: String {
-        let status = appState.uploadCoordinator.status
-        let pending = appState.uploadCoordinator.pendingCount
-
-        switch status {
-        case .notSynced:
-            return "Connecting..."
-        case .synced:
-            return pending > 0 ? "\(pending) pending" : "Synced"
-        case .syncing(let checked, let total):
-            return "Syncing \(checked)/\(total)"
-        case .uploading(let segment):
-            return "Uploading \(segment)"
-        case .retrying(let segment, let attempts):
-            return "Retry #\(attempts): \(segment)"
-        case .offline(let error):
-            return "Offline: \(error)"
         }
     }
 }

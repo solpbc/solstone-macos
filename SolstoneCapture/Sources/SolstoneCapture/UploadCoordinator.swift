@@ -103,6 +103,18 @@ public final class UploadCoordinator {
         }
     }
 
+    /// Force a full re-sync, clearing cached synced days
+    public func forceFullSync() {
+        guard config.isUploadConfigured else {
+            return
+        }
+
+        Task {
+            await syncService.clearSyncedDaysCache()
+            await syncService.sync(forceFullSync: true)
+        }
+    }
+
     /// Test connection to server (for settings UI)
     public func testConnection() async -> String? {
         guard let serverURL = config.serverURL,
