@@ -8,15 +8,22 @@ Solstone Capture is a macOS status bar app for continuous screen and audio recor
 - Per-source audio recording (system audio + individual microphones)
 - 5-minute segment rotation at clock boundaries
 - Audio and video mute with timed unmute
-- Automatic upload with retry
+- Server sync with automatic upload and retry
 - Window exclusion for password managers and private browsers
 - Dynamic microphone join/leave mid-segment
+- Auto-start at login
+- Auto-recovery from capture errors with escalating retry
+- Incomplete segment recovery on startup
 
 ## Requirements
 
 - macOS 15.0+
 - Swift 6.1
 - Swift Package Manager
+
+- Screen Recording permission
+- Microphone permission
+- System Audio Recording permission
 
 ## Building and Running
 
@@ -27,6 +34,7 @@ Solstone Capture is a macOS status bar app for continuous screen and audio recor
 - `make bundle` - Create .app bundle
 - `make install` - Install to /Applications
 - `make clean` - Clean all build artifacts
+- `make reset-permissions` - Reset TCC permissions for testing
 
 ## Architecture
 
@@ -54,3 +62,7 @@ log stream --predicate 'subsystem == "com.solstone.capture" AND category == "upl
 ```
 
 Or use Console.app and filter by subsystem `com.solstone.capture`.
+
+## License
+
+AGPL-3.0-only — Copyright (c) 2026 sol pbc
