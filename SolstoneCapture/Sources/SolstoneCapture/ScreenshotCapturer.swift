@@ -149,7 +149,11 @@ public final class ScreenshotCapturer {
 
         if let stream = stream {
             do {
-                try await stream.stopCapture()
+                try await withTimeout(seconds: 5) {
+                    try await stream.stopCapture()
+                }
+            } catch is TimeoutError {
+                Log.warn("ScreenshotCapturer: Timeout stopping capture stream for display \(displayID)")
             } catch {
                 Log.debug("ScreenshotCapturer: Error stopping stream: \(error)", verbose: verbose)
             }

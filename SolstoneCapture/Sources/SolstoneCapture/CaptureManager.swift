@@ -720,7 +720,9 @@ public final class CaptureManager {
             await waitForAudioDevices(timeout: 5.0)
 
             // Refresh display list
-            let content = try await SCShareableContent.current
+            let content = try await withTimeout(seconds: 10) {
+                try await SCShareableContent.current
+            }
             displays = content.displays
 
             if let firstDisplay = displays.first {
@@ -792,7 +794,9 @@ public final class CaptureManager {
             await waitForAudioDevices(timeout: 5.0)
 
             // Refresh display list
-            let content = try await SCShareableContent.current
+            let content = try await withTimeout(seconds: 10) {
+                try await SCShareableContent.current
+            }
             displays = content.displays
 
             if let firstDisplay = displays.first {

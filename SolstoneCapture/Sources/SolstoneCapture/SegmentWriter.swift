@@ -4,6 +4,7 @@
 import AVFAudio
 import CoreMedia
 import Foundation
+import os
 @preconcurrency import ScreenCaptureKit
 import SolstoneCaptureCore
 
@@ -256,6 +257,22 @@ public final class SegmentWriter {
         for (displayID, capturer) in screenshotCapturers {
             Log.info("Waiting for video finish on display \(displayID)...")
             await withCheckedContinuation { continuation in
+                let resumed = OSAllocatedUnfairLock(initialState: false)
+
+                // Timeout: resume continuation if callback never fires
+                Task {
+                    try? await Task.sleep(for: .seconds(10))
+                    let alreadyResumed = resumed.withLock { state -> Bool in
+                        if state { return true }
+                        state = true
+                        return false
+                    }
+                    if !alreadyResumed {
+                        Log.warn("Timeout waiting for video finish on display \(displayID)")
+                        continuation.resume()
+                    }
+                }
+
                 capturer.finish { result in
                     Log.info("Video finish callback fired for display \(displayID)")
                     switch result {
@@ -264,7 +281,14 @@ public final class SegmentWriter {
                     case let .failure(error):
                         Log.warn("Error finishing video for display \(displayID): \(error)")
                     }
-                    continuation.resume()
+                    let alreadyResumed = resumed.withLock { state -> Bool in
+                        if state { return true }
+                        state = true
+                        return false
+                    }
+                    if !alreadyResumed {
+                        continuation.resume()
+                    }
                 }
             }
             Log.info("Video finish complete for display \(displayID)")
@@ -313,6 +337,22 @@ public final class SegmentWriter {
         Log.debug("Finishing \(screenshotCapturers.count) video output(s)...", verbose: verbose)
         for (displayID, capturer) in screenshotCapturers {
             await withCheckedContinuation { continuation in
+                let resumed = OSAllocatedUnfairLock(initialState: false)
+
+                // Timeout: resume continuation if callback never fires
+                Task {
+                    try? await Task.sleep(for: .seconds(10))
+                    let alreadyResumed = resumed.withLock { state -> Bool in
+                        if state { return true }
+                        state = true
+                        return false
+                    }
+                    if !alreadyResumed {
+                        Log.warn("Timeout waiting for video finish on display \(displayID)")
+                        continuation.resume()
+                    }
+                }
+
                 capturer.finish { result in
                     switch result {
                     case let .success((url, frameCount)):
@@ -320,7 +360,14 @@ public final class SegmentWriter {
                     case let .failure(error):
                         Log.warn("Error finishing video for display \(displayID): \(error)")
                     }
-                    continuation.resume()
+                    let alreadyResumed = resumed.withLock { state -> Bool in
+                        if state { return true }
+                        state = true
+                        return false
+                    }
+                    if !alreadyResumed {
+                        continuation.resume()
+                    }
                 }
             }
         }
