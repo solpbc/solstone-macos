@@ -27,6 +27,10 @@ let package = Package(
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("SoundAnalysis")
             ]
+        ),
+        .testTarget(
+            name: "SolstoneCaptureCoreTests",
+            dependencies: ["SolstoneCaptureCore"]
         )
     ]
 )

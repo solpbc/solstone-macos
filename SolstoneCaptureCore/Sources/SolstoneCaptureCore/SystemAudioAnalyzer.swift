@@ -67,7 +67,7 @@ public final class SystemAudioAnalyzer: Sendable {
     }
 
     /// Merge adjacent silence ranges and apply padding (shrink ranges at boundaries)
-    private func computeSilenceRanges(
+    func computeSilenceRanges(
         from ranges: [CMTimeRange],
         padding: Double
     ) -> [CMTimeRange] {

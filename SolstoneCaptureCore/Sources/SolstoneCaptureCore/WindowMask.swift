@@ -114,7 +114,7 @@ public final class WindowExclusionDetector: @unchecked Sendable {
     ///   - ownerName: The application name (lowercase)
     ///   - windowTitle: The window title
     /// - Returns: True if this is a private browsing window
-    private static func isPrivateBrowserWindow(ownerName: String, windowTitle: String) -> Bool {
+    static func isPrivateBrowserWindow(ownerName: String, windowTitle: String) -> Bool {
         guard browserNames.contains(ownerName) else {
             return false
         }
