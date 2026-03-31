@@ -94,11 +94,11 @@ public final class CaptureManager {
     private var retryCount: Int = 0
     private var isRecovering: Bool = false
 
-    /// Track if we were recording before sleep (for resume on wake)
-    private var wasRecordingBeforeSleep: Bool = false
+    /// Tracks whether recording should resume when conditions allow (after wake/unlock)
+    private var suspendedForRecovery: Bool = false
 
-    /// Track if we were recording before screen lock (for resume on unlock)
-    private var wasRecordingBeforeLock: Bool = false
+    /// Debounce task for unlock resume (cancelled by subsequent lock/sleep)
+    private var unlockResumeTask: Task<Void, Never>? = nil
 
     /// Current default microphone device ID (for change detection)
     private var currentDefaultMicID: AudioDeviceID?
@@ -269,6 +269,11 @@ public final class CaptureManager {
         self.disabledMicUIDs = disabledMicUIDs
         guard state.isIdle || state.isPaused else { return }
 
+        // Clear any stale recovery state (e.g., user manually restarted while paused from sleep/lock)
+        suspendedForRecovery = false
+        unlockResumeTask?.cancel()
+        unlockResumeTask = nil
+
         // Ensure storage directory exists
         try storageManager.ensureBaseDirectoryExists()
 
@@ -344,6 +349,9 @@ public final class CaptureManager {
         windowExclusionTimer = nil
         stopHeartbeat()
         stopRecoveryTimer()
+        suspendedForRecovery = false
+        unlockResumeTask?.cancel()
+        unlockResumeTask = nil
 
         // Finish current segment and rename to actual duration
         var completedSegmentURL: URL?
@@ -378,6 +386,9 @@ public final class CaptureManager {
         segmentTimer = nil
         stopHeartbeat()
         stopRecoveryTimer()
+        suspendedForRecovery = false
+        unlockResumeTask?.cancel()
+        unlockResumeTask = nil
 
         // Finish current segment and rename to actual duration
         var completedSegmentURL: URL?
@@ -727,12 +738,15 @@ public final class CaptureManager {
     }
 
     private func handleWillSleep() async {
-        Log.info("System going to sleep")
+        Log.info("[Event] willSleep (state: \(state.label), suspended: \(suspendedForRecovery))")
 
-        // Remember if we were actively recording
-        wasRecordingBeforeSleep = state.isRecording
+        // Cancel any pending unlock resume — sleep supersedes it
+        unlockResumeTask?.cancel()
+        unlockResumeTask = nil
 
         guard state.isRecording else { return }
+
+        suspendedForRecovery = true
 
         // Finish current segment gracefully before sleep
         segmentTimer?.invalidate()
@@ -755,7 +769,6 @@ public final class CaptureManager {
         // Use beginActivity to request time for upload before system suspends
         // Fire async to avoid blocking MainActor during sleep transition
         if let url = completedSegmentURL, let callback = onSegmentComplete {
-            // Request system to delay sudden termination for our upload activity
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.suddenTerminationDisabled, .automaticTerminationDisabled],
                 reason: "Processing and uploading segment before sleep"
@@ -773,24 +786,25 @@ public final class CaptureManager {
     }
 
     private func handleDidWake() async {
-        Log.info("System woke from sleep")
+        Log.info("[Event] didWake (state: \(state.label), suspended: \(suspendedForRecovery))")
 
-        // Only resume if we were recording before sleep
-        guard wasRecordingBeforeSleep else { return }
-        wasRecordingBeforeSleep = false
+        guard suspendedForRecovery else { return }
+
+        // Already recording (shouldn't happen, but guard against double-start)
+        guard !state.isRecording else {
+            Log.warn("[Event] didWake: already recording, skipping resume")
+            return
+        }
 
         // If screen is locked, defer resume to unlock handler
         guard !isScreenLocked() else {
             Log.info("Screen is locked after wake, deferring to unlock handler")
-            wasRecordingBeforeLock = true
             return
         }
 
         do {
-            // Wait for audio devices to become available (up to 5 seconds)
             await waitForAudioDevices(timeout: 5.0)
 
-            // Refresh display list
             let content = try await withTimeout(seconds: 10) {
                 try await SCShareableContent.current
             }
@@ -800,11 +814,11 @@ public final class CaptureManager {
                 contentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
             }
 
-            // Update current default mic (may have changed on dock/undock)
             currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
 
-            // Start fresh segment with current device state
             try await startNewSegment()
+
+            suspendedForRecovery = false
 
             let oldState = state.label
             state = .recording
@@ -819,12 +833,15 @@ public final class CaptureManager {
     }
 
     private func handleScreenLocked() async {
-        Log.info("Screen locked")
+        Log.info("[Event] screenLocked (state: \(state.label), suspended: \(suspendedForRecovery))")
 
-        // Remember if we were actively recording
-        wasRecordingBeforeLock = state.isRecording
+        // Cancel any pending unlock resume
+        unlockResumeTask?.cancel()
+        unlockResumeTask = nil
 
         guard state.isRecording else { return }
+
+        suspendedForRecovery = true
 
         // Finish current segment gracefully before lock
         segmentTimer?.invalidate()
@@ -859,41 +876,63 @@ public final class CaptureManager {
     }
 
     private func handleScreenUnlocked() async {
-        Log.info("Screen unlocked")
+        Log.info("[Event] screenUnlocked (state: \(state.label), suspended: \(suspendedForRecovery))")
 
-        // Only resume if we were recording before lock
-        guard wasRecordingBeforeLock else { return }
-        wasRecordingBeforeLock = false
+        guard suspendedForRecovery else { return }
 
-        do {
-            // Wait for audio devices to become available (up to 5 seconds)
-            await waitForAudioDevices(timeout: 5.0)
+        // Already recording (shouldn't happen, but guard against double-start)
+        guard !state.isRecording else {
+            Log.warn("[Event] screenUnlocked: already recording, skipping resume")
+            return
+        }
 
-            // Refresh display list
-            let content = try await withTimeout(seconds: 10) {
-                try await SCShareableContent.current
+        // Cancel any existing debounce task
+        unlockResumeTask?.cancel()
+        unlockResumeTask = nil
+
+        // Debounce: wait 0.5s before resuming to handle rapid lock/unlock cycling
+        unlockResumeTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 500_000_000)
+            } catch {
+                // Task was cancelled (rapid re-lock)
+                return
             }
-            displays = content.displays
 
-            if let firstDisplay = displays.first {
-                contentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
+            guard let self = self else { return }
+
+            // Re-check state after debounce
+            guard self.suspendedForRecovery, !self.state.isRecording else { return }
+
+            do {
+                await self.waitForAudioDevices(timeout: 5.0)
+
+                let content = try await withTimeout(seconds: 10) {
+                    try await SCShareableContent.current
+                }
+                self.displays = content.displays
+
+                if let firstDisplay = self.displays.first {
+                    self.contentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
+                }
+
+                self.currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
+
+                try await self.startNewSegment()
+
+                self.suspendedForRecovery = false
+                self.unlockResumeTask = nil
+
+                let oldState = self.state.label
+                self.state = .recording
+                Log.info("[State] \(oldState) -> \(self.state.label) (trigger: unlock)")
+                self.onStateChanged?(self.state)
+                self.startHeartbeat()
+                Log.info("Capture resumed after unlock")
+            } catch {
+                self.transitionToError("Failed to resume after unlock: \(error.localizedDescription)", trigger: "unlock_failed")
+                Log.error("Failed to resume capture after unlock: \(error)")
             }
-
-            // Update current default mic (may have changed)
-            currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
-
-            // Start fresh segment
-            try await startNewSegment()
-
-            let oldState = state.label
-            state = .recording
-            Log.info("[State] \(oldState) -> \(state.label) (trigger: unlock)")
-            onStateChanged?(state)
-            startHeartbeat()
-            Log.info("Capture resumed after unlock")
-        } catch {
-            transitionToError("Failed to resume after unlock: \(error.localizedDescription)", trigger: "unlock_failed")
-            Log.error("Failed to resume capture after unlock: \(error)")
         }
     }
 
