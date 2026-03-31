@@ -11,6 +11,8 @@ import SolstoneCaptureCore
 @MainActor
 public final class ScreenshotCapturer {
     public let displayID: CGDirectDisplayID
+    public var onHealthFailure: (() -> Void)?
+
     private let videoWriter: VideoWriter
     private let verbose: Bool
 
@@ -18,10 +20,17 @@ public final class ScreenshotCapturer {
     private let configuration: SCStreamConfiguration
     private var stream: SCStream?
     private var streamOutput: VideoStreamOutput?
+    private var streamDelegate: StreamDelegate?
+    private var healthCheckTimer: Timer?
     private var isRunning = false
     private let captureStartTime: Date
     private var frameIndex: Int = 0
     private var skippedFrames: Int = 0
+    private var consecutiveEmptyChecks = 0
+    private var healthCheckFrameCount = 0
+
+    private let healthCheckInterval: TimeInterval = 30.0
+    private let maxEmptyChecks: Int = 2
 
     /// Creates a screenshot capturer for a single display
     /// - Parameters:
@@ -102,11 +111,19 @@ public final class ScreenshotCapturer {
             }
             self.streamOutput = output
 
+            let delegate = StreamDelegate { [weak self] error in
+                Task { @MainActor in
+                    self?.handleStreamError(error)
+                }
+            }
+            self.streamDelegate = delegate
+
             // Create and start the persistent stream
-            let newStream = SCStream(filter: contentFilter, configuration: configuration, delegate: nil)
+            let newStream = SCStream(filter: contentFilter, configuration: configuration, delegate: delegate)
             try newStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
             try await newStream.startCapture()
             self.stream = newStream
+            startHealthCheck()
 
             Log.info("ScreenshotCapturer: Started persistent stream for display \(displayID)")
         } catch {
@@ -121,6 +138,7 @@ public final class ScreenshotCapturer {
     ///   - isIdle: True if SCStream reports the frame as idle (no content change)
     private func handleFrame(_ pixelBuffer: CVPixelBuffer, isIdle: Bool) {
         guard isRunning else { return }
+        healthCheckFrameCount += 1
 
         // SCStream tells us when content hasn't changed via frame status
         if isIdle {
@@ -145,6 +163,7 @@ public final class ScreenshotCapturer {
 
     /// Stops the capture stream
     public func stop() async {
+        stopHealthCheck()
         isRunning = false
 
         if let stream = stream {
@@ -161,6 +180,7 @@ public final class ScreenshotCapturer {
 
         stream = nil
         streamOutput = nil
+        streamDelegate = nil
 
         let totalFrames = frameIndex + skippedFrames
         let skipPercent = totalFrames > 0 ? (skippedFrames * 100) / totalFrames : 0
@@ -173,6 +193,113 @@ public final class ScreenshotCapturer {
         Task {
             await stop()
             videoWriter.finish(completion: completion)
+        }
+    }
+
+    private func getAndResetFrameCount() -> Int {
+        let frameCount = healthCheckFrameCount
+        healthCheckFrameCount = 0
+        return frameCount
+    }
+
+    private func startHealthCheck() {
+        stopHealthCheck()
+        consecutiveEmptyChecks = 0
+        healthCheckTimer = Timer.scheduledTimer(withTimeInterval: healthCheckInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.performHealthCheck()
+            }
+        }
+        healthCheckTimer?.tolerance = 10.0
+    }
+
+    private func stopHealthCheck() {
+        healthCheckTimer?.invalidate()
+        healthCheckTimer = nil
+    }
+
+    private func performHealthCheck() async {
+        guard stream != nil else { return }
+
+        let frameCount = getAndResetFrameCount()
+        if frameCount > 0 {
+            consecutiveEmptyChecks = 0
+            return
+        }
+
+        consecutiveEmptyChecks += 1
+        Log.warn("ScreenshotCapturer: Health check found no frames for display \(displayID) (consecutive: \(consecutiveEmptyChecks)/\(maxEmptyChecks))")
+
+        if consecutiveEmptyChecks >= maxEmptyChecks {
+            Log.error("ScreenshotCapturer: Health check failed for display \(displayID), restarting stream")
+            onHealthFailure?()
+            await restartStream()
+        }
+    }
+
+    private func restartStream() async {
+        guard isRunning, stream != nil else {
+            Log.debug("ScreenshotCapturer: Restart requested for display \(displayID) but stream is not running", verbose: verbose)
+            return
+        }
+
+        Log.info("ScreenshotCapturer: Restarting stream for display \(displayID)")
+
+        if let stream = self.stream {
+            self.streamOutput = nil
+            do {
+                try await withTimeout(seconds: 5) {
+                    try await stream.stopCapture()
+                }
+            } catch is TimeoutError {
+                Log.warn("ScreenshotCapturer: Timeout stopping stream during restart for display \(displayID)")
+            } catch {
+                Log.debug("ScreenshotCapturer: Error stopping stream during restart for display \(displayID): \(error)", verbose: verbose)
+            }
+        }
+
+        self.stream = nil
+        self.streamDelegate = nil
+
+        do {
+            try await Task.sleep(nanoseconds: 500_000_000)
+        } catch {
+            Log.debug("ScreenshotCapturer: Restart sleep interrupted for display \(displayID): \(error)", verbose: verbose)
+        }
+
+        let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
+            Task { @MainActor in
+                self?.handleFrame(pixelBuffer, isIdle: isIdle)
+            }
+        }
+        self.streamOutput = output
+
+        let delegate = StreamDelegate { [weak self] error in
+            Task { @MainActor in
+                self?.handleStreamError(error)
+            }
+        }
+        self.streamDelegate = delegate
+
+        do {
+            let newStream = SCStream(filter: self.contentFilter, configuration: self.configuration, delegate: delegate)
+            try newStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
+            try await newStream.startCapture()
+            self.stream = newStream
+            self.consecutiveEmptyChecks = 0
+            self.healthCheckFrameCount = 0
+            Log.info("ScreenshotCapturer: Stream restarted successfully for display \(displayID)")
+        } catch {
+            Log.error("ScreenshotCapturer: Failed to restart stream for display \(displayID): \(error)")
+        }
+    }
+
+    private func handleStreamError(_ error: Error) {
+        guard isRunning else { return }
+        Log.error("ScreenshotCapturer: Stream error for display \(displayID): \(error)")
+        onHealthFailure?()
+        Task { @MainActor [weak self] in
+            await self?.restartStream()
         }
     }
 }
@@ -204,5 +331,19 @@ private final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Send
         }
 
         onFrame(pixelBuffer, isIdle)
+    }
+}
+
+// MARK: - Stream Delegate
+
+private final class StreamDelegate: NSObject, SCStreamDelegate, @unchecked Sendable {
+    let onError: (Error) -> Void
+
+    init(onError: @escaping (Error) -> Void) {
+        self.onError = onError
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        onError(error)
     }
 }

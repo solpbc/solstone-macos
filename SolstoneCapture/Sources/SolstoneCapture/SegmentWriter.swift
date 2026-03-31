@@ -127,6 +127,9 @@ public final class SegmentWriter {
                 contentFilter: filter,
                 verbose: verbose
             )
+            capturer.onHealthFailure = {
+                Log.warn("ScreenshotCapturer: health failure reported for display \(info.displayID)")
+            }
 
             screenshotCapturers[info.displayID] = capturer
         }
