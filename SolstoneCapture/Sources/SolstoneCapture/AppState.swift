@@ -251,9 +251,6 @@ public final class AppState {
     public func startRecording() async {
         do {
             try await captureManager.startRecording(disabledMicUIDs: config.disabledMicrophoneUIDs)
-            isRecording = true
-            isPaused = false
-            errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -261,8 +258,6 @@ public final class AppState {
 
     public func stopRecording() async {
         await captureManager.stopRecording()
-        isRecording = false
-        isPaused = false
     }
 
     public func toggleRecording() async {
@@ -288,6 +283,8 @@ public final class AppState {
             isRecording = true
             isPaused = true
         case .error(let message):
+            isRecording = false
+            isPaused = false
             errorMessage = message
         }
     }
