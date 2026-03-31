@@ -48,12 +48,14 @@ bundle-universal: release-universal
 	@cp Sources/SolstoneCapture/Info.plist SolstoneCapture.app/Contents/
 	@echo "Created universal SolstoneCapture.app"
 
-# Install to /Applications
+# Install to /Applications (resets TCC so rebuilt binary is recognized)
 install: bundle
 	@echo "Installing to /Applications..."
 	@rm -rf /Applications/SolstoneCapture.app
 	@cp -r SolstoneCapture.app /Applications/
-	@echo "Installed to /Applications/SolstoneCapture.app"
+	-@tccutil reset ScreenCapture com.solstone.capture 2>/dev/null
+	-@tccutil reset Microphone com.solstone.capture 2>/dev/null
+	@echo "Installed to /Applications/SolstoneCapture.app (TCC reset, will prompt on first launch)"
 
 # Open the app
 open: bundle
