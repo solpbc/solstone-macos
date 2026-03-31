@@ -53,11 +53,15 @@ public final class CaptureManager {
     private let storageManager: StorageManager
     private var currentSegment: SegmentWriter?
     private var segmentTimer: Timer?
+    /// Recovery timer for auto-retry after error state
+    private var retryTimer: Timer?
     private var windowExclusionTimer: Timer?
     private var heartbeatTimer: Timer?
     private var displays: [SCDisplay] = []
     private var contentFilter: SCContentFilter?
     private let verbose: Bool
+    private let retryDelays: [TimeInterval] = [5, 30, 60]
+    private let maxRetryCount = 20
 
     /// Persistent mic capture manager - keeps AVAudioEngine instances alive across segment rotations
     /// This prevents audio playback interference during rotation
@@ -86,6 +90,9 @@ public final class CaptureManager {
 
     /// Flag to prevent concurrent segment rotations
     private var isRotatingSegment: Bool = false
+
+    private var retryCount: Int = 0
+    private var isRecovering: Bool = false
 
     /// Track if we were recording before sleep (for resume on wake)
     private var wasRecordingBeforeSleep: Bool = false
@@ -336,6 +343,7 @@ public final class CaptureManager {
         windowExclusionTimer?.invalidate()
         windowExclusionTimer = nil
         stopHeartbeat()
+        stopRecoveryTimer()
 
         // Finish current segment and rename to actual duration
         var completedSegmentURL: URL?
@@ -369,6 +377,7 @@ public final class CaptureManager {
         segmentTimer?.invalidate()
         segmentTimer = nil
         stopHeartbeat()
+        stopRecoveryTimer()
 
         // Finish current segment and rename to actual duration
         var completedSegmentURL: URL?
@@ -555,6 +564,14 @@ public final class CaptureManager {
         heartbeatTimer = nil
     }
 
+    private func transitionToError(_ message: String, trigger: String) {
+        let oldState = state.label
+        state = .error(message)
+        Log.info("[State] \(oldState) -> error (trigger: \(trigger), error: \(message))")
+        onStateChanged?(state)
+        startRecoveryTimer()
+    }
+
     /// Calculate seconds until the next 5-minute clock boundary
     private static func timeUntilNextSegmentBoundary() -> TimeInterval {
         let now = Date()
@@ -594,10 +611,7 @@ public final class CaptureManager {
         do {
             (newSegmentDir, newTimePrefix) = try storageManager.createSegmentDirectory(segmentStartTime: Date())
         } catch {
-            let oldState = state.label
-            state = .error("Failed to create segment directory: \(error.localizedDescription)")
-            Log.info("[State] \(oldState) -> error (trigger: rotation_failed, error: \(error.localizedDescription))")
-            onStateChanged?(state)
+            transitionToError("Failed to create segment directory: \(error.localizedDescription)", trigger: "rotation_failed")
             Log.error("Failed to rotate segment: \(error)")
             return
         }
@@ -630,10 +644,7 @@ public final class CaptureManager {
         do {
             try await startNewSegmentWithDirectory(newSegmentDir, timePrefix: newTimePrefix, mics: Array(availableMics))
         } catch {
-            let oldState = state.label
-            state = .error("Failed to start new segment: \(error.localizedDescription)")
-            Log.info("[State] \(oldState) -> error (trigger: rotation_failed, error: \(error.localizedDescription))")
-            onStateChanged?(state)
+            transitionToError("Failed to start new segment: \(error.localizedDescription)", trigger: "rotation_failed")
             Log.error("Failed to start new segment: \(error)")
         }
 
@@ -802,10 +813,7 @@ public final class CaptureManager {
             startHeartbeat()
             Log.info("Capture resumed after wake")
         } catch {
-            let oldState = state.label
-            state = .error("Failed to resume after wake: \(error.localizedDescription)")
-            Log.info("[State] \(oldState) -> error (trigger: wake_failed, error: \(error.localizedDescription))")
-            onStateChanged?(state)
+            transitionToError("Failed to resume after wake: \(error.localizedDescription)", trigger: "wake_failed")
             Log.error("Failed to resume capture after wake: \(error)")
         }
     }
@@ -884,11 +892,99 @@ public final class CaptureManager {
             startHeartbeat()
             Log.info("Capture resumed after unlock")
         } catch {
-            let oldState = state.label
-            state = .error("Failed to resume after unlock: \(error.localizedDescription)")
-            Log.info("[State] \(oldState) -> error (trigger: unlock_failed, error: \(error.localizedDescription))")
-            onStateChanged?(state)
+            transitionToError("Failed to resume after unlock: \(error.localizedDescription)", trigger: "unlock_failed")
             Log.error("Failed to resume capture after unlock: \(error)")
+        }
+    }
+
+    // MARK: - Recovery
+
+    /// Schedules the next recovery attempt based on retryCount
+    private func startRecoveryTimer() {
+        retryTimer?.invalidate()
+
+        guard retryCount < maxRetryCount else {
+            Log.error("[Recovery] Giving up after \(maxRetryCount) failed attempts")
+            return
+        }
+
+        let delay = retryCount < retryDelays.count ? retryDelays[retryCount] : 300.0
+        Log.info("[Recovery] Scheduling attempt \(retryCount + 1)/\(maxRetryCount) in \(Int(delay))s")
+
+        retryTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                await self?.attemptRecovery()
+            }
+        }
+        retryTimer?.tolerance = 5.0
+    }
+
+    /// Cancels pending recovery and resets retry state
+    private func stopRecoveryTimer() {
+        retryTimer?.invalidate()
+        retryTimer = nil
+        retryCount = 0
+        isRecovering = false
+    }
+
+    /// Attempts to recover from error state by refreshing displays and starting a new segment
+    private func attemptRecovery() async {
+        guard state.isError else {
+            stopRecoveryTimer()
+            return
+        }
+
+        guard !isScreenLocked() else {
+            Log.info("[Recovery] Screen is locked, deferring recovery")
+            startRecoveryTimer()
+            return
+        }
+
+        guard !isRecovering else {
+            Log.info("[Recovery] Already in progress, skipping")
+            return
+        }
+
+        isRecovering = true
+        defer { isRecovering = false }
+
+        let attempt = retryCount + 1
+        Log.info("[Recovery] Attempting recovery \(attempt)/\(maxRetryCount)")
+
+        do {
+            // Refresh display list
+            let content = try await withTimeout(seconds: 10) {
+                try await SCShareableContent.current
+            }
+            displays = content.displays
+
+            guard let firstDisplay = displays.first else {
+                throw CaptureError.noDisplaysAvailable
+            }
+
+            contentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
+
+            // Start fresh segment
+            try await startNewSegment()
+
+            // Success - restore recording state
+            currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
+            let oldState = state.label
+            state = .recording
+            Log.info("[State] \(oldState) -> \(state.label) (trigger: recovery)")
+            onStateChanged?(state)
+            startHeartbeat()
+            stopRecoveryTimer()
+            Log.info("[Recovery] Successfully recovered on attempt \(attempt)")
+        } catch {
+            retryCount += 1
+            Log.info("[Recovery] Attempt \(attempt) failed: \(error.localizedDescription)")
+
+            if retryCount >= maxRetryCount {
+                Log.error("[Recovery] Giving up after \(maxRetryCount) failed attempts")
+            } else {
+                startRecoveryTimer()
+            }
         }
     }
 
