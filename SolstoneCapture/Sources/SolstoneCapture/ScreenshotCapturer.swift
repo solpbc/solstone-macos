@@ -28,6 +28,8 @@ public final class ScreenshotCapturer {
     private var skippedFrames: Int = 0
     private var consecutiveEmptyChecks = 0
     private var healthCheckFrameCount = 0
+    private var firstFrameLogged = false
+    private var streamStartTime: Date?
 
     private let healthCheckInterval: TimeInterval = 30.0
     private let maxEmptyChecks: Int = 2
@@ -101,6 +103,8 @@ public final class ScreenshotCapturer {
     public func start() async {
         guard !isRunning else { return }
         isRunning = true
+        firstFrameLogged = false
+        streamStartTime = Date()
 
         do {
             // Create stream output handler
@@ -139,6 +143,12 @@ public final class ScreenshotCapturer {
     private func handleFrame(_ pixelBuffer: CVPixelBuffer, isIdle: Bool) {
         guard isRunning else { return }
         healthCheckFrameCount += 1
+
+        if !firstFrameLogged {
+            firstFrameLogged = true
+            let elapsed = streamStartTime.map { String(format: "%.1f", Date().timeIntervalSince($0)) } ?? "?"
+            Log.info("ScreenshotCapturer: First frame received for display \(displayID) after \(elapsed)s")
+        }
 
         // SCStream tells us when content hasn't changed via frame status
         if isIdle {
@@ -286,6 +296,8 @@ public final class ScreenshotCapturer {
             try newStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
             try await newStream.startCapture()
             self.stream = newStream
+            self.firstFrameLogged = false
+            self.streamStartTime = Date()
             self.consecutiveEmptyChecks = 0
             self.healthCheckFrameCount = 0
             Log.info("ScreenshotCapturer: Stream restarted successfully for display \(displayID)")

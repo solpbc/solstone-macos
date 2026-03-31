@@ -37,6 +37,15 @@ public final class CaptureManager {
             if case .error = self { return true }
             return false
         }
+
+        var label: String {
+            switch self {
+            case .idle: return "idle"
+            case .recording: return "recording"
+            case .paused: return "paused"
+            case .error: return "error"
+            }
+        }
     }
 
     // MARK: - Properties
@@ -45,6 +54,7 @@ public final class CaptureManager {
     private var currentSegment: SegmentWriter?
     private var segmentTimer: Timer?
     private var windowExclusionTimer: Timer?
+    private var heartbeatTimer: Timer?
     private var displays: [SCDisplay] = []
     private var contentFilter: SCContentFilter?
     private let verbose: Bool
@@ -273,8 +283,11 @@ public final class CaptureManager {
         // Start monitoring for default microphone changes
         startDefaultMicMonitoring()
 
+        let oldState = state.label
         state = .recording
+        Log.info("[State] \(oldState) -> \(state.label) (trigger: manual_start)")
         onStateChanged?(state)
+        startHeartbeat()
 
         Log.info("Started recording session with \(displays.count) display(s)")
     }
@@ -322,6 +335,7 @@ public final class CaptureManager {
         segmentTimer = nil
         windowExclusionTimer?.invalidate()
         windowExclusionTimer = nil
+        stopHeartbeat()
 
         // Finish current segment and rename to actual duration
         var completedSegmentURL: URL?
@@ -334,7 +348,9 @@ public final class CaptureManager {
         micCaptureManager.stopAll()
         await systemAudioCaptureManager.stop()
 
+        let oldState = state.label
         state = .idle
+        Log.info("[State] \(oldState) -> \(state.label) (trigger: manual_stop)")
         onStateChanged?(state)
 
         Log.info("Stopped recording")
@@ -352,6 +368,7 @@ public final class CaptureManager {
         // Stop segment timer
         segmentTimer?.invalidate()
         segmentTimer = nil
+        stopHeartbeat()
 
         // Finish current segment and rename to actual duration
         var completedSegmentURL: URL?
@@ -364,7 +381,9 @@ public final class CaptureManager {
         micCaptureManager.stopAll()
         await systemAudioCaptureManager.stop()
 
+        let oldState = state.label
         state = .paused
+        Log.info("[State] \(oldState) -> \(state.label) (trigger: manual_pause)")
         onStateChanged?(state)
 
         Log.info("Paused recording")
@@ -382,8 +401,11 @@ public final class CaptureManager {
         // Start new segment
         try await startNewSegment()
 
+        let oldState = state.label
         state = .recording
+        Log.info("[State] \(oldState) -> \(state.label) (trigger: manual_resume)")
         onStateChanged?(state)
+        startHeartbeat()
 
         Log.info("Resumed recording")
     }
@@ -515,6 +537,24 @@ public final class CaptureManager {
         Log.info("Next segment rotation in \(Int(interval)) seconds")
     }
 
+    private func startHeartbeat() {
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let segmentName = self.currentSegment?.outputDirectory.lastPathComponent ?? "none"
+                let sysAudio = self.systemAudioCaptureManager.isRunning ? "running" : "stopped"
+                Log.info("[Heartbeat] state=\(self.state.label) displays=\(self.displays.count) segment=\(segmentName) rotation_in=\(Int(self.segmentTimeRemaining))s sysaudio=\(sysAudio)")
+            }
+        }
+        heartbeatTimer?.tolerance = 30.0
+    }
+
+    private func stopHeartbeat() {
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
+    }
+
     /// Calculate seconds until the next 5-minute clock boundary
     private static func timeUntilNextSegmentBoundary() -> TimeInterval {
         let now = Date()
@@ -554,7 +594,9 @@ public final class CaptureManager {
         do {
             (newSegmentDir, newTimePrefix) = try storageManager.createSegmentDirectory(segmentStartTime: Date())
         } catch {
+            let oldState = state.label
             state = .error("Failed to create segment directory: \(error.localizedDescription)")
+            Log.info("[State] \(oldState) -> error (trigger: rotation_failed, error: \(error.localizedDescription))")
             onStateChanged?(state)
             Log.error("Failed to rotate segment: \(error)")
             return
@@ -566,6 +608,19 @@ public final class CaptureManager {
             captureResult = await segment.finishCapture()
         }
 
+        // Log segment directory summary
+        if let result = captureResult {
+            let dir = result.segmentDirectory
+            do {
+                let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey])
+                let totalBytes = files.compactMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize }.reduce(0, +)
+                let totalMB = Double(totalBytes) / 1_048_576.0
+                Log.info("[Segment] Finished \(dir.lastPathComponent): \(files.count) files, \(String(format: "%.1f", totalMB)) MB")
+            } catch {
+                Log.info("[Segment] Finished \(dir.lastPathComponent): unable to read directory")
+            }
+        }
+
         // Collect available mics for new segment
         let availableMics = MicrophoneMonitor.listInputDevices()
             .filter { !disabledMicUIDs.contains($0.uid) }
@@ -575,7 +630,9 @@ public final class CaptureManager {
         do {
             try await startNewSegmentWithDirectory(newSegmentDir, timePrefix: newTimePrefix, mics: Array(availableMics))
         } catch {
+            let oldState = state.label
             state = .error("Failed to start new segment: \(error.localizedDescription)")
+            Log.info("[State] \(oldState) -> error (trigger: rotation_failed, error: \(error.localizedDescription))")
             onStateChanged?(state)
             Log.error("Failed to start new segment: \(error)")
         }
@@ -669,6 +726,7 @@ public final class CaptureManager {
         // Finish current segment gracefully before sleep
         segmentTimer?.invalidate()
         segmentTimer = nil
+        stopHeartbeat()
 
         let completedSegmentURL: URL?
         if let segment = currentSegment {
@@ -678,7 +736,9 @@ public final class CaptureManager {
             completedSegmentURL = nil
         }
 
+        let oldState = state.label
         state = .paused
+        Log.info("[State] \(oldState) -> \(state.label) (trigger: sleep)")
         onStateChanged?(state)
 
         // Use beginActivity to request time for upload before system suspends
@@ -735,11 +795,16 @@ public final class CaptureManager {
             // Start fresh segment with current device state
             try await startNewSegment()
 
+            let oldState = state.label
             state = .recording
+            Log.info("[State] \(oldState) -> \(state.label) (trigger: wake)")
             onStateChanged?(state)
+            startHeartbeat()
             Log.info("Capture resumed after wake")
         } catch {
+            let oldState = state.label
             state = .error("Failed to resume after wake: \(error.localizedDescription)")
+            Log.info("[State] \(oldState) -> error (trigger: wake_failed, error: \(error.localizedDescription))")
             onStateChanged?(state)
             Log.error("Failed to resume capture after wake: \(error)")
         }
@@ -756,6 +821,7 @@ public final class CaptureManager {
         // Finish current segment gracefully before lock
         segmentTimer?.invalidate()
         segmentTimer = nil
+        stopHeartbeat()
 
         let completedSegmentURL: URL?
         if let segment = currentSegment {
@@ -769,7 +835,9 @@ public final class CaptureManager {
         micCaptureManager.stopAll()
         await systemAudioCaptureManager.stop()
 
+        let oldState = state.label
         state = .paused
+        Log.info("[State] \(oldState) -> \(state.label) (trigger: lock)")
         onStateChanged?(state)
 
         // Trigger upload callback
@@ -809,11 +877,16 @@ public final class CaptureManager {
             // Start fresh segment
             try await startNewSegment()
 
+            let oldState = state.label
             state = .recording
+            Log.info("[State] \(oldState) -> \(state.label) (trigger: unlock)")
             onStateChanged?(state)
+            startHeartbeat()
             Log.info("Capture resumed after unlock")
         } catch {
+            let oldState = state.label
             state = .error("Failed to resume after unlock: \(error.localizedDescription)")
+            Log.info("[State] \(oldState) -> error (trigger: unlock_failed, error: \(error.localizedDescription))")
             onStateChanged?(state)
             Log.error("Failed to resume capture after unlock: \(error)")
         }
