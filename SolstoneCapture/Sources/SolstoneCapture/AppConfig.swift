@@ -81,14 +81,17 @@ public struct AppConfig: Sendable {
     public var serverURL: String?
 
     /// API key for remote server authentication - stored securely in Keychain
-    public var serverKey: String? {
-        get { KeychainManager.loadServerKey() }
-        set {
-            if let key = newValue {
-                KeychainManager.saveServerKey(key)
-            } else {
-                KeychainManager.deleteServerKey()
-            }
+    /// Cached in memory to avoid repeated keychain reads (which can trigger auth prompts on rebuild).
+    /// Loaded once from keychain during `load()`. Use `setServerKey(_:)` to update.
+    public private(set) var serverKey: String?
+
+    /// Update the server key (persists to keychain)
+    public mutating func setServerKey(_ key: String?) {
+        serverKey = key
+        if let key = key {
+            KeychainManager.saveServerKey(key)
+        } else {
+            KeychainManager.deleteServerKey()
         }
     }
 
@@ -162,7 +165,7 @@ public struct AppConfig: Sendable {
             excludedApps = (try? JSONDecoder().decode([AppEntry].self, from: data)) ?? []
         }
 
-        return AppConfig(
+        var config = AppConfig(
             microphonePriority: microphonePriority,
             excludedApps: excludedApps,
             excludedTitlePatterns: defaults.stringArray(forKey: Keys.excludedTitlePatterns) ?? [],
@@ -175,6 +178,9 @@ public struct AppConfig: Sendable {
             microphoneGain: defaults.object(forKey: Keys.microphoneGain) as? Float ?? 2.0,
             silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true
         )
+        // Load server key from keychain once (avoids repeated keychain reads that prompt on rebuild)
+        config.serverKey = KeychainManager.loadServerKey()
+        return config
     }
 
     /// Loads config or creates with defaults if missing
@@ -257,7 +263,7 @@ public struct AppConfig: Sendable {
                 let data = try Data(contentsOf: path)
                 let legacyConfig = try JSONDecoder().decode(LegacyJSONConfig.self, from: data)
 
-                let config = AppConfig(
+                var config = AppConfig(
                     microphonePriority: legacyConfig.microphonePriority ?? [],
                     excludedApps: legacyConfig.excludedApps ?? [],
                     excludedTitlePatterns: legacyConfig.excludedTitlePatterns ?? [],
@@ -276,6 +282,8 @@ public struct AppConfig: Sendable {
                     KeychainManager.saveServerKey(key)
                     Log.info("Migrated server key from JSON to Keychain")
                 }
+                // Cache the server key in the config struct
+                config.serverKey = KeychainManager.loadServerKey()
 
                 try config.save()
                 defaults.set(true, forKey: Keys.didMigrateFromJSON)

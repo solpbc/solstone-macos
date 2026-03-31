@@ -57,7 +57,7 @@ struct SettingsView: View {
             get: { appState.config.serverKey ?? "" },
             set: { newValue in
                 var config = appState.config
-                config.serverKey = newValue.isEmpty ? nil : newValue
+                config.setServerKey(newValue.isEmpty ? nil : newValue)
                 appState.updateConfig(config)
             }
         )

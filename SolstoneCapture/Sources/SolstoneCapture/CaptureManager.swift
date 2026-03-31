@@ -575,12 +575,29 @@ public final class CaptureManager {
         heartbeatTimer = nil
     }
 
+    /// Check if an error is a permission/TCC denial that will never self-heal
+    private func isPermissionError(_ error: Error) -> Bool {
+        let desc = error.localizedDescription.lowercased()
+        return desc.contains("declined") || desc.contains("permission")
+            || desc.contains("tcc") || desc.contains("not authorized")
+    }
+
     private func transitionToError(_ message: String, trigger: String) {
         let oldState = state.label
         state = .error(message)
         Log.info("[State] \(oldState) -> error (trigger: \(trigger), error: \(message))")
         onStateChanged?(state)
-        startRecoveryTimer()
+
+        // Don't auto-retry permission errors — they require user action in System Settings
+        let isPermission = message.lowercased().contains("declined")
+            || message.lowercased().contains("permission")
+            || message.lowercased().contains("tcc")
+            || message.lowercased().contains("not authorized")
+        if isPermission {
+            Log.info("[Recovery] Skipping auto-recovery: permission error requires user action")
+        } else {
+            startRecoveryTimer()
+        }
     }
 
     /// Calculate seconds until the next 5-minute clock boundary
@@ -1019,7 +1036,10 @@ public final class CaptureManager {
             retryCount += 1
             Log.info("[Recovery] Attempt \(attempt) failed: \(error.localizedDescription)")
 
-            if retryCount >= maxRetryCount {
+            if isPermissionError(error) {
+                Log.info("[Recovery] Permission error detected, stopping auto-recovery")
+                stopRecoveryTimer()
+            } else if retryCount >= maxRetryCount {
                 Log.error("[Recovery] Giving up after \(maxRetryCount) failed attempts")
             } else {
                 startRecoveryTimer()
