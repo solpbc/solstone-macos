@@ -53,15 +53,12 @@ public final class CaptureManager {
     private let storageManager: StorageManager
     private var currentSegment: SegmentWriter?
     private var segmentTimer: Timer?
-    /// Recovery timer for auto-retry after error state
-    private var retryTimer: Timer?
     private var windowExclusionTimer: Timer?
     private var heartbeatTimer: Timer?
     private var displays: [SCDisplay] = []
     private var contentFilter: SCContentFilter?
     private let verbose: Bool
-    private let retryDelays: [TimeInterval] = [5, 30, 60]
-    private let maxRetryCount = 20
+    private let lifecycleManager = CaptureLifecycleManager()
 
     /// Persistent mic capture manager - keeps AVAudioEngine instances alive across segment rotations
     /// This prevents audio playback interference during rotation
@@ -91,15 +88,6 @@ public final class CaptureManager {
     /// Flag to prevent concurrent segment rotations
     private var isRotatingSegment: Bool = false
 
-    private var retryCount: Int = 0
-    private var isRecovering: Bool = false
-
-    /// Tracks whether recording should resume when conditions allow (after wake/unlock)
-    private var suspendedForRecovery: Bool = false
-
-    /// Debounce task for unlock resume (cancelled by subsequent lock/sleep)
-    private var unlockResumeTask: Task<Void, Never>? = nil
-
     /// Current default microphone device ID (for change detection)
     private var currentDefaultMicID: AudioDeviceID?
 
@@ -108,10 +96,6 @@ public final class CaptureManager {
 
     /// UIDs of microphones to exclude from recording (disabled mics)
     private var disabledMicUIDs: Set<String> = []
-
-    /// Observer tokens for screen lock/unlock notifications (must be removed in deinit)
-    nonisolated(unsafe) private var screenLockedObserver: NSObjectProtocol?
-    nonisolated(unsafe) private var screenUnlockedObserver: NSObjectProtocol?
 
     public private(set) var state: State = .idle
 
@@ -169,27 +153,6 @@ public final class CaptureManager {
             }
         }
 
-        // Listen for sleep/wake events
-        NotificationCenter.default.addObserver(
-            forName: NSWorkspace.willSleepNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                await self?.handleWillSleep()
-            }
-        }
-
-        NotificationCenter.default.addObserver(
-            forName: NSWorkspace.didWakeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                await self?.handleDidWake()
-            }
-        }
-
         // Listen for app activation changes (for window exclusion updates)
         NotificationCenter.default.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
@@ -211,38 +174,11 @@ public final class CaptureManager {
             }
         }
 
-        // Listen for screen lock/unlock events
-        screenLockedObserver = DistributedNotificationCenter.default().addObserver(
-            forName: NSNotification.Name("com.apple.screenIsLocked"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                await self?.handleScreenLocked()
-            }
-        }
-
-        screenUnlockedObserver = DistributedNotificationCenter.default().addObserver(
-            forName: NSNotification.Name("com.apple.screenIsUnlocked"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                await self?.handleScreenUnlocked()
-            }
-        }
+        lifecycleManager.configure(delegate: self)
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
-
-        // Remove DistributedNotificationCenter observers (separate from NotificationCenter)
-        if let observer = screenLockedObserver {
-            DistributedNotificationCenter.default().removeObserver(observer)
-        }
-        if let observer = screenUnlockedObserver {
-            DistributedNotificationCenter.default().removeObserver(observer)
-        }
 
         // Inline cleanup for default mic monitoring (can't call actor-isolated method from deinit)
         if let block = defaultMicListenerBlock {
@@ -270,9 +206,7 @@ public final class CaptureManager {
         guard state.isIdle || state.isPaused else { return }
 
         // Clear any stale recovery state (e.g., user manually restarted while paused from sleep/lock)
-        suspendedForRecovery = false
-        unlockResumeTask?.cancel()
-        unlockResumeTask = nil
+        lifecycleManager.reset(stopRecovery: false)
 
         // Ensure storage directory exists
         try storageManager.ensureBaseDirectoryExists()
@@ -360,10 +294,7 @@ public final class CaptureManager {
         windowExclusionTimer?.invalidate()
         windowExclusionTimer = nil
         stopHeartbeat()
-        stopRecoveryTimer()
-        suspendedForRecovery = false
-        unlockResumeTask?.cancel()
-        unlockResumeTask = nil
+        lifecycleManager.reset(stopRecovery: true)
 
         // Finish current segment and rename to actual duration
         var completedSegmentURL: URL?
@@ -397,10 +328,7 @@ public final class CaptureManager {
         segmentTimer?.invalidate()
         segmentTimer = nil
         stopHeartbeat()
-        stopRecoveryTimer()
-        suspendedForRecovery = false
-        unlockResumeTask?.cancel()
-        unlockResumeTask = nil
+        lifecycleManager.reset(stopRecovery: true)
 
         // Finish current segment and rename to actual duration
         var completedSegmentURL: URL?
@@ -592,13 +520,7 @@ public final class CaptureManager {
         state = .error(message)
         Log.info("[State] \(oldState) -> error (trigger: \(trigger), error: \(message))")
         onStateChanged?(state)
-
-        // Don't auto-retry permission errors — they require user action in System Settings
-        if isPermissionError(message) {
-            Log.info("[Recovery] Skipping auto-recovery: permission error requires user action")
-        } else {
-            startRecoveryTimer()
-        }
+        lifecycleManager.startRecoveryIfNeeded(message: message)
     }
 
     /// Calculate seconds until the next 5-minute clock boundary
@@ -721,337 +643,6 @@ public final class CaptureManager {
             }
         } catch {
             Log.warn("Failed to get updated display list: \(error)")
-        }
-    }
-
-    // MARK: - Sleep/Wake/Lock Handling
-
-    /// Check if the screen is currently locked
-    private func isScreenLocked() -> Bool {
-        guard let dict = CGSessionCopyCurrentDictionary() as? [String: Any],
-              let locked = dict["CGSSessionScreenIsLocked"] as? Bool else {
-            return false
-        }
-        return locked
-    }
-
-    /// Wait for at least one audio input device to become available
-    /// - Parameter timeout: Maximum time to wait in seconds
-    private func waitForAudioDevices(timeout: TimeInterval) async {
-        let startTime = Date()
-        let pollInterval: UInt64 = 100_000_000 // 100ms in nanoseconds
-
-        while Date().timeIntervalSince(startTime) < timeout {
-            let devices = MicrophoneMonitor.listInputDevices()
-            if !devices.isEmpty {
-                Log.info("Audio devices available after \(String(format: "%.1f", Date().timeIntervalSince(startTime)))s")
-                return
-            }
-            try? await Task.sleep(nanoseconds: pollInterval)
-        }
-
-        // Timeout reached - log warning but don't fail
-        // Recording can proceed without mic if needed
-        Log.warn("Timeout waiting for audio devices after \(timeout)s")
-    }
-
-    private func handleWillSleep() async {
-        Log.info("[Event] willSleep (state: \(state.label), suspended: \(suspendedForRecovery))")
-
-        // Cancel any pending unlock resume — sleep supersedes it
-        unlockResumeTask?.cancel()
-        unlockResumeTask = nil
-
-        guard state.isRecording else { return }
-
-        suspendedForRecovery = true
-
-        // Finish current segment gracefully before sleep
-        segmentTimer?.invalidate()
-        segmentTimer = nil
-        stopHeartbeat()
-
-        let completedSegmentURL: URL?
-        if let segment = currentSegment {
-            completedSegmentURL = await segment.finishAndRename()
-            currentSegment = nil
-        } else {
-            completedSegmentURL = nil
-        }
-
-        let oldState = state.label
-        state = .paused
-        Log.info("[State] \(oldState) -> \(state.label) (trigger: sleep)")
-        onStateChanged?(state)
-
-        // Use beginActivity to request time for upload before system suspends
-        // Fire async to avoid blocking MainActor during sleep transition
-        if let url = completedSegmentURL, let callback = onSegmentComplete {
-            let activity = ProcessInfo.processInfo.beginActivity(
-                options: [.suddenTerminationDisabled, .automaticTerminationDisabled],
-                reason: "Processing and uploading segment before sleep"
-            )
-
-            Task {
-                Log.info("Starting processing and upload in background before sleep")
-                await callback(url)
-                Log.info("Processing and upload completed before sleep")
-                ProcessInfo.processInfo.endActivity(activity)
-            }
-        }
-
-        Log.info("Capture paused for sleep")
-    }
-
-    private func handleDidWake() async {
-        Log.info("[Event] didWake (state: \(state.label), suspended: \(suspendedForRecovery))")
-
-        guard suspendedForRecovery else { return }
-
-        // Already recording (shouldn't happen, but guard against double-start)
-        guard !state.isRecording else {
-            Log.warn("[Event] didWake: already recording, skipping resume")
-            return
-        }
-
-        // If screen is locked, defer resume to unlock handler
-        guard !isScreenLocked() else {
-            Log.info("Screen is locked after wake, deferring to unlock handler")
-            return
-        }
-
-        do {
-            await waitForAudioDevices(timeout: 5.0)
-
-            let content = try await withTimeout(seconds: 10) {
-                try await SCShareableContent.current
-            }
-            displays = content.displays
-
-            if let firstDisplay = displays.first {
-                contentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
-            }
-
-            currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
-
-            try await startNewSegment()
-
-            suspendedForRecovery = false
-
-            let oldState = state.label
-            state = .recording
-            Log.info("[State] \(oldState) -> \(state.label) (trigger: wake)")
-            onStateChanged?(state)
-            startHeartbeat()
-            Log.info("Capture resumed after wake")
-        } catch {
-            transitionToError("Failed to resume after wake: \(error.localizedDescription)", trigger: "wake_failed")
-            Log.error("Failed to resume capture after wake: \(error)")
-        }
-    }
-
-    private func handleScreenLocked() async {
-        Log.info("[Event] screenLocked (state: \(state.label), suspended: \(suspendedForRecovery))")
-
-        // Cancel any pending unlock resume
-        unlockResumeTask?.cancel()
-        unlockResumeTask = nil
-
-        guard state.isRecording else { return }
-
-        suspendedForRecovery = true
-
-        // Finish current segment gracefully before lock
-        segmentTimer?.invalidate()
-        segmentTimer = nil
-        stopHeartbeat()
-
-        let completedSegmentURL: URL?
-        if let segment = currentSegment {
-            completedSegmentURL = await segment.finishAndRename()
-            currentSegment = nil
-        } else {
-            completedSegmentURL = nil
-        }
-
-        // Stop all persistent captures during lock
-        micCaptureManager.stopAll()
-        await systemAudioCaptureManager.stop()
-
-        let oldState = state.label
-        state = .paused
-        Log.info("[State] \(oldState) -> \(state.label) (trigger: lock)")
-        onStateChanged?(state)
-
-        // Trigger upload callback
-        if let url = completedSegmentURL, let callback = onSegmentComplete {
-            Task {
-                await callback(url)
-            }
-        }
-
-        Log.info("Capture paused for screen lock")
-    }
-
-    private func handleScreenUnlocked() async {
-        Log.info("[Event] screenUnlocked (state: \(state.label), suspended: \(suspendedForRecovery))")
-
-        guard suspendedForRecovery else { return }
-
-        // Already recording (shouldn't happen, but guard against double-start)
-        guard !state.isRecording else {
-            Log.warn("[Event] screenUnlocked: already recording, skipping resume")
-            return
-        }
-
-        // Cancel any existing debounce task
-        unlockResumeTask?.cancel()
-        unlockResumeTask = nil
-
-        // Debounce: wait 0.5s before resuming to handle rapid lock/unlock cycling
-        unlockResumeTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 500_000_000)
-            } catch {
-                // Task was cancelled (rapid re-lock)
-                return
-            }
-
-            guard let self = self else { return }
-
-            // Re-check state after debounce
-            guard self.suspendedForRecovery, !self.state.isRecording else { return }
-
-            do {
-                await self.waitForAudioDevices(timeout: 5.0)
-
-                let content = try await withTimeout(seconds: 10) {
-                    try await SCShareableContent.current
-                }
-                self.displays = content.displays
-
-                if let firstDisplay = self.displays.first {
-                    self.contentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
-                }
-
-                self.currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
-
-                try await self.startNewSegment()
-
-                self.suspendedForRecovery = false
-                self.unlockResumeTask = nil
-
-                let oldState = self.state.label
-                self.state = .recording
-                Log.info("[State] \(oldState) -> \(self.state.label) (trigger: unlock)")
-                self.onStateChanged?(self.state)
-                self.startHeartbeat()
-                Log.info("Capture resumed after unlock")
-            } catch {
-                self.transitionToError("Failed to resume after unlock: \(error.localizedDescription)", trigger: "unlock_failed")
-                Log.error("Failed to resume capture after unlock: \(error)")
-            }
-        }
-    }
-
-    // MARK: - Recovery
-
-    /// Schedules the next recovery attempt based on retryCount
-    private func startRecoveryTimer() {
-        retryTimer?.invalidate()
-
-        guard retryCount < maxRetryCount else {
-            Log.error("[Recovery] Giving up after \(maxRetryCount) failed attempts")
-            return
-        }
-
-        let delay = retryCount < retryDelays.count ? retryDelays[retryCount] : 300.0
-        Log.info("[Recovery] Scheduling attempt \(retryCount + 1)/\(maxRetryCount) in \(Int(delay))s")
-
-        retryTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                await self?.attemptRecovery()
-            }
-        }
-        retryTimer?.tolerance = 5.0
-    }
-
-    /// Cancels pending recovery and resets retry state
-    private func stopRecoveryTimer() {
-        retryTimer?.invalidate()
-        retryTimer = nil
-        retryCount = 0
-        isRecovering = false
-    }
-
-    /// Attempts to recover from error state by refreshing displays and starting a new segment
-    private func attemptRecovery() async {
-        guard state.isError else {
-            stopRecoveryTimer()
-            return
-        }
-
-        guard !isScreenLocked() else {
-            Log.info("[Recovery] Screen is locked, deferring recovery")
-            startRecoveryTimer()
-            return
-        }
-
-        // Don't attempt recovery without screen capture permission
-        guard CGPreflightScreenCaptureAccess() else {
-            Log.info("[Recovery] No screen capture permission, stopping recovery")
-            stopRecoveryTimer()
-            return
-        }
-
-        guard !isRecovering else {
-            Log.info("[Recovery] Already in progress, skipping")
-            return
-        }
-
-        isRecovering = true
-        defer { isRecovering = false }
-
-        let attempt = retryCount + 1
-        Log.info("[Recovery] Attempting recovery \(attempt)/\(maxRetryCount)")
-
-        do {
-            // Refresh display list
-            let content = try await withTimeout(seconds: 10) {
-                try await SCShareableContent.current
-            }
-            displays = content.displays
-
-            guard let firstDisplay = displays.first else {
-                throw CaptureError.noDisplaysAvailable
-            }
-
-            contentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
-
-            // Start fresh segment
-            try await startNewSegment()
-
-            // Success - restore recording state
-            currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
-            let oldState = state.label
-            state = .recording
-            Log.info("[State] \(oldState) -> \(state.label) (trigger: recovery)")
-            onStateChanged?(state)
-            startHeartbeat()
-            stopRecoveryTimer()
-            Log.info("[Recovery] Successfully recovered on attempt \(attempt)")
-        } catch {
-            retryCount += 1
-            Log.info("[Recovery] Attempt \(attempt) failed: \(error.localizedDescription)")
-
-            if isPermissionError(error) {
-                Log.info("[Recovery] Permission error detected, stopping auto-recovery")
-                stopRecoveryTimer()
-            } else if retryCount >= maxRetryCount {
-                Log.error("[Recovery] Giving up after \(maxRetryCount) failed attempts")
-            } else {
-                startRecoveryTimer()
-            }
         }
     }
 
@@ -1183,6 +774,83 @@ public final class CaptureManager {
                 return "Capture manager not initialized"
             case .permissionDenied:
                 return "The user declined TCCs for application, window, display capture"
+            }
+        }
+    }
+}
+
+// MARK: - CaptureLifecycleDelegate
+
+extension CaptureManager: CaptureLifecycleDelegate {
+    var lifecycleCurrentState: CaptureManager.State { state }
+
+    func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL? {
+        segmentTimer?.invalidate()
+        segmentTimer = nil
+        stopHeartbeat()
+
+        var completedSegmentURL: URL?
+        if let segment = currentSegment {
+            completedSegmentURL = await segment.finishAndRename()
+            currentSegment = nil
+        }
+
+        if stopAudio {
+            micCaptureManager.stopAll()
+            await systemAudioCaptureManager.stop()
+        }
+
+        let oldState = state.label
+        state = .paused
+        Log.info("[State] \(oldState) -> \(state.label) (trigger: \(trigger))")
+        onStateChanged?(state)
+
+        return completedSegmentURL
+    }
+
+    func lifecycleResumeCapture(trigger: String) async throws {
+        let content = try await withTimeout(seconds: 10) {
+            try await SCShareableContent.current
+        }
+        displays = content.displays
+
+        if let firstDisplay = displays.first {
+            contentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
+        }
+
+        try await startNewSegment()
+
+        currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
+
+        let oldState = state.label
+        state = .recording
+        Log.info("[State] \(oldState) -> \(state.label) (trigger: \(trigger))")
+        onStateChanged?(state)
+        startHeartbeat()
+    }
+
+    func lifecycleTransitionToError(message: String, trigger: String) {
+        transitionToError(message, trigger: trigger)
+    }
+
+    func lifecycleProcessSegment(_ url: URL, useSleepActivity: Bool) {
+        guard let callback = onSegmentComplete else { return }
+
+        if useSleepActivity {
+            let activity = ProcessInfo.processInfo.beginActivity(
+                options: [.suddenTerminationDisabled, .automaticTerminationDisabled],
+                reason: "Processing and uploading segment before sleep"
+            )
+
+            Task {
+                Log.info("Starting processing and upload in background before sleep")
+                await callback(url)
+                Log.info("Processing and upload completed before sleep")
+                ProcessInfo.processInfo.endActivity(activity)
+            }
+        } else {
+            Task {
+                await callback(url)
             }
         }
     }
