@@ -240,7 +240,7 @@ public final class AudioRemixer: Sendable {
                            let silenceRanges = silenceRangesMap[idx] {
                             let sampleTime = CMSampleBufferGetPresentationTimeStamp(buffer)
                             if silenceRanges.contains(where: { CMTimeRangeContainsTime($0, time: sampleTime) }) {
-                                if let zeroed = zeroBuffer(buffer) {
+                                if let zeroed = AudioBufferUtils.silencedCopy(of: buffer) {
                                     buffer = zeroed
                                 }
                             }
@@ -371,60 +371,6 @@ public final class AudioRemixer: Sendable {
         )
 
         return status == noErr ? newSampleBuffer : nil
-    }
-
-    /// Create a zeroed (silent) copy of a sample buffer, preserving timing
-    private func zeroBuffer(_ sampleBuffer: CMSampleBuffer) -> CMSampleBuffer? {
-        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) else {
-            return nil
-        }
-
-        let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
-        guard numSamples > 0 else { return nil }
-
-        // Get timing info from original buffer
-        var timingInfo = CMSampleTimingInfo()
-        CMSampleBufferGetSampleTimingInfo(sampleBuffer, at: 0, timingInfoOut: &timingInfo)
-
-        // Get audio format details
-        let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee
-        let bytesPerSample = Int(asbd?.mBytesPerFrame ?? 4)  // Float32 = 4 bytes
-        let dataSize = numSamples * bytesPerSample
-
-        // Allocate zeroed memory that CMBlockBuffer will own
-        guard let silentMemory = calloc(1, dataSize) else { return nil }
-
-        // Create block buffer that owns the memory
-        var blockBuffer: CMBlockBuffer?
-        let status = CMBlockBufferCreateWithMemoryBlock(
-            allocator: kCFAllocatorDefault,
-            memoryBlock: silentMemory,
-            blockLength: dataSize,
-            blockAllocator: kCFAllocatorMalloc,
-            customBlockSource: nil,
-            offsetToData: 0,
-            dataLength: dataSize,
-            flags: 0,
-            blockBufferOut: &blockBuffer
-        )
-
-        guard status == noErr, let block = blockBuffer else {
-            free(silentMemory)
-            return nil
-        }
-
-        var silentBuffer: CMSampleBuffer?
-        CMAudioSampleBufferCreateReadyWithPacketDescriptions(
-            allocator: kCFAllocatorDefault,
-            dataBuffer: block,
-            formatDescription: formatDesc,
-            sampleCount: numSamples,
-            presentationTimeStamp: timingInfo.presentationTimeStamp,
-            packetDescriptions: nil,
-            sampleBufferOut: &silentBuffer
-        )
-
-        return silentBuffer
     }
 }
 

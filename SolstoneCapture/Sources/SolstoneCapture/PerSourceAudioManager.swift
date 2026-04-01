@@ -108,7 +108,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         // When muted, write silence to maintain timing continuity
         let bufferToWrite: CMSampleBuffer
         if isAudioMuted() {
-            guard let silentBuffer = silencedBuffer(from: sampleBuffer) else { return }
+            guard let silentBuffer = AudioBufferUtils.silencedCopy(of: sampleBuffer) else { return }
             bufferToWrite = silentBuffer
         } else {
             bufferToWrite = sampleBuffer
@@ -162,7 +162,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             // Wire callback to this segment's writer
             // When muted, write silence to maintain timing continuity
             captureManager.setCallback(for: device.uid) { [weak writer] buffer, time in
-                let outputBuffer = isMuted() ? Self.silencedPCMBuffer(from: buffer) ?? buffer : buffer
+                let outputBuffer = isMuted() ? AudioBufferUtils.silencedCopy(of: buffer) ?? buffer : buffer
                 writer?.appendPCMBuffer(outputBuffer, presentationTime: time)
             }
             Log.info("Wired mic callback: \(device.name)")
@@ -170,7 +170,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             // Legacy path: create capture per segment
             let capture = ExternalMicCapture(device: device, gain: gain, verbose: verbose)
             capture.onAudioBuffer = { [weak writer] buffer, time in
-                let outputBuffer = isMuted() ? Self.silencedPCMBuffer(from: buffer) ?? buffer : buffer
+                let outputBuffer = isMuted() ? AudioBufferUtils.silencedCopy(of: buffer) ?? buffer : buffer
                 writer?.appendPCMBuffer(outputBuffer, presentationTime: time)
             }
             try capture.start()
@@ -326,81 +326,6 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             deleteSourceFiles: deleteSourceFiles,
             silenceMusic: silenceMusic
         )
-    }
-
-    // MARK: - Mute Silence Helpers
-
-    /// Create a silent version of a CMSampleBuffer (same timing, zero audio data)
-    private func silencedBuffer(from buffer: CMSampleBuffer) -> CMSampleBuffer? {
-        guard let formatDesc = CMSampleBufferGetFormatDescription(buffer) else {
-            return nil
-        }
-
-        let numSamples = CMSampleBufferGetNumSamples(buffer)
-        guard numSamples > 0 else { return nil }
-
-        // Get timing info from original buffer
-        var timingInfo = CMSampleTimingInfo()
-        CMSampleBufferGetSampleTimingInfo(buffer, at: 0, timingInfoOut: &timingInfo)
-
-        // Get audio format details
-        let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee
-        let bytesPerSample = Int(asbd?.mBytesPerFrame ?? 2)
-        let dataSize = numSamples * bytesPerSample
-
-        // Allocate memory that CMBlockBuffer will own and free
-        guard let silentMemory = calloc(1, dataSize) else { return nil }
-
-        // Create block buffer that owns the memory (kCFAllocatorMalloc will call free())
-        var blockBuffer: CMBlockBuffer?
-        let status = CMBlockBufferCreateWithMemoryBlock(
-            allocator: kCFAllocatorDefault,
-            memoryBlock: silentMemory,
-            blockLength: dataSize,
-            blockAllocator: kCFAllocatorMalloc,
-            customBlockSource: nil,
-            offsetToData: 0,
-            dataLength: dataSize,
-            flags: 0,
-            blockBufferOut: &blockBuffer
-        )
-
-        guard status == noErr, let block = blockBuffer else {
-            free(silentMemory)
-            return nil
-        }
-
-        var silentBuffer: CMSampleBuffer?
-        CMAudioSampleBufferCreateReadyWithPacketDescriptions(
-            allocator: kCFAllocatorDefault,
-            dataBuffer: block,
-            formatDescription: formatDesc,
-            sampleCount: numSamples,
-            presentationTimeStamp: timingInfo.presentationTimeStamp,
-            packetDescriptions: nil,
-            sampleBufferOut: &silentBuffer
-        )
-
-        return silentBuffer
-    }
-
-    /// Create a silent version of an AVAudioPCMBuffer (same format/length, zero audio data)
-    private static func silencedPCMBuffer(from buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard let silentBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
-            return nil
-        }
-        silentBuffer.frameLength = buffer.frameLength
-
-        // Zero-fill all channels
-        if let floatData = silentBuffer.floatChannelData {
-            let channelCount = Int(buffer.format.channelCount)
-            let frameCount = Int(buffer.frameLength)
-            for channel in 0..<channelCount {
-                memset(floatData[channel], 0, frameCount * MemoryLayout<Float>.size)
-            }
-        }
-
-        return silentBuffer
     }
 
     // MARK: - Private
