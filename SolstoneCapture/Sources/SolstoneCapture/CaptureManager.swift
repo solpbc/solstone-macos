@@ -53,12 +53,12 @@ public final class CaptureManager {
     private let storageManager: StorageManager
     private var currentSegment: SegmentWriter?
     private var segmentTimer: Timer?
-    private var windowExclusionTimer: Timer?
     private var heartbeatTimer: Timer?
     private var displays: [SCDisplay] = []
     private var contentFilter: SCContentFilter?
     private let verbose: Bool
     private let lifecycleManager = CaptureLifecycleManager()
+    private let windowExclusionManager: WindowExclusionManager
 
     /// Persistent mic capture manager - keeps AVAudioEngine instances alive across segment rotations
     /// This prevents audio playback interference during rotation
@@ -66,9 +66,6 @@ public final class CaptureManager {
 
     /// Persistent system audio capture manager - keeps SCStream alive across segment rotations
     private let systemAudioCaptureManager = SystemAudioCaptureManager()
-
-    /// Window exclusion detector for filtering out specific app windows
-    private var windowExclusionDetector: WindowExclusionDetector?
 
     /// Closure to check if audio is muted (passed to SegmentWriter)
     private let isAudioMuted: @Sendable () -> Bool
@@ -78,12 +75,6 @@ public final class CaptureManager {
 
     /// Closure to check if music silencing is enabled
     private let silenceMusic: @Sendable () -> Bool
-
-    /// Currently excluded windows (for change detection)
-    private var currentExcludedWindowIDs: Set<CGWindowID> = []
-
-    /// Flag to prevent filter updates during stream startup
-    private var isStreamReady: Bool = false
 
     /// Flag to prevent concurrent segment rotations
     private var isRotatingSegment: Bool = false
@@ -130,17 +121,12 @@ public final class CaptureManager {
         self.silenceMusic = silenceMusic
         self.verbose = verbose
         self.micCaptureManager = MicrophoneCaptureManager(gain: microphoneGain, verbose: verbose)
-
-        // Create window exclusion detector if we have apps to exclude, title patterns, or private browsing detection
-        if !excludedAppNames.isEmpty || !excludedTitlePatterns.isEmpty || excludePrivateBrowsing {
-            self.windowExclusionDetector = WindowExclusionDetector(
-                appNames: excludedAppNames,
-                detectPrivateBrowsing: excludePrivateBrowsing,
-                titlePatterns: excludedTitlePatterns
-            )
-        } else {
-            self.windowExclusionDetector = nil
-        }
+        self.windowExclusionManager = WindowExclusionManager(
+            excludedAppNames: excludedAppNames,
+            excludePrivateBrowsing: excludePrivateBrowsing,
+            excludedTitlePatterns: excludedTitlePatterns,
+            verbose: verbose
+        )
 
         // Listen for display changes
         NotificationCenter.default.addObserver(
@@ -153,27 +139,15 @@ public final class CaptureManager {
             }
         }
 
-        // Listen for app activation changes (for window exclusion updates)
-        NotificationCenter.default.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: NSWorkspace.shared,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                await self?.updateWindowExclusions()
-            }
-        }
-
-        NotificationCenter.default.addObserver(
-            forName: NSWorkspace.didDeactivateApplicationNotification,
-            object: NSWorkspace.shared,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                await self?.updateWindowExclusions()
-            }
-        }
-
+        windowExclusionManager.configure(
+            onFilterChanged: { [weak self] newFilter in
+                guard let self, let segment = self.currentSegment else { return }
+                try await self.systemAudioCaptureManager.updateContentFilter(newFilter)
+                try await segment.updateContentFilter(newFilter)
+            },
+            primaryDisplay: { [weak self] in self?.displays.first },
+            isRecording: { [weak self] in self?.state.isRecording ?? false }
+        )
         lifecycleManager.configure(delegate: self)
     }
 
@@ -282,8 +256,7 @@ public final class CaptureManager {
 
     /// Stops recording
     public func stopRecording() async {
-        // Mark stream as not ready
-        isStreamReady = false
+        windowExclusionManager.stop()
 
         // Stop monitoring for microphone changes
         stopDefaultMicMonitoring()
@@ -291,8 +264,6 @@ public final class CaptureManager {
         // Cancel timers
         segmentTimer?.invalidate()
         segmentTimer = nil
-        windowExclusionTimer?.invalidate()
-        windowExclusionTimer = nil
         stopHeartbeat()
         lifecycleManager.reset(stopRecovery: true)
 
@@ -401,17 +372,11 @@ public final class CaptureManager {
         excludePrivateBrowsing: Bool,
         excludedTitlePatterns: [String]
     ) {
-        if !excludedAppNames.isEmpty || !excludedTitlePatterns.isEmpty || excludePrivateBrowsing {
-            windowExclusionDetector = WindowExclusionDetector(
-                appNames: excludedAppNames,
-                detectPrivateBrowsing: excludePrivateBrowsing,
-                titlePatterns: excludedTitlePatterns
-            )
-            Log.info("Updated window exclusions: \(excludedAppNames.count) apps, \(excludedTitlePatterns.count) title patterns, privateBrowsing=\(excludePrivateBrowsing)")
-        } else {
-            windowExclusionDetector = nil
-            Log.info("Cleared window exclusions")
-        }
+        windowExclusionManager.updateExclusions(
+            excludedAppNames: excludedAppNames,
+            excludePrivateBrowsing: excludePrivateBrowsing,
+            excludedTitlePatterns: excludedTitlePatterns
+        )
     }
 
     // MARK: - Private Methods
@@ -447,8 +412,7 @@ public final class CaptureManager {
         }
 
         // Reset stream ready flag for new segment
-        isStreamReady = false
-        currentExcludedWindowIDs = []
+        windowExclusionManager.resetForNewSegment()
 
         // Create segment writer
         let segment = SegmentWriter(
@@ -477,9 +441,7 @@ public final class CaptureManager {
         // Without this delay, filter updates can fail or cause frame drops.
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 500_000_000)
-            isStreamReady = true
-            await updateWindowExclusions()
-            startWindowExclusionTimer()
+            await self.windowExclusionManager.streamBecameReady()
         }
 
         // Schedule segment rotation
@@ -706,56 +668,6 @@ public final class CaptureManager {
             Log.info("Default microphone changed (no rotation - mics handled dynamically)")
             currentDefaultMicID = newDefaultMicID
             // No rotation needed - mics are handled dynamically via handleDeviceChange
-        }
-    }
-
-    // MARK: - Window Exclusion
-
-    /// Starts a timer to periodically check for window exclusions
-    private func startWindowExclusionTimer() {
-        windowExclusionTimer?.invalidate()
-        let timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.updateWindowExclusions()
-            }
-        }
-        timer.tolerance = 2.0  // Allow coalescing to reduce energy impact
-        windowExclusionTimer = timer
-    }
-
-    /// Updates the content filter to exclude detected windows
-    private func updateWindowExclusions() async {
-        guard state.isRecording,
-              isStreamReady,
-              let detector = windowExclusionDetector,
-              let segment = currentSegment,
-              !displays.isEmpty else { return }
-
-        // Detect windows to exclude
-        let excludedWindows = await detector.detectExcludedWindows()
-        let newExcludedIDs = Set(excludedWindows.map { $0.windowID })
-
-        // Only update if exclusions changed
-        guard newExcludedIDs != currentExcludedWindowIDs else { return }
-
-        currentExcludedWindowIDs = newExcludedIDs
-
-        // Create new filter with excluded windows
-        let newFilter = SCContentFilter(
-            display: displays[0],
-            excludingWindows: excludedWindows
-        )
-
-        do {
-            // Update system audio stream filter
-            try await systemAudioCaptureManager.updateContentFilter(newFilter)
-            // Update video (screenshot) filters
-            try await segment.updateContentFilter(newFilter)
-            if !excludedWindows.isEmpty {
-                Log.debug("Updated filter to exclude \(excludedWindows.count) window(s)", verbose: verbose)
-            }
-        } catch {
-            Log.warn("Failed to update content filter: \(error)")
         }
     }
 
