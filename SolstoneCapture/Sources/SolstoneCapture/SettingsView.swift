@@ -23,7 +23,12 @@ struct MicrophoneDisplayEntry: Identifiable {
 
 /// Settings window for configuring server upload
 struct SettingsView: View {
+    enum Tab: Hashable {
+        case server, microphones, privacy, status
+    }
+
     @Bindable var appState: AppState
+    @State var selectedTab: Tab = .server
     @Environment(\.dismiss) private var dismiss
 
     @State private var testResult: TestResult = .none
@@ -75,17 +80,21 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             serverTab
+                .tag(Tab.server)
                 .tabItem { Label("Server", systemImage: "server.rack") }
 
             microphoneTab
+                .tag(Tab.microphones)
                 .tabItem { Label("Microphones", systemImage: "mic") }
 
             privacyTab
+                .tag(Tab.privacy)
                 .tabItem { Label("Privacy", systemImage: "eye.slash") }
 
             statusTab
+                .tag(Tab.status)
                 .tabItem { Label("Status", systemImage: "info.circle") }
         }
         .padding(20)

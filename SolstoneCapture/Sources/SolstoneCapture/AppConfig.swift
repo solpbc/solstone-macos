@@ -83,7 +83,7 @@ public struct AppConfig: Sendable {
     /// API key for remote server authentication - stored securely in Keychain
     /// Cached in memory to avoid repeated keychain reads (which can trigger auth prompts on rebuild).
     /// Loaded once from keychain during `load()`. Use `setServerKey(_:)` to update.
-    public private(set) var serverKey: String?
+    public internal(set) var serverKey: String?
 
     /// Update the server key (persists to keychain)
     public mutating func setServerKey(_ key: String?) {

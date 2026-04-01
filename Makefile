@@ -1,4 +1,4 @@
-.PHONY: build release run clean test bundle install open reset-permissions
+.PHONY: build release run clean test snapshot bundle install open reset-permissions
 
 # Build both packages (debug)
 build:
@@ -26,6 +26,10 @@ clean:
 test:
 	swift test --package-path SolstoneCaptureCore
 	swift test --package-path SolstoneCapture
+
+# Render view snapshots
+snapshot:
+	swift test --package-path SolstoneCapture --filter Snapshot
 
 # Create app bundle
 bundle:

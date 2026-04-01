@@ -42,3 +42,6 @@ Carthage/Checkouts/
 .claude/settings.local.json
 .claude/todos.json
 .claude/.scratchpad.md
+
+# Snapshot renders
+snapshots/
