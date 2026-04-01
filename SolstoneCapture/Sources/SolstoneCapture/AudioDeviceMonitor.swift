@@ -9,7 +9,7 @@ import SolstoneCaptureCore
 @MainActor
 @Observable
 public final class AudioDeviceMonitor {
-    public private(set) var availableDevices: [AudioInputDevice] = []
+    public internal(set) var availableDevices: [AudioInputDevice] = []
 
     /// Storage for the listener block - nonisolated for deinit access
     @ObservationIgnored
@@ -28,6 +28,15 @@ public final class AudioDeviceMonitor {
         // Initialize previous UIDs without triggering callback
         previousDeviceUIDs = Set(availableDevices.map { $0.uid })
         startListening()
+    }
+
+    /// Internal init for snapshot/testing — skips CoreAudio hardware interaction
+    internal init(startListening: Bool) {
+        if startListening {
+            refreshDevices()
+            previousDeviceUIDs = Set(availableDevices.map { $0.uid })
+            self.startListening()
+        }
     }
 
     deinit {

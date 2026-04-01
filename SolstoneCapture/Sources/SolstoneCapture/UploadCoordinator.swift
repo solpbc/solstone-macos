@@ -21,8 +21,8 @@ public final class UploadCoordinator {
 
     // MARK: - Observable State
 
-    public private(set) var status: Status = .notSynced
-    public private(set) var pendingCount: Int = 0
+    public internal(set) var status: Status = .notSynced
+    public internal(set) var pendingCount: Int = 0
 
     /// Whether syncing is paused - reads from config as single source of truth
     public var syncPaused: Bool {
@@ -53,6 +53,12 @@ public final class UploadCoordinator {
 
         // Start listening to sync events
         startEventListener()
+    }
+
+    /// Internal init for snapshot/testing — creates SyncService but skips configuration Tasks and event listener
+    internal init(forSnapshot storageManager: StorageManager, config: AppConfig) {
+        self.config = config
+        self.syncService = SyncService(storageManager: storageManager)
     }
 
     // MARK: - Public API

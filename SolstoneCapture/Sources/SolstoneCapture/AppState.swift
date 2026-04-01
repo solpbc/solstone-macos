@@ -28,12 +28,20 @@ final class DebugSettingHolder: @unchecked Sendable {
 public final class AppState {
     /// Shared instance for app-wide access (set during init)
     nonisolated(unsafe) public static var shared: AppState?
+    private static var snapshotAudioMonitorMode = false
+
+    private static func makeAudioDeviceMonitor() -> AudioDeviceMonitor {
+        if snapshotAudioMonitorMode {
+            return AudioDeviceMonitor(startListening: false)
+        }
+        return AudioDeviceMonitor()
+    }
 
     // MARK: - Managers
 
     public let muteManager = MuteManager()
     public let storageManager = StorageManager()
-    public let audioDeviceMonitor = AudioDeviceMonitor()
+    public let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
     public private(set) var captureManager: CaptureManager!
     public private(set) var uploadCoordinator: UploadCoordinator!
     public private(set) var config: AppConfig
@@ -42,9 +50,9 @@ public final class AppState {
 
     // MARK: - State
 
-    public private(set) var isRecording = false
-    public private(set) var isPaused = false
-    public private(set) var errorMessage: String?
+    public internal(set) var isRecording = false
+    public internal(set) var isPaused = false
+    public internal(set) var errorMessage: String?
 
 
     // MARK: - Computed Properties
@@ -82,7 +90,7 @@ public final class AppState {
 
     // MARK: - Login Item
 
-    public private(set) var isLoginItemEnabled: Bool = false
+    public internal(set) var isLoginItemEnabled: Bool = false
 
     private func refreshLoginItemStatus() {
         isLoginItemEnabled = SMAppService.mainApp.status == .enabled
@@ -244,6 +252,33 @@ public final class AppState {
 
         // Set shared instance for app-wide access (e.g., termination handler)
         AppState.shared = self
+    }
+
+    // MARK: - Snapshot Construction
+
+    /// Creates an AppState suitable for snapshot previews and testing.
+    /// All managers are initialized but no hardware, network, or keychain activity is triggered.
+    /// `AppState.shared` is NOT set.
+    public static func forSnapshot(config: AppConfig = AppConfig()) -> AppState {
+        snapshotAudioMonitorMode = true
+        defer { snapshotAudioMonitorMode = false }
+        return AppState(snapshotConfig: config)
+    }
+
+    /// Private designated init that creates all managers without activating hardware or side effects.
+    private init(snapshotConfig config: AppConfig) {
+        self.config = config
+
+        let debugAudioHolder = DebugSettingHolder(value: false)
+        let silenceMusicHolder = DebugSettingHolder(value: true)
+        self.debugAudioHolder = debugAudioHolder
+        self.silenceMusicHolder = silenceMusicHolder
+
+        captureManager = CaptureManager(storageManager: storageManager)
+        uploadCoordinator = UploadCoordinator(forSnapshot: storageManager, config: config)
+
+        // No callback wiring, no mute restore, no segment recovery,
+        // no startRecording, no upload sync, no AppState.shared assignment.
     }
 
     // MARK: - Recording Control
