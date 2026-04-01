@@ -108,3 +108,15 @@ log stream --predicate 'subsystem == "com.solstone.capture" AND category == "upl
 ```
 
 Or use Console.app and filter by subsystem `com.solstone.capture`.
+
+## Skills
+
+Specialized knowledge packs in `skills/`, symlinked from `.claude/skills/` and `.agents/skills/`. Each contains a `SKILL.md` with codebase-grounded patterns and optional `reference/` files for supplementary material.
+
+| Skill | When to use |
+|-------|------------|
+| `swift-concurrency` | Writing or reviewing concurrent code, resolving strict concurrency compiler errors, making isolation decisions (@MainActor vs actor vs @unchecked Sendable) |
+| `screencapturekit` | Working with SCStream, SCContentFilter, display capture, system audio capture, or frame status optimization |
+| `coreaudio-hal` | Working with AudioObjectPropertyAddress, device enumeration, property listeners, device pinning, or transport types |
+| `av-media-pipeline` | Working with HEVC encoding, AVAssetWriter, AVAudioEngine, audio format conversion, the remix pipeline, or SoundAnalysis |
+| `macos-app-lifecycle` | Working with MenuBarExtra, TCC permissions, login items, graceful shutdown, keychain, configuration, or DMG packaging |
