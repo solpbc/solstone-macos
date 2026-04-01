@@ -164,6 +164,13 @@ public final class SystemAudioCaptureManager {
         streamOutput = nil
         streamDelegate = nil
 
+        // Don't restart on permission errors — they require user action
+        if isPermissionError(error) {
+            Log.info("[SystemAudio] Permission error, not restarting (requires user action in System Settings)")
+            stopHealthCheck()
+            return
+        }
+
         // Attempt to restart if we have a filter
         guard let filter = currentFilter else {
             Log.error("[SystemAudio] Cannot restart - no filter available")
@@ -178,6 +185,10 @@ public final class SystemAudioCaptureManager {
             try await startStream(filter: filter)
             Log.info("[SystemAudio] Stream restarted successfully after error")
         } catch {
+            if isPermissionError(error) {
+                Log.info("[SystemAudio] Permission error on restart, stopping health check")
+                stopHealthCheck()
+            }
             Log.error("[SystemAudio] Failed to restart stream: \(error)")
         }
     }
@@ -269,6 +280,10 @@ public final class SystemAudioCaptureManager {
             Log.info("[SystemAudio] Stream restarted successfully")
         } catch {
             Log.error("[SystemAudio] Failed to restart stream: \(error)")
+            if isPermissionError(error) {
+                Log.info("[SystemAudio] Permission error, stopping health check")
+                stopHealthCheck()
+            }
         }
     }
 }

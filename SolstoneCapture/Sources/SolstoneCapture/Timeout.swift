@@ -8,6 +8,17 @@ public struct TimeoutError: Error {
     public let seconds: Double
 }
 
+/// Check if an error indicates a permission/TCC denial that will never self-heal
+func isPermissionError(_ error: Error) -> Bool {
+    isPermissionError(error.localizedDescription)
+}
+
+func isPermissionError(_ message: String) -> Bool {
+    let lower = message.lowercased()
+    return lower.contains("declined") || lower.contains("permission")
+        || lower.contains("tcc") || lower.contains("not authorized")
+}
+
 func withTimeout<T: Sendable>(
     seconds: Double,
     operation: @Sendable @escaping () async throws -> T

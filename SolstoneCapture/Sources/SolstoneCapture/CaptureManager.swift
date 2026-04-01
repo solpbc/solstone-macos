@@ -277,6 +277,18 @@ public final class CaptureManager {
         // Ensure storage directory exists
         try storageManager.ensureBaseDirectoryExists()
 
+        // Check screen capture permission before touching any ScreenCaptureKit APIs.
+        // CGPreflightScreenCaptureAccess() checks without prompting.
+        // CGRequestScreenCaptureAccess() shows one prompt if needed.
+        if !CGPreflightScreenCaptureAccess() {
+            CGRequestScreenCaptureAccess()
+            // Give the user a moment to respond, then check again
+            try await Task.sleep(nanoseconds: 500_000_000)
+            if !CGPreflightScreenCaptureAccess() {
+                throw CaptureError.permissionDenied
+            }
+        }
+
         // Get available content
         let content = try await SCShareableContent.current
 
@@ -575,13 +587,6 @@ public final class CaptureManager {
         heartbeatTimer = nil
     }
 
-    /// Check if an error is a permission/TCC denial that will never self-heal
-    private func isPermissionError(_ error: Error) -> Bool {
-        let desc = error.localizedDescription.lowercased()
-        return desc.contains("declined") || desc.contains("permission")
-            || desc.contains("tcc") || desc.contains("not authorized")
-    }
-
     private func transitionToError(_ message: String, trigger: String) {
         let oldState = state.label
         state = .error(message)
@@ -589,11 +594,7 @@ public final class CaptureManager {
         onStateChanged?(state)
 
         // Don't auto-retry permission errors — they require user action in System Settings
-        let isPermission = message.lowercased().contains("declined")
-            || message.lowercased().contains("permission")
-            || message.lowercased().contains("tcc")
-            || message.lowercased().contains("not authorized")
-        if isPermission {
+        if isPermissionError(message) {
             Log.info("[Recovery] Skipping auto-recovery: permission error requires user action")
         } else {
             startRecoveryTimer()
@@ -996,6 +997,13 @@ public final class CaptureManager {
             return
         }
 
+        // Don't attempt recovery without screen capture permission
+        guard CGPreflightScreenCaptureAccess() else {
+            Log.info("[Recovery] No screen capture permission, stopping recovery")
+            stopRecoveryTimer()
+            return
+        }
+
         guard !isRecovering else {
             Log.info("[Recovery] Already in progress, skipping")
             return
@@ -1165,6 +1173,7 @@ public final class CaptureManager {
     public enum CaptureError: Error, LocalizedError {
         case noDisplaysAvailable
         case notInitialized
+        case permissionDenied
 
         public var errorDescription: String? {
             switch self {
@@ -1172,6 +1181,8 @@ public final class CaptureManager {
                 return "No displays available for capture"
             case .notInitialized:
                 return "Capture manager not initialized"
+            case .permissionDenied:
+                return "The user declined TCCs for application, window, display capture"
             }
         }
     }

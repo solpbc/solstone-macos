@@ -303,12 +303,24 @@ public final class ScreenshotCapturer {
             Log.info("ScreenshotCapturer: Stream restarted successfully for display \(displayID)")
         } catch {
             Log.error("ScreenshotCapturer: Failed to restart stream for display \(displayID): \(error)")
+            if isPermissionError(error) {
+                Log.info("ScreenshotCapturer: Permission error, stopping health check for display \(displayID)")
+                stopHealthCheck()
+            }
         }
     }
 
     private func handleStreamError(_ error: Error) {
         guard isRunning else { return }
         Log.error("ScreenshotCapturer: Stream error for display \(displayID): \(error)")
+
+        // Don't restart on permission errors — they require user action
+        if isPermissionError(error) {
+            Log.info("ScreenshotCapturer: Permission error, not restarting (requires user action in System Settings)")
+            stopHealthCheck()
+            return
+        }
+
         onHealthFailure?()
         Task { @MainActor [weak self] in
             await self?.restartStream()
