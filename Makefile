@@ -25,6 +25,7 @@ clean:
 # Run tests
 test:
 	swift test --package-path SolstoneCaptureCore
+	swift test --package-path SolstoneCapture
 
 # Create app bundle
 bundle:

@@ -26,6 +26,13 @@ let package = Package(
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("ServiceManagement")
             ]
+        ),
+        .testTarget(
+            name: "SolstoneCaptureTests",
+            dependencies: [
+                "SolstoneCapture",
+                .product(name: "SolstoneCaptureCore", package: "SolstoneCaptureCore")
+            ]
         )
     ]
 )

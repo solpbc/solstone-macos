@@ -267,7 +267,7 @@ public final class IncompleteSegmentRecovery: Sendable {
     /// Examples:
     ///   - 143022_audio_system.m4a -> .systemAudio
     ///   - 143022_audio_BuiltInMicrophoneDevice.m4a -> .microphone(name: "BuiltInMicrophoneDevice", deviceUID: "BuiltInMicrophoneDevice")
-    private func parseTrackType(from filename: String, timePrefix: String) -> AudioTrackType {
+    func parseTrackType(from filename: String, timePrefix: String) -> AudioTrackType {
         // Remove prefix and suffix: "143022_audio_" ... ".m4a"
         let prefix = "\(timePrefix)_audio_"
         let suffix = ".m4a"
