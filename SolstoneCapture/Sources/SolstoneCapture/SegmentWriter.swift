@@ -4,7 +4,6 @@
 import AVFAudio
 import CoreMedia
 import Foundation
-import os
 @preconcurrency import ScreenCaptureKit
 import SolstoneCaptureCore
 
@@ -259,39 +258,14 @@ public final class SegmentWriter {
         Log.info("Finishing \(screenshotCapturers.count) video output(s)...")
         for (displayID, capturer) in screenshotCapturers {
             Log.info("Waiting for video finish on display \(displayID)...")
-            await withCheckedContinuation { continuation in
-                let resumed = OSAllocatedUnfairLock(initialState: false)
-
-                // Timeout: resume continuation if callback never fires
-                Task {
-                    try? await Task.sleep(for: .seconds(10))
-                    let alreadyResumed = resumed.withLock { state -> Bool in
-                        if state { return true }
-                        state = true
-                        return false
-                    }
-                    if !alreadyResumed {
-                        Log.warn("Timeout waiting for video finish on display \(displayID)")
-                        continuation.resume()
-                    }
-                }
-
-                capturer.finish { result in
-                    Log.info("Video finish callback fired for display \(displayID)")
-                    switch result {
-                    case let .success((url, frameCount)):
-                        Log.info("Saved video for display \(displayID): \(url.lastPathComponent) (\(frameCount) frames)")
-                    case let .failure(error):
-                        Log.warn("Error finishing video for display \(displayID): \(error)")
-                    }
-                    let alreadyResumed = resumed.withLock { state -> Bool in
-                        if state { return true }
-                        state = true
-                        return false
-                    }
-                    if !alreadyResumed {
-                        continuation.resume()
-                    }
+            let result = await capturer.finishWithTimeout(seconds: 10)
+            if let result {
+                Log.info("Video finish callback fired for display \(displayID)")
+                switch result {
+                case let .success((url, frameCount)):
+                    Log.info("Saved video for display \(displayID): \(url.lastPathComponent) (\(frameCount) frames)")
+                case let .failure(error):
+                    Log.warn("Error finishing video for display \(displayID): \(error)")
                 }
             }
             Log.info("Video finish complete for display \(displayID)")
@@ -339,38 +313,13 @@ public final class SegmentWriter {
         // Finish all screenshot capturers (video writers)
         Log.debug("Finishing \(screenshotCapturers.count) video output(s)...", verbose: verbose)
         for (displayID, capturer) in screenshotCapturers {
-            await withCheckedContinuation { continuation in
-                let resumed = OSAllocatedUnfairLock(initialState: false)
-
-                // Timeout: resume continuation if callback never fires
-                Task {
-                    try? await Task.sleep(for: .seconds(10))
-                    let alreadyResumed = resumed.withLock { state -> Bool in
-                        if state { return true }
-                        state = true
-                        return false
-                    }
-                    if !alreadyResumed {
-                        Log.warn("Timeout waiting for video finish on display \(displayID)")
-                        continuation.resume()
-                    }
-                }
-
-                capturer.finish { result in
-                    switch result {
-                    case let .success((url, frameCount)):
-                        Log.debug("Saved video for display \(displayID): \(url.lastPathComponent) (\(frameCount) frames)", verbose: self.verbose)
-                    case let .failure(error):
-                        Log.warn("Error finishing video for display \(displayID): \(error)")
-                    }
-                    let alreadyResumed = resumed.withLock { state -> Bool in
-                        if state { return true }
-                        state = true
-                        return false
-                    }
-                    if !alreadyResumed {
-                        continuation.resume()
-                    }
+            let result = await capturer.finishWithTimeout(seconds: 10)
+            if let result {
+                switch result {
+                case let .success((url, frameCount)):
+                    Log.debug("Saved video for display \(displayID): \(url.lastPathComponent) (\(frameCount) frames)", verbose: self.verbose)
+                case let .failure(error):
+                    Log.warn("Error finishing video for display \(displayID): \(error)")
                 }
             }
         }

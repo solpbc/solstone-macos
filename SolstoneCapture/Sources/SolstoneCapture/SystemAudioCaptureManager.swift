@@ -287,19 +287,3 @@ public final class SystemAudioCaptureManager {
         }
     }
 }
-
-// MARK: - Stream Delegate
-
-/// Delegate to handle SCStream errors
-private final class StreamDelegate: NSObject, SCStreamDelegate, @unchecked Sendable {
-    private let onError: (Error) -> Void
-
-    init(onError: @escaping (Error) -> Void) {
-        self.onError = onError
-        super.init()
-    }
-
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
-        onError(error)
-    }
-}

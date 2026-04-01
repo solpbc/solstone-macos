@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
 @preconcurrency import ScreenCaptureKit
 import CoreMedia
 import CoreVideo
@@ -206,6 +207,38 @@ public final class ScreenshotCapturer {
         }
     }
 
+    /// Finishes video writing with a timeout to prevent indefinite hangs.
+    /// Returns the result from the video writer, or nil if the timeout fires first.
+    public func finishWithTimeout(seconds: Double) async -> Result<(URL, Int), Error>? {
+        await withCheckedContinuation { continuation in
+            let resumed = OSAllocatedUnfairLock(initialState: false)
+
+            Task {
+                try? await Task.sleep(for: .seconds(seconds))
+                let alreadyResumed = resumed.withLock { state -> Bool in
+                    if state { return true }
+                    state = true
+                    return false
+                }
+                if !alreadyResumed {
+                    Log.warn("Timeout waiting for video finish on display \(self.displayID)")
+                    continuation.resume(returning: nil)
+                }
+            }
+
+            self.finish { result in
+                let alreadyResumed = resumed.withLock { state -> Bool in
+                    if state { return true }
+                    state = true
+                    return false
+                }
+                if !alreadyResumed {
+                    continuation.resume(returning: result)
+                }
+            }
+        }
+    }
+
     private func getAndResetFrameCount() -> Int {
         let frameCount = healthCheckFrameCount
         healthCheckFrameCount = 0
@@ -355,19 +388,5 @@ private final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Send
         }
 
         onFrame(pixelBuffer, isIdle)
-    }
-}
-
-// MARK: - Stream Delegate
-
-private final class StreamDelegate: NSObject, SCStreamDelegate, @unchecked Sendable {
-    let onError: (Error) -> Void
-
-    init(onError: @escaping (Error) -> Void) {
-        self.onError = onError
-    }
-
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
-        onError(error)
     }
 }
