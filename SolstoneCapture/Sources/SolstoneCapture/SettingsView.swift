@@ -457,6 +457,7 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
+            #if DEBUG
             GroupBox("Debug") {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("1-minute segments", isOn: debugSegmentsBinding)
@@ -466,11 +467,13 @@ struct SettingsView: View {
                 }
                 .padding(.vertical, 4)
             }
+            #endif
 
             Spacer()
         }
     }
 
+    #if DEBUG
     private var debugSegmentsBinding: Binding<Bool> {
         Binding(
             get: { appState.config.debugSegments },
@@ -496,6 +499,7 @@ struct SettingsView: View {
             }
         )
     }
+    #endif
 
     // MARK: - Upload Status
 
