@@ -462,7 +462,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("1-minute segments", isOn: debugSegmentsBinding)
                         .help("Use 1-minute segments instead of 5-minute for testing")
-                    Toggle("Keep rejected audio", isOn: debugKeepRejectedBinding)
+                    Toggle("keep rejected audio", isOn: debugKeepRejectedBinding)
                         .help("Move rejected mic tracks to rejected/ folder instead of deleting")
                 }
                 .padding(.vertical, 4)
