@@ -119,7 +119,7 @@ struct SetupView: View {
                 bundleImage("sol-wordmark")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 48, height: 48)
+                    .frame(width: 72, height: 72)
 
                 Text("solstone")
                     .font(.title)

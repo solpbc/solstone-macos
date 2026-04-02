@@ -77,7 +77,7 @@ icons: check-icons-deps
 	\
 	echo "  Rendering app icon sizes..." && \
 	for size in 16 32 64 128 256 512 1024; do \
-		rsvg-convert -w $$size -h $$size ../assets/sol-wordmark.svg \
+		rsvg-convert -w $$size -h $$size ../assets/icon-app.svg \
 			-o $$TMPDIR/icon_$${size}.png; \
 	done && \
 	\
