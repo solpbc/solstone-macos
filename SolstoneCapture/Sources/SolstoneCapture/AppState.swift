@@ -240,14 +240,16 @@ public final class AppState {
             }
         }
 
-        // Auto-start recording on launch
-        Task { @MainActor in
-            await self.startRecording()
-        }
+        // Auto-start recording on launch (skip if setup not completed)
+        if config.serverURL != nil {
+            Task { @MainActor in
+                await self.startRecording()
+            }
 
-        // Start upload sync in background
-        Task.detached { [uploadCoordinator] in
-            await uploadCoordinator?.syncOnStartup()
+            // Start upload sync in background
+            Task.detached { [uploadCoordinator] in
+                await uploadCoordinator?.syncOnStartup()
+            }
         }
 
         // Set shared instance for app-wide access (e.g., termination handler)

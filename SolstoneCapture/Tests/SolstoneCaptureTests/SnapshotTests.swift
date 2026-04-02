@@ -217,4 +217,24 @@ struct SnapshotTests {
             to: "settings-status-recording.png"
         )
     }
+
+    private let setupSize = CGSize(width: 420, height: 320)
+
+    @Test func setupEmpty() throws {
+        let state = AppState.forSnapshot()
+        try render(SetupView(appState: state), size: setupSize, to: "setup-empty.png")
+    }
+
+    @Test func setupFilled() throws {
+        let state = AppState.forSnapshot()
+        try render(
+            SetupView(
+                appState: state,
+                initialServerURL: "https://solstone.example.com",
+                initialServerKey: "sk-test-key-1234"
+            ),
+            size: setupSize,
+            to: "setup-filled.png"
+        )
+    }
 }
