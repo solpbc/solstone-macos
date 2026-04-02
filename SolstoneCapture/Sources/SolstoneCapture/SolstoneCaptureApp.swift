@@ -46,16 +46,39 @@ struct SolstoneCaptureApp: App {
         Stderr.setUnbuffered()
     }
 
+    private var statusAccessibilityLabel: String {
+        if appState.errorMessage != nil {
+            return "solstone — error"
+        }
+        if appState.isPaused {
+            return "solstone — paused"
+        }
+        if appState.muteManager.isMuted {
+            return "solstone — muted"
+        }
+        if appState.isRecording {
+            return "solstone — recording"
+        }
+        return "solstone — not recording"
+    }
+
     var body: some Scene {
         MenuBarExtra {
             MenuContent(appState: appState)
         } label: {
             Image(systemName: appState.statusIconName)
+                .accessibilityLabel(statusAccessibilityLabel)
         }
         .menuBarExtraStyle(.menu)
 
         Window("Solstone Settings", id: "settings") {
             SettingsView(appState: appState)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+
+        Window("About solstone", id: "about") {
+            AboutView()
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
