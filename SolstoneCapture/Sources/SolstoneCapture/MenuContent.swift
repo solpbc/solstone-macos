@@ -53,6 +53,15 @@ struct MenuContent: View {
 
         Divider()
 
+        Section {
+            Button("About solstone...") {
+                openWindow(id: "about")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
+
+        Divider()
+
         Button("Quit Solstone Capture") {
             Task {
                 // Stop recording gracefully before quitting

@@ -30,5 +30,7 @@
     <string>Solstone Capture needs permission to record system audio.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Solstone Capture uses on-device speech recognition to detect audio tracks containing speech.</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 sol pbc. All rights reserved.</string>
 </dict>
 </plist>
