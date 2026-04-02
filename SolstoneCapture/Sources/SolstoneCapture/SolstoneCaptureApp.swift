@@ -54,7 +54,7 @@ struct SolstoneCaptureApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        Window("Solstone Settings", id: "settings") {
+        Window("solstone settings", id: "settings") {
             SettingsView(appState: appState)
         }
         .windowResizability(.contentSize)

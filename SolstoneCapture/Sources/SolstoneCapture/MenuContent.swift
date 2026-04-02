@@ -53,7 +53,7 @@ struct MenuContent: View {
 
         Divider()
 
-        Button("Quit Solstone Capture") {
+        Button("Quit solstone") {
             Task {
                 // Stop recording gracefully before quitting
                 if appState.isRecording {
