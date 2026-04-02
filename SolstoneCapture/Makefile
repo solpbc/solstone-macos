@@ -36,6 +36,8 @@ bundle: release
 	@mkdir -p SolstoneCapture.app/Contents/Resources
 	@cp .build/release/SolstoneCapture SolstoneCapture.app/Contents/MacOS/
 	@cp Sources/SolstoneCapture/Info.plist SolstoneCapture.app/Contents/
+	@cp Sources/SolstoneCapture/Resources/AppIcon.icns SolstoneCapture.app/Contents/Resources/
+	@cp -r .build/release/SolstoneCapture_SolstoneCapture.bundle SolstoneCapture.app/Contents/Resources/
 	@echo "Created SolstoneCapture.app"
 
 # Create universal app bundle
@@ -46,6 +48,8 @@ bundle-universal: release-universal
 	@mkdir -p SolstoneCapture.app/Contents/Resources
 	@cp .build/apple/Products/Release/SolstoneCapture SolstoneCapture.app/Contents/MacOS/
 	@cp Sources/SolstoneCapture/Info.plist SolstoneCapture.app/Contents/
+	@cp Sources/SolstoneCapture/Resources/AppIcon.icns SolstoneCapture.app/Contents/Resources/
+	@cp -r .build/apple/Products/Release/SolstoneCapture_SolstoneCapture.bundle SolstoneCapture.app/Contents/Resources/
 	@echo "Created universal SolstoneCapture.app"
 
 # Install to /Applications (resets TCC so rebuilt binary is recognized)

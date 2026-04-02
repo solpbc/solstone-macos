@@ -66,7 +66,7 @@ struct SolstoneCaptureApp: App {
         MenuBarExtra {
             MenuContent(appState: appState)
         } label: {
-            StatusIcon(iconName: appState.statusIconName, needsSetup: appState.config.serverURL == nil)
+            StatusIcon(appState: appState)
                 .accessibilityLabel(statusAccessibilityLabel)
         }
         .menuBarExtraStyle(.menu)
@@ -93,17 +93,35 @@ struct SolstoneCaptureApp: App {
 
 /// Menu bar icon that opens the setup window on first launch
 private struct StatusIcon: View {
-    let iconName: String
-    let needsSetup: Bool
+    let appState: AppState
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Image(systemName: iconName)
-            .task {
-                if needsSetup {
-                    openWindow(id: "setup")
-                    NSApp.activate(ignoringOtherApps: true)
+        ZStack(alignment: .bottomTrailing) {
+            Image("sol-ring-template", bundle: .module)
+                .renderingMode(.template)
+
+            if appState.errorMessage != nil {
+                Circle()
+                    .fill(.red)
+                    .frame(width: 6, height: 6)
+            } else if appState.isRecording && !appState.isPaused {
+                if appState.muteManager.isMuted {
+                    Circle()
+                        .fill(.orange)
+                        .frame(width: 6, height: 6)
+                } else {
+                    Circle()
+                        .fill(.green)
+                        .frame(width: 6, height: 6)
                 }
             }
+        }
+        .task {
+            if appState.config.serverURL == nil {
+                openWindow(id: "setup")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
     }
 }

@@ -218,7 +218,7 @@ struct SnapshotTests {
         )
     }
 
-    private let setupSize = CGSize(width: 420, height: 320)
+    private let setupSize = CGSize(width: 420, height: 380)
 
     @Test func setupEmpty() throws {
         let state = AppState.forSnapshot()

@@ -34,5 +34,7 @@
     <string>© 2026 sol pbc. all rights reserved.</string>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
 </dict>
 </plist>

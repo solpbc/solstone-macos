@@ -7,9 +7,9 @@ import Testing
 @Suite("AppState.forSnapshot")
 @MainActor
 struct AppStateSnapshotTests {
-    @Test func recordingStatusIcon() {
+    @Test func snapshotStateDefaults() {
         let state = AppState.forSnapshot()
-        state.isRecording = true
-        #expect(state.statusIconName == "record.circle.fill")
+        #expect(state.isRecording == false)
+        #expect(state.errorMessage == nil)
     }
 }

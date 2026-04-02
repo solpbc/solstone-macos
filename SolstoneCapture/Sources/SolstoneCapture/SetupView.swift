@@ -18,6 +18,11 @@ struct SetupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
+                Image("sol-wordmark", bundle: .module)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 48, height: 48)
+
                 Text("solstone")
                     .font(.title)
                     .bold()

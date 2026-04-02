@@ -57,23 +57,6 @@ public final class AppState {
 
     // MARK: - Computed Properties
 
-    /// Status bar icon name based on current state
-    public var statusIconName: String {
-        if errorMessage != nil {
-            return "exclamationmark.circle.fill"
-        }
-        if isPaused {
-            return "pause.circle.fill"
-        }
-        if muteManager.isMuted {
-            return "circle.lefthalf.filled"
-        }
-        if isRecording {
-            return "record.circle.fill"
-        }
-        return "circle"
-    }
-
     /// Human-readable status text
     public var statusText: String {
         if let error = errorMessage {

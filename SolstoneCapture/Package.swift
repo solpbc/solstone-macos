@@ -19,6 +19,7 @@ let package = Package(
                 .product(name: "SolstoneCaptureCore", package: "SolstoneCaptureCore")
             ],
             exclude: ["Info.plist", "entitlements.plist"],
+            resources: [.process("Resources")],
             linkerSettings: [
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("CoreMedia"),

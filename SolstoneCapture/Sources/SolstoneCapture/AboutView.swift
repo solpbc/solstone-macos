@@ -15,9 +15,10 @@ struct AboutView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: "brain.head.profile")
-                .font(.system(size: 64))
-                .foregroundStyle(.secondary)
+            Image("sol-wordmark", bundle: .module)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 64, height: 64)
 
             Text("solstone")
                 .font(.title)
