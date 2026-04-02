@@ -20,7 +20,7 @@ run: build
 clean:
 	swift package clean
 	rm -rf .build
-	rm -rf SolstoneCapture.app
+	rm -rf solstone.app
 
 # Reset TCC permissions for testing
 reset-permissions:
@@ -31,39 +31,39 @@ reset-permissions:
 # Create app bundle for distribution
 bundle: release
 	@echo "Creating app bundle..."
-	@rm -rf SolstoneCapture.app
-	@mkdir -p SolstoneCapture.app/Contents/MacOS
-	@mkdir -p SolstoneCapture.app/Contents/Resources
-	@cp .build/release/SolstoneCapture SolstoneCapture.app/Contents/MacOS/
-	@cp Sources/SolstoneCapture/Info.plist SolstoneCapture.app/Contents/
-	@cp Sources/SolstoneCapture/Resources/AppIcon.icns SolstoneCapture.app/Contents/Resources/
-	@cp -r .build/release/SolstoneCapture_SolstoneCapture.bundle SolstoneCapture.app/Contents/Resources/
-	@echo "Created SolstoneCapture.app"
+	@rm -rf solstone.app
+	@mkdir -p solstone.app/Contents/MacOS
+	@mkdir -p solstone.app/Contents/Resources
+	@cp .build/release/SolstoneCapture solstone.app/Contents/MacOS/
+	@cp Sources/SolstoneCapture/Info.plist solstone.app/Contents/
+	@cp Sources/SolstoneCapture/Resources/AppIcon.icns solstone.app/Contents/Resources/
+	@cp -r .build/release/SolstoneCapture_SolstoneCapture.bundle solstone.app/Contents/Resources/
+	@echo "Created solstone.app"
 
 # Create universal app bundle
 bundle-universal: release-universal
 	@echo "Creating universal app bundle..."
-	@rm -rf SolstoneCapture.app
-	@mkdir -p SolstoneCapture.app/Contents/MacOS
-	@mkdir -p SolstoneCapture.app/Contents/Resources
-	@cp .build/apple/Products/Release/SolstoneCapture SolstoneCapture.app/Contents/MacOS/
-	@cp Sources/SolstoneCapture/Info.plist SolstoneCapture.app/Contents/
-	@cp Sources/SolstoneCapture/Resources/AppIcon.icns SolstoneCapture.app/Contents/Resources/
-	@cp -r .build/apple/Products/Release/SolstoneCapture_SolstoneCapture.bundle SolstoneCapture.app/Contents/Resources/
-	@echo "Created universal SolstoneCapture.app"
+	@rm -rf solstone.app
+	@mkdir -p solstone.app/Contents/MacOS
+	@mkdir -p solstone.app/Contents/Resources
+	@cp .build/apple/Products/Release/SolstoneCapture solstone.app/Contents/MacOS/
+	@cp Sources/SolstoneCapture/Info.plist solstone.app/Contents/
+	@cp Sources/SolstoneCapture/Resources/AppIcon.icns solstone.app/Contents/Resources/
+	@cp -r .build/apple/Products/Release/SolstoneCapture_SolstoneCapture.bundle solstone.app/Contents/Resources/
+	@echo "Created universal solstone.app"
 
 # Install to /Applications (resets TCC so rebuilt binary is recognized)
 install: bundle
 	@echo "Installing to /Applications..."
-	@rm -rf /Applications/SolstoneCapture.app
-	@cp -r SolstoneCapture.app /Applications/
+	@rm -rf /Applications/solstone.app
+	@cp -r solstone.app /Applications/
 	-@tccutil reset ScreenCapture com.solstone.capture 2>/dev/null
 	-@tccutil reset Microphone com.solstone.capture 2>/dev/null
-	@echo "Installed to /Applications/SolstoneCapture.app (TCC reset, will prompt on first launch)"
+	@echo "Installed to /Applications/solstone.app (TCC reset, will prompt on first launch)"
 
 # Open the app
 open: bundle
-	open SolstoneCapture.app
+	open solstone.app
 
 # Generate all icon assets from SVG sources in ../assets/
 # Requires: rsvg-convert (brew install librsvg), iconutil (built-in macOS)

@@ -27,13 +27,13 @@ struct MenuContent: View {
         // Recording control
         Section {
             if appState.isRecording && !appState.isPaused {
-                Button("Stop Recording") {
+                Button("stop recording") {
                     Task {
                         await appState.stopRecording()
                     }
                 }
-            } else {
-                Button("Start Recording") {
+            } else if appState.errorMessage == nil {
+                Button("start recording") {
                     Task {
                         await appState.startRecording()
                     }
@@ -45,7 +45,7 @@ struct MenuContent: View {
 
         // Settings
         Section {
-            Button("Settings...") {
+            Button("settings...") {
                 openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)
             }
@@ -77,9 +77,13 @@ struct MenuContent: View {
 
     @ViewBuilder
     private var statusRow: some View {
-        if let error = appState.errorMessage {
-            Label(error, systemImage: "exclamationmark.triangle.fill")
-                .foregroundColor(.red)
+        if appState.errorMessage != nil {
+            Button("screen recording blocked — open privacy settings →") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .foregroundStyle(.red)
         } else {
             Text(recordingStatusText)
         }
@@ -104,37 +108,34 @@ struct MenuContent: View {
                 // Reference refreshTick to trigger view updates
                 let _ = appState.muteManager.refreshTick
                 if let timeText = appState.muteManager.formatTimeRemaining() {
-                    Button("Unmute (\(timeText) remaining)") {
+                    Button("unmute (\(timeText) remaining)") {
                         appState.muteManager.unmute()
                     }
                 } else {
-                    Button("Unmute") {
+                    Button("unmute") {
                         appState.muteManager.unmute()
                     }
                 }
             } else {
-                Menu("Mute") {
+                Menu("mute") {
                     let now = Date()
                     let nextQuarter = MuteManager.nextQuarterHour(after: now)
                     let secondQuarter = MuteManager.secondQuarterHour(after: now)
                     let nextHour = MuteManager.nextFullHour(after: now)
-                    let nextMins = Int(nextQuarter.timeIntervalSince(now) / 60)
-                    let secondMins = Int(secondQuarter.timeIntervalSince(now) / 60)
-                    let hourMins = Int(nextHour.timeIntervalSince(now) / 60)
 
-                    Button("Until \(MuteManager.formatTime(nextQuarter)) (~\(nextMins) mins)") {
+                    Button("mute for 15 minutes (until \(MuteManager.formatTime(nextQuarter)))") {
                         appState.muteManager.mute(for: .until(nextQuarter))
                     }
-                    Button("Until \(MuteManager.formatTime(secondQuarter)) (~\(secondMins) mins)") {
+                    Button("mute for 30 minutes (until \(MuteManager.formatTime(secondQuarter)))") {
                         appState.muteManager.mute(for: .until(secondQuarter))
                     }
-                    Button("Until \(MuteManager.formatTime(nextHour)) (~\(hourMins) mins)") {
+                    Button("mute for 1 hour (until \(MuteManager.formatTime(nextHour)))") {
                         appState.muteManager.mute(for: .until(nextHour))
                     }
-                    Button("Until tomorrow morning") {
+                    Button("until tomorrow morning") {
                         appState.muteManager.mute(for: .untilTomorrowMorning)
                     }
-                    Button("Until unmute") {
+                    Button("indefinitely") {
                         appState.muteManager.mute(for: .indefinite)
                     }
                 }
@@ -148,13 +149,13 @@ struct MenuContent: View {
     private var uploadStatusRow: some View {
         if appState.config.isUploadConfigured {
             if appState.config.syncPaused {
-                Button("Resume Sync") {
+                Button("resume sync") {
                     var config = appState.config
                     config.syncPaused = false
                     appState.updateConfig(config)
                 }
             } else {
-                Button("Pause Sync") {
+                Button("pause sync") {
                     var config = appState.config
                     config.syncPaused = true
                     appState.updateConfig(config)

@@ -14,30 +14,37 @@ struct AboutView: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            bundleImage("sol-wordmark")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 64, height: 64)
+        VStack(spacing: 0) {
+            VStack(spacing: 8) {
+                bundleImage("sol-wordmark")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 64, height: 64)
 
-            Text("solstone")
-                .font(.title)
-                .fontWeight(.bold)
+                Text("solstone")
+                    .font(.title)
+                    .fontWeight(.bold)
+            }
 
-            Text("Version \(version)")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            Spacer().frame(height: 16)
 
-            Text("by sol pbc")
-                .font(.callout)
+            VStack(spacing: 4) {
+                Text("version \(version)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                Text("by sol pbc")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer().frame(height: 12)
 
             Text("an AI co-brain that captures your life and gives you superhuman memory.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Text(copyright)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            Spacer()
 
             Link("solpbc.org", destination: URL(string: "https://solpbc.org")!)
                 .font(.callout)

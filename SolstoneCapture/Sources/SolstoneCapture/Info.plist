@@ -23,9 +23,9 @@
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.productivity</string>
     <key>NSScreenCaptureUsageDescription</key>
-    <string>solstone continuously captures your screen to build your personal memory. this requires screen recording permission.</string>
+    <string>solstone continuously captures your screen to build your personal memory. your captures stay on your mac and are sent only to your configured server — nothing else.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>solstone captures conversations and meetings to make them searchable. this requires microphone access.</string>
+    <string>solstone captures conversations and meetings to make them searchable. audio is stored on your device and goes only to your server.</string>
     <key>NSSystemAudioRecordingUsageDescription</key>
     <string>solstone captures system audio from calls and media to include in your memory. this requires system audio permission.</string>
     <key>NSSpeechRecognitionUsageDescription</key>

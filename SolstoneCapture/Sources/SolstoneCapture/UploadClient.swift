@@ -69,7 +69,7 @@ public struct UploadClient: Sendable {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyyMMdd"
         let today = dateFormatter.string(from: Date())
-        let urlString = "\(serverURL)/app/remote/ingest/\(serverKey)/segments/\(today)"
+        let urlString = "\(serverURL)/app/remote/ingest/segments/\(today)"
         Log.upload("testConnection: GET \(urlString)")
 
         guard let url = URL(string: urlString) else {
@@ -79,6 +79,7 @@ public struct UploadClient: Sendable {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
+        request.setValue("Bearer \(serverKey)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 10  // Quick timeout for connection test
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
 
@@ -146,13 +147,14 @@ public struct UploadClient: Sendable {
         serverKey: String,
         day: String
     ) async -> [ServerSegmentInfo]? {
-        let urlString = "\(serverURL)/app/remote/ingest/\(serverKey)/segments/\(day)"
+        let urlString = "\(serverURL)/app/remote/ingest/segments/\(day)"
         guard let url = URL(string: urlString) else {
             return nil
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
+        request.setValue("Bearer \(serverKey)", forHTTPHeaderField: "Authorization")
 
         do {
             let (data, response) = try await session.data(for: request)
@@ -205,7 +207,7 @@ public struct UploadClient: Sendable {
         mediaFiles: [URL],
         metadataJSON: String? = nil
     ) async -> UploadResult {
-        let urlString = "\(serverURL)/app/remote/ingest/\(serverKey)"
+        let urlString = "\(serverURL)/app/remote/ingest"
         guard let url = URL(string: urlString) else {
             return .failure(UploadError.invalidURL)
         }
@@ -279,6 +281,7 @@ public struct UploadClient: Sendable {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(serverKey)", forHTTPHeaderField: "Authorization")
 
             let (data, response) = try await session.upload(for: request, fromFile: tempURL)
 
@@ -312,11 +315,20 @@ public struct UploadClient: Sendable {
         return filename
     }
 
-    /// Compute SHA256 hash of a file
+    /// Compute SHA256 hash of a file using incremental streaming (no full-file memory load)
     public func sha256(of fileURL: URL) -> String? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        let hash = SHA256.hash(data: data)
-        return hash.map { String(format: "%02x", $0) }.joined()
+        guard let fileHandle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
+        defer { try? fileHandle.close() }
+
+        var hasher = SHA256()
+        let chunkSize = 1024 * 1024  // 1 MB chunks
+        while true {
+            let chunk = fileHandle.readData(ofLength: chunkSize)
+            if chunk.isEmpty { break }
+            hasher.update(data: chunk)
+        }
+        let digest = hasher.finalize()
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 }
 

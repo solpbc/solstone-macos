@@ -124,7 +124,7 @@ struct SettingsView: View {
                     }
 
                     HStack {
-                        Button("Test Connection") {
+                        Button("test connection") {
                             testConnection()
                         }
                         .disabled(!appState.config.isUploadConfigured || isTesting)
@@ -141,14 +141,14 @@ struct SettingsView: View {
             }
 
             GroupBox("local storage") {
-                LabeledContent("Retention Limit") {
+                LabeledContent("local storage limit") {
                     Stepper("\(appState.config.localRetentionMB) MB", value: localRetentionBinding, in: 50...10000, step: 50)
                 }
                 .padding(.vertical, 4)
             }
 
             GroupBox("general") {
-                Toggle("Start at Login", isOn: Binding(
+                Toggle("start at login", isOn: Binding(
                     get: { appState.isLoginItemEnabled },
                     set: { appState.setLoginItemEnabled($0) }
                 ))
@@ -175,12 +175,12 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 20) {
             GroupBox("microphone priority") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Drag to reorder. Higher items are preferred for recording.")
+                    Text("drag to reorder. the microphone at the top is used first.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
                     if microphoneDisplayEntries.isEmpty {
-                        Text("No microphones detected")
+                        Text("no microphones detected")
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.vertical, 20)
@@ -283,15 +283,15 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 GroupBox("excluded apps") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Always hide all windows from these apps.")
+                        Text("windows from these apps are never captured.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
                         if appState.config.excludedApps.isEmpty {
-                            Text("No apps excluded")
+                            Text("no apps excluded")
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.vertical, 12)
+                                .padding(.vertical, 20)
                         } else {
                             VStack(spacing: 4) {
                                 ForEach(Array(appState.config.excludedApps.enumerated()), id: \.offset) { index, app in
@@ -328,10 +328,10 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
 
                         if appState.config.excludedTitlePatterns.isEmpty {
-                            Text("No patterns configured")
+                            Text("no patterns configured")
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.vertical, 12)
+                                .padding(.vertical, 20)
                         } else {
                             VStack(spacing: 4) {
                                 ForEach(Array(appState.config.excludedTitlePatterns.enumerated()), id: \.offset) { index, pattern in
@@ -427,14 +427,14 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 20) {
             GroupBox("recording") {
                 VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("State") {
-                        Text(appState.isRecording ? (appState.isPaused ? "Paused" : "Recording") : "Stopped")
+                    LabeledContent("state") {
+                        Text(appState.isRecording ? (appState.isPaused ? "paused" : "recording") : "stopped")
                     }
 
                     if appState.isRecording && !appState.isPaused {
                         // TimelineView only updates when visible, avoiding background timer
                         TimelineView(.periodic(from: .now, by: 1.0)) { _ in
-                            LabeledContent("Time Remaining") {
+                            LabeledContent("time remaining") {
                                 let remaining = appState.captureManager.segmentTimeRemaining
                                 let mins = Int(remaining) / 60
                                 let secs = Int(remaining) % 60
@@ -449,16 +449,16 @@ struct SettingsView: View {
             GroupBox("upload") {
                 VStack(alignment: .leading, spacing: 8) {
                     uploadStatusView
-                    Button("Force Full Sync") {
+                    Button("resync all") {
                         appState.uploadCoordinator.forceFullSync()
                     }
-                    .help("Re-check all days, including previously synced ones")
+                    .help("re-check all days, including previously synced ones")
                 }
                 .padding(.vertical, 4)
             }
 
             #if DEBUG
-            GroupBox("Debug") {
+            GroupBox("debug") {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("1-minute segments", isOn: debugSegmentsBinding)
                         .help("Use 1-minute segments instead of 5-minute for testing")
@@ -542,17 +542,17 @@ struct SettingsView: View {
     private func statusText(for status: UploadCoordinator.Status) -> String {
         switch status {
         case .notSynced:
-            return "Connecting..."
+            return "connecting..."
         case .synced:
-            return "Synced"
+            return "synced"
         case .syncing(let checked, let total):
-            return "Syncing: \(checked)/\(total)"
+            return "syncing: \(checked)/\(total)"
         case .uploading(let segment):
-            return "Uploading: \(segment)"
+            return "uploading: \(segment)"
         case .retrying(let segment, let attempts):
-            return "Retrying \(segment) (attempt \(attempts))"
+            return "retrying \(segment) (attempt \(attempts))"
         case .offline(let error):
-            return "Offline: \(error)"
+            return "offline: \(error)"
         }
     }
 
@@ -640,7 +640,7 @@ struct MicrophoneRow: View {
                 .buttonStyle(.plain)
                 .help("Remove from priority list")
             } else {
-                Text("Disconnected")
+                Text("disconnected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

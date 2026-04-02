@@ -50,10 +50,14 @@ struct SetupView: View {
                 .padding(.vertical, 4)
             }
 
+            Link("need a server? visit solstone.app/install", destination: URL(string: "https://solstone.app/install")!)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             HStack {
                 Spacer()
 
-                Button("Get Started") {
+                Button("get started") {
                     var config = appState.config
                     config.serverURL = serverURL
                     config.setServerKey(serverKey)
