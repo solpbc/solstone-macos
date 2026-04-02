@@ -1,4 +1,4 @@
-.PHONY: build release run clean test snapshot bundle install open reset-permissions
+.PHONY: build release run clean test snapshot bundle install open reset-permissions icons
 
 # Build both packages (debug)
 build:
@@ -46,3 +46,8 @@ open:
 # Reset TCC permissions
 reset-permissions:
 	$(MAKE) -C SolstoneCapture reset-permissions
+
+# Generate icon assets from SVG sources (requires macOS + librsvg)
+# Run when assets/ SVGs change: make icons && git add -A SolstoneCapture/Sources/SolstoneCapture/Resources
+icons:
+	$(MAKE) -C SolstoneCapture icons
