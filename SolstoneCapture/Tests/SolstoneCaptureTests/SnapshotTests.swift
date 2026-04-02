@@ -237,4 +237,10 @@ struct SnapshotTests {
             to: "setup-filled.png"
         )
     }
+
+    private let aboutSize = CGSize(width: 300, height: 340)
+
+    @Test func about() throws {
+        try render(AboutView(), size: aboutSize, to: "about.png")
+    }
 }

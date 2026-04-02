@@ -86,52 +86,57 @@ struct MenuContent: View {
     }
 
     private var recordingStatusText: String {
-        if !appState.isRecording || appState.isPaused {
-            return "Not Recording"
+        if appState.isPaused {
+            return "paused"
         }
-        return "Recording"
+        if !appState.isRecording {
+            return "not recording"
+        }
+        return "recording"
     }
 
     // MARK: - Mute Menus
 
     @ViewBuilder
     private var muteMenu: some View {
-        if appState.muteManager.isMuted {
-            // Reference refreshTick to trigger view updates
-            let _ = appState.muteManager.refreshTick
-            if let timeText = appState.muteManager.formatTimeRemaining() {
-                Button("Unmute (\(timeText) remaining)") {
-                    appState.muteManager.unmute()
+        if appState.isRecording {
+            if appState.muteManager.isMuted {
+                // Reference refreshTick to trigger view updates
+                let _ = appState.muteManager.refreshTick
+                if let timeText = appState.muteManager.formatTimeRemaining() {
+                    Button("Unmute (\(timeText) remaining)") {
+                        appState.muteManager.unmute()
+                    }
+                } else {
+                    Button("Unmute") {
+                        appState.muteManager.unmute()
+                    }
                 }
             } else {
-                Button("Unmute") {
-                    appState.muteManager.unmute()
-                }
-            }
-        } else {
-            Menu("Mute") {
-                let now = Date()
-                let nextQuarter = MuteManager.nextQuarterHour(after: now)
-                let secondQuarter = MuteManager.secondQuarterHour(after: now)
-                let nextHour = MuteManager.nextFullHour(after: now)
-                let nextMins = Int(nextQuarter.timeIntervalSince(now) / 60)
-                let secondMins = Int(secondQuarter.timeIntervalSince(now) / 60)
-                let hourMins = Int(nextHour.timeIntervalSince(now) / 60)
+                Menu("Mute") {
+                    let now = Date()
+                    let nextQuarter = MuteManager.nextQuarterHour(after: now)
+                    let secondQuarter = MuteManager.secondQuarterHour(after: now)
+                    let nextHour = MuteManager.nextFullHour(after: now)
+                    let nextMins = Int(nextQuarter.timeIntervalSince(now) / 60)
+                    let secondMins = Int(secondQuarter.timeIntervalSince(now) / 60)
+                    let hourMins = Int(nextHour.timeIntervalSince(now) / 60)
 
-                Button("Until \(MuteManager.formatTime(nextQuarter)) (~\(nextMins) mins)") {
-                    appState.muteManager.mute(for: .until(nextQuarter))
-                }
-                Button("Until \(MuteManager.formatTime(secondQuarter)) (~\(secondMins) mins)") {
-                    appState.muteManager.mute(for: .until(secondQuarter))
-                }
-                Button("Until \(MuteManager.formatTime(nextHour)) (~\(hourMins) mins)") {
-                    appState.muteManager.mute(for: .until(nextHour))
-                }
-                Button("Until tomorrow morning") {
-                    appState.muteManager.mute(for: .untilTomorrowMorning)
-                }
-                Button("Until unmute") {
-                    appState.muteManager.mute(for: .indefinite)
+                    Button("Until \(MuteManager.formatTime(nextQuarter)) (~\(nextMins) mins)") {
+                        appState.muteManager.mute(for: .until(nextQuarter))
+                    }
+                    Button("Until \(MuteManager.formatTime(secondQuarter)) (~\(secondMins) mins)") {
+                        appState.muteManager.mute(for: .until(secondQuarter))
+                    }
+                    Button("Until \(MuteManager.formatTime(nextHour)) (~\(hourMins) mins)") {
+                        appState.muteManager.mute(for: .until(nextHour))
+                    }
+                    Button("Until tomorrow morning") {
+                        appState.muteManager.mute(for: .untilTomorrowMorning)
+                    }
+                    Button("Until unmute") {
+                        appState.muteManager.mute(for: .indefinite)
+                    }
                 }
             }
         }

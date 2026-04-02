@@ -111,7 +111,7 @@ struct SettingsView: View {
 
     private var serverTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            GroupBox("Remote Server") {
+            GroupBox("remote server") {
                 VStack(alignment: .leading, spacing: 12) {
                     LabeledContent("Server URL") {
                         TextField("https://solstone.example.com", text: serverURLBinding)
@@ -140,14 +140,14 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox("Local Storage") {
+            GroupBox("local storage") {
                 LabeledContent("Retention Limit") {
                     Stepper("\(appState.config.localRetentionMB) MB", value: localRetentionBinding, in: 50...10000, step: 50)
                 }
                 .padding(.vertical, 4)
             }
 
-            GroupBox("General") {
+            GroupBox("general") {
                 Toggle("Start at Login", isOn: Binding(
                     get: { appState.isLoginItemEnabled },
                     set: { appState.setLoginItemEnabled($0) }
@@ -173,7 +173,7 @@ struct SettingsView: View {
 
     private var microphoneTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            GroupBox("Microphone Priority") {
+            GroupBox("microphone priority") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Drag to reorder. Higher items are preferred for recording.")
                         .font(.caption)
@@ -204,7 +204,7 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox("Microphone Gain") {
+            GroupBox("microphone gain") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Boost microphone input level. Changes take effect immediately.")
                         .font(.caption)
@@ -220,7 +220,7 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox("Audio Processing") {
+            GroupBox("audio processing") {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("Silence music in system audio", isOn: silenceMusicBinding)
                         .help("When enabled, music-only portions of system audio are silenced during remix")
@@ -281,7 +281,7 @@ struct SettingsView: View {
     private var privacyTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                GroupBox("Excluded Apps") {
+                GroupBox("excluded apps") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Always hide all windows from these apps.")
                             .font(.caption)
@@ -321,7 +321,7 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                 }
 
-                GroupBox("Title Patterns") {
+                GroupBox("title patterns") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Hide windows whose title contains these keywords.")
                             .font(.caption)
@@ -361,7 +361,7 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                 }
 
-                GroupBox("Private Browsing") {
+                GroupBox("private browsing") {
                     Toggle("Exclude private/incognito browser windows", isOn: excludePrivateBrowsingBinding)
                         .help("Automatically excludes Safari Private, Chrome Incognito, and Firefox Private Browsing windows")
                         .padding(.vertical, 4)
@@ -425,7 +425,7 @@ struct SettingsView: View {
 
     private var statusTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            GroupBox("Recording") {
+            GroupBox("recording") {
                 VStack(alignment: .leading, spacing: 8) {
                     LabeledContent("State") {
                         Text(appState.isRecording ? (appState.isPaused ? "Paused" : "Recording") : "Stopped")
@@ -446,7 +446,7 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox("Upload") {
+            GroupBox("upload") {
                 VStack(alignment: .leading, spacing: 8) {
                     uploadStatusView
                     Button("Force Full Sync") {

@@ -30,7 +30,7 @@ struct SetupView: View {
                     .foregroundStyle(.secondary)
             }
 
-            GroupBox("Server Configuration") {
+            GroupBox("server configuration") {
                 VStack(alignment: .leading, spacing: 12) {
                     LabeledContent("Server URL") {
                         TextField("https://solstone.example.com", text: $serverURL)
