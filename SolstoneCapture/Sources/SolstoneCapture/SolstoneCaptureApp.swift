@@ -66,10 +66,16 @@ struct SolstoneCaptureApp: App {
         MenuBarExtra {
             MenuContent(appState: appState)
         } label: {
-            Image(systemName: appState.statusIconName)
+            StatusIcon(iconName: appState.statusIconName, needsSetup: appState.config.serverURL == nil)
                 .accessibilityLabel(statusAccessibilityLabel)
         }
         .menuBarExtraStyle(.menu)
+
+        Window("solstone setup", id: "setup") {
+            SetupView(appState: appState)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
 
         Window("solstone settings", id: "settings") {
             SettingsView(appState: appState)
@@ -82,5 +88,22 @@ struct SolstoneCaptureApp: App {
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
+    }
+}
+
+/// Menu bar icon that opens the setup window on first launch
+private struct StatusIcon: View {
+    let iconName: String
+    let needsSetup: Bool
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Image(systemName: iconName)
+            .task {
+                if needsSetup {
+                    openWindow(id: "setup")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            }
     }
 }
