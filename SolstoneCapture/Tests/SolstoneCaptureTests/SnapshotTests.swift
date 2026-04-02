@@ -219,22 +219,37 @@ struct SnapshotTests {
     }
 
     private let setupSize = CGSize(width: 420, height: 380)
+    private let setupPermissionsSize = CGSize(width: 420, height: 480)
 
-    @Test func setupEmpty() throws {
+    @Test func setupPermissionsStep() throws {
         let state = AppState.forSnapshot()
-        try render(SetupView(appState: state), size: setupSize, to: "setup-empty.png")
+        try render(
+            SetupView(appState: state, initialStep: .permissions),
+            size: setupPermissionsSize,
+            to: "setup-permissions.png"
+        )
     }
 
-    @Test func setupFilled() throws {
+    @Test func setupServerConfigEmpty() throws {
+        let state = AppState.forSnapshot()
+        try render(
+            SetupView(appState: state, initialStep: .serverConfig),
+            size: setupSize,
+            to: "setup-server-config-empty.png"
+        )
+    }
+
+    @Test func setupServerConfigFilled() throws {
         let state = AppState.forSnapshot()
         try render(
             SetupView(
                 appState: state,
                 initialServerURL: "https://solstone.example.com",
-                initialServerKey: "sk-test-key-1234"
+                initialServerKey: "sk-test-key-1234",
+                initialStep: .serverConfig
             ),
             size: setupSize,
-            to: "setup-filled.png"
+            to: "setup-server-config-filled.png"
         )
     }
 

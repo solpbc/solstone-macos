@@ -125,7 +125,7 @@ private struct StatusIcon: View {
             }
         }
         .task {
-            if appState.config.serverURL == nil {
+            if appState.config.serverURL == nil || !PermissionChecker().allGranted {
                 openWindow(id: "setup")
                 NSApp.activate(ignoringOtherApps: true)
             }

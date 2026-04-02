@@ -8,14 +8,112 @@ struct SetupView: View {
     @Bindable var appState: AppState
     @State private var serverURL = ""
     @State private var serverKey = ""
+    @State private var permissionChecker = PermissionChecker()
+    @State private var isRequestingPermissions = false
+    @State private var step: Step
 
-    init(appState: AppState, initialServerURL: String = "", initialServerKey: String = "") {
+    enum Step {
+        case permissions
+        case serverConfig
+    }
+
+    init(appState: AppState, initialServerURL: String = "", initialServerKey: String = "", initialStep: Step? = nil) {
         self.appState = appState
         self._serverURL = State(initialValue: initialServerURL)
         self._serverKey = State(initialValue: initialServerKey)
+        self._step = State(initialValue: initialStep ?? (PermissionChecker().allGranted ? .serverConfig : .permissions))
     }
 
     var body: some View {
+        Group {
+            if step == .permissions {
+                permissionsStep
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+            } else {
+                serverConfigStep
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+            }
+        }
+        .frame(width: 420)
+    }
+
+    @ViewBuilder
+    private var permissionsStep: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("two permissions, once.")
+                    .font(.title)
+                    .bold()
+
+                Text("solstone needs screen recording and microphone access to build your memory. here's what each does and why.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !permissionChecker.screenRecordingGranted {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("screen recording")
+                            .font(.headline)
+                        Text("to search your entire history — every meeting, document, and idea — solstone captures your screen continuously. everything stays on your mac and goes only to your server.")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
+                }
+            }
+
+            if !permissionChecker.microphoneGranted {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("microphone")
+                            .font(.headline)
+                        Text("to capture conversations and meetings, solstone needs mic access. same rules: stored locally, sent only to your server. no third parties, no exceptions.")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
+                }
+            }
+
+            Text("you can review or revoke these anytime in system settings → privacy & security.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+
+                if isRequestingPermissions {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .scaleEffect(0.7)
+                }
+
+                Button("continue →") {
+                    isRequestingPermissions = true
+                    Task {
+                        await permissionChecker.requestAll()
+                        isRequestingPermissions = false
+                        if appState.config.serverURL != nil {
+                            NSApp.keyWindow?.close()
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                step = .serverConfig
+                            }
+                        }
+                    }
+                }
+                .disabled(isRequestingPermissions)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(30)
+    }
+
+    @ViewBuilder
+    private var serverConfigStep: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 bundleImage("sol-wordmark")
@@ -75,6 +173,5 @@ struct SetupView: View {
             }
         }
         .padding(30)
-        .frame(width: 420)
     }
 }
