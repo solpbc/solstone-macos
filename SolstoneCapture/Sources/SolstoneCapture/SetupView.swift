@@ -18,11 +18,14 @@ struct SetupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Welcome to Solstone")
+                Text("solstone")
                     .font(.title)
                     .bold()
 
-                Text("Enter your server details to get started.")
+                Text("captures everything you see and hear and makes it searchable.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text("by sol pbc — a public benefit corporation")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

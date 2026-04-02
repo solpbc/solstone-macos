@@ -30,7 +30,7 @@ struct AboutView: View {
             Text("by sol pbc")
                 .font(.callout)
 
-            Text("Continuous screen and audio capture")
+            Text("an AI co-brain that captures your life and gives you superhuman memory.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
