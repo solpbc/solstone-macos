@@ -15,7 +15,7 @@ struct AboutView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Image("sol-wordmark", bundle: .module)
+            bundleImage("sol-wordmark")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 64, height: 64)

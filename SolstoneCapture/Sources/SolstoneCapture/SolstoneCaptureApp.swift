@@ -91,6 +91,14 @@ struct SolstoneCaptureApp: App {
     }
 }
 
+/// Loads a PNG image from the SPM resource bundle (not an asset catalog).
+/// `Image(_:bundle:)` only searches asset catalogs; this uses `Bundle.image(forResource:)`.
+func bundleImage(_ name: String, isTemplate: Bool = false) -> Image {
+    let nsImage = Bundle.module.image(forResource: name) ?? NSImage()
+    if isTemplate { nsImage.isTemplate = true }
+    return Image(nsImage: nsImage)
+}
+
 /// Menu bar icon that opens the setup window on first launch
 private struct StatusIcon: View {
     let appState: AppState
@@ -98,8 +106,7 @@ private struct StatusIcon: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            Image("sol-ring-template", bundle: .module)
-                .renderingMode(.template)
+            bundleImage("sol-ring-template", isTemplate: true)
 
             if appState.errorMessage != nil {
                 Circle()
