@@ -9,7 +9,7 @@ Solstone Capture is a macOS status bar application for continuous screen and aud
 ## Build Commands
 
 ```bash
-# Build both packages (debug)
+# Build the package (debug)
 make build
 
 # Build release
@@ -36,16 +36,15 @@ make reset-permissions
 
 ## Repository Structure
 
-This is a multi-package Swift repository:
+This is a single-package Swift repository using Swift Package Manager with Swift 6.1 and requiring macOS 15.0+.
 
-- **SolstoneCapture/** - Main macOS app (executable target)
-- **SolstoneCaptureCore/** - Shared library with recording components
-
-Both use Swift Package Manager with Swift 6.1 and require macOS 15.0+.
+- **Sources/solstone/** - All Swift source files (app layer + recording engine)
+- **Sources/ObjCHelpers/** - Objective-C exception catcher target
+- **Tests/solstoneTests/** - All test files
 
 ## Architecture
 
-### SolstoneCapture (App Layer)
+### Sources/solstone/
 - **SolstoneCaptureApp.swift** - SwiftUI entry point with MenuBarExtra
 - **AppState.swift** - Observable application state, coordinates all managers
 - **CaptureManager.swift** - Orchestrates continuous recording with segment rotation
@@ -55,8 +54,6 @@ Both use Swift Package Manager with Swift 6.1 and require macOS 15.0+.
 - **MuteManager.swift** - Tracks audio/video mute state with timed unmute
 - **StorageManager.swift** - File organization and segment directory creation
 - **AudioDeviceMonitor.swift** - Monitors audio device additions/removals
-
-### SolstoneCaptureCore (Recording Layer)
 - **VideoWriter** - HEVC hardware encoding to .mp4
 - **SingleTrackAudioWriter** - Single-source M4A recording with timing metadata
 - **AudioRemixer** - Combines individual M4A files into multi-track output with silence detection

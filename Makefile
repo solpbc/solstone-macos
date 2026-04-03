@@ -1,53 +1,127 @@
-.PHONY: build release run clean test snapshot bundle install open reset-permissions icons
+.PHONY: build release release-universal run clean test snapshot bundle bundle-universal install open reset-permissions icons check-icons-deps
 
-# Build both packages (debug)
+# Build debug version
 build:
-	swift build --package-path SolstoneCaptureCore
-	swift build --package-path SolstoneCapture
+	swift build
 
-# Build release
+# Build release version
 release:
-	swift build --package-path SolstoneCaptureCore -c release
-	swift build --package-path SolstoneCapture -c release
+	swift build -c release
+
+# Build universal binary (arm64 + x86_64)
+release-universal:
+	swift build -c release --arch arm64 --arch x86_64
 
 # Run the app
 run:
-	$(MAKE) -C SolstoneCapture run
+	swift run
 
 # Clean all build artifacts
 clean:
-	swift package clean --package-path SolstoneCaptureCore
-	rm -rf SolstoneCaptureCore/.build
-	swift package clean --package-path SolstoneCapture
-	rm -rf SolstoneCapture/.build
-	rm -rf SolstoneCapture/SolstoneCapture.app
+	swift package clean
+	rm -rf .build
+	rm -rf solstone.app
 
 # Run tests
 test:
-	swift test --package-path SolstoneCaptureCore
-	swift test --package-path SolstoneCapture
+	swift test
 
 # Render view snapshots
 snapshot:
-	swift test --package-path SolstoneCapture --filter Snapshot
+	swift test --filter Snapshot
 
-# Create app bundle
-bundle:
-	$(MAKE) -C SolstoneCapture bundle
+# Create app bundle for distribution
+bundle: release
+	@echo "Creating app bundle..."
+	@rm -rf solstone.app
+	@mkdir -p solstone.app/Contents/MacOS
+	@mkdir -p solstone.app/Contents/Resources
+	@cp .build/release/solstone solstone.app/Contents/MacOS/
+	@cp Sources/solstone/Info.plist solstone.app/Contents/
+	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
+	@cp -r .build/release/solstone_solstone.bundle solstone.app/Contents/Resources/
+	@echo "Created solstone.app"
 
-# Install to /Applications
-install:
-	$(MAKE) -C SolstoneCapture install
+# Create universal app bundle
+bundle-universal: release-universal
+	@echo "Creating universal app bundle..."
+	@rm -rf solstone.app
+	@mkdir -p solstone.app/Contents/MacOS
+	@mkdir -p solstone.app/Contents/Resources
+	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
+	@cp Sources/solstone/Info.plist solstone.app/Contents/
+	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
+	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
+	@echo "Created universal solstone.app"
+
+# Install to /Applications (resets TCC so rebuilt binary is recognized)
+install: bundle
+	@echo "Installing to /Applications..."
+	@rm -rf /Applications/solstone.app
+	@cp -r solstone.app /Applications/
+	-@tccutil reset ScreenCapture com.solstone.capture 2>/dev/null
+	-@tccutil reset Microphone com.solstone.capture 2>/dev/null
+	@echo "Installed to /Applications/solstone.app (TCC reset, will prompt on first launch)"
 
 # Open the app
-open:
-	$(MAKE) -C SolstoneCapture open
+open: bundle
+	open solstone.app
 
-# Reset TCC permissions
+# Reset TCC permissions for testing
 reset-permissions:
-	$(MAKE) -C SolstoneCapture reset-permissions
+	-tccutil reset ScreenCapture com.solstone.capture
+	-tccutil reset Microphone com.solstone.capture
+	@echo "TCC permissions reset. Restart the app to trigger permission prompts."
 
-# Generate icon assets from SVG sources (requires macOS + librsvg)
-# Run when assets/ SVGs change: make icons && git add -A SolstoneCapture/Sources/SolstoneCapture/Resources
-icons:
-	$(MAKE) -C SolstoneCapture icons
+# Generate icon assets from SVG sources in assets/
+# Requires: rsvg-convert (brew install librsvg), iconutil (built-in macOS)
+# Run when SVGs change. Output files are committed so fresh checkouts build cleanly.
+icons: check-icons-deps
+	@echo "Generating icons from SVG sources..."
+	@mkdir -p Sources/solstone/Resources
+	@TMPDIR=$$(mktemp -d) && \
+	ICONSET=$$TMPDIR/AppIcon.iconset && \
+	mkdir -p $$ICONSET && \
+	\
+	echo "  Rendering app icon sizes..." && \
+	for size in 16 32 64 128 256 512 1024; do \
+		rsvg-convert -w $$size -h $$size assets/icon-app.svg \
+			-o $$TMPDIR/icon_$${size}.png; \
+	done && \
+	\
+	cp $$TMPDIR/icon_16.png    $$ICONSET/icon_16x16.png && \
+	cp $$TMPDIR/icon_32.png    $$ICONSET/icon_16x16@2x.png && \
+	cp $$TMPDIR/icon_32.png    $$ICONSET/icon_32x32.png && \
+	cp $$TMPDIR/icon_64.png    $$ICONSET/icon_32x32@2x.png && \
+	cp $$TMPDIR/icon_128.png   $$ICONSET/icon_128x128.png && \
+	cp $$TMPDIR/icon_256.png   $$ICONSET/icon_128x128@2x.png && \
+	cp $$TMPDIR/icon_256.png   $$ICONSET/icon_256x256.png && \
+	cp $$TMPDIR/icon_512.png   $$ICONSET/icon_256x256@2x.png && \
+	cp $$TMPDIR/icon_512.png   $$ICONSET/icon_512x512.png && \
+	cp $$TMPDIR/icon_1024.png  $$ICONSET/icon_512x512@2x.png && \
+	\
+	iconutil -c icns $$ICONSET -o Sources/solstone/Resources/AppIcon.icns && \
+	echo "  ✓ AppIcon.icns" && \
+	\
+	echo "  Rendering status bar template icons..." && \
+	rsvg-convert -w 18 -h 18 assets/sol-ring.svg \
+		-o Sources/solstone/Resources/sol-ring-template.png && \
+	rsvg-convert -w 36 -h 36 assets/sol-ring.svg \
+		-o Sources/solstone/Resources/sol-ring-template@2x.png && \
+	echo "  ✓ sol-ring-template.png + @2x" && \
+	\
+	echo "  Rendering wordmark for UI..." && \
+	rsvg-convert -w 128 -h 128 assets/sol-wordmark.svg \
+		-o Sources/solstone/Resources/sol-wordmark.png && \
+	rsvg-convert -w 256 -h 256 assets/sol-wordmark.svg \
+		-o Sources/solstone/Resources/sol-wordmark@2x.png && \
+	echo "  ✓ sol-wordmark.png + @2x" && \
+	\
+	rm -rf $$TMPDIR && \
+	echo "Icons generated in Sources/solstone/Resources/"
+
+check-icons-deps:
+	@which rsvg-convert > /dev/null 2>&1 || \
+		(echo "error: rsvg-convert not found — run: brew install librsvg"; exit 1)
+	@which iconutil > /dev/null 2>&1 || \
+		(echo "error: iconutil not found (requires macOS)"; exit 1)
