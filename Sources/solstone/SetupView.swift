@@ -12,8 +12,11 @@ struct SetupView: View {
     @State private var isRequestingPermissions = false
     @State private var step: Step
 
+    private static let localServerURL = "http://localhost:5015"
+
     enum Step {
         case permissions
+        case autoDetect
         case serverConfig
     }
 
@@ -21,7 +24,7 @@ struct SetupView: View {
         self.appState = appState
         self._serverURL = State(initialValue: initialServerURL)
         self._serverKey = State(initialValue: initialServerKey)
-        self._step = State(initialValue: initialStep ?? (PermissionChecker().allGranted ? .serverConfig : .permissions))
+        self._step = State(initialValue: initialStep ?? (PermissionChecker().allGranted ? .autoDetect : .permissions))
     }
 
     var body: some View {
@@ -29,8 +32,11 @@ struct SetupView: View {
             if step == .permissions {
                 permissionsStep
                     .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
-            } else {
+            } else if step == .serverConfig {
                 serverConfigStep
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+            } else {
+                autoDetectStep
                     .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
             }
         }
@@ -100,7 +106,7 @@ struct SetupView: View {
                             NSApp.keyWindow?.close()
                         } else {
                             withAnimation(.easeInOut(duration: 0.25)) {
-                                step = .serverConfig
+                                step = .autoDetect
                             }
                         }
                     }
@@ -110,6 +116,85 @@ struct SetupView: View {
             }
         }
         .padding(30)
+    }
+
+    @ViewBuilder
+    private var autoDetectStep: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("checking for local server...")
+                    .font(.title)
+                    .bold()
+
+                Text("looking for a solstone server on this mac.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Spacer()
+                ProgressView()
+                    .progressViewStyle(.circular)
+                Spacer()
+            }
+            .padding(.vertical, 20)
+        }
+        .padding(30)
+        .task {
+            await attemptAutoRegistration()
+        }
+    }
+
+    private func attemptAutoRegistration() async {
+        let url = URL(string: "\(Self.localServerURL)/app/remote/api/create")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONEncoder().encode(["name": "solstone-macos"])
+
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 3
+        let session = URLSession(configuration: config)
+
+        do {
+            let (data, response) = try await session.data(for: request)
+
+            if let httpResponse = response as? HTTPURLResponse,
+               httpResponse.statusCode == 200 {
+                struct RegistrationResponse: Decodable {
+                    let key: String
+                }
+
+                let registration = try JSONDecoder().decode(RegistrationResponse.self, from: data)
+                Log.info("auto-registration: success")
+
+                var appConfig = appState.config
+                appConfig.serverURL = Self.localServerURL
+                appConfig.setServerKey(registration.key)
+                appState.updateConfig(appConfig)
+                NSApp.keyWindow?.close()
+                Task {
+                    await appState.startRecording()
+                }
+                Task.detached {
+                    await appState.uploadCoordinator?.syncOnStartup()
+                }
+            } else {
+                Log.info("auto-registration: server returned non-200")
+                fallbackToManualSetup()
+            }
+        } catch {
+            Log.info("auto-registration: failed — \(error.localizedDescription)")
+            fallbackToManualSetup()
+        }
+
+        session.invalidateAndCancel()
+    }
+
+    private func fallbackToManualSetup() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            step = .serverConfig
+        }
     }
 
     @ViewBuilder
