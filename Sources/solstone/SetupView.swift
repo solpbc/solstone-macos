@@ -231,12 +231,18 @@ struct SetupView: View {
         case failure(String)
     }
 
+    private struct RemoteCreateResponse: Decodable {
+        let name: String
+        let key: String
+        let prefix: String
+    }
+
     private func runSolRemoteCreate(solPath: String) async -> SolResult {
         await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: solPath)
-                process.arguments = ["remote", "create", "solstone-macos"]
+                process.arguments = ["remote", "--json", "create", "solstone-macos"]
                 let stdoutPipe = Pipe()
                 let stderrPipe = Pipe()
                 process.standardOutput = stdoutPipe
@@ -257,20 +263,11 @@ struct SetupView: View {
 
                     if process.terminationStatus == 0 {
                         let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                        let output = String(data: data, encoding: .utf8) ?? ""
-                        for line in output.components(separatedBy: .newlines) {
-                            if line.lowercased().contains("api key:") {
-                                let parts = line.components(separatedBy: ":")
-                                if parts.count >= 2 {
-                                    let key = parts.dropFirst().joined(separator: ":").trimmingCharacters(in: .whitespaces)
-                                    if !key.isEmpty {
-                                        continuation.resume(returning: .success(key))
-                                        return
-                                    }
-                                }
-                            }
+                        if let response = try? JSONDecoder().decode(RemoteCreateResponse.self, from: data) {
+                            continuation.resume(returning: .success(response.key))
+                        } else {
+                            continuation.resume(returning: .failure("could not parse JSON response"))
                         }
-                        continuation.resume(returning: .failure("could not parse api key from output"))
                     } else {
                         let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
                         let stderr = String(data: stderrData, encoding: .utf8) ?? ""
