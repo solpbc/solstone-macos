@@ -18,12 +18,26 @@ Solstone Capture is a macOS status bar app for continuous screen and audio recor
 ## Requirements
 
 - macOS 15.0+
-- Swift 6.1
-- Swift Package Manager
+- **Xcode** (full IDE, not just Command Line Tools) — install from the Mac App Store
+- Swift 6.1 (included with Xcode)
 
 - Screen Recording permission
 - Microphone permission
 - System Audio Recording permission
+
+## Install
+
+```bash
+git clone https://github.com/solpbc/solstone-macos.git
+cd solstone-macos
+make install
+```
+
+This builds a release binary, creates an app bundle, and installs to `/Applications`. The app is unsigned — if macOS Gatekeeper blocks it, either right-click and choose "Open" or run:
+
+```bash
+xattr -cr /Applications/solstone.app
+```
 
 ## Building and Running
 
