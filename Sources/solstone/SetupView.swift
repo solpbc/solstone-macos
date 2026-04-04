@@ -122,11 +122,11 @@ struct SetupView: View {
     private var autoDetectStep: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("checking for local server...")
+                Text("setting up...")
                     .font(.title)
                     .bold()
 
-                Text("looking for a solstone server on this mac.")
+                Text("registering this mac with your solstone journal.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -146,49 +146,145 @@ struct SetupView: View {
     }
 
     private func attemptAutoRegistration() async {
-        let url = URL(string: "\(Self.localServerURL)/app/remote/api/create")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONEncoder().encode(["name": "solstone-macos"])
-
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 3
-        let session = URLSession(configuration: config)
-
-        do {
-            let (data, response) = try await session.data(for: request)
-
-            if let httpResponse = response as? HTTPURLResponse,
-               httpResponse.statusCode == 200 {
-                struct RegistrationResponse: Decodable {
-                    let key: String
-                }
-
-                let registration = try JSONDecoder().decode(RegistrationResponse.self, from: data)
-                Log.info("auto-registration: success")
-
-                var appConfig = appState.config
-                appConfig.serverURL = Self.localServerURL
-                appConfig.setServerKey(registration.key)
-                appState.updateConfig(appConfig)
-                NSApp.keyWindow?.close()
-                Task {
-                    await appState.startRecording()
-                }
-                Task.detached {
-                    await appState.uploadCoordinator?.syncOnStartup()
-                }
-            } else {
-                Log.info("auto-registration: server returned non-200")
-                fallbackToManualSetup()
+        if let existingKey = KeychainManager.loadServerKey(), !existingKey.isEmpty {
+            Log.info("auto-registration: key found in keychain, skipping CLI")
+            var config = appState.config
+            config.serverURL = Self.localServerURL
+            config.setServerKey(existingKey)
+            appState.updateConfig(config)
+            NSApp.keyWindow?.close()
+            Task {
+                await appState.startRecording()
             }
-        } catch {
-            Log.info("auto-registration: failed — \(error.localizedDescription)")
-            fallbackToManualSetup()
+            Task.detached {
+                await appState.uploadCoordinator?.syncOnStartup()
+            }
+            return
         }
 
-        session.invalidateAndCancel()
+        let solPath = await findSolBinary()
+        guard let solPath else {
+            Log.info("auto-registration: sol binary not found")
+            fallbackToManualSetup()
+            return
+        }
+        Log.info("auto-registration: sol found at \(solPath)")
+
+        let result = await runSolRemoteCreate(solPath: solPath)
+
+        switch result {
+        case .success(let key):
+            Log.info("auto-registration: CLI success")
+            var config = appState.config
+            config.serverURL = Self.localServerURL
+            config.setServerKey(key)
+            appState.updateConfig(config)
+            NSApp.keyWindow?.close()
+            Task {
+                await appState.startRecording()
+            }
+            Task.detached {
+                await appState.uploadCoordinator?.syncOnStartup()
+            }
+        case .failure(let reason):
+            Log.info("auto-registration: CLI failed — \(reason)")
+            fallbackToManualSetup()
+        }
+    }
+
+    private func findSolBinary() async -> String? {
+        let preferred = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin/sol").path
+        if FileManager.default.fileExists(atPath: preferred) {
+            return preferred
+        }
+
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+                process.arguments = ["sol"]
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = FileHandle.nullDevice
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    if process.terminationStatus == 0 {
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                        let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let path, !path.isEmpty {
+                            continuation.resume(returning: path)
+                            return
+                        }
+                    }
+                    continuation.resume(returning: nil)
+                } catch {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
+    private enum SolResult {
+        case success(String)
+        case failure(String)
+    }
+
+    private func runSolRemoteCreate(solPath: String) async -> SolResult {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: solPath)
+                process.arguments = ["remote", "create", "solstone-macos"]
+                let stdoutPipe = Pipe()
+                let stderrPipe = Pipe()
+                process.standardOutput = stdoutPipe
+                process.standardError = stderrPipe
+
+                do {
+                    try process.run()
+
+                    let timer = DispatchSource.makeTimerSource()
+                    timer.schedule(deadline: .now() + 10)
+                    timer.setEventHandler {
+                        process.terminate()
+                    }
+                    timer.resume()
+
+                    process.waitUntilExit()
+                    timer.cancel()
+
+                    if process.terminationStatus == 0 {
+                        let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                        let output = String(data: data, encoding: .utf8) ?? ""
+                        for line in output.components(separatedBy: .newlines) {
+                            if line.lowercased().contains("api key:") {
+                                let parts = line.components(separatedBy: ":")
+                                if parts.count >= 2 {
+                                    let key = parts.dropFirst().joined(separator: ":").trimmingCharacters(in: .whitespaces)
+                                    if !key.isEmpty {
+                                        continuation.resume(returning: .success(key))
+                                        return
+                                    }
+                                }
+                            }
+                        }
+                        continuation.resume(returning: .failure("could not parse api key from output"))
+                    } else {
+                        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+                        if stderr.contains("already exists") {
+                            continuation.resume(returning: .failure("remote already exists"))
+                        } else {
+                            continuation.resume(returning: .failure("exit code \(process.terminationStatus)"))
+                        }
+                    }
+                } catch {
+                    continuation.resume(returning: .failure(error.localizedDescription))
+                }
+            }
+        }
     }
 
     private func fallbackToManualSetup() {
