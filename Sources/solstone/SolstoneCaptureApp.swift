@@ -106,6 +106,7 @@ func bundleImage(_ name: String, isTemplate: Bool = false) -> Image {
 private struct StatusIcon: View {
     let appState: AppState
     @Environment(\.openWindow) private var openWindow
+    @State private var hasCheckedSetup = false
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -129,6 +130,8 @@ private struct StatusIcon: View {
             }
         }
         .task {
+            guard !hasCheckedSetup else { return }
+            hasCheckedSetup = true
             if appState.config.serverURL == nil || !PermissionChecker().allGranted {
                 openWindow(id: "setup")
                 NSApp.activate(ignoringOtherApps: true)

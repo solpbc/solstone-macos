@@ -20,11 +20,15 @@ struct PermissionChecker {
 
     /// Request all missing permissions in sequence.
     /// Screen recording dialog must be triggered first (it's the more critical one).
+    /// After requesting, polls briefly to give the user time to grant in System Settings.
     func requestAll() async {
         if !screenRecordingGranted {
             CGRequestScreenCaptureAccess()
-            // Brief pause to let the OS dialog appear and dismiss
-            try? await Task.sleep(for: .milliseconds(500))
+            // Poll for up to 30 seconds — user may need to toggle in System Settings
+            for _ in 0..<30 {
+                try? await Task.sleep(for: .seconds(1))
+                if screenRecordingGranted { break }
+            }
         }
         if !microphoneGranted {
             _ = await AVCaptureDevice.requestAccess(for: .audio)

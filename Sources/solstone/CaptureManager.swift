@@ -179,16 +179,9 @@ public final class CaptureManager {
         // Ensure storage directory exists
         try storageManager.ensureBaseDirectoryExists()
 
-        // Check screen capture permission before touching any ScreenCaptureKit APIs.
-        // CGPreflightScreenCaptureAccess() checks without prompting.
-        // CGRequestScreenCaptureAccess() shows one prompt if needed.
+        // Screen capture permission must already be granted via the setup flow.
         if !CGPreflightScreenCaptureAccess() {
-            CGRequestScreenCaptureAccess()
-            // Give the user a moment to respond, then check again
-            try await Task.sleep(nanoseconds: 500_000_000)
-            if !CGPreflightScreenCaptureAccess() {
-                throw CaptureError.permissionDenied
-            }
+            throw CaptureError.permissionDenied
         }
 
         // Get available content

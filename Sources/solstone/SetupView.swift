@@ -102,6 +102,7 @@ struct SetupView: View {
                     Task {
                         await permissionChecker.requestAll()
                         isRequestingPermissions = false
+                        guard permissionChecker.allGranted else { return }
                         if appState.config.serverURL != nil {
                             NSApp.keyWindow?.close()
                         } else {
