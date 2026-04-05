@@ -82,7 +82,7 @@ public final class ScreenshotCapturer {
         config.capturesAudio = false  // Video only - audio handled separately
         self.configuration = config
 
-        Log.debug("ScreenshotCapturer: Created for display \(displayID) at \(width)x\(height)", verbose: verbose)
+        if verbose { Logger.capture.debug("ScreenshotCapturer: Created for display \(displayID, privacy: .public) at \(width, privacy: .public)x\(height, privacy: .public)") }
     }
 
     /// Updates the content filter for window exclusion
@@ -92,9 +92,9 @@ public final class ScreenshotCapturer {
         if let stream = stream {
             do {
                 try await stream.updateContentFilter(filter)
-                Log.debug("ScreenshotCapturer: Updated content filter for display \(displayID)", verbose: verbose)
+                if verbose { Logger.capture.debug("ScreenshotCapturer: Updated content filter for display \(self.displayID, privacy: .public)") }
             } catch {
-                Log.warn("ScreenshotCapturer: Failed to update content filter: \(error)")
+                Logger.capture.warning("ScreenshotCapturer: Failed to update content filter: \(error, privacy: .public)")
             }
         }
     }
@@ -129,9 +129,9 @@ public final class ScreenshotCapturer {
             self.stream = newStream
             startHealthCheck()
 
-            Log.info("ScreenshotCapturer: Started persistent stream for display \(displayID)")
+            Logger.capture.info("ScreenshotCapturer: Started persistent stream for display \(self.displayID, privacy: .public)")
         } catch {
-            Log.error("ScreenshotCapturer: Failed to start stream for display \(displayID): \(error)")
+            Logger.capture.error("ScreenshotCapturer: Failed to start stream for display \(self.displayID, privacy: .public): \(error, privacy: .public)")
             isRunning = false
         }
     }
@@ -147,14 +147,14 @@ public final class ScreenshotCapturer {
         if !firstFrameLogged {
             firstFrameLogged = true
             let elapsed = streamStartTime.map { String(format: "%.1f", Date().timeIntervalSince($0)) } ?? "?"
-            Log.info("ScreenshotCapturer: First frame received for display \(displayID) after \(elapsed)s")
+            Logger.capture.info("ScreenshotCapturer: First frame received for display \(self.displayID, privacy: .public) after \(elapsed, privacy: .public)s")
         }
 
         // SCStream tells us when content hasn't changed via frame status
         if isIdle {
             skippedFrames += 1
             if verbose {
-                Log.debug("ScreenshotCapturer: Display \(displayID) skipped idle frame (total skipped: \(skippedFrames))", verbose: true)
+                Logger.capture.debug("ScreenshotCapturer: Display \(self.displayID, privacy: .public) skipped idle frame (total skipped: \(self.skippedFrames, privacy: .public))")
             }
             return
         }
@@ -167,7 +167,7 @@ public final class ScreenshotCapturer {
         frameIndex += 1
 
         if verbose {
-            Log.debug("ScreenshotCapturer: Display \(displayID) frame #\(frameIndex) at \(String(format: "%.3f", elapsed))s", verbose: true)
+            Logger.capture.debug("ScreenshotCapturer: Display \(self.displayID, privacy: .public) frame #\(self.frameIndex, privacy: .public) at \(String(format: "%.3f", elapsed), privacy: .public)s")
         }
     }
 
@@ -182,9 +182,9 @@ public final class ScreenshotCapturer {
                     try await stream.stopCapture()
                 }
             } catch is TimeoutError {
-                Log.warn("ScreenshotCapturer: Timeout stopping capture stream for display \(displayID)")
+                Logger.capture.warning("ScreenshotCapturer: Timeout stopping capture stream for display \(self.displayID, privacy: .public)")
             } catch {
-                Log.debug("ScreenshotCapturer: Error stopping stream: \(error)", verbose: verbose)
+                if verbose { Logger.capture.debug("ScreenshotCapturer: Error stopping stream: \(error, privacy: .public)") }
             }
         }
 
@@ -194,7 +194,7 @@ public final class ScreenshotCapturer {
 
         let totalFrames = frameIndex + skippedFrames
         let skipPercent = totalFrames > 0 ? (skippedFrames * 100) / totalFrames : 0
-        Log.info("ScreenshotCapturer: Stopped for display \(displayID) - \(frameIndex) frames encoded, \(skippedFrames) duplicates skipped (\(skipPercent)%)")
+        Logger.capture.info("ScreenshotCapturer: Stopped for display \(self.displayID, privacy: .public) - \(self.frameIndex, privacy: .public) frames encoded, \(self.skippedFrames, privacy: .public) duplicates skipped (\(skipPercent, privacy: .public)%)")
     }
 
     /// Finishes video writing and closes the file
@@ -220,7 +220,7 @@ public final class ScreenshotCapturer {
                     return false
                 }
                 if !alreadyResumed {
-                    Log.warn("Timeout waiting for video finish on display \(self.displayID)")
+                    Logger.capture.warning("Timeout waiting for video finish on display \(self.displayID, privacy: .public)")
                     continuation.resume(returning: nil)
                 }
             }
@@ -270,10 +270,10 @@ public final class ScreenshotCapturer {
         }
 
         consecutiveEmptyChecks += 1
-        Log.warn("ScreenshotCapturer: Health check found no frames for display \(displayID) (consecutive: \(consecutiveEmptyChecks)/\(maxEmptyChecks))")
+        Logger.capture.warning("ScreenshotCapturer: Health check found no frames for display \(self.displayID, privacy: .public) (consecutive: \(self.consecutiveEmptyChecks, privacy: .public)/\(self.maxEmptyChecks, privacy: .public))")
 
         if consecutiveEmptyChecks >= maxEmptyChecks {
-            Log.error("ScreenshotCapturer: Health check failed for display \(displayID), restarting stream")
+            Logger.capture.error("ScreenshotCapturer: Health check failed for display \(self.displayID, privacy: .public), restarting stream")
             onHealthFailure?()
             await restartStream()
         }
@@ -281,11 +281,11 @@ public final class ScreenshotCapturer {
 
     private func restartStream() async {
         guard isRunning, stream != nil else {
-            Log.debug("ScreenshotCapturer: Restart requested for display \(displayID) but stream is not running", verbose: verbose)
+            if verbose { Logger.capture.debug("ScreenshotCapturer: Restart requested for display \(self.displayID, privacy: .public) but stream is not running") }
             return
         }
 
-        Log.info("ScreenshotCapturer: Restarting stream for display \(displayID)")
+        Logger.capture.info("ScreenshotCapturer: Restarting stream for display \(self.displayID, privacy: .public)")
 
         if let stream = self.stream {
             self.streamOutput = nil
@@ -294,9 +294,9 @@ public final class ScreenshotCapturer {
                     try await stream.stopCapture()
                 }
             } catch is TimeoutError {
-                Log.warn("ScreenshotCapturer: Timeout stopping stream during restart for display \(displayID)")
+                Logger.capture.warning("ScreenshotCapturer: Timeout stopping stream during restart for display \(self.displayID, privacy: .public)")
             } catch {
-                Log.debug("ScreenshotCapturer: Error stopping stream during restart for display \(displayID): \(error)", verbose: verbose)
+                if verbose { Logger.capture.debug("ScreenshotCapturer: Error stopping stream during restart for display \(self.displayID, privacy: .public): \(error, privacy: .public)") }
             }
         }
 
@@ -306,7 +306,7 @@ public final class ScreenshotCapturer {
         do {
             try await Task.sleep(nanoseconds: 500_000_000)
         } catch {
-            Log.debug("ScreenshotCapturer: Restart sleep interrupted for display \(displayID): \(error)", verbose: verbose)
+            if verbose { Logger.capture.debug("ScreenshotCapturer: Restart sleep interrupted for display \(self.displayID, privacy: .public): \(error, privacy: .public)") }
         }
 
         let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
@@ -332,11 +332,11 @@ public final class ScreenshotCapturer {
             self.streamStartTime = Date()
             self.consecutiveEmptyChecks = 0
             self.healthCheckFrameCount = 0
-            Log.info("ScreenshotCapturer: Stream restarted successfully for display \(displayID)")
+            Logger.capture.info("ScreenshotCapturer: Stream restarted successfully for display \(self.displayID, privacy: .public)")
         } catch {
-            Log.error("ScreenshotCapturer: Failed to restart stream for display \(displayID): \(error)")
+            Logger.capture.error("ScreenshotCapturer: Failed to restart stream for display \(self.displayID, privacy: .public): \(error, privacy: .public)")
             if isPermissionError(error) {
-                Log.info("ScreenshotCapturer: Permission error, stopping health check for display \(displayID)")
+                Logger.capture.info("ScreenshotCapturer: Permission error, stopping health check for display \(self.displayID, privacy: .public)")
                 stopHealthCheck()
             }
         }
@@ -344,11 +344,11 @@ public final class ScreenshotCapturer {
 
     private func handleStreamError(_ error: Error) {
         guard isRunning else { return }
-        Log.error("ScreenshotCapturer: Stream error for display \(displayID): \(error)")
+        Logger.capture.error("ScreenshotCapturer: Stream error for display \(self.displayID, privacy: .public): \(error, privacy: .public)")
 
         // Don't restart on permission errors — they require user action
         if isPermissionError(error) {
-            Log.info("ScreenshotCapturer: Permission error, not restarting (requires user action in System Settings)")
+            Logger.capture.info("ScreenshotCapturer: Permission error, not restarting (requires user action in System Settings)")
             stopHealthCheck()
             return
         }

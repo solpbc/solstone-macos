@@ -4,6 +4,7 @@
 import CoreMedia
 import Foundation
 import SoundAnalysis
+import os
 
 /// Result of system audio analysis
 public struct SystemAudioAnalysisResult: Sendable {
@@ -61,7 +62,7 @@ public final class SystemAudioAnalyzer: Sendable {
                 silenceRanges: silenceRanges
             )
         } catch {
-            Log.debug("SystemAudioAnalyzer failed: \(error.localizedDescription), failing open", verbose: true)
+            Logger.audio.debug("SystemAudioAnalyzer failed: \(error.localizedDescription, privacy: .public), failing open")
             return .unavailable
         }
     }
@@ -149,7 +150,7 @@ private class ClassificationObserver: NSObject, SNResultsObserving {
     }
 
     func request(_ request: SNRequest, didFailWithError error: Error) {
-        Log.debug("SystemAudioAnalyzer request failed: \(error.localizedDescription)", verbose: true)
+        Logger.audio.debug("SystemAudioAnalyzer request failed: \(error.localizedDescription, privacy: .public)")
     }
 
     func requestDidComplete(_ request: SNRequest) {

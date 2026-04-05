@@ -3,6 +3,7 @@
 
 import Foundation
 import CoreGraphics
+import os
 @preconcurrency import ScreenCaptureKit
 
 /// Detects windows belonging to specified applications for exclusion from capture
@@ -45,7 +46,7 @@ public final class WindowExclusionDetector: @unchecked Sendable {
 
             return excludedWindowIDs.compactMap { scWindowsByID[$0] }
         } catch {
-            Log.warn("Failed to get SCShareableContent for window exclusion: \(error)")
+            Logger.capture.warning("Failed to get SCShareableContent for window exclusion: \(error, privacy: .public)")
             return []
         }
     }
@@ -103,7 +104,7 @@ public final class WindowExclusionDetector: @unchecked Sendable {
         if !excludedIDs.isEmpty && Date().timeIntervalSince(lastLogTime) >= logInterval {
             lastLogTime = Date()
             let summary = excludedDescriptions.joined(separator: ", ")
-            Log.info("Hiding windows: \(summary)")
+            Logger.capture.info("Hiding windows: \(summary, privacy: .public)")
         }
 
         return excludedIDs

@@ -4,6 +4,7 @@
 import AVFoundation
 import CoreMedia
 import Foundation
+import os
 
 /// Track type for audio recording
 public enum AudioTrackType: Sendable, Equatable {
@@ -120,7 +121,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         writer.add(input)
         self.input = input
 
-        Log.info("Created audio writer: \(trackType.displayName) -> \(url.lastPathComponent)")
+        Logger.audio.info("Created audio writer: \(trackType.displayName, privacy: .public) -> \(url.lastPathComponent, privacy: .public)")
     }
 
     /// Appends audio from a CMSampleBuffer (from SCStream)
@@ -143,7 +144,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             writer.startSession(atSourceTime: .zero)
             sessionStarted = true
             firstBufferTime = currentTime
-            Log.debug("Started audio recording: \(trackType.displayName)", verbose: verbose)
+            if verbose { Logger.audio.debug("Started audio recording: \(self.trackType.displayName, privacy: .public)") }
         }
         lastBufferTime = currentTime
 
@@ -337,7 +338,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     public func appendPCMBuffer(_ buffer: AVAudioPCMBuffer, presentationTime: CMTime) {
         // Convert PCM buffer to CMSampleBuffer
         guard let sampleBuffer = createSampleBuffer(from: buffer, presentationTime: presentationTime) else {
-            Log.warn("Failed to convert PCM buffer to CMSampleBuffer for \(trackType.displayName)")
+            Logger.audio.warning("Failed to convert PCM buffer to CMSampleBuffer for \(self.trackType.displayName, privacy: .public)")
             return
         }
 
@@ -383,14 +384,14 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             await writer.finishWriting()
 
             if writer.status == .failed {
-                Log.error("Audio writer error for \(trackType.displayName): \(String(describing: writer.error))")
+                Logger.audio.error("Audio writer error for \(self.trackType.displayName, privacy: .public): \(String(describing: self.writer.error), privacy: .public)")
             } else {
                 let duration = CMTimeGetSeconds(CMTimeSubtract(endOffset, startOffset))
-                Log.info("Saved audio: \(outputURL.lastPathComponent) (\(String(format: "%.1f", duration))s)")
+                Logger.audio.info("Saved audio: \(self.outputURL.lastPathComponent, privacy: .public) (\(String(format: "%.1f", duration), privacy: .public)s)")
             }
         } else if !wasStarted {
             // No audio was written - clean up the empty file
-            Log.info("No audio written for \(trackType.displayName), removing empty file")
+            Logger.audio.info("No audio written for \(self.trackType.displayName, privacy: .public), removing empty file")
             try? FileManager.default.removeItem(at: outputURL)
         }
 

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
 @preconcurrency import ScreenCaptureKit
 
 @MainActor
@@ -109,10 +110,10 @@ final class WindowExclusionManager {
                 detectPrivateBrowsing: excludePrivateBrowsing,
                 titlePatterns: excludedTitlePatterns
             )
-            Log.info("Updated window exclusions: \(excludedAppNames.count) apps, \(excludedTitlePatterns.count) title patterns, privateBrowsing=\(excludePrivateBrowsing)")
+            Logger.capture.info("Updated window exclusions: \(excludedAppNames.count, privacy: .public) apps, \(excludedTitlePatterns.count, privacy: .public) title patterns, privateBrowsing=\(excludePrivateBrowsing, privacy: .public)")
         } else {
             windowExclusionDetector = nil
-            Log.info("Cleared window exclusions")
+            Logger.capture.info("Cleared window exclusions")
         }
     }
 
@@ -153,10 +154,10 @@ final class WindowExclusionManager {
         do {
             try await onFilterChanged?(newFilter)
             if !excludedWindows.isEmpty {
-                Log.debug("Updated filter to exclude \(excludedWindows.count) window(s)", verbose: verbose)
+                if verbose { Logger.capture.debug("Updated filter to exclude \(excludedWindows.count, privacy: .public) window(s)") }
             }
         } catch {
-            Log.warn("Failed to update content filter: \(error)")
+            Logger.capture.warning("Failed to update content filter: \(error, privacy: .public)")
         }
     }
 }

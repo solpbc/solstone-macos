@@ -3,6 +3,7 @@
 
 import Foundation
 import CryptoKit
+import os
 
 /// File info returned by the server for a segment
 public struct ServerFileInfo: Sendable {
@@ -69,10 +70,10 @@ public struct UploadClient: Sendable {
         dateFormatter.dateFormat = "yyyyMMdd"
         let today = dateFormatter.string(from: Date())
         let urlString = "\(serverURL)/app/remote/ingest/segments/\(today)"
-        Log.upload("testConnection: GET \(urlString)")
+        Logger.upload.info("testConnection: GET \(urlString, privacy: .public)")
 
         guard let url = URL(string: urlString) else {
-            Log.upload("testConnection: invalid URL")
+            Logger.upload.info("testConnection: invalid URL")
             return "Invalid URL"
         }
 
@@ -87,24 +88,24 @@ public struct UploadClient: Sendable {
         defer { testSession.invalidateAndCancel() }
 
         do {
-            Log.upload("testConnection: sending request...")
+            Logger.upload.info("testConnection: sending request...")
             let (data, response) = try await testSession.data(for: request)
             if let httpResponse = response as? HTTPURLResponse {
                 let bodyPreview = String(data: data.prefix(500), encoding: .utf8) ?? "<binary>"
                 let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "<none>"
-                Log.upload("testConnection: HTTP \(httpResponse.statusCode)")
-                Log.upload("testConnection: Content-Type: \(contentType)")
-                Log.upload("testConnection: Body: \(bodyPreview)")
+                Logger.upload.info("testConnection: HTTP \(httpResponse.statusCode, privacy: .public)")
+                Logger.upload.info("testConnection: Content-Type: \(contentType, privacy: .public)")
+                Logger.upload.info("testConnection: Body: \(bodyPreview, privacy: .public)")
 
                 // Check if response is JSON (not HTML login page)
                 if contentType.contains("text/html") || bodyPreview.contains("<!DOCTYPE") || bodyPreview.contains("<html") {
-                    Log.upload("testConnection: got HTML instead of JSON - endpoint may not exist")
+                    Logger.upload.info("testConnection: got HTML instead of JSON - endpoint may not exist")
                     return "Server returned login page (restart server?)"
                 }
 
                 switch httpResponse.statusCode {
                 case 200:
-                    Log.upload("testConnection: SUCCESS")
+                    Logger.upload.info("testConnection: SUCCESS")
                     return nil  // Success
                 case 401:
                     return "Invalid API key"
@@ -118,7 +119,7 @@ public struct UploadClient: Sendable {
             }
             return "Invalid response"
         } catch let error as URLError {
-            Log.upload("testConnection: URLError \(error.code.rawValue) - \(error.localizedDescription)")
+            Logger.upload.info("testConnection: URLError \(error.code.rawValue, privacy: .public) - \(error.localizedDescription, privacy: .public)")
             switch error.code {
             case .notConnectedToInternet:
                 return "No internet connection"
@@ -132,7 +133,7 @@ public struct UploadClient: Sendable {
                 return error.localizedDescription
             }
         } catch {
-            Log.upload("testConnection: error \(error)")
+            Logger.upload.info("testConnection: error \(error, privacy: .public)")
             return error.localizedDescription
         }
     }
@@ -188,7 +189,7 @@ public struct UploadClient: Sendable {
                 }
             }
         } catch {
-            Log.upload("getServerSegments failed: \(error)")
+            Logger.upload.info("getServerSegments failed: \(error, privacy: .public)")
         }
 
         return nil
@@ -219,7 +220,7 @@ public struct UploadClient: Sendable {
 
         // Debug logging
         let fileNames = mediaFiles.map { $0.lastPathComponent }.joined(separator: ", ")
-        Log.upload("POST day=\(day) segment=\(segment) platform=darwin files=[\(fileNames)]")
+        Logger.upload.info("POST day=\(day, privacy: .public) segment=\(segment, privacy: .public) platform=darwin files=[\(fileNames, privacy: .public)]")
 
         // Build multipart form data in a temporary file to avoid memory pressure
         let boundary = UUID().uuidString
@@ -241,7 +242,7 @@ public struct UploadClient: Sendable {
             // Write metadata if provided
             if let metadataJSON = metadataJSON {
                 try fileHandle.writeMultipartField(boundary: boundary, name: "meta", value: metadataJSON)
-                Log.upload("  + meta: \(metadataJSON.prefix(200))...")
+                Logger.upload.info("  + meta: \(metadataJSON.prefix(200), privacy: .public)...")
             }
 
             // Stream each file to temp file
@@ -251,7 +252,7 @@ public struct UploadClient: Sendable {
 
                 let attrs = try? fm.attributesOfItem(atPath: fileURL.path)
                 let fileSize = attrs?[.size] as? Int ?? 0
-                Log.upload("  + \(filename) (\(fileSize) bytes)")
+                Logger.upload.info("  + \(filename, privacy: .public) (\(fileSize, privacy: .public) bytes)")
 
                 try fileHandle.writeMultipartFileHeader(boundary: boundary, filename: filename, mimeType: mimeType)
 
@@ -274,7 +275,7 @@ public struct UploadClient: Sendable {
             try fileHandle.synchronize()
 
             let totalSize = try fm.attributesOfItem(atPath: tempURL.path)[.size] as? Int ?? 0
-            Log.upload("Total request body: \(totalSize) bytes")
+            Logger.upload.info("Total request body: \(totalSize, privacy: .public) bytes")
 
             // Create request and upload
             var request = URLRequest(url: url)
@@ -289,7 +290,7 @@ public struct UploadClient: Sendable {
             }
 
             let responseBody = String(data: data.prefix(500), encoding: .utf8) ?? "<binary>"
-            Log.upload("Response: HTTP \(httpResponse.statusCode) - \(responseBody)")
+            Logger.upload.info("Response: HTTP \(httpResponse.statusCode, privacy: .public) - \(responseBody, privacy: .public)")
 
             if httpResponse.statusCode == 200 {
                 return .success

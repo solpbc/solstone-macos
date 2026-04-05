@@ -4,6 +4,7 @@
 import AVFoundation
 import CoreMedia
 import Foundation
+import os
 
 /// Recovers orphaned .incomplete segment directories on startup
 /// Attempts to remix audio and rename files/directories to final format
@@ -66,12 +67,12 @@ public final class IncompleteSegmentRecovery: Sendable {
                 {
                     let age = Date().timeIntervalSince(creationDate)
                     if age < minimumAge {
-                        Log.debug("Skipping recent incomplete segment: \(segmentDir.lastPathComponent)", verbose: verbose)
+                        if verbose { Logger.storage.debug("Skipping recent incomplete segment: \(segmentDir.lastPathComponent, privacy: .public)") }
                         continue
                     }
                 }
 
-                Log.info("Attempting to recover incomplete segment: \(segmentDir.lastPathComponent)")
+                Logger.storage.info("Attempting to recover incomplete segment: \(segmentDir.lastPathComponent, privacy: .public)")
 
                 if await recoverSegment(at: segmentDir) {
                     recoveredCount += 1
@@ -95,14 +96,14 @@ public final class IncompleteSegmentRecovery: Sendable {
 
         // List all files in the directory
         guard let files = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) else {
-            Log.warn("Failed to list contents of \(dirName)")
+            Logger.storage.warning("Failed to list contents of \(dirName, privacy: .public)")
             return await markAsFailed(url)
         }
 
         // Find video file(s) to get duration
         let videoFiles = files.filter { $0.pathExtension == "mp4" }
         guard let primaryVideo = videoFiles.first else {
-            Log.warn("No video file found in \(dirName)")
+            Logger.storage.warning("No video file found in \(dirName, privacy: .public)")
             return await markAsFailed(url)
         }
 
@@ -113,11 +114,11 @@ public final class IncompleteSegmentRecovery: Sendable {
             let videoDuration = try await asset.load(.duration)
             duration = Int(CMTimeGetSeconds(videoDuration))
             if duration <= 0 {
-                Log.warn("Video has zero duration in \(dirName)")
+                Logger.storage.warning("Video has zero duration in \(dirName, privacy: .public)")
                 return await markAsFailed(url)
             }
         } catch {
-            Log.warn("Failed to get video duration in \(dirName): \(error)")
+            Logger.storage.warning("Failed to get video duration in \(dirName, privacy: .public): \(error, privacy: .public)")
             return await markAsFailed(url)
         }
 
@@ -135,13 +136,13 @@ public final class IncompleteSegmentRecovery: Sendable {
 
         // If we have individual audio files and no consolidated audio, remix them
         if !audioFiles.isEmpty && !hasConsolidatedAudio {
-            Log.info("Remixing \(audioFiles.count) audio file(s) for \(dirName)")
+            Logger.storage.info("Remixing \(audioFiles.count, privacy: .public) audio file(s) for \(dirName, privacy: .public)")
 
             do {
                 let inputs = try await buildAudioInputs(from: audioFiles, timePrefix: timePrefix)
 
                 if inputs.isEmpty {
-                    Log.warn("No valid audio inputs for remix in \(dirName)")
+                    Logger.storage.warning("No valid audio inputs for remix in \(dirName, privacy: .public)")
                 } else {
                     let remixer = AudioRemixer(verbose: verbose)
                     let result = try await remixer.remix(
@@ -149,10 +150,10 @@ public final class IncompleteSegmentRecovery: Sendable {
                         to: consolidatedAudioURL,
                         deleteSourceFiles: true
                     )
-                    Log.info("Remixed \(result.tracksWritten) track(s), skipped \(result.tracksSkipped)")
+                    Logger.storage.info("Remixed \(result.tracksWritten, privacy: .public) track(s), skipped \(result.tracksSkipped, privacy: .public)")
                 }
             } catch {
-                Log.warn("Audio remix failed for \(dirName): \(error)")
+                Logger.storage.warning("Audio remix failed for \(dirName, privacy: .public): \(error, privacy: .public)")
                 // Continue with recovery anyway - at least save the video
             }
         }
@@ -164,7 +165,7 @@ public final class IncompleteSegmentRecovery: Sendable {
         do {
             try renameFilesWithDuration(in: url, timePrefix: timePrefix, segmentKey: segmentKey)
         } catch {
-            Log.warn("Failed to rename files in \(dirName): \(error)")
+            Logger.storage.warning("Failed to rename files in \(dirName, privacy: .public): \(error, privacy: .public)")
             return await markAsFailed(url)
         }
 
@@ -174,10 +175,10 @@ public final class IncompleteSegmentRecovery: Sendable {
 
         do {
             try fm.moveItem(at: url, to: finalURL)
-            Log.info("Recovered segment: \(dirName) -> \(segmentKey)")
+            Logger.storage.info("Recovered segment: \(dirName, privacy: .public) -> \(segmentKey, privacy: .public)")
             return true
         } catch {
-            Log.warn("Failed to rename directory \(dirName): \(error)")
+            Logger.storage.warning("Failed to rename directory \(dirName, privacy: .public): \(error, privacy: .public)")
             return await markAsFailed(url)
         }
     }
@@ -205,7 +206,7 @@ public final class IncompleteSegmentRecovery: Sendable {
 
         for audioURL in audioFiles {
             guard let timingInfo = await buildTimingInfo(for: audioURL, baseTime: baseTime, timePrefix: timePrefix) else {
-                Log.debug("Skipping audio file (no timing info): \(audioURL.lastPathComponent)", verbose: verbose)
+                if verbose { Logger.storage.debug("Skipping audio file (no timing info): \(audioURL.lastPathComponent, privacy: .public)") }
                 continue
             }
 
@@ -306,7 +307,7 @@ public final class IncompleteSegmentRecovery: Sendable {
             if filename == newFilename { continue }
 
             try fm.moveItem(at: file, to: newURL)
-            Log.debug("Renamed: \(filename) -> \(newFilename)", verbose: verbose)
+            if verbose { Logger.storage.debug("Renamed: \(filename, privacy: .public) -> \(newFilename, privacy: .public)") }
         }
     }
 
@@ -323,10 +324,10 @@ public final class IncompleteSegmentRecovery: Sendable {
 
         do {
             try fm.moveItem(at: url, to: failedURL)
-            Log.warn("Marked segment as failed: \(dirName) -> \(failedName)")
+            Logger.storage.warning("Marked segment as failed: \(dirName, privacy: .public) -> \(failedName, privacy: .public)")
             return false
         } catch {
-            Log.error("Failed to mark segment as failed: \(error)")
+            Logger.storage.error("Failed to mark segment as failed: \(error, privacy: .public)")
             return false
         }
     }

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
 
 /// Microphone entry for priority list
 public struct MicrophoneEntry: Codable, Equatable, Sendable {
@@ -205,7 +206,7 @@ public struct AppConfig: Sendable {
         var config = AppConfig()
         config.excludedApps = defaultExclusions
         try? config.save()
-        Log.info("Created default config in UserDefaults")
+        Logger.general.info("Created default config in UserDefaults")
 
         return config
     }
@@ -279,14 +280,14 @@ public struct AppConfig: Sendable {
                 // Migrate serverKey from JSON to Keychain if present
                 if let key = legacyConfig.serverKey, !key.isEmpty, KeychainManager.loadServerKey() == nil {
                     KeychainManager.saveServerKey(key)
-                    Log.info("Migrated server key from JSON to Keychain")
+                    Logger.general.info("Migrated server key from JSON to Keychain")
                 }
                 // Cache the server key in the config struct
                 config.serverKey = KeychainManager.loadServerKey()
 
                 try config.save()
                 defaults.set(true, forKey: Keys.didMigrateFromJSON)
-                Log.info("Migrated config from \(path.path) to UserDefaults")
+                Logger.general.info("Migrated config from \(path.path, privacy: .public) to UserDefaults")
 
                 // Optionally rename old file to indicate migration
                 let backupPath = path.appendingPathExtension("migrated")
@@ -294,7 +295,7 @@ public struct AppConfig: Sendable {
 
                 return config
             } catch {
-                Log.warn("Failed to migrate config from \(path.path): \(error.localizedDescription)")
+                Logger.general.warning("Failed to migrate config from \(path.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
 

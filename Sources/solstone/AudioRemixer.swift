@@ -4,6 +4,7 @@
 import AVFoundation
 import CoreMedia
 import Foundation
+import os
 
 /// Input for the audio remixer
 public struct AudioRemixerInput: Sendable {
@@ -89,14 +90,14 @@ public final class AudioRemixer: Sendable {
         for input in inputs {
             // Skip tracks that never received any audio
             guard input.timingInfo.hasAudio else {
-                Log.info("Dropping track with no audio: \(input.timingInfo.trackType.displayName)")
+                Logger.audio.info("Dropping track with no audio: \(input.timingInfo.trackType.displayName, privacy: .public)")
                 skippedCount += 1
                 continue
             }
 
             // Check if file exists
             guard FileManager.default.fileExists(atPath: input.url.path) else {
-                Log.warn("Audio file not found: \(input.url.lastPathComponent)")
+                Logger.audio.warning("Audio file not found: \(input.url.lastPathComponent, privacy: .public)")
                 skippedCount += 1
                 continue
             }
@@ -106,7 +107,7 @@ public final class AudioRemixer: Sendable {
             // Analyze for speech using SystemAudioAnalyzer
             let result = await SystemAudioAnalyzer.shared.analyze(url: input.url)
             if !result.hasSpeech {
-                Log.info("Dropping track with no speech: \(input.timingInfo.trackType.displayName)")
+                Logger.audio.info("Dropping track with no speech: \(input.timingInfo.trackType.displayName, privacy: .public)")
                 handleRejectedFile(input.url, reason: "no-speech", outputDirectory: outputDirectory)
                 skippedCount += 1
                 continue
@@ -117,7 +118,7 @@ public final class AudioRemixer: Sendable {
                 let trackIndex = tracksToProcess.count
                 if !result.silenceRanges.isEmpty {
                     silenceRangesMap[trackIndex] = result.silenceRanges
-                    Log.debug("System audio has \(result.silenceRanges.count) silence range(s)", verbose: verbose)
+                    if verbose { Logger.audio.debug("System audio has \(result.silenceRanges.count, privacy: .public) silence range(s)") }
                 }
             }
 
@@ -125,7 +126,7 @@ public final class AudioRemixer: Sendable {
         }
 
         let filterDuration = filterStart.duration(to: .now)
-        Log.info("Speech analysis completed in \(filterDuration.formatted(.units(allowed: [.seconds, .milliseconds]))): \(tracksToProcess.count) to process, \(skippedCount) skipped")
+        Logger.audio.info("Speech analysis completed in \(filterDuration.formatted(.units(allowed: [.seconds, .milliseconds])), privacy: .public): \(tracksToProcess.count, privacy: .public) to process, \(skippedCount, privacy: .public) skipped")
 
         guard !tracksToProcess.isEmpty else {
             throw AudioRemixerError.noTracksToWrite
@@ -140,7 +141,7 @@ public final class AudioRemixer: Sendable {
         var cleanupTempFile = true
         defer {
             if cleanupTempFile {
-                Log.warn("Cleaning up temp file after remix failure")
+                Logger.audio.warning("Cleaning up temp file after remix failure")
                 try? FileManager.default.removeItem(at: tempURL)
             }
         }
@@ -160,7 +161,7 @@ public final class AudioRemixer: Sendable {
         for (input, asset) in tracksToProcess {
             let audioTracks = try await asset.loadTracks(withMediaType: .audio)
             guard let sourceTrack = audioTracks.first else {
-                Log.warn("No audio track in: \(input.url.lastPathComponent)")
+                Logger.audio.warning("No audio track in: \(input.url.lastPathComponent, privacy: .public)")
                 continue
             }
 
@@ -288,7 +289,7 @@ public final class AudioRemixer: Sendable {
         }
         try fm.moveItem(at: tempURL, to: outputURL)
 
-        Log.info("Remixed \(trackPairs.count) track(s) to \(outputURL.lastPathComponent)")
+        Logger.audio.info("Remixed \(trackPairs.count, privacy: .public) track(s) to \(outputURL.lastPathComponent, privacy: .public)")
 
         // Delete source files if requested
         let sourceURLs = inputs.map(\.url)
@@ -300,16 +301,16 @@ public final class AudioRemixer: Sendable {
                 }
                 do {
                     try fm.removeItem(at: url)
-                    Log.debug("Deleted source: \(url.lastPathComponent)", verbose: verbose)
+                    if verbose { Logger.audio.debug("Deleted source: \(url.lastPathComponent, privacy: .public)") }
                 } catch {
-                    Log.warn("Failed to delete source \(url.lastPathComponent): \(error)")
+                    Logger.audio.warning("Failed to delete source \(url.lastPathComponent, privacy: .public): \(error, privacy: .public)")
                 }
             }
         }
 
         let writeDuration = writeStart.duration(to: .now)
         let totalDuration = remixStart.duration(to: .now)
-        Log.info("Remix write completed in \(writeDuration.formatted(.units(allowed: [.seconds, .milliseconds]))), total remix time: \(totalDuration.formatted(.units(allowed: [.seconds, .milliseconds])))")
+        Logger.audio.info("Remix write completed in \(writeDuration.formatted(.units(allowed: [.seconds, .milliseconds])), privacy: .public), total remix time: \(totalDuration.formatted(.units(allowed: [.seconds, .milliseconds])), privacy: .public)")
 
         return AudioRemixerResult(
             tracksWritten: trackPairs.count,
@@ -333,9 +334,9 @@ public final class AudioRemixer: Sendable {
                 try fm.createDirectory(at: rejectedDir, withIntermediateDirectories: true)
                 let destURL = rejectedDir.appendingPathComponent("\(reason)_\(url.lastPathComponent)")
                 try fm.moveItem(at: url, to: destURL)
-                Log.debug("Moved rejected file to: \(destURL.lastPathComponent)", verbose: verbose)
+                if verbose { Logger.audio.debug("Moved rejected file to: \(destURL.lastPathComponent, privacy: .public)") }
             } catch {
-                Log.warn("Failed to move rejected file: \(error)")
+                Logger.audio.warning("Failed to move rejected file: \(error, privacy: .public)")
                 // Fall back to deletion
                 try? fm.removeItem(at: url)
             }
@@ -343,9 +344,9 @@ public final class AudioRemixer: Sendable {
             // Delete the file
             do {
                 try fm.removeItem(at: url)
-                Log.debug("Deleted rejected file: \(url.lastPathComponent)", verbose: verbose)
+                if verbose { Logger.audio.debug("Deleted rejected file: \(url.lastPathComponent, privacy: .public)") }
             } catch {
-                Log.warn("Failed to delete rejected file: \(error)")
+                Logger.audio.warning("Failed to delete rejected file: \(error, privacy: .public)")
             }
         }
     }

@@ -4,6 +4,7 @@
 import AVFAudio
 import CoreMedia
 import Foundation
+import os
 
 /// Manages persistent microphone captures across segment rotations
 /// Engines stay running - only the audio callback destination changes
@@ -30,7 +31,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         // Already running - nothing to do
         if captures[device.uid] != nil {
             lock.unlock()
-            Log.debug("Capture already running for \(device.name)", verbose: verbose)
+            if verbose { Logger.audio.debug("Capture already running for \(device.name, privacy: .public)") }
             return
         }
         lock.unlock()
@@ -42,7 +43,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
 
         for (attempt, delay) in retryDelays.enumerated() {
             if delay > 0 {
-                Log.info("Retrying \(device.name) after \(Int(delay * 1000))ms (attempt \(attempt + 1))")
+                Logger.audio.info("Retrying \(device.name, privacy: .public) after \(Int(delay * 1000), privacy: .public)ms (attempt \(attempt + 1, privacy: .public))")
                 Thread.sleep(forTimeInterval: delay)
             }
 
@@ -57,11 +58,11 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
                 captures[device.uid] = capture
                 lock.unlock()
 
-                Log.info("Started persistent capture for \(device.name)")
+                Logger.audio.info("Started persistent capture for \(device.name, privacy: .public)")
                 return
             } catch {
                 lastError = error
-                Log.debug("Attempt \(attempt + 1) failed for \(device.name): \(error)", verbose: verbose)
+                if verbose { Logger.audio.debug("Attempt \(attempt + 1, privacy: .public) failed for \(device.name, privacy: .public): \(error, privacy: .public)") }
                 // Let capture go out of scope - AVAudioEngine will be deallocated
             }
         }
@@ -81,7 +82,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
 
         // Stop outside lock
         capture.stop()
-        Log.info("Stopped capture for \(capture.device.name)")
+        Logger.audio.info("Stopped capture for \(capture.device.name, privacy: .public)")
     }
 
     /// Set the audio callback for a specific capture
@@ -97,7 +98,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         lock.unlock()
 
         if capture == nil {
-            Log.warn("setCallback: No capture found for deviceUID \(deviceUID)")
+            Logger.audio.warning("setCallback: No capture found for deviceUID \(deviceUID, privacy: .public)")
         }
         capture?.onAudioBuffer = callback
     }
@@ -111,7 +112,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         for capture in allCaptures {
             capture.onAudioBuffer = nil
         }
-        Log.debug("Cleared all mic callbacks", verbose: verbose)
+        if verbose { Logger.audio.debug("Cleared all mic callbacks") }
     }
 
     /// Get the capture for a device (if running)
@@ -150,7 +151,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         for capture in allCaptures {
             capture.stop()
         }
-        Log.info("Stopped all mic captures")
+        Logger.audio.info("Stopped all mic captures")
     }
 
     /// Update gain on all active captures (takes effect immediately)
@@ -165,6 +166,6 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         for capture in allCaptures {
             capture.gainMultiplier = newGain
         }
-        Log.info("Updated mic gain to \(newGain)x on \(allCaptures.count) capture(s)")
+        Logger.audio.info("Updated mic gain to \(newGain, privacy: .public)x on \(allCaptures.count, privacy: .public) capture(s)")
     }
 }

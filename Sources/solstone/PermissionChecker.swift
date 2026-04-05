@@ -4,15 +4,14 @@
 import AppKit
 import AVFoundation
 import ScreenCaptureKit
+import os
 
 /// Checks macOS permissions required for capture.
 /// Does not batch-request — callers trigger each permission individually.
 struct PermissionChecker {
-    private static let tccEntryCreatedKey = "screenRecordingTCCEntryCreated"
-
     var screenRecordingGranted: Bool {
         let result = CGPreflightScreenCaptureAccess()
-        Log.info("[Permissions] CGPreflightScreenCaptureAccess() = \(result) (caller: \(Thread.callStackSymbols[1]))")
+        Logger.setup.warning("[Permissions] CGPreflightScreenCaptureAccess() = \(result, privacy: .public) (caller: \(Thread.callStackSymbols[1], privacy: .public))")
         return result
     }
 
@@ -24,31 +23,16 @@ struct PermissionChecker {
         screenRecordingGranted && microphoneGranted
     }
 
-    /// Ensures the app appears in the System Settings screen recording list,
-    /// then opens System Settings. On first call ever, uses CGRequestScreenCaptureAccess
-    /// to create the TCC entry (which shows an OS dialog). On subsequent calls,
-    /// opens System Settings directly via deep link since the entry already exists.
+    /// Creates TCC entry and shows OS dialog pointing user to System Settings.
     func promptScreenRecording() {
-        if UserDefaults.standard.bool(forKey: Self.tccEntryCreatedKey) {
-            Log.info("[Permissions] promptScreenRecording: TCC entry already created, opening deep link")
-            openScreenRecordingSettings()
-        } else {
-            Log.info("[Permissions] promptScreenRecording: first time, calling CGRequestScreenCaptureAccess()")
-            CGRequestScreenCaptureAccess()
-            UserDefaults.standard.set(true, forKey: Self.tccEntryCreatedKey)
-        }
+        Logger.setup.warning("[Permissions] promptScreenRecording: calling CGRequestScreenCaptureAccess()")
+        CGRequestScreenCaptureAccess()
     }
 
     /// Shows the native microphone permission dialog. Returns when the user responds.
     func requestMicrophone() async {
-        Log.info("[Permissions] requestMicrophone: calling AVCaptureDevice.requestAccess")
+        Logger.setup.warning("[Permissions] requestMicrophone: calling AVCaptureDevice.requestAccess")
         _ = await AVCaptureDevice.requestAccess(for: .audio)
-        Log.info("[Permissions] requestMicrophone: returned")
-    }
-
-    private func openScreenRecordingSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-            NSWorkspace.shared.open(url)
-        }
+        Logger.setup.warning("[Permissions] requestMicrophone: returned")
     }
 }

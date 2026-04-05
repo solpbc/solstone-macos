@@ -5,6 +5,7 @@ import Foundation
 import AVFoundation
 import CoreMedia
 import CoreVideo
+import os
 
 /// Manages video capture and .mov file writing using hardware HEVC encoding
 public final class VideoWriter: @unchecked Sendable {
@@ -131,7 +132,7 @@ public final class VideoWriter: @unchecked Sendable {
             captureStartTime = pts
             writer.startWriting()
             writer.startSession(atSourceTime: pts)
-            Log.info("Started video recording to \(writer.outputURL.path)")
+            Logger.capture.info("Started video recording to \(self.writer.outputURL.path, privacy: .public)")
         }
 
         // Check duration limit if specified
@@ -144,7 +145,7 @@ public final class VideoWriter: @unchecked Sendable {
 
         // Check if writer is still in valid state
         guard writer.status == .writing else {
-            Log.warn("VideoWriter: writer not in writing state (status: \(writer.status.rawValue)), frame \(frameCount + 1) dropped")
+            Logger.capture.warning("VideoWriter: writer not in writing state (status: \(self.writer.status.rawValue, privacy: .public)), frame \(self.frameCount + 1, privacy: .public) dropped")
             return
         }
 
@@ -153,10 +154,10 @@ public final class VideoWriter: @unchecked Sendable {
                 frameCount += 1
                 lastPresentationTime = pts
             } else {
-                Log.error("VideoWriter: frame \(frameCount + 1) FAILED to append, status=\(writer.status.rawValue)")
+                Logger.capture.error("VideoWriter: frame \(self.frameCount + 1, privacy: .public) FAILED to append, status=\(self.writer.status.rawValue, privacy: .public)")
             }
         } else {
-            Log.warn("VideoWriter: frame \(frameCount + 1) dropped (not ready)")
+            Logger.capture.warning("VideoWriter: frame \(self.frameCount + 1, privacy: .public) dropped (not ready)")
         }
     }
 
@@ -175,9 +176,9 @@ public final class VideoWriter: @unchecked Sendable {
 
         // Check writer status before attempting to finish
         guard writer.status == .writing else {
-            Log.error("Video writer not in writing state (status: \(writer.status.rawValue))")
+            Logger.capture.error("Video writer not in writing state (status: \(self.writer.status.rawValue, privacy: .public))")
             if writer.status == .failed {
-                Log.error("Video writer error: \(String(describing: writer.error))")
+                Logger.capture.error("Video writer error: \(String(describing: self.writer.error), privacy: .public)")
             }
             completion(.failure(writer.error ?? NSError(domain: "VideoWriter", code: -4,
                 userInfo: [NSLocalizedDescriptionKey: "Writer in invalid state: \(writer.status.rawValue)"])))

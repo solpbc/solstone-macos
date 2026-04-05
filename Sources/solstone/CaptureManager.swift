@@ -3,6 +3,7 @@
 
 import CoreAudio
 import Foundation
+import os
 @preconcurrency import ScreenCaptureKit
 
 /// Manages continuous recording with segment rotation
@@ -181,7 +182,7 @@ public final class CaptureManager {
 
         // Screen capture permission must already be granted via the setup flow.
         let hasAccess = CGPreflightScreenCaptureAccess()
-        Log.info("[Permissions] CaptureManager.startRecording: CGPreflightScreenCaptureAccess() = \(hasAccess)")
+        Logger.capture.warning("[Permissions] CaptureManager.startRecording: CGPreflightScreenCaptureAccess() = \(hasAccess, privacy: .public)")
         if !hasAccess {
             throw CaptureError.permissionDenied
         }
@@ -206,11 +207,11 @@ public final class CaptureManager {
 
         let oldState = state.label
         state = .recording
-        Log.info("[State] \(oldState) -> \(state.label) (trigger: manual_start)")
+        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: manual_start)")
         onStateChanged?(state)
         startHeartbeat()
 
-        Log.info("Started recording session with \(displays.count) display(s)")
+        Logger.capture.info("Started recording session with \(self.displays.count, privacy: .public) display(s)")
     }
 
     /// Handles audio device additions/removals
@@ -223,16 +224,16 @@ public final class CaptureManager {
             for device in added where !disabledMicUIDs.contains(device.uid) {
                 do {
                     try segment.addMicrophone(device)
-                    Log.info("Added mic mid-segment: \(device.name)")
+                    Logger.capture.info("Added mic mid-segment: \(device.name, privacy: .public)")
                 } catch {
-                    Log.warn("Failed to add mic \(device.name): \(error)")
+                    Logger.capture.warning("Failed to add mic \(device.name, privacy: .public): \(error, privacy: .public)")
                 }
             }
 
             // Remove disconnected mics from current segment
             for device in removed where segment.hasMicrophone(deviceUID: device.uid) {
                 segment.removeMicrophone(deviceUID: device.uid)
-                Log.info("Removed mic mid-segment: \(device.name)")
+                Logger.capture.info("Removed mic mid-segment: \(device.name, privacy: .public)")
             }
         }
 
@@ -269,10 +270,10 @@ public final class CaptureManager {
 
         let oldState = state.label
         state = .idle
-        Log.info("[State] \(oldState) -> \(state.label) (trigger: manual_stop)")
+        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: manual_stop)")
         onStateChanged?(state)
 
-        Log.info("Stopped recording")
+        Logger.capture.info("Stopped recording")
 
         // Trigger upload callback
         if let url = completedSegmentURL, let callback = onSegmentComplete {
@@ -303,10 +304,10 @@ public final class CaptureManager {
 
         let oldState = state.label
         state = .paused
-        Log.info("[State] \(oldState) -> \(state.label) (trigger: manual_pause)")
+        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: manual_pause)")
         onStateChanged?(state)
 
-        Log.info("Paused recording")
+        Logger.capture.info("Paused recording")
 
         // Trigger upload callback
         if let url = completedSegmentURL, let callback = onSegmentComplete {
@@ -323,11 +324,11 @@ public final class CaptureManager {
 
         let oldState = state.label
         state = .recording
-        Log.info("[State] \(oldState) -> \(state.label) (trigger: manual_resume)")
+        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: manual_resume)")
         onStateChanged?(state)
         startHeartbeat()
 
-        Log.info("Resumed recording")
+        Logger.capture.info("Resumed recording")
     }
 
     /// Update segment duration based on debug setting
@@ -336,7 +337,7 @@ public final class CaptureManager {
         let newDuration: TimeInterval = enabled ? 60 : 300
         if SegmentWriter.segmentDuration != newDuration {
             SegmentWriter.segmentDuration = newDuration
-            Log.info("Segment duration changed to \(Int(newDuration))s")
+            Logger.capture.info("Segment duration changed to \(Int(newDuration), privacy: .public)s")
 
             // Trigger immediate rotation if recording
             if state.isRecording {
@@ -444,7 +445,7 @@ public final class CaptureManager {
                 await self?.rotateSegment()
             }
         }
-        Log.info("Next segment rotation in \(Int(interval)) seconds")
+        Logger.capture.info("Next segment rotation in \(Int(interval), privacy: .public) seconds")
     }
 
     private func startHeartbeat() {
@@ -454,7 +455,7 @@ public final class CaptureManager {
                 guard let self else { return }
                 let segmentName = self.currentSegment?.outputDirectory.lastPathComponent ?? "none"
                 let sysAudio = self.systemAudioCaptureManager.isRunning ? "running" : "stopped"
-                Log.info("[Heartbeat] state=\(self.state.label) displays=\(self.displays.count) segment=\(segmentName) rotation_in=\(Int(self.segmentTimeRemaining))s sysaudio=\(sysAudio)")
+                Logger.capture.info("[Heartbeat] state=\(self.state.label, privacy: .public) displays=\(self.displays.count, privacy: .public) segment=\(segmentName, privacy: .public) rotation_in=\(Int(self.segmentTimeRemaining), privacy: .public)s sysaudio=\(sysAudio, privacy: .public)")
             }
         }
         heartbeatTimer?.tolerance = 30.0
@@ -468,7 +469,7 @@ public final class CaptureManager {
     private func transitionToError(_ message: String, trigger: String) {
         let oldState = state.label
         state = .error(message)
-        Log.info("[State] \(oldState) -> error (trigger: \(trigger), error: \(message))")
+        Logger.capture.info("[State] \(oldState, privacy: .public) -> error (trigger: \(trigger, privacy: .public), error: \(message, privacy: .public))")
         onStateChanged?(state)
         lifecycleManager.startRecoveryIfNeeded(message: message)
     }
@@ -498,13 +499,13 @@ public final class CaptureManager {
 
         // Prevent concurrent rotations
         guard !isRotatingSegment else {
-            Log.debug("Segment rotation already in progress, skipping", verbose: verbose)
+            if verbose { Logger.capture.debug("Segment rotation already in progress, skipping") }
             return
         }
         isRotatingSegment = true
         defer { isRotatingSegment = false }
 
-        Log.info("Rotating segment...")
+        Logger.capture.info("Rotating segment...")
 
         // Create new segment directory FIRST
         let newSegmentDir: URL
@@ -513,7 +514,7 @@ public final class CaptureManager {
             (newSegmentDir, newTimePrefix) = try storageManager.createSegmentDirectory(segmentStartTime: Date())
         } catch {
             transitionToError("Failed to create segment directory: \(error.localizedDescription)", trigger: "rotation_failed")
-            Log.error("Failed to rotate segment: \(error)")
+            Logger.capture.error("Failed to rotate segment: \(error, privacy: .public)")
             return
         }
 
@@ -530,9 +531,9 @@ public final class CaptureManager {
                 let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey])
                 let totalBytes = files.compactMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize }.reduce(0, +)
                 let totalMB = Double(totalBytes) / 1_048_576.0
-                Log.info("[Segment] Finished \(dir.lastPathComponent): \(files.count) files, \(String(format: "%.1f", totalMB)) MB")
+                Logger.capture.info("[Segment] Finished \(dir.lastPathComponent, privacy: .public): \(files.count, privacy: .public) files, \(String(format: "%.1f", totalMB), privacy: .public) MB")
             } catch {
-                Log.info("[Segment] Finished \(dir.lastPathComponent): unable to read directory")
+                Logger.capture.info("[Segment] Finished \(dir.lastPathComponent, privacy: .public): unable to read directory")
             }
         }
 
@@ -546,7 +547,7 @@ public final class CaptureManager {
             try await startNewSegmentWithDirectory(newSegmentDir, timePrefix: newTimePrefix, mics: Array(availableMics))
         } catch {
             transitionToError("Failed to start new segment: \(error.localizedDescription)", trigger: "rotation_failed")
-            Log.error("Failed to start new segment: \(error)")
+            Logger.capture.error("Failed to start new segment: \(error, privacy: .public)")
         }
 
         // Enqueue remix for background processing
@@ -568,7 +569,7 @@ public final class CaptureManager {
     private func handleDisplayChange() async {
         guard state.isRecording else { return }
 
-        Log.info("Display configuration changed")
+        Logger.capture.info("Display configuration changed")
 
         // Get new display list
         do {
@@ -580,7 +581,7 @@ public final class CaptureManager {
             let newIDs = Set(newDisplays.map { $0.displayID })
 
             if oldIDs != newIDs {
-                Log.info("Display set changed, rotating segment")
+                Logger.capture.info("Display set changed, rotating segment")
                 displays = newDisplays
 
                 // Update filter
@@ -592,7 +593,7 @@ public final class CaptureManager {
                 await rotateSegment()
             }
         } catch {
-            Log.warn("Failed to get updated display list: \(error)")
+            Logger.capture.warning("Failed to get updated display list: \(error, privacy: .public)")
         }
     }
 
@@ -622,9 +623,9 @@ public final class CaptureManager {
         )
 
         if status != noErr {
-            Log.warn("Failed to add default mic listener: \(status)")
+            Logger.capture.warning("Failed to add default mic listener: \(status, privacy: .public)")
         } else {
-            Log.debug("Started monitoring default microphone changes", verbose: verbose)
+            if verbose { Logger.capture.debug("Started monitoring default microphone changes") }
         }
     }
 
@@ -653,7 +654,7 @@ public final class CaptureManager {
 
         // Check if default mic actually changed
         if newDefaultMicID != currentDefaultMicID {
-            Log.info("Default microphone changed (no rotation - mics handled dynamically)")
+            Logger.capture.info("Default microphone changed (no rotation - mics handled dynamically)")
             currentDefaultMicID = newDefaultMicID
             // No rotation needed - mics are handled dynamically via handleDeviceChange
         }
@@ -702,7 +703,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
 
         let oldState = state.label
         state = .paused
-        Log.info("[State] \(oldState) -> \(state.label) (trigger: \(trigger))")
+        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: \(trigger, privacy: .public))")
         onStateChanged?(state)
 
         return completedSegmentURL
@@ -724,7 +725,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
 
         let oldState = state.label
         state = .recording
-        Log.info("[State] \(oldState) -> \(state.label) (trigger: \(trigger))")
+        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: \(trigger, privacy: .public))")
         onStateChanged?(state)
         startHeartbeat()
     }
@@ -743,9 +744,9 @@ extension CaptureManager: CaptureLifecycleDelegate {
             )
 
             Task {
-                Log.info("Starting processing and upload in background before sleep")
+                Logger.capture.info("Starting processing and upload in background before sleep")
                 await callback(url)
-                Log.info("Processing and upload completed before sleep")
+                Logger.capture.info("Processing and upload completed before sleep")
                 ProcessInfo.processInfo.endActivity(activity)
             }
         } else {

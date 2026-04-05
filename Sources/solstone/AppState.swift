@@ -4,6 +4,7 @@
 import Foundation
 import SwiftUI
 import ServiceManagement
+import os
 
 /// Thread-safe holder for a debug setting value
 /// Allows Sendable closures to read the current value
@@ -154,7 +155,7 @@ public final class AppState {
         // Apply debug segments setting if enabled
         if config.debugSegments {
             SegmentWriter.segmentDuration = 60
-            Log.info("Debug segments enabled: using 60s duration")
+            Logger.general.info("Debug segments enabled: using 60s duration")
         }
 
         // Check current login item status
@@ -225,12 +226,12 @@ public final class AppState {
             let recovery = IncompleteSegmentRecovery(verbose: false)
             let recovered = await recovery.recoverAll()
             if recovered > 0 {
-                Log.info("Recovered \(recovered) incomplete segment(s)")
+                Logger.general.info("Recovered \(recovered, privacy: .public) incomplete segment(s)")
             }
         }
 
         // Auto-start recording on launch (skip if setup not completed or permissions missing)
-        Log.info("[Permissions] AppState.init: checking auto-start (serverURL=\(config.serverURL != nil ? "set" : "nil"), paused=\(pauseManager.isPaused))")
+        Logger.general.warning("[Permissions] AppState.init: checking auto-start (serverURL=\(self.config.serverURL != nil ? "set" : "nil", privacy: .public), paused=\(self.pauseManager.isPaused, privacy: .public))")
         if config.serverURL != nil && !pauseManager.isPaused && PermissionChecker().allGranted {
             Task { @MainActor in
                 await self.startRecording()

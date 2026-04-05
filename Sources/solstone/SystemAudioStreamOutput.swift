@@ -3,6 +3,7 @@
 
 import CoreMedia
 import Foundation
+import os
 @preconcurrency import ScreenCaptureKit
 
 /// Routes system audio from SCStream to a callback
@@ -56,7 +57,7 @@ public final class SystemAudioStreamOutput: NSObject, SCStreamOutput, @unchecked
         let now = Date()
         if let lastLog = lastAudioLogTime {
             if now.timeIntervalSince(lastLog) >= 60.0 {
-                Log.info("[SystemAudio] \(systemAudioBufferCount) buffers in last minute")
+                Logger.audio.info("[SystemAudio] \(self.systemAudioBufferCount, privacy: .public) buffers in last minute")
                 systemAudioBufferCount = 0
                 lastAudioLogTime = now
             }

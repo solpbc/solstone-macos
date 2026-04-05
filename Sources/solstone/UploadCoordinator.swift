@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
 
 /// UI-facing coordinator for upload/sync status
 /// Thin @MainActor layer that observes SyncService events and exposes state for SwiftUI
@@ -85,12 +86,12 @@ public final class UploadCoordinator {
     /// Trigger sync on startup
     public func syncOnStartup() async {
         guard !syncPaused else {
-            Log.upload("Sync paused, skipping startup sync")
+            Logger.upload.info("Sync paused, skipping startup sync")
             return
         }
 
         guard config.isUploadConfigured else {
-            Log.upload("Not configured, skipping startup sync")
+            Logger.upload.info("Not configured, skipping startup sync")
             return
         }
 
@@ -169,7 +170,7 @@ public final class UploadCoordinator {
             break
 
         case .uploadFailed(let segment, let error):
-            Log.upload("Upload failed for \(segment): \(error)")
+            Logger.upload.info("Upload failed for \(segment, privacy: .public): \(error, privacy: .public)")
             // Continue with next segment
 
         case .syncComplete:

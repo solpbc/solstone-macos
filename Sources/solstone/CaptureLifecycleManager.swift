@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
 @preconcurrency import ScreenCaptureKit
 
 @MainActor
@@ -106,7 +107,7 @@ final class CaptureLifecycleManager {
 
     func startRecoveryIfNeeded(message: String) {
         if isPermissionError(message) {
-            Log.info("[Recovery] Skipping auto-recovery: permission error requires user action")
+            Logger.capture.info("[Recovery] Skipping auto-recovery: permission error requires user action")
         } else {
             startRecoveryTimer()
         }
@@ -114,7 +115,7 @@ final class CaptureLifecycleManager {
 
     private func handleWillSleep() async {
         let stateLabel = delegate?.lifecycleCurrentState.label ?? "unknown"
-        Log.info("[Event] willSleep (state: \(stateLabel), suspended: \(suspendedForRecovery))")
+        Logger.capture.info("[Event] willSleep (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
 
         // Cancel any pending unlock resume — sleep supersedes it
         unlockResumeTask?.cancel()
@@ -132,24 +133,24 @@ final class CaptureLifecycleManager {
             delegate?.lifecycleProcessSegment(url, useSleepActivity: true)
         }
 
-        Log.info("Capture paused for sleep")
+        Logger.capture.info("Capture paused for sleep")
     }
 
     private func handleDidWake() async {
         let stateLabel = delegate?.lifecycleCurrentState.label ?? "unknown"
-        Log.info("[Event] didWake (state: \(stateLabel), suspended: \(suspendedForRecovery))")
+        Logger.capture.info("[Event] didWake (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
 
         guard suspendedForRecovery else { return }
 
         // Already recording (shouldn't happen, but guard against double-start)
         guard delegate?.lifecycleCurrentState.isRecording != true else {
-            Log.warn("[Event] didWake: already recording, skipping resume")
+            Logger.capture.warning("[Event] didWake: already recording, skipping resume")
             return
         }
 
         // If screen is locked, defer resume to unlock handler
         guard !isScreenLocked() else {
-            Log.info("Screen is locked after wake, deferring to unlock handler")
+            Logger.capture.info("Screen is locked after wake, deferring to unlock handler")
             return
         }
 
@@ -157,19 +158,19 @@ final class CaptureLifecycleManager {
             await waitForAudioDevices(timeout: 5.0)
             try await delegate?.lifecycleResumeCapture(trigger: "wake")
             suspendedForRecovery = false
-            Log.info("Capture resumed after wake")
+            Logger.capture.info("Capture resumed after wake")
         } catch {
             delegate?.lifecycleTransitionToError(
                 message: "Failed to resume after wake: \(error.localizedDescription)",
                 trigger: "wake_failed"
             )
-            Log.error("Failed to resume capture after wake: \(error)")
+            Logger.capture.error("Failed to resume capture after wake: \(error, privacy: .public)")
         }
     }
 
     private func handleScreenLocked() async {
         let stateLabel = delegate?.lifecycleCurrentState.label ?? "unknown"
-        Log.info("[Event] screenLocked (state: \(stateLabel), suspended: \(suspendedForRecovery))")
+        Logger.capture.info("[Event] screenLocked (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
 
         // Cancel any pending unlock resume
         unlockResumeTask?.cancel()
@@ -186,18 +187,18 @@ final class CaptureLifecycleManager {
             delegate?.lifecycleProcessSegment(url, useSleepActivity: false)
         }
 
-        Log.info("Capture paused for screen lock")
+        Logger.capture.info("Capture paused for screen lock")
     }
 
     private func handleScreenUnlocked() async {
         let stateLabel = delegate?.lifecycleCurrentState.label ?? "unknown"
-        Log.info("[Event] screenUnlocked (state: \(stateLabel), suspended: \(suspendedForRecovery))")
+        Logger.capture.info("[Event] screenUnlocked (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
 
         guard suspendedForRecovery else { return }
 
         // Already recording (shouldn't happen, but guard against double-start)
         guard delegate?.lifecycleCurrentState.isRecording != true else {
-            Log.warn("[Event] screenUnlocked: already recording, skipping resume")
+            Logger.capture.warning("[Event] screenUnlocked: already recording, skipping resume")
             return
         }
 
@@ -225,13 +226,13 @@ final class CaptureLifecycleManager {
                 try await self.delegate?.lifecycleResumeCapture(trigger: "unlock")
                 self.suspendedForRecovery = false
                 self.unlockResumeTask = nil
-                Log.info("Capture resumed after unlock")
+                Logger.capture.info("Capture resumed after unlock")
             } catch {
                 self.delegate?.lifecycleTransitionToError(
                     message: "Failed to resume after unlock: \(error.localizedDescription)",
                     trigger: "unlock_failed"
                 )
-                Log.error("Failed to resume capture after unlock: \(error)")
+                Logger.capture.error("Failed to resume capture after unlock: \(error, privacy: .public)")
             }
         }
     }
@@ -251,7 +252,7 @@ final class CaptureLifecycleManager {
         while Date().timeIntervalSince(startTime) < timeout {
             let devices = MicrophoneMonitor.listInputDevices()
             if !devices.isEmpty {
-                Log.info("Audio devices available after \(String(format: "%.1f", Date().timeIntervalSince(startTime)))s")
+                Logger.capture.info("Audio devices available after \(String(format: "%.1f", Date().timeIntervalSince(startTime)), privacy: .public)s")
                 return
             }
             try? await Task.sleep(nanoseconds: pollInterval)
@@ -259,19 +260,19 @@ final class CaptureLifecycleManager {
 
         // Timeout reached - log warning but don't fail
         // Recording can proceed without mic if needed
-        Log.warn("Timeout waiting for audio devices after \(timeout)s")
+        Logger.capture.warning("Timeout waiting for audio devices after \(timeout, privacy: .public)s")
     }
 
     private func startRecoveryTimer() {
         retryTimer?.invalidate()
 
         guard retryCount < maxRetryCount else {
-            Log.error("[Recovery] Giving up after \(maxRetryCount) failed attempts")
+            Logger.capture.error("[Recovery] Giving up after \(self.maxRetryCount, privacy: .public) failed attempts")
             return
         }
 
         let delay = retryCount < retryDelays.count ? retryDelays[retryCount] : 300.0
-        Log.info("[Recovery] Scheduling attempt \(retryCount + 1)/\(maxRetryCount) in \(Int(delay))s")
+        Logger.capture.info("[Recovery] Scheduling attempt \(self.retryCount + 1, privacy: .public)/\(self.maxRetryCount, privacy: .public) in \(Int(delay), privacy: .public)s")
 
         retryTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in
@@ -295,22 +296,22 @@ final class CaptureLifecycleManager {
         }
 
         guard !isScreenLocked() else {
-            Log.info("[Recovery] Screen is locked, deferring recovery")
+            Logger.capture.info("[Recovery] Screen is locked, deferring recovery")
             startRecoveryTimer()
             return
         }
 
         // Don't attempt recovery without screen capture permission
         let hasAccess = CGPreflightScreenCaptureAccess()
-        Log.info("[Permissions] CaptureLifecycleManager.attemptRecovery: CGPreflightScreenCaptureAccess() = \(hasAccess)")
+        Logger.capture.warning("[Permissions] CaptureLifecycleManager.attemptRecovery: CGPreflightScreenCaptureAccess() = \(hasAccess, privacy: .public)")
         guard hasAccess else {
-            Log.info("[Recovery] No screen capture permission, stopping recovery")
+            Logger.capture.info("[Recovery] No screen capture permission, stopping recovery")
             stopRecoveryTimer()
             return
         }
 
         guard !isRecovering else {
-            Log.info("[Recovery] Already in progress, skipping")
+            Logger.capture.info("[Recovery] Already in progress, skipping")
             return
         }
 
@@ -318,21 +319,21 @@ final class CaptureLifecycleManager {
         defer { isRecovering = false }
 
         let attempt = retryCount + 1
-        Log.info("[Recovery] Attempting recovery \(attempt)/\(maxRetryCount)")
+        Logger.capture.info("[Recovery] Attempting recovery \(attempt, privacy: .public)/\(self.maxRetryCount, privacy: .public)")
 
         do {
             try await delegate?.lifecycleResumeCapture(trigger: "recovery")
             stopRecoveryTimer()
-            Log.info("[Recovery] Successfully recovered on attempt \(attempt)")
+            Logger.capture.info("[Recovery] Successfully recovered on attempt \(attempt, privacy: .public)")
         } catch {
             retryCount += 1
-            Log.info("[Recovery] Attempt \(attempt) failed: \(error.localizedDescription)")
+            Logger.capture.info("[Recovery] Attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
 
             if isPermissionError(error) {
-                Log.info("[Recovery] Permission error detected, stopping auto-recovery")
+                Logger.capture.info("[Recovery] Permission error detected, stopping auto-recovery")
                 stopRecoveryTimer()
             } else if retryCount >= maxRetryCount {
-                Log.error("[Recovery] Giving up after \(maxRetryCount) failed attempts")
+                Logger.capture.error("[Recovery] Giving up after \(self.maxRetryCount, privacy: .public) failed attempts")
             } else {
                 startRecoveryTimer()
             }

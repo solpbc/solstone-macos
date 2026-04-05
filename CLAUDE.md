@@ -91,20 +91,15 @@ Server Key: Keychain
 
 ## Logging
 
-Uses macOS unified logging (`os.Logger`) with subsystem `com.solstone.capture`.
+Uses macOS unified logging (`os.Logger`) with subsystem `com.solstone.capture`. Categories: `general`, `capture`, `audio`, `upload`, `setup`, `storage`. See the `live-logging` skill for full details.
 
 ```bash
-# Stream logs in real-time
-log stream --predicate 'subsystem == "com.solstone.capture"'
+# Stream logs in real-time (use full path — fish has a `log` builtin)
+/usr/bin/log stream --predicate 'subsystem == "com.solstone.capture"' --level debug
 
-# Show recent logs (last hour)
-log show --predicate 'subsystem == "com.solstone.capture"' --last 1h
-
-# Filter by category (general or upload)
-log stream --predicate 'subsystem == "com.solstone.capture" AND category == "upload"'
+# Filter by category
+/usr/bin/log stream --predicate 'subsystem == "com.solstone.capture" AND category == "audio"' --level debug
 ```
-
-Or use Console.app and filter by subsystem `com.solstone.capture`.
 
 ## Skills
 
@@ -117,3 +112,4 @@ Specialized knowledge packs in `skills/`, symlinked from `.claude/skills/` and `
 | `coreaudio-hal` | Working with AudioObjectPropertyAddress, device enumeration, property listeners, device pinning, or transport types |
 | `av-media-pipeline` | Working with HEVC encoding, AVAssetWriter, AVAudioEngine, audio format conversion, the remix pipeline, or SoundAnalysis |
 | `macos-app-lifecycle` | Working with MenuBarExtra, TCC permissions, login items, graceful shutdown, keychain, configuration, or DMG packaging |
+| `live-logging` | Debugging the running app with log stream, adding log statements, Logger categories, privacy annotations, or troubleshooting logging issues |

@@ -4,6 +4,7 @@
 import AVFAudio
 import CoreMedia
 import Foundation
+import os
 @preconcurrency import ScreenCaptureKit
 
 /// Information about a display for recording
@@ -120,7 +121,7 @@ public final class SegmentWriter {
                 verbose: verbose
             )
             capturer.onHealthFailure = {
-                Log.warn("ScreenshotCapturer: health failure reported for display \(info.displayID)")
+                Logger.capture.warning("ScreenshotCapturer: health failure reported for display \(info.displayID, privacy: .public)")
             }
 
             screenshotCapturers[info.displayID] = capturer
@@ -167,7 +168,7 @@ public final class SegmentWriter {
             do {
                 _ = try manager.addMicrophone(device)
             } catch {
-                Log.warn("Failed to start mic \(device.name): \(error)")
+                Logger.capture.warning("Failed to start mic \(device.name, privacy: .public): \(error, privacy: .public)")
             }
         }
 
@@ -177,7 +178,7 @@ public final class SegmentWriter {
         }
 
         captureStartTime = Date()
-        Log.info("Started segment using SCScreenshotManager (1fps periodic capture): \(outputDirectory.lastPathComponent)")
+        Logger.capture.info("Started segment using SCScreenshotManager (1fps periodic capture): \(self.outputDirectory.lastPathComponent, privacy: .public)")
     }
 
     // MARK: - Dynamic Microphone Management
@@ -220,9 +221,9 @@ public final class SegmentWriter {
     /// Finishes recording, remixes audio, and closes all files
     public func finish() async {
         // Stop all screenshot capturers first
-        Log.info("Stopping \(screenshotCapturers.count) screenshot capturer(s)...")
+        Logger.capture.info("Stopping \(self.screenshotCapturers.count, privacy: .public) screenshot capturer(s)...")
         for (displayID, capturer) in screenshotCapturers {
-            Log.info("Stopping capturer for display \(displayID)...")
+            Logger.capture.info("Stopping capturer for display \(displayID, privacy: .public)...")
             await capturer.stop()
         }
 
@@ -239,31 +240,31 @@ public final class SegmentWriter {
                     deleteSourceFiles: true,
                     silenceMusic: silenceMusic
                 )
-                Log.info("Audio remix complete: \(result.tracksWritten) tracks, \(result.tracksSkipped) skipped")
+                Logger.capture.info("Audio remix complete: \(result.tracksWritten, privacy: .public) tracks, \(result.tracksSkipped, privacy: .public) skipped")
             } catch {
-                Log.error("Audio remix failed: \(error)")
+                Logger.capture.error("Audio remix failed: \(error, privacy: .public)")
             }
         }
 
         // Finish all screenshot capturers (video writers)
-        Log.info("Finishing \(screenshotCapturers.count) video output(s)...")
+        Logger.capture.info("Finishing \(self.screenshotCapturers.count, privacy: .public) video output(s)...")
         for (displayID, capturer) in screenshotCapturers {
-            Log.info("Waiting for video finish on display \(displayID)...")
+            Logger.capture.info("Waiting for video finish on display \(displayID, privacy: .public)...")
             let result = await capturer.finishWithTimeout(seconds: 10)
             if let result {
-                Log.info("Video finish callback fired for display \(displayID)")
+                Logger.capture.info("Video finish callback fired for display \(displayID, privacy: .public)")
                 switch result {
                 case let .success((url, frameCount)):
-                    Log.info("Saved video for display \(displayID): \(url.lastPathComponent) (\(frameCount) frames)")
+                    Logger.capture.info("Saved video for display \(displayID, privacy: .public): \(url.lastPathComponent, privacy: .public) (\(frameCount, privacy: .public) frames)")
                 case let .failure(error):
-                    Log.warn("Error finishing video for display \(displayID): \(error)")
+                    Logger.capture.warning("Error finishing video for display \(displayID, privacy: .public): \(error, privacy: .public)")
                 }
             }
-            Log.info("Video finish complete for display \(displayID)")
+            Logger.capture.info("Video finish complete for display \(displayID, privacy: .public)")
         }
-        Log.info("All video outputs finished")
+        Logger.capture.info("All video outputs finished")
 
-        Log.debug("Finished segment: \(outputDirectory.lastPathComponent)", verbose: verbose)
+        if verbose { Logger.capture.debug("Finished segment: \(self.outputDirectory.lastPathComponent, privacy: .public)") }
     }
 
     /// Finishes capture and returns data for background remix
@@ -271,9 +272,9 @@ public final class SegmentWriter {
     /// Use this for segment rotation to minimize gap between segments
     public func finishCapture() async -> SegmentCaptureResult? {
         // Stop all screenshot capturers first
-        Log.info("Stopping \(screenshotCapturers.count) screenshot capturer(s) for background remix...")
+        Logger.capture.info("Stopping \(self.screenshotCapturers.count, privacy: .public) screenshot capturer(s) for background remix...")
         for (displayID, capturer) in screenshotCapturers {
-            Log.debug("Stopping capturer for display \(displayID)...", verbose: verbose)
+            if verbose { Logger.capture.debug("Stopping capturer for display \(displayID, privacy: .public)...") }
             await capturer.stop()
         }
 
@@ -302,25 +303,25 @@ public final class SegmentWriter {
         }
 
         // Finish all screenshot capturers (video writers)
-        Log.debug("Finishing \(screenshotCapturers.count) video output(s)...", verbose: verbose)
+        if verbose { Logger.capture.debug("Finishing \(self.screenshotCapturers.count, privacy: .public) video output(s)...") }
         for (displayID, capturer) in screenshotCapturers {
             let result = await capturer.finishWithTimeout(seconds: 10)
             if let result {
                 switch result {
                 case let .success((url, frameCount)):
-                    Log.debug("Saved video for display \(displayID): \(url.lastPathComponent) (\(frameCount) frames)", verbose: self.verbose)
+                    if self.verbose { Logger.capture.debug("Saved video for display \(displayID, privacy: .public): \(url.lastPathComponent, privacy: .public) (\(frameCount, privacy: .public) frames)") }
                 case let .failure(error):
-                    Log.warn("Error finishing video for display \(displayID): \(error)")
+                    Logger.capture.warning("Error finishing video for display \(displayID, privacy: .public): \(error, privacy: .public)")
                 }
             }
         }
 
         guard let startTime = captureStartTime else {
-            Log.warn("No capture start time recorded")
+            Logger.capture.warning("No capture start time recorded")
             return nil
         }
 
-        Log.info("Capture finished, queued for background remix: \(outputDirectory.lastPathComponent)")
+        Logger.capture.info("Capture finished, queued for background remix: \(self.outputDirectory.lastPathComponent, privacy: .public)")
 
         return SegmentCaptureResult(
             segmentDirectory: outputDirectory,
@@ -353,14 +354,14 @@ public final class SegmentWriter {
 
         // Calculate actual duration
         guard let startTime = captureStartTime else {
-            Log.warn("No capture start time recorded, keeping original segment name")
+            Logger.capture.warning("No capture start time recorded, keeping original segment name")
             return outputDirectory
         }
 
         let actualDuration = Int(Date().timeIntervalSince(startTime))
         let segmentKey = "\(timePrefix)_\(actualDuration)"
 
-        Log.info("Finalizing segment: \(timePrefix).incomplete -> \(segmentKey)")
+        Logger.capture.info("Finalizing segment: \(self.timePrefix, privacy: .public).incomplete -> \(segmentKey, privacy: .public)")
 
         let fm = FileManager.default
 
@@ -379,7 +380,7 @@ public final class SegmentWriter {
                 }
             }
         } catch {
-            Log.warn("Failed to rename segment files: \(error)")
+            Logger.capture.warning("Failed to rename segment files: \(error, privacy: .public)")
             return outputDirectory
         }
 
@@ -389,10 +390,10 @@ public final class SegmentWriter {
 
         do {
             try fm.moveItem(at: outputDirectory, to: newDirectory)
-            Log.info("Renamed segment directory to: \(segmentKey)")
+            Logger.capture.info("Renamed segment directory to: \(segmentKey, privacy: .public)")
             return newDirectory
         } catch {
-            Log.warn("Failed to rename segment directory: \(error)")
+            Logger.capture.warning("Failed to rename segment directory: \(error, privacy: .public)")
             return outputDirectory
         }
     }
@@ -405,9 +406,9 @@ public final class SegmentWriter {
         do {
             let data = try JSONSerialization.data(withJSONObject: metadata, options: [.prettyPrinted, .sortedKeys])
             try data.write(to: metaURL)
-            Log.debug("Wrote metadata file: \(metaURL.lastPathComponent)", verbose: verbose)
+            if verbose { Logger.capture.debug("Wrote metadata file: \(metaURL.lastPathComponent, privacy: .public)") }
         } catch {
-            Log.warn("Failed to write metadata file: \(error)")
+            Logger.capture.warning("Failed to write metadata file: \(error, privacy: .public)")
         }
     }
 

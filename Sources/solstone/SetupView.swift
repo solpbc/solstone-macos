@@ -3,6 +3,7 @@
 
 import AppKit
 import SwiftUI
+import os
 
 struct SetupView: View {
     @Bindable var appState: AppState
@@ -75,7 +76,7 @@ struct SetupView: View {
                             HStack {
                                 Spacer()
                                 Button("enable screen recording →") {
-                                    Log.info("[Setup] Button tapped: enable screen recording")
+                                    Logger.setup.info("[Setup] Button tapped: enable screen recording")
                                     PermissionChecker().promptScreenRecording()
                                 }
                             }
@@ -251,12 +252,12 @@ struct SetupView: View {
 
         // Check keychain first
         if let existingKey = KeychainManager.loadServerKey(), !existingKey.isEmpty {
-            Log.info("[Setup] local detect: key found in keychain")
+            Logger.setup.info("[Setup] local detect: key found in keychain")
             let error = await UploadCoordinator.testConnection(
                 serverURL: Self.localServerURL, serverKey: existingKey
             )
             if let error {
-                Log.info("[Setup] local detect: keychain key failed connectivity — \(error)")
+                Logger.setup.info("[Setup] local detect: keychain key failed connectivity — \(error, privacy: .public)")
                 localStatus = .failed("local service not reachable — \(error)")
                 return
             }
@@ -269,17 +270,17 @@ struct SetupView: View {
         // Find sol binary
         let solPath = await findSolBinary()
         guard let solPath else {
-            Log.info("[Setup] local detect: sol binary not found")
+            Logger.setup.info("[Setup] local detect: sol binary not found")
             localStatus = .failed("sol CLI not found — try again")
             return
         }
-        Log.info("[Setup] local detect: sol found at \(solPath)")
+        Logger.setup.info("[Setup] local detect: sol found at \(solPath, privacy: .public)")
 
         // Run remote create
         let result = await runSolRemoteCreate(solPath: solPath)
         switch result {
         case .success(let key):
-            Log.info("[Setup] local detect: CLI success, verifying connectivity")
+            Logger.setup.info("[Setup] local detect: CLI success, verifying connectivity")
             let error = await UploadCoordinator.testConnection(
                 serverURL: Self.localServerURL, serverKey: key
             )
@@ -291,7 +292,7 @@ struct SetupView: View {
             connectedKey = key
             localStatus = .connected
         case .failure(let reason):
-            Log.info("[Setup] local detect: CLI failed — \(reason)")
+            Logger.setup.info("[Setup] local detect: CLI failed — \(reason, privacy: .public)")
             localStatus = .failed("\(reason) — try again")
         }
     }

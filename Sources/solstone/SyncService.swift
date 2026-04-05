@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
 
 /// Background sync service that walks days and uploads missing segments
 /// All operations run off the main actor
@@ -92,7 +93,7 @@ public actor SyncService {
     /// Trigger a sync (debounced - coalesces rapid calls)
     public func triggerSync() {
         guard !isSyncing else {
-            Log.upload("Sync already in progress, skipping trigger")
+            Logger.upload.info("Sync already in progress, skipping trigger")
             return
         }
 
@@ -111,17 +112,17 @@ public actor SyncService {
     /// - Parameter forceFullSync: When true, ignores cached synced days and checks all days
     public func sync(forceFullSync: Bool = false) async {
         guard !syncPaused else {
-            Log.upload("Sync paused, skipping")
+            Logger.upload.info("Sync paused, skipping")
             return
         }
 
         guard let serverURL = serverURL, let serverKey = serverKey else {
-            Log.upload("Sync not configured, skipping")
+            Logger.upload.info("Sync not configured, skipping")
             return
         }
 
         guard !isSyncing else {
-            Log.upload("Sync already in progress")
+            Logger.upload.info("Sync already in progress")
             return
         }
 
@@ -134,7 +135,7 @@ public actor SyncService {
 
         // Test connection first
         if let error = await client.testConnection(serverURL: serverURL, serverKey: serverKey) {
-            Log.upload("Connection test failed: \(error)")
+            Logger.upload.info("Connection test failed: \(error, privacy: .public)")
             progressContinuation.yield(.offline(error: error))
             return
         }
@@ -142,7 +143,7 @@ public actor SyncService {
         // Collect all segments grouped by day
         let segmentsByDay = collectSegmentsByDay()
         guard !segmentsByDay.isEmpty else {
-            Log.upload("No local segments found")
+            Logger.upload.info("No local segments found")
             progressContinuation.yield(.syncComplete)
             return
         }
@@ -161,7 +162,7 @@ public actor SyncService {
         for (day, localSegments) in segmentsByDay.sorted(by: { $0.key > $1.key }) {
             // Skip past days that are already fully synced (unless forcing)
             if day != today && syncedDays.contains(day) && !forceFullSync {
-                Log.upload("Day \(day): skipping (already synced)")
+                Logger.upload.info("Day \(day, privacy: .public): skipping (already synced)")
                 checked += localSegments.count
                 progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
                 continue
@@ -175,12 +176,12 @@ public actor SyncService {
                 serverKey: serverKey,
                 day: day
             ) else {
-                Log.upload("Failed to query server for day \(day), skipping")
+                Logger.upload.info("Failed to query server for day \(day, privacy: .public), skipping")
                 checked += localSegments.count
                 continue
             }
 
-            Log.upload("Day \(day): \(localSegments.count) local, \(serverSegments.count) on server")
+            Logger.upload.info("Day \(day, privacy: .public): \(localSegments.count, privacy: .public) local, \(serverSegments.count, privacy: .public) on server")
 
             // Build lookup for server segments (by both key and original_key)
             var serverByKey: [String: ServerSegmentInfo] = [:]
@@ -203,7 +204,7 @@ public actor SyncService {
 
                 if segmentNeedsUpload(segmentURL: segmentURL, segment: segment, serverSegment: serverSegment) {
                     anyNeededUpload = true
-                    Log.upload("Segment \(segment) needs upload...")
+                    Logger.upload.info("Segment \(segment, privacy: .public) needs upload...")
                     let metadataJSON = readSegmentMetadataJSON(segmentURL: segmentURL, segment: segment)
                     await uploadSegmentWithRetry(
                         serverURL: serverURL,
@@ -229,7 +230,7 @@ public actor SyncService {
         // await cleanupOldSegments(serverURL: serverURL, serverKey: serverKey)
 
         progressContinuation.yield(.syncComplete)
-        Log.upload("Sync complete")
+        Logger.upload.info("Sync complete")
     }
 
     // MARK: - File Comparison
@@ -250,7 +251,7 @@ public actor SyncService {
 
         // If no server segment, definitely need upload
         guard let serverSegment = serverSegment, !serverSegment.files.isEmpty else {
-            Log.upload("Segment \(segment): not on server")
+            Logger.upload.info("Segment \(segment, privacy: .public): not on server")
             return true
         }
 
@@ -265,7 +266,7 @@ public actor SyncService {
             let localFilename = localFile.lastPathComponent
 
             guard serverFileMap[localFilename] != nil else {
-                Log.upload("Segment \(segment): file \(localFilename) not on server")
+                Logger.upload.info("Segment \(segment, privacy: .public): file \(localFilename, privacy: .public) not on server")
                 return true
             }
         }
@@ -297,7 +298,7 @@ public actor SyncService {
             // Select files to upload
             let mediaFiles = selectFilesForUpload(segmentDirectory: segmentURL)
             guard !mediaFiles.isEmpty else {
-                Log.upload("No files to upload for segment \(segment)")
+                Logger.upload.info("No files to upload for segment \(segment, privacy: .public)")
                 progressContinuation.yield(.uploadFailed(segment: segment, error: "No files"))
                 return
             }
@@ -317,7 +318,7 @@ public actor SyncService {
                 progressContinuation.yield(.uploadSucceeded(segment: segment))
                 return
             case .failure(let error):
-                Log.upload("Attempt \(attempts) failed: \(error)")
+                Logger.upload.info("Attempt \(attempts, privacy: .public) failed: \(error, privacy: .public)")
 
                 if attempts >= maxRetries {
                     progressContinuation.yield(.uploadFailed(segment: segment, error: error.localizedDescription))
@@ -332,12 +333,12 @@ public actor SyncService {
                     delay = 300  // 5 minutes
                 }
 
-                Log.upload("Retrying in \(Int(delay))s...")
+                Logger.upload.info("Retrying in \(Int(delay), privacy: .public)s...")
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
 
                 // Check if still configured
                 if syncPaused || serverURL != self.serverURL {
-                    Log.upload("Config changed during retry, aborting")
+                    Logger.upload.info("Config changed during retry, aborting")
                     progressContinuation.yield(.uploadFailed(segment: segment, error: "Config changed"))
                     return
                 }
@@ -467,7 +468,7 @@ public actor SyncService {
             // Return as string (already JSON formatted)
             return String(data: data, encoding: .utf8)
         } catch {
-            Log.upload("Failed to read metadata file: \(error)")
+            Logger.upload.info("Failed to read metadata file: \(error, privacy: .public)")
         }
 
         return nil
@@ -498,7 +499,7 @@ public actor SyncService {
             totalSize += size
         }
 
-        Log.upload("Total storage: \(totalSize / 1024 / 1024) MB, limit: \(localRetentionMB) MB")
+        Logger.upload.info("Total storage: \(totalSize / 1024 / 1024, privacy: .public) MB, limit: \(self.localRetentionMB, privacy: .public) MB")
 
         // Cache server segments by day
         var serverSegmentsCache: [String: [String: ServerSegmentInfo]] = [:]
@@ -535,7 +536,7 @@ public actor SyncService {
                 do {
                     try fm.removeItem(at: oldestSegment)
                     totalSize -= size
-                    Log.upload("Deleted old segment: \(oldestSegment.lastPathComponent) (\(size / 1024) KB)")
+                    Logger.upload.info("Deleted old segment: \(oldestSegment.lastPathComponent, privacy: .public) (\(size / 1024, privacy: .public) KB)")
 
                     // Clean up empty date directory
                     let dateDir = oldestSegment.deletingLastPathComponent()
@@ -543,7 +544,7 @@ public actor SyncService {
                         try? fm.removeItem(at: dateDir)
                     }
                 } catch {
-                    Log.upload("Failed to delete segment: \(error)")
+                    Logger.upload.info("Failed to delete segment: \(error, privacy: .public)")
                 }
             }
         }
@@ -577,13 +578,13 @@ public actor SyncService {
     private func markDaySynced(_ day: String) {
         syncedDays.insert(day)
         saveSyncedDays()
-        Log.upload("Marked day \(day) as fully synced")
+        Logger.upload.info("Marked day \(day, privacy: .public) as fully synced")
     }
 
     /// Clear the synced days cache (for force re-sync)
     public func clearSyncedDaysCache() {
         syncedDays.removeAll()
         UserDefaults.standard.removeObject(forKey: syncedDaysKey)
-        Log.upload("Cleared synced days cache")
+        Logger.upload.info("Cleared synced days cache")
     }
 }

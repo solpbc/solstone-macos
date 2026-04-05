@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
 
 /// Manages background audio remix operations
 /// Processes jobs sequentially to avoid CPU contention
@@ -73,7 +74,7 @@ public actor RemixQueue {
         let actualDuration = Int(Date().timeIntervalSince(job.captureStartTime))
         let segmentKey = "\(job.timePrefix)_\(actualDuration)"
 
-        Log.info("Background remix: \(job.timePrefix) -> \(segmentKey)")
+        Logger.storage.info("Background remix: \(job.timePrefix, privacy: .public) -> \(segmentKey, privacy: .public)")
 
         // Remix audio if we have inputs
         // Create output with final name directly (no rename needed)
@@ -88,11 +89,11 @@ public actor RemixQueue {
                     deleteSourceFiles: true,
                     silenceMusic: job.silenceMusic
                 )
-                Log.info("Remix complete: \(result.tracksWritten) tracks, \(result.tracksSkipped) skipped")
+                Logger.storage.info("Remix complete: \(result.tracksWritten, privacy: .public) tracks, \(result.tracksSkipped, privacy: .public) skipped")
             } catch AudioRemixerError.noTracksToWrite {
-                Log.info("No audio tracks to write (all silent)")
+                Logger.storage.info("No audio tracks to write (all silent)")
             } catch {
-                Log.error("Background remix failed: \(error)")
+                Logger.storage.error("Background remix failed: \(error, privacy: .public)")
                 // Continue with rename anyway - video is still valid
             }
         }
@@ -102,9 +103,9 @@ public actor RemixQueue {
             let metaURL = job.segmentDirectory.appendingPathComponent("\(segmentKey)_meta.json")
             do {
                 try metadataJSON.write(to: metaURL, atomically: true, encoding: .utf8)
-                Log.debug("Wrote metadata file: \(metaURL.lastPathComponent)", verbose: false)
+                if false { Logger.storage.debug("Wrote metadata file: \(metaURL.lastPathComponent, privacy: .public)") }
             } catch {
-                Log.warn("Failed to write metadata file: \(error)")
+                Logger.storage.warning("Failed to write metadata file: \(error, privacy: .public)")
             }
         }
 
@@ -127,7 +128,7 @@ public actor RemixQueue {
                 try fm.moveItem(at: fileURL, to: newFileURL)
             }
         } catch {
-            Log.warn("Failed to rename video files: \(error)")
+            Logger.storage.warning("Failed to rename video files: \(error, privacy: .public)")
         }
 
         // Rename directory from HHMMSS.incomplete to HHMMSS_duration
@@ -136,12 +137,12 @@ public actor RemixQueue {
 
         do {
             try fm.moveItem(at: job.segmentDirectory, to: finalDirectory)
-            Log.info("Renamed segment: \(job.timePrefix).incomplete -> \(segmentKey)")
+            Logger.storage.info("Renamed segment: \(job.timePrefix, privacy: .public).incomplete -> \(segmentKey, privacy: .public)")
 
             // Trigger upload callback
             await onSegmentComplete?(finalDirectory)
         } catch {
-            Log.warn("Failed to rename segment directory: \(error)")
+            Logger.storage.warning("Failed to rename segment directory: \(error, privacy: .public)")
             // Try to trigger upload with original path anyway
             await onSegmentComplete?(job.segmentDirectory)
         }

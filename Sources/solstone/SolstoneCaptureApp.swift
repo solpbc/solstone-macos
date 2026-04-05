@@ -2,11 +2,12 @@
 // Copyright (c) 2026 sol pbc
 
 import SwiftUI
+import os
 
 /// Handles app termination to ensure pending remixes complete
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
-        Log.info("Termination: starting shutdown...")
+        Logger.general.info("Termination: starting shutdown...")
 
         // Request time to complete pending work before termination
         let activity = ProcessInfo.processInfo.beginActivity(
@@ -28,9 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let result = semaphore.wait(timeout: .now() + 30)
         if result == .timedOut {
-            Log.warn("Timeout waiting for remix queue during termination")
+            Logger.general.warning("Timeout waiting for remix queue during termination")
         } else {
-            Log.info("Termination: shutdown complete")
+            Logger.general.info("Termination: shutdown complete")
         }
     }
 }
@@ -132,9 +133,9 @@ private struct StatusIcon: View {
         .task {
             guard !hasCheckedSetup else { return }
             hasCheckedSetup = true
-            Log.info("[Permissions] StatusIcon.task: checking if setup needed")
+            Logger.general.warning("[Permissions] StatusIcon.task: checking if setup needed")
             if appState.config.serverURL == nil || !PermissionChecker().allGranted {
-                Log.info("[Permissions] StatusIcon.task: opening setup window")
+                Logger.general.warning("[Permissions] StatusIcon.task: opening setup window")
                 openWindow(id: "setup")
                 NSApp.activate(ignoringOtherApps: true)
             }

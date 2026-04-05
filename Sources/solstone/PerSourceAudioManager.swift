@@ -4,6 +4,7 @@
 import AVFAudio
 import CoreMedia
 import Foundation
+import os
 
 /// Manages individual audio writers per source
 /// Handles dynamic microphone additions/removals during segment
@@ -90,7 +91,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         )
 
         sourceWriters[sourceID] = SourceWriter(writer: writer)
-        Log.info("Started system audio writer: \(url.lastPathComponent)")
+        Logger.audio.info("Started system audio writer: \(url.lastPathComponent, privacy: .public)")
 
         return sourceID
     }
@@ -145,7 +146,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             captureManager.setCallback(for: device.uid) { [weak writer] buffer, time in
                 writer?.appendPCMBuffer(buffer, presentationTime: time)
             }
-            Log.info("Wired mic callback: \(device.name)")
+            Logger.audio.info("Wired mic callback: \(device.name, privacy: .public)")
         } else {
             // Legacy path: create capture per segment
             let capture = ExternalMicCapture(device: device, gain: gain, verbose: verbose)
@@ -153,7 +154,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
                 writer?.appendPCMBuffer(buffer, presentationTime: time)
             }
             try capture.start()
-            Log.info("Started mic capture (legacy): \(device.name)")
+            Logger.audio.info("Started mic capture (legacy): \(device.name, privacy: .public)")
         }
 
         return sourceID
@@ -189,7 +190,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
             self.storeCompletedInput(input, deviceUID: deviceUID)
 
-            Log.info("Removed mic mid-segment: \(timingInfo.trackType.displayName)")
+            Logger.audio.info("Removed mic mid-segment: \(timingInfo.trackType.displayName, privacy: .public)")
         }
     }
 

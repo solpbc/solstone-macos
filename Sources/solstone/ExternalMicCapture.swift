@@ -7,6 +7,7 @@ import CoreAudio
 import CoreMedia
 import Foundation
 import ObjCHelpers
+import os
 
 /// Captures audio from an external microphone and sends it to a callback
 /// Used for routing external mic audio to per-source audio writers
@@ -119,7 +120,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         // Use inputFormat (what hardware actually provides) instead of outputFormat
         // outputFormat can return cached/default values, but inputFormat reflects actual hardware
         let hardwareFormat = inputNode.inputFormat(forBus: 0)
-        Log.info("\(device.name): hardware format \(hardwareFormat.sampleRate)Hz, \(hardwareFormat.channelCount)ch")
+        Logger.audio.info("\(self.device.name, privacy: .public): hardware format \(hardwareFormat.sampleRate, privacy: .public)Hz, \(hardwareFormat.channelCount, privacy: .public)ch")
 
         // Validate format - newly connected devices may not be ready yet
         guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
@@ -157,7 +158,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         try engine.start()
         isRunning = true
 
-        Log.info("Started external mic capture: \(device.name)")
+        Logger.audio.info("Started external mic capture: \(self.device.name, privacy: .public)")
     }
 
     /// Stop capturing
@@ -171,7 +172,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
             isRunning = false
         }
 
-        Log.debug("Stopped external mic capture: \(device.name)", verbose: verbose)
+        if verbose { Logger.audio.debug("Stopped external mic capture: \(self.device.name, privacy: .public)") }
     }
 
     /// Handle audio configuration changes (e.g., AirPods connecting as default device)
@@ -182,7 +183,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
             guard self.isRunning, !self.isRecovering else { return }
 
             self.isRecovering = true
-            Log.info("\(self.device.name): Config change detected, re-pinning to hardware...")
+            Logger.audio.info("\(self.device.name, privacy: .public): Config change detected, re-pinning to hardware...")
 
             // Teardown current state
             self.engine.stop()
@@ -202,9 +203,9 @@ public final class ExternalMicCapture: @unchecked Sendable {
             do {
                 self.isRunning = false  // Allow startCapture to proceed
                 try self.startCapture()
-                Log.info("\(self.device.name): Successfully recovered after config change")
+                Logger.audio.info("\(self.device.name, privacy: .public): Successfully recovered after config change")
             } catch {
-                Log.error("\(self.device.name): Failed to recover after config change: \(error)")
+                Logger.audio.error("\(self.device.name, privacy: .public): Failed to recover after config change: \(error, privacy: .public)")
             }
 
             self.isRecovering = false
@@ -238,7 +239,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
             throw ExternalMicCaptureError.failedToSetDevice(deviceID, status)
         }
 
-        Log.info("\(device.name): setInputDevice succeeded for deviceID \(deviceID)")
+        Logger.audio.info("\(self.device.name, privacy: .public): setInputDevice succeeded for deviceID \(deviceID, privacy: .public)")
     }
 
     private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer, monoFormat: AVAudioFormat) {
@@ -247,7 +248,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
             receivedFirstBuffer = true
             recordingStartTime = Date()
             firstBufferTime = CMClockGetTime(CMClockGetHostTimeClock())
-            Log.info("\(device.name): Receiving audio buffers")
+            Logger.audio.info("\(self.device.name, privacy: .public): Receiving audio buffers")
         }
 
         // Deep copy buffer
@@ -287,7 +288,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         // Log periodic status (every 60 seconds)
         let now = Date()
         if lastBufferLogTime == nil || now.timeIntervalSince(lastBufferLogTime!) >= 60 {
-            Log.info("[Mic:\(device.name)] \(bufferCount) buffers in last minute")
+            Logger.audio.info("[Mic:\(self.device.name, privacy: .public)] \(self.bufferCount, privacy: .public) buffers in last minute")
             bufferCount = 0
             lastBufferLogTime = now
         }
@@ -296,7 +297,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
         // Convert to mono if needed and resample to target rate
         guard let monoBuffer = convertToMono(buffer, targetFormat: monoFormat) else {
-            Log.warn("\(device.name): convertToMono failed")
+            Logger.audio.warning("\(self.device.name, privacy: .public): convertToMono failed")
             return
         }
 
@@ -351,7 +352,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
             cachedConverter = newConverter
             cachedSourceFormat = sourceFormat
             converter = newConverter
-            Log.debug("\(device.name): Created audio converter \(sourceFormat.sampleRate)Hz -> \(targetFormat.sampleRate)Hz", verbose: verbose)
+            if verbose { Logger.audio.debug("\(self.device.name, privacy: .public): Created audio converter \(sourceFormat.sampleRate, privacy: .public)Hz -> \(targetFormat.sampleRate, privacy: .public)Hz") }
         }
 
         // Calculate output frame count
