@@ -12,33 +12,18 @@ struct MenuContent: View {
         // Status section
         Section {
             statusRow
+            if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused
+                && appState.config.isUploadConfigured {
+                Text(syncStatusText)
+            }
             uploadStatusRow
         }
 
         Divider()
 
-        // Mute controls
+        // Pause / Resume / Start recording controls
         Section {
-            muteMenu
-        }
-
-        Divider()
-
-        // Recording control
-        Section {
-            if appState.isRecording && !appState.isPaused {
-                Button("stop recording") {
-                    Task {
-                        await appState.stopRecording()
-                    }
-                }
-            } else if appState.errorMessage == nil {
-                Button("start recording") {
-                    Task {
-                        await appState.startRecording()
-                    }
-                }
-            }
+            pauseResumeSection
         }
 
         Divider()
@@ -90,6 +75,13 @@ struct MenuContent: View {
     }
 
     private var recordingStatusText: String {
+        if appState.pauseManager.isPaused {
+            let _ = appState.pauseManager.refreshTick
+            if let timeText = appState.pauseManager.formatTimeRemaining() {
+                return "paused - \(timeText) remaining"
+            }
+            return "paused"
+        }
         if appState.isPaused {
             return "paused"
         }
@@ -99,45 +91,66 @@ struct MenuContent: View {
         return "recording"
     }
 
-    // MARK: - Mute Menus
+    private var syncStatusText: String {
+        if appState.config.syncPaused {
+            return "sync: paused"
+        }
+        switch appState.uploadCoordinator.status {
+        case .notSynced:
+            return "sync: pending"
+        case .syncing(let checked, let total):
+            return "sync: checking (\(checked)/\(total))"
+        case .synced:
+            return "sync: up to date"
+        case .uploading:
+            return "sync: uploading"
+        case .retrying(_, let attempts):
+            return "sync: retrying (\(attempts))"
+        case .offline:
+            return "sync: offline"
+        }
+    }
+
+    // MARK: - Pause Controls
 
     @ViewBuilder
-    private var muteMenu: some View {
-        if appState.isRecording {
-            if appState.muteManager.isMuted {
-                // Reference refreshTick to trigger view updates
-                let _ = appState.muteManager.refreshTick
-                if let timeText = appState.muteManager.formatTimeRemaining() {
-                    Button("unmute (\(timeText) remaining)") {
-                        appState.muteManager.unmute()
-                    }
-                } else {
-                    Button("unmute") {
-                        appState.muteManager.unmute()
-                    }
+    private var pauseResumeSection: some View {
+        if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused {
+            Menu("pause") {
+                Button("5 minutes") {
+                    appState.pauseManager.pause(for: .minutes(5))
+                }
+                Button("15 minutes") {
+                    appState.pauseManager.pause(for: .minutes(15))
+                }
+                Button("30 minutes") {
+                    appState.pauseManager.pause(for: .minutes(30))
+                }
+                Button("1 hour") {
+                    appState.pauseManager.pause(for: .minutes(60))
+                }
+                Button("2 hours") {
+                    appState.pauseManager.pause(for: .minutes(120))
+                }
+                Button("indefinitely") {
+                    appState.pauseManager.pause(for: .indefinite)
+                }
+            }
+        } else if appState.pauseManager.isPaused {
+            let _ = appState.pauseManager.refreshTick
+            if let timeText = appState.pauseManager.formatTimeRemaining() {
+                Button("resume (\(timeText) remaining)") {
+                    appState.pauseManager.resume()
                 }
             } else {
-                Menu("mute") {
-                    let now = Date()
-                    let nextQuarter = MuteManager.nextQuarterHour(after: now)
-                    let secondQuarter = MuteManager.secondQuarterHour(after: now)
-                    let nextHour = MuteManager.nextFullHour(after: now)
-
-                    Button("mute for 15 minutes (until \(MuteManager.formatTime(nextQuarter)))") {
-                        appState.muteManager.mute(for: .until(nextQuarter))
-                    }
-                    Button("mute for 30 minutes (until \(MuteManager.formatTime(secondQuarter)))") {
-                        appState.muteManager.mute(for: .until(secondQuarter))
-                    }
-                    Button("mute for 1 hour (until \(MuteManager.formatTime(nextHour)))") {
-                        appState.muteManager.mute(for: .until(nextHour))
-                    }
-                    Button("until tomorrow morning") {
-                        appState.muteManager.mute(for: .untilTomorrowMorning)
-                    }
-                    Button("indefinitely") {
-                        appState.muteManager.mute(for: .indefinite)
-                    }
+                Button("resume") {
+                    appState.pauseManager.resume()
+                }
+            }
+        } else if !appState.isRecording && appState.errorMessage == nil {
+            Button("start recording") {
+                Task {
+                    await appState.startRecording()
                 }
             }
         }

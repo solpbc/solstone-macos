@@ -11,7 +11,7 @@ description: >
 
 `SolstoneCaptureApp.swift` — status bar app, no dock icon, no main window.
 
-- **`.menuBarExtraStyle(.menu)`** — standard dropdown (vs `.window` for detachable popover). Label uses `appState.statusIconName` for reactive SF Symbol changes: `record.circle.fill`, `pause.circle.fill`, `circle.lefthalf.filled` (muted), `exclamationmark.circle.fill` (error), `circle` (idle).
+- **`.menuBarExtraStyle(.menu)`** — standard dropdown (vs `.window` for detachable popover). Label uses `appState.statusIconName` for reactive SF Symbol changes: `record.circle.fill`, `pause.circle.fill`, `circle.lefthalf.filled` (paused), `exclamationmark.circle.fill` (error), `circle` (idle).
 - **`LSUIElement = true`** in Info.plist hides from Dock and Cmd-Tab.
 - **`Window` scene alongside MenuBarExtra** — Settings window with ID `"settings"`, opened via `@Environment(\.openWindow)`. Needs `NSApp.activate(ignoringOtherApps: true)` because menu bar apps don't take focus.
 - **`@NSApplicationDelegateAdaptor`** — bridges to `AppDelegate` for `applicationWillTerminate`. SwiftUI Scene has no shutdown hook.
@@ -126,11 +126,11 @@ For sandboxed builds, pass `--entitlements` with `com.apple.security.device.audi
 
 ## @Observable State Flow
 
-- **`@Observable @MainActor`** on `AppState`, `MuteManager`, `AudioDeviceMonitor`, `UploadCoordinator`. Rule: if it drives SwiftUI views or uses `Timer.scheduledTimer`, it's `@MainActor @Observable`.
+- **`@Observable @MainActor`** on `AppState`, `PauseManager`, `AudioDeviceMonitor`, `UploadCoordinator`. Rule: if it drives SwiftUI views or uses `Timer.scheduledTimer`, it's `@MainActor @Observable`.
 - **`@Bindable var appState`** in views for custom `Binding` creation. `Binding(get:set:)` with side effects is the standard pattern — `set` copies config struct, mutates, calls `appState.updateConfig()`.
-- **Timer-driven refresh:** `MuteManager.refreshTick` incremented every 1s. Views reference it (`let _ = appState.muteManager.refreshTick`) to force re-render for countdown. Timer `tolerance = 0.5` reduces energy impact.
+- **Timer-driven refresh:** `PauseManager.refreshTick` incremented every 1s. Views reference it (`let _ = appState.pauseManager.refreshTick`) to force re-render for countdown. Timer `tolerance = 0.5` reduces energy impact.
 - **Parameter passing, not environment:** `appState` passed as init parameter, not `@EnvironmentObject`.
 
 ## Reference Files
 
-All under `Sources/SolstoneCapture/`: `SolstoneCaptureApp.swift` (entry, MenuBarExtra, AppDelegate), `AppState.swift` (root state, login items), `MenuContent.swift` (menu, quit handler), `SettingsView.swift` (tabs, Bindings, auto-save), `MuteManager.swift` (mute state, timer refresh), `KeychainManager.swift` (Security framework), `AppConfig.swift` (UserDefaults + Keychain, migration), `Info.plist` (LSUIElement, TCC descriptions). `Makefile` at package root.
+All under `Sources/SolstoneCapture/`: `SolstoneCaptureApp.swift` (entry, MenuBarExtra, AppDelegate), `AppState.swift` (root state, login items), `MenuContent.swift` (menu, quit handler), `SettingsView.swift` (tabs, Bindings, auto-save), `PauseManager.swift` (pause state, timer refresh), `KeychainManager.swift` (Security framework), `AppConfig.swift` (UserDefaults + Keychain, migration), `Info.plist` (LSUIElement, TCC descriptions). `Makefile` at package root.

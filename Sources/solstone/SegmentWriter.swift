@@ -55,9 +55,6 @@ public final class SegmentWriter {
     private var systemAudioCaptureManager: SystemAudioCaptureManager?
     private let verbose: Bool
 
-    /// Closure to check if audio is muted (passed to PerSourceAudioManager)
-    private let isAudioMuted: @Sendable () -> Bool
-
     /// When true, move rejected audio tracks to rejected/ subfolder instead of deleting
     private let debugKeepRejectedAudio: Bool
 
@@ -77,21 +74,18 @@ public final class SegmentWriter {
     /// - Parameters:
     ///   - outputDirectory: Directory to write segment files to (with .incomplete suffix)
     ///   - timePrefix: Time prefix for file naming (e.g., "143022")
-    ///   - isAudioMuted: Closure to check if audio is muted
     ///   - debugKeepRejectedAudio: Move rejected audio tracks to rejected/ subfolder instead of deleting
     ///   - silenceMusic: Silence music-only portions of system audio during remix
     ///   - verbose: Enable verbose logging
     public init(
         outputDirectory: URL,
         timePrefix: String,
-        isAudioMuted: @escaping @Sendable () -> Bool = { false },
         debugKeepRejectedAudio: Bool = false,
         silenceMusic: Bool = true,
         verbose: Bool = false
     ) {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
-        self.isAudioMuted = isAudioMuted
         self.debugKeepRejectedAudio = debugKeepRejectedAudio
         self.silenceMusic = silenceMusic
         self.verbose = verbose
@@ -139,14 +133,12 @@ public final class SegmentWriter {
                 outputDirectory: outputDirectory,
                 timePrefix: timePrefix,
                 captureManager: captureManager,
-                isAudioMuted: isAudioMuted,
                 verbose: verbose
             )
         } else {
             manager = PerSourceAudioManager(
                 outputDirectory: outputDirectory,
                 timePrefix: timePrefix,
-                isAudioMuted: isAudioMuted,
                 verbose: verbose
             )
         }

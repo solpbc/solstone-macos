@@ -66,9 +66,6 @@ public final class CaptureManager {
     /// Persistent system audio capture manager - keeps SCStream alive across segment rotations
     private let systemAudioCaptureManager = SystemAudioCaptureManager()
 
-    /// Closure to check if audio is muted (passed to SegmentWriter)
-    private let isAudioMuted: @Sendable () -> Bool
-
     /// Closure to check debug setting for keeping rejected audio tracks
     private let debugKeepRejectedAudio: @Sendable () -> Bool
 
@@ -105,7 +102,6 @@ public final class CaptureManager {
 
     public init(
         storageManager: StorageManager,
-        isAudioMuted: @escaping @Sendable () -> Bool = { false },
         debugKeepRejectedAudio: @escaping @Sendable () -> Bool = { false },
         silenceMusic: @escaping @Sendable () -> Bool = { true },
         excludedAppNames: [String] = [],
@@ -115,7 +111,6 @@ public final class CaptureManager {
         verbose: Bool = false
     ) {
         self.storageManager = storageManager
-        self.isAudioMuted = isAudioMuted
         self.debugKeepRejectedAudio = debugKeepRejectedAudio
         self.silenceMusic = silenceMusic
         self.verbose = verbose
@@ -290,7 +285,7 @@ public final class CaptureManager {
         }
     }
 
-    /// Pauses recording (used when both audio and video are muted)
+    /// Pauses recording (used for sleep/lock lifecycle events)
     public func pauseRecording() async {
         guard state.isRecording else { return }
 
@@ -417,7 +412,6 @@ public final class CaptureManager {
         let segment = SegmentWriter(
             outputDirectory: segmentDir,
             timePrefix: timePrefix,
-            isAudioMuted: isAudioMuted,
             debugKeepRejectedAudio: debugKeepRejectedAudio(),
             silenceMusic: silenceMusic(),
             verbose: verbose
