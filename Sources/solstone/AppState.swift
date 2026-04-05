@@ -54,6 +54,9 @@ public final class AppState {
     public internal(set) var isPaused = false
     public internal(set) var errorMessage: String?
 
+    /// Set by SetupView to tell SettingsView which tab to open to
+    public var pendingSettingsTab: String?
+
 
     // MARK: - Computed Properties
 

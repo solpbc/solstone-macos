@@ -109,23 +109,32 @@ struct SnapshotTests {
 
     private let settingsSize = CGSize(width: 500, height: 400)
 
-    @Test func settingsServerEmpty() throws {
+    @Test func settingsObserver() throws {
         let state = AppState.forSnapshot()
         try render(
-            SettingsView(appState: state, selectedTab: .server, initialStorageUsedMB: 0),
+            SettingsView(appState: state, selectedTab: .observer, initialStorageUsedMB: 42),
             size: settingsSize,
-            to: "settings-server-empty.png"
+            to: "settings-observer.png"
         )
     }
 
-    @Test func settingsServerConfigured() throws {
+    @Test func settingsServiceEmpty() throws {
+        let state = AppState.forSnapshot()
+        try render(
+            SettingsView(appState: state, selectedTab: .service),
+            size: settingsSize,
+            to: "settings-service-empty.png"
+        )
+    }
+
+    @Test func settingsServiceConfigured() throws {
         var config = AppConfig(serverURL: "https://solstone.example.com")
         config.serverKey = "sk-test-key-1234"
         let state = AppState.forSnapshot(config: config)
         try render(
-            SettingsView(appState: state, selectedTab: .server, initialStorageUsedMB: 42),
+            SettingsView(appState: state, selectedTab: .service),
             size: settingsSize,
-            to: "settings-server-configured.png"
+            to: "settings-service-configured.png"
         )
     }
 
@@ -217,7 +226,7 @@ struct SnapshotTests {
         )
     }
 
-    private let setupSize = CGSize(width: 420, height: 580)
+    private let setupSize = CGSize(width: 420, height: 480)
 
     @Test func setupView() throws {
         let state = AppState.forSnapshot()

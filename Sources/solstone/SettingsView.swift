@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import AppKit
 import SwiftUI
+import os
 
 /// Display entry for microphone priority list
 struct MicrophoneDisplayEntry: Identifiable {
@@ -23,11 +25,11 @@ struct MicrophoneDisplayEntry: Identifiable {
 /// Settings window for configuring server upload
 struct SettingsView: View {
     enum Tab: Hashable {
-        case server, microphones, privacy, status
+        case observer, service, microphones, privacy, status
     }
 
     @Bindable var appState: AppState
-    @State var selectedTab: Tab = .server
+    @State var selectedTab: Tab = .observer
     @Environment(\.dismiss) private var dismiss
 
     @State private var testResult: TestResult = .none
@@ -38,13 +40,30 @@ struct SettingsView: View {
     @State private var newTitlePattern = ""
     @State private var newExcludedApp = ""
 
+    // Service tab state
+    @State private var localStatus: LocalStatus = .idle
+    @State private var remoteExpanded = false
+    @State private var remoteURL = ""
+    @State private var remoteKey = ""
+    @State private var remoteError: String?
+    @State private var remoteTesting = false
+
     enum TestResult: Equatable {
         case none
         case success
         case failure(String)
     }
 
-    init(appState: AppState, selectedTab: Tab = .server, initialStorageUsedMB: Int? = nil) {
+    enum LocalStatus: Equatable {
+        case idle
+        case detecting
+        case connected
+        case failed(String)
+    }
+
+    private static let localServerURL = "http://localhost:5015"
+
+    init(appState: AppState, selectedTab: Tab = .observer, initialStorageUsedMB: Int? = nil) {
         self.appState = appState
         self.selectedTab = selectedTab
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
@@ -87,9 +106,13 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            serverTab
-                .tag(Tab.server)
-                .tabItem { Label("server", systemImage: "server.rack") }
+            observerTab
+                .tag(Tab.observer)
+                .tabItem { Label("observer", systemImage: "eye") }
+
+            serviceTab
+                .tag(Tab.service)
+                .tabItem { Label("service", systemImage: "server.rack") }
 
             microphoneTab
                 .tag(Tab.microphones)
@@ -107,42 +130,25 @@ struct SettingsView: View {
         .frame(minWidth: 500, minHeight: 380)
         .onAppear {
             appState.syncMicrophonePriorityList()
+            if let pending = appState.pendingSettingsTab, pending == "service" {
+                selectedTab = .service
+                appState.pendingSettingsTab = nil
+            }
         }
         .onExitCommand {
             dismiss()
         }
     }
 
-    // MARK: - Server Tab
+    // MARK: - Observer Tab
 
-    private var serverTab: some View {
+    private var observerTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            GroupBox("remote server") {
-                VStack(alignment: .leading, spacing: 12) {
-                    LabeledContent("server URL") {
-                        TextField("https://solstone.example.com", text: serverURLBinding)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    LabeledContent("API key") {
-                        SecureField("paste key from server", text: serverKeyBinding)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    HStack {
-                        Button("test connection") {
-                            testConnection()
-                        }
-                        .disabled(!appState.config.isUploadConfigured || isTesting)
-
-                        if isTesting {
-                            ProgressView()
-                                .scaleEffect(0.5)
-                        } else {
-                            testResultIcon
-                        }
-                    }
-                }
+            GroupBox("general") {
+                Toggle("start at login", isOn: Binding(
+                    get: { appState.isLoginItemEnabled },
+                    set: { appState.setLoginItemEnabled($0) }
+                ))
                 .padding(.vertical, 4)
             }
 
@@ -169,15 +175,330 @@ struct SettingsView: View {
                 }
             }
 
-            GroupBox("general") {
-                Toggle("start at login", isOn: Binding(
-                    get: { appState.isLoginItemEnabled },
-                    set: { appState.setLoginItemEnabled($0) }
-                ))
-                .padding(.vertical, 4)
+            Spacer()
+        }
+    }
+
+    // MARK: - Service Tab
+
+    private var serviceTab: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            if appState.config.isUploadConfigured {
+                // Connected state — show current config
+                connectedServiceSection
+            } else {
+                // Not connected — show setup options
+                serviceSetupSection
             }
 
             Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private var connectedServiceSection: some View {
+        GroupBox("connected") {
+            VStack(alignment: .leading, spacing: 12) {
+                LabeledContent("server URL") {
+                    TextField("https://solstone.example.com", text: serverURLBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                LabeledContent("API key") {
+                    SecureField("paste key from server", text: serverKeyBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                HStack {
+                    Button("test connection") {
+                        testConnection()
+                    }
+                    .disabled(!appState.config.isUploadConfigured || isTesting)
+
+                    if isTesting {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                    } else {
+                        testResultIcon
+                    }
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private var serviceSetupSection: some View {
+        GroupBox("connect to solstone service") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("connect to a solstone service to store and search your captures.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                // Local detection
+                HStack {
+                    Button("detect local service") {
+                        Task { await detectLocalService() }
+                    }
+                    .disabled(localDetectDisabled)
+
+                    switch localStatus {
+                    case .idle:
+                        EmptyView()
+                    case .detecting:
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: 16, height: 16)
+                        Text("detecting...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    case .connected:
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("connected")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    case .failed(let reason):
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text(reason)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                // Remote service option
+                Button(remoteExpanded ? "hide remote setup" : "connect to remote service...") {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        remoteExpanded.toggle()
+                    }
+                }
+                .buttonStyle(.link)
+                .font(.callout)
+
+                if remoteExpanded {
+                    VStack(alignment: .leading, spacing: 8) {
+                        LabeledContent("server URL") {
+                            TextField("https://solstone.example.com", text: $remoteURL)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        LabeledContent("API key") {
+                            SecureField("paste key from server", text: $remoteKey)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        HStack {
+                            Spacer()
+                            if remoteTesting {
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                                    .frame(width: 16, height: 16)
+                            }
+                            if let error = remoteError {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.red)
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                            }
+                            Button("connect") {
+                                Task { await connectRemoteService() }
+                            }
+                            .disabled(remoteURL.isEmpty || remoteKey.isEmpty || remoteTesting)
+                        }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    // MARK: - Service Connection Logic
+
+    private var localDetectDisabled: Bool {
+        if case .detecting = localStatus { return true }
+        return false
+    }
+
+    private func detectLocalService() async {
+        localStatus = .detecting
+
+        // Check keychain first
+        if let existingKey = KeychainManager.loadServerKey(), !existingKey.isEmpty {
+            Logger.setup.info("local detect: key found in keychain")
+            let error = await UploadCoordinator.testConnection(
+                serverURL: Self.localServerURL, serverKey: existingKey
+            )
+            if let error {
+                Logger.setup.info("local detect: keychain key failed — \(error, privacy: .public)")
+                localStatus = .failed("local service not reachable — \(error)")
+                return
+            }
+            saveServiceAndStart(url: Self.localServerURL, key: existingKey)
+            localStatus = .connected
+            return
+        }
+
+        // Find sol binary
+        let solPath = await findSolBinary()
+        guard let solPath else {
+            Logger.setup.info("local detect: sol binary not found")
+            localStatus = .failed("sol CLI not found — try again")
+            return
+        }
+        Logger.setup.info("local detect: sol found at \(solPath, privacy: .public)")
+
+        // Run remote create
+        let result = await runSolRemoteCreate(solPath: solPath)
+        switch result {
+        case .success(let key):
+            Logger.setup.info("local detect: CLI success, verifying connectivity")
+            let error = await UploadCoordinator.testConnection(
+                serverURL: Self.localServerURL, serverKey: key
+            )
+            if let error {
+                localStatus = .failed("registered but can't connect — \(error)")
+                return
+            }
+            saveServiceAndStart(url: Self.localServerURL, key: key)
+            localStatus = .connected
+        case .failure(let reason):
+            Logger.setup.info("local detect: CLI failed — \(reason, privacy: .public)")
+            localStatus = .failed("\(reason) — try again")
+        }
+    }
+
+    private func connectRemoteService() async {
+        remoteTesting = true
+        remoteError = nil
+
+        let error = await UploadCoordinator.testConnection(
+            serverURL: remoteURL, serverKey: remoteKey
+        )
+        remoteTesting = false
+
+        if let error {
+            remoteError = error
+        } else {
+            saveServiceAndStart(url: remoteURL, key: remoteKey)
+        }
+    }
+
+    private func saveServiceAndStart(url: String, key: String) {
+        var config = appState.config
+        config.serverURL = url
+        config.setServerKey(key)
+        appState.updateConfig(config)
+
+        // Open browser to solstone service
+        if let browserURL = URL(string: url) {
+            NSWorkspace.shared.open(browserURL)
+        }
+
+        // Start recording if permissions are granted
+        if PermissionChecker().allGranted {
+            Task {
+                await appState.startRecording()
+            }
+            Task.detached {
+                await appState.uploadCoordinator?.syncOnStartup()
+            }
+        }
+    }
+
+    // MARK: - Sol CLI Helpers
+
+    private func findSolBinary() async -> String? {
+        let preferred = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin/sol").path
+        if FileManager.default.fileExists(atPath: preferred) {
+            return preferred
+        }
+
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+                process.arguments = ["sol"]
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = FileHandle.nullDevice
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    if process.terminationStatus == 0 {
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                        let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let path, !path.isEmpty {
+                            continuation.resume(returning: path)
+                            return
+                        }
+                    }
+                    continuation.resume(returning: nil)
+                } catch {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
+    private enum SolResult {
+        case success(String)
+        case failure(String)
+    }
+
+    private struct RemoteCreateResponse: Decodable {
+        let name: String
+        let key: String
+        let prefix: String
+    }
+
+    private func runSolRemoteCreate(solPath: String) async -> SolResult {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: solPath)
+                process.arguments = ["remote", "--json", "create", "solstone-macos"]
+                let stdoutPipe = Pipe()
+                let stderrPipe = Pipe()
+                process.standardOutput = stdoutPipe
+                process.standardError = stderrPipe
+
+                do {
+                    try process.run()
+
+                    let timer = DispatchSource.makeTimerSource()
+                    timer.schedule(deadline: .now() + 10)
+                    timer.setEventHandler {
+                        process.terminate()
+                    }
+                    timer.resume()
+
+                    process.waitUntilExit()
+                    timer.cancel()
+
+                    if process.terminationStatus == 0 {
+                        let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                        if let response = try? JSONDecoder().decode(RemoteCreateResponse.self, from: data) {
+                            continuation.resume(returning: .success(response.key))
+                        } else {
+                            continuation.resume(returning: .failure("could not parse JSON response"))
+                        }
+                    } else {
+                        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+                        if stderr.contains("already exists") {
+                            continuation.resume(returning: .failure("remote already exists"))
+                        } else {
+                            continuation.resume(returning: .failure("exit code \(process.terminationStatus)"))
+                        }
+                    }
+                } catch {
+                    continuation.resume(returning: .failure(error.localizedDescription))
+                }
+            }
         }
     }
 
