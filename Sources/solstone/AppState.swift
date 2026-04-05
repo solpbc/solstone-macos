@@ -229,8 +229,8 @@ public final class AppState {
             }
         }
 
-        // Auto-start recording on launch (skip if setup not completed)
-        if config.serverURL != nil && !pauseManager.isPaused {
+        // Auto-start recording on launch (skip if setup not completed or permissions missing)
+        if config.serverURL != nil && !pauseManager.isPaused && PermissionChecker().allGranted {
             Task { @MainActor in
                 await self.startRecording()
             }

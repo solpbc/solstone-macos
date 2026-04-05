@@ -8,7 +8,8 @@ struct SetupView: View {
     @Bindable var appState: AppState
     @State private var serverURL = ""
     @State private var serverKey = ""
-    @State private var permissionChecker = PermissionChecker()
+    @State private var screenRecordingGranted: Bool
+    @State private var microphoneGranted: Bool
     @State private var step: Step
 
     private static let localServerURL = "http://localhost:5015"
@@ -23,7 +24,10 @@ struct SetupView: View {
         self.appState = appState
         self._serverURL = State(initialValue: initialServerURL)
         self._serverKey = State(initialValue: initialServerKey)
-        self._step = State(initialValue: initialStep ?? (PermissionChecker().allGranted ? .autoDetect : .permissions))
+        let checker = PermissionChecker()
+        self._screenRecordingGranted = State(initialValue: checker.screenRecordingGranted)
+        self._microphoneGranted = State(initialValue: checker.microphoneGranted)
+        self._step = State(initialValue: initialStep ?? (checker.allGranted ? .autoDetect : .permissions))
     }
 
     var body: some View {
@@ -55,7 +59,7 @@ struct SetupView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if !permissionChecker.screenRecordingGranted {
+            if !screenRecordingGranted {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("screen recording")
@@ -76,7 +80,7 @@ struct SetupView: View {
                 }
             }
 
-            if !permissionChecker.microphoneGranted {
+            if !microphoneGranted {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("microphone")
@@ -89,7 +93,8 @@ struct SetupView: View {
                             Spacer()
                             Button("grant access") {
                                 Task {
-                                    await permissionChecker.requestMicrophone()
+                                    await PermissionChecker().requestMicrophone()
+                                    microphoneGranted = PermissionChecker().microphoneGranted
                                 }
                             }
                         }
@@ -115,15 +120,18 @@ struct SetupView: View {
                         }
                     }
                 }
-                .disabled(!permissionChecker.allGranted)
+                .disabled(!(screenRecordingGranted && microphoneGranted))
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(30)
         .task {
             // Poll permission state so the UI updates as the user grants them
-            while !permissionChecker.allGranted {
+            while !(screenRecordingGranted && microphoneGranted) {
                 try? await Task.sleep(for: .seconds(1))
+                let checker = PermissionChecker()
+                screenRecordingGranted = checker.screenRecordingGranted
+                microphoneGranted = checker.microphoneGranted
             }
         }
     }
