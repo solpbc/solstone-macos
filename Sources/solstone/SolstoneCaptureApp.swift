@@ -82,7 +82,7 @@ struct SolstoneCaptureApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 
-        Window("About solstone", id: "about") {
+        Window("about solstone", id: "about") {
             AboutView()
         }
         .windowResizability(.contentSize)

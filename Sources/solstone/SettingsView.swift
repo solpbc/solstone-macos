@@ -89,19 +89,19 @@ struct SettingsView: View {
         TabView(selection: $selectedTab) {
             serverTab
                 .tag(Tab.server)
-                .tabItem { Label("Server", systemImage: "server.rack") }
+                .tabItem { Label("server", systemImage: "server.rack") }
 
             microphoneTab
                 .tag(Tab.microphones)
-                .tabItem { Label("Microphones", systemImage: "mic") }
+                .tabItem { Label("microphones", systemImage: "mic") }
 
             privacyTab
                 .tag(Tab.privacy)
-                .tabItem { Label("Privacy", systemImage: "eye.slash") }
+                .tabItem { Label("privacy", systemImage: "eye.slash") }
 
             statusTab
                 .tag(Tab.status)
-                .tabItem { Label("Status", systemImage: "info.circle") }
+                .tabItem { Label("status", systemImage: "info.circle") }
         }
         .padding(20)
         .frame(minWidth: 500, minHeight: 380)
@@ -119,13 +119,13 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 20) {
             GroupBox("remote server") {
                 VStack(alignment: .leading, spacing: 12) {
-                    LabeledContent("Server URL") {
+                    LabeledContent("server URL") {
                         TextField("https://solstone.example.com", text: serverURLBinding)
                             .textFieldStyle(.roundedBorder)
                     }
 
-                    LabeledContent("API Key") {
-                        SecureField("Paste key from server", text: serverKeyBinding)
+                    LabeledContent("API key") {
+                        SecureField("paste key from server", text: serverKeyBinding)
                             .textFieldStyle(.roundedBorder)
                     }
 
@@ -228,11 +228,11 @@ struct SettingsView: View {
 
             GroupBox("microphone gain") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Boost microphone input level. Changes take effect immediately.")
+                    Text("boost microphone input level. changes take effect immediately.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Picker("Gain", selection: microphoneGainBinding) {
+                    Picker("gain", selection: microphoneGainBinding) {
                         ForEach(1...8, id: \.self) { value in
                             Text("\(value)x").tag(Float(value))
                         }
@@ -244,10 +244,10 @@ struct SettingsView: View {
 
             GroupBox("audio processing") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Toggle("Silence music in system audio", isOn: silenceMusicBinding)
-                        .help("When enabled, music-only portions of system audio are silenced during remix")
+                    Toggle("silence music in system audio", isOn: silenceMusicBinding)
+                        .help("when enabled, music-only portions of system audio are silenced during remix")
 
-                    Text("Silences portions of system audio where music is detected but no speech.")
+                    Text("silences portions of system audio where music is detected but no speech.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -325,7 +325,7 @@ struct SettingsView: View {
                                                 .foregroundStyle(.red)
                                         }
                                         .buttonStyle(.plain)
-                                        .help("Remove app")
+                                        .help("remove app")
                                     }
                                     .padding(.vertical, 2)
                                 }
@@ -333,10 +333,10 @@ struct SettingsView: View {
                         }
 
                         HStack {
-                            TextField("App name (e.g., Slack)", text: $newExcludedApp)
+                            TextField("app name (e.g., slack)", text: $newExcludedApp)
                                 .textFieldStyle(.roundedBorder)
                                 .onSubmit { addExcludedApp() }
-                            Button("Add") { addExcludedApp() }
+                            Button("add") { addExcludedApp() }
                                 .disabled(newExcludedApp.trimmingCharacters(in: .whitespaces).isEmpty)
                         }
                     }
@@ -345,7 +345,7 @@ struct SettingsView: View {
 
                 GroupBox("title patterns") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Hide windows whose title contains these keywords.")
+                        Text("hide windows whose title contains these keywords.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
@@ -365,7 +365,7 @@ struct SettingsView: View {
                                                 .foregroundStyle(.red)
                                         }
                                         .buttonStyle(.plain)
-                                        .help("Remove pattern")
+                                        .help("remove pattern")
                                     }
                                     .padding(.vertical, 2)
                                 }
@@ -376,7 +376,7 @@ struct SettingsView: View {
                             TextField("reddit, facebook, etc.", text: $newTitlePattern)
                                 .textFieldStyle(.roundedBorder)
                                 .onSubmit { addTitlePattern() }
-                            Button("Add") { addTitlePattern() }
+                            Button("add") { addTitlePattern() }
                                 .disabled(newTitlePattern.trimmingCharacters(in: .whitespaces).isEmpty)
                         }
                     }
@@ -384,8 +384,8 @@ struct SettingsView: View {
                 }
 
                 GroupBox("private browsing") {
-                    Toggle("Exclude private/incognito browser windows", isOn: excludePrivateBrowsingBinding)
-                        .help("Automatically excludes Safari Private, Chrome Incognito, and Firefox Private Browsing windows")
+                    Toggle("exclude private/incognito browser windows", isOn: excludePrivateBrowsingBinding)
+                        .help("automatically excludes safari private, chrome incognito, and firefox private browsing windows")
                         .padding(.vertical, 4)
                 }
             }
@@ -483,9 +483,9 @@ struct SettingsView: View {
             GroupBox("debug") {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("1-minute segments", isOn: debugSegmentsBinding)
-                        .help("Use 1-minute segments instead of 5-minute for testing")
+                        .help("use 1-minute segments instead of 5-minute for testing")
                     Toggle("keep rejected audio", isOn: debugKeepRejectedBinding)
-                        .help("Move rejected mic tracks to rejected/ folder instead of deleting")
+                        .help("move rejected mic tracks to rejected/ folder instead of deleting")
                 }
                 .padding(.vertical, 4)
             }
@@ -651,7 +651,7 @@ struct MicrophoneRow: View {
                     .foregroundStyle(entry.isDisabled ? .orange : .green)
             }
             .buttonStyle(.plain)
-            .help(entry.isDisabled ? "Enable microphone" : "Disable microphone")
+            .help(entry.isDisabled ? "enable microphone" : "disable microphone")
 
             // Delete button (only for connected mics)
             if entry.isConnected {
@@ -660,7 +660,7 @@ struct MicrophoneRow: View {
                         .foregroundStyle(.red)
                 }
                 .buttonStyle(.plain)
-                .help("Remove from priority list")
+                .help("remove from priority list")
             } else {
                 Text("disconnected")
                     .font(.caption)
