@@ -38,7 +38,7 @@ public final class AppState {
 
     // MARK: - Managers
 
-    public let muteManager = MuteManager()
+    public let pauseManager = PauseManager()
     public let storageManager = StorageManager()
     public let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
     public private(set) var captureManager: CaptureManager!
@@ -165,7 +165,6 @@ public final class AppState {
         let silenceMusicHolder = DebugSettingHolder(value: config.silenceMusic)
         captureManager = CaptureManager(
             storageManager: storageManager,
-            isAudioMuted: { [muteManager] in muteManager.isAudioMuted },
             debugKeepRejectedAudio: { debugAudioHolder.value },
             silenceMusic: { silenceMusicHolder.value },
             excludedAppNames: config.excludedAppNames,
@@ -207,8 +206,16 @@ public final class AppState {
             }
         }
 
-        // Restore mute state from previous session
-        muteManager.restoreMuteState()
+        // Wire pause manager callbacks
+        pauseManager.onPause = { [weak self] in
+            await self?.stopRecording()
+        }
+        pauseManager.onResume = { [weak self] in
+            await self?.startRecording()
+        }
+
+        // Restore pause state from previous session
+        pauseManager.restorePauseState()
 
         // Sync microphone priority list with available devices
         syncMicrophonePriorityList()
@@ -223,12 +230,17 @@ public final class AppState {
         }
 
         // Auto-start recording on launch (skip if setup not completed)
-        if config.serverURL != nil {
+        if config.serverURL != nil && !pauseManager.isPaused {
             Task { @MainActor in
                 await self.startRecording()
             }
 
             // Start upload sync in background
+            Task.detached { [uploadCoordinator] in
+                await uploadCoordinator?.syncOnStartup()
+            }
+        } else if config.serverURL != nil {
+            // Even when paused, start upload sync for any pending segments
             Task.detached { [uploadCoordinator] in
                 await uploadCoordinator?.syncOnStartup()
             }
@@ -261,7 +273,7 @@ public final class AppState {
         captureManager = CaptureManager(storageManager: storageManager)
         uploadCoordinator = UploadCoordinator(forSnapshot: storageManager, config: config)
 
-        // No callback wiring, no mute restore, no segment recovery,
+        // No callback wiring, no pause restore, no segment recovery,
         // no startRecording, no upload sync, no AppState.shared assignment.
     }
 

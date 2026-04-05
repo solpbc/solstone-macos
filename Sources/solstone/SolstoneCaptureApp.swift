@@ -49,14 +49,18 @@ struct SolstoneCaptureApp: App {
         if appState.errorMessage != nil {
             return "solstone — error"
         }
-        if appState.isPaused {
+        if appState.pauseManager.isPaused || appState.isPaused {
             return "solstone — paused"
         }
-        if appState.muteManager.isMuted {
-            return "solstone — muted"
-        }
         if appState.isRecording {
-            return "solstone — recording"
+            switch appState.uploadCoordinator.status {
+            case .offline:
+                return "solstone — recording, sync offline"
+            case .retrying:
+                return "solstone — recording, sync retrying"
+            default:
+                return "solstone — recording"
+            }
         }
         return "solstone — not recording"
     }
@@ -111,12 +115,13 @@ private struct StatusIcon: View {
                 Circle()
                     .fill(.red)
                     .frame(width: 6, height: 6)
-            } else if appState.isRecording && !appState.isPaused {
-                if appState.muteManager.isMuted {
+            } else if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused {
+                switch appState.uploadCoordinator.status {
+                case .offline, .retrying:
                     Circle()
                         .fill(.orange)
                         .frame(width: 6, height: 6)
-                } else {
+                default:
                     Circle()
                         .fill(.green)
                         .frame(width: 6, height: 6)

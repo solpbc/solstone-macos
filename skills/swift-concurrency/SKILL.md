@@ -16,7 +16,7 @@ Packages: `SolstoneCapture` (executable), `SolstoneCaptureCore` (library). macOS
 
 ### @MainActor — UI-bound state
 
-`AppState`, `CaptureManager`, `MuteManager`, `AudioDeviceMonitor`, `SystemAudioCaptureManager`, `StorageManager`, `UploadCoordinator` are all `@MainActor`. Rule: if it touches `@Observable`, `Timer.scheduledTimer`, or drives SwiftUI, it's `@MainActor`. Nothing else should be.
+`AppState`, `CaptureManager`, `PauseManager`, `AudioDeviceMonitor`, `SystemAudioCaptureManager`, `StorageManager`, `UploadCoordinator` are all `@MainActor`. Rule: if it touches `@Observable`, `Timer.scheduledTimer`, or drives SwiftUI, it's `@MainActor`. Nothing else should be.
 
 ### actor — sequential background work
 
@@ -43,7 +43,7 @@ Packages: `SolstoneCapture` (executable), `SolstoneCaptureCore` (library). macOS
 
 **2. Static non-Sendable constants.** `SingleTrackAudioWriter` and `AudioRemixer` use `static nonisolated(unsafe) let audioSettings: [String: Any]` — `[String: Any]` isn't Sendable but is immutable after init.
 
-**3. Cross-isolation atomic reads.** `MuteManager._isAudioMuted` is `nonisolated(unsafe)` so capture closures on arbitrary threads can read mute state without awaiting MainActor. Bool is atomic on Apple platforms, writes happen only on MainActor. `AppState.shared` is similar — set once, read from termination handlers.
+**3. Cross-isolation atomic reads.** `AppState.shared` is `nonisolated(unsafe)` — set once during init, read from termination handlers.
 
 ### @preconcurrency imports
 

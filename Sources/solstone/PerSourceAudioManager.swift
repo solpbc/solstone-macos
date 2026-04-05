@@ -23,9 +23,6 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     private let verbose: Bool
     private let lock = NSLock()
 
-    /// Closure to check if audio is muted (samples discarded when true)
-    private let isAudioMuted: () -> Bool
-
     /// Shared capture manager for persistent mic captures
     private let captureManager: MicrophoneCaptureManager?
 
@@ -40,14 +37,12 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         outputDirectory: URL,
         timePrefix: String,
         captureManager: MicrophoneCaptureManager,
-        isAudioMuted: @escaping @Sendable () -> Bool = { false },
         verbose: Bool = false
     ) {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
         self.captureManager = captureManager
         self.gain = 2.0  // Not used when captureManager is provided
-        self.isAudioMuted = isAudioMuted
         self.verbose = verbose
     }
 
@@ -56,14 +51,12 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         outputDirectory: URL,
         timePrefix: String,
         gain: Float = 2.0,
-        isAudioMuted: @escaping @Sendable () -> Bool = { false },
         verbose: Bool = false
     ) {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
         self.captureManager = nil
         self.gain = gain
-        self.isAudioMuted = isAudioMuted
         self.verbose = verbose
     }
 
@@ -104,15 +97,6 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
     /// Append system audio sample buffer
     public func appendSystemAudio(_ sampleBuffer: CMSampleBuffer) {
-        // When muted, write silence to maintain timing continuity
-        let bufferToWrite: CMSampleBuffer
-        if isAudioMuted() {
-            guard let silentBuffer = AudioBufferUtils.silencedCopy(of: sampleBuffer) else { return }
-            bufferToWrite = silentBuffer
-        } else {
-            bufferToWrite = sampleBuffer
-        }
-
         lock.lock()
         guard let source = sourceWriters["system"], !source.finished else {
             lock.unlock()
@@ -121,7 +105,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         let writer = source.writer
         lock.unlock()
 
-        writer.appendAudio(bufferToWrite)
+        writer.appendAudio(sampleBuffer)
     }
 
     /// Add a microphone mid-segment (can be called anytime)
@@ -153,24 +137,20 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         lock.unlock()
 
         // Use shared capture manager if available (keeps engine running across segments)
-        let isMuted = isAudioMuted
         if let captureManager = captureManager {
             // Start capture if not already running
             try captureManager.startCapture(for: device)
 
             // Wire callback to this segment's writer
-            // When muted, write silence to maintain timing continuity
             captureManager.setCallback(for: device.uid) { [weak writer] buffer, time in
-                let outputBuffer = isMuted() ? AudioBufferUtils.silencedCopy(of: buffer) ?? buffer : buffer
-                writer?.appendPCMBuffer(outputBuffer, presentationTime: time)
+                writer?.appendPCMBuffer(buffer, presentationTime: time)
             }
             Log.info("Wired mic callback: \(device.name)")
         } else {
             // Legacy path: create capture per segment
             let capture = ExternalMicCapture(device: device, gain: gain, verbose: verbose)
             capture.onAudioBuffer = { [weak writer] buffer, time in
-                let outputBuffer = isMuted() ? AudioBufferUtils.silencedCopy(of: buffer) ?? buffer : buffer
-                writer?.appendPCMBuffer(outputBuffer, presentationTime: time)
+                writer?.appendPCMBuffer(buffer, presentationTime: time)
             }
             try capture.start()
             Log.info("Started mic capture (legacy): \(device.name)")

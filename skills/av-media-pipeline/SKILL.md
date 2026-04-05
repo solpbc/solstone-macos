@@ -55,7 +55,7 @@ Each audio source records to its own M4A during a segment. `PerSourceAudioManage
 
 **Silence batching (non-obvious):** Silent buffers (RMS < 0.001, ~-60dB) are accumulated, not encoded individually. Flushed as one synthetic buffer when: (a) 48000 samples (1s) accumulate, or (b) non-silent buffer arrives. Reduces encoder invocations for quiet mics. Built via `calloc` -> `CMBlockBufferCreateWithMemoryBlock` -> `CMSampleBufferCreate`.
 
-**Muted state (non-obvious):** Muted sources generate silence buffers preserving timing. System audio: zeroed `CMSampleBuffer` via `CMAudioSampleBufferCreateReadyWithPacketDescriptions`. Mics: zero-filled `AVAudioPCMBuffer`. Maintains timing continuity — track duration stays correct while muted.
+**Audio pipeline:** Each audio source writes directly to its own M4A file. No muting or silencing logic exists in the audio pipeline — pause stops all capture entirely.
 
 ## AudioRemixer
 

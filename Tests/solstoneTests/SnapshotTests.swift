@@ -94,11 +94,11 @@ struct SnapshotTests {
         try render(MenuContent(appState: state), size: menuSize, to: "menu-recording.png")
     }
 
-    @Test func menuMuted() throws {
+    @Test func menuPaused() throws {
         let state = AppState.forSnapshot()
         state.isRecording = true
-        state.muteManager.mute(for: .indefinite)
-        try render(MenuContent(appState: state), size: menuSize, to: "menu-muted.png")
+        state.pauseManager.pause(for: .indefinite)
+        try render(MenuContent(appState: state), size: menuSize, to: "menu-paused.png")
     }
 
     @Test func menuError() throws {

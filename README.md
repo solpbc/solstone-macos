@@ -7,7 +7,7 @@ Solstone Capture is a macOS status bar app for continuous screen and audio recor
 - Multi-display capture at 1 FPS
 - Per-source audio recording (system audio + individual microphones)
 - 5-minute segment rotation at clock boundaries
-- Audio and video mute with timed unmute
+- Pause recording with timed auto-resume
 - Server sync with automatic upload and retry
 - Window exclusion for password managers and private browsers
 - Dynamic microphone join/leave mid-segment
@@ -52,7 +52,7 @@ xattr -cr /Applications/solstone.app
 
 ## Architecture
 
-This is a two-package Swift Package Manager repository. **SolstoneCapture** is the app layer with the SwiftUI menu bar interface, application state, capture orchestration, segment management, upload flow, and mute controls. **SolstoneCaptureCore** is the recording layer with HEVC video encoding, per-source audio capture, multi-track audio remixing, microphone monitoring, and window filtering.
+This is a two-package Swift Package Manager repository. **SolstoneCapture** is the app layer with the SwiftUI menu bar interface, application state, capture orchestration, segment management, upload flow, and pause controls. **SolstoneCaptureCore** is the recording layer with HEVC video encoding, per-source audio capture, multi-track audio remixing, microphone monitoring, and window filtering.
 
 ## File Storage
 

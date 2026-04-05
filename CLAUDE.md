@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Solstone Capture is a macOS status bar application for continuous screen and audio recording. It captures all connected displays at 1 FPS and records system/microphone audio in 5-minute segments, with mute functionality and automatic upload to a remote server.
+Solstone Capture is a macOS status bar application for continuous screen and audio recording. It captures all connected displays at 1 FPS and records system/microphone audio in 5-minute segments, with pause functionality and automatic upload to a remote server.
 
 ## Build Commands
 
@@ -51,7 +51,7 @@ This is a single-package Swift repository using Swift Package Manager with Swift
 - **SegmentWriter.swift** - Manages individual 5-minute recording segments
 - **PerSourceAudioManager.swift** - Manages per-source audio writers, handles dynamic mic join/leave
 - **UploadService.swift** - Handles segment upload with sync and retry logic
-- **MuteManager.swift** - Tracks audio/video mute state with timed unmute
+- **PauseManager.swift** - Tracks pause state with timed auto-resume
 - **StorageManager.swift** - File organization and segment directory creation
 - **AudioDeviceMonitor.swift** - Monitors audio device additions/removals
 - **VideoWriter** - HEVC hardware encoding to .mp4
