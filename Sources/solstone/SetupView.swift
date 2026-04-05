@@ -9,7 +9,6 @@ struct SetupView: View {
     @State private var serverURL = ""
     @State private var serverKey = ""
     @State private var permissionChecker = PermissionChecker()
-    @State private var isRequestingPermissions = false
     @State private var step: Step
 
     private static let localServerURL = "http://localhost:5015"
@@ -58,12 +57,19 @@ struct SetupView: View {
 
             if !permissionChecker.screenRecordingGranted {
                 GroupBox {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 8) {
                         Text("screen recording")
                             .font(.headline)
                         Text("to search your entire history — every meeting, document, and idea — solstone captures your screen continuously. everything stays on your mac and goes only to your server.")
                             .font(.body)
                             .foregroundStyle(.secondary)
+
+                        HStack {
+                            Spacer()
+                            Button("open system settings") {
+                                PermissionChecker.openScreenRecordingSettings()
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
@@ -72,12 +78,21 @@ struct SetupView: View {
 
             if !permissionChecker.microphoneGranted {
                 GroupBox {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 8) {
                         Text("microphone")
                             .font(.headline)
                         Text("to capture conversations and meetings, solstone needs mic access. same rules: stored locally, sent only to your server. no third parties, no exceptions.")
                             .font(.body)
                             .foregroundStyle(.secondary)
+
+                        HStack {
+                            Spacer()
+                            Button("grant access") {
+                                Task {
+                                    await permissionChecker.requestMicrophone()
+                                }
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
@@ -91,32 +106,26 @@ struct SetupView: View {
             HStack {
                 Spacer()
 
-                if isRequestingPermissions {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .scaleEffect(0.7)
-                }
-
                 Button("continue →") {
-                    isRequestingPermissions = true
-                    Task {
-                        await permissionChecker.requestAll()
-                        isRequestingPermissions = false
-                        guard permissionChecker.allGranted else { return }
-                        if appState.config.serverURL != nil {
-                            NSApp.keyWindow?.close()
-                        } else {
-                            withAnimation(.easeInOut(duration: 0.25)) {
-                                step = .autoDetect
-                            }
+                    if appState.config.serverURL != nil {
+                        NSApp.keyWindow?.close()
+                    } else {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            step = .autoDetect
                         }
                     }
                 }
-                .disabled(isRequestingPermissions)
+                .disabled(!permissionChecker.allGranted)
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(30)
+        .task {
+            // Poll permission state so the UI updates as the user grants them
+            while !permissionChecker.allGranted {
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
     }
 
     @ViewBuilder
