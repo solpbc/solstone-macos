@@ -132,7 +132,9 @@ private struct StatusIcon: View {
         .task {
             guard !hasCheckedSetup else { return }
             hasCheckedSetup = true
+            Log.info("[Permissions] StatusIcon.task: checking if setup needed")
             if appState.config.serverURL == nil || !PermissionChecker().allGranted {
+                Log.info("[Permissions] StatusIcon.task: opening setup window")
                 openWindow(id: "setup")
                 NSApp.activate(ignoringOtherApps: true)
             }

@@ -11,7 +11,9 @@ struct PermissionChecker {
     private static let tccEntryCreatedKey = "screenRecordingTCCEntryCreated"
 
     var screenRecordingGranted: Bool {
-        CGPreflightScreenCaptureAccess()
+        let result = CGPreflightScreenCaptureAccess()
+        Log.info("[Permissions] CGPreflightScreenCaptureAccess() = \(result) (caller: \(Thread.callStackSymbols[1]))")
+        return result
     }
 
     var microphoneGranted: Bool {
@@ -28,8 +30,10 @@ struct PermissionChecker {
     /// opens System Settings directly via deep link since the entry already exists.
     func promptScreenRecording() {
         if UserDefaults.standard.bool(forKey: Self.tccEntryCreatedKey) {
+            Log.info("[Permissions] promptScreenRecording: TCC entry already created, opening deep link")
             openScreenRecordingSettings()
         } else {
+            Log.info("[Permissions] promptScreenRecording: first time, calling CGRequestScreenCaptureAccess()")
             CGRequestScreenCaptureAccess()
             UserDefaults.standard.set(true, forKey: Self.tccEntryCreatedKey)
         }
@@ -37,7 +41,9 @@ struct PermissionChecker {
 
     /// Shows the native microphone permission dialog. Returns when the user responds.
     func requestMicrophone() async {
+        Log.info("[Permissions] requestMicrophone: calling AVCaptureDevice.requestAccess")
         _ = await AVCaptureDevice.requestAccess(for: .audio)
+        Log.info("[Permissions] requestMicrophone: returned")
     }
 
     private func openScreenRecordingSettings() {

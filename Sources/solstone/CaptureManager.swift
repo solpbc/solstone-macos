@@ -180,7 +180,9 @@ public final class CaptureManager {
         try storageManager.ensureBaseDirectoryExists()
 
         // Screen capture permission must already be granted via the setup flow.
-        if !CGPreflightScreenCaptureAccess() {
+        let hasAccess = CGPreflightScreenCaptureAccess()
+        Log.info("[Permissions] CaptureManager.startRecording: CGPreflightScreenCaptureAccess() = \(hasAccess)")
+        if !hasAccess {
             throw CaptureError.permissionDenied
         }
 
