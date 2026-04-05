@@ -77,6 +77,7 @@ struct SetupView: View {
                         HStack {
                             Spacer()
                             Button("enable screen recording →") {
+                                Log.info("[Permissions] Button tapped: enable screen recording")
                                 PermissionChecker().promptScreenRecording()
                             }
                         }
@@ -128,6 +129,9 @@ struct SetupView: View {
                 Button("continue →") {
                     if appState.config.serverURL != nil {
                         NSApp.keyWindow?.close()
+                        Task {
+                            await appState.startRecording()
+                        }
                     } else {
                         withAnimation(.easeInOut(duration: 0.25)) {
                             step = .autoDetect
@@ -140,6 +144,7 @@ struct SetupView: View {
         }
         .padding(30)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Log.info("[Permissions] didBecomeActive: re-checking permissions")
             let checker = PermissionChecker()
             screenRecordingGranted = checker.screenRecordingGranted
             microphoneGranted = checker.microphoneGranted
