@@ -313,13 +313,13 @@ struct SetupView: View {
 
             GroupBox("server configuration") {
                 VStack(alignment: .leading, spacing: 12) {
-                    LabeledContent("Server URL") {
+                    LabeledContent("server URL") {
                         TextField("https://solstone.example.com", text: $serverURL)
                             .textFieldStyle(.roundedBorder)
                     }
 
-                    LabeledContent("API Key") {
-                        SecureField("Paste key from server", text: $serverKey)
+                    LabeledContent("API key") {
+                        SecureField("paste key from server", text: $serverKey)
                             .textFieldStyle(.roundedBorder)
                     }
                 }
