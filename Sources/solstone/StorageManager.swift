@@ -69,4 +69,30 @@ public final class StorageManager: Sendable {
             return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
         }.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
+
+    /// Calculates total disk usage of all files under `baseDirectory`, in bytes
+    public func calculateStorageUsed() async -> Int64 {
+        let baseDirectory = self.baseDirectory
+        return await Task.detached(priority: .utility) {
+            let fm = FileManager.default
+            guard let enumerator = fm.enumerator(
+                at: baseDirectory,
+                includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                return Int64(0)
+            }
+
+            var totalSize: Int64 = 0
+            while let fileURL = enumerator.nextObject() as? URL {
+                guard let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+                      resourceValues.isRegularFile == true,
+                      let fileSize = resourceValues.fileSize else {
+                    continue
+                }
+                totalSize += Int64(fileSize)
+            }
+            return totalSize
+        }.value
+    }
 }

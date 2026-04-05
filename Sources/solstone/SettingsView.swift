@@ -32,6 +32,7 @@ struct SettingsView: View {
 
     @State private var testResult: TestResult = .none
     @State private var isTesting = false
+    @State private var storageUsedMB: Int?
 
     // Privacy tab state
     @State private var newTitlePattern = ""
@@ -41,6 +42,12 @@ struct SettingsView: View {
         case none
         case success
         case failure(String)
+    }
+
+    init(appState: AppState, selectedTab: Tab = .server, initialStorageUsedMB: Int? = nil) {
+        self.appState = appState
+        self.selectedTab = selectedTab
+        self._storageUsedMB = State(initialValue: initialStorageUsedMB)
     }
 
     // MARK: - Auto-saving Bindings
@@ -140,10 +147,26 @@ struct SettingsView: View {
             }
 
             GroupBox("local storage") {
+                LabeledContent("currently using") {
+                    if let used = storageUsedMB {
+                        Text("\(used) MB")
+                    } else {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                    }
+                }
+                .padding(.vertical, 4)
+
                 LabeledContent("local storage limit") {
                     Stepper("\(appState.config.localRetentionMB) MB", value: localRetentionBinding, in: 50...10000, step: 50)
                 }
                 .padding(.vertical, 4)
+            }
+            .task {
+                if storageUsedMB == nil {
+                    let bytes = await appState.storageManager.calculateStorageUsed()
+                    storageUsedMB = Int(bytes / (1024 * 1024))
+                }
             }
 
             GroupBox("general") {

@@ -112,7 +112,7 @@ struct SnapshotTests {
     @Test func settingsServerEmpty() throws {
         let state = AppState.forSnapshot()
         try render(
-            SettingsView(appState: state, selectedTab: .server),
+            SettingsView(appState: state, selectedTab: .server, initialStorageUsedMB: 0),
             size: settingsSize,
             to: "settings-server-empty.png"
         )
@@ -123,7 +123,7 @@ struct SnapshotTests {
         config.serverKey = "sk-test-key-1234"
         let state = AppState.forSnapshot(config: config)
         try render(
-            SettingsView(appState: state, selectedTab: .server),
+            SettingsView(appState: state, selectedTab: .server, initialStorageUsedMB: 42),
             size: settingsSize,
             to: "settings-server-configured.png"
         )
