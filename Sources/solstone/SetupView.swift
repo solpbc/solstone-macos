@@ -139,14 +139,10 @@ struct SetupView: View {
             }
         }
         .padding(30)
-        .task {
-            // Poll permission state so the UI updates as the user grants them
-            while !(screenRecordingGranted && microphoneGranted) {
-                try? await Task.sleep(for: .seconds(1))
-                let checker = PermissionChecker()
-                screenRecordingGranted = checker.screenRecordingGranted
-                microphoneGranted = checker.microphoneGranted
-            }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            let checker = PermissionChecker()
+            screenRecordingGranted = checker.screenRecordingGranted
+            microphoneGranted = checker.microphoneGranted
         }
     }
 
