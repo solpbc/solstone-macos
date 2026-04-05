@@ -39,7 +39,7 @@ struct MenuContent: View {
         Divider()
 
         Section {
-            Button("about solstone...") {
+            Button("about solstone observer...") {
                 openWindow(id: "about")
                 NSApp.activate(ignoringOtherApps: true)
             }
@@ -47,7 +47,7 @@ struct MenuContent: View {
 
         Divider()
 
-        Button("quit solstone") {
+        Button("quit solstone observer") {
             Task {
                 // Stop recording gracefully before quitting
                 if appState.isRecording {
@@ -63,10 +63,9 @@ struct MenuContent: View {
     @ViewBuilder
     private var statusRow: some View {
         if appState.errorMessage != nil {
-            Button("screen recording blocked — open privacy settings →") {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                    NSWorkspace.shared.open(url)
-                }
+            Button("permissions needed — open setup →") {
+                openWindow(id: "setup")
+                NSApp.activate(ignoringOtherApps: true)
             }
             .foregroundStyle(.red)
         } else {

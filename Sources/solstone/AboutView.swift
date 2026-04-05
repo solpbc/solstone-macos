@@ -21,7 +21,7 @@ struct AboutView: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 64, height: 64)
 
-                Text("solstone")
+                Text("solstone observer")
                     .font(.title)
                     .fontWeight(.bold)
             }

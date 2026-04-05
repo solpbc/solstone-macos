@@ -47,22 +47,22 @@ struct SolstoneCaptureApp: App {
 
     private var statusAccessibilityLabel: String {
         if appState.errorMessage != nil {
-            return "solstone — error"
+            return "solstone observer — error"
         }
         if appState.pauseManager.isPaused || appState.isPaused {
-            return "solstone — paused"
+            return "solstone observer — paused"
         }
         if appState.isRecording {
             switch appState.uploadCoordinator.status {
             case .offline:
-                return "solstone — recording, sync offline"
+                return "solstone observer — recording, sync offline"
             case .retrying:
-                return "solstone — recording, sync retrying"
+                return "solstone observer — recording, sync retrying"
             default:
-                return "solstone — recording"
+                return "solstone observer — recording"
             }
         }
-        return "solstone — not recording"
+        return "solstone observer — not recording"
     }
 
     var body: some Scene {
@@ -74,19 +74,19 @@ struct SolstoneCaptureApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        Window("solstone setup", id: "setup") {
+        Window("solstone observer setup", id: "setup") {
             SetupView(appState: appState)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 
-        Window("solstone settings", id: "settings") {
+        Window("solstone observer settings", id: "settings") {
             SettingsView(appState: appState)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 
-        Window("about solstone", id: "about") {
+        Window("about solstone observer", id: "about") {
             AboutView()
         }
         .windowResizability(.contentSize)

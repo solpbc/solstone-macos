@@ -54,40 +54,54 @@ struct SetupView: View {
                     .font(.title)
                     .bold()
 
-                Text("solstone needs screen recording and microphone access to build your memory. here's what each does and why.")
+                Text("solstone observer needs screen recording and microphone access to build your memory. here's what each does and why.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
-            if !screenRecordingGranted {
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("screen recording")
-                            .font(.headline)
-                        Text("to search your entire history — every meeting, document, and idea — solstone captures your screen continuously. everything stays on your mac and goes only to your server.")
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("screen recording")
+                        .font(.headline)
+                    if screenRecordingGranted {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("all good")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("to search your entire history — every meeting, document, and idea — solstone observer captures your screen continuously. everything stays on your mac and goes only to your server.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
                             Spacer()
                             Button("enable screen recording →") {
-                                PermissionChecker().requestScreenRecording()
+                                PermissionChecker().promptScreenRecording()
                             }
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
             }
+            .opacity(screenRecordingGranted ? 0.7 : 1.0)
 
-            if !microphoneGranted {
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("microphone")
-                            .font(.headline)
-                        Text("to capture conversations and meetings, solstone needs mic access. same rules: stored locally, sent only to your server. no third parties, no exceptions.")
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("microphone")
+                        .font(.headline)
+                    if microphoneGranted {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("all good")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("to capture conversations and meetings, solstone observer needs mic access. same rules: stored locally, sent only to your server. no third parties, no exceptions.")
                             .font(.body)
                             .foregroundStyle(.secondary)
-
                         HStack {
                             Spacer()
                             Button("grant access") {
@@ -98,10 +112,11 @@ struct SetupView: View {
                             }
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
             }
+            .opacity(microphoneGranted ? 0.7 : 1.0)
 
             Text("you can review or revoke these anytime in system settings → privacy & security.")
                 .font(.caption)
@@ -316,7 +331,7 @@ struct SetupView: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 72, height: 72)
 
-                Text("solstone")
+                Text("solstone observer")
                     .font(.title)
                     .bold()
 
