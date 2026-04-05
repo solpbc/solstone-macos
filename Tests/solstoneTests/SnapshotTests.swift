@@ -226,14 +226,12 @@ struct SnapshotTests {
         )
     }
 
-    private let setupSize = CGSize(width: 420, height: 480)
-
-    @Test func setupView() throws {
+    @Test func settingsPermissions() throws {
         let state = AppState.forSnapshot()
         try render(
-            SetupView(appState: state),
-            size: setupSize,
-            to: "setup.png"
+            SettingsView(appState: state, selectedTab: .permissions),
+            size: settingsSize,
+            to: "settings-permissions.png"
         )
     }
 

@@ -25,7 +25,7 @@ struct MicrophoneDisplayEntry: Identifiable {
 /// Settings window for configuring server upload
 struct SettingsView: View {
     enum Tab: Hashable {
-        case observer, service, microphones, privacy, status
+        case permissions, observer, service, microphones, privacy, status
     }
 
     @Bindable var appState: AppState
@@ -35,6 +35,10 @@ struct SettingsView: View {
     @State private var testResult: TestResult = .none
     @State private var isTesting = false
     @State private var storageUsedMB: Int?
+
+    // Permissions tab state
+    @State private var screenRecordingGranted: Bool
+    @State private var microphoneGranted: Bool
 
     // Privacy tab state
     @State private var newTitlePattern = ""
@@ -67,6 +71,9 @@ struct SettingsView: View {
         self.appState = appState
         self.selectedTab = selectedTab
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
+        let checker = PermissionChecker()
+        self._screenRecordingGranted = State(initialValue: checker.screenRecordingGranted)
+        self._microphoneGranted = State(initialValue: checker.microphoneGranted)
     }
 
     // MARK: - Auto-saving Bindings
@@ -106,6 +113,10 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
+            permissionsTab
+                .tag(Tab.permissions)
+                .tabItem { Label("permissions", systemImage: "lock.shield") }
+
             observerTab
                 .tag(Tab.observer)
                 .tabItem { Label("observer", systemImage: "eye") }
@@ -130,13 +141,108 @@ struct SettingsView: View {
         .frame(minWidth: 500, minHeight: 380)
         .onAppear {
             appState.syncMicrophonePriorityList()
-            if let pending = appState.pendingSettingsTab, pending == "service" {
-                selectedTab = .service
+            if let pending = appState.pendingSettingsTab {
+                switch pending {
+                case "permissions": selectedTab = .permissions
+                case "service": selectedTab = .service
+                default: break
+                }
                 appState.pendingSettingsTab = nil
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            let checker = PermissionChecker()
+            screenRecordingGranted = checker.screenRecordingGranted
+            microphoneGranted = checker.microphoneGranted
+        }
         .onExitCommand {
             dismiss()
+        }
+    }
+
+    // MARK: - Permissions Tab
+
+    private var permissionsTab: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("solstone observer needs screen recording and microphone access to build your memory.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("screen recording")
+                        .font(.headline)
+                    if screenRecordingGranted {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("all good")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("to search your entire history — every meeting, document, and idea — solstone observer captures your screen continuously. everything stays on your mac and goes only to your server.")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Spacer()
+                            Button("enable screen recording →") {
+                                Logger.setup.info("Button tapped: enable screen recording")
+                                PermissionChecker().promptScreenRecording()
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+            .opacity(screenRecordingGranted ? 0.7 : 1.0)
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("microphone")
+                        .font(.headline)
+                    if microphoneGranted {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("all good")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("to capture conversations and meetings, solstone observer needs mic access. same rules: stored locally, sent only to your server. no third parties, no exceptions.")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Spacer()
+                            Button("grant access") {
+                                Task {
+                                    await PermissionChecker().requestMicrophone()
+                                    microphoneGranted = PermissionChecker().microphoneGranted
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+            .opacity(microphoneGranted ? 0.7 : 1.0)
+
+            Text("you can review or revoke these anytime in system settings → privacy & security.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if screenRecordingGranted && microphoneGranted && !appState.config.isUploadConfigured {
+                HStack {
+                    Spacer()
+                    Button("continue to service configuration →") {
+                        selectedTab = .service
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+
+            Spacer()
         }
     }
 

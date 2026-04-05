@@ -75,12 +75,6 @@ struct SolstoneCaptureApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        Window("solstone observer setup", id: "setup") {
-            SetupView(appState: appState)
-        }
-        .windowResizability(.contentSize)
-        .defaultPosition(.center)
-
         Window("solstone observer settings", id: "settings") {
             SettingsView(appState: appState)
         }
@@ -133,10 +127,14 @@ private struct StatusIcon: View {
         .task {
             guard !hasCheckedSetup else { return }
             hasCheckedSetup = true
-            Logger.general.warning("[Permissions] StatusIcon.task: checking if setup needed")
-            if appState.config.serverURL == nil || !PermissionChecker().allGranted {
-                Logger.general.warning("[Permissions] StatusIcon.task: opening setup window")
-                openWindow(id: "setup")
+            let checker = PermissionChecker()
+            if !checker.allGranted {
+                appState.pendingSettingsTab = "permissions"
+                openWindow(id: "settings")
+                NSApp.activate(ignoringOtherApps: true)
+            } else if appState.config.serverURL == nil {
+                appState.pendingSettingsTab = "service"
+                openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)
             }
         }

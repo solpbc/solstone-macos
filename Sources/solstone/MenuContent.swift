@@ -63,8 +63,9 @@ struct MenuContent: View {
     @ViewBuilder
     private var statusRow: some View {
         if appState.errorMessage != nil {
-            Button("permissions needed — open setup →") {
-                openWindow(id: "setup")
+            Button("permissions needed — open settings →") {
+                appState.pendingSettingsTab = "permissions"
+                openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)
             }
             .foregroundStyle(.red)
