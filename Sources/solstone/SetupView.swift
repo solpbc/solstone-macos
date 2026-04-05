@@ -6,224 +6,341 @@ import SwiftUI
 
 struct SetupView: View {
     @Bindable var appState: AppState
-    @State private var serverURL = ""
-    @State private var serverKey = ""
     @State private var screenRecordingGranted: Bool
     @State private var microphoneGranted: Bool
-    @State private var step: Step
+
+    // Service connection state
+    @State private var localStatus: LocalStatus = .idle
+    @State private var remoteExpanded = false
+    @State private var remoteURL = ""
+    @State private var remoteKey = ""
+    @State private var remoteError: String?
+    @State private var remoteTesting = false
+    @State private var connectedURL: String?
+    @State private var connectedKey: String?
 
     private static let localServerURL = "http://localhost:5015"
 
-    enum Step {
-        case permissions
-        case autoDetect
-        case serverConfig
+    enum LocalStatus {
+        case idle
+        case detecting
+        case connected
+        case failed(String)
     }
 
-    init(appState: AppState, initialServerURL: String = "", initialServerKey: String = "", initialStep: Step? = nil) {
+    init(appState: AppState, initialStep: Step? = nil) {
         self.appState = appState
-        self._serverURL = State(initialValue: initialServerURL)
-        self._serverKey = State(initialValue: initialServerKey)
         let checker = PermissionChecker()
         self._screenRecordingGranted = State(initialValue: checker.screenRecordingGranted)
         self._microphoneGranted = State(initialValue: checker.microphoneGranted)
-        self._step = State(initialValue: initialStep ?? (checker.allGranted ? .autoDetect : .permissions))
     }
+
+    // Keep Step enum for snapshot test compatibility
+    enum Step {
+        case permissions
+    }
+
+    private var isConnected: Bool { connectedURL != nil }
 
     var body: some View {
-        Group {
-            if step == .permissions {
-                permissionsStep
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
-            } else if step == .serverConfig {
-                serverConfigStep
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
-            } else {
-                autoDetectStep
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
-            }
-        }
-        .frame(width: 420)
-    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // Header
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("set up solstone observer")
+                        .font(.title)
+                        .bold()
 
-    @ViewBuilder
-    private var permissionsStep: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("two permissions, once.")
-                    .font(.title)
-                    .bold()
-
-                Text("solstone observer needs screen recording and microphone access to build your memory. here's what each does and why.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("screen recording")
-                        .font(.headline)
-                    if screenRecordingGranted {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                            Text("all good")
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        Text("to search your entire history — every meeting, document, and idea — solstone observer captures your screen continuously. everything stays on your mac and goes only to your server.")
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Spacer()
-                            Button("enable screen recording →") {
-                                Log.info("[Permissions] Button tapped: enable screen recording")
-                                PermissionChecker().promptScreenRecording()
-                            }
-                        }
-                    }
+                    Text("solstone observer needs two permissions and a connection to your solstone service.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
-            }
-            .opacity(screenRecordingGranted ? 0.7 : 1.0)
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("microphone")
-                        .font(.headline)
-                    if microphoneGranted {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                            Text("all good")
+                // Section 1: Screen Recording
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("screen recording")
+                            .font(.headline)
+                        if screenRecordingGranted {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("all good")
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("to search your entire history — every meeting, document, and idea — solstone observer captures your screen continuously. everything stays on your mac and goes only to your server.")
+                                .font(.body)
                                 .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        Text("to capture conversations and meetings, solstone observer needs mic access. same rules: stored locally, sent only to your server. no third parties, no exceptions.")
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Spacer()
-                            Button("grant access") {
-                                Task {
-                                    await PermissionChecker().requestMicrophone()
-                                    microphoneGranted = PermissionChecker().microphoneGranted
+                            HStack {
+                                Spacer()
+                                Button("enable screen recording →") {
+                                    Log.info("[Setup] Button tapped: enable screen recording")
+                                    PermissionChecker().promptScreenRecording()
                                 }
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
-            }
-            .opacity(microphoneGranted ? 0.7 : 1.0)
+                .opacity(screenRecordingGranted ? 0.7 : 1.0)
 
-            Text("you can review or revoke these anytime in system settings → privacy & security.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Spacer()
-
-                Button("continue →") {
-                    if appState.config.serverURL != nil {
-                        NSApp.keyWindow?.close()
-                        Task {
-                            await appState.startRecording()
-                        }
-                    } else {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            step = .autoDetect
+                // Section 2: Microphone
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("microphone")
+                            .font(.headline)
+                        if microphoneGranted {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("all good")
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("to capture conversations and meetings, solstone observer needs mic access. same rules: stored locally, sent only to your server. no third parties, no exceptions.")
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                            HStack {
+                                Spacer()
+                                Button("grant access") {
+                                    Task {
+                                        await PermissionChecker().requestMicrophone()
+                                        microphoneGranted = PermissionChecker().microphoneGranted
+                                    }
+                                }
+                            }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
                 }
-                .disabled(!(screenRecordingGranted && microphoneGranted))
-                .keyboardShortcut(.defaultAction)
+                .opacity(microphoneGranted ? 0.7 : 1.0)
+
+                // Section 3: Service Connection
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("solstone service")
+                            .font(.headline)
+
+                        if isConnected {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("connected to \(connectedURL ?? "")")
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("connect to a solstone service to store and search your captures.")
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+
+                            // Local detection button
+                            HStack {
+                                Button("detect local service") {
+                                    Task { await detectLocalService() }
+                                }
+                                .disabled(localDetectDisabled)
+
+                                switch localStatus {
+                                case .idle:
+                                    EmptyView()
+                                case .detecting:
+                                    ProgressView()
+                                        .scaleEffect(0.5)
+                                        .frame(width: 16, height: 16)
+                                    Text("detecting...")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                case .connected:
+                                    EmptyView() // handled by isConnected above
+                                case .failed(let reason):
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.orange)
+                                    Text(reason)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+
+                            // Remote service option
+                            Button(remoteExpanded ? "hide remote setup" : "connect to remote service...") {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    remoteExpanded.toggle()
+                                }
+                            }
+                            .buttonStyle(.link)
+                            .font(.callout)
+
+                            if remoteExpanded {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    LabeledContent("server URL") {
+                                        TextField("https://solstone.example.com", text: $remoteURL)
+                                            .textFieldStyle(.roundedBorder)
+                                    }
+
+                                    LabeledContent("API key") {
+                                        SecureField("paste key from server", text: $remoteKey)
+                                            .textFieldStyle(.roundedBorder)
+                                    }
+
+                                    HStack {
+                                        Spacer()
+                                        if remoteTesting {
+                                            ProgressView()
+                                                .scaleEffect(0.5)
+                                                .frame(width: 16, height: 16)
+                                        }
+                                        if let error = remoteError {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundStyle(.red)
+                                            Text(error)
+                                                .font(.caption)
+                                                .foregroundStyle(.red)
+                                        }
+                                        Button("connect") {
+                                            Task { await connectRemoteService() }
+                                        }
+                                        .disabled(remoteURL.isEmpty || remoteKey.isEmpty || remoteTesting)
+                                    }
+                                }
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
+                }
+                .opacity(isConnected ? 0.7 : 1.0)
+
+                Text("you can review or revoke permissions anytime in system settings → privacy & security.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                // Final action button
+                HStack {
+                    Spacer()
+
+                    Button("start observing and open browser →") {
+                        completeSetup()
+                    }
+                    .disabled(!(screenRecordingGranted && microphoneGranted && isConnected))
+                    .keyboardShortcut(.defaultAction)
+                }
             }
+            .padding(30)
         }
-        .padding(30)
+        .frame(width: 420)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Log.info("[Permissions] didBecomeActive: re-checking permissions")
             let checker = PermissionChecker()
             screenRecordingGranted = checker.screenRecordingGranted
             microphoneGranted = checker.microphoneGranted
         }
     }
 
-    @ViewBuilder
-    private var autoDetectStep: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("setting up...")
-                    .font(.title)
-                    .bold()
+    // MARK: - Local Service Detection
 
-                Text("registering this mac with your solstone journal.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack {
-                Spacer()
-                ProgressView()
-                    .progressViewStyle(.circular)
-                Spacer()
-            }
-            .padding(.vertical, 20)
-        }
-        .padding(30)
-        .task {
-            await attemptAutoRegistration()
-        }
+    private var localDetectDisabled: Bool {
+        if case .detecting = localStatus { return true }
+        return false
     }
 
-    private func attemptAutoRegistration() async {
+    private func detectLocalService() async {
+        localStatus = .detecting
+
+        // Check keychain first
         if let existingKey = KeychainManager.loadServerKey(), !existingKey.isEmpty {
-            Log.info("auto-registration: key found in keychain, skipping CLI")
-            var config = appState.config
-            config.serverURL = Self.localServerURL
-            config.setServerKey(existingKey)
-            appState.updateConfig(config)
-            NSApp.keyWindow?.close()
-            Task {
-                await appState.startRecording()
+            Log.info("[Setup] local detect: key found in keychain")
+            let error = await UploadCoordinator.testConnection(
+                serverURL: Self.localServerURL, serverKey: existingKey
+            )
+            if let error {
+                Log.info("[Setup] local detect: keychain key failed connectivity — \(error)")
+                localStatus = .failed("local service not reachable — \(error)")
+                return
             }
-            Task.detached {
-                await appState.uploadCoordinator?.syncOnStartup()
-            }
+            connectedURL = Self.localServerURL
+            connectedKey = existingKey
+            localStatus = .connected
             return
         }
 
+        // Find sol binary
         let solPath = await findSolBinary()
         guard let solPath else {
-            Log.info("auto-registration: sol binary not found")
-            fallbackToManualSetup()
+            Log.info("[Setup] local detect: sol binary not found")
+            localStatus = .failed("sol CLI not found — try again")
             return
         }
-        Log.info("auto-registration: sol found at \(solPath)")
+        Log.info("[Setup] local detect: sol found at \(solPath)")
 
+        // Run remote create
         let result = await runSolRemoteCreate(solPath: solPath)
-
         switch result {
         case .success(let key):
-            Log.info("auto-registration: CLI success")
-            var config = appState.config
-            config.serverURL = Self.localServerURL
-            config.setServerKey(key)
-            appState.updateConfig(config)
-            NSApp.keyWindow?.close()
-            Task {
-                await appState.startRecording()
+            Log.info("[Setup] local detect: CLI success, verifying connectivity")
+            let error = await UploadCoordinator.testConnection(
+                serverURL: Self.localServerURL, serverKey: key
+            )
+            if let error {
+                localStatus = .failed("registered but can't connect — \(error)")
+                return
             }
-            Task.detached {
-                await appState.uploadCoordinator?.syncOnStartup()
-            }
+            connectedURL = Self.localServerURL
+            connectedKey = key
+            localStatus = .connected
         case .failure(let reason):
-            Log.info("auto-registration: CLI failed — \(reason)")
-            fallbackToManualSetup()
+            Log.info("[Setup] local detect: CLI failed — \(reason)")
+            localStatus = .failed("\(reason) — try again")
         }
     }
+
+    // MARK: - Remote Service Connection
+
+    private func connectRemoteService() async {
+        remoteTesting = true
+        remoteError = nil
+
+        let error = await UploadCoordinator.testConnection(
+            serverURL: remoteURL, serverKey: remoteKey
+        )
+        remoteTesting = false
+
+        if let error {
+            remoteError = error
+        } else {
+            connectedURL = remoteURL
+            connectedKey = remoteKey
+            remoteError = nil
+        }
+    }
+
+    // MARK: - Complete Setup
+
+    private func completeSetup() {
+        guard let url = connectedURL, let key = connectedKey else { return }
+
+        var config = appState.config
+        config.serverURL = url
+        config.setServerKey(key)
+        appState.updateConfig(config)
+        NSApp.keyWindow?.close()
+
+        // Open browser to solstone service
+        if let browserURL = URL(string: url) {
+            NSWorkspace.shared.open(browserURL)
+        }
+
+        Task {
+            await appState.startRecording()
+        }
+        Task.detached {
+            await appState.uploadCoordinator?.syncOnStartup()
+        }
+    }
+
+    // MARK: - Sol CLI Helpers
 
     private func findSolBinary() async -> String? {
         let preferred = FileManager.default.homeDirectoryForCurrentUser
@@ -315,74 +432,5 @@ struct SetupView: View {
                 }
             }
         }
-    }
-
-    private func fallbackToManualSetup() {
-        withAnimation(.easeInOut(duration: 0.25)) {
-            step = .serverConfig
-        }
-    }
-
-    @ViewBuilder
-    private var serverConfigStep: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                bundleImage("sol-wordmark")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 72, height: 72)
-
-                Text("solstone observer")
-                    .font(.title)
-                    .bold()
-
-                Text("captures everything you see and hear and makes it searchable.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Text("by sol pbc — a public benefit corporation")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            GroupBox("server configuration") {
-                VStack(alignment: .leading, spacing: 12) {
-                    LabeledContent("server URL") {
-                        TextField("https://solstone.example.com", text: $serverURL)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    LabeledContent("API key") {
-                        SecureField("paste key from server", text: $serverKey)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
-            Link("need a server? visit solstone.app/install", destination: URL(string: "https://solstone.app/install")!)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Spacer()
-
-                Button("get started") {
-                    var config = appState.config
-                    config.serverURL = serverURL
-                    config.setServerKey(serverKey)
-                    appState.updateConfig(config)
-                    NSApp.keyWindow?.close()
-                    Task {
-                        await appState.startRecording()
-                    }
-                    Task.detached {
-                        await appState.uploadCoordinator?.syncOnStartup()
-                    }
-                }
-                .disabled(serverURL.isEmpty || serverKey.isEmpty)
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(30)
     }
 }
