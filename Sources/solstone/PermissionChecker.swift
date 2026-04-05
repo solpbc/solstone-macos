@@ -20,15 +20,15 @@ struct PermissionChecker {
         screenRecordingGranted && microphoneGranted
     }
 
+    /// Creates the TCC entry so the app appears in System Settings, and shows
+    /// the OS dialog pointing the user there. This is the only way to get the
+    /// app into the screen recording list.
+    func requestScreenRecording() {
+        CGRequestScreenCaptureAccess()
+    }
+
     /// Shows the native microphone permission dialog. Returns when the user responds.
     func requestMicrophone() async {
         _ = await AVCaptureDevice.requestAccess(for: .audio)
-    }
-
-    /// Opens System Settings directly to the Screen & System Audio Recording pane.
-    static func openScreenRecordingSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-            NSWorkspace.shared.open(url)
-        }
     }
 }

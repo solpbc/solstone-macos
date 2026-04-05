@@ -67,11 +67,10 @@ struct SetupView: View {
                         Text("to search your entire history — every meeting, document, and idea — solstone captures your screen continuously. everything stays on your mac and goes only to your server.")
                             .font(.body)
                             .foregroundStyle(.secondary)
-
                         HStack {
                             Spacer()
-                            Button("open system settings") {
-                                PermissionChecker.openScreenRecordingSettings()
+                            Button("enable screen recording →") {
+                                PermissionChecker().requestScreenRecording()
                             }
                         }
                     }
