@@ -301,13 +301,6 @@ final class CaptureLifecycleManager {
             return
         }
 
-        // Don't attempt recovery without screen capture permission
-        guard PermissionChecker().screenRecordingGranted else {
-            Logger.capture.info("[Recovery] No screen capture permission, stopping recovery")
-            stopRecoveryTimer()
-            return
-        }
-
         guard !isRecovering else {
             Logger.capture.info("[Recovery] Already in progress, skipping")
             return

@@ -188,13 +188,8 @@ struct SettingsView: View {
                             } else {
                                 Button("enable screen recording →") {
                                     Logger.setup.info("Button tapped: enable screen recording")
-                                    // Re-check with passive check (real-time, no dialog)
-                                    if PermissionChecker().screenRecordingGranted {
-                                        appState.screenRecordingGranted = true
-                                    } else {
-                                        PermissionChecker().promptScreenRecording()
-                                        screenRecordingPrompted = true
-                                    }
+                                    PermissionChecker().promptScreenRecording()
+                                    screenRecordingPrompted = true
                                 }
                             }
                         }
@@ -522,15 +517,11 @@ struct SettingsView: View {
             NSWorkspace.shared.open(browserURL)
         }
 
-        // Start recording if permissions are granted
-        let checker = PermissionChecker()
-        appState.screenRecordingGranted = checker.screenRecordingGranted
-        if checker.screenRecordingGranted && checker.microphoneGranted {
+        // Try recording — startRecording sets screenRecordingGranted based on result
+        if PermissionChecker().microphoneGranted {
             Task {
                 await appState.startRecording()
-            }
-            Task.detached {
-                await appState.uploadCoordinator?.syncOnStartup()
+                Task.detached { await appState.uploadCoordinator?.syncOnStartup() }
             }
         }
     }

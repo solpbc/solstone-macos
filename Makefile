@@ -59,13 +59,12 @@ bundle-universal: release-universal
 # Install to /Applications (resets TCC so rebuilt binary is recognized)
 install: bundle
 	-@pkill -f solstone 2>/dev/null
-	@echo "Installing to /Applications..."
 	@rm -rf /Applications/solstone.app
-	@cp -r solstone.app /Applications/
 	-@tccutil reset ScreenCapture app.solstone.capture 2>/dev/null
 	-@tccutil reset Microphone app.solstone.capture 2>/dev/null
 	-@defaults delete app.solstone.capture 2>/dev/null
-	@echo "Installed to /Applications/solstone.app (TCC + defaults reset, will prompt on first launch)"
+	@cp -r solstone.app /Applications/
+	@echo "Installed to /Applications/solstone.app (TCC + defaults reset)"
 
 # Open the app
 open: bundle

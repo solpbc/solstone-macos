@@ -180,8 +180,14 @@ public final class CaptureManager {
         // Ensure storage directory exists
         try storageManager.ensureBaseDirectoryExists()
 
-        // Get available content (throws if screen recording permission not granted)
-        let content = try await SCShareableContent.current
+        // Get available content — throws permissionDenied if screen recording not granted
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.current
+        } catch {
+            Logger.capture.info("[Permissions] SCShareableContent denied: \(error.localizedDescription, privacy: .public)")
+            throw CaptureError.permissionDenied
+        }
 
         // Get all displays
         displays = content.displays

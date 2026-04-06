@@ -158,9 +158,6 @@ public final class AppState {
         // Load configuration
         config = AppConfig.loadOrCreateDefault()
 
-        // Screen recording permission — passive check, never triggers a dialog
-        screenRecordingGranted = PermissionChecker().screenRecordingGranted
-
         // Apply debug segments setting if enabled
         if config.debugSegments {
             SegmentWriter.segmentDuration = 60
@@ -239,20 +236,23 @@ public final class AppState {
             }
         }
 
-        // Auto-start recording on launch (skip if setup not completed or permissions missing)
-        let micGranted = PermissionChecker().microphoneGranted
-        Logger.general.info("[Permissions] auto-start check: serverURL=\(self.config.serverURL != nil ? "set" : "nil", privacy: .public), paused=\(self.pauseManager.isPaused, privacy: .public), screen=\(self.screenRecordingGranted, privacy: .public), mic=\(micGranted, privacy: .public)")
-        if config.serverURL != nil && !pauseManager.isPaused && screenRecordingGranted && micGranted {
+        // Check screen recording permission if user has been through the prompt flow
+        // (TCC entry exists, so SCShareableContent won't trigger a surprise dialog)
+        let checker = PermissionChecker()
+        if checker.hasPromptedScreenRecording || config.serverURL != nil {
             Task { @MainActor in
-                await self.startRecording()
-            }
-            Task.detached { [uploadCoordinator] in
-                await uploadCoordinator?.syncOnStartup()
-            }
-        } else if config.serverURL != nil {
-            // Even when paused, start upload sync for any pending segments
-            Task.detached { [uploadCoordinator] in
-                await uploadCoordinator?.syncOnStartup()
+                self.screenRecordingGranted = await PermissionChecker.checkScreenRecording()
+                Logger.general.info("[Permissions] launch check: screen=\(self.screenRecordingGranted, privacy: .public), mic=\(checker.microphoneGranted, privacy: .public)")
+                // Auto-start recording if everything is ready
+                if self.config.serverURL != nil && !self.pauseManager.isPaused
+                    && self.screenRecordingGranted && checker.microphoneGranted {
+                    await self.startRecording()
+                }
+                if self.config.serverURL != nil {
+                    Task.detached { [uploadCoordinator] in
+                        await uploadCoordinator?.syncOnStartup()
+                    }
+                }
             }
         }
 
@@ -292,6 +292,10 @@ public final class AppState {
     public func startRecording() async {
         do {
             try await captureManager.startRecording(disabledMicUIDs: config.disabledMicrophoneUIDs)
+            screenRecordingGranted = true
+        } catch let error as CaptureManager.CaptureError where error == .permissionDenied {
+            Logger.general.info("[Permissions] Recording denied — screen recording permission not granted")
+            screenRecordingGranted = false
         } catch {
             errorMessage = error.localizedDescription
         }

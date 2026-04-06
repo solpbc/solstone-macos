@@ -7,40 +7,37 @@ import ScreenCaptureKit
 import os
 
 /// Checks macOS permissions required for capture.
-/// Does not batch-request — callers trigger each permission individually.
+/// Screen recording permission is verified via SCShareableContent — pre-check APIs
+/// (CGPreflightScreenCaptureAccess, CGWindowListCopyWindowInfo) are unreliable
+/// on macOS 26 with ad-hoc signing.
 struct PermissionChecker {
-    /// Non-prompting, real-time screen recording permission check.
-    /// Uses CGWindowListCopyWindowInfo — kCGWindowName is only populated when the app
-    /// has screen recording permission. Never triggers a dialog, never caches.
-    /// Technique from Ice, alt-tab-macos, and widely-used community patterns.
-    var screenRecordingGranted: Bool {
-        guard let windowList = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
-            as? [[String: Any]] else {
-            Logger.setup.debug("[Permissions] screenRecordingGranted: CGWindowListCopyWindowInfo returned nil")
+    private static let hasPromptedKey = "hasPromptedScreenRecording"
+
+    /// Whether the user has been through the screen recording prompt flow at least once.
+    /// When true, a TCC entry exists and SCShareableContent can be checked without triggering a dialog.
+    var hasPromptedScreenRecording: Bool {
+        UserDefaults.standard.bool(forKey: Self.hasPromptedKey)
+    }
+
+    /// Check screen recording permission via SCShareableContent.
+    /// Only safe to call when a TCC entry exists (after prompting), otherwise may trigger OS dialog.
+    static func checkScreenRecording() async -> Bool {
+        do {
+            _ = try await SCShareableContent.current
+            return true
+        } catch {
             return false
         }
-        let myPID = ProcessInfo.processInfo.processIdentifier
-        for window in windowList {
-            guard let pid = window[kCGWindowOwnerPID as String] as? pid_t,
-                  pid != myPID else { continue }
-            // Skip Dock windows — they always expose names
-            if let app = NSRunningApplication(processIdentifier: pid),
-               app.executableURL?.lastPathComponent == "Dock" { continue }
-            if window[kCGWindowName as String] as? String != nil {
-                return true
-            }
-        }
-        return false
     }
 
     var microphoneGranted: Bool {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
-    /// Triggers the screen recording permission prompt.
-    /// Uses SCShareableContent on macOS 15+ (CGRequestScreenCaptureAccess is broken).
+    /// Triggers the screen recording permission prompt and records that we've prompted.
     func promptScreenRecording() {
         Logger.setup.info("[Permissions] promptScreenRecording")
+        UserDefaults.standard.set(true, forKey: Self.hasPromptedKey)
         SCShareableContent.getWithCompletionHandler { _, _ in }
     }
 
