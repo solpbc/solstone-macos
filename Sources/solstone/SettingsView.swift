@@ -111,10 +111,6 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            permissionsTab
-                .tag(Tab.permissions)
-                .tabItem { Label("permissions", systemImage: "lock.shield") }
-
             observerTab
                 .tag(Tab.observer)
                 .tabItem { Label("observer", systemImage: "eye") }
@@ -134,6 +130,10 @@ struct SettingsView: View {
             statusTab
                 .tag(Tab.status)
                 .tabItem { Label("status", systemImage: "info.circle") }
+
+            permissionsTab
+                .tag(Tab.permissions)
+                .tabItem { Label("permissions", systemImage: "lock.shield") }
         }
         .padding(20)
         .frame(minWidth: 500, minHeight: 380)

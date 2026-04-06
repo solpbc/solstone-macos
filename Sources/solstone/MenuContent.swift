@@ -60,15 +60,22 @@ struct MenuContent: View {
 
     // MARK: - Status Row
 
+    private var permissionsMissing: Bool {
+        !appState.screenRecordingGranted || !PermissionChecker().microphoneGranted
+    }
+
     @ViewBuilder
     private var statusRow: some View {
-        if appState.errorMessage != nil {
+        if permissionsMissing {
             Button("permissions needed — open settings →") {
                 appState.pendingSettingsTab = "permissions"
                 openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)
             }
             .foregroundStyle(.red)
+        } else if let error = appState.errorMessage {
+            Text("error: \(error)")
+                .foregroundStyle(.red)
         } else {
             Text(recordingStatusText)
         }
