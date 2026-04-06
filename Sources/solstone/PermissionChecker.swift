@@ -11,7 +11,7 @@ import os
 struct PermissionChecker {
     var screenRecordingGranted: Bool {
         let result = CGPreflightScreenCaptureAccess()
-        Logger.setup.warning("[Permissions] CGPreflightScreenCaptureAccess() = \(result, privacy: .public) (caller: \(Thread.callStackSymbols[1], privacy: .public))")
+        Logger.setup.info("[Permissions] CGPreflightScreenCaptureAccess() = \(result, privacy: .public)")
         return result
     }
 

@@ -6,6 +6,27 @@ import os
 
 /// Handles app termination to ensure pending remixes complete
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var menuTrackingObserver: Any?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // When the status menu opens, bring any visible app windows (settings, about) to front
+        menuTrackingObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                let hasVisibleWindow = NSApp.windows.contains { window in
+                    window.isVisible && (window.identifier?.rawValue.contains("settings") == true
+                        || window.identifier?.rawValue.contains("about") == true)
+                }
+                if hasVisibleWindow {
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            }
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         Logger.general.info("Termination: starting shutdown...")
 
@@ -127,8 +148,7 @@ private struct StatusIcon: View {
         .task {
             guard !hasCheckedSetup else { return }
             hasCheckedSetup = true
-            let checker = PermissionChecker()
-            if !checker.allGranted {
+            if !appState.screenRecordingGranted || !PermissionChecker().microphoneGranted {
                 appState.pendingSettingsTab = "permissions"
                 openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)

@@ -54,6 +54,10 @@ public final class AppState {
     public internal(set) var isPaused = false
     public internal(set) var errorMessage: String?
 
+    /// Screen recording permission is fixed for the process lifetime on macOS 15+.
+    /// Checked once at init; the app must restart to pick up changes.
+    public private(set) var screenRecordingGranted = false
+
     /// Set by SetupView to tell SettingsView which tab to open to
     public var pendingSettingsTab: String?
 
@@ -155,6 +159,9 @@ public final class AppState {
         // Load configuration
         config = AppConfig.loadOrCreateDefault()
 
+        // Screen recording permission is fixed for the process lifetime on macOS 15+
+        screenRecordingGranted = CGPreflightScreenCaptureAccess()
+
         // Apply debug segments setting if enabled
         if config.debugSegments {
             SegmentWriter.segmentDuration = 60
@@ -234,8 +241,9 @@ public final class AppState {
         }
 
         // Auto-start recording on launch (skip if setup not completed or permissions missing)
-        Logger.general.warning("[Permissions] AppState.init: checking auto-start (serverURL=\(self.config.serverURL != nil ? "set" : "nil", privacy: .public), paused=\(self.pauseManager.isPaused, privacy: .public))")
-        if config.serverURL != nil && !pauseManager.isPaused && PermissionChecker().allGranted {
+        let micGranted = PermissionChecker().microphoneGranted
+        Logger.general.warning("[Permissions] AppState.init: checking auto-start (serverURL=\(self.config.serverURL != nil ? "set" : "nil", privacy: .public), paused=\(self.pauseManager.isPaused, privacy: .public), screen=\(self.screenRecordingGranted, privacy: .public), mic=\(micGranted, privacy: .public))")
+        if config.serverURL != nil && !pauseManager.isPaused && screenRecordingGranted && micGranted {
             Task { @MainActor in
                 await self.startRecording()
             }
