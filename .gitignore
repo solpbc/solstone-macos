@@ -45,3 +45,6 @@ Carthage/Checkouts/
 
 # Snapshot renders
 snapshots/
+
+# Local scratch / debug logs
+scratch/

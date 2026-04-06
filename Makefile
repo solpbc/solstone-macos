@@ -12,9 +12,17 @@ release:
 release-universal:
 	swift build -c release --arch arm64 --arch x86_64
 
-# Run the app
+# Run the installed app and stream all logs to a timestamped file in scratch/
+# Keeps capturing across app restarts. Ctrl+C to stop.
 run:
-	swift run
+	@mkdir -p scratch; \
+	LOG=scratch/$$(date +%Y%m%d_%H%M%S).log; \
+	echo "Streaming logs → $$LOG  (Ctrl+C to stop)"; \
+	/usr/bin/log stream --predicate 'subsystem == "app.solstone.capture"' --level debug > "$$LOG" 2>&1 & \
+	STREAM_PID=$$!; \
+	open /Applications/solstone.app; \
+	trap "kill $$STREAM_PID 2>/dev/null; echo; echo 'Log saved: $$LOG'" INT TERM; \
+	wait $$STREAM_PID
 
 # Clean all build artifacts
 clean:
