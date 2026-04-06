@@ -39,6 +39,7 @@ struct SettingsView: View {
 
     // Permissions tab state
     @State private var screenRecordingPrompted = false
+    @State private var restartCountdown: Int? = nil
 
     // Privacy tab state
     @State private var newTitlePattern = ""
@@ -176,19 +177,30 @@ struct SettingsView: View {
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
-                            Spacer()
-                            if screenRecordingPrompted {
+                            if let countdown = restartCountdown {
                                 HStack(spacing: 6) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    Text("waiting for permission in system settings...")
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                    Text("granted — restarting in \(countdown)...")
                                         .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Button("restart now") { relaunchApp() }
                                 }
                             } else {
-                                Button("enable screen recording →") {
-                                    Logger.setup.info("Button tapped: enable screen recording")
-                                    PermissionChecker().promptScreenRecording()
-                                    screenRecordingPrompted = true
+                                Spacer()
+                                if screenRecordingPrompted {
+                                    HStack(spacing: 6) {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                        Text("waiting for permission in system settings...")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                } else {
+                                    Button("enable screen recording →") {
+                                        Logger.setup.info("Button tapped: enable screen recording")
+                                        PermissionChecker().promptScreenRecording()
+                                        screenRecordingPrompted = true
+                                    }
                                 }
                             }
                         }
@@ -260,13 +272,25 @@ struct SettingsView: View {
             while !Task.isCancelled {
                 do {
                     _ = try await SCShareableContent.current
-                    appState.screenRecordingGranted = true
-                    relaunchApp()
+                    restartCountdown = 5
                     return
                 } catch {
                     // permission not yet granted
                 }
                 try? await Task.sleep(for: .seconds(1.5))
+            }
+        }
+        .onChange(of: restartCountdown) { _, newValue in
+            if let value = newValue, value > 0 {
+                Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    if restartCountdown == value {
+                        restartCountdown = value - 1
+                    }
+                }
+            } else if newValue == 0 {
+                appState.screenRecordingGranted = true
+                relaunchApp()
             }
         }
     }
