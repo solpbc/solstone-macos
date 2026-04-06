@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import AppKit
+import ScreenCaptureKit
 import SwiftUI
 import os
 
@@ -177,8 +178,11 @@ struct SettingsView: View {
                         HStack {
                             Spacer()
                             if screenRecordingPrompted {
-                                Button("restart solstone observer") {
-                                    relaunchApp()
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("waiting for permission in system settings...")
+                                        .foregroundStyle(.secondary)
                                 }
                             } else {
                                 Button("enable screen recording →") {
@@ -226,9 +230,18 @@ struct SettingsView: View {
             }
             .opacity(appState.microphoneGranted ? 0.7 : 1.0)
 
-            Text("you can review or revoke these anytime in system settings → privacy & security.")
+            HStack(spacing: 4) {
+                Text("you can review or revoke these anytime in")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("system settings") {
+                    NSWorkspace.shared.open(
+                        URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
+                    )
+                }
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .buttonStyle(.link)
+            }
 
             if appState.screenRecordingGranted && appState.microphoneGranted && !appState.config.isUploadConfigured {
                 HStack {
@@ -241,6 +254,20 @@ struct SettingsView: View {
             }
 
             Spacer()
+        }
+        .task(id: screenRecordingPrompted) {
+            guard screenRecordingPrompted && !appState.screenRecordingGranted else { return }
+            while !Task.isCancelled {
+                do {
+                    _ = try await SCShareableContent.current
+                    appState.screenRecordingGranted = true
+                    relaunchApp()
+                    return
+                } catch {
+                    // permission not yet granted
+                }
+                try? await Task.sleep(for: .seconds(1.5))
+            }
         }
     }
 
