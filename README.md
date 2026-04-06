@@ -58,24 +58,24 @@ This is a two-package Swift Package Manager repository. **SolstoneCapture** is t
 
 - Captures: `~/Library/Application Support/Solstone/captures/YYYY-MM-DD/HHMMSS_DDD/`
 - Configuration: UserDefaults
-- Server key: Keychain
+- Server key: UserDefaults
 
 ## Logging
 
-Uses macOS unified logging with subsystem `com.solstone.capture`.
+Uses macOS unified logging with subsystem `app.solstone.capture`.
 
 ```bash
 # Stream logs in real-time
-log stream --predicate 'subsystem == "com.solstone.capture"'
+log stream --predicate 'subsystem == "app.solstone.capture"'
 
 # Show recent logs (last hour)
-log show --predicate 'subsystem == "com.solstone.capture"' --last 1h
+log show --predicate 'subsystem == "app.solstone.capture"' --last 1h
 
 # Filter by category
-log stream --predicate 'subsystem == "com.solstone.capture" AND category == "upload"'
+log stream --predicate 'subsystem == "app.solstone.capture" AND category == "upload"'
 ```
 
-Or use Console.app and filter by subsystem `com.solstone.capture`.
+Or use Console.app and filter by subsystem `app.solstone.capture`.
 
 ## License
 

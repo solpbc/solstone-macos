@@ -106,14 +106,12 @@ struct AppConfigTests {
     // MARK: - isUploadConfigured
 
     @Test func isUploadConfiguredTrueWhenBothSet() {
-        var config = AppConfig(serverURL: "https://example.com")
-        config.setServerKey("secret-key")
+        let config = AppConfig(serverURL: "https://example.com", serverKey: "secret-key")
         #expect(config.isUploadConfigured == true)
     }
 
     @Test func isUploadConfiguredFalseWhenNoURL() {
-        var config = AppConfig()
-        config.setServerKey("secret-key")
+        let config = AppConfig(serverKey: "secret-key")
         #expect(config.isUploadConfigured == false)
     }
 
@@ -123,14 +121,12 @@ struct AppConfigTests {
     }
 
     @Test func isUploadConfiguredFalseWhenEmptyURL() {
-        var config = AppConfig(serverURL: "")
-        config.setServerKey("secret-key")
+        let config = AppConfig(serverURL: "", serverKey: "secret-key")
         #expect(config.isUploadConfigured == false)
     }
 
     @Test func isUploadConfiguredFalseWhenEmptyKey() {
-        var config = AppConfig(serverURL: "https://example.com")
-        config.setServerKey("")
+        let config = AppConfig(serverURL: "https://example.com", serverKey: "")
         #expect(config.isUploadConfigured == false)
     }
 

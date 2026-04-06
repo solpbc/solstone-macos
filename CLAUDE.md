@@ -77,7 +77,7 @@ This is a single-package Swift repository using Swift Package Manager with Swift
 
 Segments: `~/Library/Application Support/Solstone/captures/YYYY-MM-DD/HHMMSS_DDD/`
 Config: UserDefaults (standard macOS preferences storage)
-Server Key: Keychain
+Server Key: UserDefaults
 
 ## Technical Notes
 
@@ -91,14 +91,14 @@ Server Key: Keychain
 
 ## Logging
 
-Uses macOS unified logging (`os.Logger`) with subsystem `com.solstone.capture`. Categories: `general`, `capture`, `audio`, `upload`, `setup`, `storage`. See the `live-logging` skill for full details.
+Uses macOS unified logging (`os.Logger`) with subsystem `app.solstone.capture`. Categories: `general`, `capture`, `audio`, `upload`, `setup`, `storage`. See the `live-logging` skill for full details.
 
 ```bash
 # Stream logs in real-time (use full path — fish has a `log` builtin)
-/usr/bin/log stream --predicate 'subsystem == "com.solstone.capture"' --level debug
+/usr/bin/log stream --predicate 'subsystem == "app.solstone.capture"' --level debug
 
 # Filter by category
-/usr/bin/log stream --predicate 'subsystem == "com.solstone.capture" AND category == "audio"' --level debug
+/usr/bin/log stream --predicate 'subsystem == "app.solstone.capture" AND category == "audio"' --level debug
 ```
 
 ## Skills
@@ -111,5 +111,5 @@ Specialized knowledge packs in `skills/`, symlinked from `.claude/skills/` and `
 | `screencapturekit` | Working with SCStream, SCContentFilter, display capture, system audio capture, or frame status optimization |
 | `coreaudio-hal` | Working with AudioObjectPropertyAddress, device enumeration, property listeners, device pinning, or transport types |
 | `av-media-pipeline` | Working with HEVC encoding, AVAssetWriter, AVAudioEngine, audio format conversion, the remix pipeline, or SoundAnalysis |
-| `macos-app-lifecycle` | Working with MenuBarExtra, TCC permissions, login items, graceful shutdown, keychain, configuration, or DMG packaging |
+| `macos-app-lifecycle` | Working with MenuBarExtra, TCC permissions, login items, graceful shutdown, configuration, or DMG packaging |
 | `live-logging` | Debugging the running app with log stream, adding log statements, Logger categories, privacy annotations, or troubleshooting logging issues |

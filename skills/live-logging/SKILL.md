@@ -23,22 +23,22 @@ Read `Log.swift` for the current subsystem, categories, and file-to-category map
 
 ### Stream all solstone logs
 ```bash
-/usr/bin/log stream --predicate 'subsystem == "com.solstone.capture"' --level debug
+/usr/bin/log stream --predicate 'subsystem == "app.solstone.capture"' --level debug
 ```
 
 ### Filter by category
 ```bash
-/usr/bin/log stream --predicate 'subsystem == "com.solstone.capture" AND category == "audio"' --level debug
+/usr/bin/log stream --predicate 'subsystem == "app.solstone.capture" AND category == "audio"' --level debug
 ```
 
 ### Filter by message content
 ```bash
-/usr/bin/log stream --predicate 'subsystem == "com.solstone.capture" AND eventMessage CONTAINS "[Heartbeat]"' --level debug
+/usr/bin/log stream --predicate 'subsystem == "app.solstone.capture" AND eventMessage CONTAINS "[Heartbeat]"' --level debug
 ```
 
 ### Stream to file for automated capture
 ```bash
-/usr/bin/log stream --predicate 'subsystem == "com.solstone.capture"' --level debug > /tmp/solstone_logs.txt 2>&1 &
+/usr/bin/log stream --predicate 'subsystem == "app.solstone.capture"' --level debug > /tmp/solstone_logs.txt 2>&1 &
 # ... run the app, reproduce the issue ...
 kill %1
 cat /tmp/solstone_logs.txt
@@ -47,7 +47,7 @@ cat /tmp/solstone_logs.txt
 ### Debug workflow: kill, stream, relaunch
 ```bash
 pkill -f solstone
-/usr/bin/log stream --predicate 'subsystem == "com.solstone.capture"' --level debug > /tmp/solstone_logs.txt 2>&1 &
+/usr/bin/log stream --predicate 'subsystem == "app.solstone.capture"' --level debug > /tmp/solstone_logs.txt 2>&1 &
 STREAM_PID=$!
 open /Applications/solstone.app   # or: .build/debug/solstone &
 sleep 5 && cat /tmp/solstone_logs.txt

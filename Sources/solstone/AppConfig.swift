@@ -54,6 +54,7 @@ public struct AppConfig: Sendable {
         static let localRetentionMB = "localRetentionMB"
         static let syncPaused = "syncPaused"
         static let debugSegments = "debugSegments"
+        static let serverKey = "serverKey"
         static let debugKeepRejectedAudio = "debugKeepRejectedAudio"
         static let microphoneGain = "microphoneGain"
         static let silenceMusic = "silenceMusic"
@@ -80,20 +81,8 @@ public struct AppConfig: Sendable {
     /// Remote server URL (e.g., "https://solstone.example.com")
     public var serverURL: String?
 
-    /// API key for remote server authentication - stored securely in Keychain
-    /// Cached in memory to avoid repeated keychain reads (which can trigger auth prompts on rebuild).
-    /// Loaded once from keychain during `load()`. Use `setServerKey(_:)` to update.
-    public internal(set) var serverKey: String?
-
-    /// Update the server key (persists to keychain)
-    public mutating func setServerKey(_ key: String?) {
-        serverKey = key
-        if let key = key {
-            KeychainManager.saveServerKey(key)
-        } else {
-            KeychainManager.deleteServerKey()
-        }
-    }
+    /// API key for remote server authentication
+    public var serverKey: String?
 
     /// Maximum local storage to retain after upload (in MB). Default: 200
     /// Only segments that have been successfully uploaded will be deleted.
@@ -127,6 +116,7 @@ public struct AppConfig: Sendable {
         excludedTitlePatterns: [String] = [],
         excludePrivateBrowsing: Bool = true,
         serverURL: String? = nil,
+        serverKey: String? = nil,
         localRetentionMB: Int = 200,
         syncPaused: Bool = false,
         debugSegments: Bool = false,
@@ -139,6 +129,7 @@ public struct AppConfig: Sendable {
         self.excludedTitlePatterns = excludedTitlePatterns
         self.excludePrivateBrowsing = excludePrivateBrowsing
         self.serverURL = serverURL
+        self.serverKey = serverKey
         self.localRetentionMB = localRetentionMB
         self.syncPaused = syncPaused
         self.debugSegments = debugSegments
@@ -165,12 +156,13 @@ public struct AppConfig: Sendable {
             excludedApps = (try? JSONDecoder().decode([AppEntry].self, from: data)) ?? []
         }
 
-        var config = AppConfig(
+        let config = AppConfig(
             microphonePriority: microphonePriority,
             excludedApps: excludedApps,
             excludedTitlePatterns: defaults.stringArray(forKey: Keys.excludedTitlePatterns) ?? [],
             excludePrivateBrowsing: defaults.object(forKey: Keys.excludePrivateBrowsing) as? Bool ?? true,
             serverURL: defaults.string(forKey: Keys.serverURL),
+            serverKey: defaults.string(forKey: Keys.serverKey),
             localRetentionMB: defaults.object(forKey: Keys.localRetentionMB) as? Int ?? 200,
             syncPaused: defaults.bool(forKey: Keys.syncPaused),
             debugSegments: defaults.bool(forKey: Keys.debugSegments),
@@ -178,8 +170,6 @@ public struct AppConfig: Sendable {
             microphoneGain: defaults.object(forKey: Keys.microphoneGain) as? Float ?? 2.0,
             silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true
         )
-        // Load server key from keychain once (avoids repeated keychain reads that prompt on rebuild)
-        config.serverKey = KeychainManager.loadServerKey()
         return config
     }
 
@@ -226,6 +216,7 @@ public struct AppConfig: Sendable {
         defaults.set(excludedTitlePatterns, forKey: Keys.excludedTitlePatterns)
         defaults.set(excludePrivateBrowsing, forKey: Keys.excludePrivateBrowsing)
         defaults.set(serverURL, forKey: Keys.serverURL)
+        defaults.set(serverKey, forKey: Keys.serverKey)
         defaults.set(localRetentionMB, forKey: Keys.localRetentionMB)
         defaults.set(syncPaused, forKey: Keys.syncPaused)
         defaults.set(debugSegments, forKey: Keys.debugSegments)
@@ -263,12 +254,13 @@ public struct AppConfig: Sendable {
                 let data = try Data(contentsOf: path)
                 let legacyConfig = try JSONDecoder().decode(LegacyJSONConfig.self, from: data)
 
-                var config = AppConfig(
+                let config = AppConfig(
                     microphonePriority: legacyConfig.microphonePriority ?? [],
                     excludedApps: legacyConfig.excludedApps ?? [],
                     excludedTitlePatterns: legacyConfig.excludedTitlePatterns ?? [],
                     excludePrivateBrowsing: legacyConfig.excludePrivateBrowsing ?? true,
                     serverURL: legacyConfig.serverURL,
+                    serverKey: legacyConfig.serverKey,
                     localRetentionMB: legacyConfig.localRetentionMB ?? 200,
                     syncPaused: legacyConfig.syncPaused ?? false,
                     debugSegments: legacyConfig.debugSegments ?? false,
@@ -276,14 +268,6 @@ public struct AppConfig: Sendable {
                     microphoneGain: legacyConfig.microphoneGain ?? 2.0,
                     silenceMusic: legacyConfig.silenceMusic ?? true
                 )
-
-                // Migrate serverKey from JSON to Keychain if present
-                if let key = legacyConfig.serverKey, !key.isEmpty, KeychainManager.loadServerKey() == nil {
-                    KeychainManager.saveServerKey(key)
-                    Logger.general.info("Migrated server key from JSON to Keychain")
-                }
-                // Cache the server key in the config struct
-                config.serverKey = KeychainManager.loadServerKey()
 
                 try config.save()
                 defaults.set(true, forKey: Keys.didMigrateFromJSON)

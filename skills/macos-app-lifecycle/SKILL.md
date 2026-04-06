@@ -2,7 +2,7 @@
 name: macos-app-lifecycle
 description: >
   macOS app lifecycle patterns for background recording apps. MenuBarExtra, TCC permissions
-  for screen recording and microphone, login items, graceful shutdown, keychain storage,
+  for screen recording and microphone, login items, graceful shutdown, configuration,
   and direct distribution packaging. Use when working with app structure, permissions,
   or distribution.
 ---
@@ -47,8 +47,8 @@ Permission denied surfaces as framework errors (SCStream/AVAudioEngine fails), c
 ### Testing
 
 ```bash
-make reset-permissions  # tccutil reset ScreenCapture/Microphone for com.solstone.capture
-tccutil reset All com.solstone.capture  # reset everything
+make reset-permissions  # tccutil reset ScreenCapture/Microphone for app.solstone.capture
+tccutil reset All app.solstone.capture  # reset everything
 ```
 
 Restart app after reset to re-trigger dialogs.
@@ -75,26 +75,15 @@ Two shutdown paths:
 - **`setOnSegmentComplete(nil)`** — clears upload-trigger callback before final processing to avoid sync during shutdown.
 - **`Task.detached`** — required because `applicationWillTerminate` is nonisolated and `RemixQueue` is an actor.
 
-## Keychain Storage
-
-`KeychainManager.swift` — enum with static methods wrapping Security framework.
-
-- **`kSecClassGenericPassword`** with service `"com.solstone.capture"`, account `"serverKey"`.
-- **`kSecAttrAccessibleAfterFirstUnlock`** — critical for background uploads. `WhenUnlocked` would fail when screen is locked.
-- **Delete-before-add:** `saveServerKey()` deletes first to avoid `errSecDuplicateItem`. `errSecItemNotFound` treated as success for idempotency.
-- **Integration:** `AppConfig.serverKey` is a computed property through `KeychainManager` — never touches UserDefaults.
-
 ## Configuration Persistence
 
 `AppConfig.swift` — struct with `save()`/`load()` methods.
 
-**UserDefaults:** All settings except server key. Complex types (`microphonePriority: [MicrophoneEntry]`, `excludedApps: [AppEntry]`) are JSON-encoded to `Data` before storing.
-
-**Keychain:** `serverKey` only, via computed property delegating to `KeychainManager`.
+**UserDefaults:** All settings including server key. Complex types (`microphonePriority: [MicrophoneEntry]`, `excludedApps: [AppEntry]`) are JSON-encoded to `Data` before storing.
 
 **Auto-saving:** SettingsView uses `Binding(get:set:)` that calls `appState.updateConfig()` on every set — updates in-memory state, propagates to managers, persists.
 
-**JSON migration:** `loadOrCreateDefault()` checks `~/Library/Application Support/Solstone/config.json` and `~/.sck-cli.json` on first launch, migrates to UserDefaults + Keychain, renames old file to `.migrated`.
+**JSON migration:** `loadOrCreateDefault()` checks `~/Library/Application Support/Solstone/config.json` and `~/.sck-cli.json` on first launch, migrates to UserDefaults, renames old file to `.migrated`.
 
 ## Direct Distribution Packaging
 
@@ -133,4 +122,4 @@ For sandboxed builds, pass `--entitlements` with `com.apple.security.device.audi
 
 ## Reference Files
 
-All under `Sources/SolstoneCapture/`: `SolstoneCaptureApp.swift` (entry, MenuBarExtra, AppDelegate), `AppState.swift` (root state, login items), `MenuContent.swift` (menu, quit handler), `SettingsView.swift` (tabs, Bindings, auto-save), `PauseManager.swift` (pause state, timer refresh), `KeychainManager.swift` (Security framework), `AppConfig.swift` (UserDefaults + Keychain, migration), `Info.plist` (LSUIElement, TCC descriptions). `Makefile` at package root.
+All under `Sources/solstone/`: `SolstoneCaptureApp.swift` (entry, MenuBarExtra, AppDelegate), `AppState.swift` (root state, login items), `MenuContent.swift` (menu, quit handler), `SettingsView.swift` (tabs, Bindings, auto-save), `PauseManager.swift` (pause state, timer refresh), `AppConfig.swift` (UserDefaults, migration), `Info.plist` (LSUIElement, TCC descriptions). `Makefile` at package root.

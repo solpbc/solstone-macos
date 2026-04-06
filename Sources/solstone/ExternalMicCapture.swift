@@ -37,7 +37,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private let callbackLock = NSLock()
 
     private let engine: AVAudioEngine
-    private let writerQueue = DispatchQueue(label: "com.solstone.extmic.writer", qos: .userInitiated)
+    private let writerQueue = DispatchQueue(label: "app.solstone.extmic.writer", qos: .userInitiated)
     private let verbose: Bool
 
     /// Cached audio converter for format conversion (expensive to create)

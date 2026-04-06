@@ -40,6 +40,7 @@ bundle: release
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@cp -r .build/release/solstone_solstone.bundle solstone.app/Contents/Resources/
+	@codesign --force --deep --sign - solstone.app
 	@echo "Created solstone.app"
 
 # Create universal app bundle
@@ -52,16 +53,19 @@ bundle-universal: release-universal
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
+	@codesign --force --deep --sign - solstone.app
 	@echo "Created universal solstone.app"
 
 # Install to /Applications (resets TCC so rebuilt binary is recognized)
 install: bundle
+	-@pkill -f solstone 2>/dev/null
 	@echo "Installing to /Applications..."
 	@rm -rf /Applications/solstone.app
 	@cp -r solstone.app /Applications/
-	-@tccutil reset ScreenCapture com.solstone.capture 2>/dev/null
-	-@tccutil reset Microphone com.solstone.capture 2>/dev/null
-	@echo "Installed to /Applications/solstone.app (TCC reset, will prompt on first launch)"
+	-@tccutil reset ScreenCapture app.solstone.capture 2>/dev/null
+	-@tccutil reset Microphone app.solstone.capture 2>/dev/null
+	-@defaults delete app.solstone.capture 2>/dev/null
+	@echo "Installed to /Applications/solstone.app (TCC + defaults reset, will prompt on first launch)"
 
 # Open the app
 open: bundle
@@ -69,8 +73,8 @@ open: bundle
 
 # Reset TCC permissions for testing
 reset-permissions:
-	-tccutil reset ScreenCapture com.solstone.capture
-	-tccutil reset Microphone com.solstone.capture
+	-tccutil reset ScreenCapture app.solstone.capture
+	-tccutil reset Microphone app.solstone.capture
 	@echo "TCC permissions reset. Restart the app to trigger permission prompts."
 
 # Generate icon assets from SVG sources in assets/

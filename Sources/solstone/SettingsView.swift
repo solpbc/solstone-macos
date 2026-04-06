@@ -37,7 +37,7 @@ struct SettingsView: View {
     @State private var storageUsedMB: Int?
 
     // Permissions tab state
-    @State private var screenRecordingGranted: Bool
+    @State private var screenRecordingPrompted = false
     @State private var microphoneGranted: Bool
 
     // Privacy tab state
@@ -71,9 +71,7 @@ struct SettingsView: View {
         self.appState = appState
         self.selectedTab = selectedTab
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
-        let checker = PermissionChecker()
-        self._screenRecordingGranted = State(initialValue: checker.screenRecordingGranted)
-        self._microphoneGranted = State(initialValue: checker.microphoneGranted)
+        self._microphoneGranted = State(initialValue: PermissionChecker().microphoneGranted)
     }
 
     // MARK: - Auto-saving Bindings
@@ -94,7 +92,7 @@ struct SettingsView: View {
             get: { appState.config.serverKey ?? "" },
             set: { newValue in
                 var config = appState.config
-                config.setServerKey(newValue.isEmpty ? nil : newValue)
+                config.serverKey = newValue.isEmpty ? nil : newValue
                 appState.updateConfig(config)
             }
         )
@@ -151,9 +149,7 @@ struct SettingsView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            let checker = PermissionChecker()
-            screenRecordingGranted = checker.screenRecordingGranted
-            microphoneGranted = checker.microphoneGranted
+            microphoneGranted = PermissionChecker().microphoneGranted
         }
         .onExitCommand {
             dismiss()
@@ -172,7 +168,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("screen recording")
                         .font(.headline)
-                    if screenRecordingGranted {
+                    if appState.screenRecordingGranted {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(.green)
@@ -185,9 +181,16 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                         HStack {
                             Spacer()
-                            Button("enable screen recording →") {
-                                Logger.setup.info("Button tapped: enable screen recording")
-                                PermissionChecker().promptScreenRecording()
+                            if screenRecordingPrompted {
+                                Button("restart solstone observer") {
+                                    relaunchApp()
+                                }
+                            } else {
+                                Button("enable screen recording →") {
+                                    Logger.setup.info("Button tapped: enable screen recording")
+                                    PermissionChecker().promptScreenRecording()
+                                    screenRecordingPrompted = true
+                                }
                             }
                         }
                     }
@@ -195,7 +198,7 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
             }
-            .opacity(screenRecordingGranted ? 0.7 : 1.0)
+            .opacity(appState.screenRecordingGranted ? 0.7 : 1.0)
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 8) {
@@ -232,7 +235,7 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            if screenRecordingGranted && microphoneGranted && !appState.config.isUploadConfigured {
+            if appState.screenRecordingGranted && microphoneGranted && !appState.config.isUploadConfigured {
                 HStack {
                     Spacer()
                     Button("continue to service configuration →") {
@@ -243,6 +246,17 @@ struct SettingsView: View {
             }
 
             Spacer()
+        }
+    }
+
+    private func relaunchApp() {
+        let bundlePath = Bundle.main.bundlePath
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-n", bundlePath]
+        try? process.run()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            NSApp.terminate(nil)
         }
     }
 
@@ -431,9 +445,9 @@ struct SettingsView: View {
     private func detectLocalService() async {
         localStatus = .detecting
 
-        // Check keychain first
-        if let existingKey = KeychainManager.loadServerKey(), !existingKey.isEmpty {
-            Logger.setup.info("local detect: key found in keychain")
+        // Check existing config first
+        if let existingKey = appState.config.serverKey, !existingKey.isEmpty {
+            Logger.setup.info("local detect: key found in config")
             let error = await UploadCoordinator.testConnection(
                 serverURL: Self.localServerURL, serverKey: existingKey
             )
@@ -495,7 +509,7 @@ struct SettingsView: View {
     private func saveServiceAndStart(url: String, key: String) {
         var config = appState.config
         config.serverURL = url
-        config.setServerKey(key)
+        config.serverKey = key
         appState.updateConfig(config)
 
         // Open browser to solstone service
@@ -504,7 +518,7 @@ struct SettingsView: View {
         }
 
         // Start recording if permissions are granted
-        if PermissionChecker().allGranted {
+        if appState.screenRecordingGranted && PermissionChecker().microphoneGranted {
             Task {
                 await appState.startRecording()
             }
