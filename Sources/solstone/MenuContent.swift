@@ -61,7 +61,7 @@ struct MenuContent: View {
     // MARK: - Status Row
 
     private var permissionsMissing: Bool {
-        !appState.screenRecordingGranted || !PermissionChecker().microphoneGranted
+        !appState.screenRecordingGranted || !appState.microphoneGranted
     }
 
     @ViewBuilder

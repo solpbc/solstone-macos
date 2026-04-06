@@ -144,7 +144,7 @@ private struct StatusIcon: View {
         .task {
             guard !hasCheckedSetup else { return }
             hasCheckedSetup = true
-            if !appState.screenRecordingGranted || !PermissionChecker().microphoneGranted {
+            if !appState.screenRecordingGranted || !appState.microphoneGranted {
                 appState.pendingSettingsTab = "permissions"
                 openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)

@@ -66,7 +66,6 @@ public final class PauseManager {
 
         pauseState = PauseState(isPaused: true, expirationDate: expirationDate)
         scheduleTimer(expiration: expirationDate)
-        savePauseState()
         updateUIRefreshTimer()
 
         if let onPause {
@@ -82,7 +81,6 @@ public final class PauseManager {
         pauseTimer = nil
         pauseState = PauseState()
 
-        savePauseState()
         updateUIRefreshTimer()
 
         if let onResume {
@@ -92,7 +90,8 @@ public final class PauseManager {
         }
     }
 
-    /// Restore pause state from UserDefaults (call on app launch)
+    /// Clear any persisted pause state from previous sessions.
+    /// Pause only applies to the running instance — on restart we always start fresh.
     public func restorePauseState() {
         let defaults = UserDefaults.standard
 
@@ -100,21 +99,8 @@ public final class PauseManager {
         defaults.removeObject(forKey: "audioMuteIndefinite")
         defaults.removeObject(forKey: "videoMuteExpiration")
         defaults.removeObject(forKey: "videoMuteIndefinite")
-
-        if let pauseExpiration = defaults.object(forKey: "pauseExpiration") as? Date {
-            if pauseExpiration > Date() {
-                pauseState = PauseState(isPaused: true, expirationDate: pauseExpiration)
-                scheduleTimer(expiration: pauseExpiration)
-            } else {
-                defaults.removeObject(forKey: "pauseExpiration")
-            }
-        } else if defaults.bool(forKey: "pauseIndefinite") {
-            pauseState = PauseState(isPaused: true, expirationDate: nil)
-        }
-
-        if isPaused {
-            updateUIRefreshTimer()
-        }
+        defaults.removeObject(forKey: "pauseExpiration")
+        defaults.removeObject(forKey: "pauseIndefinite")
     }
 
     /// Format remaining time as a human-readable string with natural units
@@ -191,20 +177,4 @@ public final class PauseManager {
         }
     }
 
-    private func savePauseState() {
-        let defaults = UserDefaults.standard
-
-        if pauseState.isPaused {
-            if let expiration = pauseState.expirationDate {
-                defaults.set(expiration, forKey: "pauseExpiration")
-                defaults.removeObject(forKey: "pauseIndefinite")
-            } else {
-                defaults.set(true, forKey: "pauseIndefinite")
-                defaults.removeObject(forKey: "pauseExpiration")
-            }
-        } else {
-            defaults.removeObject(forKey: "pauseExpiration")
-            defaults.removeObject(forKey: "pauseIndefinite")
-        }
-    }
 }

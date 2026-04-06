@@ -38,7 +38,6 @@ struct SettingsView: View {
 
     // Permissions tab state
     @State private var screenRecordingPrompted = false
-    @State private var microphoneGranted: Bool
 
     // Privacy tab state
     @State private var newTitlePattern = ""
@@ -71,7 +70,6 @@ struct SettingsView: View {
         self.appState = appState
         self.selectedTab = selectedTab
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
-        self._microphoneGranted = State(initialValue: PermissionChecker().microphoneGranted)
     }
 
     // MARK: - Auto-saving Bindings
@@ -148,9 +146,6 @@ struct SettingsView: View {
                 appState.pendingSettingsTab = nil
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            microphoneGranted = PermissionChecker().microphoneGranted
-        }
         .onExitCommand {
             dismiss()
         }
@@ -204,7 +199,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("microphone")
                         .font(.headline)
-                    if microphoneGranted {
+                    if appState.microphoneGranted {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(.green)
@@ -220,7 +215,7 @@ struct SettingsView: View {
                             Button("grant access") {
                                 Task {
                                     await PermissionChecker().requestMicrophone()
-                                    microphoneGranted = PermissionChecker().microphoneGranted
+                                    appState.microphoneGranted = PermissionChecker().microphoneGranted
                                 }
                             }
                         }
@@ -229,13 +224,13 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
             }
-            .opacity(microphoneGranted ? 0.7 : 1.0)
+            .opacity(appState.microphoneGranted ? 0.7 : 1.0)
 
             Text("you can review or revoke these anytime in system settings → privacy & security.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            if appState.screenRecordingGranted && microphoneGranted && !appState.config.isUploadConfigured {
+            if appState.screenRecordingGranted && appState.microphoneGranted && !appState.config.isUploadConfigured {
                 HStack {
                     Spacer()
                     Button("continue to service configuration →") {
@@ -518,7 +513,7 @@ struct SettingsView: View {
         }
 
         // Try recording — startRecording sets screenRecordingGranted based on result
-        if PermissionChecker().microphoneGranted {
+        if appState.microphoneGranted {
             Task {
                 await appState.startRecording()
                 Task.detached { await appState.uploadCoordinator?.syncOnStartup() }

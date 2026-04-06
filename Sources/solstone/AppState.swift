@@ -54,11 +54,17 @@ public final class AppState {
     public internal(set) var isPaused = false
     public internal(set) var errorMessage: String?
 
-    /// Screen recording permission, checked async via SCShareableContent at launch.
+    /// Screen recording permission — polled periodically via SCShareableContent.
     public internal(set) var screenRecordingGranted = false
+
+    /// Microphone permission — polled periodically.
+    public internal(set) var microphoneGranted = false
 
     /// Set by SetupView to tell SettingsView which tab to open to
     public var pendingSettingsTab: String?
+
+    /// Timer that polls permissions every few seconds until recording starts
+    private var permissionPollTimer: Timer?
 
 
     // MARK: - Computed Properties
@@ -221,7 +227,7 @@ public final class AppState {
             await self?.startRecording()
         }
 
-        // Restore pause state from previous session
+        // Clear any persisted pause state from previous sessions
         pauseManager.restorePauseState()
 
         // Sync microphone priority list with available devices
@@ -236,25 +242,15 @@ public final class AppState {
             }
         }
 
-        // Check screen recording permission if user has been through the prompt flow
-        // (TCC entry exists, so SCShareableContent won't trigger a surprise dialog)
-        let checker = PermissionChecker()
-        if checker.hasPromptedScreenRecording || config.serverURL != nil {
-            Task { @MainActor in
-                self.screenRecordingGranted = await PermissionChecker.checkScreenRecording()
-                Logger.general.info("[Permissions] launch check: screen=\(self.screenRecordingGranted, privacy: .public), mic=\(checker.microphoneGranted, privacy: .public)")
-                // Auto-start recording if everything is ready
-                if self.config.serverURL != nil && !self.pauseManager.isPaused
-                    && self.screenRecordingGranted && checker.microphoneGranted {
-                    await self.startRecording()
-                }
-                if self.config.serverURL != nil {
-                    Task.detached { [uploadCoordinator] in
-                        await uploadCoordinator?.syncOnStartup()
-                    }
-                }
+        // Sync any pending uploads on startup
+        if config.serverURL != nil {
+            Task.detached { [uploadCoordinator] in
+                await uploadCoordinator?.syncOnStartup()
             }
         }
+
+        // Start polling permissions — auto-starts recording when ready
+        startPermissionPolling()
 
         // Set shared instance for app-wide access (e.g., termination handler)
         AppState.shared = self
@@ -313,6 +309,55 @@ public final class AppState {
         }
     }
 
+    // MARK: - Permission Polling
+
+    /// Polls permissions every 5 seconds. When both are granted and the app is configured,
+    /// auto-starts recording and stops polling. Resumes polling if recording stops and
+    /// permissions are still needed.
+    private func startPermissionPolling() {
+        // Check immediately, then poll
+        Task { @MainActor in
+            await self.checkPermissionsAndAutoStart()
+        }
+
+        permissionPollTimer?.invalidate()
+        permissionPollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.checkPermissionsAndAutoStart()
+            }
+        }
+        permissionPollTimer?.tolerance = 2.0
+    }
+
+    private func stopPermissionPolling() {
+        permissionPollTimer?.invalidate()
+        permissionPollTimer = nil
+    }
+
+    private func checkPermissionsAndAutoStart() async {
+        let checker = PermissionChecker()
+
+        // Only check screen recording via SCShareableContent if user has been prompted
+        // (otherwise it triggers the OS dialog)
+        if checker.hasPromptedScreenRecording || config.serverURL != nil {
+            screenRecordingGranted = await PermissionChecker.checkScreenRecording()
+        }
+        microphoneGranted = checker.microphoneGranted
+
+        let allGranted = screenRecordingGranted && microphoneGranted
+
+        // Auto-start if permissions are ready, not paused, configured, and not already recording
+        if allGranted && config.serverURL != nil && !pauseManager.isPaused && !isRecording {
+            Logger.general.info("[Permissions] all granted, auto-starting recording")
+            await startRecording()
+        }
+
+        // Stop polling once recording is active — lifecycle manager handles recovery from there
+        if isRecording {
+            stopPermissionPolling()
+        }
+    }
+
     // MARK: - Private Methods
 
     private func handleCaptureStateChange(_ state: CaptureManager.State) {
@@ -320,10 +365,16 @@ public final class AppState {
         case .idle:
             isRecording = false
             isPaused = false
+            // Resume polling so we auto-start if user clicks "start recording" later
+            // or permissions change
+            if permissionPollTimer == nil {
+                startPermissionPolling()
+            }
         case .recording:
             isRecording = true
             isPaused = false
             errorMessage = nil
+            stopPermissionPolling()
         case .paused:
             isRecording = true
             isPaused = true
@@ -331,6 +382,10 @@ public final class AppState {
             isRecording = false
             isPaused = false
             errorMessage = message
+            // Resume polling to retry when permissions are restored
+            if permissionPollTimer == nil {
+                startPermissionPolling()
+            }
         }
     }
 
