@@ -311,9 +311,8 @@ public final class AppState {
 
     // MARK: - Permission Polling
 
-    /// Polls permissions every 5 seconds. When both are granted and the app is configured,
-    /// auto-starts recording and stops polling. Resumes polling if recording stops and
-    /// permissions are still needed.
+    /// Polls permissions every 5 seconds. When both are granted, auto-starts recording and
+    /// stops polling. Resumes polling if recording stops and permissions change.
     private func startPermissionPolling() {
         // Check immediately, then poll
         Task { @MainActor in
@@ -339,16 +338,16 @@ public final class AppState {
 
         // Only check screen recording via SCShareableContent if user has been prompted
         // (otherwise it triggers the OS dialog)
-        if checker.hasPromptedScreenRecording || config.serverURL != nil {
+        if checker.hasPromptedScreenRecording {
             screenRecordingGranted = await PermissionChecker.checkScreenRecording()
         }
         microphoneGranted = checker.microphoneGranted
 
         let allGranted = screenRecordingGranted && microphoneGranted
 
-        // Auto-start if permissions are ready, not paused, configured, and not already recording
-        if allGranted && config.serverURL != nil && !pauseManager.isPaused && !isRecording {
-            Logger.general.info("[Permissions] all granted, auto-starting recording")
+        // Auto-start if permissions are ready, not paused, and not already recording
+        if allGranted && !pauseManager.isPaused && !isRecording {
+            Logger.general.info("[Permissions] all granted, auto-starting observation")
             await startRecording()
         }
 
