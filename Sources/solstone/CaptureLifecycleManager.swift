@@ -302,9 +302,7 @@ final class CaptureLifecycleManager {
         }
 
         // Don't attempt recovery without screen capture permission
-        let hasAccess = CGPreflightScreenCaptureAccess()
-        Logger.capture.warning("[Permissions] CaptureLifecycleManager.attemptRecovery: CGPreflightScreenCaptureAccess() = \(hasAccess, privacy: .public)")
-        guard hasAccess else {
+        guard PermissionChecker().screenRecordingGranted else {
             Logger.capture.info("[Recovery] No screen capture permission, stopping recovery")
             stopRecoveryTimer()
             return

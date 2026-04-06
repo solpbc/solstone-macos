@@ -180,14 +180,7 @@ public final class CaptureManager {
         // Ensure storage directory exists
         try storageManager.ensureBaseDirectoryExists()
 
-        // Screen capture permission must already be granted via the setup flow.
-        let hasAccess = CGPreflightScreenCaptureAccess()
-        Logger.capture.warning("[Permissions] CaptureManager.startRecording: CGPreflightScreenCaptureAccess() = \(hasAccess, privacy: .public)")
-        if !hasAccess {
-            throw CaptureError.permissionDenied
-        }
-
-        // Get available content
+        // Get available content (throws if screen recording permission not granted)
         let content = try await SCShareableContent.current
 
         // Get all displays
