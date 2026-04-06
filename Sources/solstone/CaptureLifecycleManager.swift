@@ -10,7 +10,7 @@ protocol CaptureLifecycleDelegate: AnyObject {
     var lifecycleCurrentState: CaptureManager.State { get }
     func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL?
     func lifecycleResumeCapture(trigger: String) async throws
-    func lifecycleTransitionToError(message: String, trigger: String)
+    func lifecycleTransitionToError(message: String, error: Error, trigger: String)
     func lifecycleProcessSegment(_ url: URL, useSleepActivity: Bool)
 }
 
@@ -105,8 +105,8 @@ final class CaptureLifecycleManager {
         }
     }
 
-    func startRecoveryIfNeeded(message: String) {
-        if isPermissionError(message) {
+    func startRecoveryIfNeeded(error: Error) {
+        if isPermissionError(error) {
             Logger.capture.info("[Recovery] Skipping auto-recovery: permission error requires user action")
         } else {
             startRecoveryTimer()
@@ -162,6 +162,7 @@ final class CaptureLifecycleManager {
         } catch {
             delegate?.lifecycleTransitionToError(
                 message: "Failed to resume after wake: \(error.localizedDescription)",
+                error: error,
                 trigger: "wake_failed"
             )
             Logger.capture.error("Failed to resume capture after wake: \(error, privacy: .public)")
@@ -230,6 +231,7 @@ final class CaptureLifecycleManager {
             } catch {
                 self.delegate?.lifecycleTransitionToError(
                     message: "Failed to resume after unlock: \(error.localizedDescription)",
+                    error: error,
                     trigger: "unlock_failed"
                 )
                 Logger.capture.error("Failed to resume capture after unlock: \(error, privacy: .public)")

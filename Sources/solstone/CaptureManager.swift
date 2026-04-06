@@ -465,12 +465,12 @@ public final class CaptureManager {
         heartbeatTimer = nil
     }
 
-    private func transitionToError(_ message: String, trigger: String) {
+    private func transitionToError(_ message: String, error: Error, trigger: String) {
         let oldState = state.label
         state = .error(message)
         Logger.capture.info("[State] \(oldState, privacy: .public) -> error (trigger: \(trigger, privacy: .public), error: \(message, privacy: .public))")
         onStateChanged?(state)
-        lifecycleManager.startRecoveryIfNeeded(message: message)
+        lifecycleManager.startRecoveryIfNeeded(error: error)
     }
 
     /// Calculate seconds until the next 5-minute clock boundary
@@ -512,7 +512,7 @@ public final class CaptureManager {
         do {
             (newSegmentDir, newTimePrefix) = try storageManager.createSegmentDirectory(segmentStartTime: Date())
         } catch {
-            transitionToError("Failed to create segment directory: \(error.localizedDescription)", trigger: "rotation_failed")
+            transitionToError("Failed to create segment directory: \(error.localizedDescription)", error: error, trigger: "rotation_failed")
             Logger.capture.error("Failed to rotate segment: \(error, privacy: .public)")
             return
         }
@@ -545,7 +545,7 @@ public final class CaptureManager {
         do {
             try await startNewSegmentWithDirectory(newSegmentDir, timePrefix: newTimePrefix, mics: Array(availableMics))
         } catch {
-            transitionToError("Failed to start new segment: \(error.localizedDescription)", trigger: "rotation_failed")
+            transitionToError("Failed to start new segment: \(error.localizedDescription)", error: error, trigger: "rotation_failed")
             Logger.capture.error("Failed to start new segment: \(error, privacy: .public)")
         }
 
@@ -729,8 +729,8 @@ extension CaptureManager: CaptureLifecycleDelegate {
         startHeartbeat()
     }
 
-    func lifecycleTransitionToError(message: String, trigger: String) {
-        transitionToError(message, trigger: trigger)
+    func lifecycleTransitionToError(message: String, error: Error, trigger: String) {
+        transitionToError(message, error: error, trigger: trigger)
     }
 
     func lifecycleProcessSegment(_ url: URL, useSleepActivity: Bool) {
