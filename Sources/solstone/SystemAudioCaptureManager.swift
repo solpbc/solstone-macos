@@ -70,6 +70,7 @@ public final class SystemAudioCaptureManager {
         config.sampleRate = 48_000
         config.channelCount = 1
         config.capturesAudio = true
+        config.excludesCurrentProcessAudio = true
         config.captureMicrophone = false  // All mics via ExternalMicCapture
         config.minimumFrameInterval = CMTime(value: 1, timescale: 1)  // 1 fps max
         config.width = 2  // Minimum valid dimensions
