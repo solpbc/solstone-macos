@@ -84,7 +84,7 @@ struct SolstoneCaptureApp: App {
                 return "solstone observer — recording"
             }
         }
-        return "solstone observer — not recording"
+        return "solstone observer — paused"
     }
 
     var body: some Scene {
@@ -124,27 +124,23 @@ private struct StatusIcon: View {
     @Environment(\.openWindow) private var openWindow
     @State private var hasCheckedSetup = false
 
-    var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            bundleImage("sol-ring-template", isTemplate: true)
-
-            if appState.errorMessage != nil {
-                Circle()
-                    .fill(.red)
-                    .frame(width: 6, height: 6)
-            } else if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused {
-                switch appState.uploadCoordinator.status {
-                case .offline, .retrying:
-                    Circle()
-                        .fill(.orange)
-                        .frame(width: 6, height: 6)
-                default:
-                    Circle()
-                        .fill(.green)
-                        .frame(width: 6, height: 6)
-                }
-            }
+    private var iconName: String {
+        if appState.errorMessage != nil {
+            return "sol-ring-icon-error-template"
         }
+        if !appState.isRecording || appState.isPaused || appState.pauseManager.isPaused {
+            return "sol-ring-icon-paused-template"
+        }
+        switch appState.uploadCoordinator.status {
+        case .offline, .retrying:
+            return "sol-ring-icon-half-template"
+        default:
+            return "sol-ring-template"
+        }
+    }
+
+    var body: some View {
+        bundleImage(iconName, isTemplate: true)
         .task {
             guard !hasCheckedSetup else { return }
             hasCheckedSetup = true
