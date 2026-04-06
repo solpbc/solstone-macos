@@ -22,12 +22,20 @@ struct PermissionChecker {
     /// Check screen recording permission via SCShareableContent.
     /// Only safe to call when a TCC entry exists (after prompting), otherwise may trigger OS dialog.
     static func checkScreenRecording() async -> Bool {
-        do {
-            _ = try await SCShareableContent.current
-            return true
-        } catch {
-            return false
+        for attempt in 1...5 {
+            do {
+                _ = try await SCShareableContent.current
+                return true
+            } catch {
+                // On macOS 26, SCShareableContent can transiently fail at cold boot
+                // even when permission IS granted. Retry with linear backoff.
+                if attempt < 5 {
+                    Logger.setup.debug("[Permissions] Screen recording check attempt \(attempt, privacy: .public) failed, retrying...")
+                    try? await Task.sleep(for: .seconds(attempt))
+                }
+            }
         }
+        return false
     }
 
     var microphoneGranted: Bool {
