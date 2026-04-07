@@ -133,13 +133,6 @@ public actor SyncService {
             isSyncing = false
         }
 
-        // Test connection first
-        if let error = await client.testConnection(serverURL: serverURL, serverKey: serverKey) {
-            Logger.upload.info("Connection test failed: \(error, privacy: .public)")
-            progressContinuation.yield(.offline(error: error))
-            return
-        }
-
         // Collect all segments grouped by day
         let segmentsByDay = collectSegmentsByDay()
         guard !segmentsByDay.isEmpty else {
@@ -171,11 +164,19 @@ public actor SyncService {
             progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
 
             // Query server for all segments on this day
-            guard let serverSegments = await client.getServerSegments(
-                serverURL: serverURL,
-                serverKey: serverKey,
-                day: day
-            ) else {
+            let serverSegments: [ServerSegmentInfo]?
+            do {
+                serverSegments = try await client.getServerSegments(
+                    serverURL: serverURL,
+                    serverKey: serverKey,
+                    day: day
+                )
+            } catch {
+                Logger.upload.info("Network error querying server: \(error.localizedDescription, privacy: .public)")
+                progressContinuation.yield(.offline(error: error.localizedDescription))
+                return
+            }
+            guard let serverSegments else {
                 Logger.upload.info("Failed to query server for day \(day, privacy: .public), skipping")
                 checked += localSegments.count
                 continue
@@ -511,7 +512,7 @@ public actor SyncService {
 
             // Get server segments for this day (cached)
             if serverSegmentsCache[day] == nil {
-                if let serverSegments = await client.getServerSegments(
+                if let serverSegments = try? await client.getServerSegments(
                     serverURL: serverURL,
                     serverKey: serverKey,
                     day: day

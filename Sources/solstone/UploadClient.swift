@@ -146,7 +146,7 @@ public struct UploadClient: Sendable {
         serverURL: String,
         serverKey: String,
         day: String
-    ) async -> [ServerSegmentInfo]? {
+    ) async throws -> [ServerSegmentInfo]? {
         let urlString = "\(serverURL)/app/observer/ingest/segments/\(day)"
         guard let url = URL(string: urlString) else {
             return nil
@@ -188,6 +188,8 @@ public struct UploadClient: Sendable {
                     }
                 }
             }
+        } catch let error as URLError {
+            throw error
         } catch {
             Logger.upload.info("getServerSegments failed: \(error, privacy: .public)")
         }

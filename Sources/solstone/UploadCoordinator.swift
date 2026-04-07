@@ -23,6 +23,11 @@ public final class UploadCoordinator {
 
     public internal(set) var status: Status = .notSynced
     public internal(set) var pendingCount: Int = 0
+    public internal(set) var lastError: String?
+
+    // MARK: - Retry State
+
+    private var retryTask: Task<Void, Never>?
 
     /// Whether syncing is paused - reads from config as single source of truth
     public var syncPaused: Bool {
@@ -153,6 +158,8 @@ public final class UploadCoordinator {
     private func handleProgressEvent(_ event: SyncService.ProgressEvent) {
         switch event {
         case .syncStarted:
+            retryTask?.cancel()
+            retryTask = nil
             status = .syncing(checked: 0, total: 0)
 
         case .syncProgress(let checked, let total):
@@ -171,14 +178,27 @@ public final class UploadCoordinator {
 
         case .uploadFailed(let segment, let error):
             Logger.upload.info("Upload failed for \(segment, privacy: .public): \(error, privacy: .public)")
+            lastError = error
             // Continue with next segment
 
         case .syncComplete:
             status = .synced
             pendingCount = 0
+            lastError = nil
 
         case .offline(let error):
+            lastError = error
             status = .offline(error)
+            scheduleRetry()
+        }
+    }
+
+    private func scheduleRetry() {
+        retryTask?.cancel()
+        retryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            guard !Task.isCancelled, let self else { return }
+            self.triggerSync()
         }
     }
 }

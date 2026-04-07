@@ -900,6 +900,11 @@ struct SettingsView: View {
             GroupBox("upload") {
                 VStack(alignment: .leading, spacing: 8) {
                     uploadStatusView
+                    if let error = appState.uploadCoordinator.lastError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Button("resync all") {
                         appState.uploadCoordinator.forceFullSync()
                     }
