@@ -36,18 +36,27 @@ struct AboutView: View {
                 Text("by sol pbc")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+
+                Text("a public benefit corporation. your data is never sold or shared — by binding legal covenant.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
 
             Spacer().frame(height: 12)
 
-            Text("an AI co-brain that captures your life and gives you superhuman memory.")
+            Text("your second memory. always on, always yours.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             Spacer()
 
-            Link("solpbc.org", destination: URL(string: "https://solpbc.org")!)
-                .font(.callout)
+            VStack(spacing: 4) {
+                Link("source code on github", destination: URL(string: "https://github.com/solpbc/solstone-macos")!)
+                    .font(.callout)
+                Link("solstone.app", destination: URL(string: "https://solstone.app")!)
+                    .font(.callout)
+            }
         }
         .padding(30)
     }
