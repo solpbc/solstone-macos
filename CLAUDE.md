@@ -30,8 +30,8 @@ make install
 # Clean all build artifacts
 make clean
 
-# Reset TCC permissions for testing
-make reset-permissions
+# Reset TCC permissions and defaults for testing
+make reset
 ```
 
 ## Repository Structure

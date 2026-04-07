@@ -28,7 +28,7 @@ public actor SyncService {
 
     private var serverURL: String?
     private var serverKey: String?
-    private var localRetentionMB: Int = 200
+    private var localRetentionMB: Int = AppConfig.Defaults.localRetentionMB
     private var syncPaused: Bool = false
 
     // MARK: - State

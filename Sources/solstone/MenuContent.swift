@@ -39,7 +39,7 @@ struct MenuContent: View {
         Divider()
 
         Section {
-            Button("about solstone observer...") {
+            Button("about") {
                 openWindow(id: "about")
                 NSApp.activate(ignoringOtherApps: true)
             }
@@ -83,10 +83,6 @@ struct MenuContent: View {
 
     private var recordingStatusText: String {
         if appState.pauseManager.isPaused {
-            let _ = appState.pauseManager.refreshTick
-            if let timeText = appState.pauseManager.formatTimeRemaining() {
-                return "paused - \(timeText) remaining"
-            }
             return "paused"
         }
         if appState.isPaused {
@@ -95,7 +91,7 @@ struct MenuContent: View {
         if !appState.isRecording {
             return "not recording"
         }
-        return "recording"
+        return "observing"
     }
 
     private var syncStatusText: String {

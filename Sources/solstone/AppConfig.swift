@@ -45,6 +45,10 @@ public struct AppEntry: Codable, Equatable, Sendable {
 public struct AppConfig: Sendable {
     // MARK: - UserDefaults Keys
 
+    public enum Defaults {
+        public static let localRetentionMB = 2048
+    }
+
     private enum Keys {
         static let microphonePriority = "microphonePriority"
         static let excludedApps = "excludedApps"
@@ -84,7 +88,7 @@ public struct AppConfig: Sendable {
     /// API key for observer server authentication
     public var serverKey: String?
 
-    /// Maximum local storage to retain after upload (in MB). Default: 200
+    /// Maximum local storage to retain after upload (in MB). Default: Defaults.localRetentionMB
     /// Only segments that have been successfully uploaded will be deleted.
     public var localRetentionMB: Int
 
@@ -117,7 +121,7 @@ public struct AppConfig: Sendable {
         excludePrivateBrowsing: Bool = true,
         serverURL: String? = nil,
         serverKey: String? = nil,
-        localRetentionMB: Int = 200,
+        localRetentionMB: Int = Defaults.localRetentionMB,
         syncPaused: Bool = false,
         debugSegments: Bool = false,
         debugKeepRejectedAudio: Bool = false,
@@ -163,7 +167,7 @@ public struct AppConfig: Sendable {
             excludePrivateBrowsing: defaults.object(forKey: Keys.excludePrivateBrowsing) as? Bool ?? true,
             serverURL: defaults.string(forKey: Keys.serverURL),
             serverKey: defaults.string(forKey: Keys.serverKey),
-            localRetentionMB: defaults.object(forKey: Keys.localRetentionMB) as? Int ?? 200,
+            localRetentionMB: defaults.object(forKey: Keys.localRetentionMB) as? Int ?? Defaults.localRetentionMB,
             syncPaused: defaults.bool(forKey: Keys.syncPaused),
             debugSegments: defaults.bool(forKey: Keys.debugSegments),
             debugKeepRejectedAudio: defaults.bool(forKey: Keys.debugKeepRejectedAudio),
@@ -261,7 +265,7 @@ public struct AppConfig: Sendable {
                     excludePrivateBrowsing: legacyConfig.excludePrivateBrowsing ?? true,
                     serverURL: legacyConfig.serverURL,
                     serverKey: legacyConfig.serverKey,
-                    localRetentionMB: legacyConfig.localRetentionMB ?? 200,
+                    localRetentionMB: legacyConfig.localRetentionMB ?? Defaults.localRetentionMB,
                     syncPaused: legacyConfig.syncPaused ?? false,
                     debugSegments: legacyConfig.debugSegments ?? false,
                     debugKeepRejectedAudio: legacyConfig.debugKeepRejectedAudio ?? false,

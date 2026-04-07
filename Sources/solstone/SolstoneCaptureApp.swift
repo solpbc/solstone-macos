@@ -132,10 +132,10 @@ private struct StatusIcon: View {
             return "sol-ring-icon-paused-template"
         }
         switch appState.uploadCoordinator.status {
-        case .offline, .retrying:
-            return "sol-ring-icon-half-template"
-        default:
+        case .synced, .syncing, .uploading:
             return "sol-ring-template"
+        case .notSynced, .retrying, .offline:
+            return "sol-ring-icon-half-template"
         }
     }
 

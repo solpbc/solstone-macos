@@ -136,7 +136,7 @@ struct SettingsView: View {
                 .tabItem { Label("permissions", systemImage: "lock.shield") }
         }
         .padding(20)
-        .frame(minWidth: 500, minHeight: 380)
+        .frame(minWidth: 580, minHeight: 380)
         .onAppear {
             appState.syncMicrophonePriorityList()
             if let pending = appState.pendingSettingsTab {
@@ -319,6 +319,7 @@ struct SettingsView: View {
             }
 
             GroupBox("local storage") {
+                VStack(alignment: .leading) {
                 LabeledContent("currently using") {
                     if let used = storageUsedMB {
                         Text("\(used) MB")
@@ -333,6 +334,7 @@ struct SettingsView: View {
                     Stepper("\(appState.config.localRetentionMB) MB", value: localRetentionBinding, in: 50...10000, step: 50)
                 }
                 .padding(.vertical, 4)
+                }
             }
             .task {
                 if storageUsedMB == nil {
@@ -343,6 +345,7 @@ struct SettingsView: View {
 
             Spacer()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Service Tab
@@ -359,6 +362,7 @@ struct SettingsView: View {
 
             Spacer()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -932,10 +936,10 @@ struct SettingsView: View {
 
     private var statusTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            GroupBox("recording") {
+            GroupBox("observing") {
                 VStack(alignment: .leading, spacing: 8) {
                     LabeledContent("state") {
-                        Text(appState.isRecording ? (appState.isPaused ? "paused" : "recording") : "stopped")
+                        Text(appState.isRecording ? (appState.isPaused ? "paused" : "observing") : "stopped")
                     }
 
                     if appState.isRecording && !appState.isPaused {

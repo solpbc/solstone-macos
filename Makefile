@@ -1,4 +1,9 @@
-.PHONY: build release release-universal run clean test snapshot bundle bundle-universal install open reset-permissions icons check-icons-deps
+.PHONY: build release release-universal run clean test snapshot bundle bundle-universal install open reset cert check-cert icons check-icons-deps
+
+# Code signing identity — create once via Keychain Access → Certificate Assistant → Create a Certificate
+# Name: "solstone dev", Identity Type: Self Signed Root, Certificate Type: Code Signing, validity: 3650 days
+# Then: Get Info → Trust → "When using this certificate" → Always Trust
+SIGN_IDENTITY ?= solstone dev
 
 # Build debug version
 build:
@@ -38,8 +43,14 @@ test:
 snapshot:
 	swift test --filter Snapshot
 
+check-cert:
+	@security find-identity -v -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"' || \
+		{ echo "error: signing identity '$(SIGN_IDENTITY)' not found in keychain"; \
+		  echo "       run 'make cert' once to create a local self-signing credential"; \
+		  exit 1; }
+
 # Create app bundle for distribution
-bundle: release
+bundle: check-cert release
 	@echo "Creating app bundle..."
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS
@@ -48,7 +59,7 @@ bundle: release
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@cp -r .build/release/solstone_solstone.bundle solstone.app/Contents/Resources/
-	@codesign --force --deep --sign - solstone.app
+	@codesign --force --deep --sign "$(SIGN_IDENTITY)" solstone.app
 	@echo "Created solstone.app"
 
 # Create universal app bundle
@@ -61,28 +72,54 @@ bundle-universal: release-universal
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
-	@codesign --force --deep --sign - solstone.app
+	@codesign --force --deep --sign "$(SIGN_IDENTITY)" solstone.app
 	@echo "Created universal solstone.app"
 
-# Install to /Applications (resets TCC so rebuilt binary is recognized)
+# Install to /Applications
 install: bundle
-	-@pkill -f solstone 2>/dev/null
 	@rm -rf /Applications/solstone.app
-	-@tccutil reset ScreenCapture app.solstone.capture 2>/dev/null
-	-@tccutil reset Microphone app.solstone.capture 2>/dev/null
-	-@defaults delete app.solstone.capture 2>/dev/null
 	@cp -r solstone.app /Applications/
-	@echo "Installed to /Applications/solstone.app (TCC + defaults reset)"
+	@echo "Installed to /Applications/solstone.app"
 
 # Open the app
 open: bundle
 	open solstone.app
 
-# Reset TCC permissions for testing
-reset-permissions:
+# Reset TCC permissions and app defaults for testing
+reset:
 	-tccutil reset ScreenCapture app.solstone.capture
 	-tccutil reset Microphone app.solstone.capture
-	@echo "TCC permissions reset. Restart the app to trigger permission prompts."
+	-defaults delete app.solstone.capture 2>/dev/null
+	@echo "TCC permissions and defaults reset. Restart the app to trigger permission prompts."
+
+# Create a self-signed code signing certificate in your login keychain (one-time setup).
+# Using a named cert instead of ad-hoc (-) gives a stable designated requirement so
+# TCC permissions survive rebuilds. Will prompt for your keychain password once.
+cert:
+	@if security find-identity -v -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"'; then \
+		echo "Certificate '$(SIGN_IDENTITY)' already exists — nothing to do."; \
+		exit 0; \
+	fi
+	@echo "Creating self-signed code signing certificate '$(SIGN_IDENTITY)'..."
+	@TMPDIR=$$(mktemp -d); \
+	PASS=$$(openssl rand -hex 16); \
+	printf '[req]\ndistinguished_name=dn\nx509_extensions=v3\nprompt=no\n[dn]\nCN=$(SIGN_IDENTITY)\n[v3]\nkeyUsage=critical,digitalSignature,keyCertSign\nextendedKeyUsage=codeSigning\nbasicConstraints=critical,CA:TRUE\n' \
+		> $$TMPDIR/cert.conf; \
+	openssl genrsa -out $$TMPDIR/key.pem 2048 2>/dev/null; \
+	openssl req -new -x509 -key $$TMPDIR/key.pem -out $$TMPDIR/cert.pem \
+		-days 3650 -config $$TMPDIR/cert.conf 2>/dev/null; \
+	openssl pkcs12 -export -legacy -out $$TMPDIR/cert.p12 \
+		-inkey $$TMPDIR/key.pem -in $$TMPDIR/cert.pem -passout pass:$$PASS 2>/dev/null; \
+	security import $$TMPDIR/cert.p12 \
+		-k "$$HOME/Library/Keychains/login.keychain-db" \
+		-T /usr/bin/codesign -P "$$PASS"; \
+	security add-trusted-cert -r trustRoot \
+		-k "$$HOME/Library/Keychains/login.keychain-db" $$TMPDIR/cert.pem; \
+	security set-key-partition-list -S apple-tool:,apple: -k "" \
+		-D "$(SIGN_IDENTITY)" -t private \
+		"$$HOME/Library/Keychains/login.keychain-db" 2>/dev/null || true; \
+	rm -rf $$TMPDIR; \
+	echo "Done — '$(SIGN_IDENTITY)' is ready. Run 'make install' to rebuild with the new identity."
 
 # Generate icon assets from SVG sources in assets/
 # Requires: rsvg-convert (brew install librsvg), iconutil (built-in macOS)

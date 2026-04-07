@@ -42,6 +42,12 @@ struct PermissionChecker {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
+    /// Clears the prompted flag so background polling stops triggering SCShareableContent.
+    /// Called when permission is found to be revoked (e.g. after reinstall with new CDHash).
+    static func resetPromptedFlag() {
+        UserDefaults.standard.removeObject(forKey: hasPromptedKey)
+    }
+
     /// Triggers the screen recording permission prompt and records that we've prompted.
     func promptScreenRecording() {
         Logger.setup.info("[Permissions] promptScreenRecording")

@@ -170,6 +170,12 @@ public final class AppState {
             Logger.general.info("Debug segments enabled: using 60s duration")
         }
 
+        // Enable login item on first launch (status is .notRegistered before any registration)
+        if SMAppService.mainApp.status == .notRegistered {
+            try? SMAppService.mainApp.register()
+            Logger.general.info("First launch: enabled login item")
+        }
+
         // Check current login item status
         isLoginItemEnabled = SMAppService.mainApp.status == .enabled
 
@@ -339,7 +345,15 @@ public final class AppState {
         // Only check screen recording via SCShareableContent if user has been prompted
         // (otherwise it triggers the OS dialog)
         if checker.hasPromptedScreenRecording {
-            screenRecordingGranted = await PermissionChecker.checkScreenRecording()
+            let granted = await PermissionChecker.checkScreenRecording()
+            if !granted {
+                // Permission revoked (e.g. CDHash changed after reinstall) — reset the prompted
+                // flag so the background poll stops calling SCShareableContent (which triggers
+                // the system dialog on macOS 26) until the user explicitly re-grants via the button.
+                PermissionChecker.resetPromptedFlag()
+                Logger.setup.info("[Permissions] Screen recording revoked — resetting prompt flag")
+            }
+            screenRecordingGranted = granted
         }
         microphoneGranted = checker.microphoneGranted
 
