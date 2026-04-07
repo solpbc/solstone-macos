@@ -148,7 +148,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("to search your entire history — every meeting, document, and idea — solstone observer captures your screen continuously. everything stays on your mac and goes only to your server.")
+                        Text("this is how you get searchable memory of every meeting, document, and idea. solstone watches your screen and keeps everything on your mac, sent only to your service.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
@@ -198,7 +198,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("to capture conversations and meetings, solstone observer needs mic access. same rules: stored locally, sent only to your server. no third parties, no exceptions.")
+                        Text("to capture conversations and meetings, solstone observer needs mic access. same rules: stored locally, sent only to your service. no third parties, no exceptions.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
@@ -323,6 +323,11 @@ struct SettingsView: View {
                 }
             }
 
+            Text("when the limit is reached, the oldest uploaded segments are removed from your mac. unuploaded segments are never deleted.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
+
             Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -346,7 +351,7 @@ struct SettingsView: View {
     private var serviceSection: some View {
         GroupBox("service") {
             VStack(alignment: .leading, spacing: 12) {
-                Link("instructions at solstone.app/install", destination: URL(string: "https://solstone.app/install")!)
+                Link("setup guide: solstone.app/install", destination: URL(string: "https://solstone.app/install")!)
                     .font(.callout)
 
                 HStack {
@@ -636,7 +641,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
 
                     if microphoneDisplayEntries.isEmpty {
-                        Text("no microphones detected")
+                        Text("no microphones found yet")
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.vertical, 20)
@@ -679,7 +684,7 @@ struct SettingsView: View {
             GroupBox("audio processing") {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("silence music in system audio", isOn: silenceMusicBinding)
-                        .help("when enabled, music-only portions of system audio are silenced during remix")
+                        .help("silences background music when nobody's talking")
 
                     Text("silences portions of system audio where music is detected but no speech.")
                         .font(.caption)
@@ -784,7 +789,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
 
                         if appState.config.excludedTitlePatterns.isEmpty {
-                            Text("no patterns configured")
+                            Text("no patterns added")
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(.vertical, 20)
