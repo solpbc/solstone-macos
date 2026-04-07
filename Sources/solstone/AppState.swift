@@ -68,6 +68,8 @@ public final class AppState {
 
     /// Timer that polls permissions every few seconds until recording starts
     private var permissionPollTimer: Timer?
+    /// Prevents concurrent permission check calls (poll interval < check duration)
+    private var isCheckingPermissions = false
 
 
     // MARK: - Computed Properties
@@ -343,20 +345,28 @@ public final class AppState {
     }
 
     private func checkPermissionsAndAutoStart() async {
+        guard !isCheckingPermissions else { return }
+        isCheckingPermissions = true
+        defer { isCheckingPermissions = false }
+
         let checker = PermissionChecker()
 
-        // Only check screen recording via SCShareableContent if user has been prompted
-        // (otherwise it triggers the OS dialog)
         if checker.hasPromptedScreenRecording {
-            let granted = await PermissionChecker.checkScreenRecording()
-            if !granted {
-                // Permission revoked (e.g. CDHash changed after reinstall) — reset the prompted
-                // flag so the background poll stops calling SCShareableContent (which triggers
-                // the system dialog on macOS 26) until the user explicitly re-grants via the button.
-                PermissionChecker.resetPromptedFlag()
-                Logger.setup.info("[Permissions] Screen recording revoked — resetting prompt flag")
+            // Gate on CGPreflightScreenCaptureAccess before touching SCShareableContent.
+            // On macOS 26, SCShareableContent.current re-triggers the OS dialog when no TCC
+            // entry exists — i.e. while the user has been prompted but hasn't granted yet.
+            // CGPreflightScreenCaptureAccess returns true only when a valid TCC entry exists.
+            if CGPreflightScreenCaptureAccess() {
+                let granted = await PermissionChecker.checkScreenRecording()
+                if !granted {
+                    // Preflight passed but SCShareableContent failed — CDHash changed after
+                    // reinstall. Reset prompted flag so user re-grants via the button.
+                    PermissionChecker.resetPromptedFlag()
+                    Logger.setup.info("[Permissions] Screen recording access lost (CDHash changed?) — resetting prompt flag")
+                }
+                screenRecordingGranted = granted
             }
-            screenRecordingGranted = granted
+            // else: no TCC entry yet — user hasn't granted in System Settings, wait silently
         }
         microphoneGranted = checker.microphoneGranted
 

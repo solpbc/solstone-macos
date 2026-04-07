@@ -9,15 +9,15 @@ import os
 /// optimized logging with per-value privacy control and accurate source location.
 ///
 /// View logs with:
-///   log stream --predicate 'subsystem == "app.solstone.capture"' --level debug
-///   log show --predicate 'subsystem == "app.solstone.capture"' --last 1h
+///   log stream --predicate 'subsystem == "app.solstone.observer"' --level debug
+///   log show --predicate 'subsystem == "app.solstone.observer"' --last 1h
 ///
 /// Filter by category:
-///   log stream --predicate 'subsystem == "app.solstone.capture" AND category == "audio"'
+///   log stream --predicate 'subsystem == "app.solstone.observer" AND category == "audio"'
 ///
-/// Or use Console.app and filter by subsystem "app.solstone.capture"
+/// Or use Console.app and filter by subsystem "app.solstone.observer"
 extension Logger {
-    private static let subsystem = "app.solstone.capture"
+    private static let subsystem = "app.solstone.observer"
 
     static let general = Logger(subsystem: subsystem, category: "general")
     static let capture = Logger(subsystem: subsystem, category: "capture")

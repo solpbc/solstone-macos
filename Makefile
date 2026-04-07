@@ -23,7 +23,7 @@ run:
 	@mkdir -p scratch; \
 	LOG=scratch/$$(date +%Y%m%d_%H%M%S).log; \
 	echo "Streaming logs → $$LOG  (Ctrl+C to stop)"; \
-	/usr/bin/log stream --predicate 'subsystem == "app.solstone.capture"' --level debug > "$$LOG" 2>&1 & \
+	/usr/bin/log stream --predicate 'subsystem == "app.solstone.observer"' --level debug > "$$LOG" 2>&1 & \
 	STREAM_PID=$$!; \
 	open /Applications/solstone.app; \
 	trap "kill $$STREAM_PID 2>/dev/null; echo; echo 'Log saved: $$LOG'" INT TERM; \
@@ -59,7 +59,7 @@ bundle: check-cert release
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@cp -r .build/release/solstone_solstone.bundle solstone.app/Contents/Resources/
-	@codesign --force --deep --sign "$(SIGN_IDENTITY)" solstone.app
+	@codesign --force --deep --sign "$(SIGN_IDENTITY)" --entitlements Sources/solstone/entitlements.plist solstone.app
 	@echo "Created solstone.app"
 
 # Create universal app bundle
@@ -72,7 +72,7 @@ bundle-universal: release-universal
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
-	@codesign --force --deep --sign "$(SIGN_IDENTITY)" solstone.app
+	@codesign --force --deep --sign "$(SIGN_IDENTITY)" --entitlements Sources/solstone/entitlements.plist solstone.app
 	@echo "Created universal solstone.app"
 
 # Install to /Applications
@@ -85,12 +85,16 @@ install: bundle
 open: bundle
 	open solstone.app
 
-# Reset TCC permissions and app defaults for testing
+# Reset TCC permissions and app defaults for testing.
+# NOTE: ScreenCapture is intentionally omitted — on macOS 26, tccutil reset ScreenCapture
+# without sudo writes a DENIED entry to system TCC.db (it can't clear it without privileges),
+# which silently blocks the permission dialog. Use: sudo tccutil reset All app.solstone.observer
 reset:
-	-tccutil reset ScreenCapture app.solstone.capture
-	-tccutil reset Microphone app.solstone.capture
-	-defaults delete app.solstone.capture 2>/dev/null
-	@echo "TCC permissions and defaults reset. Restart the app to trigger permission prompts."
+	-tccutil reset Microphone app.solstone.observer
+	-defaults delete app.solstone.observer 2>/dev/null
+	-rm -f ~/Library/Preferences/app.solstone.observer.plist
+	@echo "Microphone TCC and defaults reset."
+	@echo "To fully reset screen recording: sudo tccutil reset All app.solstone.observer"
 
 # Create a self-signed code signing certificate in your login keychain (one-time setup).
 # Using a named cert instead of ad-hoc (-) gives a stable designated requirement so

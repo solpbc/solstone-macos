@@ -245,12 +245,17 @@ struct SettingsView: View {
         .task(id: screenRecordingPrompted) {
             guard screenRecordingPrompted && !appState.screenRecordingGranted else { return }
             while !Task.isCancelled {
-                do {
-                    _ = try await SCShareableContent.current
-                    restartCountdown = 5
-                    return
-                } catch {
-                    // permission not yet granted
+                // Gate on CGPreflightScreenCaptureAccess before calling SCShareableContent.
+                // On macOS 26, SCShareableContent.current re-triggers the OS dialog every call
+                // when no TCC entry exists yet — i.e. while the user hasn't granted yet.
+                if CGPreflightScreenCaptureAccess() {
+                    do {
+                        _ = try await SCShareableContent.current
+                        restartCountdown = 5
+                        return
+                    } catch {
+                        // permission not yet granted
+                    }
                 }
                 try? await Task.sleep(for: .seconds(1.5))
             }

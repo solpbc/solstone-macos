@@ -47,8 +47,8 @@ Permission denied surfaces as framework errors (SCStream/AVAudioEngine fails), c
 ### Testing
 
 ```bash
-make reset-permissions  # tccutil reset ScreenCapture/Microphone for app.solstone.capture
-tccutil reset All app.solstone.capture  # reset everything
+make reset-permissions  # tccutil reset ScreenCapture/Microphone for app.solstone.observer
+tccutil reset All app.solstone.observer  # reset everything
 ```
 
 Restart app after reset to re-trigger dialogs.

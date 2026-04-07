@@ -62,20 +62,20 @@ This is a two-package Swift Package Manager repository. **SolstoneCapture** is t
 
 ## Logging
 
-Uses macOS unified logging with subsystem `app.solstone.capture`.
+Uses macOS unified logging with subsystem `app.solstone.observer`.
 
 ```bash
 # Stream logs in real-time
-log stream --predicate 'subsystem == "app.solstone.capture"'
+log stream --predicate 'subsystem == "app.solstone.observer"'
 
 # Show recent logs (last hour)
-log show --predicate 'subsystem == "app.solstone.capture"' --last 1h
+log show --predicate 'subsystem == "app.solstone.observer"' --last 1h
 
 # Filter by category
-log stream --predicate 'subsystem == "app.solstone.capture" AND category == "upload"'
+log stream --predicate 'subsystem == "app.solstone.observer" AND category == "upload"'
 ```
 
-Or use Console.app and filter by subsystem `app.solstone.capture`.
+Or use Console.app and filter by subsystem `app.solstone.observer`.
 
 ## License
 

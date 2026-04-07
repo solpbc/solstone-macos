@@ -7,7 +7,7 @@
     <key>CFBundleDisplayName</key>
     <string>solstone</string>
     <key>CFBundleIdentifier</key>
-    <string>app.solstone.capture</string>
+    <string>app.solstone.observer</string>
     <key>CFBundleVersion</key>
     <string>1.0.0</string>
     <key>CFBundleShortVersionString</key>

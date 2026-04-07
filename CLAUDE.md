@@ -91,14 +91,14 @@ Server Key: UserDefaults
 
 ## Logging
 
-Uses macOS unified logging (`os.Logger`) with subsystem `app.solstone.capture`. Categories: `general`, `capture`, `audio`, `upload`, `setup`, `storage`. See the `live-logging` skill for full details.
+Uses macOS unified logging (`os.Logger`) with subsystem `app.solstone.observer`. Categories: `general`, `capture`, `audio`, `upload`, `setup`, `storage`. See the `live-logging` skill for full details.
 
 ```bash
 # Stream logs in real-time (use full path — fish has a `log` builtin)
-/usr/bin/log stream --predicate 'subsystem == "app.solstone.capture"' --level debug
+/usr/bin/log stream --predicate 'subsystem == "app.solstone.observer"' --level debug
 
 # Filter by category
-/usr/bin/log stream --predicate 'subsystem == "app.solstone.capture" AND category == "audio"' --level debug
+/usr/bin/log stream --predicate 'subsystem == "app.solstone.observer" AND category == "audio"' --level debug
 ```
 
 ## Skills

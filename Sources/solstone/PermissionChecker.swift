@@ -49,10 +49,20 @@ struct PermissionChecker {
     }
 
     /// Triggers the screen recording permission prompt and records that we've prompted.
+    /// Uses the async SCShareableContent API — CGRequestScreenCaptureAccess() and the
+    /// deprecated getWithCompletionHandler do not reliably register the app in the
+    /// "Screen & System Audio Recording" section on macOS 15+.
     func promptScreenRecording() {
         Logger.setup.info("[Permissions] promptScreenRecording")
         UserDefaults.standard.set(true, forKey: Self.hasPromptedKey)
-        SCShareableContent.getWithCompletionHandler { _, _ in }
+        Task {
+            do {
+                _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                Logger.setup.info("[Permissions] SCShareableContent succeeded")
+            } catch {
+                Logger.setup.error("[Permissions] SCShareableContent failed: \(error, privacy: .public)")
+            }
+        }
     }
 
     /// Shows the native microphone permission dialog. Returns when the user responds.
