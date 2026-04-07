@@ -233,7 +233,7 @@ struct SettingsView: View {
             if appState.screenRecordingGranted && appState.microphoneGranted && !appState.config.isUploadConfigured {
                 HStack {
                     Spacer()
-                    Button("continue to service configuration →") {
+                    Button("configure solstone service connection →") {
                         selectedTab = .service
                     }
                     .keyboardShortcut(.defaultAction)
@@ -350,7 +350,7 @@ struct SettingsView: View {
                     .font(.callout)
 
                 HStack {
-                    Button("detect local install") {
+                    Button("connect to local service") {
                         Task { await detectLocalService() }
                     }
                     .disabled(localDetectDisabled)
@@ -374,21 +374,27 @@ struct SettingsView: View {
                     case .failed(let reason):
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
-                        Text(reason)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if reason.contains("already exists") {
+                            Text("observer already registered — check the help tab for troubleshooting")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(reason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("service host").font(.caption).foregroundStyle(.secondary)
+                    Text("service address").font(.caption).foregroundStyle(.secondary)
                     TextField("localhost, host:port, or https://...", text: $observerURL)
                         .textFieldStyle(.roundedBorder)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("key").font(.caption).foregroundStyle(.secondary)
-                    TextField("paste key from server", text: $observerKey)
+                    TextField("paste key from service", text: $observerKey)
                         .textFieldStyle(.roundedBorder)
                 }
 
@@ -415,9 +421,14 @@ struct SettingsView: View {
                     }
                 ))
                 .disabled(observerURL.isEmpty || observerKey.isEmpty)
+                .help("keeps recording locally but stops sending to your service")
             }
             .padding(.vertical, 4)
         }
+        Text("segments are uploaded only to your configured solstone service. no data is sent anywhere else.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.top, 4)
     }
 
     /// Normalizes flexible host input to a full URL.
@@ -1028,9 +1039,13 @@ struct SettingsView: View {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         case .failure(let message):
-            Image(systemName: "xmark.circle.fill")
-                .foregroundStyle(.red)
-                .help(message)
+            HStack(spacing: 4) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.red)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
         }
     }
 
