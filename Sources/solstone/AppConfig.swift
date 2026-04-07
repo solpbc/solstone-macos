@@ -78,10 +78,10 @@ public struct AppConfig: Sendable {
 
     // MARK: - Server Upload Configuration
 
-    /// Remote server URL (e.g., "https://solstone.example.com")
+    /// Observer server URL (e.g., "https://solstone.example.com")
     public var serverURL: String?
 
-    /// API key for remote server authentication
+    /// API key for observer server authentication
     public var serverKey: String?
 
     /// Maximum local storage to retain after upload (in MB). Default: 200

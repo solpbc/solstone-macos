@@ -69,7 +69,7 @@ public struct UploadClient: Sendable {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyyMMdd"
         let today = dateFormatter.string(from: Date())
-        let urlString = "\(serverURL)/app/remote/ingest/segments/\(today)"
+        let urlString = "\(serverURL)/app/observer/ingest/segments/\(today)"
         Logger.upload.info("testConnection: GET \(urlString, privacy: .public)")
 
         guard let url = URL(string: urlString) else {
@@ -110,7 +110,7 @@ public struct UploadClient: Sendable {
                 case 401:
                     return "Invalid API key"
                 case 403:
-                    return "Remote disabled"
+                    return "Observer disabled"
                 case 404:
                     return "Endpoint not found (server update needed?)"
                 default:
@@ -147,7 +147,7 @@ public struct UploadClient: Sendable {
         serverKey: String,
         day: String
     ) async -> [ServerSegmentInfo]? {
-        let urlString = "\(serverURL)/app/remote/ingest/segments/\(day)"
+        let urlString = "\(serverURL)/app/observer/ingest/segments/\(day)"
         guard let url = URL(string: urlString) else {
             return nil
         }
@@ -207,7 +207,7 @@ public struct UploadClient: Sendable {
         mediaFiles: [URL],
         metadataJSON: String? = nil
     ) async -> UploadResult {
-        let urlString = "\(serverURL)/app/remote/ingest"
+        let urlString = "\(serverURL)/app/observer/ingest"
         guard let url = URL(string: urlString) else {
             return .failure(UploadError.invalidURL)
         }

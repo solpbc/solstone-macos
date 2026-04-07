@@ -47,11 +47,11 @@ struct SettingsView: View {
 
     // Service tab state
     @State private var localStatus: LocalStatus = .idle
-    @State private var remoteExpanded = false
-    @State private var remoteURL = ""
-    @State private var remoteKey = ""
-    @State private var remoteError: String?
-    @State private var remoteTesting = false
+    @State private var observerExpanded = false
+    @State private var observerURL = ""
+    @State private var observerKey = ""
+    @State private var observerError: String?
+    @State private var observerTesting = false
 
     enum TestResult: Equatable {
         case none
@@ -433,35 +433,35 @@ struct SettingsView: View {
                     }
                 }
 
-                // Remote service option
-                Button(remoteExpanded ? "hide remote setup" : "connect to remote service...") {
+                // Observer service option
+                Button(observerExpanded ? "hide observer setup" : "connect to observer service...") {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        remoteExpanded.toggle()
+                        observerExpanded.toggle()
                     }
                 }
                 .buttonStyle(.link)
                 .font(.callout)
 
-                if remoteExpanded {
+                if observerExpanded {
                     VStack(alignment: .leading, spacing: 8) {
                         LabeledContent("server URL") {
-                            TextField("https://solstone.example.com", text: $remoteURL)
+                            TextField("https://solstone.example.com", text: $observerURL)
                                 .textFieldStyle(.roundedBorder)
                         }
 
                         LabeledContent("API key") {
-                            SecureField("paste key from server", text: $remoteKey)
+                            SecureField("paste key from server", text: $observerKey)
                                 .textFieldStyle(.roundedBorder)
                         }
 
                         HStack {
                             Spacer()
-                            if remoteTesting {
+                            if observerTesting {
                                 ProgressView()
                                     .scaleEffect(0.5)
                                     .frame(width: 16, height: 16)
                             }
-                            if let error = remoteError {
+                            if let error = observerError {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundStyle(.red)
                                 Text(error)
@@ -469,9 +469,9 @@ struct SettingsView: View {
                                     .foregroundStyle(.red)
                             }
                             Button("connect") {
-                                Task { await connectRemoteService() }
+                                Task { await connectObserverService() }
                             }
-                            .disabled(remoteURL.isEmpty || remoteKey.isEmpty || remoteTesting)
+                            .disabled(observerURL.isEmpty || observerKey.isEmpty || observerTesting)
                         }
                     }
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -516,8 +516,8 @@ struct SettingsView: View {
         }
         Logger.setup.info("local detect: sol found at \(solPath, privacy: .public)")
 
-        // Run remote create
-        let result = await runSolRemoteCreate(solPath: solPath)
+        // Run observer create
+        let result = await runSolObserverCreate(solPath: solPath)
         switch result {
         case .success(let key):
             Logger.setup.info("local detect: CLI success, verifying connectivity")
@@ -536,19 +536,19 @@ struct SettingsView: View {
         }
     }
 
-    private func connectRemoteService() async {
-        remoteTesting = true
-        remoteError = nil
+    private func connectObserverService() async {
+        observerTesting = true
+        observerError = nil
 
         let error = await UploadCoordinator.testConnection(
-            serverURL: remoteURL, serverKey: remoteKey
+            serverURL: observerURL, serverKey: observerKey
         )
-        remoteTesting = false
+        observerTesting = false
 
         if let error {
-            remoteError = error
+            observerError = error
         } else {
-            saveServiceAndStart(url: remoteURL, key: remoteKey)
+            saveServiceAndStart(url: observerURL, key: observerKey)
         }
     }
 
@@ -613,18 +613,18 @@ struct SettingsView: View {
         case failure(String)
     }
 
-    private struct RemoteCreateResponse: Decodable {
+    private struct ObserverCreateResponse: Decodable {
         let name: String
         let key: String
         let prefix: String
     }
 
-    private func runSolRemoteCreate(solPath: String) async -> SolResult {
+    private func runSolObserverCreate(solPath: String) async -> SolResult {
         await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: solPath)
-                process.arguments = ["remote", "--json", "create", "solstone-macos"]
+                process.arguments = ["observer", "--json", "create", "solstone-macos"]
                 let stdoutPipe = Pipe()
                 let stderrPipe = Pipe()
                 process.standardOutput = stdoutPipe
@@ -645,7 +645,7 @@ struct SettingsView: View {
 
                     if process.terminationStatus == 0 {
                         let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                        if let response = try? JSONDecoder().decode(RemoteCreateResponse.self, from: data) {
+                        if let response = try? JSONDecoder().decode(ObserverCreateResponse.self, from: data) {
                             continuation.resume(returning: .success(response.key))
                         } else {
                             continuation.resume(returning: .failure("could not parse JSON response"))
@@ -654,7 +654,7 @@ struct SettingsView: View {
                         let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
                         let stderr = String(data: stderrData, encoding: .utf8) ?? ""
                         if stderr.contains("already exists") {
-                            continuation.resume(returning: .failure("remote already exists"))
+                            continuation.resume(returning: .failure("observer already exists"))
                         } else {
                             continuation.resume(returning: .failure("exit code \(process.terminationStatus)"))
                         }

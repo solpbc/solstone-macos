@@ -12,7 +12,7 @@ check if the app is already installed:
 
 ```
 ls /Applications/solstone.app
-sol remote list
+sol observer list
 ```
 
 if the app exists and shows as connected, you're done.
@@ -52,12 +52,12 @@ if the app exists and shows as connected, you're done.
 
 4. the app auto-registers with the solstone server at `http://localhost:5015`. your human needs to approve **screen recording** and **microphone** permission dialogs when macOS prompts for them.
 
-5. verify the menu bar icon appears and the remote is connected:
+5. verify the menu bar icon appears and the observer is connected:
    ```
-   sol remote list
+   sol observer list
    ```
 
 ## notes
 
-- if auto-registration fails (server not reachable), register manually with `sol remote create solstone-macos` and enter the server URL and API key in the app's setup screen.
+- if auto-registration fails (server not reachable), register manually with `sol observer create solstone-macos` and enter the server URL and API key in the app's setup screen.
 - the app starts automatically at login once installed.
