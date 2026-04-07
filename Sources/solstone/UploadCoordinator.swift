@@ -24,6 +24,7 @@ public final class UploadCoordinator {
     public internal(set) var status: Status = .notSynced
     public internal(set) var pendingCount: Int = 0
     public internal(set) var lastError: String?
+    public internal(set) var lastSyncedAt: Date?
 
     // MARK: - Retry State
 
@@ -71,6 +72,9 @@ public final class UploadCoordinator {
     /// Update configuration (called when settings change)
     public func updateConfig(_ newConfig: AppConfig) {
         let wasPaused = config.syncPaused
+        if newConfig.serverURL != config.serverURL {
+            lastSyncedAt = nil
+        }
         self.config = newConfig
 
         Task {
@@ -184,6 +188,7 @@ public final class UploadCoordinator {
         case .syncComplete:
             status = .synced
             pendingCount = 0
+            lastSyncedAt = Date()
             lastError = nil
 
         case .offline(let error):

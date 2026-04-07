@@ -433,6 +433,14 @@ struct SettingsView: View {
                 ))
                 .disabled(observerURL.isEmpty || observerKey.isEmpty)
                 .help("keeps recording locally but stops sending to your service")
+
+                if localStatus == .connected || testResult == .success {
+                    Button("view status →") {
+                        selectedTab = .status
+                    }
+                    .font(.caption)
+                    .buttonStyle(.link)
+                }
             }
             .padding(.vertical, 4)
         }
@@ -912,7 +920,7 @@ struct SettingsView: View {
                     if appState.isRecording && !appState.isPaused {
                         // TimelineView only updates when visible, avoiding background timer
                         TimelineView(.periodic(from: .now, by: 1.0)) { _ in
-                            LabeledContent("time remaining") {
+                            LabeledContent("next segment in") {
                                 let remaining = appState.captureManager.segmentTimeRemaining
                                 let mins = Int(remaining) / 60
                                 let secs = Int(remaining) % 60
@@ -926,7 +934,17 @@ struct SettingsView: View {
 
             GroupBox("upload") {
                 VStack(alignment: .leading, spacing: 8) {
+                    LabeledContent("service") {
+                        Text(appState.config.serverURL ?? "not configured")
+                            .foregroundStyle(appState.config.serverURL == nil ? .secondary : .primary)
+                    }
                     uploadStatusView
+                    if let lastSynced = appState.uploadCoordinator.lastSyncedAt {
+                        LabeledContent("last synced") {
+                            Text(lastSynced, style: .relative)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     if let error = appState.uploadCoordinator.lastError {
                         Text(error)
                             .font(.caption)
@@ -936,6 +954,11 @@ struct SettingsView: View {
                         appState.uploadCoordinator.forceFullSync()
                     }
                     .help("re-check all days, including previously synced ones")
+                    Button("configure service →") {
+                        selectedTab = .service
+                    }
+                    .font(.caption)
+                    .buttonStyle(.link)
                 }
                 .padding(.vertical, 4)
             }
