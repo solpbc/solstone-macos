@@ -16,6 +16,25 @@ struct MenuContent: View {
 
         Divider()
 
+        Section {
+            if appState.config.isUploadConfigured {
+                switch appState.uploadCoordinator.status {
+                case .synced, .syncing, .uploading:
+                    Button("open web portal") {
+                        NSWorkspace.shared.open(URL(string: appState.config.serverURL!)!)
+                    }
+                default:
+                    EmptyView()
+                }
+            }
+
+            Button("show captures in finder") {
+                NSWorkspace.shared.open(appState.storageManager.baseDirectory)
+            }
+        }
+
+        Divider()
+
         // Pause / Resume / Start recording controls
         Section {
             pauseResumeSection
@@ -23,17 +42,11 @@ struct MenuContent: View {
 
         Divider()
 
-        // Settings
         Section {
             Button("settings...") {
                 openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)
             }
-        }
-
-        Divider()
-
-        Section {
             Button("about") {
                 openWindow(id: "about")
                 NSApp.activate(ignoringOtherApps: true)
@@ -69,8 +82,29 @@ struct MenuContent: View {
             }
             .foregroundStyle(.red)
         } else if let error = appState.errorMessage {
-            Text("error: \(error)")
-                .foregroundStyle(.red)
+            Button("error: \(error)") {
+                appState.pendingSettingsTab = "status"
+                openWindow(id: "settings")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            .foregroundStyle(.red)
+        } else if appState.isRecording && !appState.config.isUploadConfigured && !appState.isPaused && !appState.pauseManager.isPaused {
+            Button("observing - no service →") {
+                appState.pendingSettingsTab = "service"
+                openWindow(id: "settings")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        } else if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused {
+            switch appState.uploadCoordinator.status {
+            case .offline, .retrying:
+                Button("observing - offline (recording locally) →") {
+                    appState.pendingSettingsTab = "status"
+                    openWindow(id: "settings")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            default:
+                Text(recordingStatusText)
+            }
         } else {
             Text(recordingStatusText)
         }
@@ -78,10 +112,10 @@ struct MenuContent: View {
 
     private var recordingStatusText: String {
         if appState.pauseManager.isPaused {
-            return "paused"
+            return "paused - not observing"
         }
         if appState.isPaused {
-            return "paused"
+            return "paused - not observing"
         }
         if !appState.isRecording {
             return "not recording"
@@ -92,8 +126,10 @@ struct MenuContent: View {
         switch appState.uploadCoordinator.status {
         case .synced, .syncing, .uploading:
             return "observing - connected"
-        case .notSynced, .retrying, .offline:
+        case .notSynced:
             return "observing - offline"
+        case .retrying, .offline:
+            return "observing - offline (recording locally)"
         }
     }
 

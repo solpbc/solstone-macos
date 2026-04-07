@@ -123,6 +123,7 @@ struct SettingsView: View {
                 case "permissions": selectedTab = .permissions
                 case "service": selectedTab = .service
                 case "help": selectedTab = .help
+                case "status": selectedTab = .status
                 default: break
                 }
                 appState.pendingSettingsTab = nil
