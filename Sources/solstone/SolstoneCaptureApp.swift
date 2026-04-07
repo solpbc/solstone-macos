@@ -84,7 +84,7 @@ struct SolstoneCaptureApp: App {
                 return "solstone observer — recording"
             }
         }
-        return "solstone observer — paused"
+        return "solstone observer — stopped"
     }
 
     var body: some Scene {
