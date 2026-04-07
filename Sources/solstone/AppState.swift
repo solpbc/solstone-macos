@@ -63,6 +63,9 @@ public final class AppState {
     /// Set by SetupView to tell SettingsView which tab to open to
     public var pendingSettingsTab: String?
 
+    /// Set to true after the first permission check completes, so startup UI knows real state
+    public internal(set) var initialPermissionCheckComplete = false
+
     /// Timer that polls permissions every few seconds until recording starts
     private var permissionPollTimer: Timer?
 
@@ -369,6 +372,8 @@ public final class AppState {
         if isRecording {
             stopPermissionPolling()
         }
+
+        initialPermissionCheckComplete = true
     }
 
     // MARK: - Private Methods

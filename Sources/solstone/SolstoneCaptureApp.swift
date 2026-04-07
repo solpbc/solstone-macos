@@ -144,12 +144,13 @@ private struct StatusIcon: View {
         .task {
             guard !hasCheckedSetup else { return }
             hasCheckedSetup = true
+            // Wait for the first real permission check to complete before deciding
+            // whether to open settings — avoids false-positive on startup.
+            while !appState.initialPermissionCheckComplete {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
             if !appState.screenRecordingGranted || !appState.microphoneGranted {
                 appState.pendingSettingsTab = "permissions"
-                openWindow(id: "settings")
-                NSApp.activate(ignoringOtherApps: true)
-            } else if appState.config.serverURL == nil {
-                appState.pendingSettingsTab = "service"
                 openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)
             }

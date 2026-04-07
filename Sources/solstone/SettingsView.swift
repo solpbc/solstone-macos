@@ -30,7 +30,7 @@ struct SettingsView: View {
     }
 
     @Bindable var appState: AppState
-    @State var selectedTab: Tab = .observer
+    @State var selectedTab: Tab = .status
     @Environment(\.dismiss) private var dismiss
 
     @State private var testResult: TestResult = .none
@@ -47,11 +47,8 @@ struct SettingsView: View {
 
     // Service tab state
     @State private var localStatus: LocalStatus = .idle
-    @State private var observerExpanded = false
     @State private var observerURL = ""
     @State private var observerKey = ""
-    @State private var observerError: String?
-    @State private var observerTesting = false
 
     enum TestResult: Equatable {
         case none
@@ -76,28 +73,6 @@ struct SettingsView: View {
 
     // MARK: - Auto-saving Bindings
 
-    private var serverURLBinding: Binding<String> {
-        Binding(
-            get: { appState.config.serverURL ?? "" },
-            set: { newValue in
-                var config = appState.config
-                config.serverURL = newValue.isEmpty ? nil : newValue
-                appState.updateConfig(config)
-            }
-        )
-    }
-
-    private var serverKeyBinding: Binding<String> {
-        Binding(
-            get: { appState.config.serverKey ?? "" },
-            set: { newValue in
-                var config = appState.config
-                config.serverKey = newValue.isEmpty ? nil : newValue
-                appState.updateConfig(config)
-            }
-        )
-    }
-
     private var localRetentionBinding: Binding<Int> {
         Binding(
             get: { appState.config.localRetentionMB },
@@ -111,9 +86,13 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
+            statusTab
+                .tag(Tab.status)
+                .tabItem { Label("status", systemImage: "info.circle") }
+
             observerTab
                 .tag(Tab.observer)
-                .tabItem { Label("observer", systemImage: "eye") }
+                .tabItem { Label("general", systemImage: "gearshape") }
 
             serviceTab
                 .tag(Tab.service)
@@ -126,10 +105,6 @@ struct SettingsView: View {
             privacyTab
                 .tag(Tab.privacy)
                 .tabItem { Label("privacy", systemImage: "eye.slash") }
-
-            statusTab
-                .tag(Tab.status)
-                .tabItem { Label("status", systemImage: "info.circle") }
 
             permissionsTab
                 .tag(Tab.permissions)
@@ -352,62 +327,25 @@ struct SettingsView: View {
 
     private var serviceTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            if appState.config.isUploadConfigured {
-                // Connected state — show current config
-                connectedServiceSection
-            } else {
-                // Not connected — show setup options
-                serviceSetupSection
-            }
-
+            serviceSection
             Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private var connectedServiceSection: some View {
-        GroupBox("connected") {
-            VStack(alignment: .leading, spacing: 12) {
-                LabeledContent("server URL") {
-                    TextField("https://solstone.example.com", text: serverURLBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                LabeledContent("API key") {
-                    SecureField("paste key from server", text: serverKeyBinding)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                HStack {
-                    Button("test connection") {
-                        testConnection()
-                    }
-                    .disabled(!appState.config.isUploadConfigured || isTesting)
-
-                    if isTesting {
-                        ProgressView()
-                            .scaleEffect(0.5)
-                    } else {
-                        testResultIcon
-                    }
-                }
-            }
-            .padding(.vertical, 4)
+        .onAppear {
+            if observerURL.isEmpty { observerURL = appState.config.serverURL ?? "" }
+            if observerKey.isEmpty { observerKey = appState.config.serverKey ?? "" }
         }
     }
 
     @ViewBuilder
-    private var serviceSetupSection: some View {
-        GroupBox("connect to solstone service") {
+    private var serviceSection: some View {
+        GroupBox("service") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("connect to a solstone service to store and search your captures.")
+                Link("instructions at solstone.app/install", destination: URL(string: "https://solstone.app/install")!)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
 
-                // Local detection
                 HStack {
-                    Button("detect local service") {
+                    Button("detect local install") {
                         Task { await detectLocalService() }
                     }
                     .disabled(localDetectDisabled)
@@ -437,52 +375,54 @@ struct SettingsView: View {
                     }
                 }
 
-                // Observer service option
-                Button(observerExpanded ? "hide observer setup" : "connect to observer service...") {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        observerExpanded.toggle()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("service host").font(.caption).foregroundStyle(.secondary)
+                    TextField("localhost, host:port, or https://...", text: $observerURL)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("key").font(.caption).foregroundStyle(.secondary)
+                    TextField("paste key from server", text: $observerKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                HStack {
+                    Button("test connection") {
+                        testServiceConnection()
+                    }
+                    .disabled(observerURL.isEmpty || observerKey.isEmpty || isTesting)
+
+                    if isTesting {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                    } else {
+                        testResultIcon
                     }
                 }
-                .buttonStyle(.link)
-                .font(.callout)
 
-                if observerExpanded {
-                    VStack(alignment: .leading, spacing: 8) {
-                        LabeledContent("server URL") {
-                            TextField("https://solstone.example.com", text: $observerURL)
-                                .textFieldStyle(.roundedBorder)
-                        }
-
-                        LabeledContent("API key") {
-                            SecureField("paste key from server", text: $observerKey)
-                                .textFieldStyle(.roundedBorder)
-                        }
-
-                        HStack {
-                            Spacer()
-                            if observerTesting {
-                                ProgressView()
-                                    .scaleEffect(0.5)
-                                    .frame(width: 16, height: 16)
-                            }
-                            if let error = observerError {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.red)
-                                Text(error)
-                                    .font(.caption)
-                                    .foregroundStyle(.red)
-                            }
-                            Button("connect") {
-                                Task { await connectObserverService() }
-                            }
-                            .disabled(observerURL.isEmpty || observerKey.isEmpty || observerTesting)
-                        }
+                Toggle("pause sync", isOn: Binding(
+                    get: { appState.config.syncPaused },
+                    set: { newValue in
+                        var config = appState.config
+                        config.syncPaused = newValue
+                        appState.updateConfig(config)
                     }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
+                ))
+                .disabled(observerURL.isEmpty || observerKey.isEmpty)
             }
             .padding(.vertical, 4)
         }
+    }
+
+    /// Normalizes flexible host input to a full URL.
+    /// Accepts: "localhost", "myhost:5015", "https://myhost", full URLs.
+    private func normalizeServerURL(_ input: String) -> String {
+        let trimmed = input.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
+            return trimmed
+        }
+        return "http://\(trimmed.contains(":") ? trimmed : "\(trimmed):5015")"
     }
 
     // MARK: - Service Connection Logic
@@ -506,7 +446,9 @@ struct SettingsView: View {
                 localStatus = .failed("local service not reachable — \(error)")
                 return
             }
-            saveServiceAndStart(url: Self.localServerURL, key: existingKey)
+            observerURL = Self.localServerURL
+            observerKey = existingKey
+            saveService(url: Self.localServerURL, key: existingKey)
             localStatus = .connected
             return
         }
@@ -520,7 +462,6 @@ struct SettingsView: View {
         }
         Logger.setup.info("local detect: sol found at \(solPath, privacy: .public)")
 
-        // Run observer create
         let result = await runSolObserverCreate(solPath: solPath)
         switch result {
         case .success(let key):
@@ -532,7 +473,9 @@ struct SettingsView: View {
                 localStatus = .failed("registered but can't connect — \(error)")
                 return
             }
-            saveServiceAndStart(url: Self.localServerURL, key: key)
+            observerURL = Self.localServerURL
+            observerKey = key
+            saveService(url: Self.localServerURL, key: key)
             localStatus = .connected
         case .failure(let reason):
             Logger.setup.info("local detect: CLI failed — \(reason, privacy: .public)")
@@ -540,34 +483,31 @@ struct SettingsView: View {
         }
     }
 
-    private func connectObserverService() async {
-        observerTesting = true
-        observerError = nil
-
-        let error = await UploadCoordinator.testConnection(
-            serverURL: observerURL, serverKey: observerKey
-        )
-        observerTesting = false
-
-        if let error {
-            observerError = error
-        } else {
-            saveServiceAndStart(url: observerURL, key: observerKey)
+    private func testServiceConnection() {
+        let url = normalizeServerURL(observerURL)
+        let key = observerKey
+        isTesting = true
+        testResult = .none
+        Task {
+            let error = await UploadCoordinator.testConnection(serverURL: url, serverKey: key)
+            await MainActor.run {
+                if let error {
+                    testResult = .failure(error)
+                } else {
+                    testResult = .success
+                    observerURL = url
+                    saveService(url: url, key: key)
+                }
+                isTesting = false
+            }
         }
     }
 
-    private func saveServiceAndStart(url: String, key: String) {
+    private func saveService(url: String, key: String) {
         var config = appState.config
         config.serverURL = url
         config.serverKey = key
         appState.updateConfig(config)
-
-        // Open browser to solstone service
-        if let browserURL = URL(string: url) {
-            NSWorkspace.shared.open(browserURL)
-        }
-
-        // Try recording — startRecording sets screenRecordingGranted based on result
         if appState.microphoneGranted {
             Task {
                 await appState.startRecording()
@@ -1084,27 +1024,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Actions
-
-    private func testConnection() {
-        guard let serverURL = appState.config.serverURL,
-              let serverKey = appState.config.serverKey else { return }
-
-        isTesting = true
-        testResult = .none
-
-        Task {
-            let error = await UploadCoordinator.testConnection(serverURL: serverURL, serverKey: serverKey)
-            await MainActor.run {
-                if let error = error {
-                    testResult = .failure(error)
-                } else {
-                    testResult = .success
-                }
-                isTesting = false
-            }
-        }
-    }
 }
 
 /// Row view for a microphone in the priority list

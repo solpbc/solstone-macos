@@ -12,11 +12,6 @@ struct MenuContent: View {
         // Status section
         Section {
             statusRow
-            if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused
-                && appState.config.isUploadConfigured {
-                Text(syncStatusText)
-            }
-            uploadStatusRow
         }
 
         Divider()
@@ -91,26 +86,14 @@ struct MenuContent: View {
         if !appState.isRecording {
             return "not recording"
         }
-        return "observing"
-    }
-
-    private var syncStatusText: String {
         if appState.config.syncPaused {
-            return "sync: paused"
+            return "observing - sync paused"
         }
         switch appState.uploadCoordinator.status {
-        case .notSynced:
-            return "sync: pending"
-        case .syncing(let checked, let total):
-            return "sync: checking (\(checked)/\(total))"
-        case .synced:
-            return "sync: up to date"
-        case .uploading:
-            return "sync: uploading"
-        case .retrying(_, let attempts):
-            return "sync: retrying (\(attempts))"
-        case .offline:
-            return "sync: offline"
+        case .synced, .syncing, .uploading:
+            return "observing - connected"
+        case .notSynced, .retrying, .offline:
+            return "observing - offline"
         }
     }
 
@@ -161,22 +144,4 @@ struct MenuContent: View {
 
     // MARK: - Upload Status Row
 
-    @ViewBuilder
-    private var uploadStatusRow: some View {
-        if appState.config.isUploadConfigured {
-            if appState.config.syncPaused {
-                Button("resume sync") {
-                    var config = appState.config
-                    config.syncPaused = false
-                    appState.updateConfig(config)
-                }
-            } else {
-                Button("pause sync") {
-                    var config = appState.config
-                    config.syncPaused = true
-                    appState.updateConfig(config)
-                }
-            }
-        }
-    }
 }
