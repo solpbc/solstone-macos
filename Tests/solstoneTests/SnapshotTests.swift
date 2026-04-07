@@ -235,6 +235,15 @@ struct SnapshotTests {
         )
     }
 
+    @Test func settingsHelp() throws {
+        let state = AppState.forSnapshot()
+        try render(
+            SettingsView(appState: state, selectedTab: .help),
+            size: settingsSize,
+            to: "settings-help.png"
+        )
+    }
+
     private let aboutSize = CGSize(width: 300, height: 390)
 
     @Test func about() throws {

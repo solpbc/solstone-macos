@@ -26,7 +26,7 @@ struct MicrophoneDisplayEntry: Identifiable {
 /// Settings window for configuring server upload
 struct SettingsView: View {
     enum Tab: Hashable {
-        case permissions, observer, service, microphones, privacy, status
+        case permissions, observer, service, microphones, privacy, status, help
     }
 
     @Bindable var appState: AppState
@@ -109,6 +109,10 @@ struct SettingsView: View {
             permissionsTab
                 .tag(Tab.permissions)
                 .tabItem { Label("permissions", systemImage: "lock.shield") }
+
+            helpTab
+                .tag(Tab.help)
+                .tabItem { Label("help", systemImage: "questionmark.circle") }
         }
         .padding(20)
         .frame(minWidth: 580, minHeight: 380)
@@ -118,6 +122,7 @@ struct SettingsView: View {
                 switch pending {
                 case "permissions": selectedTab = .permissions
                 case "service": selectedTab = .service
+                case "help": selectedTab = .help
                 default: break
                 }
                 appState.pendingSettingsTab = nil
@@ -1031,6 +1036,76 @@ struct SettingsView: View {
             Image(systemName: "xmark.circle.fill")
                 .foregroundStyle(.red)
                 .help(message)
+        }
+    }
+
+    // MARK: - Help Tab
+
+    private var agentInstructions: String {
+        """
+        this is solstone-macos, a screen and audio observer for solstone.
+        installed at: \(Bundle.main.bundlePath)
+        captures: ~/Library/Application Support/Solstone/captures/
+        logs: /usr/bin/log stream --predicate 'subsystem == "app.solstone.observer"' --level debug
+        service: \(appState.config.serverURL ?? "not configured")
+
+        if the observer isn't recording, check settings → permissions.
+        if it's not syncing, check settings → service.
+        source: https://github.com/solpbc/solstone-macos
+        """
+    }
+
+    private var helpTab: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("use your favorite coding agent with this block to give it context about solstone observer.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            GroupBox("agent instructions") {
+                VStack(alignment: .trailing, spacing: 8) {
+                    ScrollView {
+                        Text(agentInstructions)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(height: 160)
+
+                    Button("copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(agentInstructions, forType: .string)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            GroupBox("icon states") {
+                HStack(spacing: 24) {
+                    HStack(spacing: 6) {
+                        bundleImage("sol-ring-template", isTemplate: true)
+                            .frame(width: 16, height: 16)
+                        Text("observing, connected")
+                    }
+                    HStack(spacing: 6) {
+                        bundleImage("sol-ring-icon-half-template", isTemplate: true)
+                            .frame(width: 16, height: 16)
+                        Text("observing, offline")
+                    }
+                    HStack(spacing: 6) {
+                        bundleImage("sol-ring-icon-paused-template", isTemplate: true)
+                            .frame(width: 16, height: 16)
+                        Text("paused or stopped")
+                    }
+                    HStack(spacing: 6) {
+                        bundleImage("sol-ring-icon-error-template", isTemplate: true)
+                            .frame(width: 16, height: 16)
+                        Text("error")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+
+            Spacer()
         }
     }
 
