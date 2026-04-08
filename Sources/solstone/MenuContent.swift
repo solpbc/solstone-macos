@@ -18,17 +18,12 @@ struct MenuContent: View {
 
         Section {
             if appState.config.isUploadConfigured {
-                switch appState.uploadCoordinator.status {
-                case .synced, .syncing, .uploading:
-                    Button("open web portal") {
-                        NSWorkspace.shared.open(URL(string: appState.config.serverURL!)!)
-                    }
-                default:
-                    EmptyView()
+                Button("open journal") {
+                    NSWorkspace.shared.open(URL(string: appState.config.serverURL!)!)
                 }
             }
 
-            Button("show captures in finder") {
+            Button("show captures in Finder") {
                 NSWorkspace.shared.open(appState.storageManager.baseDirectory)
             }
         }
@@ -47,7 +42,7 @@ struct MenuContent: View {
                 openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)
             }
-            Button("about") {
+            Button("about solstone observer") {
                 openWindow(id: "about")
                 NSApp.activate(ignoringOtherApps: true)
             }
@@ -89,21 +84,25 @@ struct MenuContent: View {
             }
             .foregroundStyle(.red)
         } else if appState.isRecording && !appState.config.isUploadConfigured && !appState.isPaused && !appState.pauseManager.isPaused {
-            Button("observing - no service →") {
+            Button("observing - local only →") {
                 appState.pendingSettingsTab = "service"
                 openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)
             }
         } else if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused {
-            switch appState.uploadCoordinator.status {
-            case .offline, .retrying:
-                Button("observing - offline (recording locally) →") {
-                    appState.pendingSettingsTab = "status"
-                    openWindow(id: "settings")
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-            default:
+            if appState.config.syncPaused {
                 Text(recordingStatusText)
+            } else {
+                switch appState.uploadCoordinator.status {
+                case .offline, .retrying:
+                    Button("observing - offline (recording locally) →") {
+                        appState.pendingSettingsTab = "status"
+                        openWindow(id: "settings")
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
+                default:
+                    Text(recordingStatusText)
+                }
             }
         } else {
             Text(recordingStatusText)
@@ -112,13 +111,13 @@ struct MenuContent: View {
 
     private var recordingStatusText: String {
         if appState.pauseManager.isPaused {
-            return "paused - not observing"
+            return "paused"
         }
         if appState.isPaused {
-            return "paused - not observing"
+            return "paused"
         }
         if !appState.isRecording {
-            return "not recording"
+            return "stopped"
         }
         if appState.config.syncPaused {
             return "observing - sync paused"
@@ -139,9 +138,6 @@ struct MenuContent: View {
     private var pauseResumeSection: some View {
         if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused {
             Menu("pause") {
-                Button("5 minutes") {
-                    appState.pauseManager.pause(for: .minutes(5))
-                }
                 Button("15 minutes") {
                     appState.pauseManager.pause(for: .minutes(15))
                 }
@@ -151,10 +147,7 @@ struct MenuContent: View {
                 Button("1 hour") {
                     appState.pauseManager.pause(for: .minutes(60))
                 }
-                Button("2 hours") {
-                    appState.pauseManager.pause(for: .minutes(120))
-                }
-                Button("indefinitely") {
+                Button("until I resume") {
                     appState.pauseManager.pause(for: .indefinite)
                 }
             }
@@ -169,7 +162,7 @@ struct MenuContent: View {
                     appState.pauseManager.resume()
                 }
             }
-        } else if !appState.isRecording && appState.errorMessage == nil {
+        } else if !appState.isRecording && appState.errorMessage == nil && !permissionsMissing {
             Button("start recording") {
                 Task {
                     await appState.startRecording()
