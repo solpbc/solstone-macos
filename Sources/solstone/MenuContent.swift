@@ -16,20 +16,6 @@ struct MenuContent: View {
 
         Divider()
 
-        Section {
-            if appState.config.isUploadConfigured {
-                Button("open journal") {
-                    NSWorkspace.shared.open(URL(string: appState.config.serverURL!)!)
-                }
-            }
-
-            Button("show captures in Finder") {
-                NSWorkspace.shared.open(appState.storageManager.baseDirectory)
-            }
-        }
-
-        Divider()
-
         // Pause / Resume / Start recording controls
         Section {
             pauseResumeSection
@@ -38,6 +24,11 @@ struct MenuContent: View {
         Divider()
 
         Section {
+            if appState.config.isUploadConfigured {
+                Button("open journal") {
+                    NSWorkspace.shared.open(URL(string: appState.config.serverURL!)!)
+                }
+            }
             Button("settings...") {
                 openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)

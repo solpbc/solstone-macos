@@ -320,6 +320,13 @@ struct SettingsView: View {
                     Stepper("\(appState.config.localRetentionMB) MB", value: localRetentionBinding, in: 50...10000, step: 50)
                 }
                 .padding(.vertical, 4)
+
+                LabeledContent("cache folder") {
+                    Button("open in Finder") {
+                        NSWorkspace.shared.open(appState.storageManager.baseDirectory)
+                    }
+                }
+                .padding(.vertical, 4)
                 }
             }
             .task {
