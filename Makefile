@@ -1,4 +1,4 @@
-.PHONY: build release release-universal run clean test snapshot bundle bundle-universal install open reset cert check-cert icons check-icons-deps
+.PHONY: build release release-universal run clean test snapshot bundle bundle-universal install setup install-app open reset cert check-cert icons check-icons-deps check-dev-deps
 
 # Code signing identity — create once via Keychain Access → Certificate Assistant → Create a Certificate
 # Name: "solstone dev", Identity Type: Self Signed Root, Certificate Type: Code Signing, validity: 3650 days
@@ -43,6 +43,12 @@ test:
 snapshot:
 	swift test --filter Snapshot
 
+check-dev-deps:
+	@xcodebuild -version > /dev/null 2>&1 || \
+		{ echo "error: Xcode is required for local builds"; \
+		  echo "       install the full Xcode app from the Mac App Store, then run it once"; \
+		  exit 1; }
+
 check-cert:
 	@security find-identity -v -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"' || \
 		{ echo "error: signing identity '$(SIGN_IDENTITY)' not found in keychain"; \
@@ -75,8 +81,27 @@ bundle-universal: release-universal
 	@codesign --force --deep --sign "$(SIGN_IDENTITY)" --entitlements Sources/solstone/entitlements.plist solstone.app
 	@echo "Created universal solstone.app"
 
-# Install to /Applications
-install: bundle
+# Install development dependencies needed for local build workflows
+install: check-dev-deps
+	@if command -v brew > /dev/null 2>&1; then \
+		if command -v rsvg-convert > /dev/null 2>&1; then \
+			echo "librsvg already installed"; \
+		else \
+			echo "Installing librsvg via Homebrew..."; \
+			brew install librsvg; \
+		fi; \
+	else \
+		echo "Homebrew not found; skipping optional icon dependency (librsvg)"; \
+		echo "Install Homebrew and run 'brew install librsvg' if you need 'make icons'"; \
+	fi
+	@echo "Development dependencies are ready."
+	@echo "Use 'make build' for a debug build or 'make install-app' to bundle and copy the app to /Applications."
+
+# Alias for install
+setup: install
+
+# Install the bundled app to /Applications
+install-app: bundle
 	@rm -rf /Applications/solstone.app
 	@cp -r solstone.app /Applications/
 	@echo "Installed to /Applications/solstone.app"
@@ -123,7 +148,7 @@ cert:
 		-D "$(SIGN_IDENTITY)" -t private \
 		"$$HOME/Library/Keychains/login.keychain-db" 2>/dev/null || true; \
 	rm -rf $$TMPDIR; \
-	echo "Done — '$(SIGN_IDENTITY)' is ready. Run 'make install' to rebuild with the new identity."
+	echo "Done — '$(SIGN_IDENTITY)' is ready. Run 'make install-app' to rebuild with the new identity."
 
 # Generate icon assets from SVG sources in assets/
 # Requires: rsvg-convert (brew install librsvg), iconutil (built-in macOS)

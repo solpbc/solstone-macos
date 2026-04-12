@@ -24,8 +24,12 @@ make test
 # Create .app bundle
 make bundle
 
-# Install to /Applications
+# Install local development/build dependencies
 make install
+make setup
+
+# Install to /Applications
+make install-app
 
 # Clean all build artifacts
 make clean

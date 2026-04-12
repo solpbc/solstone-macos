@@ -34,11 +34,13 @@ if the app exists and shows as connected, you're done.
    git clone https://github.com/solpbc/solstone-macos.git
    cd solstone-macos
    ```
-   then build:
+   then install local build dependencies and the app:
    ```
    make install
+   # or: make setup
+   make install-app
    ```
-   this builds a release binary, creates an app bundle, and copies it to `/Applications`.
+   `make install` and `make setup` prepare the development environment. `make install-app` builds a release binary, creates an app bundle, and copies it to `/Applications`.
 
 2. if macOS blocks the unsigned app, clear the quarantine flag:
    ```

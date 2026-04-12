@@ -31,9 +31,11 @@ Solstone Capture is a macOS status bar app for continuous screen and audio recor
 git clone https://github.com/solpbc/solstone-macos.git
 cd solstone-macos
 make install
+make setup
+make install-app
 ```
 
-This builds a release binary, creates an app bundle, and installs to `/Applications`. The app is unsigned — if macOS Gatekeeper blocks it, either right-click and choose "Open" or run:
+`make install` and `make setup` both prepare the local development environment. `make install-app` builds a release binary, creates an app bundle, and installs it to `/Applications`. The app is unsigned — if macOS Gatekeeper blocks it, either right-click and choose "Open" or run:
 
 ```bash
 xattr -cr /Applications/solstone.app
@@ -46,9 +48,11 @@ xattr -cr /Applications/solstone.app
 - `make run` - Run the app
 - `make test` - Run tests
 - `make bundle` - Create .app bundle
-- `make install` - Install to /Applications
+- `make install` - Install local development/build dependencies
+- `make setup` - Alias for `make install`
+- `make install-app` - Install the app to /Applications
 - `make clean` - Clean all build artifacts
-- `make reset-permissions` - Reset TCC permissions for testing
+- `make reset` - Reset TCC permissions for testing
 
 ## Architecture
 
