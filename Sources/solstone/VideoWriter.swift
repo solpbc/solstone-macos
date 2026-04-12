@@ -7,7 +7,7 @@ import CoreMedia
 import CoreVideo
 import os
 
-/// Manages video capture and .mov file writing using hardware HEVC encoding
+/// Manages video capture and .mov file writing using hardware H.264 encoding
 public final class VideoWriter: @unchecked Sendable {
     private let writer: AVAssetWriter
     private let videoInput: AVAssetWriterInput
@@ -58,7 +58,7 @@ public final class VideoWriter: @unchecked Sendable {
         ]
 
         let videoSettings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.hevc,
+            AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
             AVVideoColorPropertiesKey: colorProps,

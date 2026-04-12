@@ -56,7 +56,7 @@ xattr -cr /Applications/solstone.app
 
 ## Architecture
 
-This is a two-package Swift Package Manager repository. **SolstoneCapture** is the app layer with the SwiftUI menu bar interface, application state, capture orchestration, segment management, upload flow, and pause controls. **SolstoneCaptureCore** is the recording layer with HEVC video encoding, per-source audio capture, multi-track audio remixing, microphone monitoring, and window filtering.
+This is a two-package Swift Package Manager repository. **SolstoneCapture** is the app layer with the SwiftUI menu bar interface, application state, capture orchestration, segment management, upload flow, and pause controls. **SolstoneCaptureCore** is the recording layer with H.264 video encoding, per-source audio capture, multi-track audio remixing, microphone monitoring, and window filtering.
 
 ## File Storage
 

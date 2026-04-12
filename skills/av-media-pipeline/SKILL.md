@@ -1,18 +1,18 @@
 ---
 name: av-media-pipeline
 description: >
-  AVFoundation media pipeline for HEVC video encoding, multi-track audio recording,
+  AVFoundation media pipeline for H.264 video encoding, multi-track audio recording,
   and intelligent audio remixing. Covers AVAssetWriter, AVAudioEngine, AudioRemixer,
   SoundAnalysis, and CMTime patterns. Use when working with video/audio recording,
   encoding, format conversion, or the remix pipeline.
 ---
 
-## HEVC Video Encoding
+## H.264 Video Encoding
 
 `VideoWriter` wraps AVAssetWriter for 1fps screen capture to `.mp4`. Source: `SolstoneCaptureCore/.../VideoWriter.swift`, `SolstoneCapture/.../ScreenshotCapturer.swift`
 
-- **Codec:** `AVVideoCodecType.hevc` (hardware-accelerated). BT.709 color. Frame reordering disabled.
-- **Pixel format:** `kCVPixelFormatType_420YpCbCr8BiPlanarFullRange` — native HEVC encoder format. SCStream delivers this directly, no CPU color conversion.
+- **Codec:** `AVVideoCodecType.h264` (hardware-accelerated). BT.709 color. Frame reordering disabled.
+- **Pixel format:** `kCVPixelFormatType_420YpCbCr8BiPlanarFullRange` — native hardware encoder format. SCStream delivers this directly, no CPU color conversion.
 - **Keyframe interval: 90s.** Both `AVVideoMaxKeyFrameIntervalKey` and `AVVideoMaxKeyFrameIntervalDurationKey` set to 90. At 1fps = ~3-4 keyframes per 5-min segment. Maximizes P-frame compression for mostly-static screens. Tradeoff: corruption loses up to 90s.
 - **Fragment interval: 30s.** `movieFragmentInterval = CMTime(seconds: 30, preferredTimescale: 1)` — fragmented MP4 for crash resilience. Without this, crash corrupts entire file. With it, lose at most 30s.
 - **Frame flow:** SCStream callback -> skip idle frames (`SCFrameStatus == .idle`) -> `VideoWriter.appendFrame(pixelBuffer, presentationTime:)` -> check `isReadyForMoreMediaData`, drop if not ready. PTS from `Date().timeIntervalSince(captureStartTime)` at timescale 600.

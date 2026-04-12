@@ -58,7 +58,7 @@ This is a single-package Swift repository using Swift Package Manager with Swift
 - **PauseManager.swift** - Tracks pause state with timed auto-resume
 - **StorageManager.swift** - File organization and segment directory creation
 - **AudioDeviceMonitor.swift** - Monitors audio device additions/removals
-- **VideoWriter** - HEVC hardware encoding to .mp4
+- **VideoWriter** - H.264 hardware encoding to .mp4
 - **SingleTrackAudioWriter** - Single-source M4A recording with timing metadata
 - **AudioRemixer** - Combines individual M4A files into multi-track output with silence detection
 - **SystemAudioStreamOutput** - SCStreamOutput routing system audio to SingleTrackAudioWriter
@@ -114,6 +114,6 @@ Specialized knowledge packs in `skills/`, symlinked from `.claude/skills/` and `
 | `swift-concurrency` | Writing or reviewing concurrent code, resolving strict concurrency compiler errors, making isolation decisions (@MainActor vs actor vs @unchecked Sendable) |
 | `screencapturekit` | Working with SCStream, SCContentFilter, display capture, system audio capture, or frame status optimization |
 | `coreaudio-hal` | Working with AudioObjectPropertyAddress, device enumeration, property listeners, device pinning, or transport types |
-| `av-media-pipeline` | Working with HEVC encoding, AVAssetWriter, AVAudioEngine, audio format conversion, the remix pipeline, or SoundAnalysis |
+| `av-media-pipeline` | Working with H.264 encoding, AVAssetWriter, AVAudioEngine, audio format conversion, the remix pipeline, or SoundAnalysis |
 | `macos-app-lifecycle` | Working with MenuBarExtra, TCC permissions, login items, graceful shutdown, configuration, or DMG packaging |
 | `live-logging` | Debugging the running app with log stream, adding log statements, Logger categories, privacy annotations, or troubleshooting logging issues |
