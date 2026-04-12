@@ -52,7 +52,7 @@ public final class UploadCoordinator {
             await syncService.configure(
                 serverURL: config.serverURL,
                 serverKey: config.serverKey,
-                localRetentionMB: config.localRetentionMB,
+                cacheRetentionDays: config.cacheRetentionDays,
                 syncPaused: config.syncPaused
             )
         }
@@ -81,7 +81,7 @@ public final class UploadCoordinator {
             await syncService.configure(
                 serverURL: newConfig.serverURL,
                 serverKey: newConfig.serverKey,
-                localRetentionMB: newConfig.localRetentionMB,
+                cacheRetentionDays: newConfig.cacheRetentionDays,
                 syncPaused: newConfig.syncPaused
             )
 
