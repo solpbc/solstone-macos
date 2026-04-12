@@ -28,7 +28,7 @@ public actor SyncService {
 
     private var serverURL: String?
     private var serverKey: String?
-    private var localRetentionMB: Int = AppConfig.Defaults.localRetentionMB
+    private var cacheRetentionDays: Int = AppConfig.Defaults.cacheRetentionDays
     private var syncPaused: Bool = false
 
     // MARK: - State
@@ -74,12 +74,12 @@ public actor SyncService {
     public func configure(
         serverURL: String?,
         serverKey: String?,
-        localRetentionMB: Int,
+        cacheRetentionDays: Int,
         syncPaused: Bool
     ) {
         self.serverURL = serverURL
         self.serverKey = serverKey
-        self.localRetentionMB = localRetentionMB
+        self.cacheRetentionDays = cacheRetentionDays
         self.syncPaused = syncPaused
     }
 
@@ -227,8 +227,7 @@ public actor SyncService {
             }
         }
 
-        // TODO: Re-enable cleanup once sync is working reliably
-        // await cleanupOldSegments(serverURL: serverURL, serverKey: serverKey)
+        await cleanupSyncedSegments(serverURL: serverURL, serverKey: serverKey)
 
         progressContinuation.yield(.syncComplete)
         Logger.upload.info("Sync complete")
@@ -477,46 +476,56 @@ public actor SyncService {
 
     // MARK: - Storage Cleanup
 
-    private func cleanupOldSegments(serverURL: String, serverKey: String) async {
-        let retentionBytes = Int64(localRetentionMB) * 1024 * 1024
-        let fm = FileManager.default
+    /// Delete synced segments older than cacheRetentionDays.
+    /// Safety gates: (1) day in syncedDays, (2) age check, (3) server reachable, (4) per-segment server confirmation.
+    private func cleanupSyncedSegments(serverURL: String, serverKey: String) async {
+        guard cacheRetentionDays >= 0 else {
+            Logger.upload.info("Cache retention: keep forever, skipping cleanup")
+            return
+        }
 
         let segmentsByDay = collectSegmentsByDay()
         guard !segmentsByDay.isEmpty else { return }
 
-        // Flatten to list (oldest first for cleanup)
-        var segments = segmentsByDay.keys.sorted().flatMap { day in
-            segmentsByDay[day]?.reversed() ?? []  // Reverse to get oldest first
-        }
-        guard !segments.isEmpty else { return }
+        let fm = FileManager.default
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
 
-        // Calculate total size
-        var totalSize: Int64 = 0
-        var segmentSizes: [URL: Int64] = [:]
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyyMMdd"
 
-        for segmentURL in segments {
-            let size = directorySize(segmentURL)
-            segmentSizes[segmentURL] = size
-            totalSize += size
-        }
-
-        Logger.upload.info("Total storage: \(totalSize / 1024 / 1024, privacy: .public) MB, limit: \(self.localRetentionMB, privacy: .public) MB")
-
-        // Cache server segments by day
+        // Cache server segments per day to avoid redundant requests
         var serverSegmentsCache: [String: [String: ServerSegmentInfo]] = [:]
 
-        // Delete oldest uploaded segments until under limit
-        while totalSize > retentionBytes && segments.count > 1 {
-            let oldestSegment = segments.removeFirst()
-            let (day, segment) = convertSegmentPath(oldestSegment)
+        for (day, segments) in segmentsByDay.sorted(by: { $0.key < $1.key }) {
+            // Gate 1: day must be fully synced
+            guard syncedDays.contains(day) else {
+                Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - not fully synced")
+                continue
+            }
 
-            // Get server segments for this day (cached)
+            // Gate 2: age check
+            guard let dayDate = dateFormatter.date(from: day) else {
+                Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - cannot parse date")
+                continue
+            }
+            let age = calendar.dateComponents([.day], from: calendar.startOfDay(for: dayDate), to: today).day ?? 0
+            guard cacheRetentionDays == 0 || age > cacheRetentionDays else {
+                Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - within retention window (\(age, privacy: .public)d <= \(self.cacheRetentionDays, privacy: .public)d)")
+                continue
+            }
+
+            // Gate 3: server must be reachable and return segment data
             if serverSegmentsCache[day] == nil {
-                if let serverSegments = try? await client.getServerSegments(
-                    serverURL: serverURL,
-                    serverKey: serverKey,
-                    day: day
-                ) {
+                do {
+                    guard let serverSegments = try await client.getServerSegments(
+                        serverURL: serverURL,
+                        serverKey: serverKey,
+                        day: day
+                    ) else {
+                        Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - server returned nil")
+                        continue
+                    }
                     var byKey: [String: ServerSegmentInfo] = [:]
                     for seg in serverSegments {
                         byKey[seg.key] = seg
@@ -525,45 +534,37 @@ public actor SyncService {
                         }
                     }
                     serverSegmentsCache[day] = byKey
-                } else {
-                    serverSegmentsCache[day] = [:]
-                }
-            }
-            let serverSegments = serverSegmentsCache[day] ?? [:]
-
-            // Check if this segment exists on server
-            if serverSegments[segment] != nil {
-                let size = segmentSizes[oldestSegment] ?? 0
-                do {
-                    try fm.removeItem(at: oldestSegment)
-                    totalSize -= size
-                    Logger.upload.info("Deleted old segment: \(oldestSegment.lastPathComponent, privacy: .public) (\(size / 1024, privacy: .public) KB)")
-
-                    // Clean up empty date directory
-                    let dateDir = oldestSegment.deletingLastPathComponent()
-                    if let contents = try? fm.contentsOfDirectory(atPath: dateDir.path), contents.isEmpty {
-                        try? fm.removeItem(at: dateDir)
-                    }
                 } catch {
-                    Logger.upload.info("Failed to delete segment: \(error, privacy: .public)")
+                    Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - server unreachable: \(error.localizedDescription, privacy: .public)")
+                    continue
                 }
             }
-        }
-    }
+            let serverByKey = serverSegmentsCache[day] ?? [:]
 
-    private func directorySize(_ url: URL) -> Int64 {
-        let fm = FileManager.default
-        guard let contents = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.fileSizeKey]) else {
-            return 0
-        }
+            // Gate 4: per-segment server confirmation
+            for segmentURL in segments {
+                let (_, segment) = convertSegmentPath(segmentURL)
 
-        var size: Int64 = 0
-        for fileURL in contents {
-            if let fileSize = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                size += Int64(fileSize)
+                guard serverByKey[segment] != nil else {
+                    Logger.upload.info("Cleanup: keeping \(segment, privacy: .public) - not confirmed on server")
+                    continue
+                }
+
+                do {
+                    try fm.removeItem(at: segmentURL)
+                    Logger.upload.info("Cleanup: deleted \(segment, privacy: .public) (day \(day, privacy: .public))")
+                } catch {
+                    Logger.upload.info("Cleanup: failed to delete \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                }
+            }
+
+            // Clean up empty date directory
+            let dateDir = segments.first?.deletingLastPathComponent()
+            if let dateDir, let contents = try? fm.contentsOfDirectory(atPath: dateDir.path), contents.isEmpty {
+                try? fm.removeItem(at: dateDir)
+                Logger.upload.info("Cleanup: removed empty date directory \(dateDir.lastPathComponent, privacy: .public)")
             }
         }
-        return size
     }
 
     // MARK: - Synced Days Persistence

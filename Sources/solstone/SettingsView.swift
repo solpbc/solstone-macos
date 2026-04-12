@@ -73,12 +73,12 @@ struct SettingsView: View {
 
     // MARK: - Auto-saving Bindings
 
-    private var localRetentionBinding: Binding<Int> {
+    private var cacheRetentionBinding: Binding<Int> {
         Binding(
-            get: { appState.config.localRetentionMB },
+            get: { appState.config.cacheRetentionDays },
             set: { newValue in
                 var config = appState.config
-                config.localRetentionMB = newValue
+                config.cacheRetentionDays = newValue
                 appState.updateConfig(config)
             }
         )
@@ -316,8 +316,16 @@ struct SettingsView: View {
                 }
                 .padding(.vertical, 4)
 
-                LabeledContent("local storage limit") {
-                    Stepper("\(appState.config.localRetentionMB) MB", value: localRetentionBinding, in: 50...10000, step: 50)
+                LabeledContent("cache retention") {
+                    Picker("", selection: cacheRetentionBinding) {
+                        Text("don't keep").tag(0)
+                        Text("7 days").tag(7)
+                        Text("14 days").tag(14)
+                        Text("30 days").tag(30)
+                        Text("60 days").tag(60)
+                        Text("forever").tag(-1)
+                    }
+                    .frame(width: 120)
                 }
                 .padding(.vertical, 4)
 
@@ -336,7 +344,7 @@ struct SettingsView: View {
                 }
             }
 
-            Text("when the limit is reached, the oldest uploaded segments are removed from your mac. unuploaded segments are never deleted.")
+            Text("synced segments older than the retention period are removed from your mac. unsynced segments are never deleted.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)
