@@ -25,36 +25,49 @@ if the app exists and shows as connected, you're done.
 ## what to sort out together
 
 - **Xcode availability.** check if `xcodebuild -version` works. if not, the human needs to install Xcode from the App Store before you can build.
+- **Code signing trust.** one step below (`make allow`) requires the human — macOS shows a system password dialog that cannot be automated or run over SSH. the agent can do everything else.
 
 ## install sequence
 
-1. if not already cloned, clone into solstone's observers directory and build:
+1. if not already cloned, clone into solstone's observers directory:
    ```
    cd "$(sol root)/observers"
    git clone https://github.com/solpbc/solstone-macos.git
    cd solstone-macos
    ```
-   then install local build dependencies and the app:
+
+2. install build dependencies and create a self-signed code signing certificate:
    ```
    make install
-   # or: make setup
+   make cert
+   ```
+   `make install` checks for Xcode and installs optional icon dependencies. `make cert` creates a local code signing certificate so the app gets a stable identity (TCC permissions survive rebuilds).
+
+3. **[human required]** trust the certificate — macOS will show a system password dialog:
+   ```
+   make allow
+   ```
+   this cannot be run by an agent or over SSH. the human enters their mac password once and they're done.
+
+4. build and install the app:
+   ```
    make install-app
    ```
-   `make install` and `make setup` prepare the development environment. `make install-app` builds a release binary, creates an app bundle, and copies it to `/Applications`.
+   this builds a release binary, signs it, bundles the app, and copies it to `/Applications`.
 
-2. if macOS blocks the unsigned app, clear the quarantine flag:
+5. if macOS blocks the app on first launch, clear the quarantine flag:
    ```
    xattr -cr /Applications/solstone.app
    ```
 
-3. launch the app:
+6. launch the app:
    ```
    open /Applications/solstone.app
    ```
 
-4. the app auto-registers with the solstone server at `http://localhost:5015`. your human needs to approve **screen recording** and **microphone** permission dialogs when macOS prompts for them.
+7. the app auto-registers with the solstone server at `http://localhost:5015`. your human needs to approve **screen recording** and **microphone** permission dialogs when macOS prompts for them.
 
-5. verify the menu bar icon appears and the observer is connected:
+8. verify the menu bar icon appears and the observer is connected:
    ```
    sol observer list
    ```

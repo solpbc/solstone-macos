@@ -1,8 +1,6 @@
-.PHONY: build release release-universal run clean test snapshot bundle bundle-universal install setup install-app open reset cert check-cert icons check-icons-deps check-dev-deps
+.PHONY: build release release-universal run clean test snapshot bundle bundle-universal install setup install-app open reset cert allow check-cert icons check-icons-deps check-dev-deps
 
-# Code signing identity — create once via Keychain Access → Certificate Assistant → Create a Certificate
-# Name: "solstone dev", Identity Type: Self Signed Root, Certificate Type: Code Signing, validity: 3650 days
-# Then: Get Info → Trust → "When using this certificate" → Always Trust
+# Code signing identity — run 'make cert' then 'make allow' to create and trust (one-time setup)
 SIGN_IDENTITY ?= solstone dev
 
 # Build debug version
@@ -50,10 +48,17 @@ check-dev-deps:
 		  exit 1; }
 
 check-cert:
-	@security find-identity -v -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"' || \
-		{ echo "error: signing identity '$(SIGN_IDENTITY)' not found in keychain"; \
-		  echo "       run 'make cert' once to create a local self-signing credential"; \
-		  exit 1; }
+	@if security find-identity -v -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"'; then \
+		exit 0; \
+	elif security find-identity -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"'; then \
+		echo "error: certificate '$(SIGN_IDENTITY)' exists but is not trusted"; \
+		echo "       run 'make allow' — macOS will ask for your password"; \
+		exit 1; \
+	else \
+		echo "error: signing identity '$(SIGN_IDENTITY)' not found in keychain"; \
+		echo "       run 'make cert' then 'make allow' to create one"; \
+		exit 1; \
+	fi
 
 # Create app bundle for distribution
 bundle: check-cert release
@@ -123,10 +128,14 @@ reset:
 
 # Create a self-signed code signing certificate in your login keychain (one-time setup).
 # Using a named cert instead of ad-hoc (-) gives a stable designated requirement so
-# TCC permissions survive rebuilds. Will prompt for your keychain password once.
+# TCC permissions survive rebuilds. Run 'make allow' after this to trust the certificate.
 cert:
 	@if security find-identity -v -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"'; then \
-		echo "Certificate '$(SIGN_IDENTITY)' already exists — nothing to do."; \
+		echo "Certificate '$(SIGN_IDENTITY)' already exists and is trusted — nothing to do."; \
+		exit 0; \
+	fi
+	@if security find-identity -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"'; then \
+		echo "Certificate '$(SIGN_IDENTITY)' exists but is not trusted — run 'make allow'."; \
 		exit 0; \
 	fi
 	@echo "Creating self-signed code signing certificate '$(SIGN_IDENTITY)'..."
@@ -142,13 +151,29 @@ cert:
 	security import $$TMPDIR/cert.p12 \
 		-k "$$HOME/Library/Keychains/login.keychain-db" \
 		-T /usr/bin/codesign -P "$$PASS"; \
-	security add-trusted-cert -r trustRoot \
-		-k "$$HOME/Library/Keychains/login.keychain-db" $$TMPDIR/cert.pem; \
-	security set-key-partition-list -S apple-tool:,apple: -k "" \
-		-D "$(SIGN_IDENTITY)" -t private \
-		"$$HOME/Library/Keychains/login.keychain-db" 2>/dev/null || true; \
 	rm -rf $$TMPDIR; \
-	echo "Done — '$(SIGN_IDENTITY)' is ready. Run 'make install-app' to rebuild with the new identity."
+	echo "Certificate created. Now run 'make allow' — macOS will ask for your password."
+
+# Trust the self-signed certificate for code signing (one-time setup).
+# This MUST be run by a human at the Mac — macOS shows a system password dialog
+# that cannot be bypassed or automated. Agents cannot run this step.
+allow:
+	@if security find-identity -v -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"'; then \
+		echo "Certificate '$(SIGN_IDENTITY)' is already trusted — nothing to do."; \
+		exit 0; \
+	fi
+	@security find-certificate -c "$(SIGN_IDENTITY)" -p \
+		"$$HOME/Library/Keychains/login.keychain-db" > /dev/null 2>&1 || \
+		{ echo "error: certificate '$(SIGN_IDENTITY)' not found — run 'make cert' first"; exit 1; }
+	@echo "Trusting certificate '$(SIGN_IDENTITY)' — macOS will ask for your password..."
+	@CERT=$$(security find-certificate -c "$(SIGN_IDENTITY)" -p \
+		"$$HOME/Library/Keychains/login.keychain-db"); \
+	TMPFILE=$$(mktemp); \
+	echo "$$CERT" > $$TMPFILE; \
+	security add-trusted-cert -r trustRoot \
+		-k "$$HOME/Library/Keychains/login.keychain-db" $$TMPFILE; \
+	rm -f $$TMPFILE; \
+	echo "Done — '$(SIGN_IDENTITY)' is trusted. Run 'make install-app' to build and install."
 
 # Generate icon assets from SVG sources in assets/
 # Requires: rsvg-convert (brew install librsvg), iconutil (built-in macOS)
