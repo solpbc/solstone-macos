@@ -263,6 +263,13 @@ public final class AppState {
         // Start polling permissions — auto-starts recording when ready
         startPermissionPolling()
 
+        // Listen for external defaults changes (e.g. `defaults write` from terminal)
+        Task { [weak self] in
+            for await _ in NotificationCenter.default.notifications(named: UserDefaults.didChangeNotification) {
+                self?.handleExternalDefaultsChange()
+            }
+        }
+
         // Set shared instance for app-wide access (e.g., termination handler)
         AppState.shared = self
     }
@@ -413,6 +420,26 @@ public final class AppState {
             // Resume polling to retry when permissions are restored
             if permissionPollTimer == nil {
                 startPermissionPolling()
+            }
+        }
+    }
+
+    /// Reloads config when an external process writes serverURL/serverKey to UserDefaults.
+    /// Guards against feedback loops: updateConfig() -> save() -> notification -> load() -> same values -> return.
+    private func handleExternalDefaultsChange() {
+        let fresh = AppConfig.load()
+
+        // Only react to server config changes — ignore unrelated defaults
+        guard fresh.serverURL != config.serverURL || fresh.serverKey != config.serverKey else {
+            return
+        }
+
+        Logger.general.info("External defaults change detected — reloading server config")
+        updateConfig(fresh)
+
+        if fresh.isUploadConfigured {
+            Task.detached { [uploadCoordinator] in
+                await uploadCoordinator?.syncOnStartup()
             }
         }
     }
