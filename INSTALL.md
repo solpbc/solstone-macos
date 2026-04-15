@@ -65,14 +65,29 @@ if the app exists and shows as connected, you're done.
    open /Applications/solstone.app
    ```
 
-7. the app auto-registers with the solstone server at `http://localhost:5015`. your human needs to approve **screen recording** and **microphone** permission dialogs when macOS prompts for them.
+7. register the observer and push config into the app. this creates the server-side registration and writes the credentials directly into the app's UserDefaults — the app detects the change automatically and starts syncing:
+   ```
+   key=$(sol observer --json create solstone-macos | jq -r .key)
+   defaults write app.solstone.observer serverURL "http://localhost:5015"
+   defaults write app.solstone.observer serverKey "$key"
+   ```
+   if `sol observer create` fails with "already exists", the observer was registered by a previous install. revoke and recreate:
+   ```
+   sol observer revoke solstone-macos
+   key=$(sol observer --json create solstone-macos | jq -r .key)
+   defaults write app.solstone.observer serverURL "http://localhost:5015"
+   defaults write app.solstone.observer serverKey "$key"
+   ```
 
-8. verify the menu bar icon appears and the observer is connected:
+8. your human needs to approve **screen recording** and **microphone** permission dialogs when macOS prompts for them.
+
+9. verify the menu bar icon appears and the observer is connected:
    ```
    sol observer list
    ```
 
 ## notes
 
-- if auto-registration fails (server not reachable), register manually with `sol observer create solstone-macos` and enter the server URL and API key in the app's setup screen.
+- the app detects `defaults write` changes automatically — no need to restart it after writing config.
+- if the agent flow above doesn't work, the human can click "connect to local service" in the app's settings as a fallback.
 - the app starts automatically at login once installed.
