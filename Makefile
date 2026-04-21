@@ -1,7 +1,25 @@
-.PHONY: build release release-universal run clean test snapshot bundle bundle-universal install setup install-app open reset cert allow check-cert icons check-icons-deps check-dev-deps
+.PHONY: build release release-universal run clean test snapshot bundle bundle-universal install setup install-app open reset cert allow check-cert icons check-icons-deps check-dev-deps \
+        signing-check unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg
 
 # Code signing identity — run 'make cert' then 'make allow' to create and trust (one-time setup)
 SIGN_IDENTITY ?= solstone dev
+
+# ---------------------------------------------------------------------------
+# Distribution signing (Apple Developer ID + notarization)
+#
+# Activated 2026-04-20 when the sol pbc Apple Developer Program went live
+# (team 7QCG8V4M6H). Certs live in a dedicated sol-signing keychain on
+# pro5e.local, isolated from the login keychain. Notarytool uses an ASC API
+# key (no app-specific password). See shared/vendors/apple.md and
+# cto/workspace/apple-signing-sequence-260420.md in the extro repo.
+# ---------------------------------------------------------------------------
+DEVELOPER_ID_APP       ?= Developer ID Application: sol pbc (7QCG8V4M6H)
+DEVELOPER_ID_INSTALLER ?= Developer ID Installer: sol pbc (7QCG8V4M6H)
+NOTARY_PROFILE         ?= sol-pbc-notary
+SIGNING_KEYCHAIN       ?= $(HOME)/Library/Keychains/sol-signing.keychain-db
+SIGNING_KC_PASS_FILE   ?= $(HOME)/.config/sol-pbc/signing/keychain-password
+DIST_VERSION           := $(shell /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Sources/solstone/Info.plist 2>/dev/null || echo 0.0.0)
+DMG_NAME               ?= solstone-$(DIST_VERSION).dmg
 
 # Build debug version
 build:
@@ -85,6 +103,92 @@ bundle-universal: release-universal
 	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
 	@codesign --force --deep --sign "$(SIGN_IDENTITY)" --entitlements Sources/solstone/entitlements.plist solstone.app
 	@echo "Created universal solstone.app"
+
+# =======================================================================
+# Distribution pipeline: Developer ID signed + notarized DMG
+#
+# Use `make release-dmg` to produce a signed, notarized, stapled DMG ready
+# to hand out for ad-hoc install. All signing runs headless over SSH using
+# the sol-signing keychain (see header). For local debug builds continue
+# to use `bundle` / `bundle-universal` (self-signed `solstone dev` cert).
+# =======================================================================
+
+# Read-only check that Developer ID certs + notary profile are ready.
+signing-check:
+	@security find-identity -v -p codesigning | grep -q '"$(DEVELOPER_ID_APP)"' || \
+		{ echo "error: '$(DEVELOPER_ID_APP)' not found in any keychain on the search list"; \
+		  echo "       ensure $(SIGNING_KEYCHAIN) is in 'security list-keychains -d user'"; \
+		  exit 1; }
+	@security find-identity -v | grep -q '"$(DEVELOPER_ID_INSTALLER)"' || \
+		{ echo "error: '$(DEVELOPER_ID_INSTALLER)' not found"; exit 1; }
+	@xcrun notarytool history --keychain-profile "$(NOTARY_PROFILE)" --keychain "$(SIGNING_KEYCHAIN)" > /dev/null 2>&1 || \
+		{ echo "error: notarytool profile '$(NOTARY_PROFILE)' not configured in $(SIGNING_KEYCHAIN)"; \
+		  echo "       store with: xcrun notarytool store-credentials '$(NOTARY_PROFILE)' --key <p8> --key-id <id> --issuer <issuer> --keychain $(SIGNING_KEYCHAIN)"; \
+		  exit 1; }
+	@echo "✓ Developer ID certs + notary profile ready"
+
+# Unlock the sol-signing keychain (no-op if already unlocked).
+unlock-signing:
+	@if [ -f "$(SIGNING_KC_PASS_FILE)" ]; then \
+		security unlock-keychain -p "$$(cat $(SIGNING_KC_PASS_FILE))" "$(SIGNING_KEYCHAIN)"; \
+	else \
+		echo "warn: $(SIGNING_KC_PASS_FILE) missing — signing keychain may be locked"; \
+	fi
+
+# Build a universal .app bundle signed with Developer ID Application + hardened runtime.
+# Separate from `bundle-universal` so distribution signing is additive, not destructive —
+# existing self-signed bundle target stays for local dev.
+bundle-dist: unlock-signing signing-check release-universal
+	@echo "Creating distribution app bundle..."
+	@rm -rf solstone.app
+	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources
+	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
+	@cp Sources/solstone/Info.plist solstone.app/Contents/
+	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
+	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		solstone.app/Contents/Resources/solstone_solstone.bundle
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		--entitlements Sources/solstone/entitlements.plist \
+		solstone.app
+	@codesign --verify --strict --deep --verbose=2 solstone.app
+	@echo "✓ Signed: solstone.app"
+
+# Create and sign the DMG.
+dmg: bundle-dist
+	@rm -f $(DMG_NAME)
+	@hdiutil create -volname "solstone" -srcfolder solstone.app -ov -format UDZO $(DMG_NAME)
+	@codesign --force --timestamp --sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" $(DMG_NAME)
+	@echo "✓ Built: $(DMG_NAME)"
+
+# Submit for notarization and block until Apple responds.
+notarize: dmg
+	@echo "Submitting $(DMG_NAME) for notarization (typically 1-5 min)…"
+	@xcrun notarytool submit $(DMG_NAME) \
+		--keychain-profile "$(NOTARY_PROFILE)" --keychain "$(SIGNING_KEYCHAIN)" \
+		--wait
+
+# Attach the notarization ticket to the DMG so Gatekeeper works offline.
+staple: notarize
+	@xcrun stapler staple $(DMG_NAME)
+
+# Confirm the DMG will pass Gatekeeper on a fresh Mac.
+verify-notarization: staple
+	@spctl --assess --type open --context context:primary-signature -v $(DMG_NAME) || \
+		{ echo "spctl verification failed"; exit 1; }
+	@xcrun stapler validate $(DMG_NAME)
+	@echo "✓ $(DMG_NAME) notarized + stapled"
+
+# One-shot: build + sign + notarize + staple + verify. This is the canonical
+# entry point for creating an ad-hoc distributable DMG.
+release-dmg: verify-notarization
+	@echo ""
+	@echo "✅ Distribution DMG ready: $(DMG_NAME)"
+	@echo "   Signed:  $(DEVELOPER_ID_APP)"
+	@echo "   Notary:  $(NOTARY_PROFILE)"
+	@echo "   Size:    $$(du -h $(DMG_NAME) | cut -f1)"
 
 # Install development dependencies needed for local build workflows
 install: check-dev-deps
