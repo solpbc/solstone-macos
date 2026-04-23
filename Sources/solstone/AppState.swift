@@ -71,6 +71,18 @@ public final class AppState {
     /// Prevents concurrent permission check calls (poll interval < check duration)
     private var isCheckingPermissions = false
 
+    // MARK: - Activation Policy
+
+    public internal(set) var openSceneIds: Set<SolstoneSceneID> = []
+    public internal(set) var dockMode: DockMode = .auto
+    public internal(set) var currentPolicy: NSApplication.ActivationPolicy = .accessory
+    public internal(set) var loginLaunchSuppressionExpires: Date = .distantPast
+    public internal(set) var isTerminating: Bool = false
+    var quitRequestedViaMenuBar: Bool = false
+    private var activationPolicyWorkItem: DispatchWorkItem?
+    private let dockBehaviorDefaultsKey = "SolstoneDockBehavior"
+    private static let loginLaunchSuppressionInterval: TimeInterval = 2.0
+
 
     // MARK: - Computed Properties
 
@@ -266,9 +278,12 @@ public final class AppState {
         startPermissionPolling()
 
         // Listen for external defaults changes (e.g. `defaults write` from terminal)
+        loadDockModeFromDefaults()
+        loginLaunchSuppressionExpires = Date().addingTimeInterval(Self.loginLaunchSuppressionInterval)
         Task { [weak self] in
             for await _ in NotificationCenter.default.notifications(named: UserDefaults.didChangeNotification) {
                 self?.handleExternalDefaultsChange()
+                self?.handleDockModeDefaultsChange()
             }
         }
 
@@ -426,6 +441,85 @@ public final class AppState {
         }
     }
 
+    public func didOpenWindow(_ id: SolstoneSceneID) {
+        openSceneIds.insert(id)
+        reevaluateActivationPolicy(debounced: false)
+    }
+
+    public func requestMenuBarQuit() {
+        quitRequestedViaMenuBar = true
+        NSApp.terminate(nil)
+    }
+
+    func handleWindowWillClose(identifier: String?) {
+        let rawID = identifier ?? ""
+        let matchedSceneIDs = SolstoneSceneID.allCases.filter { rawID.contains($0.rawValue) }
+        guard !matchedSceneIDs.isEmpty else { return }
+
+        for sceneID in matchedSceneIDs {
+            openSceneIds.remove(sceneID)
+        }
+        reevaluateActivationPolicy(debounced: true)
+    }
+
+    func reevaluateActivationPolicy(debounced: Bool = true) {
+        activationPolicyWorkItem?.cancel()
+        activationPolicyWorkItem = nil
+
+        if debounced {
+            let workItem = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.reevaluateActivationPolicy(debounced: false)
+                }
+            }
+            activationPolicyWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500), execute: workItem)
+            return
+        }
+
+        let desiredPolicy = computeDesiredPolicy(now: Date())
+        applyPolicy(desiredPolicy)
+    }
+
+    func computeDesiredPolicy(now: Date = Date()) -> NSApplication.ActivationPolicy {
+        if isTerminating {
+            return currentPolicy
+        }
+        if dockMode == .alwaysRegular {
+            return .regular
+        }
+        if dockMode == .alwaysAccessory {
+            return .accessory
+        }
+        if now < loginLaunchSuppressionExpires {
+            return .accessory
+        }
+        return openSceneIds.isEmpty ? .accessory : .regular
+    }
+
+    private func applyPolicy(_ policy: NSApplication.ActivationPolicy) {
+        if policy == currentPolicy {
+            return
+        }
+
+        NSApp.setActivationPolicy(policy)
+        currentPolicy = policy
+
+        let name = policy == .regular ? "regular" : "accessory"
+        let idsString = self.openSceneIds.map(\.rawValue).sorted().joined(separator: ",")
+        Logger.general.info("Activation policy → \(name, privacy: .public) (openScenes=\(self.openSceneIds.count, privacy: .public), ids=[\(idsString, privacy: .public)])")
+
+        if policy == .accessory {
+            let hasVisibleTrackedWindow = NSApp.windows.contains { window in
+                guard window.isVisible, let identifier = window.identifier?.rawValue else { return false }
+                return identifier.contains(SolstoneSceneID.settings.rawValue) || identifier.contains(SolstoneSceneID.about.rawValue)
+            }
+            if hasVisibleTrackedWindow {
+                Logger.general.warning("Activation policy drift: set to accessory but visible solstone window still in NSApp.windows")
+            }
+        }
+    }
+
     /// Reloads config when an external process writes serverURL/serverKey to UserDefaults.
     /// Guards against feedback loops: updateConfig() -> save() -> notification -> load() -> same values -> return.
     private func handleExternalDefaultsChange() {
@@ -444,6 +538,21 @@ public final class AppState {
                 await uploadCoordinator?.syncOnStartup()
             }
         }
+    }
+
+    private func handleDockModeDefaultsChange() {
+        let previous = dockMode
+        loadDockModeFromDefaults()
+        guard dockMode != previous else { return }
+        reevaluateActivationPolicy(debounced: false)
+    }
+
+    private func loadDockModeFromDefaults() {
+        guard let rawValue = UserDefaults.standard.string(forKey: dockBehaviorDefaultsKey) else {
+            dockMode = .auto
+            return
+        }
+        dockMode = DockMode(rawValue: rawValue) ?? .auto
     }
 
 }

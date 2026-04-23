@@ -3,51 +3,57 @@
 
 import AppKit
 import Testing
+import XCTest
 @testable import solstone
 
 @Suite("Activation Policy")
 @MainActor
 struct ActivationPolicyTests {
     @Test func openingSettingsSceneComputesRegularPolicy() {
-        let delegate = AppDelegate()
-        delegate.openSceneIds.insert(.settings)
+        let state = AppState.forSnapshot()
+        state.openSceneIds.insert(.settings)
 
-        #expect(delegate.openSceneIds == [.settings])
-        #expect(delegate.computeDesiredPolicy() == .regular)
+        #expect(state.openSceneIds == [.settings])
+        #expect(state.computeDesiredPolicy() == .regular)
     }
 
     @Test func handleWindowWillCloseRemovesMatchingSceneID() {
-        let delegate = AppDelegate()
-        delegate.openSceneIds = [.settings]
+        let state = AppState.forSnapshot()
+        state.openSceneIds = [.settings]
 
-        delegate.handleWindowWillClose(identifier: "settings-AppWindow-1")
+        state.handleWindowWillClose(identifier: "settings-AppWindow-1")
 
-        #expect(delegate.openSceneIds.isEmpty)
+        #expect(state.openSceneIds.isEmpty)
     }
 
     @Test func alwaysAccessoryOverridesOpenWindows() {
-        let delegate = AppDelegate()
-        delegate.dockMode = .alwaysAccessory
-        delegate.openSceneIds = [.settings]
+        let state = AppState.forSnapshot()
+        state.dockMode = .alwaysAccessory
+        state.openSceneIds = [.settings]
 
-        #expect(delegate.computeDesiredPolicy() == .accessory)
+        #expect(state.computeDesiredPolicy() == .accessory)
     }
 
     @Test func alwaysRegularOverridesEmptyOpenWindows() {
-        let delegate = AppDelegate()
-        delegate.dockMode = .alwaysRegular
-        delegate.openSceneIds = []
+        let state = AppState.forSnapshot()
+        state.dockMode = .alwaysRegular
+        state.openSceneIds = []
 
-        #expect(delegate.computeDesiredPolicy() == .regular)
+        #expect(state.computeDesiredPolicy() == .regular)
     }
 
     @Test func loginLaunchSuppressionForcesAccessoryUntilItExpires() {
-        let delegate = AppDelegate()
+        let state = AppState.forSnapshot()
         let now = Date()
-        delegate.loginLaunchSuppressionExpires = now.addingTimeInterval(1)
-        delegate.openSceneIds = [.settings]
+        state.loginLaunchSuppressionExpires = now.addingTimeInterval(1)
+        state.openSceneIds = [.settings]
 
-        #expect(delegate.computeDesiredPolicy(now: now) == .accessory)
-        #expect(delegate.computeDesiredPolicy(now: now.addingTimeInterval(2)) == .regular)
+        #expect(state.computeDesiredPolicy(now: now) == .accessory)
+        #expect(state.computeDesiredPolicy(now: now.addingTimeInterval(2)) == .regular)
+    }
+
+    @Test func testAppStateSharedBridgeWiring() async {
+        let state = AppState()
+        XCTAssertTrue(AppState.shared === state, "AppState.shared must reference the instance after full init")
     }
 }
