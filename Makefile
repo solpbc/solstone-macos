@@ -129,8 +129,12 @@ signing-check:
 		  exit 1; }
 	@echo "✓ Developer ID certs + notary profile ready"
 
-# Unlock the sol-signing keychain (no-op if already unlocked).
+# Unlock the sol-signing keychain and add it to the session search list.
+# Fresh SSH sessions don't always inherit the user-domain search list, so
+# setting it here makes `make signing-check` work from any session (not just
+# the persistent hopper:build tmux window).
 unlock-signing:
+	@security list-keychains -s "$(SIGNING_KEYCHAIN)" "$(HOME)/Library/Keychains/login.keychain-db" >/dev/null
 	@if [ -f "$(SIGNING_KC_PASS_FILE)" ]; then \
 		security unlock-keychain -p "$$(cat $(SIGNING_KC_PASS_FILE))" "$(SIGNING_KEYCHAIN)"; \
 	else \
