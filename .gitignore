@@ -48,3 +48,6 @@ snapshots/
 
 # Local scratch / debug logs
 scratch/
+
+# Distribution build artifacts
+*.dmg
