@@ -6,6 +6,7 @@ import SwiftUI
 /// The content of the status bar menu
 struct MenuContent: View {
     @Bindable var appState: AppState
+    @Bindable var updateController: UpdateController
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -33,6 +34,13 @@ struct MenuContent: View {
                 openWindow(id: "settings")
                 appState.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
+            }
+            Button(UpdatesCopy.menuBarCheckForUpdates) {
+                appState.pendingSettingsTab = "updates"
+                openWindow(id: "settings")
+                appState.didOpenWindow(.settings)
+                NSApp.activate(ignoringOtherApps: true)
+                updateController.checkForUpdates()
             }
             Button("about solstone observer") {
                 openWindow(id: "about")

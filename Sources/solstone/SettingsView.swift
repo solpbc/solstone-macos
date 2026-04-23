@@ -26,10 +26,11 @@ struct MicrophoneDisplayEntry: Identifiable {
 /// Settings window for configuring server upload
 struct SettingsView: View {
     enum Tab: Hashable {
-        case permissions, observer, service, microphones, privacy, status, help
+        case permissions, observer, service, microphones, privacy, status, updates, help
     }
 
     @Bindable var appState: AppState
+    @Bindable var updateController: UpdateController
     @State var selectedTab: Tab = .status
     @Environment(\.dismiss) private var dismiss
 
@@ -65,8 +66,14 @@ struct SettingsView: View {
 
     private static let localServerURL = "http://localhost:5015"
 
-    init(appState: AppState, selectedTab: Tab = .observer, initialStorageUsedMB: Int? = nil) {
+    init(
+        appState: AppState,
+        updateController: UpdateController,
+        selectedTab: Tab = .observer,
+        initialStorageUsedMB: Int? = nil
+    ) {
         self.appState = appState
+        self.updateController = updateController
         self.selectedTab = selectedTab
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
     }
@@ -110,6 +117,10 @@ struct SettingsView: View {
                 .tag(Tab.permissions)
                 .tabItem { Label("permissions", systemImage: "lock.shield") }
 
+            UpdatesTabView(controller: updateController)
+                .tag(Tab.updates)
+                .tabItem { Label(UpdatesCopy.tabTitle, systemImage: "arrow.down.circle") }
+
             helpTab
                 .tag(Tab.help)
                 .tabItem { Label("help", systemImage: "questionmark.circle") }
@@ -124,6 +135,7 @@ struct SettingsView: View {
                 case "service": selectedTab = .service
                 case "help": selectedTab = .help
                 case "status": selectedTab = .status
+                case "updates": selectedTab = .updates
                 default: break
                 }
                 appState.pendingSettingsTab = nil

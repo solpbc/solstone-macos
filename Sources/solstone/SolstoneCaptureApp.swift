@@ -146,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct SolstoneCaptureApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var appState = AppState()
+    @State private var updateController = UpdateController()
 
     init() {
         // Configure unbuffered output for stderr
@@ -174,7 +175,7 @@ struct SolstoneCaptureApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(appState: appState)
+            MenuContent(appState: appState, updateController: updateController)
         } label: {
             StatusIcon(appState: appState)
                 .accessibilityLabel(statusAccessibilityLabel)
@@ -182,7 +183,7 @@ struct SolstoneCaptureApp: App {
         .menuBarExtraStyle(.menu)
 
         Window("solstone observer settings", id: "settings") {
-            SettingsView(appState: appState)
+            SettingsView(appState: appState, updateController: updateController)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)

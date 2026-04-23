@@ -58,6 +58,10 @@ struct SnapshotTests {
         _ = NSApplication.shared
     }
 
+    private func makeSnapshotUpdateController() -> UpdateController {
+        UpdateController(feedURL: nil, publicKey: nil) { _ in nil }
+    }
+
     private func render<V: View>(_ view: V, size: CGSize, to filename: String) throws {
         let hostingView = NSHostingView(rootView: view)
         hostingView.frame = NSRect(origin: .zero, size: size)
@@ -85,34 +89,39 @@ struct SnapshotTests {
 
     @Test func menuIdle() throws {
         let state = AppState.forSnapshot()
-        try render(MenuContent(appState: state), size: menuSize, to: "menu-idle.png")
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-idle.png")
     }
 
     @Test func menuRecording() throws {
         let state = AppState.forSnapshot()
         state.isRecording = true
-        try render(MenuContent(appState: state), size: menuSize, to: "menu-recording.png")
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-recording.png")
     }
 
     @Test func menuPaused() throws {
         let state = AppState.forSnapshot()
         state.isRecording = true
         state.pauseManager.pause(for: .indefinite)
-        try render(MenuContent(appState: state), size: menuSize, to: "menu-paused.png")
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-paused.png")
     }
 
     @Test func menuError() throws {
         let state = AppState.forSnapshot()
         state.errorMessage = "Screen recording permission denied"
-        try render(MenuContent(appState: state), size: menuSize, to: "menu-error.png")
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-error.png")
     }
 
     private let settingsSize = CGSize(width: 500, height: 400)
 
     @Test func settingsObserver() throws {
         let state = AppState.forSnapshot()
+        let updateController = makeSnapshotUpdateController()
         try render(
-            SettingsView(appState: state, selectedTab: .observer, initialStorageUsedMB: 42),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),
             size: settingsSize,
             to: "settings-observer.png"
         )
@@ -120,8 +129,9 @@ struct SnapshotTests {
 
     @Test func settingsServiceEmpty() throws {
         let state = AppState.forSnapshot()
+        let updateController = makeSnapshotUpdateController()
         try render(
-            SettingsView(appState: state, selectedTab: .service),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .service),
             size: settingsSize,
             to: "settings-service-empty.png"
         )
@@ -131,8 +141,9 @@ struct SnapshotTests {
         var config = AppConfig(serverURL: "https://solstone.example.com")
         config.serverKey = "sk-test-key-1234"
         let state = AppState.forSnapshot(config: config)
+        let updateController = makeSnapshotUpdateController()
         try render(
-            SettingsView(appState: state, selectedTab: .service),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .service),
             size: settingsSize,
             to: "settings-service-configured.png"
         )
@@ -148,6 +159,7 @@ struct SnapshotTests {
             microphoneGain: 2.0
         )
         let state = AppState.forSnapshot(config: config)
+        let updateController = makeSnapshotUpdateController()
         state.audioDeviceMonitor.availableDevices = [
             AudioInputDevice(
                 id: AudioDeviceID(1),
@@ -159,7 +171,7 @@ struct SnapshotTests {
             )
         ]
         try render(
-            SettingsView(appState: state, selectedTab: .microphones),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .microphones),
             size: settingsSize,
             to: "settings-microphones.png"
         )
@@ -167,8 +179,9 @@ struct SnapshotTests {
 
     @Test func settingsMicrophonesEmpty() throws {
         let state = AppState.forSnapshot()
+        let updateController = makeSnapshotUpdateController()
         try render(
-            SettingsView(appState: state, selectedTab: .microphones),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .microphones),
             size: settingsSize,
             to: "settings-microphones-empty.png"
         )
@@ -184,8 +197,9 @@ struct SnapshotTests {
             excludePrivateBrowsing: true
         )
         let state = AppState.forSnapshot(config: config)
+        let updateController = makeSnapshotUpdateController()
         try render(
-            SettingsView(appState: state, selectedTab: .privacy),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .privacy),
             size: settingsSize,
             to: "settings-privacy.png"
         )
@@ -198,8 +212,9 @@ struct SnapshotTests {
             excludePrivateBrowsing: false
         )
         let state = AppState.forSnapshot(config: config)
+        let updateController = makeSnapshotUpdateController()
         try render(
-            SettingsView(appState: state, selectedTab: .privacy),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .privacy),
             size: settingsSize,
             to: "settings-privacy-empty.png"
         )
@@ -207,9 +222,10 @@ struct SnapshotTests {
 
     @Test func settingsStatusIdle() throws {
         let state = AppState.forSnapshot()
+        let updateController = makeSnapshotUpdateController()
         state.uploadCoordinator.status = .synced
         try render(
-            SettingsView(appState: state, selectedTab: .status),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .status),
             size: settingsSize,
             to: "settings-status-idle.png"
         )
@@ -217,10 +233,11 @@ struct SnapshotTests {
 
     @Test func settingsStatusRecording() throws {
         let state = AppState.forSnapshot()
+        let updateController = makeSnapshotUpdateController()
         state.isRecording = true
         state.uploadCoordinator.status = .syncing(checked: 3, total: 10)
         try render(
-            SettingsView(appState: state, selectedTab: .status),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .status),
             size: settingsSize,
             to: "settings-status-recording.png"
         )
@@ -228,8 +245,9 @@ struct SnapshotTests {
 
     @Test func settingsPermissions() throws {
         let state = AppState.forSnapshot()
+        let updateController = makeSnapshotUpdateController()
         try render(
-            SettingsView(appState: state, selectedTab: .permissions),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .permissions),
             size: settingsSize,
             to: "settings-permissions.png"
         )
@@ -237,8 +255,9 @@ struct SnapshotTests {
 
     @Test func settingsHelp() throws {
         let state = AppState.forSnapshot()
+        let updateController = makeSnapshotUpdateController()
         try render(
-            SettingsView(appState: state, selectedTab: .help),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .help),
             size: settingsSize,
             to: "settings-help.png"
         )
