@@ -19,7 +19,7 @@
     <key>SUFeedURL</key>
     <string>https://updates.solstone.app/solstone-macos/appcast.xml</string>
     <key>SUPublicEDKey</key>
-    <string>11qYAYKxCrfVS/7TyWQHOg7hcvPa9jIlrwIaaPcHUho=</string>
+    <string>5EP/CLtfMrN2qC8zWsHeIWcPVPjqFH7hW4m8cGX7Qg0=</string>
     <key>SUEnableAutomaticChecks</key>
     <true/>
     <key>SUScheduledCheckInterval</key>
