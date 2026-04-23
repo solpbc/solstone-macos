@@ -61,6 +61,85 @@ public struct UploadClient: Sendable {
         self.session = URLSession(configuration: config)
     }
 
+    static func isLocalNetworkHost(_ host: String) -> Bool {
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedHost.isEmpty else {
+            return false
+        }
+
+        let normalizedHost = trimmedHost.hasSuffix(".") ? String(trimmedHost.dropLast()) : trimmedHost
+        let lowercaseHost = normalizedHost.lowercased()
+
+        if lowercaseHost == "localhost" || lowercaseHost == "::1" {
+            return false
+        }
+
+        if lowercaseHost.contains(":") {
+            if lowercaseHost.hasPrefix("fe80:") {
+                return true
+            }
+
+            if lowercaseHost.hasPrefix("fc") || lowercaseHost.hasPrefix("fd") {
+                return true
+            }
+
+            return false
+        }
+
+        let parts = lowercaseHost.split(separator: ".", omittingEmptySubsequences: false)
+        if parts.count == 4 {
+            let octets = parts.compactMap { Int($0) }
+            guard octets.count == 4, octets.allSatisfy({ 0...255 ~= $0 }) else {
+                return false
+            }
+
+            switch (octets[0], octets[1]) {
+            case (127, _):
+                return false
+            case (10, _):
+                return true
+            case (172, 16...31):
+                return true
+            case (192, 168):
+                return true
+            case (169, 254):
+                return true
+            default:
+                return false
+            }
+        }
+
+        if lowercaseHost.hasSuffix(".local") {
+            return true
+        }
+
+        return !lowercaseHost.contains(".")
+    }
+
+    static func errorMessage(for error: URLError, host: String) -> String {
+        if isLocalNetworkHost(host) {
+            switch error.code {
+            case .cannotConnectToHost, .notConnectedToInternet, .networkConnectionLost, .timedOut:
+                return "Can't reach local network. Open System Settings → Privacy & Security → Local Network and allow solstone."
+            default:
+                break
+            }
+        }
+
+        switch error.code {
+        case .notConnectedToInternet:
+            return "No internet connection"
+        case .cannotFindHost:
+            return "Server not found"
+        case .cannotConnectToHost:
+            return "Cannot connect to server"
+        case .timedOut:
+            return "Connection timed out"
+        default:
+            return error.localizedDescription
+        }
+    }
+
     // MARK: - Connection Test
 
     /// Test connection to server, returns error message if failed, nil on success
@@ -76,6 +155,7 @@ public struct UploadClient: Sendable {
             Logger.upload.info("testConnection: invalid URL")
             return "Invalid URL"
         }
+        let host = url.host ?? ""
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -120,18 +200,7 @@ public struct UploadClient: Sendable {
             return "Invalid response"
         } catch let error as URLError {
             Logger.upload.info("testConnection: URLError \(error.code.rawValue, privacy: .public) - \(error.localizedDescription, privacy: .public)")
-            switch error.code {
-            case .notConnectedToInternet:
-                return "No internet connection"
-            case .cannotFindHost:
-                return "Server not found"
-            case .cannotConnectToHost:
-                return "Cannot connect to server"
-            case .timedOut:
-                return "Connection timed out"
-            default:
-                return error.localizedDescription
-            }
+            return Self.errorMessage(for: error, host: host)
         } catch {
             Logger.upload.info("testConnection: error \(error, privacy: .public)")
             return error.localizedDescription
