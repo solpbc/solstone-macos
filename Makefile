@@ -20,6 +20,8 @@ SIGNING_KEYCHAIN       ?= $(HOME)/Library/Keychains/sol-signing.keychain-db
 SIGNING_KC_PASS_FILE   ?= $(HOME)/.config/sol-pbc/signing/keychain-password
 DIST_VERSION           := $(shell /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Sources/solstone/Info.plist 2>/dev/null || echo 0.0.0)
 DMG_NAME               ?= solstone-$(DIST_VERSION).dmg
+SPARKLE_ARTIFACT_DIR   ?= .build/artifacts/sparkle/Sparkle
+SPARKLE_FRAMEWORK      ?= $(SPARKLE_ARTIFACT_DIR)/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
 
 # Build debug version
 build:
@@ -141,11 +143,28 @@ unlock-signing:
 bundle-dist: unlock-signing signing-check release-universal
 	@echo "Creating distribution app bundle..."
 	@rm -rf solstone.app
-	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources
+	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
 	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
+	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
+	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		solstone.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		solstone.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		solstone.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		solstone.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		solstone.app/Contents/Frameworks/Sparkle.framework
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		solstone.app/Contents/Resources/solstone_solstone.bundle
