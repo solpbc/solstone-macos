@@ -175,8 +175,10 @@ public final class AppState {
             Logger.general.info("Debug segments enabled: using 60s duration")
         }
 
-        // Enable login item on first launch (status is .notRegistered before any registration)
-        if SMAppService.mainApp.status == .notRegistered {
+        // Enable login item on first launch.
+        // Fresh install returns .notFound (never registered); .notRegistered means
+        // user explicitly disabled it. Only auto-register on .notFound to respect opt-out.
+        if SMAppService.mainApp.status == .notFound {
             try? SMAppService.mainApp.register()
             Logger.general.info("First launch: enabled login item")
         }
