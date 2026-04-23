@@ -31,10 +31,12 @@ struct MenuContent: View {
             }
             Button("settings...") {
                 openWindow(id: "settings")
+                (NSApp.delegate as? AppDelegate)?.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
             }
             Button("about solstone observer") {
                 openWindow(id: "about")
+                (NSApp.delegate as? AppDelegate)?.didOpenWindow(.about)
                 NSApp.activate(ignoringOtherApps: true)
             }
         }
@@ -47,7 +49,9 @@ struct MenuContent: View {
                 if appState.isRecording {
                     await appState.stopRecording()
                 }
-                NSApplication.shared.terminate(nil)
+                await MainActor.run {
+                    (NSApp.delegate as? AppDelegate)?.requestMenuBarQuit()
+                }
             }
         }
     }
@@ -64,6 +68,7 @@ struct MenuContent: View {
             Button("permissions needed — open settings →") {
                 appState.pendingSettingsTab = "permissions"
                 openWindow(id: "settings")
+                (NSApp.delegate as? AppDelegate)?.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
             }
             .foregroundStyle(.red)
@@ -71,6 +76,7 @@ struct MenuContent: View {
             Button("error: \(error)") {
                 appState.pendingSettingsTab = "status"
                 openWindow(id: "settings")
+                (NSApp.delegate as? AppDelegate)?.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
             }
             .foregroundStyle(.red)
@@ -78,6 +84,7 @@ struct MenuContent: View {
             Button("observing - local only →") {
                 appState.pendingSettingsTab = "service"
                 openWindow(id: "settings")
+                (NSApp.delegate as? AppDelegate)?.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
             }
         } else if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused {
@@ -89,6 +96,7 @@ struct MenuContent: View {
                     Button("observing - offline (recording locally) →") {
                         appState.pendingSettingsTab = "status"
                         openWindow(id: "settings")
+                        (NSApp.delegate as? AppDelegate)?.didOpenWindow(.settings)
                         NSApp.activate(ignoringOtherApps: true)
                     }
                 default:
