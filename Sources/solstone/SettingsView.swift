@@ -2,7 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import AppKit
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 import SwiftUI
 import os
 
