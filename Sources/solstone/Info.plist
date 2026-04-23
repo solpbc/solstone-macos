@@ -9,13 +9,33 @@
     <key>CFBundleIdentifier</key>
     <string>app.solstone.observer</string>
     <key>CFBundleVersion</key>
-    <string>1.0.0</string>
+    <string>2</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>1.1.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
     <string>solstone</string>
+    <key>SUFeedURL</key>
+    <string>https://updates.solstone.app/solstone-macos/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>11qYAYKxCrfVS/7TyWQHOg7hcvPa9jIlrwIaaPcHUho=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+    <key>SUAllowsAutomaticUpdates</key>
+    <true/>
+    <key>SUAutomaticallyUpdate</key>
+    <false/>
+    <key>SUShowReleaseNotes</key>
+    <true/>
+    <key>SUEnableSystemProfiling</key>
+    <false/>
+    <key>SUSendsSystemProfile</key>
+    <false/>
+    <key>SUEnableJavaScript</key>
+    <false/>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>LSUIElement</key>
