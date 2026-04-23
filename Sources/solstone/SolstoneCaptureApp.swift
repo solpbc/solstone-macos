@@ -85,6 +85,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateCancel
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // Fires when the user clicks the Dock tile (including the macOS 26 "recent
+        // apps" tile that shows after the app drops back to .accessory). With no
+        // visible windows, the click means "bring the main window back" — open Settings.
+        if !flag {
+            if let state = AppState.shared,
+               let settingsWindow = NSApp.windows.first(where: {
+                   $0.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
+               }) {
+                state.didOpenWindow(.settings)
+                settingsWindow.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            } else if AppState.shared == nil {
+                Logger.general.error("AppState.shared nil in applicationShouldHandleReopen")
+            } else {
+                Logger.general.info("applicationShouldHandleReopen: no settings NSWindow found; falling through to default")
+            }
+        }
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         if let state = AppState.shared {
             state.isTerminating = true
