@@ -268,6 +268,59 @@ public struct UploadClient: Sendable {
         return nil
     }
 
+    func buildObserverStatusRequest(
+        serverURL: String,
+        serverKey: String,
+        paused: Bool
+    ) throws -> URLRequest {
+        let urlString = "\(serverURL)/app/observer/ingest/event"
+        guard let url = URL(string: urlString) else {
+            throw UploadError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(serverKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 5
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: [
+                "tract": "observe",
+                "event": "status",
+                "paused": paused,
+                "source": "heartbeat",
+            ]
+        )
+        return request
+    }
+
+    public func postObserverStatus(
+        serverURL: String,
+        serverKey: String,
+        paused: Bool
+    ) async throws {
+        let request = try buildObserverStatusRequest(
+            serverURL: serverURL,
+            serverKey: serverKey,
+            paused: paused
+        )
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw UploadError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw UploadError.serverError(
+                statusCode: httpResponse.statusCode,
+                message: errorMessage
+            )
+        }
+    }
+
     // MARK: - Upload
 
     /// Upload a segment to the server

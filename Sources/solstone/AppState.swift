@@ -39,11 +39,12 @@ public final class AppState {
 
     // MARK: - Managers
 
-    public let pauseManager = PauseManager()
-    public let storageManager = StorageManager()
-    public let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
+    public let pauseManager: PauseManager
+    public let storageManager: StorageManager
+    public let audioDeviceMonitor: AudioDeviceMonitor
     public private(set) var captureManager: CaptureManager!
     public private(set) var uploadCoordinator: UploadCoordinator!
+    public let heartbeatService: HeartbeatService
     public private(set) var config: AppConfig
     private var debugAudioHolder: DebugSettingHolder!
     private var silenceMusicHolder: DebugSettingHolder!
@@ -129,6 +130,17 @@ public final class AppState {
         let oldConfig = config
         config = newConfig
         uploadCoordinator.updateConfig(newConfig)
+        if newConfig.isUploadConfigured,
+           let serverURL = newConfig.serverURL,
+           let serverKey = newConfig.serverKey {
+            Task { [heartbeatService] in
+                await heartbeatService.configure(serverURL: serverURL, serverKey: serverKey)
+            }
+        } else {
+            Task { [heartbeatService] in
+                await heartbeatService.stop()
+            }
+        }
         debugAudioHolder.value = newConfig.debugKeepRejectedAudio
         silenceMusicHolder.value = newConfig.silenceMusic
 
@@ -179,7 +191,28 @@ public final class AppState {
 
     public init() {
         // Load configuration
-        config = AppConfig.loadOrCreateDefault()
+        let config = AppConfig.loadOrCreateDefault()
+        let pauseManager = PauseManager()
+        let storageManager = StorageManager()
+        let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
+        let uploadClient = UploadClient()
+
+        self.pauseManager = pauseManager
+        self.storageManager = storageManager
+        self.audioDeviceMonitor = audioDeviceMonitor
+        self.config = config
+        self.heartbeatService = HeartbeatService(
+            isPaused: { [pauseManager] in
+                pauseManager.isPaused
+            },
+            postHeartbeat: { [uploadClient] url, key, paused in
+                try await uploadClient.postObserverStatus(
+                    serverURL: url,
+                    serverKey: key,
+                    paused: paused
+                )
+            }
+        )
 
         // Apply debug segments setting if enabled
         if config.debugSegments {
@@ -273,6 +306,11 @@ public final class AppState {
                 await uploadCoordinator?.syncOnStartup()
             }
         }
+        if config.isUploadConfigured, let serverURL = config.serverURL, let serverKey = config.serverKey {
+            Task { [heartbeatService] in
+                await heartbeatService.configure(serverURL: serverURL, serverKey: serverKey)
+            }
+        }
 
         // Start polling permissions — auto-starts recording when ready
         startPermissionPolling()
@@ -304,7 +342,18 @@ public final class AppState {
 
     /// Private designated init that creates all managers without activating hardware or side effects.
     private init(snapshotConfig config: AppConfig) {
+        let pauseManager = PauseManager()
+        let storageManager = StorageManager()
+        let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
+
+        self.pauseManager = pauseManager
+        self.storageManager = storageManager
+        self.audioDeviceMonitor = audioDeviceMonitor
         self.config = config
+        self.heartbeatService = HeartbeatService(
+            isPaused: { false },
+            postHeartbeat: { _, _, _ in }
+        )
 
         let debugAudioHolder = DebugSettingHolder(value: false)
         let silenceMusicHolder = DebugSettingHolder(value: true)

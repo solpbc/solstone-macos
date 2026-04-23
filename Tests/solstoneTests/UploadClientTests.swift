@@ -90,4 +90,28 @@ struct UploadClientTests {
         let error = URLError(.badServerResponse)
         #expect(UploadClient.errorMessage(for: error, host: "example.com") == error.localizedDescription)
     }
+
+    @Test(arguments: [true, false])
+    func buildObserverStatusRequestShape(paused: Bool) throws {
+        let request = try client.buildObserverStatusRequest(
+            serverURL: "http://example.com",
+            serverKey: "secret123",
+            paused: paused
+        )
+
+        #expect(request.url?.absoluteString == "http://example.com/app/observer/ingest/event")
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer secret123")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+        #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")
+        #expect(request.timeoutInterval == 5)
+
+        let body = try #require(request.httpBody)
+        let payload = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(payload.count == 4)
+        #expect(payload["tract"] as? String == "observe")
+        #expect(payload["event"] as? String == "status")
+        #expect(payload["paused"] as? Bool == paused)
+        #expect(payload["source"] as? String == "heartbeat")
+    }
 }

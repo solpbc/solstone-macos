@@ -88,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         if let state = AppState.shared {
             state.isTerminating = true
+            Task { await state.heartbeatService.stop() }
         } else {
             Logger.general.error("AppState.shared nil in applicationWillTerminate")
         }
