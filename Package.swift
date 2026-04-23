@@ -9,11 +9,15 @@ let package = Package(
     platforms: [
         .macOS(.v15)
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.1")
+    ],
     targets: [
         .executableTarget(
             name: "solstone",
             dependencies: [
-                .target(name: "ObjCHelpers")
+                .target(name: "ObjCHelpers"),
+                .product(name: "Sparkle", package: "Sparkle")
             ],
             path: "Sources/solstone",
             exclude: [
