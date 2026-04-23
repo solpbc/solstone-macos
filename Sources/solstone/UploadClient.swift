@@ -104,6 +104,8 @@ public struct UploadClient: Sendable {
                 return true
             case (169, 254):
                 return true
+            case (100, 64...127):
+                return true  // CGNAT / Tailscale (RFC 6598, 100.64.0.0/10)
             default:
                 return false
             }

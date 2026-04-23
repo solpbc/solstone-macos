@@ -90,6 +90,8 @@ if the app exists and shows as connected, you're done.
 
 if you point solstone at a server on your LAN using a `.local` name, a private IP address, or a local IPv6 address, macOS may ask for Local Network access. if uploads fail and the app says `Can't reach local network. Open System Settings → Privacy & Security → Local Network and allow solstone.`, open that settings page and enable `solstone`. `http://localhost:5015` does not need Local Network permission, so a standard local install usually will not show this prompt. if you denied the prompt earlier, toggle it there and run the connection test again.
 
+solstone ships with an App Transport Security exception (`NSAllowsArbitraryLoads`) so the app can reach `http://` servers on local networks and Tailscale CGNAT IPs (`100.64.0.0/10`), which ATS does not cover via `NSAllowsLocalNetworking` alone.
+
 ## notes
 
 - the app detects `defaults write` changes automatically — no need to restart it after writing config.

@@ -32,6 +32,11 @@
     <string>solstone uses on-device speech recognition to identify audio containing conversation, so only meaningful audio is kept.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>solstone connects to your local observer server to upload captures.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
     <key>NSHumanReadableCopyright</key>
     <string>© 2026 sol pbc. all rights reserved.</string>
     <key>CFBundleDevelopmentRegion</key>

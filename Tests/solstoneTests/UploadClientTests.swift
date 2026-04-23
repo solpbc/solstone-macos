@@ -40,6 +40,14 @@ struct UploadClientTests {
         #expect(UploadClient.isLocalNetworkHost("169.254.10.2"))
     }
 
+    @Test func isLocalNetworkHostRecognizesCGNATRange() {
+        #expect(UploadClient.isLocalNetworkHost("100.64.0.1"))
+        #expect(UploadClient.isLocalNetworkHost("100.121.250.106"))
+        #expect(UploadClient.isLocalNetworkHost("100.127.255.255"))
+        #expect(!UploadClient.isLocalNetworkHost("100.63.255.255"))
+        #expect(!UploadClient.isLocalNetworkHost("100.128.0.0"))
+    }
+
     @Test func isLocalNetworkHostRecognizesPrivateIPv6Ranges() {
         #expect(UploadClient.isLocalNetworkHost("fe80::1"))
         #expect(UploadClient.isLocalNetworkHost("FE80::ABCD"))
