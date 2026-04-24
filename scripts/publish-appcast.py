@@ -148,7 +148,7 @@ def build_item(version: str, bundle_version: int, signature: str, length: int, e
     ET.SubElement(item, f"{{{SPARKLE_NS}}}shortVersionString").text = version
     ET.SubElement(item, f"{{{SPARKLE_NS}}}minimumSystemVersion").text = MIN_SYSTEM
     ET.SubElement(item, "description").text = notes
-    ET.SubElement(item, "enclosure", {"url": enclosure_url, "length": str(length), "type": "application/octet-stream", f"{{{SPARKLE_NS}}}edSignature": signature})
+    ET.SubElement(item, "enclosure", {"url": enclosure_url, "length": str(length), "type": "application/x-apple-diskimage", f"{{{SPARKLE_NS}}}edSignature": signature})
     return item
 
 def merge_item(tree: ET.ElementTree, item: ET.Element, bundle_version: int) -> None:
@@ -168,8 +168,9 @@ def serialize_appcast(tree: ET.ElementTree) -> bytes:
     ET.indent(tree, space="  ")
     return ET.tostring(tree.getroot(), encoding="UTF-8", xml_declaration=True)
 
-def upload(local_path: str, r2_key: str) -> None:
-    run(["wrangler", "r2", "object", "put", f"{R2_BUCKET}/{r2_key}", f"--file={local_path}"])
+def upload(local_path: str, r2_key: str, content_type: str) -> None:
+    run(["wrangler", "r2", "object", "put", f"{R2_BUCKET}/{r2_key}",
+         f"--file={local_path}", "--remote", f"--content-type={content_type}"])
 
 def head_check(url: str) -> None:
     status = run(["curl", "-sS", "-I", "-o", "/dev/null", "-w", "%{http_code}", url]).stdout.strip()
@@ -202,8 +203,8 @@ def main() -> None:
         tmp.write(serialize_appcast(tree))
         tmp_path = tmp.name
     try:
-        upload(dmg_path, dmg_key)
-        upload(tmp_path, appcast_key)
+        upload(dmg_path, dmg_key, "application/x-apple-diskimage")
+        upload(tmp_path, appcast_key, "application/xml")
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
