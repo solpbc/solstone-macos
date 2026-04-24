@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""
+Publish a Sparkle 2 auto-update release.
+Usage:
+  publish-appcast.py <version> [--staging]
+Inputs:
+  - ./solstone-<version>.dmg in CWD
+  - Sources/solstone/Info.plist (CFBundleVersion int, CFBundleShortVersionString must equal <version>)
+  - CHANGELOG.md (## [<version>] block)
+  - $SOLSTONE_SPARKLE_KEY_PATH (default /tmp/sparkle-priv.key), mode 600, 44-byte base64 Ed25519 seed
+Side effects:
+  - R2 put of DMG to <bucket>/<prefix>/releases/v<version>/solstone-<version>.dmg
+  - R2 put of updated appcast.xml to <bucket>/<prefix>/appcast.xml
+  - curl HEAD sanity checks
+EXTRO-HOST ONLY. Requires: wrangler, curl, PyNaCl.
+"""
+import argparse
+import base64
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from email.utils import format_datetime
+from typing import NoReturn, Optional, Tuple
+
+import nacl.signing
+
+R2_BUCKET = "solstone-updates"  # TODO-VPE: confirm this matches the real Cloudflare R2 bucket.
+BASE_URL = "https://updates.solstone.app"
+PROD_PREFIX = "solstone-macos"
+STAGING_PREFIX = "solstone-macos/_staging"
+SPARKLE_NS = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+MIN_SYSTEM = "15.0"
+DEFAULT_KEY_PATH = "/tmp/sparkle-priv.key"
+
+ET.register_namespace("sparkle", SPARKLE_NS)
+
+def die(msg: str) -> NoReturn:
+    print(msg, file=sys.stderr)
+    raise SystemExit(1)
+
+def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
+    params = {"check": True, "capture_output": True, "text": True}
+    params.update(kwargs)
+    try:
+        return subprocess.run(cmd, **params)
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            sys.stderr.write(exc.stderr)
+        die("command failed: " + " ".join(cmd))
+
+def load_private_key(path: str) -> nacl.signing.SigningKey:
+    if not os.path.exists(path):
+        die(f"{path}: not found")
+    if not os.path.isfile(path):
+        die(f"{path}: not a file")
+    mode = os.stat(path).st_mode & 0o777
+    if mode != 0o600:
+        die(f"{path}: mode must be 600, got {mode:03o}")
+    try:
+        raw = open(path, "rb").read()
+    except OSError as exc:
+        die(f"{path}: {exc}")
+    seed_b64 = raw.rstrip(b"\n")
+    if len(seed_b64) != 44:
+        die(f"{path}: expected 44-byte base64 seed, got {len(seed_b64)} bytes")
+    try:
+        seed = base64.b64decode(seed_b64, validate=True)
+    except (ValueError, base64.binascii.Error) as exc:
+        die(f"{path}: invalid base64 seed: {exc}")
+    if len(seed) != 32:
+        die(f"{path}: expected 32 decoded bytes, got {len(seed)}")
+    return nacl.signing.SigningKey(seed)
+
+def sign_dmg(key: nacl.signing.SigningKey, dmg_path: str) -> Tuple[str, int]:
+    if not os.path.exists(dmg_path):
+        die(f"{dmg_path}: not found")
+    if not os.path.isfile(dmg_path):
+        die(f"{dmg_path}: not a file")
+    try:
+        payload = open(dmg_path, "rb").read()
+    except OSError as exc:
+        die(f"{dmg_path}: {exc}")
+    signature = key.sign(payload).signature
+    return base64.b64encode(signature).decode("ascii"), len(payload)
+
+def read_info_plist(version: str) -> int:
+    plist_path = "Sources/solstone/Info.plist"
+    short_version = run(["plutil", "-extract", "CFBundleShortVersionString", "raw", "-o", "-", plist_path]).stdout.strip()
+    if short_version != version:
+        die(f"{plist_path}: CFBundleShortVersionString is {short_version}, expected {version}")
+    bundle_version_raw = run(["plutil", "-extract", "CFBundleVersion", "raw", "-o", "-", plist_path]).stdout.strip()
+    try:
+        return int(bundle_version_raw)
+    except ValueError:
+        die(f"{plist_path}: CFBundleVersion is not an integer: {bundle_version_raw}")
+
+def extract_release_notes(version: str) -> str:
+    try:
+        changelog = open("CHANGELOG.md", "r", encoding="utf-8").read()
+    except OSError as exc:
+        die(f"CHANGELOG.md: {exc}")
+    header_re = re.compile(rf"^## \[{re.escape(version)}\](?: .*)?$", re.MULTILINE)
+    next_header_re = re.compile(r"^## \[", re.MULTILINE)
+    header_match = header_re.search(changelog)
+    if not header_match:
+        die(f"CHANGELOG.md: no entry for version {version}")
+    body_start = header_match.end()
+    next_match = next_header_re.search(changelog, body_start)
+    body_end = next_match.start() if next_match else len(changelog)
+    return changelog[body_start:body_end].strip()
+
+def fetch_appcast(url: str) -> Optional[ET.ElementTree]:
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        status = run(["curl", "-sS", "-o", tmp_path, "-w", "%{http_code}", url]).stdout.strip()
+        if status == "200":
+            try:
+                return ET.parse(tmp_path)
+            except ET.ParseError as exc:
+                die(f"{url}: invalid XML: {exc}")
+        if status == "404":
+            return None
+        body = open(tmp_path, "r", encoding="utf-8", errors="replace").read()
+        die(f"{url}: HTTP {status}\n{body}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+def seed_appcast(prefix: str) -> ET.ElementTree:
+    rss = ET.Element("rss", {"version": "2.0", "xmlns:sparkle": SPARKLE_NS})
+    channel = ET.SubElement(rss, "channel")
+    ET.SubElement(channel, "title").text = "solstone"
+    ET.SubElement(channel, "link").text = f"{BASE_URL}/{prefix}/appcast.xml"
+    ET.SubElement(channel, "description").text = "Solstone Capture updates"
+    ET.SubElement(channel, "language").text = "en"
+    return ET.ElementTree(rss)
+
+def build_item(version: str, bundle_version: int, signature: str, length: int, enclosure_url: str, notes: str) -> ET.Element:
+    item = ET.Element("item")
+    ET.SubElement(item, "title").text = f"Solstone {version}"
+    ET.SubElement(item, "pubDate").text = format_datetime(datetime.now(timezone.utc), usegmt=True)
+    ET.SubElement(item, f"{{{SPARKLE_NS}}}version").text = str(bundle_version)
+    ET.SubElement(item, f"{{{SPARKLE_NS}}}shortVersionString").text = version
+    ET.SubElement(item, f"{{{SPARKLE_NS}}}minimumSystemVersion").text = MIN_SYSTEM
+    ET.SubElement(item, "description").text = notes
+    ET.SubElement(item, "enclosure", {"url": enclosure_url, "length": str(length), "type": "application/octet-stream", f"{{{SPARKLE_NS}}}edSignature": signature})
+    return item
+
+def merge_item(tree: ET.ElementTree, item: ET.Element, bundle_version: int) -> None:
+    channel = tree.getroot().find("channel")
+    if channel is None:
+        die("appcast.xml: missing channel element")
+    target = str(bundle_version)
+    for existing in list(channel.findall("item")):
+        existing_version = existing.find(f"{{{SPARKLE_NS}}}version")
+        if existing_version is not None and (existing_version.text or "").strip() == target:
+            channel.remove(existing)
+    children = list(channel)
+    first_item_index = next((i for i, child in enumerate(children) if child.tag == "item"), len(children))
+    channel.insert(first_item_index, item)
+
+def serialize_appcast(tree: ET.ElementTree) -> bytes:
+    ET.indent(tree, space="  ")
+    return ET.tostring(tree.getroot(), encoding="UTF-8", xml_declaration=True)
+
+def upload(local_path: str, r2_key: str) -> None:
+    run(["wrangler", "r2", "object", "put", f"{R2_BUCKET}/{r2_key}", f"--file={local_path}"])
+
+def head_check(url: str) -> None:
+    status = run(["curl", "-sS", "-I", "-o", "/dev/null", "-w", "%{http_code}", url]).stdout.strip()
+    if status != "200":
+        die(f"{url}: HEAD returned HTTP {status}")
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Publish a Sparkle 2 appcast release.")
+    parser.add_argument("version", help='CFBundleShortVersionString, e.g. "1.1.0"')
+    parser.add_argument("--staging", action="store_true", help="Publish to the staging feed")
+    args = parser.parse_args()
+    prefix = STAGING_PREFIX if args.staging else PROD_PREFIX
+    key_path = os.environ.get("SOLSTONE_SPARKLE_KEY_PATH", DEFAULT_KEY_PATH)
+    dmg_name = f"solstone-{args.version}.dmg"
+    dmg_path = os.path.abspath(dmg_name)
+    appcast_url = f"{BASE_URL}/{prefix}/appcast.xml"
+    enclosure_url = f"{BASE_URL}/{prefix}/releases/v{args.version}/{dmg_name}"
+    appcast_key = f"{prefix}/appcast.xml"
+    dmg_key = f"{prefix}/releases/v{args.version}/{dmg_name}"
+    key = load_private_key(key_path)
+    signature, length = sign_dmg(key, dmg_path)
+    bundle_version = read_info_plist(args.version)
+    notes = extract_release_notes(args.version)
+    tree = fetch_appcast(appcast_url)
+    if tree is None:
+        tree = seed_appcast(prefix)
+    item = build_item(args.version, bundle_version, signature, length, enclosure_url, notes)
+    merge_item(tree, item, bundle_version)
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp.write(serialize_appcast(tree))
+        tmp_path = tmp.name
+    try:
+        upload(dmg_path, dmg_key)
+        upload(tmp_path, appcast_key)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+    head_check(appcast_url)
+    head_check(enclosure_url)
+    print(f"published {args.version}")
+    print(f"appcast: {appcast_url}")
+    print(f"enclosure: {enclosure_url}")
+    print(f"length: {length}")
+    print(f"signature: {signature}")
+
+if __name__ == "__main__":
+    main()
