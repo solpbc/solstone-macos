@@ -1,0 +1,37 @@
+# Changelog
+
+All notable changes to Solstone Capture will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.1.0] - unreleased
+
+### Added
+- In-app update support with an Updates tab and menu-bar "check for updates".
+- Sparkle-based signed update feed integration.
+
+### Changed
+- Distribution builds are now packaged as signed, notarized DMGs suitable for direct install outside the App Store.
+
+### Fixed
+- Release builds now use the production Sparkle signing key.
+- Signing checks are idempotent across fresh SSH sessions by resetting the session keychain search list.
+
+## [1.0.0] - 2026-04-22
+
+### Added
+- Initial release of Solstone Capture.
+- Continuous multi-display screen capture at 1 FPS.
+- System audio plus per-microphone recording with dynamic mic join/leave.
+- 5-minute segment rotation, pause with auto-resume, observer sync/retry, startup recovery, and privacy window exclusion.
+
+### Changed
+- H.264 recording for browser compatibility.
+- Day-based local cache retention instead of size-based cleanup.
+
+### Fixed
+- Fresh-install start-at-login registration.
+- Clearer local-network permission handling for LAN and Tailscale servers.
+- Reliable settings-window Dock behavior and reopen handling.
+- Install flow split into `make cert` plus human-run `make allow`.

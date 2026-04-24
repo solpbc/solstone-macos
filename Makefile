@@ -370,3 +370,17 @@ check-icons-deps:
 		(echo "error: rsvg-convert not found — run: brew install librsvg"; exit 1)
 	@which iconutil > /dev/null 2>&1 || \
 		(echo "error: iconutil not found (requires macOS)"; exit 1)
+
+# ────────────────────────────────────────────────────────────────
+# Publish targets — EXTRO-HOST ONLY
+# Do not run on pro5e. These are invoked from the extro host by VPE
+# during the release playbook. They require wrangler and the local
+# vault private key.
+# ────────────────────────────────────────────────────────────────
+publish-appcast:
+	python3 scripts/publish-appcast.py $(DIST_VERSION)
+
+publish-appcast-staging:
+	python3 scripts/publish-appcast.py $(DIST_VERSION) --staging
+
+.PHONY: publish-appcast publish-appcast-staging
