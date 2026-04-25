@@ -51,3 +51,9 @@ scratch/
 
 # Distribution build artifacts
 *.dmg
+
+# AppIcon.iconset is an intermediate artifact built by `make icons`
+# in a temp dir. The shipping artifact is AppIcon.icns. Use
+# `iconutil -c iconset Sources/solstone/Resources/AppIcon.icns` to
+# extract sized PNGs on demand.
+Sources/solstone/Resources/AppIcon.iconset/
