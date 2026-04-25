@@ -312,10 +312,15 @@ icons: check-icons-deps
 	ICONSET=$$TMPDIR/AppIcon.iconset && \
 	mkdir -p $$ICONSET && \
 	\
-	echo "  Rendering app icon sizes..." && \
+	echo "  Rendering app icon sizes (per-size SVG selection — never downsample)..." && \
 	for size in 16 32 64 128 256 512 1024; do \
-		rsvg-convert -w $$size -h $$size assets/icon-app.svg \
+		svg=assets/icon-app.svg; \
+		if [ -f assets/icon-app-$${size}.svg ]; then \
+			svg=assets/icon-app-$${size}.svg; \
+		fi; \
+		rsvg-convert -w $$size -h $$size $$svg \
 			-o $$TMPDIR/icon_$${size}.png; \
+		echo "    $${size}x$${size}  ($$svg)"; \
 	done && \
 	\
 	cp $$TMPDIR/icon_16.png    $$ICONSET/icon_16x16.png && \
