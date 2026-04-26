@@ -359,9 +359,9 @@ icons: check-icons-deps
 	echo "  ✓ AppIcon.icns" && \
 	\
 	echo "  Rendering status bar template icons..." && \
-	rsvg-convert -w 18 -h 18 assets/sol-ring.svg \
+	rsvg-convert -w 18 -h 18 assets/sol-ring-icon.svg \
 		-o Sources/solstone/Resources/sol-ring-template.png && \
-	rsvg-convert -w 36 -h 36 assets/sol-ring.svg \
+	rsvg-convert -w 36 -h 36 assets/sol-ring-icon.svg \
 		-o Sources/solstone/Resources/sol-ring-template@2x.png && \
 	echo "  ✓ sol-ring-template.png + @2x" && \
 	echo "  Rendering status bar variant icons..." && \
