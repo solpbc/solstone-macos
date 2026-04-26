@@ -3,6 +3,7 @@
 
 import Foundation
 import os
+import SolstoneCore
 
 /// UI-facing coordinator for upload/sync status
 /// Thin @MainActor layer that observes SyncService events and exposes state for SwiftUI

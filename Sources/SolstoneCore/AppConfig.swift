@@ -49,6 +49,17 @@ public struct AppConfig: Sendable {
         public static let cacheRetentionDays = 7
     }
 
+    public static let knownKeys: [String] = [
+        "microphonePriority", "excludedApps", "excludedTitlePatterns",
+        "excludePrivateBrowsing", "serverURL", "serverKey",
+        "cacheRetentionDays", "syncPaused", "debugSegments",
+        "debugKeepRejectedAudio", "microphoneGain", "silenceMusic"
+    ]
+
+    public static func isKnownKey(_ key: String) -> Bool {
+        knownKeys.contains(key)
+    }
+
     private enum Keys {
         static let microphonePriority = "microphonePriority"
         static let excludedApps = "excludedApps"
@@ -321,29 +332,14 @@ public struct AppConfig: Sendable {
 
     /// Reorders microphones in the priority list
     public mutating func reorderMicrophones(fromOffsets: IndexSet, toOffset: Int) {
-        microphonePriority.move(fromOffsets: fromOffsets, toOffset: toOffset)
-    }
+        let movingEntries = fromOffsets.map { microphonePriority[$0] }
+        let adjustedDestination = toOffset - fromOffsets.filter { $0 < toOffset }.count
 
-    /// Selects the highest priority microphone that is currently available
-    public func selectBestMicrophone(from available: [AudioInputDevice]) -> AudioInputDevice? {
-        let availableUIDs = Set(available.map { $0.uid })
-
-        for entry in microphonePriority {
-            if availableUIDs.contains(entry.uid) {
-                return available.first(where: { $0.uid == entry.uid })
-            }
+        for index in fromOffsets.sorted(by: >) {
+            microphonePriority.remove(at: index)
         }
 
-        return nil
-    }
-
-    /// Adds a microphone to the priority list
-    public mutating func addMicrophone(_ device: AudioInputDevice) -> Bool {
-        guard !microphonePriority.contains(where: { $0.uid == device.uid }) else {
-            return false
-        }
-        microphonePriority.append(MicrophoneEntry(uid: device.uid, name: device.name))
-        return true
+        microphonePriority.insert(contentsOf: movingEntries, at: adjustedDestination)
     }
 
     /// Removes a microphone from the priority list

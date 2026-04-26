@@ -10,12 +10,21 @@ let package = Package(
         .macOS(.v15)
     ],
     dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.1")
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.1"),
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0")
     ],
     targets: [
+        .target(
+            name: "SolstoneCore",
+            path: "Sources/SolstoneCore",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
         .executableTarget(
             name: "solstone",
             dependencies: [
+                .target(name: "SolstoneCore"),
                 .target(name: "ObjCHelpers"),
                 .product(name: "Sparkle", package: "Sparkle")
             ],
@@ -39,6 +48,17 @@ let package = Package(
                 .linkedFramework("SoundAnalysis")
             ]
         ),
+        .executableTarget(
+            name: "sol-mac",
+            dependencies: [
+                .target(name: "SolstoneCore"),
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ],
+            path: "Sources/sol-mac",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
         .target(
             name: "ObjCHelpers",
             path: "Sources/ObjCHelpers",
@@ -47,9 +67,13 @@ let package = Package(
         .testTarget(
             name: "solstoneTests",
             dependencies: [
-                .target(name: "solstone")
+                .target(name: "solstone"),
+                .target(name: "SolstoneCore")
             ],
-            path: "Tests/solstoneTests"
+            path: "Tests/solstoneTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
         )
     ]
 )

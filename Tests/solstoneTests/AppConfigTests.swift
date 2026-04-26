@@ -3,6 +3,7 @@
 
 import CoreAudio
 import Testing
+import SolstoneCore
 @testable import solstone
 
 @Suite("AppConfig")

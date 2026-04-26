@@ -5,6 +5,7 @@ import AppKit
 import CoreAudio
 import SwiftUI
 import Testing
+import SolstoneCore
 @testable import solstone
 
 private func runGit(_ args: String...) throws -> String {

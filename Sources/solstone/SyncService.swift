@@ -3,6 +3,7 @@
 
 import Foundation
 import os
+import SolstoneCore
 
 /// Background sync service that walks days and uploads missing segments
 /// All operations run off the main actor

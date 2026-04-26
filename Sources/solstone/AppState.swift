@@ -5,6 +5,7 @@ import Foundation
 import SwiftUI
 import ServiceManagement
 import os
+import SolstoneCore
 
 /// Thread-safe holder for a debug setting value
 /// Allows Sendable closures to read the current value

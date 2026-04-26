@@ -19,10 +19,10 @@ import os
 extension Logger {
     private static let subsystem = "app.solstone.observer"
 
-    static let general = Logger(subsystem: subsystem, category: "general")
-    static let capture = Logger(subsystem: subsystem, category: "capture")
-    static let audio = Logger(subsystem: subsystem, category: "audio")
-    static let upload = Logger(subsystem: subsystem, category: "upload")
-    static let setup = Logger(subsystem: subsystem, category: "setup")
-    static let storage = Logger(subsystem: subsystem, category: "storage")
+    public static let general = Logger(subsystem: subsystem, category: "general")
+    public static let capture = Logger(subsystem: subsystem, category: "capture")
+    public static let audio = Logger(subsystem: subsystem, category: "audio")
+    public static let upload = Logger(subsystem: subsystem, category: "upload")
+    public static let setup = Logger(subsystem: subsystem, category: "setup")
+    public static let storage = Logger(subsystem: subsystem, category: "storage")
 }

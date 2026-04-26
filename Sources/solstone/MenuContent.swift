@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import SwiftUI
+import SolstoneCore
 
 /// The content of the status bar menu
 struct MenuContent: View {

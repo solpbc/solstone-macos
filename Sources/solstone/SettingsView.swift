@@ -5,6 +5,7 @@ import AppKit
 @preconcurrency import ScreenCaptureKit
 import SwiftUI
 import os
+import SolstoneCore
 
 /// Display entry for microphone priority list
 struct MicrophoneDisplayEntry: Identifiable {
