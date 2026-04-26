@@ -55,6 +55,7 @@ release:
 # Build universal binary (arm64 + x86_64)
 release-universal:
 	swift build -c release --arch arm64 --arch x86_64
+	swift build -c release --arch arm64 --arch x86_64 --product sol-mac
 
 # Run the installed app and stream all logs to a timestamped file in scratch/
 # Keeps capturing across app restarts. Ctrl+C to stop.
@@ -172,6 +173,7 @@ bundle-dist: unlock-signing signing-check release-universal
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
 	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
+	@cp .build/apple/Products/Release/sol-mac solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
@@ -195,6 +197,10 @@ bundle-dist: unlock-signing signing-check release-universal
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		solstone.app/Contents/Resources/solstone_solstone.bundle
+	@codesign --force --options runtime --timestamp \
+		--identifier app.solstone.observer.cli \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		solstone.app/Contents/MacOS/sol-mac
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		--entitlements Sources/solstone/entitlements.plist \
@@ -225,7 +231,19 @@ verify-notarization: staple
 	@spctl --assess --type open --context context:primary-signature -v $(DMG_NAME) || \
 		{ echo "spctl verification failed"; exit 1; }
 	@xcrun stapler validate $(DMG_NAME)
-	@echo "✓ $(DMG_NAME) notarized + stapled"
+	@codesign --verify --strict --verbose=2 solstone.app/Contents/MacOS/sol-mac || \
+		{ echo "inner CLI signature invalid"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/MacOS/sol-mac 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || \
+		{ echo "inner CLI missing Team ID 7QCG8V4M6H"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/MacOS/sol-mac 2>&1 | grep -q 'flags=0x10000(runtime)' || \
+		{ echo "inner CLI missing hardened runtime flag"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/MacOS/sol-mac 2>&1 | grep -q 'Identifier=app.solstone.observer.cli' || \
+		{ echo "inner CLI identifier mismatch (expected app.solstone.observer.cli)"; exit 1; }
+	@lipo -archs solstone.app/Contents/MacOS/sol-mac | grep -q 'arm64' || \
+		{ echo "inner CLI missing arm64 slice"; exit 1; }
+	@lipo -archs solstone.app/Contents/MacOS/sol-mac | grep -q 'x86_64' || \
+		{ echo "inner CLI missing x86_64 slice"; exit 1; }
+	@echo "✓ $(DMG_NAME) notarized + stapled (inner CLI signature verified)"
 
 # One-shot: build + sign + notarize + staple + verify. This is the canonical
 # entry point for creating an ad-hoc distributable DMG.
