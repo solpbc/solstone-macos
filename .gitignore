@@ -43,8 +43,10 @@ Carthage/Checkouts/
 .claude/todos.json
 .claude/.scratchpad.md
 
-# Snapshot renders
-snapshots/
+# Snapshot renders (negate trailing-slash so the un-ignore below can take effect)
+snapshots/*
+# Brand-alignment validation reports are documentation, not test artifacts — keep tracked.
+!snapshots/brand-alignment-validation-*.md
 
 # Local scratch / debug logs
 scratch/

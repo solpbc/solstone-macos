@@ -1,8 +1,12 @@
 .PHONY: build release release-universal run clean test snapshot bundle bundle-universal install setup install-app open reset cert allow check-cert icons check-icons-deps check-dev-deps \
-        signing-check unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg
+        signing-check unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg \
+        brand-sync
 
 # Code signing identity — run 'make cert' then 'make allow' to create and trust (one-time setup)
 SIGN_IDENTITY ?= solstone dev
+
+# Canonical brand source (override with BRAND_DIR=/path/to/extro/cmo/brand/sol make brand-sync)
+BRAND_DIR ?= ../extro/cmo/brand/sol
 
 # ---------------------------------------------------------------------------
 # Distribution signing (Apple Developer ID + notarization)
@@ -22,6 +26,23 @@ DIST_VERSION           := $(shell /usr/libexec/PlistBuddy -c "Print :CFBundleSho
 DMG_NAME               ?= solstone-$(DIST_VERSION).dmg
 SPARKLE_ARTIFACT_DIR   ?= .build/artifacts/sparkle/Sparkle
 SPARKLE_FRAMEWORK      ?= $(SPARKLE_ARTIFACT_DIR)/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
+
+# Re-vendor brand SVGs from the canonical source. CI verifies the committed
+# output (it does not run brand-sync) — run this locally when the brand spec
+# updates, then commit the diff.
+brand-sync:
+	@test -d "$(BRAND_DIR)" || { echo "brand: $(BRAND_DIR) not found — clone extro alongside this repo (or set BRAND_DIR=...)"; exit 1; }
+	cp "$(BRAND_DIR)/sol-wordmark.svg"          assets/sol-wordmark.svg
+	cp "$(BRAND_DIR)/sol-wordmark-white.svg"    assets/sol-wordmark-white.svg
+	cp "$(BRAND_DIR)/sol-ring.svg"              assets/sol-ring.svg
+	cp "$(BRAND_DIR)/sol-ring-icon.svg"         assets/sol-ring-icon.svg
+	cp "$(BRAND_DIR)/sol-ring-icon-error.svg"   assets/sol-ring-icon-error.svg
+	cp "$(BRAND_DIR)/sol-ring-icon-paused.svg"  assets/sol-ring-icon-paused.svg
+	cp "$(BRAND_DIR)/sol-ring-icon-half.svg"    assets/sol-ring-icon-half.svg
+	cp "$(BRAND_DIR)/sol-app-icon.svg"          assets/icon-app.svg
+	cp "$(BRAND_DIR)/sol-app-icon-16.svg"       assets/icon-app-16.svg
+	cp "$(BRAND_DIR)/sol-app-icon-32.svg"       assets/icon-app-32.svg
+	@echo "brand: synced from $(BRAND_DIR)"
 
 # Build debug version
 build:

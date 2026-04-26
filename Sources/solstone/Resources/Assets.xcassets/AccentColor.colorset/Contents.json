@@ -5,6 +5,24 @@
         "color-space" : "srgb",
         "components" : {
           "alpha" : "1.000",
+          "blue" : "0.102",
+          "green" : "0.416",
+          "red" : "0.690"
+        }
+      },
+      "idiom" : "universal"
+    },
+    {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "dark"
+        }
+      ],
+      "color" : {
+        "color-space" : "srgb",
+        "components" : {
+          "alpha" : "1.000",
           "blue" : "0.227",
           "green" : "0.573",
           "red" : "0.910"
@@ -15,6 +33,7 @@
   ],
   "info" : {
     "author" : "xcode",
+    "comment" : "extro/cmo/brand/sol/index.md — solOrangeAccessible (light, WCAG-AA-on-cream) & solOrange (dark)",
     "version" : 1
   }
 }

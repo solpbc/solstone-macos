@@ -117,3 +117,14 @@ Specialized knowledge packs in `skills/`, symlinked from `.claude/skills/` and `
 | `av-media-pipeline` | Working with H.264 encoding, AVAssetWriter, AVAudioEngine, audio format conversion, the remix pipeline, or SoundAnalysis |
 | `macos-app-lifecycle` | Working with MenuBarExtra, TCC permissions, login items, graceful shutdown, configuration, or DMG packaging |
 | `live-logging` | Debugging the running app with log stream, adding log statements, Logger categories, privacy annotations, or troubleshooting logging issues |
+
+## Brand
+
+- Follow lowercase-first UI copy in visible product text.
+- Exceptions are limited to HIG cancel/destructive labels, `accessibilityHint` / `accessibilityLabel`, third-party proper nouns, OS-required path strings (e.g. `Application Support/Solstone/...`), protocol and URL literals, and AM/PM or date abbreviations.
+- Canonical brand source: `extro/cmo/brand/sol/index.md`.
+- Sync vendored brand SVGs with `make brand-sync` (writes into `assets/`).
+- Override the source directory with `BRAND_DIR=/path/to/extro/cmo/brand/sol make brand-sync`.
+- `Sources/solstone/Resources/Assets.xcassets/AccentColor.colorset/` carries the canonical `solOrangeAccessible` (light, WCAG-AA-on-cream) and `solOrange` (dark) split — do not collapse it back to a single variant.
+- Render PNGs from the SVG sources via `make icons` — never downsample a larger PNG. Per-size hand-tuned variants live alongside the canonical (`assets/icon-app-16.svg`, `assets/icon-app-32.svg`).
+- Data covenants: no analytics, no tracking, no telemetry, no phone-home — see `charter/bylaws.md` Article IV (Sections 4.1–4.2) in extro.
