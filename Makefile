@@ -108,6 +108,7 @@ bundle: check-cert release
 	@mkdir -p solstone.app/Contents/MacOS
 	@mkdir -p solstone.app/Contents/Resources
 	@cp .build/release/solstone solstone.app/Contents/MacOS/
+	@cp .build/release/sol-mac solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@cp -r .build/release/solstone_solstone.bundle solstone.app/Contents/Resources/
@@ -121,6 +122,7 @@ bundle-universal: release-universal
 	@mkdir -p solstone.app/Contents/MacOS
 	@mkdir -p solstone.app/Contents/Resources
 	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
+	@cp .build/apple/Products/Release/sol-mac solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/

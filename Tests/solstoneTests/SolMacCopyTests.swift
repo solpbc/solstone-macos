@@ -3,25 +3,28 @@ import SolstoneCore
 
 @Suite("SolMacCopy")
 struct SolMacCopyTests {
-    @Test func appNotRunningLiteral() {
-        #expect(SolMacCopy.appNotRunning == "solstone is not running")
+    @Test func appNotRunningLiteralIsLocked() {
+        #expect(SolMacCopy.APP_NOT_RUNNING == "solstone is not running. run 'sol-mac start' to launch it.")
     }
 
-    @Test func stopNoopLiteral() {
-        #expect(SolMacCopy.stopNoop == "solstone is not recording")
+    @Test func stopNoopLiteralIsLocked() {
+        #expect(SolMacCopy.STOP_NOOP == "solstone is not running")
     }
 
-    @Test func versionMismatchTemplate() {
-        #expect(
-            SolMacCopy.versionMismatch(serverVersion: 2, clientVersion: 1) ==
-                "protocol version skew: cli v1 → app v2. update one to match."
-        )
+    @Test func installLogLiteralsAreLocked() {
+        #expect(SolMacCopy.INSTALL_SUCCESS_LOG == "installed sol-mac at ~/.local/bin/sol-mac")
+        #expect(SolMacCopy.INSTALL_SKIP_LOG == "~/.local/bin/sol-mac exists and isn't ours, skipping")
+        #expect(SolMacCopy.INSTALL_FAILURE_LOG == "failed to install sol-mac at ~/.local/bin/sol-mac")
     }
 
-    @Test func installAndTranslocationLiteralsPresent() {
-        #expect(!SolMacCopy.installSuccess.isEmpty)
-        #expect(!SolMacCopy.installNeedsAuth.isEmpty)
-        #expect(!SolMacCopy.translocationDetected.isEmpty)
-        #expect(!SolMacCopy.translocationRemedy.isEmpty)
+    @Test func translocationModalLiteralsAreLocked() {
+        #expect(SolMacCopy.TRANSLOCATION_MODAL_TITLE == "solstone needs to be moved")
+        #expect(SolMacCopy.TRANSLOCATION_MODAL_BODY == "solstone is running from a temporary location. Move solstone.app to /Applications and re-launch.")
+        #expect(SolMacCopy.TRANSLOCATION_MODAL_BUTTON == "Quit solstone")
+    }
+
+    @Test func versionMismatchFormatsAsLocked() {
+        let actual = SolMacCopy.versionMismatch(cliVersion: "1.2", appVersion: "1.3")
+        #expect(actual == "sol-mac 1.2 → solstone 1.3: version_mismatch — re-install the latest sol-mac via the .app's auto-install (re-launch solstone)")
     }
 }

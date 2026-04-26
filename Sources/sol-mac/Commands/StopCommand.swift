@@ -21,10 +21,10 @@ struct StopCommand: AsyncParsableCommand {
         } catch let error as SolMacClientError {
             switch error {
             case .appNotRunning:
-                print(SolMacCopy.stopNoop)
+                print(SolMacCopy.STOP_NOOP)
                 throw ExitCode(SolMacExit.success.rawValue)
             case .timeout:
-                writeStructuredStderr(code: "ipc_timeout", message: SolMacCopy.ipcTimeout)
+                writeStructuredStderr(code: "ipc_timeout", message: "ipc timeout")
                 throw ExitCode(SolMacExit.ipcError.rawValue)
             case .decodeFailed(let underlying):
                 writeStructuredStderr(code: "decode_failed", message: "decode failed: \(underlying)")

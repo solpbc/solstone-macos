@@ -1,18 +1,31 @@
 import Foundation
 
-// Locked CLI copy. INSTALL_* and TRANSLOCATION_* are imported by Lode 4 and unused in Lode 3.
 public enum SolMacCopy {
-    public static let appNotRunning = "solstone is not running"
-    public static let stopNoop = "solstone is not recording"
-    public static let alreadyRecording = "solstone is already recording"
-    public static let ipcTimeout = "ipc timeout"
+    public static let APP_NOT_RUNNING =
+        "solstone is not running. run 'sol-mac start' to launch it."
 
-    public static func versionMismatch(serverVersion: Int, clientVersion: Int) -> String {
-        "protocol version skew: cli v\(clientVersion) → app v\(serverVersion). update one to match."
+    public static let STOP_NOOP =
+        "solstone is not running"
+
+    public static let INSTALL_SUCCESS_LOG =
+        "installed sol-mac at ~/.local/bin/sol-mac"
+
+    public static let INSTALL_SKIP_LOG =
+        "~/.local/bin/sol-mac exists and isn't ours, skipping"
+
+    public static let INSTALL_FAILURE_LOG =
+        "failed to install sol-mac at ~/.local/bin/sol-mac"
+
+    public static let TRANSLOCATION_MODAL_TITLE =
+        "solstone needs to be moved"
+
+    public static let TRANSLOCATION_MODAL_BODY =
+        "solstone is running from a temporary location. Move solstone.app to /Applications and re-launch."
+
+    public static let TRANSLOCATION_MODAL_BUTTON =
+        "Quit solstone"
+
+    public static func versionMismatch(cliVersion: String, appVersion: String) -> String {
+        "sol-mac \(cliVersion) → solstone \(appVersion): version_mismatch — re-install the latest sol-mac via the .app's auto-install (re-launch solstone)"
     }
-
-    public static let installSuccess = "sol-mac installed to /usr/local/bin/sol-mac"
-    public static let installNeedsAuth = "installation requires admin access. re-run with sudo, or use the settings UI."
-    public static let translocationDetected = "solstone is running from a quarantined location (App Translocation). drag it into /Applications and re-launch."
-    public static let translocationRemedy = "move solstone.app to /Applications, then re-launch."
 }

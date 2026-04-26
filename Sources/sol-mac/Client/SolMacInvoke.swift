@@ -110,8 +110,8 @@ func validateResponseProtocol(_ response: IPCResponse) throws {
     if response.serverProtocolVersion != SolMacIPCConstants.currentProtocolVersion {
         writeStderr(
             SolMacCopy.versionMismatch(
-                serverVersion: response.serverProtocolVersion,
-                clientVersion: SolMacIPCConstants.currentProtocolVersion
+                cliVersion: String(SolMacIPCConstants.currentProtocolVersion),
+                appVersion: String(response.serverProtocolVersion)
             )
         )
         throw ExitCode(SolMacExit.versionMismatch.rawValue)
@@ -120,8 +120,8 @@ func validateResponseProtocol(_ response: IPCResponse) throws {
     if case .error(let error) = response.result, error.code == "version_mismatch" {
         writeStderr(
             SolMacCopy.versionMismatch(
-                serverVersion: response.serverProtocolVersion,
-                clientVersion: SolMacIPCConstants.currentProtocolVersion
+                cliVersion: String(SolMacIPCConstants.currentProtocolVersion),
+                appVersion: String(response.serverProtocolVersion)
             )
         )
         throw ExitCode(SolMacExit.versionMismatch.rawValue)
@@ -130,11 +130,8 @@ func validateResponseProtocol(_ response: IPCResponse) throws {
 
 func remapServerError(_ error: IPCError, command: String) throws -> Never {
     switch (command, error.code) {
-    case ("start", "already_in_state"):
-        writeStderr(SolMacCopy.alreadyRecording)
-        throw ExitCode(SolMacExit.success.rawValue)
     case ("stop", "already_in_state"):
-        print(SolMacCopy.stopNoop)
+        print(SolMacCopy.STOP_NOOP)
         throw ExitCode(SolMacExit.success.rawValue)
     case ("pause", "already_in_state"), ("unpause", "already_in_state"):
         writeStructuredStderr(code: error.code, message: error.message)
@@ -142,14 +139,6 @@ func remapServerError(_ error: IPCError, command: String) throws -> Never {
     case (_, "not_configured") where command == "sync":
         writeStructuredStderr(code: error.code, message: error.message, hint: error.hint)
         throw ExitCode(SolMacExit.localValidation.rawValue)
-    case (_, "version_mismatch"):
-        writeStderr(
-            SolMacCopy.versionMismatch(
-                serverVersion: SolMacIPCConstants.currentProtocolVersion,
-                clientVersion: SolMacIPCConstants.currentProtocolVersion
-            )
-        )
-        throw ExitCode(SolMacExit.versionMismatch.rawValue)
     default:
         writeStructuredStderr(code: error.code, message: error.message, hint: error.hint)
         throw ExitCode(SolMacExit.ipcError.rawValue)
@@ -183,10 +172,10 @@ private func performSend(_ request: IPCRequest, allowLoginRaceRetry: Bool) async
 private func handleClientErrorAndExit(_ error: SolMacClientError) throws -> Never {
     switch error {
     case .appNotRunning:
-        writeStderr(SolMacCopy.appNotRunning)
+        writeStderr(SolMacCopy.APP_NOT_RUNNING)
         throw ExitCode(SolMacExit.appNotRunning.rawValue)
     case .timeout:
-        writeStructuredStderr(code: "ipc_timeout", message: SolMacCopy.ipcTimeout)
+        writeStructuredStderr(code: "ipc_timeout", message: "ipc timeout")
         throw ExitCode(SolMacExit.ipcError.rawValue)
     case .decodeFailed(let underlying):
         writeStructuredStderr(code: "decode_failed", message: "decode failed: \(underlying)")

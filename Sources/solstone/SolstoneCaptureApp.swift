@@ -26,6 +26,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var ipcService: SolMacIPCService?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if AppTranslocationDetector.isTranslocated() {
+            AppTranslocationModal.presentAndQuit()
+            return
+        }
+
         notificationObservers.append(
             NotificationCenter.default.addObserver(
                 forName: NSWindow.willCloseNotification,
@@ -66,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let state = AppState.shared {
             state.reevaluateActivationPolicy(debounced: false)
+            SolMacSymlinkInstaller.ensureInstalled()
             let responder = SolMacResponder(appState: state)
             let service = SolMacIPCService(responder: responder)
             service.start()
