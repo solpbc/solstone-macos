@@ -68,9 +68,13 @@ let package = Package(
             name: "solstoneTests",
             dependencies: [
                 .target(name: "solstone"),
-                .target(name: "SolstoneCore")
+                .target(name: "SolstoneCore"),
+                .target(name: "sol-mac")
             ],
             path: "Tests/solstoneTests",
+            resources: [
+                .copy("Fixtures")
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]

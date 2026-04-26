@@ -130,20 +130,30 @@ struct SettingsView: View {
         .frame(minWidth: 580, minHeight: 380)
         .onAppear {
             appState.syncMicrophonePriorityList()
-            if let pending = appState.pendingSettingsTab {
-                switch pending {
-                case "permissions": selectedTab = .permissions
-                case "service": selectedTab = .service
-                case "help": selectedTab = .help
-                case "status": selectedTab = .status
-                case "updates": selectedTab = .updates
-                default: break
-                }
-                appState.pendingSettingsTab = nil
-            }
+            applyPendingSettingsTab()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .solMacOpenSettings)) { _ in
+            applyPendingSettingsTab()
         }
         .onExitCommand {
             dismiss()
+        }
+    }
+
+    private func applyPendingSettingsTab() {
+        if let pending = appState.pendingSettingsTab {
+            switch pending {
+            case "observer": selectedTab = .observer
+            case "permissions": selectedTab = .permissions
+            case "service": selectedTab = .service
+            case "microphones": selectedTab = .microphones
+            case "privacy": selectedTab = .privacy
+            case "help": selectedTab = .help
+            case "status": selectedTab = .status
+            case "updates": selectedTab = .updates
+            default: break
+            }
+            appState.pendingSettingsTab = nil
         }
     }
 

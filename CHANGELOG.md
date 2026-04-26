@@ -10,9 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - In-app update support with an Updates tab and menu-bar "check for updates".
 - Sparkle-based signed update feed integration.
+- `sol-mac` IPC over a unix domain socket, including the locked `Codable` wire schema in `SolstoneCore`, the app-side `NWListener` service, and the hidden `_internal-ping` round-trip command.
 
 ### Changed
 - Distribution builds are now packaged as signed, notarized DMGs suitable for direct install outside the App Store.
+- `AppState.reloadConfigFromDisk()` is now the cross-process fast path for config reloads.
 
 ### Fixed
 - Release builds now use the production Sparkle signing key.

@@ -23,6 +23,7 @@ public enum DockMode: String {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuTrackingObserver: Any?
     private var notificationObservers: [Any] = []
+    private var ipcService: SolMacIPCService?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         notificationObservers.append(
@@ -65,6 +66,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let state = AppState.shared {
             state.reevaluateActivationPolicy(debounced: false)
+            let responder = SolMacResponder(appState: state)
+            let service = SolMacIPCService(responder: responder)
+            service.start()
+            ipcService = service
         } else {
             Logger.general.error("AppState.shared nil in applicationDidFinishLaunching")
         }
@@ -113,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             Logger.general.error("AppState.shared nil in applicationWillTerminate")
         }
+        ipcService?.stop()
         Logger.general.info("Termination: starting shutdown...")
 
         // Request time to complete pending work before termination
@@ -227,20 +233,25 @@ private struct StatusIcon: View {
 
     var body: some View {
         bundleImage(iconName, isTemplate: true)
-        .task {
-            guard !hasCheckedSetup else { return }
-            hasCheckedSetup = true
-            // Wait for the first real permission check to complete before deciding
-            // whether to open settings — avoids false-positive on startup.
-            while !appState.initialPermissionCheckComplete {
-                try? await Task.sleep(for: .milliseconds(100))
+            .task {
+                guard !hasCheckedSetup else { return }
+                hasCheckedSetup = true
+                // Wait for the first real permission check to complete before deciding
+                // whether to open settings — avoids false-positive on startup.
+                while !appState.initialPermissionCheckComplete {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                if !appState.screenRecordingGranted || !appState.microphoneGranted {
+                    appState.pendingSettingsTab = "permissions"
+                    openWindow(id: "settings")
+                    appState.didOpenWindow(.settings)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
             }
-            if !appState.screenRecordingGranted || !appState.microphoneGranted {
-                appState.pendingSettingsTab = "permissions"
+            .onReceive(NotificationCenter.default.publisher(for: .solMacOpenSettings)) { _ in
                 openWindow(id: "settings")
                 appState.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
             }
-        }
     }
 }

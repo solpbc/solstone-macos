@@ -10,6 +10,7 @@ public final class PauseManager {
     /// Duration options for pausing capture
     public enum PauseDuration: Sendable {
         case minutes(Int)
+        case seconds(Int)
         case indefinite
 
         /// Calculate the expiration date for this duration
@@ -17,6 +18,8 @@ public final class PauseManager {
             switch self {
             case .minutes(let minutes):
                 return Date().addingTimeInterval(TimeInterval(minutes * 60))
+            case .seconds(let seconds):
+                return Date().addingTimeInterval(TimeInterval(seconds))
             case .indefinite:
                 return nil
             }

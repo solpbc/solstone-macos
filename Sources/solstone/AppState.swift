@@ -168,6 +168,12 @@ public final class AppState {
         }
     }
 
+    public func reloadConfigFromDisk() {
+        CFPreferencesAppSynchronize(SolMacIPCConstants.appBundleIdentifier as CFString)
+        let reloaded = AppConfig.load()
+        updateConfig(reloaded)
+    }
+
     /// Auto-adds any newly detected microphones to the priority list
     public func syncMicrophonePriorityList() {
         let available = audioDeviceMonitor.availableDevices
