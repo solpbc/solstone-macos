@@ -160,6 +160,7 @@ public struct AppConfig: Sendable {
 
     /// Loads config from UserDefaults
     public static func load() -> AppConfig {
+        CFPreferencesAppSynchronize(SolMacIPCConstants.appBundleIdentifier as CFString)
         let defaults = UserDefaults.standard
 
         // Load microphonePriority from JSON data

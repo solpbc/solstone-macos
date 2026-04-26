@@ -1,14 +1,29 @@
 import ArgumentParser
-import SolstoneCore
+import Foundation
 
 @main
 struct SolMac: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "sol-mac",
-        subcommands: [InternalPing.self]
+        abstract: "command-line interface for solstone.",
+        subcommands: [
+            StatusCommand.self,
+            VersionCommand.self,
+            PathCommand.self,
+            DiagnoseCommand.self,
+            ConfigCommand.self,
+            StartCommand.self,
+            StopCommand.self,
+            PauseCommand.self,
+            UnpauseCommand.self,
+            SyncCommand.self,
+            OpenCommand.self,
+            LogsCommand.self,
+            InternalPing.self,
+        ]
     )
 
     mutating func run() async throws {
-        print("sol-mac stub — commands wire up in Lode 3")
+        print(Self.helpMessage())
     }
 }

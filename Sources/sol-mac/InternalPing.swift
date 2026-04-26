@@ -22,14 +22,10 @@ struct InternalPing: AsyncParsableCommand {
         case .ok(.pong):
             print("pong")
         case .ok:
-            FileHandle.standardError.write(Data("unexpected response\n".utf8))
-            throw ExitCode.failure
+            writeStructuredStderr(code: "ipc_error", message: "unexpected response payload")
+            throw ExitCode(SolMacExit.ipcError.rawValue)
         case .error(let error):
-            if let hint = error.hint {
-                print("\(error.code): \(error.message) (\(hint))")
-            } else {
-                print("\(error.code): \(error.message)")
-            }
+            writeStructuredStderr(code: error.code, message: error.message, hint: error.hint)
         }
     }
 }

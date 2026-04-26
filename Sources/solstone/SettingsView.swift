@@ -143,7 +143,7 @@ struct SettingsView: View {
     private func applyPendingSettingsTab() {
         if let pending = appState.pendingSettingsTab {
             switch pending {
-            case "observer": selectedTab = .observer
+            case "observer", "general": selectedTab = .observer
             case "permissions": selectedTab = .permissions
             case "service": selectedTab = .service
             case "microphones": selectedTab = .microphones
