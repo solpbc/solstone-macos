@@ -1,6 +1,6 @@
 # installing solstone-macos
 
-these instructions are for a coding agent and human working together. solstone-macos is a native swift menu bar app that captures screen and audio on macOS, and uploads to a solstone server.
+these instructions are for a coding agent and human working together. solstone-macos is a native swift menu bar app — one of the owner's observers, experiencing screen and audio along with them on macOS, with segments uploaded to a solstone server.
 
 solstone must already be installed and running. if it isn't, start there: https://solstone.app/install
 

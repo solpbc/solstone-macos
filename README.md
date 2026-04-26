@@ -1,18 +1,18 @@
 # Solstone Capture
 
-Solstone Capture is a macOS status bar app for continuous screen and audio recording. It captures all connected displays at 1 FPS, records system and microphone audio in 5-minute segments, and automatically uploads to an observer server.
+Solstone Capture is a macOS status bar app that experiences your screen and audio along with you. It takes in all connected displays at 1 FPS, records system and microphone audio in 5-minute segments (per-source M4A files remixed at segment boundaries), and automatically uploads to an observer server.
 
 ## Key Features
 
-- Multi-display capture at 1 FPS
+- Multi-display observation at 1 FPS
 - Per-source audio recording (system audio + individual microphones)
 - 5-minute segment rotation at clock boundaries
-- Pause recording with timed auto-resume
+- Pause with timed auto-resume
 - Server sync with automatic upload and retry
 - Window exclusion for password managers and private browsers
 - Dynamic microphone join/leave mid-segment
 - Auto-start at login
-- Auto-recovery from capture errors with escalating retry
+- Auto-recovery from segment errors with escalating retry
 - Incomplete segment recovery on startup
 
 ## Requirements

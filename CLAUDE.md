@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Solstone Capture is a macOS status bar application for continuous screen and audio recording. It captures all connected displays at 1 FPS and records system/microphone audio in 5-minute segments, with pause functionality and automatic upload to an observer server.
+Solstone Capture is a macOS status bar application — one of the trinity's observers, experiencing screen and audio along with the owner on macOS. It takes in all connected displays at 1 FPS, records system/microphone audio in 5-minute segments (per-source M4A files remixed at segment boundaries), with pause functionality and automatic upload to an observer server.
 
 ## Build Commands
 
@@ -69,7 +69,7 @@ This is a single-package Swift repository using Swift Package Manager with Swift
 ## Key Design Patterns
 
 - **5-Minute Segments**: Recording splits at clock boundaries (:00, :05, :10, etc.)
-- **Multi-Display**: Captures all connected displays simultaneously
+- **Multi-Display**: Observes all connected displays simultaneously
 - **Per-Source Audio Files**: Each audio source (system + mics) records to individual M4A during segment
 - **Dynamic Mic Join/Leave**: Mics can connect/disconnect mid-segment without rotation
 - **Audio Remix on Segment End**: Individual M4A files combined into single multi-track output
@@ -120,6 +120,7 @@ Specialized knowledge packs in `skills/`, symlinked from `.claude/skills/` and `
 
 ## Brand
 
+- System-anatomy canon: `~/projects/extro/cmo/brand/system-anatomy.md`. solstone-macos is **one of the owner's observers** in the trinity (`observers + sol agent + journal`). Branded surfaces (UI strings, README/INSTALL prose, log messages owners see) follow the canon's surveillance-verb ban; code identifiers (`CaptureManager`, the `captures/` directory, the `capture` log category, swift class/method names) stay verbatim — `capture` remains a code-only word here.
 - Follow lowercase-first UI copy in visible product text.
 - Exceptions are limited to HIG cancel/destructive labels, `accessibilityHint` / `accessibilityLabel`, third-party proper nouns, OS-required path strings (e.g. `Application Support/Solstone/...`), protocol and URL literals, and AM/PM or date abbreviations.
 - Canonical brand source: `extro/cmo/brand/sol/index.md`.
