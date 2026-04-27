@@ -102,7 +102,7 @@ xcrun notarytool submit SolstoneCapture.app \
 xcrun stapler staple SolstoneCapture.app
 
 # Package as DMG (-format UDZO = zlib compressed)
-hdiutil create -volname "Solstone Capture" \
+hdiutil create -volname "solstone observer" \
     -srcfolder SolstoneCapture.app -ov -format UDZO SolstoneCapture.dmg
 
 # DMG must be signed + notarized + stapled separately

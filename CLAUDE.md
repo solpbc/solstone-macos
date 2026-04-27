@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Solstone Capture is a macOS status bar application — one of the trinity's observers, experiencing screen and audio along with the owner on macOS. It takes in all connected displays at 1 FPS, records system/microphone audio in 5-minute segments (per-source M4A files remixed at segment boundaries), with pause functionality and automatic upload to an observer server.
+solstone observer is a macOS status bar application — one of the trinity's observers, experiencing screen and audio along with the owner on macOS. It takes in all connected displays at 1 FPS, records system/microphone audio in 5-minute segments (per-source M4A files remixed at segment boundaries), with pause functionality and automatic upload to an observer server.
 
 ## Build Commands
 

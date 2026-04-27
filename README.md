@@ -1,6 +1,6 @@
-# Solstone Capture
+# solstone observer
 
-Solstone Capture is a macOS status bar app that experiences your screen and audio along with you. It takes in all connected displays at 1 FPS, records system and microphone audio in 5-minute segments (per-source M4A files remixed at segment boundaries), and automatically uploads to an observer server.
+solstone observer is a macOS status bar app — one of the owner's observers in the trinity, experiencing your screen and audio along with you. It takes in all connected displays at 1 FPS, records system and microphone audio in 5-minute segments (per-source M4A files remixed at segment boundaries), and automatically uploads to an observer server.
 
 ## Key Features
 

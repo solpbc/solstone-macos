@@ -136,7 +136,7 @@ def seed_appcast(prefix: str) -> ET.ElementTree:
     channel = ET.SubElement(rss, "channel")
     ET.SubElement(channel, "title").text = "solstone"
     ET.SubElement(channel, "link").text = f"{BASE_URL}/{prefix}/appcast.xml"
-    ET.SubElement(channel, "description").text = "Solstone Capture updates"
+    ET.SubElement(channel, "description").text = "solstone observer updates"
     ET.SubElement(channel, "language").text = "en"
     return ET.ElementTree(rss)
 
