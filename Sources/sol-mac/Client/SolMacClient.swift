@@ -15,18 +15,24 @@ public enum SolMacClient {
         connectTimeout: Duration = .seconds(1),
         requestTimeout: Duration = .seconds(5)
     ) async throws -> IPCResponse {
-        guard FileManager.default.fileExists(atPath: socketURL.path) else {
-            throw SolMacClientError.appNotRunning
-        }
-
         let connection = NWConnection(to: .unix(path: socketURL.path), using: .tcp)
         let io = ConnectionIO(connection: connection)
 
         do {
+            guard FileManager.default.fileExists(atPath: socketURL.path) else {
+                throw SolMacClientError.appNotRunning
+            }
+
             try await withTimeout(connectTimeout) {
                 try await io.start()
             }
+        } catch {
+            io.cancel()
+            // Treat any connect-phase failure as "app not running."
+            throw SolMacClientError.appNotRunning
+        }
 
+        do {
             let responseData = try await withTimeout(requestTimeout) {
                 var data = try IPCWire.encoder.encode(request)
                 data.append(0x0A)
@@ -44,7 +50,7 @@ public enum SolMacClient {
             throw error
         } catch {
             io.cancel()
-            throw map(error)
+            throw mapPostConnect(error)
         }
     }
 
@@ -78,16 +84,7 @@ public enum SolMacClient {
         }
     }
 
-    private static func map(_ error: Error) -> SolMacClientError {
-        if let error = error as? NWError {
-            switch error {
-            case .posix(let posixError) where posixError == .ECONNREFUSED || posixError == .ENOENT:
-                return .appNotRunning
-            default:
-                return .timeout
-            }
-        }
-
+    private static func mapPostConnect(_ error: Error) -> SolMacClientError {
         if let error = error as? ConnectionIO.ConnectionError {
             switch error {
             case .cancelled, .eof:
