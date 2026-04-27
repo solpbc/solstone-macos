@@ -267,6 +267,8 @@ public struct StatusInfo: Codable, Sendable {
     public let lastError: String?
     public let appVersion: String
     public let appBuild: String
+    public let screenRecordingGranted: Bool?
+    public let microphoneGranted: Bool?
 
     public init(
         isRecording: Bool,
@@ -279,7 +281,9 @@ public struct StatusInfo: Codable, Sendable {
         lastSyncedAt: Date?,
         lastError: String?,
         appVersion: String,
-        appBuild: String
+        appBuild: String,
+        screenRecordingGranted: Bool? = nil,
+        microphoneGranted: Bool? = nil
     ) {
         self.isRecording = isRecording
         self.isPaused = isPaused
@@ -292,6 +296,58 @@ public struct StatusInfo: Codable, Sendable {
         self.lastError = lastError
         self.appVersion = appVersion
         self.appBuild = appBuild
+        self.screenRecordingGranted = screenRecordingGranted
+        self.microphoneGranted = microphoneGranted
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isRecording
+        case isPaused
+        case pauseAutoResumeAt
+        case serverURL
+        case serverConfigured
+        case segmentTimeRemainingSeconds
+        case pendingUploadCount
+        case lastSyncedAt
+        case lastError
+        case appVersion
+        case appBuild
+        case screenRecordingGranted
+        case microphoneGranted
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.isRecording = try container.decode(Bool.self, forKey: .isRecording)
+        self.isPaused = try container.decode(Bool.self, forKey: .isPaused)
+        self.pauseAutoResumeAt = try container.decodeIfPresent(Date.self, forKey: .pauseAutoResumeAt)
+        self.serverURL = try container.decodeIfPresent(String.self, forKey: .serverURL)
+        self.serverConfigured = try container.decode(Bool.self, forKey: .serverConfigured)
+        self.segmentTimeRemainingSeconds = try container.decodeIfPresent(Double.self, forKey: .segmentTimeRemainingSeconds)
+        self.pendingUploadCount = try container.decode(Int.self, forKey: .pendingUploadCount)
+        self.lastSyncedAt = try container.decodeIfPresent(Date.self, forKey: .lastSyncedAt)
+        self.lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
+        self.appVersion = try container.decode(String.self, forKey: .appVersion)
+        self.appBuild = try container.decode(String.self, forKey: .appBuild)
+        self.screenRecordingGranted = try container.decodeIfPresent(Bool.self, forKey: .screenRecordingGranted)
+        self.microphoneGranted = try container.decodeIfPresent(Bool.self, forKey: .microphoneGranted)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(isRecording, forKey: .isRecording)
+        try container.encode(isPaused, forKey: .isPaused)
+        try container.encodeIfPresent(pauseAutoResumeAt, forKey: .pauseAutoResumeAt)
+        try container.encodeIfPresent(serverURL, forKey: .serverURL)
+        try container.encode(serverConfigured, forKey: .serverConfigured)
+        try container.encodeIfPresent(segmentTimeRemainingSeconds, forKey: .segmentTimeRemainingSeconds)
+        try container.encode(pendingUploadCount, forKey: .pendingUploadCount)
+        try container.encodeIfPresent(lastSyncedAt, forKey: .lastSyncedAt)
+        try container.encodeIfPresent(lastError, forKey: .lastError)
+        try container.encode(appVersion, forKey: .appVersion)
+        try container.encode(appBuild, forKey: .appBuild)
+        try container.encodeIfPresent(screenRecordingGranted, forKey: .screenRecordingGranted)
+        try container.encodeIfPresent(microphoneGranted, forKey: .microphoneGranted)
     }
 }
 

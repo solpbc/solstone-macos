@@ -125,9 +125,34 @@ struct SolMacWireTests {
         #expect(status.lastError == "none")
         #expect(status.appVersion == "1.0")
         #expect(status.appBuild == "100")
+        #expect(status.screenRecordingGranted == nil)
+        #expect(status.microphoneGranted == nil)
 
         guard case .ok(.empty) = responses[1].result else {
             Issue.record("Expected second fixture response to be .ok(.empty)")
+            return
+        }
+    }
+
+    @Test func v110FixtureCarriesNewPermissionFields() throws {
+        let url = try #require(Bundle.module.url(forResource: "IPCResponse-v1.1.0", withExtension: "json", subdirectory: "Fixtures"))
+        let data = try Data(contentsOf: url)
+        let responses = try IPCWire.decoder.decode([IPCResponse].self, from: data)
+
+        #expect(responses.count == 2)
+
+        guard case .ok(.status(let status)) = responses[0].result else {
+            Issue.record("Expected first v1.1.0 fixture response to be .ok(.status)")
+            return
+        }
+
+        #expect(status.appVersion == "1.1")
+        #expect(status.appBuild == "110")
+        #expect(status.screenRecordingGranted == true)
+        #expect(status.microphoneGranted == true)
+
+        guard case .ok(.empty) = responses[1].result else {
+            Issue.record("Expected second v1.1.0 fixture response to be .ok(.empty)")
             return
         }
     }
@@ -157,7 +182,9 @@ struct SolMacWireTests {
             lastSyncedAt: fixedDate,
             lastError: "none",
             appVersion: "1.0",
-            appBuild: "100"
+            appBuild: "100",
+            screenRecordingGranted: true,
+            microphoneGranted: false
         )
     }
 
@@ -206,6 +233,8 @@ struct SolMacWireTests {
             #expect(lhsInfo.lastError == rhsInfo.lastError)
             #expect(lhsInfo.appVersion == rhsInfo.appVersion)
             #expect(lhsInfo.appBuild == rhsInfo.appBuild)
+            #expect(lhsInfo.screenRecordingGranted == rhsInfo.screenRecordingGranted)
+            #expect(lhsInfo.microphoneGranted == rhsInfo.microphoneGranted)
         case (.versionInfo(let lhsInfo), .versionInfo(let rhsInfo)):
             #expect(lhsInfo.appVersion == rhsInfo.appVersion)
             #expect(lhsInfo.appBuild == rhsInfo.appBuild)

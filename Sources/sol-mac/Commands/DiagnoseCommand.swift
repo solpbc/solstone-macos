@@ -16,39 +16,53 @@ struct DiagnoseCommand: AsyncParsableCommand {
             print("FAIL: app installed: not found")
         }
 
-        let pingRequest = IPCRequest(
+        let statusRequest = IPCRequest(
             id: UUID(),
             protocolVersion: SolMacIPCConstants.currentProtocolVersion,
-            command: .ping
+            command: .status
         )
 
-        let pingResult = try? await SolMacClient.send(
-            pingRequest,
+        let statusResponse = try? await SolMacClient.send(
+            statusRequest,
             connectTimeout: .milliseconds(500),
-            requestTimeout: .seconds(1)
+            requestTimeout: .seconds(5)
         )
 
-        if let pingResult, case .ok(.pong) = pingResult.result {
+        let statusInfo: StatusInfo?
+        if let statusResponse, case .ok(.status(let info)) = statusResponse.result {
             print("OK: app running")
             print("OK: IPC reachable")
-        } else if pingResult != nil {
+            statusInfo = info
+        } else if statusResponse != nil {
             print("WARN: app running: responded unexpectedly")
             print("WARN: IPC reachable: responded unexpectedly")
+            statusInfo = nil
         } else {
             print("WARN: app running: not running")
             print("WARN: IPC reachable: n/a — app not running")
+            statusInfo = nil
         }
 
-        if screenCaptureAccessGranted() {
-            print("OK: screen TCC: granted")
-        } else {
-            print("FAIL: screen TCC: not granted")
-        }
-
-        print("WARN: mic TCC: unknown (cli cannot probe without AVFoundation)")
+        printPermission(label: "screen-recording", granted: statusInfo?.screenRecordingGranted, appReachable: statusInfo != nil)
+        printPermission(label: "microphone", granted: statusInfo?.microphoneGranted, appReachable: statusInfo != nil)
 
         await printServerReachability()
         printCapturesWritable()
+    }
+}
+
+private func printPermission(label: String, granted: Bool?, appReachable: Bool) {
+    guard appReachable else {
+        print("WARN: \(label): unknown — start solstone to check")
+        return
+    }
+    switch granted {
+    case .some(true):
+        print("OK: \(label): granted")
+    case .some(false):
+        print("FAIL: \(label): denied")
+    case .none:
+        print("WARN: \(label): unknown — start solstone to check")
     }
 }
 

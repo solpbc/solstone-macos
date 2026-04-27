@@ -14,7 +14,9 @@ func formatStatus(_ status: StatusInfo) -> String {
         "lastSyncedAt=\(formatStatusDate(status.lastSyncedAt))",
         "lastError=\(status.lastError ?? "<unset>")",
         "appVersion=\(status.appVersion)",
-        "appBuild=\(status.appBuild)"
+        "appBuild=\(status.appBuild)",
+        "screenRecordingGranted=\(formatStatusBool(status.screenRecordingGranted))",
+        "microphoneGranted=\(formatStatusBool(status.microphoneGranted))"
     ].joined(separator: "\n")
 }
 
@@ -62,4 +64,9 @@ struct StatusCommand: AsyncParsableCommand {
 private func formatStatusDate(_ value: Date?) -> String {
     guard let value else { return "<unset>" }
     return ISO8601DateFormatter().string(from: value)
+}
+
+private func formatStatusBool(_ value: Bool?) -> String {
+    guard let value else { return "<unset>" }
+    return value ? "true" : "false"
 }

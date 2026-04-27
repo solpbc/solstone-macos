@@ -142,7 +142,9 @@ public final class SolMacResponder {
             lastSyncedAt: appState.uploadCoordinator.lastSyncedAt,
             lastError: appState.errorMessage ?? appState.uploadCoordinator.lastError,
             appVersion: versionInfo.appVersion,
-            appBuild: versionInfo.appBuild
+            appBuild: versionInfo.appBuild,
+            screenRecordingGranted: appState.screenRecordingGranted,
+            microphoneGranted: appState.microphoneGranted
         )
     }
 
