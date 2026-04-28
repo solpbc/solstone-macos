@@ -5,17 +5,17 @@
 # Code signing identity — run 'make cert' then 'make allow' to create and trust (one-time setup)
 SIGN_IDENTITY ?= solstone dev
 
-# Canonical brand source (override with BRAND_DIR=/path/to/extro/cmo/brand/sol make brand-sync)
-BRAND_DIR ?= ../extro/cmo/brand/sol
+# Canonical brand source — set BRAND_DIR to the sol brand source directory
+# (kept out of this repo; override per-environment, e.g. BRAND_DIR=/path/to/brand make brand-sync)
+BRAND_DIR ?=
 
 # ---------------------------------------------------------------------------
 # Distribution signing (Apple Developer ID + notarization)
 #
 # Activated 2026-04-20 when the sol pbc Apple Developer Program went live
-# (team 7QCG8V4M6H). Certs live in a dedicated sol-signing keychain on
-# pro5e.local, isolated from the login keychain. Notarytool uses an ASC API
-# key (no app-specific password). See shared/vendors/apple.md and
-# cto/workspace/apple-signing-sequence-260420.md in the extro repo.
+# (team 7QCG8V4M6H). Certs live in a dedicated sol-signing keychain on the
+# release host, isolated from the login keychain. Notarytool uses an ASC
+# API key (no app-specific password).
 # ---------------------------------------------------------------------------
 DEVELOPER_ID_APP       ?= Developer ID Application: sol pbc (7QCG8V4M6H)
 DEVELOPER_ID_INSTALLER ?= Developer ID Installer: sol pbc (7QCG8V4M6H)
@@ -31,7 +31,8 @@ SPARKLE_FRAMEWORK      ?= $(SPARKLE_ARTIFACT_DIR)/Sparkle.xcframework/macos-arm6
 # output (it does not run brand-sync) — run this locally when the brand spec
 # updates, then commit the diff.
 brand-sync:
-	@test -d "$(BRAND_DIR)" || { echo "brand: $(BRAND_DIR) not found — clone extro alongside this repo (or set BRAND_DIR=...)"; exit 1; }
+	@test -n "$(BRAND_DIR)" || { echo "brand: BRAND_DIR is not set — point it at the sol brand source directory (BRAND_DIR=/path/to/brand make brand-sync)"; exit 1; }
+	@test -d "$(BRAND_DIR)" || { echo "brand: $(BRAND_DIR) not found — set BRAND_DIR to the sol brand source directory"; exit 1; }
 	cp "$(BRAND_DIR)/sol-wordmark.svg"          assets/sol-wordmark.svg
 	cp "$(BRAND_DIR)/sol-wordmark-white.svg"    assets/sol-wordmark-white.svg
 	cp "$(BRAND_DIR)/sol-ring.svg"              assets/sol-ring.svg
@@ -418,10 +419,10 @@ check-icons-deps:
 		(echo "error: iconutil not found (requires macOS)"; exit 1)
 
 # ────────────────────────────────────────────────────────────────
-# Publish targets — EXTRO-HOST ONLY
-# Do not run on pro5e. These are invoked from the extro host by VPE
-# during the release playbook. They require wrangler and the local
-# vault private key.
+# Publish targets — RELEASE HOST ONLY
+# Do not run from a developer workstation. These are invoked from the
+# release host during the release playbook. They require wrangler and the
+# local vault private key.
 # ────────────────────────────────────────────────────────────────
 publish-appcast:
 	python3 scripts/publish-appcast.py $(DIST_VERSION)
