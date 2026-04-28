@@ -1,4 +1,4 @@
-.PHONY: build release release-universal run clean test snapshot bundle bundle-universal install setup install-app open reset cert allow check-cert icons check-icons-deps check-dev-deps \
+.PHONY: build release release-universal run clean test snapshot bundle bundle-universal install setup install-app open reset reset-full cert allow check-cert icons check-icons-deps check-dev-deps \
         signing-check unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg \
         brand-sync
 
@@ -293,6 +293,51 @@ reset:
 	-rm -f ~/Library/Preferences/app.solstone.observer.plist
 	@echo "Microphone TCC and defaults reset."
 	@echo "To fully reset screen recording: sudo tccutil reset All app.solstone.observer"
+
+# Full "as-if-new-machine" wipe for reproducing first-run flows.
+# Preserves captures/, parakeet/, journal/ — sync state is just a UserDefaults cache,
+# segments are the source of truth and will be picked up by the next install.
+# Steps requiring sudo or GUI interaction are echoed at the end, not executed
+# (tccutil ScreenCapture without sudo writes a DENIED row on macOS 26 — worse than skipping).
+reset-full:
+	@echo "==> quitting solstone..."
+	-@osascript -e 'tell application "solstone" to quit' 2>/dev/null
+	-@killall -9 solstone sol-mac 2>/dev/null
+	@echo "==> removing installed app + cli symlink..."
+	-@rm -rf /Applications/solstone.app
+	-@rm -f $(HOME)/.local/bin/sol-mac
+	@echo "==> wiping app state (keeping captures/, parakeet/, journal/)..."
+	-@rm -f  "$(HOME)/Library/Application Support/Solstone/sol-mac.sock"
+	-@rm -f  "$(HOME)/Library/Application Support/Solstone/config.json.migrated"
+	-@rm -rf "$(HOME)/Library/Application Support/Solstone/logs"
+	-@rm -f  $(HOME)/Library/Preferences/app.solstone.capture.plist
+	-@rm -f  $(HOME)/Library/Preferences/app.solstone.observer.plist
+	-@rm -f  $(HOME)/Library/Preferences/app.solstone.observer.tests.*.plist
+	-@killall cfprefsd 2>/dev/null
+	@echo "==> clearing caches + LaunchServices registration..."
+	-@rm -rf $(HOME)/Library/Caches/app.solstone.* $(HOME)/Library/Caches/com.solstone.* $(HOME)/Library/Caches/sol-mac
+	-@rm -rf "$(HOME)/Library/Saved Application State/app.solstone."* "$(HOME)/Library/Saved Application State/com.solstone."*
+	-@/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister -kill -r -domain local -domain system -domain user >/dev/null 2>&1 || true
+	@echo ""
+	@echo "Local state wiped. Captures preserved at:"
+	@echo "  $(HOME)/Library/Application Support/Solstone/captures/"
+	@echo ""
+	@echo "MANUAL STEPS REMAINING (need sudo / GUI interaction):"
+	@echo ""
+	@echo "  1. reset TCC entries (requires sudo — unsudoed tccutil writes a DENIED"
+	@echo "     row on Tahoe and silently blocks the dialog):"
+	@echo "       sudo tccutil reset All app.solstone.observer"
+	@echo "       sudo tccutil reset All app.solstone.capture"
+	@echo ""
+	@echo "  2. open System Settings and remove any stale 'solstone' rows the GUI"
+	@echo "     still shows (CDHash-tied entries that tccutil can leave behind):"
+	@echo "       open 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'"
+	@echo "     check both Screen & System Audio Recording and Microphone."
+	@echo ""
+	@echo "  3. reboot to flush cfprefsd, tccd, and IconServices:"
+	@echo "       sudo shutdown -r now"
+	@echo ""
+	@echo "Then: make install-app && open /Applications/solstone.app"
 
 # Create a self-signed code signing certificate in your login keychain (one-time setup).
 # Using a named cert instead of ad-hoc (-) gives a stable designated requirement so
