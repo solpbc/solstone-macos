@@ -12,7 +12,7 @@ Side effects:
   - R2 put of DMG to <bucket>/<prefix>/releases/v<version>/solstone-<version>.dmg
   - R2 put of updated appcast.xml to <bucket>/<prefix>/appcast.xml
   - curl HEAD sanity checks
-EXTRO-HOST ONLY. Requires: wrangler, curl, PyNaCl.
+RELEASE-HOST ONLY. Requires: wrangler, curl, PyNaCl.
 """
 import argparse
 import base64
