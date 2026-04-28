@@ -2,12 +2,16 @@
         signing-check unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg \
         brand-sync
 
+# Default goal when running bare `make` — build the project. brand-sync is
+# opt-in (run it manually when the brand spec updates).
+.DEFAULT_GOAL := build
+
 # Code signing identity — run 'make cert' then 'make allow' to create and trust (one-time setup)
 SIGN_IDENTITY ?= solstone dev
 
-# Canonical brand source — set BRAND_DIR to the sol brand source directory
-# (kept out of this repo; override per-environment, e.g. BRAND_DIR=/path/to/brand make brand-sync)
-BRAND_DIR ?=
+# Canonical brand source — only used by `make brand-sync`. Override to point
+# at the sol brand source directory: BRAND_DIR=/path/to/brand make brand-sync
+BRAND_DIR ?= ../sol-brand
 
 # ---------------------------------------------------------------------------
 # Distribution signing (Apple Developer ID + notarization)
@@ -31,8 +35,7 @@ SPARKLE_FRAMEWORK      ?= $(SPARKLE_ARTIFACT_DIR)/Sparkle.xcframework/macos-arm6
 # output (it does not run brand-sync) — run this locally when the brand spec
 # updates, then commit the diff.
 brand-sync:
-	@test -n "$(BRAND_DIR)" || { echo "brand: BRAND_DIR is not set — point it at the sol brand source directory (BRAND_DIR=/path/to/brand make brand-sync)"; exit 1; }
-	@test -d "$(BRAND_DIR)" || { echo "brand: $(BRAND_DIR) not found — set BRAND_DIR to the sol brand source directory"; exit 1; }
+	@test -d "$(BRAND_DIR)" || { echo "brand: $(BRAND_DIR) not found — set BRAND_DIR to the sol brand source directory (BRAND_DIR=/path/to/brand make brand-sync)"; exit 1; }
 	cp "$(BRAND_DIR)/sol-wordmark.svg"          assets/sol-wordmark.svg
 	cp "$(BRAND_DIR)/sol-wordmark-white.svg"    assets/sol-wordmark-white.svg
 	cp "$(BRAND_DIR)/sol-ring.svg"              assets/sol-ring.svg
