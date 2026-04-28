@@ -120,12 +120,11 @@ Specialized knowledge packs in `skills/`, symlinked from `.claude/skills/` and `
 
 ## Brand
 
-- System-anatomy canon: `~/projects/extro/cmo/brand/system-anatomy.md`. solstone-macos is **one of the owner's observers** in the trinity (`observers + sol agent + journal`). Branded surfaces (UI strings, README/INSTALL prose, log messages owners see) follow the canon's surveillance-verb ban; code identifiers (`CaptureManager`, the `captures/` directory, the `capture` log category, swift class/method names) stay verbatim — `capture` remains a code-only word here.
+- System-anatomy canon: solstone-macos is **one of the owner's observers** in the trinity (`observers + sol agent + journal`). Branded surfaces (UI strings, README/INSTALL prose, log messages owners see) follow the canon's surveillance-verb ban; code identifiers (`CaptureManager`, the `captures/` directory, the `capture` log category, swift class/method names) stay verbatim — `capture` remains a code-only word here.
 - Follow lowercase-first UI copy in visible product text.
 - Exceptions are limited to HIG cancel/destructive labels, `accessibilityHint` / `accessibilityLabel`, third-party proper nouns, OS-required path strings (e.g. `Application Support/Solstone/...`), protocol and URL literals, and AM/PM or date abbreviations.
-- Canonical brand source: `extro/cmo/brand/sol/index.md`.
 - Sync vendored brand SVGs with `make brand-sync` (writes into `assets/`).
-- Override the source directory with `BRAND_DIR=/path/to/extro/cmo/brand/sol make brand-sync`.
+- The brand source directory is kept outside this repo; set `BRAND_DIR=/path/to/brand make brand-sync` to point at it.
 - `Sources/solstone/Resources/Assets.xcassets/AccentColor.colorset/` carries the canonical `solOrangeAccessible` (light, WCAG-AA-on-cream) and `solOrange` (dark) split — do not collapse it back to a single variant.
 - Render PNGs from the SVG sources via `make icons` — never downsample a larger PNG. Per-size hand-tuned variants live alongside the canonical (`assets/icon-app-16.svg`, `assets/icon-app-32.svg`).
-- Data covenants: no analytics, no tracking, no telemetry, no phone-home — see `charter/bylaws.md` Article IV (Sections 4.1–4.2) in extro.
+- Data covenants: no analytics, no tracking, no telemetry, no phone-home — these are irrevocable covenants in sol pbc's bylaws (Article IV, Sections 4.1–4.2).
