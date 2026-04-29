@@ -212,10 +212,17 @@ bundle-dist: unlock-signing signing-check release-universal
 	@codesign --verify --strict --deep --verbose=2 solstone.app
 	@echo "✓ Signed: solstone.app"
 
-# Create and sign the DMG.
+# Create and sign the DMG. Stages the .app alongside an /Applications
+# symlink so the mounted volume is conventional drag-and-drop UX —
+# users drag solstone.app onto the Applications shortcut in the same
+# window, no separate Finder navigation needed.
 dmg: bundle-dist
+	@rm -rf .build/dmg-staging
+	@mkdir -p .build/dmg-staging
+	@cp -R solstone.app .build/dmg-staging/
+	@ln -s /Applications .build/dmg-staging/Applications
 	@rm -f $(DMG_NAME)
-	@hdiutil create -volname "solstone" -srcfolder solstone.app -ov -format UDZO $(DMG_NAME)
+	@hdiutil create -volname "solstone" -srcfolder .build/dmg-staging -ov -format UDZO $(DMG_NAME)
 	@codesign --force --timestamp --sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" $(DMG_NAME)
 	@echo "✓ Built: $(DMG_NAME)"
 
