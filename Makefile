@@ -435,26 +435,26 @@ icons: check-icons-deps
 	echo "  ✓ AppIcon.icns" && \
 	\
 	echo "  Rendering status bar template icons..." && \
-	rsvg-convert -w 18 -h 18 assets/sol-ring-icon.svg \
-		-o Sources/solstone/Resources/sol-ring-template.png && \
-	rsvg-convert -w 36 -h 36 assets/sol-ring-icon.svg \
-		-o Sources/solstone/Resources/sol-ring-template@2x.png && \
-	echo "  ✓ sol-ring-template.png + @2x" && \
-	echo "  Rendering status bar variant icons..." && \
-	rsvg-convert -w 18 -h 18 assets/sol-ring-icon-error.svg \
-		-o Sources/solstone/Resources/sol-ring-icon-error-template.png && \
-	rsvg-convert -w 36 -h 36 assets/sol-ring-icon-error.svg \
-		-o Sources/solstone/Resources/sol-ring-icon-error-template@2x.png && \
-	echo "  ✓ sol-ring-icon-error-template.png + @2x" && \
-	rsvg-convert -w 18 -h 18 assets/sol-ring-icon-paused.svg \
-		-o Sources/solstone/Resources/sol-ring-icon-paused-template.png && \
-	rsvg-convert -w 36 -h 36 assets/sol-ring-icon-paused.svg \
-		-o Sources/solstone/Resources/sol-ring-icon-paused-template@2x.png && \
-	echo "  ✓ sol-ring-icon-paused-template.png + @2x" && \
-	rsvg-convert -w 18 -h 18 assets/sol-ring-icon-half.svg \
-		-o Sources/solstone/Resources/sol-ring-icon-half-template.png && \
-	rsvg-convert -w 36 -h 36 assets/sol-ring-icon-half.svg \
-		-o Sources/solstone/Resources/sol-ring-icon-half-template@2x.png && \
+		rsvg-convert -w 18 -h 18 assets/sol-ring-mb.svg \
+			-o Sources/solstone/Resources/sol-ring-template.png && \
+		rsvg-convert -w 36 -h 36 assets/sol-ring-mb.svg \
+			-o Sources/solstone/Resources/sol-ring-template@2x.png && \
+		echo "  ✓ sol-ring-template.png + @2x" && \
+		echo "  Rendering status bar variant icons..." && \
+		rsvg-convert -w 18 -h 18 assets/sol-ring-mb-error.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-error-template.png && \
+		rsvg-convert -w 36 -h 36 assets/sol-ring-mb-error.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-error-template@2x.png && \
+		echo "  ✓ sol-ring-icon-error-template.png + @2x" && \
+		rsvg-convert -w 18 -h 18 assets/sol-ring-mb-paused.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-paused-template.png && \
+		rsvg-convert -w 36 -h 36 assets/sol-ring-mb-paused.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-paused-template@2x.png && \
+		echo "  ✓ sol-ring-icon-paused-template.png + @2x" && \
+		rsvg-convert -w 18 -h 18 assets/sol-ring-mb-half.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-half-template.png && \
+		rsvg-convert -w 36 -h 36 assets/sol-ring-mb-half.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-half-template@2x.png && \
 	echo "  ✓ sol-ring-icon-half-template.png + @2x" && \
 	\
 	echo "  Rendering wordmark for UI..." && \
