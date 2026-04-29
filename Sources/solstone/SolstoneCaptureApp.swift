@@ -81,21 +81,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if AppState.shared?.quitRequestedViaMenuBar == true {
-            return .terminateNow
-        }
-
-        for window in NSApp.windows {
-            guard window.isVisible, let identifier = window.identifier?.rawValue else { continue }
-            if identifier.contains(SolstoneSceneID.settings.rawValue) || identifier.contains(SolstoneSceneID.about.rawValue) {
-                window.close()
-            }
-        }
-
-        return .terminateCancel
-    }
-
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // Fires when the user clicks the Dock tile (including the macOS 26 "recent
         // apps" tile that shows after the app drops back to .accessory). With no

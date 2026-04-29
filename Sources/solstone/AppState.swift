@@ -80,7 +80,6 @@ public final class AppState {
     public internal(set) var currentPolicy: NSApplication.ActivationPolicy = .accessory
     public internal(set) var loginLaunchSuppressionExpires: Date = .distantPast
     public internal(set) var isTerminating: Bool = false
-    var quitRequestedViaMenuBar: Bool = false
     private var activationPolicyWorkItem: DispatchWorkItem?
     private let dockBehaviorDefaultsKey = "SolstoneDockBehavior"
     private static let loginLaunchSuppressionInterval: TimeInterval = 2.0
@@ -500,11 +499,6 @@ public final class AppState {
     public func didOpenWindow(_ id: SolstoneSceneID) {
         openSceneIds.insert(id)
         reevaluateActivationPolicy(debounced: false)
-    }
-
-    public func requestMenuBarQuit() {
-        quitRequestedViaMenuBar = true
-        NSApp.terminate(nil)
     }
 
     func handleWindowWillClose(identifier: String?) {

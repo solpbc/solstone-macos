@@ -58,7 +58,7 @@ struct MenuContent: View {
                 if appState.isRecording {
                     await appState.stopRecording()
                 }
-                appState.requestMenuBarQuit()
+                NSApp.terminate(nil)
             }
         }
     }
