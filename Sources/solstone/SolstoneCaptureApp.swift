@@ -194,9 +194,20 @@ struct SolstoneCaptureApp: App {
 }
 
 /// Loads a PNG image from the SPM resource bundle (not an asset catalog).
-/// `Image(_:bundle:)` only searches asset catalogs; this uses `Bundle.image(forResource:)`.
+/// `Image(_:bundle:)` only searches asset catalogs; this uses an explicit
+/// path lookup against the bundle's `Resources/` subdirectory because
+/// SwiftPM `.copy("Resources")` nests the directory inside the bundle as
+/// `Contents/Resources/Resources/<file>`, and `Bundle.image(forResource:)`
+/// does not recurse into subdirectories. The `inDirectory: "Resources"`
+/// parameter makes the lookup work against the nested layout.
 func bundleImage(_ name: String, isTemplate: Bool = false) -> Image {
-    let nsImage = Bundle.module.image(forResource: name) ?? NSImage()
+    let nsImage: NSImage
+    if let path = Bundle.module.path(forResource: name, ofType: "png", inDirectory: "Resources"),
+       let img = NSImage(contentsOfFile: path) {
+        nsImage = img
+    } else {
+        nsImage = NSImage()
+    }
     if isTemplate { nsImage.isTemplate = true }
     return Image(nsImage: nsImage)
 }
