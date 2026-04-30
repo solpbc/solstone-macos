@@ -447,28 +447,20 @@ icons: check-icons-deps
 	iconutil -c icns $$ICONSET -o Sources/solstone/Resources/AppIcon.icns && \
 	echo "  ✓ AppIcon.icns" && \
 	\
-	echo "  Rendering status bar template icons..." && \
-		rsvg-convert -w 18 -h 18 assets/sol-ring-mb.svg \
-			-o Sources/solstone/Resources/sol-ring-template.png && \
-		rsvg-convert -w 36 -h 36 assets/sol-ring-mb.svg \
-			-o Sources/solstone/Resources/sol-ring-template@2x.png && \
-		echo "  ✓ sol-ring-template.png + @2x" && \
+	echo "  Rendering status bar template icons (vector PDF — renders crisp at any density)..." && \
+		rsvg-convert -f pdf assets/sol-ring-mb.svg \
+			-o Sources/solstone/Resources/sol-ring-template.pdf && \
+		echo "  ✓ sol-ring-template.pdf" && \
 		echo "  Rendering status bar variant icons..." && \
-		rsvg-convert -w 18 -h 18 assets/sol-ring-mb-error.svg \
-			-o Sources/solstone/Resources/sol-ring-icon-error-template.png && \
-		rsvg-convert -w 36 -h 36 assets/sol-ring-mb-error.svg \
-			-o Sources/solstone/Resources/sol-ring-icon-error-template@2x.png && \
-		echo "  ✓ sol-ring-icon-error-template.png + @2x" && \
-		rsvg-convert -w 18 -h 18 assets/sol-ring-mb-paused.svg \
-			-o Sources/solstone/Resources/sol-ring-icon-paused-template.png && \
-		rsvg-convert -w 36 -h 36 assets/sol-ring-mb-paused.svg \
-			-o Sources/solstone/Resources/sol-ring-icon-paused-template@2x.png && \
-		echo "  ✓ sol-ring-icon-paused-template.png + @2x" && \
-		rsvg-convert -w 18 -h 18 assets/sol-ring-mb-half.svg \
-			-o Sources/solstone/Resources/sol-ring-icon-half-template.png && \
-		rsvg-convert -w 36 -h 36 assets/sol-ring-mb-half.svg \
-			-o Sources/solstone/Resources/sol-ring-icon-half-template@2x.png && \
-	echo "  ✓ sol-ring-icon-half-template.png + @2x" && \
+		rsvg-convert -f pdf assets/sol-ring-mb-error.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-error-template.pdf && \
+		echo "  ✓ sol-ring-icon-error-template.pdf" && \
+		rsvg-convert -f pdf assets/sol-ring-mb-paused.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-paused-template.pdf && \
+		echo "  ✓ sol-ring-icon-paused-template.pdf" && \
+		rsvg-convert -f pdf assets/sol-ring-mb-half.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-half-template.pdf && \
+	echo "  ✓ sol-ring-icon-half-template.pdf" && \
 	\
 	echo "  Rendering wordmark for UI..." && \
 	rsvg-convert -w 128 -h 128 assets/sol-wordmark.svg \
