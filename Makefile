@@ -212,17 +212,30 @@ bundle-dist: unlock-signing signing-check release-universal
 	@codesign --verify --strict --deep --verbose=2 solstone.app
 	@echo "✓ Signed: solstone.app"
 
-# Create and sign the DMG. Stages the .app alongside an /Applications
-# symlink so the mounted volume is conventional drag-and-drop UX —
-# users drag solstone.app onto the Applications shortcut in the same
-# window, no separate Finder navigation needed.
+# Create and sign the DMG using create-dmg. Produces a polished mounted
+# volume — cream brand background with sol-ring watermark, app icon
+# left-centered, Applications shortcut right-centered, arrow between.
+# Window dimensions are logical points; background PNG ships @2x so it
+# stays crisp on Retina.
+#
+# create-dmg builds an unsigned DMG; we codesign with --timestamp after
+# (notarization needs the secure timestamp, and create-dmg doesn't pass
+# extra codesign flags through).
+#
+# Requires: brew install create-dmg
 dmg: bundle-dist
-	@rm -rf .build/dmg-staging
-	@mkdir -p .build/dmg-staging
-	@cp -R solstone.app .build/dmg-staging/
-	@ln -s /Applications .build/dmg-staging/Applications
 	@rm -f $(DMG_NAME)
-	@hdiutil create -volname "solstone" -srcfolder .build/dmg-staging -ov -format UDZO $(DMG_NAME)
+	@create-dmg \
+	  --volname "solstone" \
+	  --background assets/dmg-background@2x.png \
+	  --window-pos 200 200 \
+	  --window-size 640 400 \
+	  --icon-size 128 \
+	  --icon "solstone.app" 180 200 \
+	  --app-drop-link 460 200 \
+	  --hide-extension "solstone.app" \
+	  --no-internet-enable \
+	  $(DMG_NAME) solstone.app
 	@codesign --force --timestamp --sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" $(DMG_NAME)
 	@echo "✓ Built: $(DMG_NAME)"
 
