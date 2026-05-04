@@ -38,8 +38,10 @@ final class SparkleUserDriver: NSObject, SPUUserDriver {
         switch state.stage {
         case .notDownloaded:
             controller.state = .updateAvailable(version: version, releaseNotes: releaseNotes)
+            controller.updateLastCheck(.updateFound(version: version))
         case .downloaded, .installing:
             controller.state = .readyToInstall(version: version, releaseNotes: releaseNotes)
+            controller.updateLastCheck(.updateFound(version: version))
         @unknown default:
             controller.state = .readyToInstall(version: version, releaseNotes: releaseNotes)
         }
@@ -59,11 +61,13 @@ final class SparkleUserDriver: NSObject, SPUUserDriver {
         Logger.setup.error("Sparkle no-update result: \(String(describing: error), privacy: .public)")
         controller.clearPendingInteractions()
         controller.state = .noUpdateAvailable
+        controller.updateLastCheck(.upToDate)
         acknowledgement()
     }
 
     func showUpdaterError(_ error: Error, acknowledgement: @escaping () -> Void) {
         controller.setOpaqueError(error)
+        controller.updateLastCheck(.failed)
         acknowledgement()
     }
 

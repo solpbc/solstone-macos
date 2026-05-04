@@ -25,3 +25,9 @@ enum UpdateState: Equatable, Sendable {
     case noUpdateAvailable
     case error(message: String)
 }
+
+enum LastCheckResult: Equatable, Sendable {
+    case upToDate
+    case updateFound(version: String)
+    case failed
+}

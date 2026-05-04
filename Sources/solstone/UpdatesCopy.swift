@@ -4,14 +4,9 @@ enum UpdatesCopy {
     static let menuBarCheckForUpdates = "check for updates…"
     static let tabTitle = "updates"
 
-    static let idleTitle = "updates"
-    static let idleSubtitle = "check whether a newer version of solstone observer is available."
-
     static let checkingTitle = "checking for updates"
     static let checkingSubtitle = "looking for the latest version now."
-
-    static let noUpdateAvailableTitle = "you're up to date"
-    static let noUpdateAvailableSubtitle = "this mac already has the latest version."
+    static let checkingInline = "checking…"
 
     static let errorTitle = "update check failed"
     static func errorMessage() -> String { "we couldn't check right now." }
@@ -23,13 +18,43 @@ enum UpdatesCopy {
     static let finalizingSuffix = "finalizing"
 
     static let actionCheckNow = "check now"
+    static let actionCheckAgain = "check again"
     static let actionDownload = "download"
     static let actionInstall = "install"
     static let actionCancel = "cancel"
     static let actionDismiss = "dismiss"
     static let actionRetry = "retry"
 
+    static let autoUpdateGroupTitle = "automatic updates"
+    static let autoCheckToggleLabel = "check for updates automatically"
+    static let autoDownloadToggleLabel = "download updates in the background"
+    static let frequencyPickerLabel = "how often"
+    static let frequencyDay = "every day"
+    static let frequencyWeek = "every week"
+    static let frequencyMonth = "every month"
+
+    static let lastCheckedNever = "never checked for updates"
     static let privacyFootnote = "solstone never sends usage data. update checks only fetch the version manifest."
+
+    static func appHeader(version: String) -> String {
+        "solstone observer \(version)"
+    }
+
+    static func lastCheckedUpToDate(relative: String) -> String {
+        "last checked \(relative) — up to date"
+    }
+
+    static func lastCheckedUpdateFound(relative: String, version: String) -> String {
+        "last checked \(relative) — version \(version) found"
+    }
+
+    static func lastCheckedFailed(relative: String) -> String {
+        "last checked \(relative) — check failed"
+    }
+
+    static func lastCheckedGeneric(relative: String) -> String {
+        "last checked \(relative)"
+    }
 
     static func updateAvailableTitle(version: String) -> String {
         "version \(version) is available"

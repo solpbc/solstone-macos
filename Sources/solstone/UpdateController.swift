@@ -8,9 +8,10 @@ import os
 final class UpdateController {
     typealias UpdaterFactory = @MainActor (SparkleUserDriver) -> SPUUpdater?
 
-    var state: UpdateState = .idle {
-        didSet { handleStateTransition(from: oldValue, to: state) }
-    }
+    private static let lastCheckedAtKey = "solstone.updates.lastCheckedAt"
+    private static let lastCheckResultKey = "solstone.updates.lastCheckResult"
+
+    var state: UpdateState = .idle
 
     private(set) var canCheckForUpdates: Bool
 
@@ -21,11 +22,39 @@ final class UpdateController {
     private var updaterStarted = false
     private var pendingChoiceReply: ((SPUUserUpdateChoice) -> Void)?
     private var pendingCancellation: (() -> Void)?
-    private var noUpdateResetTask: Task<Void, Never>?
 
     private(set) var latestVersion: String?
     private(set) var latestReleaseNotes: String?
+    private(set) var lastCheckedAt: Date?
+    private(set) var lastCheckResult: LastCheckResult?
     private var expectedContentLength: UInt64?
+    private var _automaticChecksEnabled: Bool = true
+    private var _updateCheckInterval: TimeInterval = 86_400
+    private var _automaticDownloadsEnabled: Bool = false
+
+    var automaticChecksEnabled: Bool {
+        get { _automaticChecksEnabled }
+        set {
+            _automaticChecksEnabled = newValue
+            updater?.automaticallyChecksForUpdates = newValue
+        }
+    }
+
+    var updateCheckInterval: TimeInterval {
+        get { _updateCheckInterval }
+        set {
+            _updateCheckInterval = newValue
+            updater?.updateCheckInterval = newValue
+        }
+    }
+
+    var automaticDownloadsEnabled: Bool {
+        get { _automaticDownloadsEnabled }
+        set {
+            _automaticDownloadsEnabled = newValue
+            updater?.automaticallyDownloadsUpdates = newValue
+        }
+    }
 
     static var hasValidSparkleConfig: Bool {
         let info = Bundle.main.infoDictionary
@@ -57,6 +86,11 @@ final class UpdateController {
             feedURL: feedURL ?? info?["SUFeedURL"] as? String,
             publicKey: publicKey ?? info?["SUPublicEDKey"] as? String
         )
+
+        let defaults = UserDefaults.standard
+        self.lastCheckedAt = defaults.object(forKey: Self.lastCheckedAtKey) as? Date
+        self.lastCheckResult = defaults.string(forKey: Self.lastCheckResultKey).flatMap(Self.decode)
+
         self.userDriver.attach(to: self)
 
         guard canCheckForUpdates else {
@@ -88,6 +122,10 @@ final class UpdateController {
             Logger.setup.error("checkForUpdates() ignored because Sparkle updater failed to start")
             state = .error(message: UpdatesCopy.errorMessage())
             return
+        }
+
+        if state != .checking {
+            state = .checking
         }
 
         updater.checkForUpdates()
@@ -170,6 +208,15 @@ final class UpdateController {
         state = .error(message: UpdatesCopy.errorMessage())
     }
 
+    func updateLastCheck(_ result: LastCheckResult, now: Date = Date()) {
+        lastCheckedAt = now
+        lastCheckResult = result
+
+        let defaults = UserDefaults.standard
+        defaults.set(now, forKey: Self.lastCheckedAtKey)
+        defaults.set(Self.encode(result), forKey: Self.lastCheckResultKey)
+    }
+
     private func ensureUpdaterStarted() -> Bool {
         if updaterStarted {
             return true
@@ -185,6 +232,7 @@ final class UpdateController {
         do {
             try updater.start()
             updaterStarted = true
+            refreshUpdaterSettings(from: updater)
             return true
         } catch {
             Logger.setup.error("Sparkle updater start failed: \(String(describing: error), privacy: .public)")
@@ -192,17 +240,36 @@ final class UpdateController {
         }
     }
 
-    private func handleStateTransition(from oldValue: UpdateState, to newValue: UpdateState) {
-        noUpdateResetTask?.cancel()
+    private func refreshUpdaterSettings(from updater: SPUUpdater) {
+        _automaticChecksEnabled = updater.automaticallyChecksForUpdates
+        _updateCheckInterval = updater.updateCheckInterval
+        _automaticDownloadsEnabled = updater.automaticallyDownloadsUpdates
+    }
 
-        guard newValue == .noUpdateAvailable else {
-            return
+    private static func encode(_ result: LastCheckResult) -> String {
+        switch result {
+        case .upToDate:
+            return "upToDate"
+        case .updateFound(let version):
+            return "updateFound:\(version)"
+        case .failed:
+            return "failed"
         }
+    }
 
-        noUpdateResetTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(3))
-            guard let self, !Task.isCancelled, self.state == .noUpdateAvailable else { return }
-            self.state = .idle
+    private static func decode(_ raw: String) -> LastCheckResult? {
+        let parts = raw.split(separator: ":", maxSplits: 1)
+
+        switch parts.first.map(String.init) {
+        case "upToDate":
+            return .upToDate
+        case "failed":
+            return .failed
+        case "updateFound":
+            guard parts.count == 2 else { return nil }
+            return .updateFound(version: String(parts[1]))
+        default:
+            return nil
         }
     }
 }
