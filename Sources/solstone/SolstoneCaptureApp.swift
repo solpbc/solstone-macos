@@ -182,7 +182,7 @@ struct SolstoneCaptureApp: App {
         Window("solstone observer settings", id: "settings") {
             SettingsView(appState: appState, updateController: updateController)
         }
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
         .defaultPosition(.center)
 
         Window("about solstone observer", id: "about") {

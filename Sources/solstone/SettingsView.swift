@@ -93,41 +93,39 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            statusTab
-                .tag(Tab.status)
-                .tabItem { Label("status", systemImage: "info.circle") }
+        NavigationSplitView {
+            List(selection: $selectedTab) {
+                Section {
+                    Label("permissions", systemImage: "lock.shield").tag(Tab.permissions)
+                    Label("service", systemImage: "server.rack").tag(Tab.service)
+                } header: {
+                    Text("setup")
+                }
 
-            observerTab
-                .tag(Tab.observer)
-                .tabItem { Label("general", systemImage: "gearshape") }
+                Section {
+                    Label("general", systemImage: "gearshape").tag(Tab.observer)
+                    Label("microphones", systemImage: "mic").tag(Tab.microphones)
+                    Label("privacy", systemImage: "eye.slash").tag(Tab.privacy)
+                } header: {
+                    Text("preferences")
+                }
 
-            serviceTab
-                .tag(Tab.service)
-                .tabItem { Label("service", systemImage: "server.rack") }
-
-            microphoneTab
-                .tag(Tab.microphones)
-                .tabItem { Label("microphones", systemImage: "mic") }
-
-            privacyTab
-                .tag(Tab.privacy)
-                .tabItem { Label("privacy", systemImage: "eye.slash") }
-
-            permissionsTab
-                .tag(Tab.permissions)
-                .tabItem { Label("permissions", systemImage: "lock.shield") }
-
-            UpdatesTabView(controller: updateController)
-                .tag(Tab.updates)
-                .tabItem { Label(UpdatesCopy.tabTitle, systemImage: "arrow.down.circle") }
-
-            helpTab
-                .tag(Tab.help)
-                .tabItem { Label("help", systemImage: "questionmark.circle") }
+                Section {
+                    Label("status", systemImage: "info.circle").tag(Tab.status)
+                    Label(UpdatesCopy.tabTitle, systemImage: "arrow.down.circle").tag(Tab.updates)
+                    Label("help", systemImage: "questionmark.circle").tag(Tab.help)
+                } header: {
+                    Text("system")
+                }
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
+        } detail: {
+            detailContent
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding(20)
-        .frame(minWidth: 580, minHeight: 380)
+        .frame(minWidth: 720, minHeight: 500)
         .onAppear {
             appState.syncMicrophonePriorityList()
             applyPendingSettingsTab()
@@ -137,6 +135,20 @@ struct SettingsView: View {
         }
         .onExitCommand {
             dismiss()
+        }
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        switch selectedTab {
+        case .status: statusTab
+        case .observer: observerTab
+        case .service: serviceTab
+        case .microphones: microphoneTab
+        case .privacy: privacyTab
+        case .permissions: permissionsTab
+        case .updates: UpdatesTabView(controller: updateController)
+        case .help: helpTab
         }
     }
 
