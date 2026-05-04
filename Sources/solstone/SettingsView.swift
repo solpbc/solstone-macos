@@ -75,7 +75,7 @@ struct SettingsView: View {
     ) {
         self.appState = appState
         self.updateController = updateController
-        self.selectedTab = selectedTab
+        self._selectedTab = State(initialValue: selectedTab)
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
     }
 

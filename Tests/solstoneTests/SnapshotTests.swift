@@ -116,7 +116,7 @@ struct SnapshotTests {
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-error.png")
     }
 
-    private let settingsSize = CGSize(width: 500, height: 400)
+    private let settingsSize = CGSize(width: 800, height: 560)
 
     @Test func settingsObserver() throws {
         let state = AppState.forSnapshot()
