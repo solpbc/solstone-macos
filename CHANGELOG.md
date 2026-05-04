@@ -5,7 +5,27 @@ All notable changes to Solstone Capture will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] - unreleased
+## [1.1.2] - 2026-05-04
+
+### Added
+- Updates tab anchored with current version + last-checked line, and surfaces auto-update preferences.
+- Polished DMG window layout via create-dmg (brand background, window bounds, icon positions).
+
+### Changed
+- Settings switched from `TabView` to `NavigationSplitView` for a native-feeling sidebar.
+- Menu-bar icons now ship as vector PDF templates — crisp at any density.
+- `SettingsView` seeds its selected tab from init for snapshot stability; snapshot frame widened.
+
+### Fixed
+- Menu-bar icons load from the nested SwiftPM `Resources/` subdirectory.
+- `UpdatesTabView` no longer shows a duplicate transient block while checking.
+
+## [1.1.1] - 2026-04-29
+
+### Fixed
+- `sol-mac` maps a stale-socket connect failure to `app_not_running` cleanly.
+
+## [1.1.0] - 2026-04-28
 
 ### Added
 - In-app update support with an Updates tab and menu-bar "check for updates".
