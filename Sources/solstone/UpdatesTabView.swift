@@ -88,15 +88,8 @@ struct UpdatesTabView: View {
     @ViewBuilder
     private var transientBlock: some View {
         switch controller.state {
-        case .idle, .noUpdateAvailable:
+        case .idle, .noUpdateAvailable, .checking:
             EmptyView()
-        case .checking:
-            titleBlock(
-                title: UpdatesCopy.checkingTitle,
-                subtitle: UpdatesCopy.checkingSubtitle
-            )
-            ProgressView()
-            actionRow(primaryTitle: UpdatesCopy.actionCancel, primaryAction: controller.cancel)
         case .updateAvailable(let version, let releaseNotes):
             titleBlock(
                 title: UpdatesCopy.updateAvailableTitle(version: version),
