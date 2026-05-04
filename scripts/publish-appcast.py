@@ -17,6 +17,7 @@ RELEASE-HOST ONLY. Requires: wrangler, curl, PyNaCl.
 import argparse
 import base64
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -89,10 +90,15 @@ def sign_dmg(key: nacl.signing.SigningKey, dmg_path: str) -> Tuple[str, int]:
 
 def read_info_plist(version: str) -> int:
     plist_path = "Sources/solstone/Info.plist"
-    short_version = run(["plutil", "-extract", "CFBundleShortVersionString", "raw", "-o", "-", plist_path]).stdout.strip()
+    try:
+        with open(plist_path, "rb") as f:
+            plist = plistlib.load(f)
+    except (OSError, plistlib.InvalidFileException) as exc:
+        die(f"{plist_path}: {exc}")
+    short_version = str(plist.get("CFBundleShortVersionString", "")).strip()
     if short_version != version:
-        die(f"{plist_path}: CFBundleShortVersionString is {short_version}, expected {version}")
-    bundle_version_raw = run(["plutil", "-extract", "CFBundleVersion", "raw", "-o", "-", plist_path]).stdout.strip()
+        die(f"{plist_path}: CFBundleShortVersionString is {short_version!r}, expected {version}")
+    bundle_version_raw = str(plist.get("CFBundleVersion", "")).strip()
     try:
         return int(bundle_version_raw)
     except ValueError:
