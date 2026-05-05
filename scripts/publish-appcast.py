@@ -138,7 +138,7 @@ def fetch_appcast(url: str) -> Optional[ET.ElementTree]:
             os.unlink(tmp_path)
 
 def seed_appcast(prefix: str) -> ET.ElementTree:
-    rss = ET.Element("rss", {"version": "2.0", "xmlns:sparkle": SPARKLE_NS})
+    rss = ET.Element("rss", {"version": "2.0"})
     channel = ET.SubElement(rss, "channel")
     ET.SubElement(channel, "title").text = "solstone"
     ET.SubElement(channel, "link").text = f"{BASE_URL}/{prefix}/appcast.xml"
