@@ -11,6 +11,7 @@ let scalarWritableKeys: Set<String> = [
     "debugKeepRejectedAudio",
     "microphoneGain",
     "silenceMusic",
+    "solInitiatedChatNotificationsEnabled",
     "excludePrivateBrowsing"
 ]
 
@@ -49,7 +50,8 @@ func parseScalar(key: String, value: String) throws -> Any {
             throw ConfigParseError(reason: "expected float")
         }
         return NSNumber(value: floatValue)
-    case "syncPaused", "debugSegments", "debugKeepRejectedAudio", "silenceMusic", "excludePrivateBrowsing":
+    case "syncPaused", "debugSegments", "debugKeepRejectedAudio", "silenceMusic",
+         "solInitiatedChatNotificationsEnabled", "excludePrivateBrowsing":
         switch value.lowercased() {
         case "true", "1", "yes":
             return NSNumber(value: true)

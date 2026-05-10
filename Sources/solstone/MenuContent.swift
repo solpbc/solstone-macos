@@ -11,6 +11,18 @@ struct MenuContent: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        if let pending = appState.solChatPending {
+            Section {
+                Button("· \(pending.summary)") {
+                    Task {
+                        await AppState.shared?.solChatBridge.handleClick(requestID: pending.id)
+                    }
+                }
+            }
+
+            Divider()
+        }
+
         // Status section
         Section {
             statusRow

@@ -4,6 +4,7 @@
 import Foundation
 import SwiftUI
 import ServiceManagement
+import UserNotifications
 import os
 import SolstoneCore
 
@@ -21,6 +22,11 @@ final class DebugSettingHolder: @unchecked Sendable {
     init(value: Bool) {
         self._value = value
     }
+}
+
+@MainActor
+private final class AppStateBridgeTarget: @unchecked Sendable {
+    weak var state: AppState?
 }
 
 /// Observable state for the entire application
@@ -46,6 +52,7 @@ public final class AppState {
     public private(set) var captureManager: CaptureManager!
     public private(set) var uploadCoordinator: UploadCoordinator!
     public let heartbeatService: HeartbeatService
+    internal let solChatBridge: SolChatBridge
     public private(set) var config: AppConfig
     private var debugAudioHolder: DebugSettingHolder!
     private var silenceMusicHolder: DebugSettingHolder!
@@ -55,6 +62,8 @@ public final class AppState {
     public internal(set) var isRecording = false
     public internal(set) var isPaused = false
     public internal(set) var errorMessage: String?
+    public internal(set) var solChatPending: SolChatRequestSummary?
+    public internal(set) var solChatStale = false
 
     /// Screen recording permission — polled periodically via SCShareableContent.
     public internal(set) var screenRecordingGranted = false
@@ -136,9 +145,20 @@ public final class AppState {
             Task { [heartbeatService] in
                 await heartbeatService.configure(serverURL: serverURL, serverKey: serverKey)
             }
+            Task { [solChatBridge] in
+                await solChatBridge.configure(serverURL: serverURL, serverKey: serverKey)
+            }
         } else {
             Task { [heartbeatService] in
                 await heartbeatService.stop()
+            }
+            Task { [solChatBridge] in
+                await solChatBridge.stop()
+            }
+        }
+        if oldConfig.solInitiatedChatNotificationsEnabled != newConfig.solInitiatedChatNotificationsEnabled {
+            Task { [solChatBridge] in
+                await solChatBridge.setNotificationsEnabled(newConfig.solInitiatedChatNotificationsEnabled)
             }
         }
         debugAudioHolder.value = newConfig.debugKeepRejectedAudio
@@ -173,6 +193,29 @@ public final class AppState {
         updateConfig(reloaded)
     }
 
+    public func requestNotificationOptIn(enabled: Bool) async -> Bool {
+        guard enabled else {
+            var newConfig = config
+            newConfig.solInitiatedChatNotificationsEnabled = false
+            updateConfig(newConfig)
+            return false
+        }
+
+        do {
+            let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
+            var newConfig = config
+            newConfig.solInitiatedChatNotificationsEnabled = granted
+            updateConfig(newConfig)
+            return granted
+        } catch {
+            Logger.callosum.info("Notification authorization failed: \(String(describing: type(of: error)), privacy: .public)")
+            var newConfig = config
+            newConfig.solInitiatedChatNotificationsEnabled = false
+            updateConfig(newConfig)
+            return false
+        }
+    }
+
     /// Auto-adds any newly detected microphones to the priority list
     public func syncMicrophonePriorityList() {
         let available = audioDeviceMonitor.availableDevices
@@ -202,6 +245,7 @@ public final class AppState {
         let storageManager = StorageManager()
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
         let uploadClient = UploadClient()
+        let solChatTarget = AppStateBridgeTarget()
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager
@@ -217,6 +261,20 @@ public final class AppState {
                     serverKey: key,
                     paused: paused
                 )
+            }
+        )
+        self.solChatBridge = SolChatBridge(
+            notificationsEnabled: config.solInitiatedChatNotificationsEnabled,
+            setPending: { [solChatTarget] pending in
+                solChatTarget.state?.solChatPending = pending
+            },
+            setStale: { [solChatTarget] stale in
+                solChatTarget.state?.solChatStale = stale
+            },
+            postOpenChat: { url in
+                await MainActor.run {
+                    _ = NSWorkspace.shared.open(url)
+                }
             }
         )
 
@@ -316,6 +374,9 @@ public final class AppState {
             Task { [heartbeatService] in
                 await heartbeatService.configure(serverURL: serverURL, serverKey: serverKey)
             }
+            Task { [solChatBridge] in
+                await solChatBridge.configure(serverURL: serverURL, serverKey: serverKey)
+            }
         }
 
         // Start polling permissions — auto-starts recording when ready
@@ -332,6 +393,7 @@ public final class AppState {
         }
 
         // Set shared instance for app-wide access (e.g., termination handler)
+        solChatTarget.state = self
         AppState.shared = self
     }
 
@@ -359,6 +421,13 @@ public final class AppState {
         self.heartbeatService = HeartbeatService(
             isPaused: { false },
             postHeartbeat: { _, _, _ in }
+        )
+        self.solChatBridge = SolChatBridge(
+            notificationsEnabled: config.solInitiatedChatNotificationsEnabled,
+            setPending: { _ in },
+            setStale: { _ in },
+            postOpenChat: { _ in },
+            notifier: NoopSolChatNotifier()
         )
 
         let debugAudioHolder = DebugSettingHolder(value: false)

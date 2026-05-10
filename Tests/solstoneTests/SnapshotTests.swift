@@ -94,6 +94,19 @@ struct SnapshotTests {
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-idle.png")
     }
 
+    @Test func menuSolPinged() throws {
+        let state = AppState.forSnapshot()
+        state.solChatPending = SolChatRequestSummary(
+            id: "req-test",
+            summary: "let's pick up where we left off on the recorder",
+            day: "2026-05-09",
+            eventIndex: 42,
+            receivedAt: Date(timeIntervalSince1970: 0)
+        )
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-sol-pinged.png")
+    }
+
     @Test func menuRecording() throws {
         let state = AppState.forSnapshot()
         state.isRecording = true
@@ -125,6 +138,18 @@ struct SnapshotTests {
             SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),
             size: settingsSize,
             to: "settings-observer.png"
+        )
+    }
+
+    @Test func settingsObserverWithSolToggle() throws {
+        var config = AppConfig()
+        config.solInitiatedChatNotificationsEnabled = true
+        let state = AppState.forSnapshot(config: config)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "settings-observer-with-sol-toggle.png"
         )
     }
 

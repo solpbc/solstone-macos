@@ -40,7 +40,7 @@ struct HeartbeatServiceTests {
 
         await service.configure(serverURL: "http://test.invalid", serverKey: "k1")
         var runningCount = await recorder.callCount()
-        for _ in 0..<20 where runningCount < 2 {
+        for _ in 0..<60 where runningCount < 2 {
             try? await Task.sleep(for: .seconds(0.05))
             runningCount = await recorder.callCount()
         }

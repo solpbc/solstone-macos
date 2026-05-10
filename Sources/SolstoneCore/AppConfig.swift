@@ -47,13 +47,15 @@ public struct AppConfig: Sendable {
 
     public enum Defaults {
         public static let cacheRetentionDays = 7
+        public static let solInitiatedChatNotificationsEnabled = false
     }
 
     public static let knownKeys: [String] = [
         "microphonePriority", "excludedApps", "excludedTitlePatterns",
         "excludePrivateBrowsing", "serverURL", "serverKey",
         "cacheRetentionDays", "syncPaused", "debugSegments",
-        "debugKeepRejectedAudio", "microphoneGain", "silenceMusic"
+        "debugKeepRejectedAudio", "microphoneGain", "silenceMusic",
+        "solInitiatedChatNotificationsEnabled"
     ]
 
     public static func isKnownKey(_ key: String) -> Bool {
@@ -73,6 +75,7 @@ public struct AppConfig: Sendable {
         static let debugKeepRejectedAudio = "debugKeepRejectedAudio"
         static let microphoneGain = "microphoneGain"
         static let silenceMusic = "silenceMusic"
+        static let solInitiatedChatNotificationsEnabled = "solInitiatedChatNotificationsEnabled"
         static let didMigrateFromJSON = "didMigrateFromJSON"
     }
 
@@ -121,6 +124,9 @@ public struct AppConfig: Sendable {
     /// When true, silence music-only portions of system audio during remix. Default: true
     public var silenceMusic: Bool
 
+    /// When true, show system notifications for sol-initiated chat requests. Default: false
+    public var solInitiatedChatNotificationsEnabled: Bool
+
     /// Default exclusions written on first run
     public static let defaultExclusions: [AppEntry] = [
         AppEntry(bundleID: "com.1password.1password", name: "1Password"),
@@ -140,7 +146,8 @@ public struct AppConfig: Sendable {
         debugSegments: Bool = false,
         debugKeepRejectedAudio: Bool = false,
         microphoneGain: Float = 2.0,
-        silenceMusic: Bool = true
+        silenceMusic: Bool = true,
+        solInitiatedChatNotificationsEnabled: Bool = Defaults.solInitiatedChatNotificationsEnabled
     ) {
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
@@ -154,6 +161,7 @@ public struct AppConfig: Sendable {
         self.debugKeepRejectedAudio = debugKeepRejectedAudio
         self.microphoneGain = microphoneGain
         self.silenceMusic = silenceMusic
+        self.solInitiatedChatNotificationsEnabled = solInitiatedChatNotificationsEnabled
     }
 
     // MARK: - Load/Save
@@ -199,7 +207,9 @@ public struct AppConfig: Sendable {
             debugSegments: defaults.bool(forKey: Keys.debugSegments),
             debugKeepRejectedAudio: defaults.bool(forKey: Keys.debugKeepRejectedAudio),
             microphoneGain: defaults.object(forKey: Keys.microphoneGain) as? Float ?? 2.0,
-            silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true
+            silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true,
+            solInitiatedChatNotificationsEnabled: defaults.object(forKey: Keys.solInitiatedChatNotificationsEnabled) as? Bool
+                ?? Defaults.solInitiatedChatNotificationsEnabled
         )
         return config
     }
@@ -254,6 +264,7 @@ public struct AppConfig: Sendable {
         defaults.set(debugKeepRejectedAudio, forKey: Keys.debugKeepRejectedAudio)
         defaults.set(microphoneGain, forKey: Keys.microphoneGain)
         defaults.set(silenceMusic, forKey: Keys.silenceMusic)
+        defaults.set(solInitiatedChatNotificationsEnabled, forKey: Keys.solInitiatedChatNotificationsEnabled)
     }
 
     // MARK: - Migration from JSON
@@ -297,7 +308,8 @@ public struct AppConfig: Sendable {
                     debugSegments: legacyConfig.debugSegments ?? false,
                     debugKeepRejectedAudio: legacyConfig.debugKeepRejectedAudio ?? false,
                     microphoneGain: legacyConfig.microphoneGain ?? 2.0,
-                    silenceMusic: legacyConfig.silenceMusic ?? true
+                    silenceMusic: legacyConfig.silenceMusic ?? true,
+                    solInitiatedChatNotificationsEnabled: Defaults.solInitiatedChatNotificationsEnabled
                 )
 
                 try config.save()

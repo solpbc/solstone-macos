@@ -42,6 +42,7 @@ struct SettingsView: View {
     // Permissions tab state
     @State private var screenRecordingPrompted = false
     @State private var restartCountdown: Int? = nil
+    @State private var showsNotificationDeniedExplainer = false
 
     // Privacy tab state
     @State private var newTitlePattern = ""
@@ -339,6 +340,18 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
+            GroupBox("notifications") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("notify me on sol-initiated chats", isOn: solChatNotificationsBinding)
+                    if showsNotificationDeniedExplainer {
+                        Text("system notifications are off — enable in System Settings → Notifications → solstone observer")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
             GroupBox("local storage") {
                 VStack(alignment: .leading) {
                 LabeledContent("currently using") {
@@ -387,6 +400,22 @@ struct SettingsView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var solChatNotificationsBinding: Binding<Bool> {
+        Binding(
+            get: { appState.config.solInitiatedChatNotificationsEnabled },
+            set: { newValue in
+                Task { @MainActor in
+                    let granted = await appState.requestNotificationOptIn(enabled: newValue)
+                    if newValue && !granted {
+                        showsNotificationDeniedExplainer = true
+                    } else if granted || !newValue {
+                        showsNotificationDeniedExplainer = false
+                    }
+                }
+            }
+        )
     }
 
     // MARK: - Service Tab

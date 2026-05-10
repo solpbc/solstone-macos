@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import SwiftUI
+import UserNotifications
 import os
 
 /// Single source of truth for tracked SwiftUI `Window` scenes.
@@ -24,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuTrackingObserver: Any?
     private var notificationObservers: [Any] = []
     private var ipcService: SolMacIPCService?
+    private var solChatNotificationDelegate: SolChatNotificationDelegate?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if AppTranslocationDetector.isTranslocated() {
@@ -70,6 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let state = AppState.shared {
+            let delegate = SolChatNotificationDelegate()
+            solChatNotificationDelegate = delegate
+            UNUserNotificationCenter.current().delegate = delegate
+
             state.reevaluateActivationPolicy(debounced: false)
             SolMacSymlinkInstaller.ensureInstalled()
             let responder = SolMacResponder(appState: state)
@@ -106,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let state = AppState.shared {
             state.isTerminating = true
             Task { await state.heartbeatService.stop() }
+            Task { await state.solChatBridge.stop() }
         } else {
             Logger.general.error("AppState.shared nil in applicationWillTerminate")
         }
@@ -151,23 +158,31 @@ struct SolstoneCaptureApp: App {
     }
 
     private var statusAccessibilityLabel: String {
+        let baseLabel: String
         if appState.errorMessage != nil {
-            return "solstone observer — error"
-        }
-        if appState.pauseManager.isPaused || appState.isPaused {
-            return "solstone observer — paused"
-        }
-        if appState.isRecording {
+            baseLabel = "solstone observer — error"
+        } else if appState.pauseManager.isPaused || appState.isPaused {
+            baseLabel = "solstone observer — paused"
+        } else if appState.isRecording {
             switch appState.uploadCoordinator.status {
             case .offline:
-                return "solstone observer — recording, sync offline"
+                baseLabel = "solstone observer — recording, sync offline"
             case .retrying:
-                return "solstone observer — recording, sync retrying"
+                baseLabel = "solstone observer — recording, sync retrying"
             default:
-                return "solstone observer — recording"
+                baseLabel = "solstone observer — recording"
             }
+        } else {
+            baseLabel = "solstone observer — stopped"
         }
-        return "solstone observer — stopped"
+
+        if appState.solChatStale {
+            return "\(baseLabel) · \(SolChatLiterals.unreachableTooltip)"
+        }
+        if let pending = appState.solChatPending {
+            return "\(baseLabel) · sol noticed: \(pending.summary)"
+        }
+        return baseLabel
     }
 
     var body: some Scene {
@@ -242,6 +257,9 @@ private struct StatusIcon: View {
 
     var body: some View {
         bundleImage(iconName, isTemplate: true)
+            .overlay(alignment: .bottomTrailing) {
+                overlayView
+            }
             .task {
                 guard !hasCheckedSetup else { return }
                 hasCheckedSetup = true
@@ -262,5 +280,21 @@ private struct StatusIcon: View {
                 appState.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
             }
+    }
+
+    @ViewBuilder
+    private var overlayView: some View {
+        if appState.solChatStale {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 7))
+                .foregroundStyle(.orange)
+                .help(SolChatLiterals.unreachableTooltip)
+        } else if appState.solChatPending != nil {
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 6, height: 6)
+        } else {
+            EmptyView()
+        }
     }
 }
