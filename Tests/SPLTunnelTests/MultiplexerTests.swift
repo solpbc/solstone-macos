@@ -192,12 +192,83 @@ struct MultiplexerTests {
         }
     }
 
+    @Test("listener outbound IDs allocate 2,4,6 monotonically")
+    func listenerOutboundIDsAllocateEvenMonotonically() async throws {
+        let recorder = SinkRecorder()
+        let mux = Multiplexer(sink: { data in
+            await recorder.record(data)
+        }, role: .listener)
+
+        let first = try await mux.openStream()
+        let second = try await mux.openStream()
+        let third = try await mux.openStream()
+
+        #expect(await [first.id, second.id, third.id] == [2, 4, 6])
+    }
+
+    @Test("listener inbound odd OPEN is accepted and yielded")
+    func listenerInboundOddOpenIsAcceptedAndYielded() async throws {
+        let recorder = SinkRecorder()
+        let mux = Multiplexer(sink: { data in
+            await recorder.record(data)
+        }, role: .listener)
+        let incoming = mux.incomingStreams
+
+        try await mux.feedInbound(try encodeFrame(buildOpen(streamID: 1)))
+
+        let stream = try await firstIncomingStream(from: incoming)
+        #expect(await stream?.id == 1)
+    }
+
+    @Test("listener inbound even OPEN emits RESET(protocolError) via sink")
+    func listenerInboundEvenOpenEmitsProtocolReset() async throws {
+        let recorder = SinkRecorder()
+        let mux = Multiplexer(sink: { data in
+            await recorder.record(data)
+        }, role: .listener)
+
+        try await mux.feedInbound(try encodeFrame(buildOpen(streamID: 2)))
+
+        let frames = try await recorder.frames()
+        let reset = try #require(frames.first)
+        #expect(reset.streamID == 2)
+        #expect(reset.flags == FrameFlags.reset.rawValue)
+        #expect(try parseResetReason(from: reset.payload) == .protocolError)
+    }
+
+    @Test("dialer incomingStreams finishes on tearDown")
+    func dialerIncomingStreamsFinishOnTearDown() async throws {
+        let (mux, _) = makeMultiplexer()
+        let incoming = mux.incomingStreams
+
+        await mux.tearDown(reason: .normalShutdown)
+
+        let stream = try await firstIncomingStream(from: incoming)
+        #expect(stream == nil)
+    }
+
     private func makeMultiplexer() -> (Multiplexer, SinkRecorder) {
         let recorder = SinkRecorder()
         let mux = Multiplexer { data in
             await recorder.record(data)
         }
         return (mux, recorder)
+    }
+
+    private func firstIncomingStream(from incoming: AsyncStream<MuxStream>) async throws -> MuxStream? {
+        try await withThrowingTaskGroup(of: MuxStream?.self) { group in
+            group.addTask {
+                var iterator = incoming.makeAsyncIterator()
+                return await iterator.next()
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(1))
+                throw MuxError.transportClosed
+            }
+            let stream = try await group.next()!
+            group.cancelAll()
+            return stream
+        }
     }
 }
 

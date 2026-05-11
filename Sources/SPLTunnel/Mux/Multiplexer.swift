@@ -23,15 +23,28 @@ public enum TearDownReason: Sendable, Equatable {
     case protocolError
 }
 
+public enum Role: Sendable {
+    case dialer
+    case listener
+}
+
 public actor Multiplexer {
     private let sink: @Sendable (Data) async throws -> Void
-    private var nextOutboundID: UInt32 = 1
+    private let role: Role
+    internal nonisolated let incomingStreams: AsyncStream<MuxStream>
+    private let incomingContinuation: AsyncStream<MuxStream>.Continuation
+    private var nextOutboundID: UInt32
     private var streams: [UInt32: MuxStream] = [:]
     private var tornDown = false
     private var decoder = FrameDecoder()
 
-    public init(sink: @escaping @Sendable (Data) async throws -> Void) {
+    public init(sink: @escaping @Sendable (Data) async throws -> Void, role: Role = .dialer) {
+        let incoming = AsyncStream<MuxStream>.makeStream()
         self.sink = sink
+        self.role = role
+        self.incomingStreams = incoming.stream
+        self.incomingContinuation = incoming.continuation
+        self.nextOutboundID = (role == .dialer) ? 1 : 2
     }
 
     public func openStream() async throws -> MuxStream {
@@ -64,6 +77,7 @@ public actor Multiplexer {
 
     public func tearDown(reason: TearDownReason) async {
         tornDown = true
+        incomingContinuation.finish()
         let openStreams = streams.values
         streams.removeAll()
         for stream in openStreams {
@@ -107,14 +121,29 @@ public actor Multiplexer {
     }
 
     private func handleInboundOpen(_ frame: Frame) async throws {
-        if frame.streamID % 2 == 1 {
-            logger.debug("parity violation on inbound OPEN id=\(frame.streamID, privacy: .public)")
+        let isOdd = frame.streamID % 2 == 1
+        let parityRejected = (role == .dialer && isOdd) || (role == .listener && !isOdd)
+        if parityRejected {
+            logger.debug("inbound OPEN parity rejected id=\(frame.streamID, privacy: .public)")
             let reset = try encodeFrame(buildReset(streamID: frame.streamID, reason: .protocolError))
             try await sink(reset)
             return
         }
 
-        logger.debug("ignoring inbound even OPEN id=\(frame.streamID, privacy: .public)")
+        guard role == .listener else {
+            logger.debug("ignoring inbound OPEN id=\(frame.streamID, privacy: .public)")
+            return
+        }
+
+        guard await activeStreamCount() < MuxConstants.maxConcurrentStreams else {
+            let reset = try encodeFrame(buildReset(streamID: frame.streamID, reason: .streamLimitExceeded))
+            try await sink(reset)
+            return
+        }
+
+        let stream = MuxStream(id: frame.streamID, sink: sink)
+        streams[frame.streamID] = stream
+        incomingContinuation.yield(stream)
     }
 
     private func activeStreamCount() async -> Int {
