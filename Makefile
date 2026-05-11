@@ -1,4 +1,4 @@
-.PHONY: build release release-universal run clean test snapshot bundle bundle-universal install setup install-app open reset reset-full cert allow check-cert icons check-icons-deps check-dev-deps \
+.PHONY: build release release-universal run clean test integration-test snapshot bundle bundle-universal install setup install-app open reset reset-full cert allow check-cert icons check-icons-deps check-dev-deps \
         signing-check unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg \
         brand-sync
 
@@ -82,6 +82,9 @@ clean:
 # Run tests
 test:
 	swift test
+
+integration-test:
+	SPL_INTEGRATION=1 swift test --filter 'SPLTunnelTests.IntegrationTests'
 
 # Render view snapshots
 snapshot:
