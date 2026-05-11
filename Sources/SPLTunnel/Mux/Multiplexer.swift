@@ -3,6 +3,7 @@
 
 import Foundation
 import os
+import Security
 
 private let logger = Logger(subsystem: "app.solstone.observer.spl", category: "mux")
 
@@ -29,21 +30,33 @@ public enum Role: Sendable {
 }
 
 public actor Multiplexer {
+    public nonisolated var keepaliveLost: AsyncStream<Void> {
+        keepaliveLostStream
+    }
+
     private let sink: @Sendable (Data) async throws -> Void
     private let role: Role
     internal nonisolated let incomingStreams: AsyncStream<MuxStream>
     private let incomingContinuation: AsyncStream<MuxStream>.Continuation
+    private let keepaliveLostStream: AsyncStream<Void>
+    private let keepaliveLostContinuation: AsyncStream<Void>.Continuation
     private var nextOutboundID: UInt32
     private var streams: [UInt32: MuxStream] = [:]
     private var tornDown = false
     private var decoder = FrameDecoder()
+    private var keepaliveTask: Task<Void, Never>?
+    private var pendingPingNonce: Data?
+    private var missedPings = 0
 
     public init(sink: @escaping @Sendable (Data) async throws -> Void, role: Role = .dialer) {
         let incoming = AsyncStream<MuxStream>.makeStream()
+        let keepalive = AsyncStream<Void>.makeStream()
         self.sink = sink
         self.role = role
         self.incomingStreams = incoming.stream
         self.incomingContinuation = incoming.continuation
+        self.keepaliveLostStream = keepalive.stream
+        self.keepaliveLostContinuation = keepalive.continuation
         self.nextOutboundID = (role == .dialer) ? 1 : 2
     }
 
@@ -75,8 +88,24 @@ public actor Multiplexer {
         }
     }
 
+    public func startKeepalive(
+        interval: Duration = .milliseconds(500),
+        missedLimit: Int = 3
+    ) {
+        guard keepaliveTask == nil else {
+            return
+        }
+
+        keepaliveTask = Task {
+            await runKeepalive(interval: interval, missedLimit: missedLimit)
+        }
+    }
+
     public func tearDown(reason: TearDownReason) async {
         tornDown = true
+        keepaliveTask?.cancel()
+        keepaliveTask = nil
+        keepaliveLostContinuation.finish()
         incomingContinuation.finish()
         let openStreams = streams.values
         streams.removeAll()
@@ -91,6 +120,17 @@ public actor Multiplexer {
         let isClose = frame.flags & FrameFlags.close.rawValue != 0
         let isReset = frame.flags & FrameFlags.reset.rawValue != 0
         let isWindow = frame.flags & FrameFlags.window.rawValue != 0
+        let isPing = frame.flags & FrameFlags.ping.rawValue != 0
+        let isPong = frame.flags & FrameFlags.pong.rawValue != 0
+
+        if frame.streamID == 0 {
+            try await handleControlFrame(frame, isPing: isPing, isPong: isPong)
+            return
+        }
+
+        if isPing || isPong {
+            throw MuxError.protocolError
+        }
 
         if isOpen {
             try await handleInboundOpen(frame)
@@ -144,6 +184,58 @@ public actor Multiplexer {
         let stream = MuxStream(id: frame.streamID, sink: sink)
         streams[frame.streamID] = stream
         incomingContinuation.yield(stream)
+    }
+
+    private func handleControlFrame(_ frame: Frame, isPing: Bool, isPong: Bool) async throws {
+        switch (isPing, isPong) {
+        case (true, false):
+            let nonce = try parseControlNonce(from: frame.payload)
+            try await sink(try encodeFrame(buildPong(nonce: nonce)))
+        case (false, true):
+            let nonce = try parseControlNonce(from: frame.payload)
+            if nonce == pendingPingNonce {
+                pendingPingNonce = nil
+                missedPings = 0
+            }
+        default:
+            throw FramingError.unknownControlFrame
+        }
+    }
+
+    private func runKeepalive(interval: Duration, missedLimit: Int) async {
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: interval)
+                try await sendKeepalivePing(missedLimit: missedLimit)
+            } catch {
+                await tearDown(reason: .transportFailure)
+                return
+            }
+        }
+    }
+
+    private func sendKeepalivePing(missedLimit: Int) async throws {
+        guard !tornDown else {
+            throw MuxError.transportClosed
+        }
+
+        if pendingPingNonce != nil {
+            missedPings += 1
+            if missedPings >= missedLimit {
+                logger.debug("mux keepalive lost missed_pings=\(self.missedPings, privacy: .public)")
+                keepaliveLostContinuation.yield(())
+                keepaliveTask?.cancel()
+                keepaliveTask = nil
+                return
+            }
+        }
+
+        var nonce = Data(count: 8)
+        nonce.withUnsafeMutableBytes { buffer in
+            _ = SecRandomCopyBytes(kSecRandomDefault, 8, buffer.baseAddress!)
+        }
+        pendingPingNonce = nonce
+        try await sink(try encodeFrame(buildPing(nonce: nonce)))
     }
 
     private func activeStreamCount() async -> Int {

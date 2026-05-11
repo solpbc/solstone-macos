@@ -247,6 +247,55 @@ struct MultiplexerTests {
         #expect(stream == nil)
     }
 
+    @Test("control PING emits matching PONG on stream 0")
+    func controlPingEmitsPong() async throws {
+        let (mux, recorder) = makeMultiplexer()
+        let nonce = Data([1, 2, 3, 4, 5, 6, 7, 8])
+
+        try await mux.feedInbound(try encodeFrame(buildPing(nonce: nonce)))
+
+        let frames = try await recorder.frames()
+        #expect(frames == [try buildPong(nonce: nonce)])
+    }
+
+    @Test("keepalive sends pings at configured cadence")
+    func keepaliveSendsPingsAtCadence() async throws {
+        let (mux, recorder) = makeMultiplexer()
+
+        await mux.startKeepalive(interval: .milliseconds(20), missedLimit: 10)
+        try await Task.sleep(for: .milliseconds(75))
+        await mux.tearDown(reason: .normalShutdown)
+
+        let frames = try await recorder.frames()
+        #expect(frames.filter { $0.streamID == 0 && $0.flags == FrameFlags.ping.rawValue }.count >= 2)
+    }
+
+    @Test("matching PONG resets missed ping count")
+    func matchingPongResetsMissedPingCount() async throws {
+        let (mux, recorder) = makeMultiplexer()
+        let lost = mux.keepaliveLost
+
+        await mux.startKeepalive(interval: .milliseconds(20), missedLimit: 3)
+        try await Task.sleep(for: .milliseconds(25))
+        let firstPing = try #require(try await recorder.frames().first { $0.flags == FrameFlags.ping.rawValue })
+        try await mux.feedInbound(try encodeFrame(buildPong(nonce: firstPing.payload)))
+        try await Task.sleep(for: .milliseconds(35))
+        await mux.tearDown(reason: .normalShutdown)
+
+        #expect(try await firstKeepaliveLost(from: lost, timeout: .milliseconds(20)) == false)
+    }
+
+    @Test("three missed pongs triggers keepalive lost")
+    func missedPongsTriggerKeepaliveLost() async throws {
+        let (mux, _) = makeMultiplexer()
+        let lost = mux.keepaliveLost
+
+        await mux.startKeepalive(interval: .milliseconds(10), missedLimit: 3)
+
+        #expect(try await firstKeepaliveLost(from: lost, timeout: .milliseconds(120)))
+        await mux.tearDown(reason: .transportFailure)
+    }
+
     private func makeMultiplexer() -> (Multiplexer, SinkRecorder) {
         let recorder = SinkRecorder()
         let mux = Multiplexer { data in
@@ -268,6 +317,22 @@ struct MultiplexerTests {
             let stream = try await group.next()!
             group.cancelAll()
             return stream
+        }
+    }
+
+    private func firstKeepaliveLost(from stream: AsyncStream<Void>, timeout: Duration) async throws -> Bool {
+        try await withThrowingTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                var iterator = stream.makeAsyncIterator()
+                return await iterator.next() != nil
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                return false
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
         }
     }
 }

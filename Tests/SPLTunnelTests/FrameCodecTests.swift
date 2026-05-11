@@ -38,6 +38,14 @@ private enum Fixtures {
         0x00, 0x00, 0x00, 0x01, 0x10, 0x00, 0x00, 0x04,
         0x00, 0x01, 0x00, 0x00
     ]
+    static let ping: [UInt8] = [
+        0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x08,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08
+    ]
+    static let pong: [UInt8] = [
+        0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x08,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08
+    ]
     static let dataFourBytes: [UInt8] = [
         0x00, 0x00, 0x00, 0x09, 0x02, 0x00, 0x00, 0x04,
         0x01, 0x02, 0x03, 0x04
@@ -89,6 +97,14 @@ struct FrameCodecWireCompatTests {
 
     @Test func window64KiBCredit() throws {
         try expectFixture(buildWindow(streamID: 1, credit: 0x0001_0000), bytes: Data(Fixtures.window64KiB))
+    }
+
+    @Test func pingRoundTrip() throws {
+        try expectFixture(buildPing(nonce: Data([1, 2, 3, 4, 5, 6, 7, 8])), bytes: Data(Fixtures.ping))
+    }
+
+    @Test func pongRoundTrip() throws {
+        try expectFixture(buildPong(nonce: Data([1, 2, 3, 4, 5, 6, 7, 8])), bytes: Data(Fixtures.pong))
     }
 
     @Test func dataFourBytes() throws {
@@ -147,6 +163,18 @@ struct FrameCodecValidationTests {
                 FrameFlags.data.rawValue |
                 FrameFlags.close.rawValue
             )
+        }
+    }
+
+    @Test func pingDataThrows() {
+        expectThrows(.invalidFlagCombination) {
+            try validateFlags(FrameFlags.ping.rawValue | FrameFlags.data.rawValue)
+        }
+    }
+
+    @Test func invalidControlNonceLengthThrows() {
+        expectThrows(.lengthMismatch) {
+            _ = try buildPing(nonce: Data([0x01]))
         }
     }
 }

@@ -19,6 +19,7 @@ public enum ConnectionMode: Sendable, Equatable {
 public enum SessionError: Error, Equatable, Sendable {
     case notConnected
     case unreachable
+    case directKeepaliveMissed
     case invalidRelayURL(String)
     case transportFailed(String)
     case tlsFailed(String)
@@ -51,10 +52,12 @@ public actor TunnelSession {
     private var state: TunnelState = .disconnected
     private var reconnectTask: Task<Void, Never>?
     private var inboundPumpTask: Task<Void, Never>?
+    private var keepaliveWatchTask: Task<Void, Never>?
     private var innerTLS: InnerTLS?
     private var multiplexer: Multiplexer?
     private var lastTrustedDirectEndpoint: TransportEndpoint?
     private var trustDirectUntil: ContinuousClock.Instant?
+    private var relayOnlyNextReconnect = false
 
     public init(pairing: StoredPairing) {
         self.pairing = pairing
@@ -81,7 +84,7 @@ public actor TunnelSession {
         }
 
         let connected = try await connectOnce(attempt: 1, endpoints: endpoints)
-        installConnected(connected.tls)
+        await installConnected(connected)
         reconnectTask = Task { [endpoints] in
             await monitorAndReconnect(endpoints: endpoints)
         }
@@ -113,9 +116,10 @@ public actor TunnelSession {
             await tearDownCurrent(reason: .transportFailure)
 
             do {
-                let connected = try await connectOnce(attempt: attempt, endpoints: endpoints)
+                let candidates = reconnectCandidates(from: endpoints)
+                let connected = try await connectOnce(attempt: attempt, endpoints: candidates)
                 attempt = 1
-                installConnected(connected.tls)
+                await installConnected(connected)
             } catch {
                 let delay = jitter(backoff(forAttempt: attempt))
                 do {
@@ -196,7 +200,8 @@ public actor TunnelSession {
         publish(.connected(via: connected.via))
     }
 
-    private func installConnected(_ tls: InnerTLS) {
+    private func installConnected(_ connected: ConnectedAttempt) async {
+        let tls = connected.tls
         innerTLS = tls
         let mux = Multiplexer { data in
             try await tls.send(data)
@@ -211,9 +216,21 @@ public actor TunnelSession {
             }
         }
         inboundPumpTask = pump
+
+        if case .lanDirect = connected.via {
+            await mux.startKeepalive()
+            keepaliveWatchTask = Task { [mux] in
+                for await _ in mux.keepaliveLost {
+                    await self.handleDirectKeepaliveLost()
+                    break
+                }
+            }
+        }
     }
 
     private func tearDownCurrent(reason: TearDownReason) async {
+        keepaliveWatchTask?.cancel()
+        keepaliveWatchTask = nil
         inboundPumpTask?.cancel()
         inboundPumpTask = nil
         await innerTLS?.close()
@@ -221,6 +238,31 @@ public actor TunnelSession {
         await multiplexer?.tearDown(reason: reason)
         multiplexer = nil
         setConnectionMode(nil)
+    }
+
+    private func handleDirectKeepaliveLost() async {
+        guard connectionMode == .plDirect else {
+            return
+        }
+        relayOnlyNextReconnect = true
+        lastTrustedDirectEndpoint = nil
+        trustDirectUntil = nil
+        publish(.failed(.directKeepaliveMissed))
+        await tearDownCurrent(reason: .transportFailure)
+    }
+
+    private func reconnectCandidates(from endpoints: [TransportEndpoint]) -> [TransportEndpoint] {
+        guard relayOnlyNextReconnect else {
+            return endpoints
+        }
+        relayOnlyNextReconnect = false
+        let relayEndpoints = endpoints.filter { endpoint in
+            if case .relay = endpoint {
+                return true
+            }
+            return false
+        }
+        return relayEndpoints.isEmpty ? endpoints : relayEndpoints
     }
 
     private func publish(_ newState: TunnelState) {

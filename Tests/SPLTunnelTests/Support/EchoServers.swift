@@ -248,6 +248,7 @@ actor WebSocketFailingServer {
 enum TLSEchoMode {
     case raw
     case mux
+    case muxDropControl
 }
 
 actor TLSEchoServer {
@@ -321,7 +322,9 @@ actor TLSEchoServer {
         case .raw:
             echo(connection)
         case .mux:
-            muxEcho(connection, decoder: MuxEchoDecoder())
+            muxEcho(connection, decoder: MuxEchoDecoder(respondsToControlFrames: true))
+        case .muxDropControl:
+            muxEcho(connection, decoder: MuxEchoDecoder(respondsToControlFrames: false))
         }
     }
 
@@ -403,13 +406,21 @@ actor TLSEchoServer {
 private final class MuxEchoDecoder: @unchecked Sendable {
     // why: Network callbacks can overlap; the test mux peer keeps decoder state serialized by lock.
     private let lock = NSLock()
+    private let respondsToControlFrames: Bool
     private var decoder = FrameDecoder()
+
+    init(respondsToControlFrames: Bool) {
+        self.respondsToControlFrames = respondsToControlFrames
+    }
 
     func response(to data: Data) throws -> Data {
         try lock.withLock {
             decoder.feed(data)
             var response = Data()
             while let frame = try decoder.next() {
+                if respondsToControlFrames && frame.streamID == 0 && frame.flags & FrameFlags.ping.rawValue != 0 {
+                    response.append(try encodeFrame(buildPong(nonce: try parseControlNonce(from: frame.payload))))
+                }
                 if frame.flags & FrameFlags.data.rawValue != 0 {
                     response.append(try encodeFrame(buildData(streamID: frame.streamID, payload: frame.payload)))
                 }

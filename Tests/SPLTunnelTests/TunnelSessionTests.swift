@@ -148,6 +148,34 @@ struct TunnelSessionTests {
         #expect(secondVia == .lanDirect(host: "127.0.0.1", port: port))
     }
 
+    @Test func directKeepaliveMissReconnectsViaRelayOnly() async throws {
+        let fixture = try TestCA.make()
+        let tlsServer = TLSEchoServer(bundle: fixture, mode: .muxDropControl)
+        try await tlsServer.start()
+        let tlsPort = await tlsServer.port
+        let relay = RelayBridgeServer(tlsPort: tlsPort)
+        try await relay.start()
+        let relayPort = await relay.port
+        let pairing = pairing(from: fixture, localPort: tlsPort, relayPort: relayPort)
+        let session = TunnelSession(pairing: pairing)
+        let recorder = StateRecorder()
+        let observation = observe(session: session, recorder: recorder)
+        let relayURL = try #require(URL(string: "ws://127.0.0.1:\(relayPort)"))
+
+        try await session.connect(endpoints: TransportEndpoint.candidates(for: pairing))
+        try await waitForConnected(recorder, via: .lanDirect(host: "127.0.0.1", port: tlsPort), minimumCount: 1)
+        try await waitForConnected(recorder, via: .relay(endpoint: relayURL), minimumCount: 1)
+
+        let mode = await session.connectionMode
+        await session.disconnect()
+        observation.cancel()
+        await relay.stop()
+        await tlsServer.stop()
+
+        #expect(await recorder.states.contains(.failed(.directKeepaliveMissed)))
+        #expect(mode == .plViaSpl)
+    }
+
     private func pairing(
         from fixture: TestCA.Bundle,
         localPort: Int? = nil,

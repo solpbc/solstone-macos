@@ -9,14 +9,18 @@ public enum FrameFlags: UInt8, Sendable {
     case close = 0x04
     case reset = 0x08
     case window = 0x10
+    case ping = 0x20
+    case pong = 0x40
 
     public static let primaryMask: UInt8 =
         FrameFlags.open.rawValue |
         FrameFlags.data.rawValue |
         FrameFlags.close.rawValue |
         FrameFlags.reset.rawValue |
-        FrameFlags.window.rawValue
-    public static let reservedMask: UInt8 = 0xE0
+        FrameFlags.window.rawValue |
+        FrameFlags.ping.rawValue |
+        FrameFlags.pong.rawValue
+    public static let reservedMask: UInt8 = 0x80
 }
 
 public enum ResetReason: UInt32, Sendable, Equatable {

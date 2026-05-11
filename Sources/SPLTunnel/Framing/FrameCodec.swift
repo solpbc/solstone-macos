@@ -12,6 +12,7 @@ public enum FramingError: Error, Equatable {
     case reservedBitsSet
     case noPrimaryFlag
     case invalidFlagCombination
+    case unknownControlFrame
     case lengthMismatch
     case bufferUnderflow
     case unknownResetReason(UInt32)
@@ -50,11 +51,20 @@ public func validateFlags(_ flags: UInt8) throws {
     let hasData = flags & FrameFlags.data.rawValue != 0
     let hasClose = flags & FrameFlags.close.rawValue != 0
     let hasReset = flags & FrameFlags.reset.rawValue != 0
+    let hasWindow = flags & FrameFlags.window.rawValue != 0
+    let hasPing = flags & FrameFlags.ping.rawValue != 0
+    let hasPong = flags & FrameFlags.pong.rawValue != 0
 
     if hasOpen && hasReset {
         throw FramingError.invalidFlagCombination
     }
     if hasOpen && hasData && hasClose {
+        throw FramingError.invalidFlagCombination
+    }
+    if (hasPing || hasPong) && (hasOpen || hasData || hasClose || hasReset || hasWindow) {
+        throw FramingError.invalidFlagCombination
+    }
+    if hasPing && hasPong {
         throw FramingError.invalidFlagCombination
     }
 }
@@ -128,6 +138,20 @@ public func buildWindow(streamID: UInt32, credit: UInt32) -> Frame {
     Frame(streamID: streamID, flags: FrameFlags.window.rawValue, payload: encodeUInt32(credit))
 }
 
+public func buildPing(nonce: Data) throws -> Frame {
+    guard nonce.count == 8 else {
+        throw FramingError.lengthMismatch
+    }
+    return Frame(streamID: 0, flags: FrameFlags.ping.rawValue, payload: nonce)
+}
+
+public func buildPong(nonce: Data) throws -> Frame {
+    guard nonce.count == 8 else {
+        throw FramingError.lengthMismatch
+    }
+    return Frame(streamID: 0, flags: FrameFlags.pong.rawValue, payload: nonce)
+}
+
 public func parseResetReason(from payload: Data) throws -> ResetReason {
     let raw = try parseUInt32(from: payload)
     guard let reason = ResetReason(rawValue: raw) else {
@@ -138,6 +162,13 @@ public func parseResetReason(from payload: Data) throws -> ResetReason {
 
 public func parseWindowCredit(from payload: Data) throws -> UInt32 {
     try parseUInt32(from: payload)
+}
+
+public func parseControlNonce(from payload: Data) throws -> Data {
+    guard payload.count == 8 else {
+        throw FramingError.lengthMismatch
+    }
+    return payload
 }
 
 private func encodeUInt32(_ value: UInt32) -> Data {
