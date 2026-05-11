@@ -72,7 +72,7 @@ public enum CertChain {
     }
 }
 
-public enum CertChainError: Error, Equatable {
+public enum CertChainError: Error, Equatable, Sendable {
     case invalidPEM
     case emptyChain
     case invalidCertificate

@@ -4,7 +4,7 @@
 import Crypto
 import Foundation
 
-public enum CryptoCSRError: Error, Equatable {
+public enum CryptoCSRError: Error, Equatable, Sendable {
     case invalidDeviceLabel
     case signatureFailed
     case encodingFailed

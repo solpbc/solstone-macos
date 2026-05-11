@@ -28,7 +28,7 @@ public struct StoredPairing: Codable, Sendable, Equatable {
     }
 }
 
-public enum SPLKeychainError: Error, Equatable {
+public enum SPLKeychainError: Error, Equatable, Sendable {
     case encodingFailed
     case decodingFailed
     case saveFailed(status: OSStatus)
