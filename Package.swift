@@ -63,6 +63,7 @@ let package = Package(
             name: "sol-mac",
             dependencies: [
                 .target(name: "SolstoneCore"),
+                .target(name: "SPLTunnel"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
             ],
             path: "Sources/sol-mac",

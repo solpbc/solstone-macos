@@ -19,6 +19,7 @@ struct SolMac: AsyncParsableCommand {
             SyncCommand.self,
             OpenCommand.self,
             LogsCommand.self,
+            SPL.self,
             InternalPing.self,
         ]
     )
