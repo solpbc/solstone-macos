@@ -119,11 +119,11 @@ public struct PairClient: Sendable {
     }
 
     static func makeLANRequest(pairURL: PairURL, csrPEM: String, deviceLabel: String) throws -> URLRequest {
-        var request = URLRequest(url: pairURL.lanURL)
+        var request = URLRequest(url: pairURL.homeURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(LANPairRequest(
-            nonce: pairURL.nonce,
+            nonce: pairURL.token,
             csr: csrPEM,
             deviceLabel: deviceLabel
         ))

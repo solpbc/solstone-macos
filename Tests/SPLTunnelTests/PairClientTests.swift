@@ -246,9 +246,12 @@ struct PairClientTests {
     }
 
     private func makePairURL() throws -> PairURL {
-        let u = b64url(Data("https://192.168.1.20/pair?token=nonce123".utf8))
-        let pin = b64url(Data(0..<32))
-        return try PairURL(splURL: URL(string: "spl://pair?u=\(u)&pin=\(pin)")!)
+        PairURL(
+            homeURL: URL(string: "https://192.168.1.20/pair?token=nonce123")!,
+            token: "nonce123",
+            caFingerprintHex: CertChain.hex(Data(0..<32)),
+            label: "living room mac"
+        )
     }
 
     private func lanResponseJSON(localEndpoints: [[String: Any]]? = nil) -> String {
@@ -282,14 +285,6 @@ struct PairClientTests {
         let body = try #require(PairURLProtocol.store.requestBodies[index])
         let data = Data(body.utf8)
         return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-    }
-
-    private func b64url(_ data: Data) -> String {
-        var encoded = data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-        encoded.removeAll { $0 == "=" }
-        return encoded
     }
 
     private func expectPairError(

@@ -112,11 +112,11 @@ actor MockHome {
         let nonce = Self.base64URL(Self.randomBytes(count: 16))
         outstandingNonces.insert(nonce)
         let lanURL = URL(string: "https://127.0.0.1:\(port)/pair?token=\(nonce)")!
-        let pairURL = PairURL(lanURL: lanURL, nonce: nonce, caFingerprintHex: pairServerFingerprint)
+        let pairURL = PairURL(homeURL: lanURL, token: nonce, caFingerprintHex: pairServerFingerprint, label: homeLabel)
         let shapeURL = URL(string: "https://192.168.99.99:\(port)/pair?token=\(nonce)")!
-        let encodedURL = Self.base64URL(Data(shapeURL.absoluteString.utf8))
-        let encodedPin = Self.base64URL(Data(hex: pairServerFingerprint))
-        return (pairURL, "spl://pair?u=\(encodedURL)&pin=\(encodedPin)")
+        let encodedURL = shapeURL.absoluteString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? shapeURL.absoluteString
+        let encodedLabel = homeLabel.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? homeLabel
+        return (pairURL, "https://link.solpbc.org/p#h=\(encodedURL)&t=\(nonce)&f=\(pairServerFingerprint)&l=\(encodedLabel)&v=1")
     }
 
     func startTLSMuxListener() async throws -> (host: String, port: UInt16) {

@@ -46,7 +46,7 @@ extension SPL {
                     writeStructuredStderr(code: "invalid_pair_url", message: "pair url is malformed")
                     throw ExitCode(SolMacExit.localValidation.rawValue)
                 }
-                parsedPairURL = try PairURL(splURL: url)
+                parsedPairURL = try PairURL.parse(url)
             } catch let error as PairURLError {
                 writeStructuredStderr(code: "invalid_pair_url", message: pairURLMessage(error))
                 throw ExitCode(SolMacExit.localValidation.rawValue)
@@ -173,25 +173,27 @@ extension SPL {
 private func pairURLMessage(_ error: PairURLError) -> String {
     switch error {
     case .wrongScheme:
-        return "pair url must use the spl scheme"
+        return "pair url must use https"
     case .wrongHost:
-        return "pair url must use the pair host"
-    case .missingU:
-        return "pair url is missing the encoded lan url"
-    case .missingPin:
-        return "pair url is missing the pin"
-    case .malformedBase64URL:
-        return "pair url contains malformed base64url data"
-    case .malformedLanURL:
-        return "pair url contains a malformed lan url"
-    case .nonHTTPSLanURL:
-        return "pair url lan endpoint must use https"
-    case .missingToken:
-        return "pair url lan endpoint is missing its token"
-    case .invalidPinLength:
-        return "pair url pin must be a sha-256 fingerprint"
-    case .nonLocalHost:
-        return "pair url lan endpoint must be local-network scoped"
+        return "pair url must use link.solpbc.org"
+    case .wrongPath:
+        return "pair url must use the /p path"
+    case .missingFragment:
+        return "pair url is missing its fragment"
+    case .missingField(let field):
+        return "pair url is missing \(field)"
+    case .invalidVersion:
+        return "pair url version is unsupported"
+    case .malformedHomeURL:
+        return "pair url contains a malformed home url"
+    case .nonHTTPSHomeURL:
+        return "pair url home endpoint must use https"
+    case .invalidFingerprint:
+        return "pair url fingerprint must be a sha-256 hex value"
+    case .emptyToken:
+        return "pair url token is empty"
+    case .emptyLabel:
+        return "pair url label is empty"
     }
 }
 

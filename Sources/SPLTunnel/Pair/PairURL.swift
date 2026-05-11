@@ -3,147 +3,125 @@
 
 import Foundation
 
-/// Parses v1 LAN pair URLs. The local-network allow-list intentionally mirrors
-/// `UploadClient.isLocalNetworkHost`: in practice pairing may use Bonjour names,
-/// bare hostnames, IPv4/IPv6 link-local, or Tailscale/CGNAT routes.
 public struct PairURL: Sendable, Equatable {
-    public let lanURL: URL
-    public let nonce: String
+    public let homeURL: URL
+    public let token: String
     public let caFingerprintHex: String
+    public let label: String
+    public let version: Int
 
-    public init(splURL: URL) throws {
-        guard splURL.scheme?.lowercased() == "spl" else {
+    public static func parse(_ url: URL) throws -> PairURL {
+        try PairURL(url: url)
+    }
+
+    public init(string: String) throws {
+        guard let url = URL(string: string) else {
+            throw PairURLError.malformedHomeURL
+        }
+        try self.init(url: url)
+    }
+
+    public init(url: URL) throws {
+        guard url.scheme?.lowercased() == "https" else {
             throw PairURLError.wrongScheme
         }
-        guard splURL.host?.lowercased() == "pair" else {
+        guard url.host?.lowercased() == "link.solpbc.org" else {
             throw PairURLError.wrongHost
         }
-        guard let components = URLComponents(url: splURL, resolvingAgainstBaseURL: false) else {
-            throw PairURLError.wrongHost
+        guard url.path == "/p" else {
+            throw PairURLError.wrongPath
         }
-        let items = components.queryItems ?? []
-        guard let encodedURL = items.first(where: { $0.name == "u" })?.value else {
-            throw PairURLError.missingU
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let fragment = components.percentEncodedFragment,
+              !fragment.isEmpty else {
+            throw PairURLError.missingFragment
         }
-        guard let encodedPin = items.first(where: { $0.name == "pin" })?.value else {
-            throw PairURLError.missingPin
+
+        let fields = try Self.fragmentFields(fragment)
+        guard let homeValue = fields["h"] else {
+            throw PairURLError.missingField("h")
         }
-        guard let lanURLData = Self.base64urlDecode(encodedURL),
-              let lanURLString = String(data: lanURLData, encoding: .utf8),
-              let lanURL = URL(string: lanURLString),
-              let lanComponents = URLComponents(url: lanURL, resolvingAgainstBaseURL: false),
-              let host = lanURL.host,
+        guard let token = fields["t"] else {
+            throw PairURLError.missingField("t")
+        }
+        guard let fingerprint = fields["f"] else {
+            throw PairURLError.missingField("f")
+        }
+        guard let label = fields["l"] else {
+            throw PairURLError.missingField("l")
+        }
+        guard fields["v"] == "1" else {
+            throw PairURLError.invalidVersion
+        }
+
+        guard let homeURL = URL(string: homeValue),
+              let host = homeURL.host,
               !host.isEmpty else {
-            throw PairURLError.malformedLanURL
+            throw PairURLError.malformedHomeURL
         }
-        guard lanURL.scheme?.lowercased() == "https" else {
-            throw PairURLError.nonHTTPSLanURL
+        guard homeURL.scheme?.lowercased() == "https" else {
+            throw PairURLError.nonHTTPSHomeURL
         }
-        guard Self.isLocalNetworkHost(host) else {
-            throw PairURLError.nonLocalHost
+        guard !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw PairURLError.emptyToken
         }
-        guard let token = lanComponents.queryItems?.first(where: { $0.name == "token" })?.value,
-              !token.isEmpty else {
-            throw PairURLError.missingToken
+        guard Self.isValidFingerprint(fingerprint) else {
+            throw PairURLError.invalidFingerprint
         }
-        guard let pinBytes = Self.base64urlDecode(encodedPin) else {
-            throw PairURLError.malformedBase64URL
-        }
-        guard pinBytes.count == 32 else {
-            throw PairURLError.invalidPinLength
+        guard !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw PairURLError.emptyLabel
         }
 
-        self.lanURL = lanURL
-        self.nonce = token
-        self.caFingerprintHex = CertChain.hex(pinBytes)
+        self.homeURL = homeURL
+        self.token = token
+        self.caFingerprintHex = fingerprint.lowercased()
+        self.label = label
+        self.version = 1
     }
 
-    init(lanURL: URL, nonce: String, caFingerprintHex: String) {
-        self.lanURL = lanURL
-        self.nonce = nonce
-        self.caFingerprintHex = caFingerprintHex
+    init(homeURL: URL, token: String, caFingerprintHex: String, label: String, version: Int = 1) {
+        self.homeURL = homeURL
+        self.token = token
+        self.caFingerprintHex = caFingerprintHex.lowercased()
+        self.label = label
+        self.version = version
     }
 
-    private static func base64urlDecode(_ value: String) -> Data? {
-        guard value.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "=" }) else {
-            return nil
+    private static func fragmentFields(_ fragment: String) throws -> [String: String] {
+        var fields: [String: String] = [:]
+        for pair in fragment.split(separator: "&", omittingEmptySubsequences: false) {
+            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2,
+                  let name = percentDecode(String(parts[0])),
+                  let value = percentDecode(String(parts[1])) else {
+                throw PairURLError.missingFragment
+            }
+            fields[name] = value
         }
-        var base64 = value.replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let remainder = base64.count % 4
-        if remainder != 0 {
-            base64 += String(repeating: "=", count: 4 - remainder)
-        }
-        return Data(base64Encoded: base64)
+        return fields
     }
 
-    private static func isLocalNetworkHost(_ host: String) -> Bool {
-        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedHost.isEmpty else {
-            return false
+    private static func percentDecode(_ value: String) -> String? {
+        value.replacingOccurrences(of: "+", with: " ").removingPercentEncoding
+    }
+
+    private static func isValidFingerprint(_ value: String) -> Bool {
+        value.count == 64 && value.allSatisfy { character in
+            character.isNumber || ("a"..."f").contains(character.lowercased())
         }
-
-        let normalizedHost = trimmedHost.hasSuffix(".") ? String(trimmedHost.dropLast()) : trimmedHost
-        let lowercaseHost = normalizedHost.lowercased()
-
-        if lowercaseHost == "localhost" || lowercaseHost == "::1" {
-            return false
-        }
-
-        if lowercaseHost.contains(":") {
-            if lowercaseHost.hasPrefix("fe80:") {
-                return true
-            }
-
-            if lowercaseHost.hasPrefix("fc") || lowercaseHost.hasPrefix("fd") {
-                return true
-            }
-
-            return false
-        }
-
-        let parts = lowercaseHost.split(separator: ".", omittingEmptySubsequences: false)
-        if parts.count == 4 {
-            let octets = parts.compactMap { Int($0) }
-            guard octets.count == 4, octets.allSatisfy({ 0...255 ~= $0 }) else {
-                return false
-            }
-
-            switch (octets[0], octets[1]) {
-            case (127, _):
-                return false
-            case (10, _):
-                return true
-            case (172, 16...31):
-                return true
-            case (192, 168):
-                return true
-            case (169, 254):
-                return true
-            case (100, 64...127):
-                return true
-            default:
-                return false
-            }
-        }
-
-        if lowercaseHost.hasSuffix(".local") {
-            return true
-        }
-
-        return !lowercaseHost.contains(".")
     }
 }
 
 public enum PairURLError: Error, Equatable, Sendable {
     case wrongScheme
     case wrongHost
-    case missingU
-    case missingPin
-    case malformedBase64URL
-    case malformedLanURL
-    case nonHTTPSLanURL
-    case missingToken
-    case invalidPinLength
-    case nonLocalHost
+    case wrongPath
+    case missingFragment
+    case missingField(String)
+    case invalidVersion
+    case malformedHomeURL
+    case nonHTTPSHomeURL
+    case invalidFingerprint
+    case emptyToken
+    case emptyLabel
 }
