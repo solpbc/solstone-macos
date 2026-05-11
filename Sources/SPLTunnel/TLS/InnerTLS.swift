@@ -263,9 +263,15 @@ public actor InnerTLS {
         guard let secKey = SecKeyCreateWithData(keyData as CFData, attributes as CFDictionary, &keyError) else {
             throw InnerTLSError.invalidPrivateKey
         }
+        #if os(macOS)
         guard let identity = SecIdentityCreate(nil, leaf, secKey) else {
             throw InnerTLSError.identityAssemblyFailed
         }
+        #else
+        let label = Self.makeIdentityKeychainLabel()
+        let identity = try Self.assembleIdentityViaKeychain(leaf: leaf, key: secKey, label: label)
+        defer { Self.cleanupKeychainIdentity(label: label) }
+        #endif
 
         let intermediates = Array(certificates.dropFirst())
         if !intermediates.isEmpty, let wrapped = sec_identity_create_with_certificates(identity, intermediates as CFArray) {
