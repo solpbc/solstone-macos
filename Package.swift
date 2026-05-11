@@ -11,7 +11,8 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.1"),
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0")
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0")
     ],
     targets: [
         .target(
@@ -23,6 +24,9 @@ let package = Package(
         ),
         .target(
             name: "SPLTunnel",
+            dependencies: [
+                .product(name: "Crypto", package: "swift-crypto")
+            ],
             path: "Sources/SPLTunnel",
             swiftSettings: [
                 .swiftLanguageMode(.v6)

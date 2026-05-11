@@ -50,6 +50,7 @@ snapshots/*
 
 # Local scratch / debug logs
 scratch/
+.hop/
 
 # Distribution build artifacts
 *.dmg
