@@ -60,7 +60,8 @@ public actor InnerTLS {
             throw InnerTLSError.invalidPort(port)
         }
 
-        let options = try makeTLSOptions(pairing: pairing)
+        let verifyFailure = TLSVerifyFailure()
+        let options = try makeTLSOptions(pairing: pairing, verifyFailure: verifyFailure)
         let parameters = NWParameters(tls: options, tcp: NWProtocolTCP.Options())
         let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: parameters)
         let startedAt = ContinuousClock.now
@@ -68,9 +69,15 @@ public actor InnerTLS {
             try await startAndWaitReady(connection)
         } catch let error as InnerTLSError {
             connection.cancel()
+            if let reason = verifyFailure.reason {
+                throw reason
+            }
             throw error
         } catch {
             connection.cancel()
+            if let reason = verifyFailure.reason {
+                throw reason
+            }
             throw InnerTLSError.handshakeFailed(error.localizedDescription)
         }
 
@@ -83,7 +90,8 @@ public actor InnerTLS {
     }
 
     public static func connectViaTransport(transport: any ByteTransport, pairing: StoredPairing) async throws -> InnerTLS {
-        let options = try makeTLSOptions(pairing: pairing)
+        let verifyFailure = TLSVerifyFailure()
+        let options = try makeTLSOptions(pairing: pairing, verifyFailure: verifyFailure)
         let listener = try NWListener(using: .tcp, on: .any)
         let acceptor = OneShotConnectionAcceptor()
         listener.newConnectionHandler = { connection in
@@ -113,6 +121,9 @@ public actor InnerTLS {
             connection.cancel()
             listener.cancel()
             await transport.close()
+            if let reason = verifyFailure.reason {
+                throw reason
+            }
             throw error
         } catch {
             pumps.forEach { $0.cancel() }
@@ -120,6 +131,9 @@ public actor InnerTLS {
             connection.cancel()
             listener.cancel()
             await transport.close()
+            if let reason = verifyFailure.reason {
+                throw reason
+            }
             throw InnerTLSError.handshakeFailed(error.localizedDescription)
         }
 
@@ -191,7 +205,7 @@ public actor InnerTLS {
         }
     }
 
-    static func makeTLSOptions(pairing: StoredPairing) throws -> NWProtocolTLS.Options {
+    private static func makeTLSOptions(pairing: StoredPairing, verifyFailure: TLSVerifyFailure) throws -> NWProtocolTLS.Options {
         let caCertificates: [SecCertificate]
         do {
             caCertificates = try CertChain.certificates(fromPEM: pairing.caChainPEM)
@@ -212,7 +226,11 @@ public actor InnerTLS {
             SecTrustSetAnchorCertificates(secTrust, caCertificates as CFArray)
             SecTrustSetAnchorCertificatesOnly(secTrust, true)
             var error: CFError?
-            complete(SecTrustEvaluateWithError(secTrust, &error))
+            let trusted = SecTrustEvaluateWithError(secTrust, &error)
+            if !trusted {
+                verifyFailure.set(.peerNotPinned)
+            }
+            complete(trusted)
         }, tlsQueue)
         return options
     }
@@ -257,6 +275,24 @@ public actor InnerTLS {
             throw InnerTLSError.identityAssemblyFailed
         }
         return wrapped
+    }
+}
+
+private final class TLSVerifyFailure: @unchecked Sendable {
+    // why: Security verify callbacks run on a dispatch queue while factories await NWConnection state.
+    private let lock = NSLock()
+    private var value: InnerTLSError?
+
+    var reason: InnerTLSError? {
+        lock.withLock { value }
+    }
+
+    func set(_ reason: InnerTLSError) {
+        lock.withLock {
+            if value == nil {
+                value = reason
+            }
+        }
     }
 }
 

@@ -163,7 +163,6 @@ public actor RelayWSTransport: ByteTransport {
         let delegate = WebSocketOpenDelegate()
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         let task = session.webSocketTask(with: request)
-        delegate.attach(task: task)
 
         self.session = session
         self.delegate = delegate
@@ -171,8 +170,13 @@ public actor RelayWSTransport: ByteTransport {
     }
 
     func open() async throws {
+        let cancellation = WebSocketOpenCancellation(task: task, session: session, delegate: delegate)
         task.resume()
-        try await delegate.waitForOpen()
+        try await withTaskCancellationHandler {
+            try await delegate.waitForOpen()
+        } onCancel: {
+            cancellation.cancel()
+        }
     }
 
     public func send(_ data: Data) async throws {
@@ -221,18 +225,30 @@ public actor RelayWSTransport: ByteTransport {
     }
 }
 
+private final class WebSocketOpenCancellation: @unchecked Sendable {
+    // why: cancellation may run off actor isolation; URLSession task cancellation is thread-safe and delegate is locked.
+    private let task: URLSessionWebSocketTask
+    private let session: URLSession
+    private let delegate: WebSocketOpenDelegate
+
+    init(task: URLSessionWebSocketTask, session: URLSession, delegate: WebSocketOpenDelegate) {
+        self.task = task
+        self.session = session
+        self.delegate = delegate
+    }
+
+    func cancel() {
+        task.cancel()
+        session.invalidateAndCancel()
+        delegate.cancelOpen()
+    }
+}
+
 // why: URLSession invokes delegate callbacks outside actor isolation; access is guarded by NSLock.
 final class WebSocketOpenDelegate: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Void, Error>?
     private var result: Result<Void, Error>?
-    private weak var task: URLSessionTask?
-
-    func attach(task: URLSessionTask) {
-        lock.withLock {
-            self.task = task
-        }
-    }
 
     func waitForOpen() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -267,6 +283,10 @@ final class WebSocketOpenDelegate: NSObject, URLSessionWebSocketDelegate, URLSes
             return
         }
         complete(.failure(Self.mapFailure(error: error, task: task)))
+    }
+
+    func cancelOpen() {
+        complete(.failure(DialError.connectionFailed("cancelled")))
     }
 
     private func complete(_ result: Result<Void, Error>) {

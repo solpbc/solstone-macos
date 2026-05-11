@@ -32,13 +32,8 @@ struct InnerTLSTests {
         try await server.start()
         let port = await server.port
 
-        await expectInnerTLSError {
-            let tls = try await InnerTLS.connectLAN(host: "127.0.0.1", port: port, pairing: fixture.pairing)
-            try await tls.send(Data([0x01]))
-            guard try await firstInbound(from: tls.inbound) != nil else {
-                throw InnerTLSError.handshakeFailed("server closed")
-            }
-            await tls.close()
+        await expectPeerNotPinned {
+            _ = try await InnerTLS.connectLAN(host: "127.0.0.1", port: port, pairing: fixture.pairing)
         }
         await server.stop()
     }
@@ -49,7 +44,7 @@ struct InnerTLSTests {
         try await server.start()
         let port = await server.port
 
-        await expectInnerTLSError {
+        await expectClientCertificateRejection {
             let tls = try await InnerTLS.connectLAN(host: "127.0.0.1", port: port, pairing: fixture.pairing)
             try await tls.send(Data([0x01]))
             guard try await firstInbound(from: tls.inbound) != nil else {
@@ -57,6 +52,7 @@ struct InnerTLSTests {
             }
             await tls.close()
         }
+        #expect(await server.clientLeafFingerprint == (try TestCA.fingerprint(certificatePEM: fixture.clientCertificatePEM)))
         await server.stop()
     }
 
@@ -119,7 +115,7 @@ struct InnerTLSTests {
         }
     }
 
-    private func expectInnerTLSError(_ operation: @escaping @Sendable () async throws -> Void) async {
+    private func expectPeerNotPinned(_ operation: @escaping @Sendable () async throws -> Void) async {
         do {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 group.addTask {
@@ -132,10 +128,31 @@ struct InnerTLSTests {
                 try await group.next()!
                 group.cancelAll()
             }
-            Issue.record("Expected InnerTLSError")
-        } catch is InnerTLSError {
+            Issue.record("Expected peerNotPinned")
+        } catch InnerTLSError.peerNotPinned {
         } catch {
-            Issue.record("Expected InnerTLSError, got \(error)")
+            Issue.record("Expected peerNotPinned, got \(error)")
+        }
+    }
+
+    private func expectClientCertificateRejection(_ operation: @escaping @Sendable () async throws -> Void) async {
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    try await operation()
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(3))
+                    throw TestTimeout()
+                }
+                try await group.next()!
+                group.cancelAll()
+            }
+            Issue.record("Expected client certificate rejection")
+        } catch InnerTLSError.handshakeFailed(_) {
+        } catch InnerTLSError.receiveFailed(_) {
+        } catch {
+            Issue.record("Expected handshakeFailed or receiveFailed, got \(error)")
         }
     }
 }

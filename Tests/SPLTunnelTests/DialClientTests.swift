@@ -31,6 +31,21 @@ struct DialClientTests {
         }
     }
 
+    @Test func relayConnectTimeoutCancelsPendingOpen() async throws {
+        let server = TCPHangingServer()
+        try await server.start()
+        let port = await server.port
+
+        await expectDialError(.connectTimeout) {
+            _ = try await DialClient.dial(.relay(
+                endpoint: try relayEndpoint(port: port),
+                instanceID: "instance-1",
+                deviceToken: "device-token"
+            ), timeout: .milliseconds(200))
+        }
+        await server.stop()
+    }
+
     @Test func relayConnectsSendsReceivesAndCarriesAuthorizationHeader() async throws {
         let server = WebSocketEchoServer()
         try await server.start()

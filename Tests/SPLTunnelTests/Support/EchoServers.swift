@@ -65,6 +65,43 @@ actor TCPEchoServer {
     }
 }
 
+actor TCPHangingServer {
+    private var listener: NWListener?
+    private var connections: [NWConnection] = []
+    private var boundPort: NWEndpoint.Port?
+
+    var port: Int {
+        Int(boundPort?.rawValue ?? 0)
+    }
+
+    func start() async throws {
+        let listener = try NWListener(using: .tcp, on: .any)
+        listener.newConnectionHandler = { [weak self] connection in
+            Task {
+                await self?.accept(connection)
+            }
+        }
+        self.listener = listener
+        try await startAndWaitForListenerReady(listener)
+        boundPort = listener.port
+    }
+
+    func stop() async {
+        for connection in connections {
+            connection.cancel()
+        }
+        connections.removeAll()
+        listener?.cancel()
+        listener = nil
+        boundPort = nil
+    }
+
+    private func accept(_ connection: NWConnection) {
+        connections.append(connection)
+        connection.start(queue: serverQueue)
+    }
+}
+
 actor WebSocketEchoServer {
     private var listener: NWListener?
     private var connections: [NWConnection] = []
