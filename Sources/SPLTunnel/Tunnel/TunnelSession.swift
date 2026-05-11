@@ -6,18 +6,19 @@ import os
 
 private let logger = Logger(subsystem: "app.solstone.observer.spl", category: "session")
 
-public enum TransportCandidate: Sendable, Equatable {
-    case lan(host: String, port: Int)
-    case relay
-}
-
 public enum ConnectedVia: Sendable, Equatable {
     case lanDirect(host: String, port: Int)
     case relay(endpoint: URL)
 }
 
+public enum ConnectionMode: Sendable, Equatable {
+    case plDirect
+    case plViaSpl
+}
+
 public enum SessionError: Error, Equatable, Sendable {
     case notConnected
+    case unreachable
     case invalidRelayURL(String)
     case transportFailed(String)
     case tlsFailed(String)
@@ -25,7 +26,7 @@ public enum SessionError: Error, Equatable, Sendable {
 
 public enum TunnelState: Sendable, Equatable {
     case disconnected
-    case connecting(attempt: Int, candidate: TransportCandidate)
+    case connecting(attempt: Int, candidates: [TransportEndpoint])
     case tlsHandshaking(via: ConnectedVia)
     case connected(via: ConnectedVia)
     case failed(SessionError)
@@ -36,38 +37,65 @@ public actor TunnelSession {
         stateStream
     }
 
+    public nonisolated var connectionModeUpdates: AsyncStream<ConnectionMode?> {
+        connectionModeStream
+    }
+
+    public private(set) var connectionMode: ConnectionMode?
+
     private let pairing: StoredPairing
     private let stateStream: AsyncStream<TunnelState>
     private let stateContinuation: AsyncStream<TunnelState>.Continuation
+    private let connectionModeStream: AsyncStream<ConnectionMode?>
+    private let connectionModeContinuation: AsyncStream<ConnectionMode?>.Continuation
     private var state: TunnelState = .disconnected
     private var reconnectTask: Task<Void, Never>?
     private var inboundPumpTask: Task<Void, Never>?
     private var innerTLS: InnerTLS?
     private var multiplexer: Multiplexer?
+    private var lastTrustedDirectEndpoint: TransportEndpoint?
+    private var trustDirectUntil: ContinuousClock.Instant?
 
     public init(pairing: StoredPairing) {
         self.pairing = pairing
         var continuation: AsyncStream<TunnelState>.Continuation!
         self.stateStream = AsyncStream { continuation = $0 }
         self.stateContinuation = continuation
+        var modeContinuation: AsyncStream<ConnectionMode?>.Continuation!
+        self.connectionModeStream = AsyncStream { modeContinuation = $0 }
+        self.connectionModeContinuation = modeContinuation
         continuation.yield(.disconnected)
+        modeContinuation.yield(nil)
     }
 
-    public func connect() {
+    @discardableResult
+    public func connect(endpoints: [TransportEndpoint]) async throws -> ConnectedVia {
+        guard !endpoints.isEmpty else {
+            throw SessionError.unreachable
+        }
         guard reconnectTask == nil else {
-            return
+            if case .connected(let via) = state {
+                return via
+            }
+            throw SessionError.transportFailed("connect already in progress")
         }
-        reconnectTask = Task {
-            await runReconnectLoop()
+
+        let connected = try await connectOnce(attempt: 1, endpoints: endpoints)
+        installConnected(connected.tls)
+        reconnectTask = Task { [endpoints] in
+            await monitorAndReconnect(endpoints: endpoints)
         }
+        return connected.via
     }
 
     public func disconnect() async {
         reconnectTask?.cancel()
         reconnectTask = nil
         await tearDownCurrent(reason: .normalShutdown)
+        setConnectionMode(nil)
         publish(.disconnected)
         stateContinuation.finish()
+        connectionModeContinuation.finish()
     }
 
     public func openStream() async throws -> MuxStream {
@@ -77,13 +105,18 @@ public actor TunnelSession {
         return try await multiplexer.openStream()
     }
 
-    private func runReconnectLoop() async {
+    private func monitorAndReconnect(endpoints: [TransportEndpoint]) async {
         var attempt = 1
         while !Task.isCancelled {
-            if let connected = await connectOnce(attempt: attempt) {
+            let pump = inboundPumpTask
+            await pump?.value
+            await tearDownCurrent(reason: .transportFailure)
+
+            do {
+                let connected = try await connectOnce(attempt: attempt, endpoints: endpoints)
                 attempt = 1
-                await runConnected(connected)
-            } else {
+                installConnected(connected.tls)
+            } catch {
                 let delay = jitter(backoff(forAttempt: attempt))
                 do {
                     try await Task.sleep(for: delay)
@@ -95,55 +128,75 @@ public actor TunnelSession {
         }
     }
 
-    private func connectOnce(attempt: Int) async -> InnerTLS? {
-        let pairing = self.pairing
-        for endpoint in pairing.localEndpoints {
-            let via = ConnectedVia.lanDirect(host: endpoint.host, port: endpoint.port)
-            publish(.connecting(attempt: attempt, candidate: .lan(host: endpoint.host, port: endpoint.port)))
-            publish(.tlsHandshaking(via: via))
-            let startedAt = ContinuousClock.now
+    private func connectOnce(attempt: Int, endpoints: [TransportEndpoint]) async throws -> ConnectedAttempt {
+        publish(.connecting(attempt: attempt, candidates: endpoints))
+
+        if let trustedEndpoint = lastTrustedDirectEndpoint,
+           let trustedUntil = trustDirectUntil,
+           ContinuousClock.now < trustedUntil {
             do {
-                let tls = try await withSessionTimeout(.seconds(5)) {
-                    try await InnerTLS.connectLAN(host: endpoint.host, port: endpoint.port, pairing: pairing)
-                }
-                logger.debug("connected transport=\("lan", privacy: .public) attempt=\(attempt, privacy: .public) duration_ms=\(startedAt.duration(to: .now).milliseconds, privacy: .public)")
-                publish(.connected(via: via))
-                return tls
+                let connected = try await connectEndpoint(trustedEndpoint, attempt: attempt)
+                publishConnected(connected, endpoint: trustedEndpoint)
+                return connected
             } catch {
-                publish(.failed(.tlsFailed(error.localizedDescription)))
+                trustDirectUntil = nil
+                lastTrustedDirectEndpoint = nil
             }
         }
 
-        guard let endpoint = URL(string: pairing.relayEndpoint) else {
-            publish(.failed(.invalidRelayURL(pairing.relayEndpoint)))
-            return nil
-        }
-
-        publish(.connecting(attempt: attempt, candidate: .relay))
-        let startedAt = ContinuousClock.now
         do {
-            let transport = try await DialClient.dial(.relay(
-                endpoint: endpoint,
-                instanceID: pairing.instanceID,
-                deviceToken: pairing.deviceToken
-            ), timeout: .seconds(5))
-            let via = ConnectedVia.relay(endpoint: endpoint)
-            publish(.tlsHandshaking(via: via))
-            let tls = try await withSessionTimeout(.seconds(5)) {
-                try await InnerTLS.connectViaTransport(transport: transport, pairing: pairing)
-            }
-            logger.debug("connected transport=\("relay", privacy: .public) attempt=\(attempt, privacy: .public) duration_ms=\(startedAt.duration(to: .now).milliseconds, privacy: .public)")
-            publish(.connected(via: via))
-            return tls
-        } catch let error as DialError {
-            publish(.failed(.transportFailed(String(describing: error))))
+            let result = try await RaceCoordinator<ConnectedAttempt> { endpoint in
+                try await self.connectEndpoint(endpoint, attempt: attempt)
+            }.connect(endpoints: endpoints)
+            publishConnected(result.value, endpoint: result.endpoint)
+            return result.value
+        } catch let error as SessionError {
+            publish(.failed(error))
+            throw error
         } catch {
-            publish(.failed(.tlsFailed(error.localizedDescription)))
+            let sessionError = SessionError.transportFailed(error.localizedDescription)
+            publish(.failed(sessionError))
+            throw sessionError
         }
-        return nil
     }
 
-    private func runConnected(_ tls: InnerTLS) async {
+    private func connectEndpoint(_ endpoint: TransportEndpoint, attempt: Int) async throws -> ConnectedAttempt {
+        let via = endpoint.connectedVia
+        publish(.tlsHandshaking(via: via))
+        let startedAt = ContinuousClock.now
+
+        switch endpoint {
+        case .lan(let host, let port, _):
+            let tls = try await withSessionTimeout(.seconds(5)) {
+                try await InnerTLS.connectLAN(host: host, port: port, pairing: self.pairing)
+            }
+            logger.debug("connected transport=\("lan", privacy: .public) attempt=\(attempt, privacy: .public) duration_ms=\(startedAt.duration(to: .now).milliseconds, privacy: .public)")
+            return ConnectedAttempt(via: via, tls: tls)
+
+        case .relay:
+            let transport = try await DialClient.dial(endpoint, timeout: .seconds(5))
+            let tls = try await withSessionTimeout(.seconds(5)) {
+                try await InnerTLS.connectViaTransport(transport: transport, pairing: self.pairing)
+            }
+            logger.debug("connected transport=\("relay", privacy: .public) attempt=\(attempt, privacy: .public) duration_ms=\(startedAt.duration(to: .now).milliseconds, privacy: .public)")
+            return ConnectedAttempt(via: via, tls: tls)
+        }
+    }
+
+    private func publishConnected(_ connected: ConnectedAttempt, endpoint: TransportEndpoint) {
+        if endpoint.isDirect {
+            lastTrustedDirectEndpoint = endpoint
+            trustDirectUntil = ContinuousClock.now + .seconds(5)
+            setConnectionMode(.plDirect)
+        } else {
+            lastTrustedDirectEndpoint = nil
+            trustDirectUntil = nil
+            setConnectionMode(.plViaSpl)
+        }
+        publish(.connected(via: connected.via))
+    }
+
+    private func installConnected(_ tls: InnerTLS) {
         innerTLS = tls
         let mux = Multiplexer { data in
             try await tls.send(data)
@@ -158,8 +211,6 @@ public actor TunnelSession {
             }
         }
         inboundPumpTask = pump
-        await pump.value
-        await tearDownCurrent(reason: .transportFailure)
     }
 
     private func tearDownCurrent(reason: TearDownReason) async {
@@ -169,11 +220,17 @@ public actor TunnelSession {
         innerTLS = nil
         await multiplexer?.tearDown(reason: reason)
         multiplexer = nil
+        setConnectionMode(nil)
     }
 
     private func publish(_ newState: TunnelState) {
         state = newState
         stateContinuation.yield(newState)
+    }
+
+    private func setConnectionMode(_ newMode: ConnectionMode?) {
+        connectionMode = newMode
+        connectionModeContinuation.yield(newMode)
     }
 
     private func backoff(forAttempt attempt: Int) -> Duration {
@@ -185,6 +242,11 @@ public actor TunnelSession {
         let seconds = Double(components.seconds) + Double(components.attoseconds) / 1e18
         return .milliseconds(Int(seconds * 1_000 * Double.random(in: 0.75...1.25)))
     }
+}
+
+private struct ConnectedAttempt: Sendable {
+    let via: ConnectedVia
+    let tls: InnerTLS
 }
 
 private func withSessionTimeout<T: Sendable>(

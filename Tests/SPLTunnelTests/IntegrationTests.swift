@@ -167,7 +167,7 @@ private func setUpMockEnv() async throws -> MockEnv {
         let recorder = IntegrationStateRecorder()
         let stateObservation = observe(session: session, recorder: recorder)
         observation = stateObservation
-        await session.connect()
+        try await session.connect(endpoints: TransportEndpoint.candidates(for: pairing))
         try await waitUntil(timeout: .seconds(10)) {
             await recorder.states.contains { state in
                 if case .connected = state {

@@ -12,11 +12,12 @@ struct TunnelSessionTests {
         let server = TLSEchoServer(bundle: fixture, mode: .mux)
         try await server.start()
         let port = await server.port
-        let session = TunnelSession(pairing: pairing(from: fixture, localPort: port))
+        let pairing = pairing(from: fixture, localPort: port)
+        let session = TunnelSession(pairing: pairing)
         let recorder = StateRecorder()
         let observation = observe(session: session, recorder: recorder)
 
-        await session.connect()
+        try await session.connect(endpoints: TransportEndpoint.candidates(for: pairing))
         try await waitUntil {
             await recorder.states.contains { state in
                 state == .connected(via: .lanDirect(host: "127.0.0.1", port: port))
@@ -32,12 +33,13 @@ struct TunnelSessionTests {
         await server.stop()
 
         let states = await recorder.states
-        #expect(Array(states.prefix(4)) == [
+        let candidates = try TransportEndpoint.candidates(for: pairing)
+        #expect(Array(states.prefix(3)) == [
             .disconnected,
-            .connecting(attempt: 1, candidate: .lan(host: "127.0.0.1", port: port)),
+            .connecting(attempt: 1, candidates: candidates),
             .tlsHandshaking(via: .lanDirect(host: "127.0.0.1", port: port)),
-            .connected(via: .lanDirect(host: "127.0.0.1", port: port)),
         ])
+        #expect(states.contains(.connected(via: .lanDirect(host: "127.0.0.1", port: port))))
         #expect(echoed == payload)
     }
 
@@ -46,11 +48,12 @@ struct TunnelSessionTests {
         let fixture = try TestCA.make()
         let server = TLSEchoServer(bundle: fixture, port: fixedPort)
         try await server.start()
-        let session = TunnelSession(pairing: pairing(from: fixture, localPort: fixedPort))
+        let pairing = pairing(from: fixture, localPort: fixedPort)
+        let session = TunnelSession(pairing: pairing)
         let recorder = StateRecorder()
         let observation = observe(session: session, recorder: recorder)
 
-        await session.connect()
+        try await session.connect(endpoints: TransportEndpoint.candidates(for: pairing))
         try await waitForConnected(recorder, via: .lanDirect(host: "127.0.0.1", port: fixedPort), minimumCount: 1)
 
         for cycle in 1...3 {
@@ -76,11 +79,12 @@ struct TunnelSessionTests {
         let server = TLSEchoServer(bundle: fixture)
         try await server.start()
         let port = await server.port
-        let session = TunnelSession(pairing: pairing(from: fixture, localPort: port))
+        let pairing = pairing(from: fixture, localPort: port)
+        let session = TunnelSession(pairing: pairing)
         let recorder = StateRecorder()
         let observation = observe(session: session, recorder: recorder)
 
-        await session.connect()
+        try await session.connect(endpoints: TransportEndpoint.candidates(for: pairing))
         try await waitForConnected(recorder, via: .lanDirect(host: "127.0.0.1", port: port), minimumCount: 1)
         await session.disconnect()
         observation.cancel()
@@ -100,11 +104,12 @@ struct TunnelSessionTests {
         let relay = RelayBridgeServer(tlsPort: tlsPort)
         try await relay.start()
         let relayPort = await relay.port
-        let session = TunnelSession(pairing: pairing(from: fixture, relayPort: relayPort, localEndpoints: []))
+        let pairing = pairing(from: fixture, relayPort: relayPort, localEndpoints: [])
+        let session = TunnelSession(pairing: pairing)
         let recorder = StateRecorder()
         let observation = observe(session: session, recorder: recorder)
 
-        await session.connect()
+        try await session.connect(endpoints: TransportEndpoint.candidates(for: pairing))
         let relayURL = try #require(URL(string: "ws://127.0.0.1:\(relayPort)"))
         try await waitForConnected(recorder, via: .relay(endpoint: relayURL), minimumCount: 1)
 
@@ -113,8 +118,34 @@ struct TunnelSessionTests {
         await relay.stop()
         await tlsServer.stop()
 
-        #expect(await recorder.states.contains(.connecting(attempt: 1, candidate: .relay)))
+        let candidates = try TransportEndpoint.candidates(for: pairing)
+        #expect(await recorder.states.contains(.connecting(attempt: 1, candidates: candidates)))
         #expect(await recorder.states.contains(.connected(via: .relay(endpoint: relayURL))))
+    }
+
+    @Test func trustDirectUntilAttemptsCachedDirectEndpointFirst() async throws {
+        let fixture = try TestCA.make()
+        let server = TLSEchoServer(bundle: fixture, mode: .mux)
+        try await server.start()
+        let port = await server.port
+        let pairing = pairing(from: fixture, localPort: port)
+        let session = TunnelSession(pairing: pairing)
+        let direct = TransportEndpoint.lan(host: "127.0.0.1", port: port, scope: "local")
+        let relayOnly = TransportEndpoint.relay(
+            endpoint: URL(string: "ws://127.0.0.1:1")!,
+            instanceID: pairing.instanceID,
+            deviceToken: pairing.deviceToken
+        )
+
+        let firstVia = try await session.connect(endpoints: [direct])
+        await session.disconnect()
+        let secondVia = try await session.connect(endpoints: [relayOnly])
+
+        await session.disconnect()
+        await server.stop()
+
+        #expect(firstVia == .lanDirect(host: "127.0.0.1", port: port))
+        #expect(secondVia == .lanDirect(host: "127.0.0.1", port: port))
     }
 
     private func pairing(

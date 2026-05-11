@@ -21,7 +21,7 @@ struct LiveStagingTests {
         let recorder = LiveStateRecorder()
         let observation = observeLive(session: tunnel, recorder: recorder)
 
-        await tunnel.connect()
+        try await tunnel.connect(endpoints: TransportEndpoint.candidates(for: pairing))
         try await waitForLive {
             await recorder.states.contains { state in
                 if case .connected = state {

@@ -146,8 +146,7 @@ extension SPL {
 
             let tunnel = TunnelSession(pairing: stored)
             do {
-                await tunnel.connect()
-                let via = try await waitForConnected(tunnel)
+                let via = try await tunnel.connect(endpoints: TransportEndpoint.candidates(for: stored))
                 let stream = try await tunnel.openStream()
                 let request = "GET /app/link/api/status HTTP/1.1\r\nHost: \(stored.homeLabel)\r\nConnection: close\r\n\r\n"
                 try await stream.write(Data(request.utf8))
