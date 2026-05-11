@@ -3,6 +3,7 @@
 
 import Foundation
 import Network
+import Security
 @testable import SPLTunnel
 
 private let serverQueue = DispatchQueue(label: "app.solstone.observer.spl.tests.echo")
@@ -203,6 +204,234 @@ actor WebSocketFailingServer {
             connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in
                 connection.cancel()
             })
+        }
+    }
+}
+
+actor TLSEchoServer {
+    private let bundle: TestCA.Bundle
+    private let clientCAPEM: String
+    private let rejectClientCertificate: Bool
+    private let capture = CertificateCapture()
+    private var listener: NWListener?
+    private var connections: [NWConnection] = []
+    private var boundPort: NWEndpoint.Port?
+
+    init(bundle: TestCA.Bundle, clientCAPEM: String? = nil, rejectClientCertificate: Bool = false) {
+        self.bundle = bundle
+        self.clientCAPEM = clientCAPEM ?? bundle.caCertificatePEM
+        self.rejectClientCertificate = rejectClientCertificate
+    }
+
+    var port: Int {
+        Int(boundPort?.rawValue ?? 0)
+    }
+
+    var clientLeafFingerprint: String? {
+        capture.fingerprint
+    }
+
+    func start() async throws {
+        let tlsOptions = try makeServerTLSOptions()
+        let parameters = NWParameters(tls: tlsOptions, tcp: NWProtocolTCP.Options())
+        let listener = try NWListener(using: parameters, on: .any)
+        listener.newConnectionHandler = { [weak self] connection in
+            Task {
+                await self?.accept(connection)
+            }
+        }
+        self.listener = listener
+        try await startAndWaitForListenerReady(listener)
+        boundPort = listener.port
+    }
+
+    func stop() async {
+        for connection in connections {
+            connection.cancel()
+        }
+        connections.removeAll()
+        listener?.cancel()
+        listener = nil
+        boundPort = nil
+    }
+
+    private func accept(_ connection: NWConnection) {
+        connections.append(connection)
+        connection.start(queue: serverQueue)
+        if rejectClientCertificate {
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { _, _, _, _ in
+                connection.cancel()
+            }
+            return
+        }
+        echo(connection)
+    }
+
+    private func echo(_ connection: NWConnection) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [weak self] data, _, isComplete, error in
+            guard error == nil, let data, !data.isEmpty else {
+                if isComplete {
+                    connection.cancel()
+                }
+                return
+            }
+            guard let server = self else {
+                return
+            }
+            connection.send(content: data, completion: .contentProcessed { _ in
+                Task {
+                    await server.echo(connection)
+                }
+            })
+        }
+    }
+
+    private func makeServerTLSOptions() throws -> NWProtocolTLS.Options {
+        let anchors = try CertChain.certificates(fromPEM: clientCAPEM)
+        let identity = try TestCA.secIdentity(
+            certificatePEM: bundle.serverCertificatePEM,
+            privateKeyPEM: bundle.serverPrivateKeyPEM
+        )
+        let options = NWProtocolTLS.Options()
+        let secOptions = options.securityProtocolOptions
+        sec_protocol_options_set_min_tls_protocol_version(secOptions, .TLSv13)
+        sec_protocol_options_set_max_tls_protocol_version(secOptions, .TLSv13)
+        sec_protocol_options_set_local_identity(secOptions, identity)
+        sec_protocol_options_set_peer_authentication_required(secOptions, true)
+        sec_protocol_options_set_verify_block(secOptions, { [capture, rejectClientCertificate] _, trust, complete in
+            let secTrust = sec_trust_copy_ref(trust).takeRetainedValue()
+            if let chain = SecTrustCopyCertificateChain(secTrust) as? [SecCertificate],
+               let leaf = chain.first {
+                capture.setFingerprint(CertChain.sha256Fingerprint(of: leaf))
+            }
+            guard !rejectClientCertificate else {
+                complete(false)
+                return
+            }
+            SecTrustSetPolicies(secTrust, SecPolicyCreateBasicX509())
+            SecTrustSetAnchorCertificates(secTrust, anchors as CFArray)
+            SecTrustSetAnchorCertificatesOnly(secTrust, true)
+            var error: CFError?
+            complete(SecTrustEvaluateWithError(secTrust, &error))
+        }, serverQueue)
+        return options
+    }
+}
+
+actor RelayBridgeServer {
+    private let tlsPort: Int
+    private var listener: NWListener?
+    private var webSocketConnections: [NWConnection] = []
+    private var tcpConnections: [NWConnection] = []
+    private var boundPort: NWEndpoint.Port?
+
+    init(tlsPort: Int) {
+        self.tlsPort = tlsPort
+    }
+
+    var port: Int {
+        Int(boundPort?.rawValue ?? 0)
+    }
+
+    func start() async throws {
+        let options = NWProtocolWebSocket.Options()
+        options.autoReplyPing = true
+        options.setClientRequestHandler(serverQueue) { _, _ in
+            NWProtocolWebSocket.Response(status: .accept, subprotocol: nil)
+        }
+
+        let parameters = NWParameters.tcp
+        parameters.defaultProtocolStack.applicationProtocols.insert(options, at: 0)
+
+        let listener = try NWListener(using: parameters, on: .any)
+        listener.newConnectionHandler = { [weak self] connection in
+            Task {
+                await self?.accept(connection)
+            }
+        }
+        self.listener = listener
+        try await startAndWaitForListenerReady(listener)
+        boundPort = listener.port
+    }
+
+    func stop() async {
+        for connection in webSocketConnections + tcpConnections {
+            connection.cancel()
+        }
+        webSocketConnections.removeAll()
+        tcpConnections.removeAll()
+        listener?.cancel()
+        listener = nil
+        boundPort = nil
+    }
+
+    private func accept(_ webSocket: NWConnection) {
+        guard let port = NWEndpoint.Port(rawValue: UInt16(clamping: tlsPort)), 1...65535 ~= tlsPort else {
+            webSocket.cancel()
+            return
+        }
+        let tcp = NWConnection(host: "127.0.0.1", port: port, using: .tcp)
+        webSocketConnections.append(webSocket)
+        tcpConnections.append(tcp)
+        webSocket.start(queue: serverQueue)
+        tcp.start(queue: serverQueue)
+        pumpWebSocket(webSocket, to: tcp)
+        pumpTCP(tcp, to: webSocket)
+    }
+
+    private func pumpWebSocket(_ webSocket: NWConnection, to tcp: NWConnection) {
+        webSocket.receiveMessage { [weak self] data, _, _, error in
+            guard error == nil, let data else {
+                tcp.cancel()
+                webSocket.cancel()
+                return
+            }
+            guard let server = self else {
+                return
+            }
+            tcp.send(content: data, completion: .contentProcessed { _ in
+                Task {
+                    await server.pumpWebSocket(webSocket, to: tcp)
+                }
+            })
+        }
+    }
+
+    private func pumpTCP(_ tcp: NWConnection, to webSocket: NWConnection) {
+        tcp.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [weak self] data, _, isComplete, error in
+            guard error == nil, let data, !data.isEmpty else {
+                if isComplete {
+                    webSocket.cancel()
+                    tcp.cancel()
+                }
+                return
+            }
+            let metadata = NWProtocolWebSocket.Metadata(opcode: .binary)
+            let context = NWConnection.ContentContext(identifier: "bridge", metadata: [metadata])
+            guard let server = self else {
+                return
+            }
+            webSocket.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { _ in
+                Task {
+                    await server.pumpTCP(tcp, to: webSocket)
+                }
+            })
+        }
+    }
+}
+
+private final class CertificateCapture: @unchecked Sendable {
+    // why: Security verify callbacks run on a dispatch queue and tests read through actor access.
+    private let lock = NSLock()
+    private var value: String?
+
+    var fingerprint: String? {
+        lock.withLock { value }
+    }
+
+    func setFingerprint(_ fingerprint: String) {
+        lock.withLock {
+            value = fingerprint
         }
     }
 }
