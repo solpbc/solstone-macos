@@ -58,6 +58,12 @@ public struct PairURL: Sendable, Equatable {
         self.caFingerprintHex = CertChain.hex(pinBytes)
     }
 
+    init(lanURL: URL, nonce: String, caFingerprintHex: String) {
+        self.lanURL = lanURL
+        self.nonce = nonce
+        self.caFingerprintHex = caFingerprintHex
+    }
+
     private static func base64urlDecode(_ value: String) -> Data? {
         guard value.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "=" }) else {
             return nil
