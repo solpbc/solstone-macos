@@ -208,19 +208,34 @@ actor WebSocketFailingServer {
     }
 }
 
+enum TLSEchoMode {
+    case raw
+    case mux
+}
+
 actor TLSEchoServer {
     private let bundle: TestCA.Bundle
     private let clientCAPEM: String
     private let rejectClientCertificate: Bool
+    private let mode: TLSEchoMode
+    private let requestedPort: Int?
     private let capture = CertificateCapture()
     private var listener: NWListener?
     private var connections: [NWConnection] = []
     private var boundPort: NWEndpoint.Port?
 
-    init(bundle: TestCA.Bundle, clientCAPEM: String? = nil, rejectClientCertificate: Bool = false) {
+    init(
+        bundle: TestCA.Bundle,
+        clientCAPEM: String? = nil,
+        rejectClientCertificate: Bool = false,
+        mode: TLSEchoMode = .raw,
+        port: Int? = nil
+    ) {
         self.bundle = bundle
         self.clientCAPEM = clientCAPEM ?? bundle.caCertificatePEM
         self.rejectClientCertificate = rejectClientCertificate
+        self.mode = mode
+        self.requestedPort = port
     }
 
     var port: Int {
@@ -234,7 +249,8 @@ actor TLSEchoServer {
     func start() async throws {
         let tlsOptions = try makeServerTLSOptions()
         let parameters = NWParameters(tls: tlsOptions, tcp: NWProtocolTCP.Options())
-        let listener = try NWListener(using: parameters, on: .any)
+        let port = requestedPort.flatMap { NWEndpoint.Port(rawValue: UInt16(clamping: $0)) }
+        let listener = try NWListener(using: parameters, on: port ?? .any)
         listener.newConnectionHandler = { [weak self] connection in
             Task {
                 await self?.accept(connection)
@@ -264,7 +280,12 @@ actor TLSEchoServer {
             }
             return
         }
-        echo(connection)
+        switch mode {
+        case .raw:
+            echo(connection)
+        case .mux:
+            muxEcho(connection, decoder: MuxEchoDecoder())
+        }
     }
 
     private func echo(_ connection: NWConnection) {
@@ -283,6 +304,30 @@ actor TLSEchoServer {
                     await server.echo(connection)
                 }
             })
+        }
+    }
+
+    private func muxEcho(_ connection: NWConnection, decoder: MuxEchoDecoder) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [weak self] data, _, isComplete, error in
+            guard error == nil, let data, !data.isEmpty else {
+                if isComplete {
+                    connection.cancel()
+                }
+                return
+            }
+            do {
+                let response = try decoder.response(to: data)
+                guard let server = self else {
+                    return
+                }
+                connection.send(content: response.isEmpty ? nil : response, completion: .contentProcessed { _ in
+                    Task {
+                        await server.muxEcho(connection, decoder: decoder)
+                    }
+                })
+            } catch {
+                connection.cancel()
+            }
         }
     }
 
@@ -315,6 +360,28 @@ actor TLSEchoServer {
             complete(SecTrustEvaluateWithError(secTrust, &error))
         }, serverQueue)
         return options
+    }
+}
+
+private final class MuxEchoDecoder: @unchecked Sendable {
+    // why: Network callbacks can overlap; the test mux peer keeps decoder state serialized by lock.
+    private let lock = NSLock()
+    private var decoder = FrameDecoder()
+
+    func response(to data: Data) throws -> Data {
+        try lock.withLock {
+            decoder.feed(data)
+            var response = Data()
+            while let frame = try decoder.next() {
+                if frame.flags & FrameFlags.data.rawValue != 0 {
+                    response.append(try encodeFrame(buildData(streamID: frame.streamID, payload: frame.payload)))
+                }
+                if frame.flags & FrameFlags.close.rawValue != 0 {
+                    response.append(try encodeFrame(buildClose(streamID: frame.streamID)))
+                }
+            }
+            return response
+        }
     }
 }
 
