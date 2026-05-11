@@ -4,6 +4,18 @@
 import Foundation
 import Security
 
+public struct LocalEndpoint: Codable, Sendable, Equatable {
+    public let host: String
+    public let port: Int
+    public let scope: String
+
+    public init(host: String, port: Int, scope: String) {
+        self.host = host
+        self.port = port
+        self.scope = scope
+    }
+}
+
 public struct StoredPairing: Codable, Sendable, Equatable {
     public let instanceID: String
     public let homeLabel: String
@@ -13,6 +25,7 @@ public struct StoredPairing: Codable, Sendable, Equatable {
     public let clientKeyPEM: String
     public let caChainPEM: String
     public let deviceToken: String
+    public let localEndpoints: [LocalEndpoint]
     public let pairedAt: Date
 
     enum CodingKeys: String, CodingKey {
@@ -24,7 +37,60 @@ public struct StoredPairing: Codable, Sendable, Equatable {
         case clientKeyPEM
         case caChainPEM
         case deviceToken
+        case localEndpoints
         case pairedAt
+    }
+
+    public init(
+        instanceID: String,
+        homeLabel: String,
+        relayEndpoint: String,
+        fingerprint: String,
+        clientCertPEM: String,
+        clientKeyPEM: String,
+        caChainPEM: String,
+        deviceToken: String,
+        localEndpoints: [LocalEndpoint] = [],
+        pairedAt: Date
+    ) {
+        self.instanceID = instanceID
+        self.homeLabel = homeLabel
+        self.relayEndpoint = relayEndpoint
+        self.fingerprint = fingerprint
+        self.clientCertPEM = clientCertPEM
+        self.clientKeyPEM = clientKeyPEM
+        self.caChainPEM = caChainPEM
+        self.deviceToken = deviceToken
+        self.localEndpoints = localEndpoints
+        self.pairedAt = pairedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        instanceID = try container.decode(String.self, forKey: .instanceID)
+        homeLabel = try container.decode(String.self, forKey: .homeLabel)
+        relayEndpoint = try container.decode(String.self, forKey: .relayEndpoint)
+        fingerprint = try container.decode(String.self, forKey: .fingerprint)
+        clientCertPEM = try container.decode(String.self, forKey: .clientCertPEM)
+        clientKeyPEM = try container.decode(String.self, forKey: .clientKeyPEM)
+        caChainPEM = try container.decode(String.self, forKey: .caChainPEM)
+        deviceToken = try container.decode(String.self, forKey: .deviceToken)
+        localEndpoints = try container.decodeIfPresent([LocalEndpoint].self, forKey: .localEndpoints) ?? []
+        pairedAt = try container.decode(Date.self, forKey: .pairedAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(instanceID, forKey: .instanceID)
+        try container.encode(homeLabel, forKey: .homeLabel)
+        try container.encode(relayEndpoint, forKey: .relayEndpoint)
+        try container.encode(fingerprint, forKey: .fingerprint)
+        try container.encode(clientCertPEM, forKey: .clientCertPEM)
+        try container.encode(clientKeyPEM, forKey: .clientKeyPEM)
+        try container.encode(caChainPEM, forKey: .caChainPEM)
+        try container.encode(deviceToken, forKey: .deviceToken)
+        try container.encode(localEndpoints, forKey: .localEndpoints)
+        try container.encode(pairedAt, forKey: .pairedAt)
     }
 }
 

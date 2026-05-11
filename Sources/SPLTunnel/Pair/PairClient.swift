@@ -34,6 +34,7 @@ public struct PairClient: Sendable {
             clientKeyPEM: generated.privateKeyPEM,
             caChainPEM: Self.joinPEMChain(lanResponse.caChain),
             deviceToken: relayResponse.deviceToken,
+            localEndpoints: lanResponse.localEndpoints,
             pairedAt: Date()
         )
     }
@@ -186,6 +187,7 @@ struct LANPairResponse: Decodable {
     let caChain: [String]
     let homeAttestation: String
     let fingerprint: String?
+    let localEndpoints: [LocalEndpoint]
 
     enum CodingKeys: String, CodingKey {
         case instanceID = "instance_id"
@@ -194,6 +196,18 @@ struct LANPairResponse: Decodable {
         case caChain = "ca_chain"
         case homeAttestation = "home_attestation"
         case fingerprint
+        case localEndpoints = "local_endpoints"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        instanceID = try container.decode(String.self, forKey: .instanceID)
+        homeLabel = try container.decode(String.self, forKey: .homeLabel)
+        clientCert = try container.decode(String.self, forKey: .clientCert)
+        caChain = try container.decode([String].self, forKey: .caChain)
+        homeAttestation = try container.decode(String.self, forKey: .homeAttestation)
+        fingerprint = try container.decodeIfPresent(String.self, forKey: .fingerprint)
+        localEndpoints = try container.decodeIfPresent([LocalEndpoint].self, forKey: .localEndpoints) ?? []
     }
 }
 

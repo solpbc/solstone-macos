@@ -114,7 +114,28 @@ struct PairClientTests {
         #expect(pairing.clientKeyPEM.hasPrefix("-----BEGIN PRIVATE KEY-----\n"))
         #expect(pairing.caChainPEM == "\(TestCertificates.cert2)\n")
         #expect(pairing.deviceToken == "device-token")
+        #expect(pairing.localEndpoints == [])
         #expect(pairing.pairedAt >= before)
+    }
+
+    @Test func pairResponseWithLocalEndpointsPopulatesStoredPairing() async throws {
+        PairURLProtocol.store.reset()
+        PairURLProtocol.store.enqueue(body: lanResponseJSON(localEndpoints: [[
+            "host": "192.168.1.10",
+            "port": 7657,
+            "scope": "local",
+        ]]))
+        PairURLProtocol.store.enqueue(body: relayResponseJSON())
+
+        let pairing = try await makeClient().pair(
+            pairURL: makePairURL(),
+            deviceLabel: "test mac",
+            relayEndpoint: URL(string: "https://spl.solpbc.org")!
+        )
+
+        #expect(pairing.localEndpoints == [
+            LocalEndpoint(host: "192.168.1.10", port: 7657, scope: "local")
+        ])
     }
 
     @Test func lanRequestShape() async throws {
@@ -230,15 +251,19 @@ struct PairClientTests {
         return try PairURL(splURL: URL(string: "spl://pair?u=\(u)&pin=\(pin)")!)
     }
 
-    private func lanResponseJSON() -> String {
-        json([
+    private func lanResponseJSON(localEndpoints: [[String: Any]]? = nil) -> String {
+        var response: [String: Any] = [
             "client_cert": TestCertificates.cert1,
             "ca_chain": [TestCertificates.cert2],
             "instance_id": "instance-1",
             "home_label": "living room mac",
             "home_attestation": "attestation",
             "fingerprint": "ignored",
-        ])
+        ]
+        if let localEndpoints {
+            response["local_endpoints"] = localEndpoints
+        }
+        return json(response)
     }
 
     private func relayResponseJSON() -> String {

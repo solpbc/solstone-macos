@@ -88,6 +88,7 @@ struct SPLKeychainTests {
             clientKeyPEM: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
             caChainPEM: "-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n",
             deviceToken: "device-token",
+            localEndpoints: [],
             pairedAt: Date(timeIntervalSince1970: 1_800_000_000)
         )
     }
