@@ -124,6 +124,72 @@ struct RaceTests {
         }
     }
 
+    @Test func singleRelayUnauthorizedThrowsRevoked() async {
+        let relay = TransportEndpoint.relay(
+            endpoint: URL(string: "wss://relay.example/session")!,
+            instanceID: "instance",
+            deviceToken: "token"
+        )
+        let coordinator = RaceCoordinator<Int>(
+            stagger: .milliseconds(1),
+            loserGrace: .milliseconds(1),
+            budget: .milliseconds(200)
+        ) { _ in
+            throw DialError.relayUnauthorized
+        }
+
+        await expectSessionError(.revoked) {
+            _ = try await coordinator.connect(endpoints: [relay])
+        }
+    }
+
+    @Test func anyRevokedCandidateWinsAllFailSurface() async {
+        let direct = TransportEndpoint.lan(host: "10.0.0.5", port: 443, scope: "local")
+        let relay = TransportEndpoint.relay(
+            endpoint: URL(string: "wss://relay.example/session")!,
+            instanceID: "instance",
+            deviceToken: "token"
+        )
+        let coordinator = RaceCoordinator<Int>(
+            stagger: .milliseconds(1),
+            loserGrace: .milliseconds(1),
+            budget: .milliseconds(200)
+        ) { endpoint in
+            if case .relay = endpoint {
+                throw DialError.relayUnauthorized
+            }
+            throw SessionError.transportFailed("timeout")
+        }
+
+        await expectSessionError(.revoked) {
+            _ = try await coordinator.connect(endpoints: [direct, relay])
+        }
+    }
+
+    @Test func tlsPinningMismatchStaysTLSFailureForSingleCandidate() async {
+        let direct = TransportEndpoint.lan(host: "10.0.0.5", port: 443, scope: "local")
+        let coordinator = RaceCoordinator<Int>(
+            stagger: .milliseconds(1),
+            loserGrace: .milliseconds(1),
+            budget: .milliseconds(200)
+        ) { _ in
+            throw InnerTLSError.peerNotPinned
+        }
+
+        do {
+            _ = try await coordinator.connect(endpoints: [direct])
+            Issue.record("Expected tls failure")
+        } catch let error as SessionError {
+            if case .tlsFailed(let reason) = error {
+                #expect(reason.contains("peerNotPinned"))
+            } else {
+                Issue.record("Expected tlsFailed, got \(error)")
+            }
+        } catch {
+            Issue.record("Expected SessionError.tlsFailed, got \(error)")
+        }
+    }
+
     private func expectSessionError(
         _ expected: SessionError,
         _ operation: () async throws -> Void

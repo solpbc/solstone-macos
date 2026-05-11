@@ -11,7 +11,7 @@ struct RaceResult<Value: Sendable>: Sendable {
 struct RaceCoordinator<Value: Sendable>: Sendable {
     private enum Event: Sendable {
         case success(order: Int, endpoint: TransportEndpoint, value: Value)
-        case failure(order: Int)
+        case failure(order: Int, error: SessionError)
         case budgetExpired
         case graceExpired
     }
@@ -44,7 +44,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                 let endpoint = sorted[0]
                 return RaceResult(endpoint: endpoint, value: try await dial(endpoint))
             } catch {
-                throw SessionError.unreachable
+                throw Self.sessionError(from: error)
             }
         }
 
@@ -55,7 +55,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                         do {
                             try await Task.sleep(for: stagger * order)
                         } catch {
-                            return .failure(order: order)
+                            return .failure(order: order, error: .unreachable)
                         }
                     }
 
@@ -63,7 +63,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                         let value = try await dial(endpoint)
                         return .success(order: order, endpoint: endpoint, value: value)
                     } catch {
-                        return .failure(order: order)
+                        return .failure(order: order, error: Self.sessionError(from: error))
                     }
                 }
             }
@@ -80,6 +80,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
             var failures = 0
             var successes: [(order: Int, endpoint: TransportEndpoint, value: Value)] = []
             var graceStarted = false
+            var sawRevocation = false
 
             while let event = try await group.next() {
                 switch event {
@@ -97,23 +98,26 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                         }
                     }
 
-                case .failure:
+                case .failure(_, let error):
                     failures += 1
+                    if error == .revoked {
+                        sawRevocation = true
+                    }
                     if failures == sorted.count, successes.isEmpty {
                         group.cancelAll()
-                        throw SessionError.unreachable
+                        throw sawRevocation ? SessionError.revoked : SessionError.unreachable
                     }
 
                 case .budgetExpired:
                     if successes.isEmpty {
                         group.cancelAll()
-                        throw SessionError.unreachable
+                        throw sawRevocation ? SessionError.revoked : SessionError.unreachable
                     }
 
                 case .graceExpired:
                     guard let winner = successes.min(by: { $0.order < $1.order }) else {
                         group.cancelAll()
-                        throw SessionError.unreachable
+                        throw sawRevocation ? SessionError.revoked : SessionError.unreachable
                     }
                     group.cancelAll()
                     return RaceResult(endpoint: winner.endpoint, value: winner.value)
@@ -121,7 +125,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
             }
 
             guard let winner = successes.min(by: { $0.order < $1.order }) else {
-                throw SessionError.unreachable
+                throw sawRevocation ? SessionError.revoked : SessionError.unreachable
             }
             return RaceResult(endpoint: winner.endpoint, value: winner.value)
         }
@@ -171,6 +175,19 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
         default:
             return false
         }
+    }
+
+    private static func sessionError(from error: any Error) -> SessionError {
+        if let sessionError = error as? SessionError {
+            return sessionError
+        }
+        if let dialError = error as? DialError, dialError == .relayUnauthorized {
+            return .revoked
+        }
+        if let tlsError = error as? InnerTLSError {
+            return .tlsFailed(String(describing: tlsError))
+        }
+        return .unreachable
     }
 }
 

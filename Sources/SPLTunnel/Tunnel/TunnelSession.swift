@@ -23,6 +23,7 @@ public enum SessionError: Error, Equatable, Sendable {
     case invalidRelayURL(String)
     case transportFailed(String)
     case tlsFailed(String)
+    case revoked
 }
 
 public enum TunnelState: Sendable, Equatable {
@@ -157,6 +158,9 @@ public actor TunnelSession {
         } catch let error as SessionError {
             publish(.failed(error))
             throw error
+        } catch DialError.relayUnauthorized {
+            publish(.failed(.revoked))
+            throw SessionError.revoked
         } catch {
             let sessionError = SessionError.transportFailed(error.localizedDescription)
             publish(.failed(sessionError))
