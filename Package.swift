@@ -21,6 +21,13 @@ let package = Package(
                 .swiftLanguageMode(.v6)
             ]
         ),
+        .target(
+            name: "SPLTunnel",
+            path: "Sources/SPLTunnel",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
         .executableTarget(
             name: "solstone",
             dependencies: [
@@ -75,6 +82,14 @@ let package = Package(
             resources: [
                 .copy("Fixtures")
             ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .testTarget(
+            name: "SPLTunnelTests",
+            dependencies: [.target(name: "SPLTunnel")],
+            path: "Tests/SPLTunnelTests",
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
