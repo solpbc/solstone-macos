@@ -226,7 +226,7 @@ struct InstallerSetupWindow: View {
 
     private func choiceContent(existingInstall: Bool) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            titleBlock(title: InstallerCopy.setupTitle, subtitle: InstallerCopy.setupSubtitle)
+            titleBlock(title: InstallerCopy.windowTitle, subtitle: InstallerCopy.pitch)
             journalPathRow(canChange: true)
 
             HStack(spacing: 10) {
@@ -234,11 +234,16 @@ struct InstallerSetupWindow: View {
                     onInstall(journalURL, .createFresh)
                 }
 
-                Button(InstallerCopy.existingInstallButton, action: onExisting)
+                Button(InstallerCopy.existingButton, action: onExisting)
             }
 
+            Button(InstallerCopy.learnMore) {
+                NSWorkspace.shared.open(URL(string: InstallerCopy.learnMoreURL)!)
+            }
+            .buttonStyle(.link)
+
             if existingInstall {
-                Text(InstallerCopy.existingInstallHint)
+                Text("we detected solstone is already installed on this mac")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -247,7 +252,7 @@ struct InstallerSetupWindow: View {
 
     private var progressContent: some View {
         VStack(alignment: .leading, spacing: 16) {
-            titleBlock(title: InstallerCopy.setupTitle, subtitle: InstallerCopy.setupSubtitle)
+            titleBlock(title: InstallerCopy.windowTitle, subtitle: InstallerCopy.pitch)
             journalPathRow(canChange: false)
             rowsContent(showModelsWhenActive: true)
         }
@@ -260,13 +265,13 @@ struct InstallerSetupWindow: View {
             Text(InstallerCopy.donePermissions)
                 .foregroundStyle(.secondary)
 
-            Button(InstallerCopy.doneButton, action: onDismiss)
+            Button("done", action: onDismiss)
         }
     }
 
     private func failureContent(_ failedState: FailedState) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            titleBlock(title: InstallerCopy.setupTitle, subtitle: failureMessage(failedState))
+            titleBlock(title: InstallerCopy.windowTitle, subtitle: failureMessage(failedState))
             rowsContent(showModelsWhenActive: true)
             Button(InstallerCopy.retryButton, action: onRetry)
         }
@@ -314,7 +319,7 @@ struct InstallerSetupWindow: View {
     private func journalPathRow(canChange: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(InstallerCopy.journalPathLabel)
+                Text(InstallerCopy.journalLocationLabel)
                     .font(.headline)
 
                 Text(journalURL.path)
@@ -326,14 +331,14 @@ struct InstallerSetupWindow: View {
                 Spacer()
 
                 if canChange {
-                    Button(InstallerCopy.changeJournalButton) {
+                    Button(InstallerCopy.journalChangeLink) {
                         changeJournalPath()
                     }
                 }
             }
 
             if isJournalPathTccRestricted(journalURL) {
-                Text(InstallerCopy.tccWarningSubtitle)
+                Text(InstallerCopy.journalTccWarning)
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -362,15 +367,15 @@ struct InstallerSetupWindow: View {
     private func label(for row: InstallerRow) -> String {
         switch row {
         case .checkingSystem:
-            return InstallerCopy.rowCheckingSystem
+            return InstallerCopy.state1Label
         case .installSolstone:
-            return InstallerCopy.rowInstallSolstone
+            return InstallerCopy.state2Label
         case .solSetup:
-            return InstallerCopy.rowSolSetup
+            return InstallerCopy.state3Label
         case .registering:
-            return InstallerCopy.rowRegistering
+            return InstallerCopy.state4Label
         case .models:
-            return InstallerCopy.rowModels
+            return InstallerCopy.state3aLabel
         }
     }
 
@@ -461,15 +466,15 @@ private struct InstallerProgressRowView: View {
         case .pending:
             Image(systemName: "circle")
                 .foregroundStyle(.secondary)
-                .accessibilityLabel(InstallerCopy.subprocessPendingLabel)
+                .accessibilityLabel("waiting")
         case .running:
             ProgressView()
                 .controlSize(.small)
-                .accessibilityLabel(InstallerCopy.subprocessRunningLabel)
+                .accessibilityLabel("running")
         case .ok:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-                .accessibilityLabel(InstallerCopy.subprocessOkLabel)
+                .accessibilityLabel(InstallerCopy.stepOk)
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
                 .foregroundStyle(.red)
