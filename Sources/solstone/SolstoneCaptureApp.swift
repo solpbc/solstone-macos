@@ -11,6 +11,7 @@ import os
 public enum SolstoneSceneID: String, CaseIterable {
     case settings
     case about
+    case installerSetup = "installer-setup"
 }
 
 public enum DockMode: String {
@@ -204,6 +205,18 @@ struct SolstoneCaptureApp: App {
             AboutView()
         }
         .windowResizability(.contentSize)
+        .defaultPosition(.center)
+
+        Window("set up solstone", id: SolstoneSceneID.installerSetup.rawValue) {
+            InstallerSetupWindow(
+                installer: appState.installer,
+                onInstall: { _, _ in },
+                onExisting: { },
+                onRetry: { },
+                onDismiss: { }
+            )
+        }
+        .windowResizability(.contentMinSize)
         .defaultPosition(.center)
     }
 }

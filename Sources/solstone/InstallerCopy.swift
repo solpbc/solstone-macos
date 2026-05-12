@@ -1,0 +1,28 @@
+import Foundation
+
+enum InstallerCopy {
+    static let setupTitle = "set up solstone"
+    static let setupSubtitle = "install solstone, connect this observer, and choose where your journal lives."
+    static let installButton = "install solstone for me"
+    static let existingInstallButton = "i already have solstone"
+    static let existingInstallHint = "use the solstone already installed on this Mac."
+    static let retryButton = "try again"
+    static let doneButton = "done"
+    static let changeJournalButton = "change…"
+    static let journalPathLabel = "journal"
+    static let tccWarningSubtitle = "this location may require extra macOS permission. choose a folder outside Documents, Desktop, Downloads, or removable drives if setup cannot continue."
+    static let rowCheckingSystem = "checking your system"
+    static let rowInstallSolstone = "installing solstone"
+    static let rowSolSetup = "running setup"
+    static let rowRegistering = "registering this observer"
+    static let rowModels = "installing models"
+    static let showLogLabel = "show log"
+    static let hideLogLabel = "hide log"
+    static let stepFailedPrefix = "failed: "
+    static let doneTitle = "solstone is ready"
+    static let doneBody = "this observer is connected and ready to run."
+    static let donePermissions = "you may still need to grant screen and microphone access before observing starts."
+    static let subprocessRunningLabel = "running"
+    static let subprocessOkLabel = "done"
+    static let subprocessPendingLabel = "waiting"
+}
