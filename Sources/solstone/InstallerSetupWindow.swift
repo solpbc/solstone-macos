@@ -177,7 +177,6 @@ struct InstallerSetupWindow: View {
     var activator: any AppActivator
     var onInstall: (URL, ExistingInstallChoice) -> Void
     var onExisting: () -> Void
-    var onRetry: () -> Void
     var onDismiss: () -> Void
 
     @State private var journalURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("journal")
@@ -192,14 +191,12 @@ struct InstallerSetupWindow: View {
         activator: any AppActivator = DefaultAppActivator(),
         onInstall: @escaping (URL, ExistingInstallChoice) -> Void,
         onExisting: @escaping () -> Void,
-        onRetry: @escaping () -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.installer = installer
         self.activator = activator
         self.onInstall = onInstall
         self.onExisting = onExisting
-        self.onRetry = onRetry
         self.onDismiss = onDismiss
     }
 
@@ -273,7 +270,9 @@ struct InstallerSetupWindow: View {
         VStack(alignment: .leading, spacing: 16) {
             titleBlock(title: InstallerCopy.windowTitle, subtitle: failureMessage(failedState))
             rowsContent(showModelsWhenActive: true)
-            Button(InstallerCopy.retryButton, action: onRetry)
+            Button(InstallerCopy.retryButton) {
+                onInstall(journalURL, .createFresh)
+            }
         }
     }
 

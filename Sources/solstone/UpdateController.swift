@@ -10,6 +10,7 @@ final class UpdateController {
 
     private static let lastCheckedAtKey = "solstone.updates.lastCheckedAt"
     private static let lastCheckResultKey = "solstone.updates.lastCheckResult"
+    private static let stashKey = "solstone.installer.preInstallerAutoCheckPreference"
 
     var state: UpdateState = .idle
 
@@ -29,6 +30,7 @@ final class UpdateController {
     private(set) var lastCheckResult: LastCheckResult?
     private var expectedContentLength: UInt64?
     private var _automaticChecksEnabled: Bool = true
+    private var preInstallerAutoCheckPreference: Bool?
     private var _updateCheckInterval: TimeInterval = 86_400
     private var _automaticDownloadsEnabled: Bool = false
 
@@ -93,12 +95,18 @@ final class UpdateController {
 
         self.userDriver.attach(to: self)
 
-        guard canCheckForUpdates else {
+        if canCheckForUpdates {
+            _ = ensureUpdaterStarted()
+        } else {
             Logger.setup.warning("Sparkle disabled: missing or invalid SUFeedURL / SUPublicEDKey")
-            return
         }
 
-        _ = ensureUpdaterStarted()
+        // Restore auto-check preference if a prior install was interrupted before installerDidFinish.
+        if let stashedAny = defaults.object(forKey: Self.stashKey),
+           let stashed = stashedAny as? Bool {
+            automaticChecksEnabled = stashed
+            defaults.removeObject(forKey: Self.stashKey)
+        }
     }
 
     convenience init() {
@@ -129,6 +137,23 @@ final class UpdateController {
         }
 
         updater.checkForUpdates()
+    }
+
+    func installerDidStart() {
+        if preInstallerAutoCheckPreference == nil {
+            preInstallerAutoCheckPreference = _automaticChecksEnabled
+            UserDefaults.standard.set(_automaticChecksEnabled, forKey: Self.stashKey)
+        }
+        cancel()
+        automaticChecksEnabled = false
+    }
+
+    func installerDidFinish() {
+        if let prior = preInstallerAutoCheckPreference {
+            automaticChecksEnabled = prior
+            preInstallerAutoCheckPreference = nil
+        }
+        UserDefaults.standard.removeObject(forKey: Self.stashKey)
     }
 
     func cancel() {

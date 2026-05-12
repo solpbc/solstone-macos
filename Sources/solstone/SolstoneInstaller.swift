@@ -144,7 +144,7 @@ public final class SolstoneInstaller {
         do {
             result = try await subprocessRunner.run(
                 executable: resolvedUVBinaryURL(),
-                arguments: ["tool", "install", "solstone==\(BundleConfig.solstoneWheelPin)", "--reinstall"],
+                arguments: ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--reinstall"],
                 environment: nil,
                 stdoutHandler: { [weak self, output] data in
                     Self.append(data, to: output, stream: .stdout)

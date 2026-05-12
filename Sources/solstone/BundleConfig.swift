@@ -1,10 +1,10 @@
-// SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 sol pbc
+import Foundation
 
-internal enum BundleConfig {
-    // LODE_A: replace with generated value
-    static let solstoneWheelPin: String = "0.0.0-stub"
-
-    // LODE_A: replace with generated value
-    static let bundledUVSha256: String = "0000000000000000000000000000000000000000000000000000000000000000"
+// STUB - overwritten by `make generate-bundle-config`. The bundle-dist
+// build chain regenerates this file with real values pinned at release time.
+public enum BundleConfig {
+    public static let solstonePinVersion: String = "0.0.0-stub"
+    public static let solstoneMinVersion: String = "0.0.0-stub"
+    public static let bundledUVVersion: String = "0.0.0-stub"
+    public static let bundledUVSha256: String = String(repeating: "0", count: 64)
 }

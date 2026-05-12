@@ -111,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         if let state = AppState.shared {
+            state.installer.cancel()
             state.isTerminating = true
             Task { await state.heartbeatService.stop() }
             Task { await state.solChatBridge.stop() }
@@ -190,7 +191,7 @@ struct SolstoneCaptureApp: App {
         MenuBarExtra {
             MenuContent(appState: appState, updateController: updateController)
         } label: {
-            StatusIcon(appState: appState)
+            StatusIcon(appState: appState, updateController: updateController)
                 .accessibilityLabel(statusAccessibilityLabel)
         }
         .menuBarExtraStyle(.menu)
@@ -208,13 +209,7 @@ struct SolstoneCaptureApp: App {
         .defaultPosition(.center)
 
         Window("set up solstone", id: SolstoneSceneID.installerSetup.rawValue) {
-            InstallerSetupWindow(
-                installer: appState.installer,
-                onInstall: { _, _ in },
-                onExisting: { },
-                onRetry: { },
-                onDismiss: { }
-            )
+            InstallerSetupSceneContent(appState: appState)
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
@@ -247,9 +242,123 @@ func bundleImage(_ name: String, isTemplate: Bool = false) -> Image {
     return Image(nsImage: nsImage)
 }
 
+@MainActor
+enum FirstLaunchRouting {
+    static func route(
+        installer: SolstoneInstaller,
+        waitForPermissionCheck: @escaping @MainActor () async -> Void,
+        permissionsMissing: @escaping @MainActor () -> Bool,
+        openInstallerSetup: @escaping @MainActor () -> Void,
+        openPermissions: @escaping @MainActor () -> Void,
+        findSolBinary: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() },
+        healthCheck: @escaping @Sendable (String) async -> Bool = { await SolHealthCheck.run(solPath: $0) }
+    ) async {
+        let solPresent = await installer.detect()
+        if !solPresent {
+            openInstallerSetup()
+            return
+        }
+
+        guard let path = await findSolBinary() else {
+            openInstallerSetup()
+            return
+        }
+
+        let healthy = await healthCheck(path)
+        if !healthy {
+            openInstallerSetup()
+            return
+        }
+
+        await waitForPermissionCheck()
+        if permissionsMissing() {
+            openPermissions()
+        }
+    }
+}
+
+@MainActor
+enum InstallerSceneRouting {
+    static func install(installer: SolstoneInstaller, journalURL: URL, choice: ExistingInstallChoice) {
+        installer.start(journalURL: journalURL, existingInstallChoice: choice)
+    }
+
+    static func existing(
+        appState: AppState,
+        openSettings: () -> Void,
+        dismissInstaller: () -> Void,
+        activate: () -> Void
+    ) {
+        appState.pendingSettingsTab = "service"
+        openSettings()
+        dismissInstaller()
+        activate()
+    }
+
+    static func dismiss(
+        appState: AppState,
+        openPermissions: () -> Void,
+        dismissInstaller: () -> Void,
+        activate: () -> Void
+    ) {
+        dismissInstaller()
+        if !appState.screenRecordingGranted || !appState.microphoneGranted {
+            appState.pendingSettingsTab = "permissions"
+            openPermissions()
+            activate()
+        }
+    }
+}
+
+private struct InstallerSetupSceneContent: View {
+    @Bindable var appState: AppState
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
+
+    var body: some View {
+        InstallerSetupWindow(
+            installer: appState.installer,
+            onInstall: { url, choice in
+                InstallerSceneRouting.install(installer: appState.installer, journalURL: url, choice: choice)
+            },
+            onExisting: {
+                InstallerSceneRouting.existing(
+                    appState: appState,
+                    openSettings: {
+                        openWindow(id: SolstoneSceneID.settings.rawValue)
+                        appState.didOpenWindow(.settings)
+                    },
+                    dismissInstaller: {
+                        dismissWindow(id: SolstoneSceneID.installerSetup.rawValue)
+                    },
+                    activate: {
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
+                )
+            },
+            onDismiss: {
+                InstallerSceneRouting.dismiss(
+                    appState: appState,
+                    openPermissions: {
+                        openWindow(id: SolstoneSceneID.settings.rawValue)
+                        appState.didOpenWindow(.settings)
+                    },
+                    dismissInstaller: {
+                        dismissWindow(id: SolstoneSceneID.installerSetup.rawValue)
+                    },
+                    activate: {
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
+                )
+            }
+        )
+    }
+}
+
 /// Menu bar icon that opens the setup window on first launch
 private struct StatusIcon: View {
     let appState: AppState
+    let updateController: UpdateController
     @Environment(\.openWindow) private var openWindow
     @State private var hasCheckedSetup = false
 
@@ -276,16 +385,22 @@ private struct StatusIcon: View {
             .task {
                 guard !hasCheckedSetup else { return }
                 hasCheckedSetup = true
-                // Wait for the first real permission check to complete before deciding
-                // whether to open settings — avoids false-positive on startup.
-                while !appState.initialPermissionCheckComplete {
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
-                if !appState.screenRecordingGranted || !appState.microphoneGranted {
-                    appState.pendingSettingsTab = "permissions"
-                    openWindow(id: "settings")
-                    appState.didOpenWindow(.settings)
-                    NSApp.activate(ignoringOtherApps: true)
+                await FirstLaunchRouting.route(
+                    installer: appState.installer,
+                    waitForPermissionCheck: waitForInitialPermissionCheck,
+                    permissionsMissing: permissionsMissing,
+                    openInstallerSetup: openInstallerSetup,
+                    openPermissions: openPermissionsSettings
+                )
+            }
+            .onChange(of: appState.installer.main) { _, newState in
+                switch newState {
+                case .installingSolstone, .runningSolSetup, .registering:
+                    updateController.installerDidStart()
+                case .done, .failed:
+                    updateController.installerDidFinish()
+                case .detecting, .awaitingChoice:
+                    break
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .solMacOpenSettings)) { _ in
@@ -293,6 +408,29 @@ private struct StatusIcon: View {
                 appState.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
             }
+    }
+
+    private func waitForInitialPermissionCheck() async {
+        while !appState.initialPermissionCheckComplete {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
+    private func permissionsMissing() -> Bool {
+        !appState.screenRecordingGranted || !appState.microphoneGranted
+    }
+
+    private func openInstallerSetup() {
+        openWindow(id: SolstoneSceneID.installerSetup.rawValue)
+        appState.didOpenWindow(.installerSetup)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func openPermissionsSettings() {
+        appState.pendingSettingsTab = "permissions"
+        openWindow(id: SolstoneSceneID.settings.rawValue)
+        appState.didOpenWindow(.settings)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @ViewBuilder

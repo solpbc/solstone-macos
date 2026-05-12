@@ -205,7 +205,6 @@ struct ActivatorTests {
             activator: fakeActivator,
             onInstall: { _, _ in },
             onExisting: { },
-            onRetry: { },
             onDismiss: { }
         )
 

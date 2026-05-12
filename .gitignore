@@ -60,9 +60,6 @@ vendor/*
 !vendor/.gitkeep
 !vendor/*.sha256
 
-# Build-time generated Swift
-Sources/solstone/Generated/
-
 # AppIcon.iconset is an intermediate artifact built by `make icons`
 # in a temp dir. The shipping artifact is AppIcon.icns. Use
 # `iconutil -c iconset Sources/solstone/Resources/AppIcon.icns` to

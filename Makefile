@@ -65,7 +65,6 @@ vendor-uv:
 	fi
 
 generate-bundle-config: check-versions
-	@mkdir -p Sources/solstone/Generated
 	@SHA="$$(awk '{print $$1; exit}' "$(UV_SHA256_FILE)")"; \
 	    [ -n "$$SHA" ] || { echo "error: could not read sha from $(UV_SHA256_FILE)"; exit 1; }; \
 	    { \
@@ -76,8 +75,8 @@ generate-bundle-config: check-versions
 	        printf '    public static let bundledUVVersion = "%s"\n' "$(UV_VERSION)"; \
 	        printf '    public static let bundledUVSha256 = "%s"\n' "$$SHA"; \
 	        printf '%s\n' '}'; \
-	    } > Sources/solstone/Generated/BundleConfig.swift
-	@echo "generated: Sources/solstone/Generated/BundleConfig.swift"
+	    } > Sources/solstone/BundleConfig.swift
+	@echo "generated: Sources/solstone/BundleConfig.swift"
 
 # Re-vendor brand SVGs from the canonical source. CI verifies the committed
 # output (it does not run brand-sync) — run this locally when the brand spec
@@ -348,7 +347,7 @@ supply-chain-check: vendor-uv generate-bundle-config
 	@echo "uv release url: $(UV_RELEASE_URL)"
 	@echo "uv sha256: $$(awk '{print $$1; exit}' "$(UV_SHA256_FILE)")"
 	@echo "── BundleConfig.swift ──"
-	@cat Sources/solstone/Generated/BundleConfig.swift
+	@cat Sources/solstone/BundleConfig.swift
 	@echo "── bundled-uv codesign ──"
 	@if [ -f solstone.app/Contents/Resources/uv ]; then \
 	    codesign -dvvv solstone.app/Contents/Resources/uv 2>&1 || true; \
