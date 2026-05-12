@@ -2,7 +2,6 @@
 // Copyright (c) 2026 sol pbc
 
 import AppKit
-import CryptoKit
 import Foundation
 import os
 import SolstoneCore
@@ -14,14 +13,11 @@ public final class SolstoneInstaller {
     public internal(set) var modelsProgress: ModelsProgress = .idle
     public internal(set) var lastFailureCategory: ErrorCategory?
 
-    private static var verifiedUVDigest: String?
-
     private weak var appState: AppState?
     private let uvBinaryURL: URL?
     private let subprocessRunner: SubprocessRunning
     private let solBinaryFinder: @Sendable () async -> String?
     private let browserOpener: @MainActor @Sendable (URL) -> Bool
-    private let expectedUVDigest: String
     private var installTask: Task<Void, Never>?
     private var modelsTask: Task<Void, Never>?
 
@@ -41,8 +37,7 @@ public final class SolstoneInstaller {
             uvBinaryURL: uvBinaryURL,
             subprocessRunner: subprocessRunner,
             solBinaryFinder: { await SolBinaryLocator.findSolBinary() },
-            browserOpener: { NSWorkspace.shared.open($0) },
-            expectedUVDigest: BundleConfig.bundledUVSha256
+            browserOpener: { NSWorkspace.shared.open($0) }
         )
     }
 
@@ -50,14 +45,12 @@ public final class SolstoneInstaller {
         uvBinaryURL: URL? = nil,
         subprocessRunner: SubprocessRunning = SubprocessRunner(),
         solBinaryFinder: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() },
-        browserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) },
-        expectedUVDigest: String = BundleConfig.bundledUVSha256
+        browserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) }
     ) {
         self.uvBinaryURL = uvBinaryURL
         self.subprocessRunner = subprocessRunner
         self.solBinaryFinder = solBinaryFinder
         self.browserOpener = browserOpener
-        self.expectedUVDigest = expectedUVDigest
     }
 
     internal func attach(appState: AppState) {
@@ -95,7 +88,6 @@ public final class SolstoneInstaller {
 
     private func runInstall(journalURL: URL, existingInstallChoice: ExistingInstallChoice) async {
         if existingInstallChoice == .createFresh {
-            guard verifyBundledUV() else { return }
             guard await runInstallSolstone() else { return }
         }
 
@@ -109,26 +101,6 @@ public final class SolstoneInstaller {
 
         guard await runSolSetup(solPath: solPath, journalURL: journalURL) else { return }
         await enterRegistering(solPath: solPath)
-    }
-
-    private func verifyBundledUV() -> Bool {
-        let uvURL = resolvedUVBinaryURL()
-        if Self.verifiedUVDigest == expectedUVDigest {
-            return true
-        }
-
-        guard let digest = sha256(of: uvURL) else {
-            failMain(.installSolstone(message: "bundled uv binary failed integrity check"), category: .permission)
-            return false
-        }
-
-        guard digest == expectedUVDigest else {
-            failMain(.installSolstone(message: "bundled uv binary failed integrity check"), category: .unknown)
-            return false
-        }
-
-        Self.verifiedUVDigest = digest
-        return true
     }
 
     private func resolvedUVBinaryURL() -> URL {
@@ -466,21 +438,6 @@ public final class SolstoneInstaller {
         case .failed:
             return "failed"
         }
-    }
-
-    private func sha256(of fileURL: URL) -> String? {
-        guard let fileHandle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
-        defer { try? fileHandle.close() }
-
-        var hasher = SHA256()
-        let chunkSize = 1024 * 1024
-        while true {
-            let chunk = fileHandle.readData(ofLength: chunkSize)
-            if chunk.isEmpty { break }
-            hasher.update(data: chunk)
-        }
-        let digest = hasher.finalize()
-        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     nonisolated internal static func categorize(stderr: String) -> ErrorCategory {

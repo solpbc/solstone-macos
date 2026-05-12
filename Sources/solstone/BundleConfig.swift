@@ -3,5 +3,4 @@ public enum BundleConfig {
     public static let solstonePinVersion = "0.3.0"
     public static let solstoneMinVersion = "0.3.0"
     public static let bundledUVVersion = "0.11.13"
-    public static let bundledUVSha256 = "196a58aa24da89144187670df7c407358028984537fbc2f8f2d8f7a2604980df"
 }

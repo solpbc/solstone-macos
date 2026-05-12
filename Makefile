@@ -73,7 +73,6 @@ generate-bundle-config: check-versions
 	        printf '    public static let solstonePinVersion = "%s"\n' "$(SOLSTONE_PIN_VERSION)"; \
 	        printf '    public static let solstoneMinVersion = "%s"\n' "$(SOLSTONE_MIN_VERSION)"; \
 	        printf '    public static let bundledUVVersion = "%s"\n' "$(UV_VERSION)"; \
-	        printf '    public static let bundledUVSha256 = "%s"\n' "$$SHA"; \
 	        printf '%s\n' '}'; \
 	    } > Sources/solstone/BundleConfig.swift
 	@echo "generated: Sources/solstone/BundleConfig.swift"

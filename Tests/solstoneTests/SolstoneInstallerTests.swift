@@ -260,15 +260,13 @@ struct SolstoneInstallerTests {
     private func makeInstaller(
         runner: FakeSubprocessRunner,
         uvURL: URL? = nil,
-        expectedDigest: String = BundleConfig.bundledUVSha256,
         browserSucceeds: Bool = true
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
             subprocessRunner: runner,
             solBinaryFinder: { "/usr/bin/sol" },
-            browserOpener: { _ in browserSucceeds },
-            expectedUVDigest: expectedDigest
+            browserOpener: { _ in browserSucceeds }
         )
     }
 
