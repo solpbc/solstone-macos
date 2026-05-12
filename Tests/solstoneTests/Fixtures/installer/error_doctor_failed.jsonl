@@ -1,0 +1,3 @@
+{"event":"setup.started","version":"0.2.1","mode":"non_interactive"}
+{"event":"step.failed","step":"doctor","error":{"code":"doctor_failed","message":"doctor failed","details":"","exit_code":2}}
+{"event":"setup.completed","status":"failed","failed_step":"doctor"}

@@ -1,0 +1,3 @@
+{"event":"setup.started","version":"0.2.1","mode":"non_interactive"}
+{"event":"step.failed","step":"journal","error":{"code":"journal_existing_blocked","message":"journal existing blocked","details":"","exit_code":2}}
+{"event":"setup.completed","status":"failed","failed_step":"journal"}

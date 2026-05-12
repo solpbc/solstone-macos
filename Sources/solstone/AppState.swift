@@ -51,6 +51,7 @@ public final class AppState {
     public let audioDeviceMonitor: AudioDeviceMonitor
     public private(set) var captureManager: CaptureManager!
     public private(set) var uploadCoordinator: UploadCoordinator!
+    public let installer = SolstoneInstaller()
     public let heartbeatService: HeartbeatService
     internal let solChatBridge: SolChatBridge
     public private(set) var config: AppConfig
@@ -393,6 +394,7 @@ public final class AppState {
         }
 
         // Set shared instance for app-wide access (e.g., termination handler)
+        installer.attach(appState: self)
         solChatTarget.state = self
         AppState.shared = self
     }

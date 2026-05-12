@@ -1,0 +1,3 @@
+{"event":"setup.started","version":"0.2.1","mode":"non_interactive"}
+{"event":"step.started","step":"doctor","index":1,"total":6}
+{"event":"step.completed","step":"doctor","outcome":"ok","duration_ms":1}

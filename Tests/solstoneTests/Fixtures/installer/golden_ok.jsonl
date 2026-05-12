@@ -1,0 +1,8 @@
+{"event":"setup.started","ts":"2026-05-11T20:00:00Z","version":"0.2.1","mode":"non_interactive"}
+{"event":"step.started","ts":"2026-05-11T20:00:00Z","step":"doctor","index":1,"total":6}
+{"event":"doctor.started","ts":"2026-05-11T20:00:00Z","version":"0.2.1"}
+{"event":"check.completed","ts":"2026-05-11T20:00:01Z","name":"python_version","severity":"blocker","status":"ok","detail":"Python version ok","fix":""}
+{"event":"doctor.completed","ts":"2026-05-11T20:00:01Z","status":"ok","duration_ms":120,"summary":{"total":17,"failed":0,"warnings":0,"skipped":0}}
+{"event":"step.completed","ts":"2026-05-11T20:00:01Z","step":"doctor","outcome":"ok","duration_ms":121}
+{"event":"step.completed","ts":"2026-05-11T20:00:04Z","step":"service","outcome":"ok","duration_ms":900}
+{"event":"setup.completed","ts":"2026-05-11T20:00:04Z","status":"ok","duration_ms":4000}

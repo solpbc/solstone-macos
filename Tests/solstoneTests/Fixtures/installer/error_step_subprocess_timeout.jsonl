@@ -1,0 +1,3 @@
+{"event":"setup.started","version":"0.2.1","mode":"non_interactive"}
+{"event":"step.failed","step":"skills","error":{"code":"step_subprocess_timeout","message":"step subprocess timeout","details":"","exit_code":1}}
+{"event":"setup.completed","status":"failed","failed_step":"skills"}

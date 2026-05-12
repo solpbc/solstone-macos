@@ -568,7 +568,7 @@ struct SettingsView: View {
         }
 
         // Find sol binary
-        let solPath = await findSolBinary()
+        let solPath = await SolBinaryLocator.findSolBinary()
         guard let solPath else {
             Logger.setup.info("local detect: sol binary not found")
             localStatus = .failed("sol CLI not found — try again")
@@ -632,40 +632,6 @@ struct SettingsView: View {
 
     // MARK: - Sol CLI Helpers
 
-    private func findSolBinary() async -> String? {
-        let preferred = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".local/bin/sol").path
-        if FileManager.default.fileExists(atPath: preferred) {
-            return preferred
-        }
-
-        return await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-                process.arguments = ["sol"]
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = FileHandle.nullDevice
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                    if process.terminationStatus == 0 {
-                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                        let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if let path, !path.isEmpty {
-                            continuation.resume(returning: path)
-                            return
-                        }
-                    }
-                    continuation.resume(returning: nil)
-                } catch {
-                    continuation.resume(returning: nil)
-                }
-            }
-        }
-    }
-
     private enum SolResult {
         case success(String)
         case failure(String)
@@ -677,6 +643,7 @@ struct SettingsView: View {
         let prefix: String
     }
 
+    // TODO: migrate to SubprocessRunner
     private func runSolObserverCreate(solPath: String) async -> SolResult {
         await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
