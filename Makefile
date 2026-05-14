@@ -1,6 +1,7 @@
 .PHONY: build release release-universal run clean test integration-test snapshot bundle bundle-universal install setup install-app open reset reset-full cert allow check-cert icons check-icons-deps check-dev-deps \
-        signing-check unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg \
-        vendor-uv generate-bundle-config check-versions supply-chain-check release-dmg-smoke brand-sync
+        signing-check notary-restore unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg \
+        vendor-uv generate-bundle-config check-versions supply-chain-check release-dmg-smoke brand-sync \
+        release-preflight bump-release
 
 # Default goal when running bare `make` — build the project. brand-sync is
 # opt-in (run it manually when the brand spec updates).
@@ -26,7 +27,15 @@ DEVELOPER_ID_INSTALLER ?= Developer ID Installer: sol pbc (7QCG8V4M6H)
 NOTARY_PROFILE         ?= sol-pbc-notary
 SIGNING_KEYCHAIN       ?= $(HOME)/Library/Keychains/sol-signing.keychain-db
 SIGNING_KC_PASS_FILE   ?= $(HOME)/.config/sol-pbc/signing/keychain-password
+# ASC API key + identifiers used by `make notary-restore` to rebuild the
+# notarytool keychain profile when it evicts (the profile lives inside
+# sol-signing.keychain-db and is reconstructable from these three inputs).
+# Mirrors cso/vault/credentials/apple-asc-api-key.{p8,json} in the extro repo.
+ASC_API_KEY_FILE       ?= $(HOME)/.config/sol-pbc/signing/apple-asc-api-key.p8
+ASC_API_KEY_ID         ?= SNP7CMKMZ5
+ASC_API_ISSUER         ?= 0fe42f6d-2c46-4f09-a9c2-152b20b3ea19
 DIST_VERSION           := $(shell python3 -c "import plistlib; print(plistlib.load(open('Sources/solstone/Info.plist','rb'))['CFBundleShortVersionString'])" 2>/dev/null || echo 0.0.0)
+DIST_BUILD             := $(shell python3 -c "import plistlib; print(plistlib.load(open('Sources/solstone/Info.plist','rb'))['CFBundleVersion'])" 2>/dev/null || echo 0)
 DMG_NAME               ?= solstone-$(DIST_VERSION).dmg
 SPARKLE_ARTIFACT_DIR   ?= .build/artifacts/sparkle/Sparkle
 SPARKLE_FRAMEWORK      ?= $(SPARKLE_ARTIFACT_DIR)/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
@@ -193,6 +202,9 @@ bundle-universal: release-universal
 # =======================================================================
 
 # Read-only check that Developer ID certs + notary profile are ready.
+# If the notary profile has evicted (recurring failure mode), auto-heal
+# from the local ASC API key. Cert checks remain hard-fail because cert
+# loss is a different class of problem and warrants founder attention.
 signing-check:
 	@security find-identity -v -p codesigning | grep -q '"$(DEVELOPER_ID_APP)"' || \
 		{ echo "error: '$(DEVELOPER_ID_APP)' not found in any keychain on the search list"; \
@@ -201,10 +213,100 @@ signing-check:
 	@security find-identity -v | grep -q '"$(DEVELOPER_ID_INSTALLER)"' || \
 		{ echo "error: '$(DEVELOPER_ID_INSTALLER)' not found"; exit 1; }
 	@xcrun notarytool history --keychain-profile "$(NOTARY_PROFILE)" --keychain "$(SIGNING_KEYCHAIN)" > /dev/null 2>&1 || \
-		{ echo "error: notarytool profile '$(NOTARY_PROFILE)' not configured in $(SIGNING_KEYCHAIN)"; \
-		  echo "       store with: xcrun notarytool store-credentials '$(NOTARY_PROFILE)' --key <p8> --key-id <id> --issuer <issuer> --keychain $(SIGNING_KEYCHAIN)"; \
-		  exit 1; }
+		{ echo "notarytool profile '$(NOTARY_PROFILE)' missing — auto-restoring from $(ASC_API_KEY_FILE)…"; \
+		  $(MAKE) -s notary-restore; }
 	@echo "✓ Developer ID certs + notary profile ready"
+
+# Rebuild the notarytool keychain profile from the local ASC API key.
+# Idempotent — safe to re-run. Use when `signing-check` fails on the
+# notary profile (most common failure mode: profile evicts after OS
+# updates, keychain rotation, or other tool churn). The .p8 + key-id +
+# issuer-id are the source of truth; the profile is reconstructable
+# from them.
+notary-restore: unlock-signing
+	@test -f "$(ASC_API_KEY_FILE)" || \
+		{ echo "error: ASC API key missing at $(ASC_API_KEY_FILE)"; \
+		  echo "       copy from extro vault: scp cso/vault/credentials/apple-asc-api-key.p8 pro5e.local:$(ASC_API_KEY_FILE) && ssh pro5e.local chmod 600 $(ASC_API_KEY_FILE)"; \
+		  exit 1; }
+	@xcrun notarytool store-credentials "$(NOTARY_PROFILE)" \
+		--key "$(ASC_API_KEY_FILE)" \
+		--key-id "$(ASC_API_KEY_ID)" \
+		--issuer "$(ASC_API_ISSUER)" \
+		--keychain "$(SIGNING_KEYCHAIN)" >/dev/null
+	@echo "✓ notarytool profile '$(NOTARY_PROFILE)' restored in $(SIGNING_KEYCHAIN)"
+
+# Pre-flight gate before kicking off `make release-dmg`. Catches the
+# 2026-05-12 ghost-fix scenario where in-session swift edits were live on
+# disk during the cold smoke but never committed — a rebuild would have
+# shipped without them. Verifies: working tree clean, on a branch tracking
+# origin, no stale signing/build processes that might hold a keychain
+# prompt open, signing-check (which auto-heals notary profile).
+release-preflight: signing-check
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "error: working tree has uncommitted changes — commit or stash before release"; \
+		git status --short; \
+		exit 1; \
+	fi
+	@STALE="$$(ps aux | grep -E 'tmux-run|notarytool|sign-and|wheel-macos|codesign' | grep -v grep | grep -v 'release-preflight' || true)"; \
+		[ -z "$$STALE" ] || { \
+			echo "error: stale signing/build processes — one may be holding a keychain prompt:"; \
+			echo "$$STALE"; \
+			echo "       investigate with tmux capture-pane, then 'pkill -9 -f <pattern>'"; \
+			exit 1; \
+		}
+	@BRANCH="$$(git rev-parse --abbrev-ref HEAD)"; \
+		[ "$$BRANCH" = "main" ] || { echo "warn: releasing from non-main branch '$$BRANCH'"; }
+	@AHEAD="$$(git rev-list --count @{u}..HEAD 2>/dev/null || echo 0)"; \
+		[ "$$AHEAD" = "0" ] || { echo "warn: $$AHEAD local commit(s) ahead of upstream — push before release"; }
+	@echo "✓ release pre-flight clean: tree clean, no stale processes, signing ready"
+
+# Bump the .app's user-visible version + the bundled-solstone pin in one
+# shot. Sole entry point for "what changes for a new release" — keeps
+# Info.plist, Makefile pins, BundleConfig, and CHANGELOG.md in sync so
+# no piece gets forgotten.
+#
+# Usage: make bump-release VERSION=1.1.4 BUILD=6 SOLSTONE=0.3.3
+#   VERSION  required, semver — sets CFBundleShortVersionString
+#   BUILD    required, integer — sets CFBundleVersion (must be > current)
+#   SOLSTONE optional — sets SOLSTONE_PIN_VERSION + SOLSTONE_MIN_VERSION;
+#            omit to keep the current pin.
+#
+# Side effects: Info.plist updated via plutil, Makefile pins updated via
+# sed, BundleConfig.swift regenerated, CHANGELOG.md scaffold prepended
+# for the new version (date defaults to today). Does NOT commit — review
+# the diff, fill in the CHANGELOG body, then commit + push.
+bump-release:
+	@test -n "$(VERSION)" || { echo "error: VERSION=... required (e.g. VERSION=1.1.4)"; exit 1; }
+	@test -n "$(BUILD)"   || { echo "error: BUILD=... required (e.g. BUILD=6)"; exit 1; }
+	@CURRENT_BUILD="$(DIST_BUILD)"; \
+		python3 -c "import sys; sys.exit(0 if int('$(BUILD)') > int('$$CURRENT_BUILD') else 1)" || \
+		{ echo "error: BUILD=$(BUILD) must be strictly greater than current $$CURRENT_BUILD (Sparkle uses CFBundleVersion for 'is newer?')"; exit 1; }
+	@/usr/bin/plutil -replace CFBundleShortVersionString -string "$(VERSION)" Sources/solstone/Info.plist
+	@/usr/bin/plutil -replace CFBundleVersion -string "$(BUILD)" Sources/solstone/Info.plist
+	@echo "✓ Info.plist: CFBundleShortVersionString=$(VERSION), CFBundleVersion=$(BUILD)"
+	@if [ -n "$(SOLSTONE)" ]; then \
+		sed -i '' "s/^SOLSTONE_PIN_VERSION ?= .*/SOLSTONE_PIN_VERSION ?= $(SOLSTONE)/" Makefile; \
+		sed -i '' "s/^SOLSTONE_MIN_VERSION ?= .*/SOLSTONE_MIN_VERSION ?= $(SOLSTONE)/" Makefile; \
+		echo "✓ Makefile pins: SOLSTONE_PIN_VERSION = $(SOLSTONE)"; \
+		$(MAKE) -s SOLSTONE_PIN_VERSION="$(SOLSTONE)" SOLSTONE_MIN_VERSION="$(SOLSTONE)" generate-bundle-config; \
+	else \
+		$(MAKE) -s generate-bundle-config; \
+	fi
+	@if grep -q "^## \[$(VERSION)\]" CHANGELOG.md; then \
+		echo "note: CHANGELOG.md already has an entry for $(VERSION); leaving it alone"; \
+	else \
+		TODAY="$$(date +%Y-%m-%d)"; \
+		awk -v v="$(VERSION)" -v d="$$TODAY" 'NR==1 {print; next} /^## \[/ && !inserted {print "## [" v "] - " d "\n\n### Added\n- (describe new user-visible additions)\n\n### Changed\n- (describe behavior changes)\n\n### Fixed\n- (describe bug fixes)\n\n"; inserted=1} {print}' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md; \
+		echo "✓ CHANGELOG.md: scaffolded entry for [$(VERSION)] — $$TODAY (FILL IN BEFORE COMMIT)"; \
+	fi
+	@echo ""
+	@echo "next steps:"
+	@echo "  1. edit CHANGELOG.md — replace scaffold bullets with real release notes"
+	@echo "  2. git diff to review"
+	@echo "  3. git add Sources/solstone/Info.plist Makefile Sources/solstone/BundleConfig.swift CHANGELOG.md"
+	@echo "  4. git commit -m 'release: bump to $(VERSION) (build $(BUILD))'"
+	@echo "  5. git push origin main"
+	@echo "  6. make release-preflight && make release-dmg"
 
 # Unlock the sol-signing keychain and add it to the session search list.
 # Fresh SSH sessions don't always inherit the user-domain search list, so
