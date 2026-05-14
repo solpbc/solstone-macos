@@ -10,6 +10,11 @@ import Foundation
 public final class AudioDeviceMonitor {
     public internal(set) var availableDevices: [AudioInputDevice] = []
 
+    /// When false (default), iPhone/Continuity microphones are filtered out at enumeration.
+    /// Set from `AppConfig.includeContinuityMicrophones` after construction and call
+    /// `refreshDevices()` to apply the change.
+    public var includeContinuity: Bool = false
+
     /// Storage for the listener block - nonisolated for deinit access
     @ObservationIgnored
     private nonisolated(unsafe) var listenerBlock: AudioObjectPropertyListenerBlock?
@@ -57,7 +62,7 @@ public final class AudioDeviceMonitor {
     }
 
     public func refreshDevices() {
-        let newDevices = MicrophoneMonitor.listInputDevices()
+        let newDevices = MicrophoneMonitor.listInputDevices(includeContinuity: includeContinuity)
         let newUIDs = Set(newDevices.map { $0.uid })
 
         // Compute added and removed devices

@@ -291,13 +291,11 @@ struct SettingsView: View {
                 // On macOS 26, SCShareableContent.current re-triggers the OS dialog every call
                 // when no TCC entry exists yet — i.e. while the user hasn't granted yet.
                 if CGPreflightScreenCaptureAccess() {
-                    do {
-                        _ = try await SCShareableContent.current
+                    if await PermissionChecker.checkScreenRecording() {
                         restartCountdown = 5
                         return
-                    } catch {
-                        // permission not yet granted
                     }
+                    // else: permission not yet granted
                 }
                 try? await Task.sleep(for: .seconds(1.5))
             }
@@ -764,8 +762,33 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
+            GroupBox("iPhone microphone (continuity)") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("include iPhone microphones", isOn: includeContinuityBinding)
+                        .help("off by default. iPhone mics often disconnect mid-call and produce repeated notifications.")
+
+                    Text("when off, nearby iPhones won't be offered as a microphone source.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+
             Spacer()
         }
+    }
+
+    private var includeContinuityBinding: Binding<Bool> {
+        Binding(
+            get: { appState.config.includeContinuityMicrophones },
+            set: { newValue in
+                var config = appState.config
+                config.includeContinuityMicrophones = newValue
+                appState.updateConfig(config)
+                appState.audioDeviceMonitor.includeContinuity = newValue
+                appState.audioDeviceMonitor.refreshDevices()
+            }
+        )
     }
 
     private var microphoneGainBinding: Binding<Float> {

@@ -81,7 +81,9 @@ public final class MicrophoneMonitor: @unchecked Sendable {
     }
 
     /// Lists all available audio input devices
-    public static func listInputDevices() -> [AudioInputDevice] {
+    /// - Parameter includeContinuity: When false (default), iPhone/Continuity microphones are
+    ///   excluded. They flap on/off and produce repeated OS notifications, so they're opt-in.
+    public static func listInputDevices(includeContinuity: Bool = false) -> [AudioInputDevice] {
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -129,6 +131,10 @@ public final class MicrophoneMonitor: @unchecked Sendable {
             let manufacturer = getDeviceManufacturer(deviceID: deviceID)
             let sampleRate = getDeviceSampleRate(deviceID: deviceID) ?? 48000.0
             let transportType = getDeviceTransportType(deviceID: deviceID)
+
+            if !includeContinuity, isContinuityDevice(name: name, manufacturer: manufacturer, transportType: transportType) {
+                return nil
+            }
 
             return AudioInputDevice(
                 id: deviceID,
@@ -342,6 +348,20 @@ public final class MicrophoneMonitor: @unchecked Sendable {
         guard status == noErr else { return nil }
 
         return sampleRate
+    }
+
+    /// Identifies iPhone/iPad Continuity microphones by transport type or name heuristic.
+    /// macOS doesn't reliably report `ContinuityCapture*` transport types for all device variants
+    /// (some versions report builtin/usb/unknown), so name matching is used as a fallback.
+    private static func isContinuityDevice(name: String, manufacturer: String?, transportType: AudioTransportType) -> Bool {
+        if transportType == .continuityWired || transportType == .continuityWireless {
+            return true
+        }
+        let lowered = name.lowercased()
+        if lowered.contains("iphone") || lowered.contains("ipad") {
+            return true
+        }
+        return false
     }
 
     private static func getDeviceTransportType(deviceID: AudioDeviceID) -> AudioTransportType {

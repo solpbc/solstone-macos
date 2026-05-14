@@ -279,6 +279,14 @@ public final class AppState {
             }
         )
 
+        // Apply Continuity-mic filter, then re-enumerate so the iPhone is excluded immediately
+        // (default-false enumeration already ran in AudioDeviceMonitor.init, but config could
+        // request inclusion — apply it before any onDeviceChange callbacks fire).
+        audioDeviceMonitor.includeContinuity = config.includeContinuityMicrophones
+        if config.includeContinuityMicrophones {
+            audioDeviceMonitor.refreshDevices()
+        }
+
         // Apply debug segments setting if enabled
         if config.debugSegments {
             SegmentWriter.segmentDuration = 60

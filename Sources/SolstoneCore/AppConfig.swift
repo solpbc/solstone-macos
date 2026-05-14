@@ -76,6 +76,7 @@ public struct AppConfig: Sendable {
         static let microphoneGain = "microphoneGain"
         static let silenceMusic = "silenceMusic"
         static let solInitiatedChatNotificationsEnabled = "solInitiatedChatNotificationsEnabled"
+        static let includeContinuityMicrophones = "includeContinuityMicrophones"
         static let didMigrateFromJSON = "didMigrateFromJSON"
     }
 
@@ -127,6 +128,11 @@ public struct AppConfig: Sendable {
     /// When true, show system notifications for sol-initiated chat requests. Default: false
     public var solInitiatedChatNotificationsEnabled: Bool
 
+    /// When true, include iPhone/Continuity microphones in capture. Default: false.
+    /// iPhone mics often disconnect mid-call and produce repeated OS notifications, so they are
+    /// excluded by default.
+    public var includeContinuityMicrophones: Bool
+
     /// Default exclusions written on first run
     public static let defaultExclusions: [AppEntry] = [
         AppEntry(bundleID: "com.1password.1password", name: "1Password"),
@@ -147,7 +153,8 @@ public struct AppConfig: Sendable {
         debugKeepRejectedAudio: Bool = false,
         microphoneGain: Float = 2.0,
         silenceMusic: Bool = true,
-        solInitiatedChatNotificationsEnabled: Bool = Defaults.solInitiatedChatNotificationsEnabled
+        solInitiatedChatNotificationsEnabled: Bool = Defaults.solInitiatedChatNotificationsEnabled,
+        includeContinuityMicrophones: Bool = false
     ) {
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
@@ -162,6 +169,7 @@ public struct AppConfig: Sendable {
         self.microphoneGain = microphoneGain
         self.silenceMusic = silenceMusic
         self.solInitiatedChatNotificationsEnabled = solInitiatedChatNotificationsEnabled
+        self.includeContinuityMicrophones = includeContinuityMicrophones
     }
 
     // MARK: - Load/Save
@@ -209,7 +217,8 @@ public struct AppConfig: Sendable {
             microphoneGain: defaults.object(forKey: Keys.microphoneGain) as? Float ?? 2.0,
             silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true,
             solInitiatedChatNotificationsEnabled: defaults.object(forKey: Keys.solInitiatedChatNotificationsEnabled) as? Bool
-                ?? Defaults.solInitiatedChatNotificationsEnabled
+                ?? Defaults.solInitiatedChatNotificationsEnabled,
+            includeContinuityMicrophones: defaults.object(forKey: Keys.includeContinuityMicrophones) as? Bool ?? false
         )
         return config
     }
@@ -265,6 +274,7 @@ public struct AppConfig: Sendable {
         defaults.set(microphoneGain, forKey: Keys.microphoneGain)
         defaults.set(silenceMusic, forKey: Keys.silenceMusic)
         defaults.set(solInitiatedChatNotificationsEnabled, forKey: Keys.solInitiatedChatNotificationsEnabled)
+        defaults.set(includeContinuityMicrophones, forKey: Keys.includeContinuityMicrophones)
     }
 
     // MARK: - Migration from JSON
