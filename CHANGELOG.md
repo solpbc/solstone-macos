@@ -5,6 +5,18 @@ All notable changes to Solstone Capture will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-05-14
+
+### Added
+- Failure card now surfaces a **show-details** disclosure with the captured subprocess log (uv stderr, sol setup rendered transcript, or observer-create output) — monospaced, selectable, copyable. Diagnosing a failed install no longer requires Console.app.
+
+### Changed
+- Bundled solstone backend pinned to **0.3.2**, which makes `sol doctor` PATH-independent. Fresh-Mac installs no longer need a launchctl-PATH workaround.
+- `uv tool install` now passes `--refresh` so freshly published solstone versions install reliably from the first attempt (no stale PyPI index cache).
+
+### Fixed
+- Subprocess environment inheritance: `Foundation.Process.environment = nil` did not deliver the .app's PATH to subprocesses in practice. The installer now passes `ProcessInfo.processInfo.environment` explicitly. This was the root cause of `npx_on_path` / `journal_sync` / `port_5015_free` doctor failures in earlier installer builds.
+
 ## [1.1.2] - 2026-05-04
 
 ### Added

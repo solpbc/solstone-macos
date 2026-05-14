@@ -2,66 +2,66 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>
-    <string>solstone</string>
-    <key>CFBundleDisplayName</key>
-    <string>solstone</string>
-    <key>CFBundleIdentifier</key>
-    <string>app.solstone.observer</string>
-    <key>CFBundleVersion</key>
-    <string>4</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.1.2</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleExecutable</key>
-    <string>solstone</string>
-    <key>SUFeedURL</key>
-    <string>https://updates.solstone.app/solstone-macos/appcast.xml</string>
-    <key>SUPublicEDKey</key>
-    <string>5EP/CLtfMrN2qC8zWsHeIWcPVPjqFH7hW4m8cGX7Qg0=</string>
-    <key>SUEnableAutomaticChecks</key>
-    <true/>
-    <key>SUScheduledCheckInterval</key>
-    <integer>86400</integer>
-    <key>SUAllowsAutomaticUpdates</key>
-    <true/>
-    <key>SUAutomaticallyUpdate</key>
-    <false/>
-    <key>SUShowReleaseNotes</key>
-    <true/>
-    <key>SUEnableSystemProfiling</key>
-    <false/>
-    <key>SUSendsSystemProfile</key>
-    <false/>
-    <key>SUEnableJavaScript</key>
-    <false/>
-    <key>LSMinimumSystemVersion</key>
-    <string>15.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.productivity</string>
-    <key>NSScreenCaptureUsageDescription</key>
-    <string>solstone observer takes in your screens along with you to build your personal memory. what it sees stays on your mac and goes only to your configured server — nothing else.</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>solstone observer hears conversations and meetings so you can find them later. audio stays on your device and goes only to your server.</string>
-    <key>NSSystemAudioRecordingUsageDescription</key>
-    <string>solstone observer hears system audio from calls and media to include it in your memory. this requires system audio permission.</string>
-    <key>NSSpeechRecognitionUsageDescription</key>
-    <string>solstone observer uses on-device speech recognition to identify audio containing conversation, so only meaningful audio is kept.</string>
-    <key>NSLocalNetworkUsageDescription</key>
-    <string>solstone observer connects to your local observer server to send your memories.</string>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
-    </dict>
-    <key>NSHumanReadableCopyright</key>
-    <string>© 2026 sol pbc. all rights reserved.</string>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>solstone</string>
+	<key>CFBundleExecutable</key>
+	<string>solstone</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>app.solstone.observer</string>
+	<key>CFBundleName</key>
+	<string>solstone</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.1.3</string>
+	<key>CFBundleVersion</key>
+	<string>5</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>15.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 sol pbc. all rights reserved.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>solstone observer connects to your local observer server to send your memories.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>solstone observer hears conversations and meetings so you can find them later. audio stays on your device and goes only to your server.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>solstone observer takes in your screens along with you to build your personal memory. what it sees stays on your mac and goes only to your configured server — nothing else.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>solstone observer uses on-device speech recognition to identify audio containing conversation, so only meaningful audio is kept.</string>
+	<key>NSSystemAudioRecordingUsageDescription</key>
+	<string>solstone observer hears system audio from calls and media to include it in your memory. this requires system audio permission.</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableJavaScript</key>
+	<false/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://updates.solstone.app/solstone-macos/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>5EP/CLtfMrN2qC8zWsHeIWcPVPjqFH7hW4m8cGX7Qg0=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUSendsSystemProfile</key>
+	<false/>
+	<key>SUShowReleaseNotes</key>
+	<true/>
 </dict>
 </plist>
