@@ -181,6 +181,7 @@ struct InstallerSetupWindow: View {
 
     @State private var journalURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("journal")
     @State private var showLogPerRow: [String: Bool] = [:]
+    @State private var failureDetailsExpanded: Bool = true
 
     #if DEBUG
     @State private var debugFixture: DebugFixture = .live
@@ -270,6 +271,23 @@ struct InstallerSetupWindow: View {
         VStack(alignment: .leading, spacing: 16) {
             titleBlock(title: InstallerCopy.windowTitle, subtitle: failureMessage(failedState))
             rowsContent(showModelsWhenActive: true)
+            if let logExcerpt = installer.lastFailureLog, !logExcerpt.isEmpty {
+                DisclosureGroup(isExpanded: $failureDetailsExpanded) {
+                    ScrollView {
+                        Text(logExcerpt)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                    }
+                    .frame(minHeight: 120, maxHeight: 280)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                } label: {
+                    Text(failureDetailsExpanded ? InstallerCopy.hideLogLabel : InstallerCopy.showLogLabel)
+                        .font(.caption)
+                }
+            }
             Button(InstallerCopy.retryButton) {
                 onInstall(journalURL, .createFresh)
             }

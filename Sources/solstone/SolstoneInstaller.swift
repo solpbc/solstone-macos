@@ -12,6 +12,7 @@ public final class SolstoneInstaller {
     public internal(set) var main: MainState = .detecting
     public internal(set) var modelsProgress: ModelsProgress = .idle
     public internal(set) var lastFailureCategory: ErrorCategory?
+    public internal(set) var lastFailureLog: String?
 
     private weak var appState: AppState?
     private let uvBinaryURL: URL?
@@ -71,6 +72,7 @@ public final class SolstoneInstaller {
         }
 
         lastFailureCategory = nil
+        lastFailureLog = nil
         modelsProgress = .idle
         installTask = Task { [weak self] in
             guard let self else { return }
@@ -116,7 +118,7 @@ public final class SolstoneInstaller {
         do {
             result = try await subprocessRunner.run(
                 executable: resolvedUVBinaryURL(),
-                arguments: ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--reinstall"],
+                arguments: ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--reinstall", "--refresh"],
                 environment: nil,
                 stdoutHandler: { [weak self, output] data in
                     Self.append(data, to: output, stream: .stdout)
@@ -132,18 +134,20 @@ public final class SolstoneInstaller {
                 }
             )
         } catch {
-            failMain(.installSolstone(message: error.localizedDescription), category: .subprocessLaunch)
+            failMain(.installSolstone(message: error.localizedDescription), category: .subprocessLaunch, logExcerpt: "uv tool install subprocess could not launch: \(error.localizedDescription)")
             return false
         }
 
         let stderr = await output.stderrString()
+        let stdoutText = await output.stdoutString()
         if result.exitCode == 0 {
             return true
         }
 
         failMain(
             .installSolstone(message: lastUsefulLine(stderr) ?? "uv tool install solstone failed"),
-            category: Self.categorize(stderr: stderr)
+            category: Self.categorize(stderr: stderr),
+            logExcerpt: Self.lastUsefulLog(stdout: stdoutText, stderr: stderr)
         )
         return false
     }
@@ -170,7 +174,7 @@ public final class SolstoneInstaller {
                 }
             )
         } catch {
-            failMain(.solSetup(errorCode: nil, message: error.localizedDescription), category: .subprocessLaunch)
+            failMain(.solSetup(errorCode: nil, message: error.localizedDescription), category: .subprocessLaunch, logExcerpt: "sol setup subprocess could not launch: \(error.localizedDescription)")
             return false
         }
 
@@ -180,7 +184,7 @@ public final class SolstoneInstaller {
         setMain(.runningSolSetup(parsed.progress))
 
         if let duplicateMessage = parsed.duplicateSetupCompletedMessage {
-            failMain(.solSetup(errorCode: nil, message: duplicateMessage), category: .unknown)
+            failMain(.solSetup(errorCode: nil, message: duplicateMessage), category: .unknown, logExcerpt: parsed.progress.renderedLog)
             return false
         }
 
@@ -193,13 +197,14 @@ public final class SolstoneInstaller {
                 ?? "sol setup failed"
             failMain(
                 .solSetup(errorCode: failure?.errorCode, message: message),
-                category: Self.categorize(stderr: stderr)
+                category: Self.categorize(stderr: stderr),
+                logExcerpt: parsed.progress.renderedLog
             )
             return false
         }
 
         guard parsed.setupCompletedStatus == "ok" else {
-            failMain(.solSetup(errorCode: nil, message: "setup did not emit setup.completed"), category: .unknown)
+            failMain(.solSetup(errorCode: nil, message: "setup did not emit setup.completed"), category: .unknown, logExcerpt: parsed.progress.renderedLog)
             return false
         }
 
@@ -247,14 +252,14 @@ public final class SolstoneInstaller {
                 }
             )
         } catch {
-            failMain(.registering(message: error.localizedDescription), category: .subprocessLaunch)
+            failMain(.registering(message: error.localizedDescription), category: .subprocessLaunch, logExcerpt: "sol observer create subprocess could not launch: \(error.localizedDescription)")
             return false
         }
 
         let stdout = await output.stdoutData()
         let stderr = await output.stderrString()
         guard result.exitCode == 0 else {
-            failMain(.registering(message: lastUsefulLine(stderr) ?? "observer create failed"), category: Self.categorize(stderr: stderr))
+            failMain(.registering(message: lastUsefulLine(stderr) ?? "observer create failed"), category: Self.categorize(stderr: stderr), logExcerpt: Self.lastUsefulLog(stdout: String(decoding: stdout, as: UTF8.self), stderr: stderr))
             return false
         }
 
@@ -263,7 +268,7 @@ public final class SolstoneInstaller {
             persistObserverKey(response.key)
             return true
         } catch {
-            failMain(.registering(message: "could not parse JSON response"), category: .unknown)
+            failMain(.registering(message: "could not parse JSON response"), category: .unknown, logExcerpt: String(decoding: stdout, as: UTF8.self))
             return false
         }
     }
@@ -320,6 +325,9 @@ public final class SolstoneInstaller {
             renderer.append(parsedLine)
 
             guard case .event(let event) = parsedLine else {
+                if !rawLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Logger.setup.debug("setup-jsonl[unparsed]: \(rawLine, privacy: .public)")
+                }
                 continue
             }
 
@@ -328,13 +336,31 @@ public final class SolstoneInstaller {
                 currentStep = step
                 stepIndex = index
                 stepTotal = total
+                let idx = index.map(String.init) ?? "?"
+                let tot = total.map(String.init) ?? "?"
+                Logger.setup.info("setup-step started: \(step, privacy: .public) (\(idx, privacy: .public)/\(tot, privacy: .public))")
             case .stepFailed(let step, let errorCode, let message, _, _):
                 lastStepFailure = StepFailure(step: step, errorCode: errorCode, message: message)
+                let s = step ?? "<unknown>"
+                let code = errorCode ?? "<none>"
+                Logger.setup.warning("setup-step failed: \(s, privacy: .public) code=\(code, privacy: .public) msg=\(message, privacy: .public)")
             case .setupCompleted(let status, _, _):
                 if setupCompletedStatus != nil {
                     duplicateMessage = "setup emitted duplicate setup.completed"
                 }
                 setupCompletedStatus = status
+                Logger.setup.info("setup-completed: status=\(status, privacy: .public)")
+            case .doctorCompleted(let status, _, let summary):
+                if let summary {
+                    Logger.setup.info("doctor-completed: status=\(status, privacy: .public) failed=\(summary.failed) warnings=\(summary.warnings) skipped=\(summary.skipped)")
+                } else {
+                    Logger.setup.info("doctor-completed: status=\(status, privacy: .public) (no summary)")
+                }
+            case .checkCompleted(let name, _, let status, let detail, _):
+                if status == "failed" || status == "warning" {
+                    let det = detail ?? ""
+                    Logger.setup.warning("doctor-check \(status, privacy: .public): \(name, privacy: .public) - \(det, privacy: .public)")
+                }
             default:
                 break
             }
@@ -370,9 +396,33 @@ public final class SolstoneInstaller {
         Logger.setup.info("installer: \(self.stateName(newState), privacy: .public)")
     }
 
-    private func failMain(_ failedState: FailedState, category: ErrorCategory) {
+    private func failMain(_ failedState: FailedState, category: ErrorCategory, logExcerpt: String? = nil) {
         lastFailureCategory = category
+        lastFailureLog = (logExcerpt?.isEmpty == false) ? logExcerpt : nil
+        let msg = Self.shortMessage(failedState)
+        Logger.setup.warning("installer: failed (\(Self.failedStateName(failedState), privacy: .public)): \(msg, privacy: .public)")
+        if let log = lastFailureLog {
+            Logger.setup.warning("installer: failure log excerpt:\n\(log, privacy: .public)")
+        }
         setMain(.failed(failedState))
+    }
+
+    nonisolated private static func shortMessage(_ failedState: FailedState) -> String {
+        switch failedState {
+        case .installSolstone(let message): return message
+        case .solSetup(let code, let message): return code.map { "[\($0)] \(message)" } ?? message
+        case .installModels(let message): return message
+        case .registering(let message): return message
+        }
+    }
+
+    nonisolated private static func failedStateName(_ failedState: FailedState) -> String {
+        switch failedState {
+        case .installSolstone: return "installSolstone"
+        case .solSetup: return "solSetup"
+        case .installModels: return "installModels"
+        case .registering: return "registering"
+        }
     }
 
     private func appendRawProgress(_ data: Data, phase: String, target: ProgressTarget, includeInTail: Bool) {
@@ -464,6 +514,17 @@ public final class SolstoneInstaller {
         }
         return .unknown
     }
+
+    nonisolated internal static func lastUsefulLog(stdout: String, stderr: String) -> String? {
+        // Prefer the tail of stderr (errors usually here), fall back to stdout tail.
+        let combined = (stderr.isEmpty ? stdout : stderr)
+            .components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .suffix(20)
+        let joined = combined.joined(separator: "\n")
+        return joined.isEmpty ? nil : joined
+    }
+
 
     nonisolated private static func timeoutLooksNetworkRelated(_ value: String) -> Bool {
         guard value.contains("timeout") else { return false }

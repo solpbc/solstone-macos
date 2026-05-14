@@ -38,7 +38,15 @@ internal final class SubprocessRunner: SubprocessRunning {
             let process = Process()
             process.executableURL = executable
             process.arguments = arguments
-            process.environment = environment
+            // Explicit inheritance: when caller passes nil, fall back to the .app's
+            // own environment. process.environment = nil documents as "inherit" but
+            // in Foundation.Process under some launch contexts an empty/minimal env
+            // is delivered to the subprocess instead. Pass the calling process's env
+            // explicitly to guarantee PATH and friends survive into the subprocess.
+            // (Verified 2026-05-12 during solstone-macos installer cold smoke —
+            // sol doctor checks for npx/ioreg/lsof failed because PATH arrived
+            // empty in the subprocess despite the parent .app having a rich PATH.)
+            process.environment = environment ?? ProcessInfo.processInfo.environment
 
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
