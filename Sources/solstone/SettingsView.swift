@@ -52,6 +52,7 @@ struct SettingsView: View {
     @State private var localStatus: LocalStatus = .idle
     @State private var observerURL = ""
     @State private var observerKey = ""
+    @State private var serviceMode: ServiceMode = .bundled
 
     enum TestResult: Equatable {
         case none
@@ -64,6 +65,11 @@ struct SettingsView: View {
         case detecting
         case connected
         case failed(String)
+    }
+
+    enum ServiceMode: Hashable {
+        case bundled
+        case external
     }
 
     private static let localServerURL = "http://localhost:5015"
@@ -434,6 +440,24 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var serviceSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Picker("service mode", selection: $serviceMode) {
+                Text("bundled").tag(ServiceMode.bundled)
+                Text("external").tag(ServiceMode.external)
+            }
+            .pickerStyle(.segmented)
+
+            switch serviceMode {
+            case .bundled:
+                BundledServiceCard(appState: appState)
+            case .external:
+                externalServiceSection
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var externalServiceSection: some View {
         GroupBox("service") {
             VStack(alignment: .leading, spacing: 12) {
                 Link("setup guide: solstone.app/install", destination: URL(string: "https://solstone.app/install")!)

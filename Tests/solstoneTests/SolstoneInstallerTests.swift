@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-import CryptoKit
 import Foundation
 import Testing
 @testable import solstone
@@ -35,8 +34,7 @@ struct SolstoneInstallerTests {
             runner.enqueue("install-models", .success())
             let installer = makeInstaller(
                 runner: runner,
-                uvURL: uvURL,
-                expectedDigest: sha256(Data("uv\n".utf8))
+                uvURL: uvURL
             )
             defer { installer.cancel() }
 
@@ -75,11 +73,9 @@ struct SolstoneInstallerTests {
         try await launchFailureUsesLocalizedDescription()
     }
 
-    @Test func state4_concurrentObserverAndBrowser() async throws {
-        try await assertState4(observerSucceeds: true, browserSucceeds: true, expectsDone: true)
-        try await assertState4(observerSucceeds: true, browserSucceeds: false, expectsDone: true)
-        try await assertState4(observerSucceeds: false, browserSucceeds: true, expectsDone: false)
-        try await assertState4(observerSucceeds: false, browserSucceeds: false, expectsDone: false)
+    @Test func state4_observerResultDrivesTerminalState() async throws {
+        try await assertState4(observerSucceeds: true, expectsDone: true)
+        try await assertState4(observerSucceeds: false, expectsDone: false)
     }
 
     @Test func existingInstall_choiceSkipsSubprocess() async throws {
@@ -149,18 +145,6 @@ struct SolstoneInstallerTests {
         }
     }
 
-    @Test func uvChecksumMismatch_refusesToInvoke() async throws {
-        let runner = FakeSubprocessRunner()
-        let uvURL = try makeUVFixture()
-        let installer = makeInstaller(runner: runner, uvURL: uvURL, expectedDigest: String(repeating: "f", count: 64))
-
-        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
-        try await waitForTerminal(installer)
-
-        #expect(installer.main == .failed(.installSolstone(message: "bundled uv binary failed integrity check")))
-        #expect(runner.invocations.isEmpty)
-    }
-
     @Test func errorCategorization_perStderrFixture() throws {
         let expectations: [(String, ErrorCategory)] = [
             ("network", .network),
@@ -202,7 +186,7 @@ struct SolstoneInstallerTests {
         let runner = FakeSubprocessRunner()
         let uvURL = try makeUVFixture()
         runner.enqueue("tool", .success(stderr: Data("last error\n".utf8), exitCode: 1))
-        let installer = makeInstaller(runner: runner, uvURL: uvURL, expectedDigest: sha256(Data("uv\n".utf8)))
+        let installer = makeInstaller(runner: runner, uvURL: uvURL)
         defer { installer.cancel() }
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
@@ -219,7 +203,7 @@ struct SolstoneInstallerTests {
         let runner = FakeSubprocessRunner()
         let uvURL = try makeUVFixture()
         runner.enqueue("tool", .failure("launch boom"))
-        let installer = makeInstaller(runner: runner, uvURL: uvURL, expectedDigest: sha256(Data("uv\n".utf8)))
+        let installer = makeInstaller(runner: runner, uvURL: uvURL)
         defer { installer.cancel() }
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
@@ -232,7 +216,7 @@ struct SolstoneInstallerTests {
         }
     }
 
-    private func assertState4(observerSucceeds: Bool, browserSucceeds: Bool, expectsDone: Bool) async throws {
+    private func assertState4(observerSucceeds: Bool, expectsDone: Bool) async throws {
         let runner = FakeSubprocessRunner()
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue(
@@ -242,7 +226,7 @@ struct SolstoneInstallerTests {
                 : .success(stderr: Data("observer failed\n".utf8), exitCode: 1)
         )
         runner.enqueue("install-models", .success())
-        let installer = makeInstaller(runner: runner, browserSucceeds: browserSucceeds)
+        let installer = makeInstaller(runner: runner)
         defer { installer.cancel() }
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
@@ -259,14 +243,12 @@ struct SolstoneInstallerTests {
 
     private func makeInstaller(
         runner: FakeSubprocessRunner,
-        uvURL: URL? = nil,
-        browserSucceeds: Bool = true
+        uvURL: URL? = nil
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
             subprocessRunner: runner,
-            solBinaryFinder: { "/usr/bin/sol" },
-            browserOpener: { _ in browserSucceeds }
+            solBinaryFinder: { "/usr/bin/sol" }
         )
     }
 
@@ -301,10 +283,6 @@ struct SolstoneInstallerTests {
             .appendingPathComponent("solstone-uv-\(UUID().uuidString)")
         try Data("uv\n".utf8).write(to: url)
         return url
-    }
-
-    private func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private var observerJSON: Data {

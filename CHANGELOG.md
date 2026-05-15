@@ -5,6 +5,13 @@ All notable changes to Solstone Capture will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+- Retired the standalone installer wizard; the bundled install state machine now lives inline in Settings → Service with a bundled / external selector.
+- The "already installed elsewhere" hint is temporarily gone; bundled-state detection in Lode B will restore equivalent behavior.
+- Removed the automatic browser open during observer registration; the "open journal dashboard" affordance lands in Lode C.
+
 ## [1.1.3] - 2026-05-14
 
 ### Added

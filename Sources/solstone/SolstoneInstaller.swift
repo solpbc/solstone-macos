@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-import AppKit
 import Foundation
 import os
 import SolstoneCore
@@ -18,7 +17,6 @@ public final class SolstoneInstaller {
     private let uvBinaryURL: URL?
     private let subprocessRunner: SubprocessRunning
     private let solBinaryFinder: @Sendable () async -> String?
-    private let browserOpener: @MainActor @Sendable (URL) -> Bool
     private var installTask: Task<Void, Never>?
     private var modelsTask: Task<Void, Never>?
 
@@ -37,21 +35,18 @@ public final class SolstoneInstaller {
         self.init(
             uvBinaryURL: uvBinaryURL,
             subprocessRunner: subprocessRunner,
-            solBinaryFinder: { await SolBinaryLocator.findSolBinary() },
-            browserOpener: { NSWorkspace.shared.open($0) }
+            solBinaryFinder: { await SolBinaryLocator.findSolBinary() }
         )
     }
 
     internal init(
         uvBinaryURL: URL? = nil,
         subprocessRunner: SubprocessRunning = SubprocessRunner(),
-        solBinaryFinder: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() },
-        browserOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) }
+        solBinaryFinder: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() }
     ) {
         self.uvBinaryURL = uvBinaryURL
         self.subprocessRunner = subprocessRunner
         self.solBinaryFinder = solBinaryFinder
-        self.browserOpener = browserOpener
     }
 
     internal func attach(appState: AppState) {
@@ -219,13 +214,7 @@ public final class SolstoneInstaller {
             await self?.runInstallModels(solPath: solPath)
         }
 
-        async let observerSucceeded = runObserverCreate(solPath: solPath, phase: phase)
-        let opened = browserOpener(URL(string: Self.localServerURL)!)
-        if !opened {
-            Logger.setup.warning("installer: browser open failed")
-        }
-
-        if await observerSucceeded {
+        if await runObserverCreate(solPath: solPath, phase: phase) {
             setMain(.done)
         }
     }

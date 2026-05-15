@@ -1,55 +1,25 @@
-import AppKit
 import Foundation
 import Testing
 @testable import solstone
 
-@Suite("InstallerCopyTests")
-struct InstallerCopyTests {
-    @Test func constantsAreLocked() {
-        #expect(InstallerCopy.windowTitle == "set up solstone")
-        #expect(InstallerCopy.pitch == "solstone is two halves: the journal and observer. this app is the observer. install the other half locally, or point it at an existing service.")
-        #expect(InstallerCopy.installButton == "install solstone for me")
-        #expect(InstallerCopy.existingButton == "i already have solstone elsewhere")
-        #expect(InstallerCopy.learnMore == "learn more →")
-        #expect(InstallerCopy.learnMoreURL == "https://solstone.app/install")
-        #expect(InstallerCopy.state1Label == "checking your system")
-        #expect(InstallerCopy.state2Label == "installing solstone")
-        #expect(InstallerCopy.state3Label == "setting up your journal")
-        #expect(InstallerCopy.state3aLabel == "downloading the transcription model (this can take a few minutes)")
-        #expect(InstallerCopy.state4Label == "registering this observer")
-        #expect(InstallerCopy.stepOk == "done")
-        #expect(InstallerCopy.stepFailedPrefix == "couldn't finish — ")
-        #expect(InstallerCopy.retryButton == "try again")
-        #expect(InstallerCopy.showLogLabel == "show details")
-        #expect(InstallerCopy.hideLogLabel == "hide details")
-        #expect(InstallerCopy.journalLocationLabel == "journal location")
-        #expect(InstallerCopy.journalChangeLink == "change...")
-        #expect(InstallerCopy.journalPickerTitle == "choose journal location")
-        #expect(InstallerCopy.journalTccWarning == "macos may ask permission to write here.")
-        #expect(InstallerCopy.doneTitle == "you're all set")
-        #expect(InstallerCopy.doneBody == "solstone is running on this mac. we opened the setup page in your browser — finish there to choose a password and connect your gemini key.")
-        #expect(InstallerCopy.donePermissions == "next you'll be asked for screen recording, microphone, and system audio access.")
-    }
-}
-
-@Suite("InstallerSetupWindowTests")
+@Suite("cardState")
 @MainActor
 struct InstallerCardStateTests {
     @Test func mainStatesMapToCardStates() {
         let progress = SubprocessProgress(phase: "phase")
 
-        #expect(cardState(from: .detecting) == .progress)
-        #expect(cardState(from: .awaitingChoice(existingInstall: false)) == .choice(existingInstall: false))
-        #expect(cardState(from: .awaitingChoice(existingInstall: true)) == .choice(existingInstall: true))
-        #expect(cardState(from: .installingSolstone(progress)) == .progress)
-        #expect(cardState(from: .runningSolSetup(progress)) == .progress)
-        #expect(cardState(from: .registering(progress)) == .progress)
-        #expect(cardState(from: .done) == .completion)
-        #expect(cardState(from: .failed(.installSolstone(message: "x"))) == .failure(.installSolstone(message: "x")))
+        #expect(cardState(from: .detecting) == .detecting)
+        #expect(cardState(from: .awaitingChoice(existingInstall: false)) == .absent)
+        #expect(cardState(from: .awaitingChoice(existingInstall: true)) == .installedPlaceholder)
+        #expect(cardState(from: .installingSolstone(progress)) == .installing)
+        #expect(cardState(from: .runningSolSetup(progress)) == .installing)
+        #expect(cardState(from: .registering(progress)) == .installing)
+        #expect(cardState(from: .done) == .done)
+        #expect(cardState(from: .failed(.installSolstone(message: "x"))) == .failed(.installSolstone(message: "x")))
     }
 }
 
-@Suite("RowStatusTests")
+@Suite("rowStatus")
 @MainActor
 struct RowStatusTests {
     private let progress = SubprocessProgress(phase: "phase")
@@ -145,7 +115,7 @@ struct RowStatusTests {
     }
 }
 
-@Suite("LogDisclosureStateTests")
+@Suite("logDisclosure")
 struct LogDisclosureStateTests {
     @Test func emptyStateDefaultsDisclosureRowsToCollapsed() {
         let state: [String: Bool] = [:]
@@ -172,7 +142,7 @@ struct LogDisclosureStateTests {
     }
 }
 
-@Suite("TccDetectorTests")
+@Suite("tcc")
 struct TccDetectorTests {
     private let home = (NSHomeDirectory() as NSString).standardizingPath
 
@@ -190,42 +160,5 @@ struct TccDetectorTests {
         #expect(isJournalPathTccRestricted(URL(fileURLWithPath: home + "/Downloads/y")))
         #expect(isJournalPathTccRestricted(URL(fileURLWithPath: "/Volumes/USB/z")))
         #expect(isJournalPathTccRestricted(URL(fileURLWithPath: home + "/Documents/")))
-    }
-}
-
-@Suite("ActivatorTests")
-@MainActor
-struct ActivatorTests {
-    @Test func changeJournalPathActivatesAndConfiguresPanel() {
-        let fakeActivator = FakeActivator()
-        let installer = SolstoneInstaller()
-        let expectedURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("journal-next")
-        let window = InstallerSetupWindow(
-            installer: installer,
-            activator: fakeActivator,
-            onInstall: { _, _ in },
-            onExisting: { },
-            onDismiss: { }
-        )
-
-        window.changeJournalPath { panel in
-            #expect(!panel.canChooseFiles)
-            #expect(panel.canChooseDirectories)
-            #expect(!panel.allowsMultipleSelection)
-            #expect(panel.canCreateDirectories)
-            #expect(panel.directoryURL?.standardizedFileURL.path == URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path)
-            return expectedURL
-        }
-
-        #expect(fakeActivator.calls == 1)
-    }
-}
-
-@MainActor
-private final class FakeActivator: AppActivator {
-    var calls = 0
-
-    func activate() {
-        calls += 1
     }
 }
