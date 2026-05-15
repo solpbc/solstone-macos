@@ -1,11 +1,27 @@
 import AppKit
 import SwiftUI
+import SolstoneCore
 
 struct BundledServiceCard: View {
     @Bindable var appState: AppState
+    var openURL: (URL) -> Void
     @State private var journalURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("journal")
     @State private var showLogPerRow: [String: Bool] = [:]
     @State private var failureDetailsExpanded = true
+    @State private var doctorRunner: SubprocessRunner
+    @State private var doctorTask: Task<Void, Never>?
+    @State private var doctorResult: Result<DoctorReport, Error>?
+    @State private var doctorExpanded = false
+
+    init(
+        appState: AppState,
+        openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
+        doctorRunner: SubprocessRunner = SubprocessRunner()
+    ) {
+        self.appState = appState
+        self.openURL = openURL
+        self._doctorRunner = State(initialValue: doctorRunner)
+    }
 
     private var installer: SolstoneInstaller {
         appState.installer
@@ -36,26 +52,35 @@ struct BundledServiceCard: View {
                 }
             case .installedCurrent(let version):
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("solstone \(version) is installed")
+                    Text(installedServiceMessage(for: .installedCurrent(version: version)))
+                    installedAffordances
                     autoTestStatusRow
                 }
             case .installedOutdated(let installed, let pinned):
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("solstone \(installed) is installed - bundled version is \(pinned)")
+                    Text(installedServiceMessage(for: .installedOutdated(installed: installed, pinned: pinned)))
                     Button("upgrade to \(pinned)") {
                         installer.start(journalURL: journalURL, existingInstallChoice: .createFresh)
                     }
                     .disabled(isInstalling)
+                    installedAffordances
                     autoTestStatusRow
                 }
             case .installedUnknown:
-                Text("solstone is installed (version unavailable)")
+                Text(installedServiceMessage(for: .installedUnknown))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             guard case .detecting = installer.main else { return }
             Task { await installer.detect() }
+        }
+        .onChange(of: doctorExpanded) { _, isExpanded in
+            if isExpanded {
+                restartDoctor()
+            } else {
+                cancelDoctor()
+            }
         }
     }
 
@@ -67,6 +92,135 @@ struct BundledServiceCard: View {
                 installer.start(journalURL: journalURL, existingInstallChoice: .createFresh)
             }
             .disabled(isDetecting)
+        }
+    }
+
+    private var installedAffordances: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button("open journal dashboard") {
+                openURL(bundledDashboardURL())
+            }
+
+            DisclosureGroup(isExpanded: $doctorExpanded) {
+                doctorDisclosureContent
+            } label: {
+                Text("doctor")
+                    .font(.caption)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var doctorDisclosureContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Button("refresh") {
+                    restartDoctor()
+                }
+                .disabled(doctorResult == nil && doctorTask != nil)
+
+                if doctorResult == nil {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                        Text("checking...")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    switch doctorResult {
+                    case nil:
+                        EmptyView()
+                    case .success(let report):
+                        ForEach(report.checks, id: \.name) { check in
+                            doctorCheckRow(check)
+                        }
+                    case .failure(let error):
+                        doctorErrorRow(error)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+            }
+            .frame(minHeight: 120, maxHeight: 320)
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+    }
+
+    private func doctorCheckRow(_ check: DoctorCheck) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: doctorStatusIconName(for: check.status))
+                .foregroundStyle(doctorStatusColor(for: check.status))
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 4) {
+                    Text(check.name.lowercased())
+                    if let severity = check.severity, !severity.isEmpty {
+                        Text("· \(severity)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let detail = check.detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                if let fix = check.fix, !fix.isEmpty {
+                    Text(fix)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+        }
+    }
+
+    private func doctorErrorRow(_ error: Error) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.octagon.fill")
+                    .foregroundStyle(.red)
+                Text(doctorErrorPreview(error))
+                    .foregroundStyle(.red)
+                    .lineLimit(3)
+            }
+
+            Button("try again") {
+                restartDoctor()
+            }
+        }
+    }
+
+    private func restartDoctor() {
+        cancelDoctor()
+        doctorResult = nil
+        let runner = doctorRunner
+        doctorTask = Task { @MainActor in
+            do {
+                let report = try await SolHealthCheck.doctor(runner: runner)
+                guard !Task.isCancelled else { return }
+                doctorResult = .success(report)
+            } catch {
+                guard !Task.isCancelled else { return }
+                doctorResult = .failure(error)
+            }
+            doctorTask = nil
+        }
+    }
+
+    private func cancelDoctor() {
+        cancelDoctorTask(&doctorTask) {
+            doctorRunner.cancelAll()
         }
     }
 
@@ -245,4 +399,68 @@ struct BundledServiceCard: View {
             return message
         }
     }
+}
+
+func installedServiceMessage(for state: InstallerCardState) -> String {
+    switch state {
+    case .installedCurrent(let version):
+        return "solstone \(version) is ready"
+    case .installedOutdated(let installed, let pinned):
+        return "solstone \(installed) is ready · bundled is \(pinned)"
+    case .installedUnknown:
+        return "solstone is installed · couldn't read its version"
+    default:
+        return ""
+    }
+}
+
+func installedStateShowsDashboardAndDoctor(_ state: InstallerCardState) -> Bool {
+    switch state {
+    case .installedCurrent, .installedOutdated:
+        return true
+    default:
+        return false
+    }
+}
+
+func bundledDashboardURL() -> URL {
+    URL(string: ServiceMode.bundledServiceURL)!
+}
+
+func doctorStatusIconName(for status: DoctorStatus) -> String {
+    switch status {
+    case .ok:
+        return "checkmark.circle.fill"
+    case .warn:
+        return "exclamationmark.triangle.fill"
+    case .fail:
+        return "exclamationmark.octagon.fill"
+    case .skip:
+        return "minus.circle"
+    case .unknown:
+        return "questionmark.circle"
+    }
+}
+
+func doctorStatusColor(for status: DoctorStatus) -> Color {
+    switch status {
+    case .ok:
+        return .green
+    case .warn:
+        return .orange
+    case .fail:
+        return .red
+    case .skip, .unknown:
+        return .secondary
+    }
+}
+
+func doctorErrorPreview(_ error: Error) -> String {
+    String(error.localizedDescription.prefix(200))
+}
+
+func cancelDoctorTask(_ task: inout Task<Void, Never>?, cancelRunner: () -> Void) {
+    task?.cancel()
+    task = nil
+    cancelRunner()
 }

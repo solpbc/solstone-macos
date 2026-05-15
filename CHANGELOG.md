@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pause-sync moved to the Status tab's upload section.
 - The "already installed elsewhere" hint is temporarily gone; bundled-state detection in Lode B will restore equivalent behavior.
 - Removed the automatic browser open during observer registration; the "open journal dashboard" affordance lands in Lode C.
+- settings sidebar now marks permission and service tabs that need attention.
+- menubar settings now mirrors attention state so setup gaps are visible without opening the window.
+- bundled service cards add open journal dashboard and doctor affordances for ready installs.
+- external service connect now shares durable connection-test state with the app.
 
 ## [1.1.3] - 2026-05-14
 

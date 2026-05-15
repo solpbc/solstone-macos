@@ -65,6 +65,7 @@ public final class AppState {
     public internal(set) var errorMessage: String?
     public internal(set) var solChatPending: SolChatRequestSummary?
     public internal(set) var solChatStale = false
+    public internal(set) var connectionTestState: ConnectionTestState = .idle
 
     /// Screen recording permission — polled periodically via SCShareableContent.
     public internal(set) var screenRecordingGranted = false
@@ -109,6 +110,36 @@ public final class AppState {
             return "Recording"
         }
         return "Idle"
+    }
+
+    public var permissionsNeedAttention: Bool {
+        initialPermissionCheckComplete && (!screenRecordingGranted || !microphoneGranted)
+    }
+
+    public var serviceNeedsAttention: Bool {
+        guard let serviceMode = config.serviceMode else { return true }
+        switch serviceMode {
+        case .external:
+            return connectionTestState != .success
+        case .bundled:
+            switch terminalCardState(main: installer.main, probe: installer.probedVersion) {
+            case .absent:
+                return true
+            case .installedCurrent,
+                 .installedOutdated,
+                 .installedUnknown,
+                 .done,
+                 .installedPlaceholder,
+                 .detecting,
+                 .installing,
+                 .failed:
+                return false
+            }
+        }
+    }
+
+    public var anyTabNeedsAttention: Bool {
+        permissionsNeedAttention || serviceNeedsAttention
     }
 
     // MARK: - Login Item

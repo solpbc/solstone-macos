@@ -40,13 +40,26 @@ struct MenuContent: View {
         Section {
             if appState.config.isUploadConfigured {
                 Button("open journal") {
-                    NSWorkspace.shared.open(URL(string: appState.config.serverURL!)!)
+                    if let url = journalURLToOpen(from: appState.config.serverURL) {
+                        NSWorkspace.shared.open(url)
+                    }
                 }
             }
-            Button("settings...") {
+            Button {
                 openWindow(id: "settings")
                 appState.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                if let iconName = settingsAttentionIconName(anyTabNeedsAttention: appState.anyTabNeedsAttention) {
+                    Label {
+                        Text("settings...")
+                    } icon: {
+                        Image(systemName: iconName)
+                            .foregroundStyle(.orange)
+                    }
+                } else {
+                    Text("settings...")
+                }
             }
             Button(UpdatesCopy.menuBarCheckForUpdates) {
                 appState.pendingSettingsTab = "updates"
@@ -77,13 +90,9 @@ struct MenuContent: View {
 
     // MARK: - Status Row
 
-    private var permissionsMissing: Bool {
-        !appState.screenRecordingGranted || !appState.microphoneGranted
-    }
-
     @ViewBuilder
     private var statusRow: some View {
-        if permissionsMissing {
+        if appState.permissionsNeedAttention {
             Button("permissions needed — open settings →") {
                 appState.pendingSettingsTab = "permissions"
                 openWindow(id: "settings")
@@ -180,7 +189,7 @@ struct MenuContent: View {
                     appState.pauseManager.resume()
                 }
             }
-        } else if !appState.isRecording && appState.errorMessage == nil && !permissionsMissing {
+        } else if !appState.isRecording && appState.errorMessage == nil && !appState.permissionsNeedAttention {
             Button("start recording") {
                 Task {
                     await appState.startRecording()
@@ -191,4 +200,12 @@ struct MenuContent: View {
 
     // MARK: - Upload Status Row
 
+}
+
+func journalURLToOpen(from serverURL: String?) -> URL? {
+    URL(string: serverURL ?? "")
+}
+
+func settingsAttentionIconName(anyTabNeedsAttention: Bool) -> String? {
+    anyTabNeedsAttention ? "exclamationmark.circle.fill" : nil
 }

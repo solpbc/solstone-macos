@@ -84,7 +84,7 @@ internal enum SetupEvent: Sendable, Equatable {
     case doctorCompleted(status: String, durationMS: Int?, summary: DoctorSummary?)
 }
 
-internal struct DoctorSummary: Sendable, Equatable {
+internal struct DoctorSummary: Decodable, Sendable, Equatable {
     internal let total: Int
     internal let failed: Int
     internal let warnings: Int

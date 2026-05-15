@@ -24,6 +24,18 @@ struct MicrophoneDisplayEntry: Identifiable {
     }
 }
 
+func isConnectButtonDisabled(observerURL: String, observerKey: String, connectionTestState: ConnectionTestState) -> Bool {
+    observerURL.isEmpty || observerKey.isEmpty || connectionTestState != .success
+}
+
+func shouldApplyConnectionTestCompletion(inFlightTestID: UUID?, testGeneration: UUID) -> Bool {
+    inFlightTestID == testGeneration
+}
+
+func serviceTabHeadingText(for mode: ServiceMode?) -> String? {
+    mode == nil ? "set up the solstone service" : nil
+}
+
 /// Settings window for configuring server upload
 struct SettingsView: View {
     enum Tab: Hashable {
@@ -35,8 +47,6 @@ struct SettingsView: View {
     @State var selectedTab: Tab = .status
     @Environment(\.dismiss) private var dismiss
 
-    @State private var testResult: TestResult = .none
-    @State private var isTesting = false
     @State private var storageUsedMB: Int?
 
     // Permissions tab state
@@ -53,12 +63,7 @@ struct SettingsView: View {
     @State private var observerKey = ""
     @State private var serviceMode: ServiceMode = .bundled
     @State private var preserveNextServiceFieldChange = false
-
-    enum TestResult: Equatable {
-        case none
-        case success
-        case failure(String)
-    }
+    @State private var inFlightTestID: UUID?
 
     init(
         appState: AppState,
@@ -89,8 +94,10 @@ struct SettingsView: View {
         NavigationSplitView {
             List(selection: $selectedTab) {
                 Section {
-                    Label("permissions", systemImage: "lock.shield").tag(Tab.permissions)
-                    Label("service", systemImage: "server.rack").tag(Tab.service)
+                    sidebarLabel("permissions", systemImage: "lock.shield", needsAttention: appState.permissionsNeedAttention)
+                        .tag(Tab.permissions)
+                    sidebarLabel("service", systemImage: "server.rack", needsAttention: appState.serviceNeedsAttention)
+                        .tag(Tab.service)
                 } header: {
                     Text("setup")
                 }
@@ -159,6 +166,18 @@ struct SettingsView: View {
             default: break
             }
             appState.pendingSettingsTab = nil
+        }
+    }
+
+    @ViewBuilder
+    private func sidebarLabel(_ title: String, systemImage: String, needsAttention: Bool) -> some View {
+        let label = Label(title, systemImage: systemImage)
+        if needsAttention {
+            label
+                .badge(Text("!"))
+                .tint(.orange)
+        } else {
+            label
         }
     }
 
@@ -439,6 +458,11 @@ struct SettingsView: View {
                     externalServiceSection
                 }
             } else {
+                if let heading = serviceTabHeadingText(for: appState.config.serviceMode) {
+                    Text(heading)
+                        .font(.headline)
+                }
+
                 Picker("service mode", selection: $serviceMode) {
                     Text("bundled").tag(ServiceMode.bundled)
                     Text("external").tag(ServiceMode.external)
@@ -478,23 +502,27 @@ struct SettingsView: View {
                     Button("test connection") {
                         testServiceConnection()
                     }
-                    .disabled(observerURL.isEmpty || observerKey.isEmpty || isTesting)
+                    .disabled(observerURL.isEmpty || observerKey.isEmpty || appState.connectionTestState == .testing)
 
                     Button("connect") {
                         let url = normalizeServerURL(observerURL)
                         saveService(url: url, key: observerKey, mode: .external)
                     }
-                    .disabled(testResult != .success || isTesting)
+                    .disabled(isConnectButtonDisabled(
+                        observerURL: observerURL,
+                        observerKey: observerKey,
+                        connectionTestState: appState.connectionTestState
+                    ))
 
-                    if isTesting {
+                    if appState.connectionTestState == .testing {
                         ProgressView()
                             .scaleEffect(0.5)
                     } else {
-                        testResultIcon
+                        connectionTestIcon
                     }
                 }
 
-                if testResult == .success {
+                if appState.connectionTestState == .success {
                     Button("view status →") {
                         selectedTab = .status
                     }
@@ -508,8 +536,8 @@ struct SettingsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .padding(.top, 4)
-            .onChange(of: observerURL) { _, _ in invalidateServiceTestResult() }
-            .onChange(of: observerKey) { _, _ in invalidateServiceTestResult() }
+            .onChange(of: observerURL) { _, _ in invalidateConnectionTestState() }
+            .onChange(of: observerKey) { _, _ in invalidateConnectionTestState() }
     }
 
     /// Normalizes flexible host input to a full URL.
@@ -527,31 +555,39 @@ struct SettingsView: View {
     private func testServiceConnection() {
         let url = normalizeServerURL(observerURL)
         let key = observerKey
-        isTesting = true
-        testResult = .none
+        let testGeneration = UUID()
+        inFlightTestID = testGeneration
+        appState.connectionTestState = .testing
         Task {
             let error = await UploadCoordinator.testConnection(serverURL: url, serverKey: key)
             await MainActor.run {
+                guard shouldApplyConnectionTestCompletion(
+                    inFlightTestID: inFlightTestID,
+                    testGeneration: testGeneration
+                ) else {
+                    return
+                }
+                inFlightTestID = nil
                 if let error {
-                    testResult = .failure(error)
+                    appState.connectionTestState = .failure(error)
                 } else {
                     if observerURL != url {
                         preserveNextServiceFieldChange = true
                     }
                     observerURL = url
-                    testResult = .success
+                    appState.connectionTestState = .success
                 }
-                isTesting = false
             }
         }
     }
 
-    private func invalidateServiceTestResult() {
+    private func invalidateConnectionTestState() {
         if preserveNextServiceFieldChange {
             preserveNextServiceFieldChange = false
             return
         }
-        testResult = .none
+        inFlightTestID = nil
+        appState.connectionTestState = .idle
     }
 
     private func saveService(url: String, key: String, mode: ServiceMode) {
@@ -995,12 +1031,12 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Test Result
+    // MARK: - Connection Test
 
     @ViewBuilder
-    private var testResultIcon: some View {
-        switch testResult {
-        case .none:
+    private var connectionTestIcon: some View {
+        switch appState.connectionTestState {
+        case .idle, .testing:
             EmptyView()
         case .success:
             Image(systemName: "checkmark.circle.fill")

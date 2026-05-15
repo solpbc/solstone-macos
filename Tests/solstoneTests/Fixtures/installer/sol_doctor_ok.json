@@ -1,0 +1,38 @@
+{
+  "checks": [
+    {
+      "name": "python_version",
+      "severity": "blocker",
+      "status": "ok",
+      "detail": "python version is supported",
+      "fix": null
+    },
+    {
+      "name": "port_5015_free",
+      "severity": "advisory",
+      "status": "warn",
+      "detail": "port 5015 is already in use",
+      "fix": null
+    },
+    {
+      "name": "feature:whisper",
+      "severity": "advisory",
+      "status": "warn",
+      "detail": "Whisper speech-to-text transcription not installed",
+      "fix": "pip install 'solstone[whisper]'"
+    },
+    {
+      "name": "future_check",
+      "severity": "advisory",
+      "status": "experimental",
+      "detail": "synthetic forward-compat row",
+      "fix": null
+    }
+  ],
+  "summary": {
+    "total": 4,
+    "failed": 0,
+    "warnings": 2,
+    "skipped": 0
+  }
+}
