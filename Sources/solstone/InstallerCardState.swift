@@ -6,7 +6,22 @@ enum InstallerCardState: Equatable {
     case installing
     case installedPlaceholder
     case done
+    case installedCurrent(version: String)
+    case installedOutdated(installed: String, pinned: String)
+    case installedUnknown
     case failed(FailedState)
+}
+
+public enum VersionProbeResult: Equatable, Sendable {
+    case current(version: String)
+    case outdated(installed: String, pinned: String)
+    case unknown
+}
+
+public enum AutoTestState: Equatable, Sendable {
+    case verifying
+    case success
+    case failure(String)
 }
 
 enum RowStatus: Equatable {
@@ -36,6 +51,24 @@ func cardState(from main: MainState) -> InstallerCardState {
         return .done
     case .failed(let failedState):
         return .failed(failedState)
+    }
+}
+
+func terminalCardState(main: MainState, probe: VersionProbeResult?) -> InstallerCardState {
+    let intermediate = cardState(from: main)
+    guard let probe else { return intermediate }
+    switch intermediate {
+    case .installedPlaceholder, .done:
+        switch probe {
+        case .current(let version):
+            return .installedCurrent(version: version)
+        case .outdated(let installed, let pinned):
+            return .installedOutdated(installed: installed, pinned: pinned)
+        case .unknown:
+            return .installedUnknown
+        }
+    default:
+        return intermediate
     }
 }
 

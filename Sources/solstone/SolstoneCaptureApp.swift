@@ -258,6 +258,7 @@ enum FirstLaunchRouting {
             return
         }
 
+        guard config.serviceMode != .external else { return }
         guard isLocalhost(config.serverURL) else { return }
         guard let path = await findSolBinary(), await healthCheck(path) else {
             openService()

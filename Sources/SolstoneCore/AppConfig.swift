@@ -4,6 +4,13 @@
 import Foundation
 import os
 
+public enum ServiceMode: String, Codable, Equatable, Sendable {
+    case bundled
+    case external
+
+    public static let bundledServiceURL = "http://localhost:5015"
+}
+
 /// Microphone entry for priority list
 public struct MicrophoneEntry: Codable, Equatable, Sendable {
     public let uid: String
@@ -50,12 +57,17 @@ public struct AppConfig: Sendable {
         public static let solInitiatedChatNotificationsEnabled = false
     }
 
+    public static func inferServiceMode(from serverURL: String?) -> ServiceMode? {
+        guard serverURL == ServiceMode.bundledServiceURL else { return nil }
+        return .bundled
+    }
+
     public static let knownKeys: [String] = [
         "microphonePriority", "excludedApps", "excludedTitlePatterns",
         "excludePrivateBrowsing", "serverURL", "serverKey",
         "cacheRetentionDays", "syncPaused", "debugSegments",
         "debugKeepRejectedAudio", "microphoneGain", "silenceMusic",
-        "solInitiatedChatNotificationsEnabled"
+        "solInitiatedChatNotificationsEnabled", "serviceMode"
     ]
 
     public static func isKnownKey(_ key: String) -> Bool {
@@ -76,6 +88,7 @@ public struct AppConfig: Sendable {
         static let microphoneGain = "microphoneGain"
         static let silenceMusic = "silenceMusic"
         static let solInitiatedChatNotificationsEnabled = "solInitiatedChatNotificationsEnabled"
+        static let serviceMode = "serviceMode"
         static let didMigrateFromJSON = "didMigrateFromJSON"
     }
 
@@ -127,6 +140,9 @@ public struct AppConfig: Sendable {
     /// When true, show system notifications for sol-initiated chat requests. Default: false
     public var solInitiatedChatNotificationsEnabled: Bool
 
+    /// Configured service mode. Nil means no mode has been explicitly selected yet.
+    public var serviceMode: ServiceMode?
+
     /// Default exclusions written on first run
     public static let defaultExclusions: [AppEntry] = [
         AppEntry(bundleID: "com.1password.1password", name: "1Password"),
@@ -147,7 +163,8 @@ public struct AppConfig: Sendable {
         debugKeepRejectedAudio: Bool = false,
         microphoneGain: Float = 2.0,
         silenceMusic: Bool = true,
-        solInitiatedChatNotificationsEnabled: Bool = Defaults.solInitiatedChatNotificationsEnabled
+        solInitiatedChatNotificationsEnabled: Bool = Defaults.solInitiatedChatNotificationsEnabled,
+        serviceMode: ServiceMode? = nil
     ) {
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
@@ -162,6 +179,7 @@ public struct AppConfig: Sendable {
         self.microphoneGain = microphoneGain
         self.silenceMusic = silenceMusic
         self.solInitiatedChatNotificationsEnabled = solInitiatedChatNotificationsEnabled
+        self.serviceMode = serviceMode
     }
 
     // MARK: - Load/Save
@@ -195,12 +213,24 @@ public struct AppConfig: Sendable {
             cacheRetentionDays = Defaults.cacheRetentionDays
         }
 
+        let serverURL = defaults.string(forKey: Keys.serverURL)
+        let serviceMode: ServiceMode?
+        if let raw = defaults.string(forKey: Keys.serviceMode), let parsed = ServiceMode(rawValue: raw) {
+            serviceMode = parsed
+        } else if let inferred = AppConfig.inferServiceMode(from: serverURL) {
+            defaults.set(inferred.rawValue, forKey: Keys.serviceMode)
+            Logger.general.info("Migrated serviceMode to \(inferred.rawValue, privacy: .public) based on serverURL")
+            serviceMode = inferred
+        } else {
+            serviceMode = nil
+        }
+
         let config = AppConfig(
             microphonePriority: microphonePriority,
             excludedApps: excludedApps,
             excludedTitlePatterns: defaults.stringArray(forKey: Keys.excludedTitlePatterns) ?? [],
             excludePrivateBrowsing: defaults.object(forKey: Keys.excludePrivateBrowsing) as? Bool ?? true,
-            serverURL: defaults.string(forKey: Keys.serverURL),
+            serverURL: serverURL,
             serverKey: defaults.string(forKey: Keys.serverKey),
             cacheRetentionDays: cacheRetentionDays,
             syncPaused: defaults.bool(forKey: Keys.syncPaused),
@@ -209,7 +239,8 @@ public struct AppConfig: Sendable {
             microphoneGain: defaults.object(forKey: Keys.microphoneGain) as? Float ?? 2.0,
             silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true,
             solInitiatedChatNotificationsEnabled: defaults.object(forKey: Keys.solInitiatedChatNotificationsEnabled) as? Bool
-                ?? Defaults.solInitiatedChatNotificationsEnabled
+                ?? Defaults.solInitiatedChatNotificationsEnabled,
+            serviceMode: serviceMode
         )
         return config
     }
@@ -258,6 +289,11 @@ public struct AppConfig: Sendable {
         defaults.set(excludePrivateBrowsing, forKey: Keys.excludePrivateBrowsing)
         defaults.set(serverURL, forKey: Keys.serverURL)
         defaults.set(serverKey, forKey: Keys.serverKey)
+        if let serviceMode {
+            defaults.set(serviceMode.rawValue, forKey: Keys.serviceMode)
+        } else {
+            defaults.removeObject(forKey: Keys.serviceMode)
+        }
         defaults.set(cacheRetentionDays, forKey: Keys.cacheRetentionDays)
         defaults.set(syncPaused, forKey: Keys.syncPaused)
         defaults.set(debugSegments, forKey: Keys.debugSegments)

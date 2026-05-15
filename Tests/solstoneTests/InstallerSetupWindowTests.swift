@@ -17,6 +17,31 @@ struct InstallerCardStateTests {
         #expect(cardState(from: .done) == .done)
         #expect(cardState(from: .failed(.installSolstone(message: "x"))) == .failed(.installSolstone(message: "x")))
     }
+
+    @Test func terminalCardStatePreservesIntermediateWhenProbeIsNil() {
+        #expect(terminalCardState(main: .done, probe: nil) == .done)
+        #expect(terminalCardState(main: .awaitingChoice(existingInstall: true), probe: nil) == .installedPlaceholder)
+    }
+
+    @Test func terminalCardStateMapsInstalledStatesWithProbe() {
+        #expect(
+            terminalCardState(main: .done, probe: .current(version: "0.3.2"))
+            == .installedCurrent(version: "0.3.2")
+        )
+        #expect(
+            terminalCardState(main: .done, probe: .outdated(installed: "0.3.1", pinned: "0.3.2"))
+            == .installedOutdated(installed: "0.3.1", pinned: "0.3.2")
+        )
+        #expect(terminalCardState(main: .done, probe: .unknown) == .installedUnknown)
+    }
+
+    @Test func terminalCardStateIgnoresProbeForNonInstalledStates() {
+        let progress = SubprocessProgress(phase: "phase")
+        #expect(
+            terminalCardState(main: .installingSolstone(progress), probe: .current(version: "0.3.2"))
+            == .installing
+        )
+    }
 }
 
 @Suite("rowStatus")

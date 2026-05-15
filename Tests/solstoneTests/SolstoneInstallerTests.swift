@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import SolstoneCore
 @testable import solstone
 
 @Suite("SolstoneInstaller")
@@ -91,6 +92,97 @@ struct SolstoneInstallerTests {
 
         #expect(!runner.invocations.contains { $0.arguments.first == "tool" })
         #expect(runner.invocations.contains { $0.arguments.first == "setup" })
+    }
+
+    @Test func observerCreateSuccessWritesBundledServiceConfig() async throws {
+        let appState = AppState.forSnapshot()
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let installer = makeInstaller(runner: runner, connectionTester: { _, _ in nil })
+        installer.attach(appState: appState)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitUntil { installer.main == .done }
+
+        #expect(appState.config.serverURL == ServiceMode.bundledServiceURL)
+        #expect(appState.config.serverKey == "observer-key")
+        #expect(appState.config.serviceMode == .bundled)
+    }
+
+    @Test func postInstallAutoTestSucceedsAfterDone() async throws {
+        let appState = AppState.forSnapshot()
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let installer = makeInstaller(
+            runner: runner,
+            connectionTester: { _, _ in
+                try? await Task.sleep(for: .milliseconds(100))
+                return nil
+            }
+        )
+        installer.attach(appState: appState)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+
+        try await waitUntil { installer.postInstallAutoTest == .verifying }
+        try await waitUntil { installer.postInstallAutoTest == .success }
+    }
+
+    @Test func postInstallAutoTestFailsOnConnectionError() async throws {
+        let appState = AppState.forSnapshot()
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let installer = makeInstaller(runner: runner, connectionTester: { _, _ in "offline" })
+        installer.attach(appState: appState)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+
+        try await waitUntil {
+            if case .failure("offline") = installer.postInstallAutoTest { return true }
+            return false
+        }
+    }
+
+    @Test func probeVersionMapsCurrentVersion() async {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let installer = makeInstaller(runner: runner)
+
+        await installer.probeVersion()
+
+        #expect(installer.probedVersion == .current(version: BundleConfig.solstonePinVersion))
+    }
+
+    @Test func probeVersionMapsOutdatedVersion() async {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) 0.3.1\n".utf8)))
+        let installer = makeInstaller(runner: runner)
+
+        await installer.probeVersion()
+
+        #expect(installer.probedVersion == .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion))
+    }
+
+    @Test func probeVersionMapsUnparseableVersionToUnknown() async {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(stdout: Data("unparseable\n".utf8)))
+        let installer = makeInstaller(runner: runner)
+
+        await installer.probeVersion()
+
+        #expect(installer.probedVersion == .unknown)
     }
 
     @Test func jsonlEdgeFixtures_driveExpectedOutcomes() async throws {
@@ -243,12 +335,14 @@ struct SolstoneInstallerTests {
 
     private func makeInstaller(
         runner: FakeSubprocessRunner,
-        uvURL: URL? = nil
+        uvURL: URL? = nil,
+        connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil }
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
             subprocessRunner: runner,
-            solBinaryFinder: { "/usr/bin/sol" }
+            solBinaryFinder: { "/usr/bin/sol" },
+            connectionTester: connectionTester
         )
     }
 

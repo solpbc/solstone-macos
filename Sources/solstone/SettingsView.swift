@@ -49,30 +49,16 @@ struct SettingsView: View {
     @State private var newExcludedApp = ""
 
     // Service tab state
-    @State private var localStatus: LocalStatus = .idle
     @State private var observerURL = ""
     @State private var observerKey = ""
     @State private var serviceMode: ServiceMode = .bundled
+    @State private var preserveNextServiceFieldChange = false
 
     enum TestResult: Equatable {
         case none
         case success
         case failure(String)
     }
-
-    enum LocalStatus: Equatable {
-        case idle
-        case detecting
-        case connected
-        case failed(String)
-    }
-
-    enum ServiceMode: Hashable {
-        case bundled
-        case external
-    }
-
-    private static let localServerURL = "http://localhost:5015"
 
     init(
         appState: AppState,
@@ -441,17 +427,30 @@ struct SettingsView: View {
     @ViewBuilder
     private var serviceSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Picker("service mode", selection: $serviceMode) {
-                Text("bundled").tag(ServiceMode.bundled)
-                Text("external").tag(ServiceMode.external)
-            }
-            .pickerStyle(.segmented)
+            if let persisted = appState.config.serviceMode {
+                LabeledContent("service mode") {
+                    Text(persisted == .bundled ? "bundled" : "external")
+                }
 
-            switch serviceMode {
-            case .bundled:
-                BundledServiceCard(appState: appState)
-            case .external:
-                externalServiceSection
+                switch persisted {
+                case .bundled:
+                    BundledServiceCard(appState: appState)
+                case .external:
+                    externalServiceSection
+                }
+            } else {
+                Picker("service mode", selection: $serviceMode) {
+                    Text("bundled").tag(ServiceMode.bundled)
+                    Text("external").tag(ServiceMode.external)
+                }
+                .pickerStyle(.segmented)
+
+                switch serviceMode {
+                case .bundled:
+                    BundledServiceCard(appState: appState)
+                case .external:
+                    externalServiceSection
+                }
             }
         }
     }
@@ -462,43 +461,6 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Link("setup guide: solstone.app/install", destination: URL(string: "https://solstone.app/install")!)
                     .font(.callout)
-
-                HStack {
-                    Button("connect to local service") {
-                        Task { await detectLocalService() }
-                    }
-                    .disabled(localDetectDisabled)
-
-                    switch localStatus {
-                    case .idle:
-                        EmptyView()
-                    case .detecting:
-                        ProgressView()
-                            .scaleEffect(0.5)
-                            .frame(width: 16, height: 16)
-                        Text("detecting...")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    case .connected:
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                        Text("connected")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    case .failed(let reason):
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                        if reason.contains("already exists") {
-                            Text("observer already registered — check the help tab for troubleshooting")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text(reason)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("service address").font(.caption).foregroundStyle(.secondary)
@@ -518,6 +480,12 @@ struct SettingsView: View {
                     }
                     .disabled(observerURL.isEmpty || observerKey.isEmpty || isTesting)
 
+                    Button("connect") {
+                        let url = normalizeServerURL(observerURL)
+                        saveService(url: url, key: observerKey, mode: .external)
+                    }
+                    .disabled(testResult != .success || isTesting)
+
                     if isTesting {
                         ProgressView()
                             .scaleEffect(0.5)
@@ -526,18 +494,7 @@ struct SettingsView: View {
                     }
                 }
 
-                Toggle("pause sync", isOn: Binding(
-                    get: { appState.config.syncPaused },
-                    set: { newValue in
-                        var config = appState.config
-                        config.syncPaused = newValue
-                        appState.updateConfig(config)
-                    }
-                ))
-                .disabled(observerURL.isEmpty || observerKey.isEmpty)
-                .help("keeps recording locally but stops sending to your service")
-
-                if localStatus == .connected || testResult == .success {
+                if testResult == .success {
                     Button("view status →") {
                         selectedTab = .status
                     }
@@ -551,6 +508,8 @@ struct SettingsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .padding(.top, 4)
+            .onChange(of: observerURL) { _, _ in invalidateServiceTestResult() }
+            .onChange(of: observerKey) { _, _ in invalidateServiceTestResult() }
     }
 
     /// Normalizes flexible host input to a full URL.
@@ -565,62 +524,6 @@ struct SettingsView: View {
 
     // MARK: - Service Connection Logic
 
-    private var localDetectDisabled: Bool {
-        if case .detecting = localStatus { return true }
-        return false
-    }
-
-    private func detectLocalService() async {
-        localStatus = .detecting
-
-        // Check existing config first
-        if let existingKey = appState.config.serverKey, !existingKey.isEmpty {
-            Logger.setup.info("local detect: key found in config")
-            let error = await UploadCoordinator.testConnection(
-                serverURL: Self.localServerURL, serverKey: existingKey
-            )
-            if let error {
-                Logger.setup.info("local detect: keychain key failed — \(error, privacy: .public)")
-                localStatus = .failed("local service not reachable — \(error)")
-                return
-            }
-            observerURL = Self.localServerURL
-            observerKey = existingKey
-            saveService(url: Self.localServerURL, key: existingKey)
-            localStatus = .connected
-            return
-        }
-
-        // Find sol binary
-        let solPath = await SolBinaryLocator.findSolBinary()
-        guard let solPath else {
-            Logger.setup.info("local detect: sol binary not found")
-            localStatus = .failed("sol CLI not found — try again")
-            return
-        }
-        Logger.setup.info("local detect: sol found at \(solPath, privacy: .public)")
-
-        let result = await runSolObserverCreate(solPath: solPath)
-        switch result {
-        case .success(let key):
-            Logger.setup.info("local detect: CLI success, verifying connectivity")
-            let error = await UploadCoordinator.testConnection(
-                serverURL: Self.localServerURL, serverKey: key
-            )
-            if let error {
-                localStatus = .failed("registered but can't connect — \(error)")
-                return
-            }
-            observerURL = Self.localServerURL
-            observerKey = key
-            saveService(url: Self.localServerURL, key: key)
-            localStatus = .connected
-        case .failure(let reason):
-            Logger.setup.info("local detect: CLI failed — \(reason, privacy: .public)")
-            localStatus = .failed("\(reason) — try again")
-        }
-    }
-
     private func testServiceConnection() {
         let url = normalizeServerURL(observerURL)
         let key = observerKey
@@ -632,85 +535,35 @@ struct SettingsView: View {
                 if let error {
                     testResult = .failure(error)
                 } else {
-                    testResult = .success
+                    if observerURL != url {
+                        preserveNextServiceFieldChange = true
+                    }
                     observerURL = url
-                    saveService(url: url, key: key)
+                    testResult = .success
                 }
                 isTesting = false
             }
         }
     }
 
-    private func saveService(url: String, key: String) {
+    private func invalidateServiceTestResult() {
+        if preserveNextServiceFieldChange {
+            preserveNextServiceFieldChange = false
+            return
+        }
+        testResult = .none
+    }
+
+    private func saveService(url: String, key: String, mode: ServiceMode) {
         var config = appState.config
         config.serverURL = url
         config.serverKey = key
+        config.serviceMode = mode
         appState.updateConfig(config)
         if appState.microphoneGranted {
             Task {
                 await appState.startRecording()
                 Task.detached { await appState.uploadCoordinator?.syncOnStartup() }
-            }
-        }
-    }
-
-    // MARK: - Sol CLI Helpers
-
-    private enum SolResult {
-        case success(String)
-        case failure(String)
-    }
-
-    private struct ObserverCreateResponse: Decodable {
-        let name: String
-        let key: String
-        let prefix: String
-    }
-
-    // TODO: migrate to SubprocessRunner
-    private func runSolObserverCreate(solPath: String) async -> SolResult {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: solPath)
-                process.arguments = ["observer", "--json", "create", "solstone-macos"]
-                let stdoutPipe = Pipe()
-                let stderrPipe = Pipe()
-                process.standardOutput = stdoutPipe
-                process.standardError = stderrPipe
-
-                do {
-                    try process.run()
-
-                    let timer = DispatchSource.makeTimerSource()
-                    timer.schedule(deadline: .now() + 10)
-                    timer.setEventHandler {
-                        process.terminate()
-                    }
-                    timer.resume()
-
-                    process.waitUntilExit()
-                    timer.cancel()
-
-                    if process.terminationStatus == 0 {
-                        let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                        if let response = try? JSONDecoder().decode(ObserverCreateResponse.self, from: data) {
-                            continuation.resume(returning: .success(response.key))
-                        } else {
-                            continuation.resume(returning: .failure("could not parse JSON response"))
-                        }
-                    } else {
-                        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-                        if stderr.contains("already exists") {
-                            continuation.resume(returning: .failure("observer already exists"))
-                        } else {
-                            continuation.resume(returning: .failure("exit code \(process.terminationStatus)"))
-                        }
-                    }
-                } catch {
-                    continuation.resume(returning: .failure(error.localizedDescription))
-                }
             }
         }
     }
@@ -1009,6 +862,16 @@ struct SettingsView: View {
                             .foregroundStyle(appState.config.serverURL == nil ? .secondary : .primary)
                     }
                     uploadStatusView
+                    Toggle("pause sync", isOn: Binding(
+                        get: { appState.config.syncPaused },
+                        set: { newValue in
+                            var config = appState.config
+                            config.syncPaused = newValue
+                            appState.updateConfig(config)
+                        }
+                    ))
+                    .disabled(!appState.config.isUploadConfigured)
+                    .help("keeps recording locally but stops sending to your service")
                     if let lastSynced = appState.uploadCoordinator.lastSyncedAt {
                         LabeledContent("last synced") {
                             Text(lastSynced, style: .relative)

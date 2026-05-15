@@ -91,6 +91,7 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         if first == "observer" { return "observer" }
         if first == "install-models" { return "install-models" }
         if first == "health" { return "health" }
+        if first == "--version" { return "--version" }
         return first
     }
 }

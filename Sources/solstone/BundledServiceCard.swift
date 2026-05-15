@@ -13,7 +13,7 @@ struct BundledServiceCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            switch cardState(from: installer.main) {
+            switch terminalCardState(main: installer.main, probe: installer.probedVersion) {
             case .detecting:
                 InstallerProgressRowView(
                     label: label(for: .checkingSystem),
@@ -28,7 +28,28 @@ struct BundledServiceCard: View {
             case .failed(let failedState):
                 failureContent(failedState)
             case .installedPlaceholder, .done:
-                Text("solstone is installed")
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                    Text("checking version...")
+                        .foregroundStyle(.secondary)
+                }
+            case .installedCurrent(let version):
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("solstone \(version) is installed")
+                    autoTestStatusRow
+                }
+            case .installedOutdated(let installed, let pinned):
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("solstone \(installed) is installed - bundled version is \(pinned)")
+                    Button("upgrade to \(pinned)") {
+                        installer.start(journalURL: journalURL, existingInstallChoice: .createFresh)
+                    }
+                    .disabled(isInstalling)
+                    autoTestStatusRow
+                }
+            case .installedUnknown:
+                Text("solstone is installed (version unavailable)")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -46,6 +67,40 @@ struct BundledServiceCard: View {
                 installer.start(journalURL: journalURL, existingInstallChoice: .createFresh)
             }
             .disabled(isDetecting)
+        }
+    }
+
+    @ViewBuilder
+    private var autoTestStatusRow: some View {
+        switch installer.postInstallAutoTest {
+        case nil:
+            EmptyView()
+        case .verifying:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .scaleEffect(0.6)
+                Text("verifying connection...")
+                    .foregroundStyle(.secondary)
+            }
+        case .success:
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text("connected")
+                    .foregroundStyle(.secondary)
+            }
+        case .failure(let message):
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.red)
+                    Text(message)
+                        .foregroundStyle(.red)
+                }
+                Button("retry") {
+                    Task { await installer.runPostInstallAutoTest() }
+                }
+            }
         }
     }
 
@@ -154,6 +209,15 @@ struct BundledServiceCard: View {
     private var isDetecting: Bool {
         if case .detecting = installer.main { return true }
         return false
+    }
+
+    private var isInstalling: Bool {
+        switch installer.main {
+        case .installingSolstone, .runningSolSetup, .registering:
+            return true
+        case .detecting, .awaitingChoice, .done, .failed:
+            return false
+        }
     }
 
     private func label(for row: InstallerRow) -> String {

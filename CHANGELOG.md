@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Retired the standalone installer wizard; the bundled install state machine now lives inline in Settings → Service with a bundled / external selector.
+- Service settings now remember whether the observer is connected to bundled solstone or an external service.
+- Bundled solstone installs show version-aware status, with an upgrade affordance when the installed CLI is behind the bundled version.
+- External service setup now requires a successful connection test before connecting.
+- Pause-sync moved to the Status tab's upload section.
 - The "already installed elsewhere" hint is temporarily gone; bundled-state detection in Lode B will restore equivalent behavior.
 - Removed the automatic browser open during observer registration; the "open journal dashboard" affordance lands in Lode C.
 

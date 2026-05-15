@@ -9,6 +9,8 @@ import SolstoneCore
 @Observable
 public final class SolstoneInstaller {
     public internal(set) var main: MainState = .detecting
+    public internal(set) var probedVersion: VersionProbeResult?
+    public internal(set) var postInstallAutoTest: AutoTestState?
     public internal(set) var modelsProgress: ModelsProgress = .idle
     public internal(set) var lastFailureCategory: ErrorCategory?
     public internal(set) var lastFailureLog: String?
@@ -17,10 +19,10 @@ public final class SolstoneInstaller {
     private let uvBinaryURL: URL?
     private let subprocessRunner: SubprocessRunning
     private let solBinaryFinder: @Sendable () async -> String?
+    private let connectionTester: @Sendable (String, String) async -> String?
     private var installTask: Task<Void, Never>?
     private var modelsTask: Task<Void, Never>?
 
-    private static let localServerURL = "http://localhost:5015"
     private static let rawLogLimit = 16 * 1024
     private static let stdoutTailLimit = 2 * 1024
 
@@ -42,11 +44,15 @@ public final class SolstoneInstaller {
     internal init(
         uvBinaryURL: URL? = nil,
         subprocessRunner: SubprocessRunning = SubprocessRunner(),
-        solBinaryFinder: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() }
+        solBinaryFinder: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() },
+        connectionTester: @escaping @Sendable (String, String) async -> String? = { url, key in
+            await UploadCoordinator.testConnection(serverURL: url, serverKey: key)
+        }
     ) {
         self.uvBinaryURL = uvBinaryURL
         self.subprocessRunner = subprocessRunner
         self.solBinaryFinder = solBinaryFinder
+        self.connectionTester = connectionTester
     }
 
     internal func attach(appState: AppState) {
@@ -57,6 +63,9 @@ public final class SolstoneInstaller {
         setMain(.detecting)
         let found = await solBinaryFinder() != nil
         setMain(.awaitingChoice(existingInstall: found))
+        if found {
+            Task { await probeVersion() }
+        }
         return found
     }
 
@@ -216,6 +225,10 @@ public final class SolstoneInstaller {
 
         if await runObserverCreate(solPath: solPath, phase: phase) {
             setMain(.done)
+            Task {
+                await probeVersion()
+                await runPostInstallAutoTest()
+            }
         }
     }
 
@@ -375,12 +388,91 @@ public final class SolstoneInstaller {
     private func persistObserverKey(_ key: String) {
         guard let appState else { return }
         var config = appState.config
-        config.serverURL = Self.localServerURL
+        config.serverURL = ServiceMode.bundledServiceURL
         config.serverKey = key
+        config.serviceMode = .bundled
         appState.updateConfig(config)
     }
 
+    public func probeVersion() async {
+        guard let solPath = await solBinaryFinder() else {
+            probedVersion = nil
+            return
+        }
+        guard let installed = await SolHealthCheck.version(solPath: solPath, runner: subprocessRunner) else {
+            probedVersion = .unknown
+            return
+        }
+        let pinned = BundleConfig.solstonePinVersion
+        let comparison = installed.compare(pinned, options: .numeric)
+        if comparison == .orderedAscending {
+            probedVersion = .outdated(installed: installed, pinned: pinned)
+        } else {
+            probedVersion = .current(version: installed)
+        }
+    }
+
+    public func runPostInstallAutoTest() async {
+        guard let appState else { return }
+        let url = appState.config.serverURL ?? ""
+        let key = appState.config.serverKey ?? ""
+        guard !url.isEmpty, !key.isEmpty else {
+            postInstallAutoTest = .failure("missing service credentials")
+            return
+        }
+
+        postInstallAutoTest = .verifying
+        let firstAttempt = await attemptConnectionTest(url: url, key: key, budgetSeconds: 5.0)
+        switch firstAttempt {
+        case .success:
+            postInstallAutoTest = .success
+            return
+        case .failure(let message):
+            postInstallAutoTest = .failure(message)
+            return
+        case .timeout:
+            break
+        }
+
+        let retry = await attemptConnectionTest(url: url, key: key, budgetSeconds: 5.0)
+        switch retry {
+        case .success:
+            postInstallAutoTest = .success
+        case .failure(let message):
+            postInstallAutoTest = .failure(message)
+        case .timeout:
+            postInstallAutoTest = .failure("timed out")
+        }
+    }
+
+    private enum ConnectionTestAttemptResult {
+        case success
+        case failure(String)
+        case timeout
+    }
+
+    private func attemptConnectionTest(url: String, key: String, budgetSeconds: Double) async -> ConnectionTestAttemptResult {
+        let tester = self.connectionTester
+        do {
+            let error = try await withTimeout(seconds: budgetSeconds) {
+                await tester(url, key)
+            }
+            if let error {
+                return .failure(error)
+            }
+            return .success
+        } catch is TimeoutError {
+            return .timeout
+        } catch {
+            return .failure("connection failed")
+        }
+    }
+
     private func setMain(_ newState: MainState) {
+        if case .installingSolstone = newState {
+            probedVersion = nil
+            postInstallAutoTest = nil
+        }
         main = newState
         Logger.setup.info("installer: \(self.stateName(newState), privacy: .public)")
     }

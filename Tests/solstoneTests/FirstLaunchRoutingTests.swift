@@ -109,6 +109,22 @@ struct FirstLaunchRoutingTests {
         #expect(openedService)
     }
 
+    @Test func firstLaunch_externalLocalhost_noops() async {
+        var openedService = false
+
+        await FirstLaunchRouting.route(
+            config: AppConfig(serverURL: "http://localhost:5015", serverKey: "key", serviceMode: .external),
+            waitForPermissionCheck: {},
+            permissionsMissing: { false },
+            openPermissions: {},
+            openService: { openedService = true },
+            findSolBinary: { nil },
+            healthCheck: { _ in false }
+        )
+
+        #expect(!openedService)
+    }
+
     @Test func firstLaunch_localhostMissingSol_isIdempotent() async {
         var permissionOpenCount = 0
         var serviceOpenCount = 0
