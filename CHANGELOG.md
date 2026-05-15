@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - menubar settings now mirrors attention state so setup gaps are visible without opening the window.
 - bundled service cards add open journal dashboard and doctor affordances for ready installs.
 - external service connect now shares durable connection-test state with the app.
+- service: always-visible bundled/external selector in settings; dashboard button honors persisted serverURL.
 
 ## [1.1.3] - 2026-05-14
 

@@ -36,6 +36,10 @@ func serviceTabHeadingText(for mode: ServiceMode?) -> String? {
     mode == nil ? "set up the solstone service" : nil
 }
 
+func initialServiceMode(for config: AppConfig) -> ServiceMode {
+    config.serviceMode ?? .bundled
+}
+
 /// Settings window for configuring server upload
 struct SettingsView: View {
     enum Tab: Hashable {
@@ -61,7 +65,7 @@ struct SettingsView: View {
     // Service tab state
     @State private var observerURL = ""
     @State private var observerKey = ""
-    @State private var serviceMode: ServiceMode = .bundled
+    @State private var serviceMode: ServiceMode
     @State private var preserveNextServiceFieldChange = false
     @State private var inFlightTestID: UUID?
 
@@ -75,6 +79,7 @@ struct SettingsView: View {
         self.updateController = updateController
         self._selectedTab = State(initialValue: selectedTab)
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
+        self._serviceMode = State(initialValue: initialServiceMode(for: appState.config))
     }
 
     // MARK: - Auto-saving Bindings
@@ -446,35 +451,22 @@ struct SettingsView: View {
     @ViewBuilder
     private var serviceSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if let persisted = appState.config.serviceMode {
-                LabeledContent("service mode") {
-                    Text(persisted == .bundled ? "bundled" : "external")
-                }
+            if let heading = serviceTabHeadingText(for: appState.config.serviceMode) {
+                Text(heading)
+                    .font(.headline)
+            }
 
-                switch persisted {
-                case .bundled:
-                    BundledServiceCard(appState: appState)
-                case .external:
-                    externalServiceSection
-                }
-            } else {
-                if let heading = serviceTabHeadingText(for: appState.config.serviceMode) {
-                    Text(heading)
-                        .font(.headline)
-                }
+            Picker("service mode", selection: $serviceMode) {
+                Text("bundled").tag(ServiceMode.bundled)
+                Text("external").tag(ServiceMode.external)
+            }
+            .pickerStyle(.segmented)
 
-                Picker("service mode", selection: $serviceMode) {
-                    Text("bundled").tag(ServiceMode.bundled)
-                    Text("external").tag(ServiceMode.external)
-                }
-                .pickerStyle(.segmented)
-
-                switch serviceMode {
-                case .bundled:
-                    BundledServiceCard(appState: appState)
-                case .external:
-                    externalServiceSection
-                }
+            switch serviceMode {
+            case .bundled:
+                BundledServiceCard(appState: appState)
+            case .external:
+                externalServiceSection
             }
         }
     }

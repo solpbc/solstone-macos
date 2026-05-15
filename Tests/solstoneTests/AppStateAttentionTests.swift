@@ -229,6 +229,33 @@ struct AppStateAttentionTests {
         #expect(serviceTabHeadingText(for: .external) == nil)
     }
 
+    @Test func initialServiceModeDefaultsToBundledWhenConfigModeUnset() {
+        #expect(initialServiceMode(for: AppConfig(serviceMode: nil)) == .bundled)
+    }
+
+    @Test func initialServiceModeUsesBundledConfigMode() {
+        #expect(initialServiceMode(for: AppConfig(serviceMode: .bundled)) == .bundled)
+    }
+
+    @Test func initialServiceModeUsesExternalConfigMode() {
+        #expect(initialServiceMode(for: AppConfig(serviceMode: .external)) == .external)
+    }
+
+    @Test func settingsViewInitializationDoesNotPersistInitialServiceMode() {
+        let state = makeState(config: AppConfig(serviceMode: nil))
+        _ = SettingsView(appState: state, updateController: UpdateController())
+
+        #expect(state.config.serviceMode == nil)
+    }
+
+    @Test func serviceAttentionUsesPersistedBundledModeNotSelectorState() {
+        let state = makeState(config: AppConfig(serviceMode: .bundled))
+        state.installer.main = .done
+        state.installer.probedVersion = .current(version: "0.3.2")
+
+        #expect(!state.serviceNeedsAttention)
+    }
+
     private func makeState(config: AppConfig = AppConfig()) -> AppState {
         AppState.forSnapshot(config: config)
     }

@@ -12,10 +12,15 @@ struct BundledServiceCardTests {
     @Test func openDashboardButtonInvokesInjectedOpener() {
         var openedURL: URL?
         let opener: (URL) -> Void = { openedURL = $0 }
+        let config = AppConfig(serverURL: "http://localhost:7777")
 
-        opener(bundledDashboardURL())
+        opener(bundledDashboardURL(activeServerURL: URL(string: config.serverURL ?? "")))
 
-        #expect(openedURL?.absoluteString == ServiceMode.bundledServiceURL)
+        #expect(openedURL?.absoluteString == config.serverURL)
+    }
+
+    @Test func dashboardURLFallsBackToBundledServiceURLWhenActiveURLMissing() {
+        #expect(bundledDashboardURL(activeServerURL: nil).absoluteString == ServiceMode.bundledServiceURL)
     }
 
     @Test func installedCurrentUsesReadyCopy() {

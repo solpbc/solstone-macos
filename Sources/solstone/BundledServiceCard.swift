@@ -98,7 +98,7 @@ struct BundledServiceCard: View {
     private var installedAffordances: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button("open journal dashboard") {
-                openURL(bundledDashboardURL())
+                openURL(bundledDashboardURL(activeServerURL: URL(string: appState.config.serverURL ?? "")))
             }
 
             DisclosureGroup(isExpanded: $doctorExpanded) {
@@ -423,8 +423,11 @@ func installedStateShowsDashboardAndDoctor(_ state: InstallerCardState) -> Bool 
     }
 }
 
-func bundledDashboardURL() -> URL {
-    URL(string: ServiceMode.bundledServiceURL)!
+func bundledDashboardURL(activeServerURL: URL?) -> URL {
+    if let activeServerURL, !activeServerURL.absoluteString.isEmpty {
+        return activeServerURL
+    }
+    return URL(string: ServiceMode.bundledServiceURL)!
 }
 
 func doctorStatusIconName(for status: DoctorStatus) -> String {
