@@ -50,8 +50,8 @@ UV_SHA256_FILE := $(UV_VENDOR_DIR)/uv-aarch64-apple-darwin.sha256
 UV_VENDOR_BINARY := $(UV_VENDOR_DIR)/uv
 
 # version pins for installer (consumed by BundleConfig)
-SOLSTONE_PIN_VERSION ?= 0.3.2
-SOLSTONE_MIN_VERSION ?= 0.3.2
+SOLSTONE_PIN_VERSION ?= 0.3.4
+SOLSTONE_MIN_VERSION ?= 0.3.4
 
 check-versions:
 	@[ -n "$(SOLSTONE_PIN_VERSION)" ] || { echo "error: solstone pin version must not be empty"; exit 1; }
