@@ -206,7 +206,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("this is how you get searchable memory of every meeting, document, and idea. solstone watches your screen and keeps everything on your mac, sent only to your journal.")
+                        Text("this is how you get searchable memory of every meeting, document, and idea. solstone observes your screen alongside you and keeps everything on your mac, sent only to your journal.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
@@ -256,7 +256,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("to capture conversations and meetings, solstone observer needs mic access. same rules: stored locally, sent only to your journal. no third parties, no exceptions.")
+                        Text("to take in conversations and meetings, solstone observer needs mic access. same rules: stored locally, sent only to your journal. no third parties, no exceptions.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
@@ -720,7 +720,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 GroupBox("excluded apps") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("windows from these apps are never captured.")
+                        Text("windows from these apps are always excluded.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
@@ -899,7 +899,7 @@ struct SettingsView: View {
                         }
                     ))
                     .disabled(!appState.config.isUploadConfigured)
-                    .help("keeps recording locally but stops sending to your journal")
+                    .help("keeps observing locally but stops sending to your journal")
                     if let lastSynced = appState.uploadCoordinator.lastSyncedAt {
                         LabeledContent("last synced") {
                             Text(lastSynced, style: .relative)
@@ -1054,7 +1054,7 @@ struct SettingsView: View {
         logs: /usr/bin/log stream --predicate 'subsystem == "app.solstone.observer"' --level debug
         journal: \(appState.config.serverURL ?? "not configured")
 
-        if the observer isn't recording, check settings → permissions.
+        if the observer isn't running, check settings → permissions.
         if it's not syncing, check settings → journal.
         source: https://github.com/solpbc/solstone-macos
         """

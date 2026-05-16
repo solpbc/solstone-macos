@@ -1,11 +1,11 @@
 # solstone observer
 
-solstone observer is a macOS status bar app — one of the owner's observers in the trinity, experiencing your screen and audio along with you. It takes in all connected displays at 1 FPS, records system and microphone audio in 5-minute segments (per-source M4A files remixed at segment boundaries), and automatically syncs to your journal.
+solstone observer is a macOS status bar app — one of your observers, experiencing your screen and audio along with you. It takes in all connected displays at 1 FPS, plus system and microphone audio in 5-minute segments (per-source M4A files remixed at segment boundaries), then syncs to your journal automatically.
 
 ## Key Features
 
 - Multi-display observation at 1 FPS
-- Per-source audio recording (system audio + individual microphones)
+- Per-source audio: system audio + individual microphones
 - 5-minute segment rotation at clock boundaries
 - Pause with timed auto-resume
 - Journal sync with automatic upload and retry

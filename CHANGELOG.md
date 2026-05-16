@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - bundled-install cards add open journal dashboard and doctor affordances for ready installs.
 - connecting to an external journal now shares durable connection-test state with the app.
 - journal: always-visible bundled/external selector in settings; dashboard button honors persisted serverURL.
+- copy: owner-visible surfaces re-voiced to the two-part owner model (`observers + journal`, sol the keeper) and the surveillance-verb ban (no `watch`/`capture`/`record`/`monitor`/`track`/`collect` in owner copy). README, CLAUDE/AGENTS, menubar status, and settings tabs updated; architecture register and code identifiers untouched. See records/decisions/260516-cmo-solstone-two-part-model-observers-journal.md.
 
 ## [1.1.3] - 2026-05-14
 

@@ -121,7 +121,7 @@ struct MenuContent: View {
             } else {
                 switch appState.uploadCoordinator.status {
                 case .offline, .retrying:
-                    Button("observing - offline (recording locally) →") {
+                    Button("observing - offline (saved locally) →") {
                         appState.pendingSettingsTab = "status"
                         openWindow(id: "settings")
                         appState.didOpenWindow(.settings)
@@ -155,7 +155,7 @@ struct MenuContent: View {
         case .notSynced:
             return "observing - offline"
         case .retrying, .offline:
-            return "observing - offline (recording locally)"
+            return "observing - offline (saved locally)"
         }
     }
 
@@ -190,7 +190,7 @@ struct MenuContent: View {
                 }
             }
         } else if !appState.isRecording && appState.errorMessage == nil && !appState.permissionsNeedAttention {
-            Button("start recording") {
+            Button("start observing") {
                 Task {
                     await appState.startRecording()
                 }
