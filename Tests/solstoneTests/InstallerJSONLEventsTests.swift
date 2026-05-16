@@ -19,6 +19,11 @@ struct InstallerJSONLEventsTests {
             "step 1/6: doctor"
         )
         assertEvent(
+            #"{"event":"step.started","step":"skills_user","index":4,"total":7}"#,
+            .stepStarted(step: "skills_user", index: 4, total: 7),
+            "step 4/7: skills_user"
+        )
+        assertEvent(
             #"{"event":"doctor.started","version":"0.2.1"}"#,
             .doctorStarted(version: "0.2.1"),
             "doctor started"
@@ -37,6 +42,16 @@ struct InstallerJSONLEventsTests {
             #"{"event":"step.completed","step":"doctor","outcome":"ok","duration_ms":121}"#,
             .stepCompleted(step: "doctor", outcome: "ok", reason: nil, durationMS: 121),
             "step doctor done (ok, 121ms)"
+        )
+        assertEvent(
+            #"{"event":"step.completed","step":"skills_journal","outcome":"ok","duration_ms":42}"#,
+            .stepCompleted(step: "skills_journal", outcome: "ok", reason: nil, durationMS: 42),
+            "step skills_journal done (ok, 42ms)"
+        )
+        assertEvent(
+            #"{"event":"step.completed","step":"skills_user","outcome":"skipped","reason":"--skip-skills"}"#,
+            .stepCompleted(step: "skills_user", outcome: "skipped", reason: "--skip-skills", durationMS: nil),
+            "step skills_user skipped (--skip-skills)"
         )
         assertEvent(
             #"{"event":"step.warning","step":"doctor","text":"port in use","fix_hint":"kill 123"}"#,

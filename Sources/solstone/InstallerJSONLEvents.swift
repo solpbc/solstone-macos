@@ -128,7 +128,8 @@ internal enum InstallerKnownValues {
         "doctor",
         "journal",
         "install_models",
-        "skills",
+        "skills_user",
+        "skills_journal",
         "wrapper",
         "service"
     ]
@@ -138,7 +139,6 @@ internal enum InstallerKnownValues {
         "--skip-skills",
         "--skip-service",
         "packaged_install",
-        "claude_config_missing",
         "prior_run_ok",
         "resumed_after_restart"
     ]
