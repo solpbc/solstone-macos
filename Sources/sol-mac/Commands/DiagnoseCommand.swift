@@ -68,18 +68,18 @@ private func printPermission(label: String, granted: Bool?, appReachable: Bool) 
 
 private func printServerReachability() async {
     guard let serverValue = cfRead(key: "serverURL") as? String else {
-        print("WARN: server not configured")
+        print("WARN: journal not configured")
         return
     }
 
     let trimmed = serverValue.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else {
-        print("WARN: server not configured")
+        print("WARN: journal not configured")
         return
     }
 
     guard let url = URL(string: trimmed) else {
-        print("FAIL: server unreachable: invalid url")
+        print("FAIL: journal unreachable: invalid url")
         return
     }
 
@@ -90,14 +90,14 @@ private func printServerReachability() async {
     do {
         let (_, response) = try await URLSession.shared.data(for: request)
         if let httpResponse = response as? HTTPURLResponse, (200..<400).contains(httpResponse.statusCode) {
-            print("OK: server reachable")
+            print("OK: journal reachable")
         } else if let httpResponse = response as? HTTPURLResponse {
-            print("FAIL: server unreachable: HTTP \(httpResponse.statusCode)")
+            print("FAIL: journal unreachable: HTTP \(httpResponse.statusCode)")
         } else {
-            print("FAIL: server unreachable: invalid response")
+            print("FAIL: journal unreachable: invalid response")
         }
     } catch {
-        print("FAIL: server unreachable: \(error.localizedDescription)")
+        print("FAIL: journal unreachable: \(error.localizedDescription)")
     }
 }
 

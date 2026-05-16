@@ -1,6 +1,6 @@
 # installing solstone-macos
 
-these instructions are for a coding agent and human working together. solstone-macos is a native swift menu bar app — one of the owner's observers, experiencing screen and audio along with them on macOS, with segments uploaded to a solstone server.
+these instructions are for a coding agent and human working together. solstone-macos is a native swift menu bar app — one of the owner's observers, experiencing screen and audio along with them on macOS, with observations sent to your solstone journal.
 
 solstone must already be installed and running. if it isn't, start there: https://solstone.app/install
 
@@ -65,7 +65,7 @@ if the app exists and shows as connected, you're done.
    open /Applications/solstone.app
    ```
 
-7. register the observer and push config into the app. this creates the server-side registration and writes the credentials directly into the app's UserDefaults — the app detects the change automatically and starts syncing:
+7. register the observer and push config into the app. this creates the journal-side registration and writes the credentials directly into the app's UserDefaults — the app detects the change automatically and starts syncing:
    ```
    key=$(sol observer --json create solstone-macos | jq -r .key)
    defaults write app.solstone.observer serverURL "http://localhost:5015"
@@ -86,14 +86,14 @@ if the app exists and shows as connected, you're done.
    sol observer list
    ```
 
-## if your server is not on localhost
+## if your journal is not on localhost
 
-if you point solstone at a server on your LAN using a `.local` name, a private IP address, or a local IPv6 address, macOS may ask for Local Network access. if uploads fail and the app says `Can't reach local network. Open System Settings → Privacy & Security → Local Network and allow solstone.`, open that settings page and enable `solstone`. `http://localhost:5015` does not need Local Network permission, so a standard local install usually will not show this prompt. if you denied the prompt earlier, toggle it there and run the connection test again.
+if you point solstone at a journal on your LAN using a `.local` name, a private IP address, or a local IPv6 address, macOS may ask for Local Network access. if uploads fail and the app says `Can't reach local network. Open System Settings → Privacy & Security → Local Network and allow solstone.`, open that settings page and enable `solstone`. `http://localhost:5015` does not need Local Network permission, so a standard local install usually will not show this prompt. if you denied the prompt earlier, toggle it there and run the connection test again.
 
-solstone ships with an App Transport Security exception (`NSAllowsArbitraryLoads`) so the app can reach `http://` servers on local networks and Tailscale CGNAT IPs (`100.64.0.0/10`), which ATS does not cover via `NSAllowsLocalNetworking` alone.
+solstone ships with an App Transport Security exception (`NSAllowsArbitraryLoads`) so the app can reach journal endpoints over `http://` on local networks and Tailscale CGNAT IPs (`100.64.0.0/10`), which ATS does not cover via `NSAllowsLocalNetworking` alone.
 
 ## notes
 
 - the app detects `defaults write` changes automatically — no need to restart it after writing config.
-- if the agent flow above doesn't work, the human can click "connect to local service" in the app's settings as a fallback.
+- if the agent flow above doesn't work, the human can click "connect your journal →" in the app's settings as a fallback.
 - the app starts automatically at login once installed.

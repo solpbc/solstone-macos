@@ -33,7 +33,7 @@ func shouldApplyConnectionTestCompletion(inFlightTestID: UUID?, testGeneration: 
 }
 
 func serviceTabHeadingText(for mode: ServiceMode?) -> String? {
-    mode == nil ? "set up the solstone service" : nil
+    mode == nil ? "set up your journal" : nil
 }
 
 func initialServiceMode(for config: AppConfig) -> ServiceMode {
@@ -101,7 +101,7 @@ struct SettingsView: View {
                 Section {
                     sidebarLabel("permissions", systemImage: "lock.shield", needsAttention: appState.permissionsNeedAttention)
                         .tag(Tab.permissions)
-                    sidebarLabel("service", systemImage: "server.rack", needsAttention: appState.serviceNeedsAttention)
+                    sidebarLabel("journal", systemImage: "book.closed", needsAttention: appState.serviceNeedsAttention)
                         .tag(Tab.service)
                 } header: {
                     Text("setup")
@@ -162,7 +162,7 @@ struct SettingsView: View {
             switch pending {
             case "observer", "general": selectedTab = .observer
             case "permissions": selectedTab = .permissions
-            case "service": selectedTab = .service
+            case "service", "journal": selectedTab = .service
             case "microphones": selectedTab = .microphones
             case "privacy": selectedTab = .privacy
             case "help": selectedTab = .help
@@ -206,7 +206,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("this is how you get searchable memory of every meeting, document, and idea. solstone watches your screen and keeps everything on your mac, sent only to your service.")
+                        Text("this is how you get searchable memory of every meeting, document, and idea. solstone watches your screen and keeps everything on your mac, sent only to your journal.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
@@ -256,7 +256,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("to capture conversations and meetings, solstone observer needs mic access. same rules: stored locally, sent only to your service. no third parties, no exceptions.")
+                        Text("to capture conversations and meetings, solstone observer needs mic access. same rules: stored locally, sent only to your journal. no third parties, no exceptions.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
@@ -291,7 +291,7 @@ struct SettingsView: View {
             if appState.screenRecordingGranted && appState.microphoneGranted && !appState.config.isUploadConfigured {
                 HStack {
                     Spacer()
-                    Button("configure solstone service connection →") {
+                    Button("connect your journal →") {
                         selectedTab = .service
                     }
                     .keyboardShortcut(.defaultAction)
@@ -456,7 +456,7 @@ struct SettingsView: View {
                     .font(.headline)
             }
 
-            Picker("service mode", selection: $serviceMode) {
+            Picker("journal mode", selection: $serviceMode) {
                 Text("bundled").tag(ServiceMode.bundled)
                 Text("external").tag(ServiceMode.external)
             }
@@ -473,20 +473,20 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var externalServiceSection: some View {
-        GroupBox("service") {
+        GroupBox("journal") {
             VStack(alignment: .leading, spacing: 12) {
                 Link("setup guide: solstone.app/install", destination: URL(string: "https://solstone.app/install")!)
                     .font(.callout)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("service address").font(.caption).foregroundStyle(.secondary)
+                    Text("address").font(.caption).foregroundStyle(.secondary)
                     TextField("localhost, host:port, or https://...", text: $observerURL)
                         .textFieldStyle(.roundedBorder)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("key").font(.caption).foregroundStyle(.secondary)
-                    TextField("paste key from service", text: $observerKey)
+                    TextField("paste key from your journal", text: $observerKey)
                         .textFieldStyle(.roundedBorder)
                 }
 
@@ -524,7 +524,7 @@ struct SettingsView: View {
             }
             .padding(.vertical, 4)
         }
-        Text("segments are uploaded only to your configured solstone service. no data is sent anywhere else.")
+        Text("observations are sent only to your configured journal. nothing else, nowhere else.")
             .font(.caption)
             .foregroundStyle(.secondary)
             .padding(.top, 4)
@@ -885,7 +885,7 @@ struct SettingsView: View {
 
             GroupBox("upload") {
                 VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("service") {
+                    LabeledContent("journal") {
                         Text(appState.config.serverURL ?? "not configured")
                             .foregroundStyle(appState.config.serverURL == nil ? .secondary : .primary)
                     }
@@ -899,7 +899,7 @@ struct SettingsView: View {
                         }
                     ))
                     .disabled(!appState.config.isUploadConfigured)
-                    .help("keeps recording locally but stops sending to your service")
+                    .help("keeps recording locally but stops sending to your journal")
                     if let lastSynced = appState.uploadCoordinator.lastSyncedAt {
                         LabeledContent("last synced") {
                             Text(lastSynced, style: .relative)
@@ -915,7 +915,7 @@ struct SettingsView: View {
                         appState.uploadCoordinator.forceFullSync()
                     }
                     .help("re-check all days, including previously synced ones")
-                    Button("configure service →") {
+                    Button("configure journal →") {
                         selectedTab = .service
                     }
                     .font(.caption)
@@ -1052,10 +1052,10 @@ struct SettingsView: View {
         installed at: \(Bundle.main.bundlePath)
         captures: ~/Library/Application Support/Solstone/captures/
         logs: /usr/bin/log stream --predicate 'subsystem == "app.solstone.observer"' --level debug
-        service: \(appState.config.serverURL ?? "not configured")
+        journal: \(appState.config.serverURL ?? "not configured")
 
         if the observer isn't recording, check settings → permissions.
-        if it's not syncing, check settings → service.
+        if it's not syncing, check settings → journal.
         source: https://github.com/solpbc/solstone-macos
         """
     }

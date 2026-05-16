@@ -8,18 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Changed
-- Retired the standalone installer wizard; the bundled install state machine now lives inline in Settings → Service with a bundled / external selector.
-- Service settings now remember whether the observer is connected to bundled solstone or an external service.
+- copy: settings "service" pane renamed to "journal" across observer surfaces (sidebar, permission dialogs, status, errors, CLI). See records/decisions/260516-cmo-observer-surface-journal-terminology.md.
+- Retired the standalone installer wizard; the bundled install state machine now lives inline in Settings → Journal with a bundled / external selector.
+- Journal settings now remember whether the observer is connected to bundled solstone or an external journal.
 - Bundled solstone installs show version-aware status, with an upgrade affordance when the installed CLI is behind the bundled version.
-- External service setup now requires a successful connection test before connecting.
+- External journal setup now requires a successful connection test before connecting.
 - Pause-sync moved to the Status tab's upload section.
 - The "already installed elsewhere" hint is temporarily gone; bundled-state detection in Lode B will restore equivalent behavior.
 - Removed the automatic browser open during observer registration; the "open journal dashboard" affordance lands in Lode C.
-- settings sidebar now marks permission and service tabs that need attention.
+- settings sidebar now marks permission and journal tabs that need attention.
 - menubar settings now mirrors attention state so setup gaps are visible without opening the window.
-- bundled service cards add open journal dashboard and doctor affordances for ready installs.
-- external service connect now shares durable connection-test state with the app.
-- service: always-visible bundled/external selector in settings; dashboard button honors persisted serverURL.
+- bundled-install cards add open journal dashboard and doctor affordances for ready installs.
+- connecting to an external journal now shares durable connection-test state with the app.
+- journal: always-visible bundled/external selector in settings; dashboard button honors persisted serverURL.
 
 ## [1.1.3] - 2026-05-14
 
@@ -83,6 +84,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Fresh-install start-at-login registration.
-- Clearer local-network permission handling for LAN and Tailscale servers.
+- Clearer local-network permission handling for journals reachable over LAN or Tailscale.
 - Reliable settings-window Dock behavior and reopen handling.
 - Install flow split into `make cert` plus human-run `make allow`.

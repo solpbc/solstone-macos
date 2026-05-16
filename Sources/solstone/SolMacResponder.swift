@@ -80,8 +80,8 @@ public final class SolMacResponder {
             guard appState.config.isUploadConfigured else {
                 result = .error(IPCError(
                     code: "not_configured",
-                    message: "server not configured",
-                    hint: "set serverURL and serverKey in settings"
+                    message: "journal not configured",
+                    hint: "set serverURL and serverKey in settings → journal"
                 ))
                 break
             }

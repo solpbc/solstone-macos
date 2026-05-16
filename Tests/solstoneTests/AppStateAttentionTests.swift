@@ -221,7 +221,7 @@ struct AppStateAttentionTests {
     }
 
     @Test func serviceTabHeadingPresentWhenServiceModeNil() {
-        #expect(serviceTabHeadingText(for: nil) == "set up the solstone service")
+        #expect(serviceTabHeadingText(for: nil) == "set up your journal")
     }
 
     @Test func serviceTabHeadingAbsentWhenServiceModeSet() {

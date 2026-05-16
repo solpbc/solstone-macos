@@ -313,7 +313,7 @@ private struct StatusIcon: View {
                 }
                 let openService = { @MainActor in
                     openWindow(id: SolstoneSceneID.settings.rawValue)
-                    appState.pendingSettingsTab = "service"
+                    appState.pendingSettingsTab = "journal"
                     appState.didOpenWindow(.settings)
                     NSApp.activate(ignoringOtherApps: true)
                 }

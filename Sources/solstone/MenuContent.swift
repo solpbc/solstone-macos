@@ -110,7 +110,7 @@ struct MenuContent: View {
             .foregroundStyle(.red)
         } else if appState.isRecording && !appState.config.isUploadConfigured && !appState.isPaused && !appState.pauseManager.isPaused {
             Button("observing - local only →") {
-                appState.pendingSettingsTab = "service"
+                appState.pendingSettingsTab = "journal"
                 openWindow(id: "settings")
                 appState.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)

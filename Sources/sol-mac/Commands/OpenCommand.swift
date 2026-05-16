@@ -5,6 +5,7 @@ import SolstoneCore
 let openTabWhitelist: Set<String> = [
     "general",
     "permissions",
+    "journal",
     "service",
     "microphones",
     "privacy",
@@ -24,7 +25,7 @@ struct OpenCommand: AsyncParsableCommand {
         abstract: "open solstone settings."
     )
 
-    @Argument(help: "optional settings tab.")
+    @Argument(help: "settings tab to open: general | journal | microphones | privacy | permissions | status | updates | help")
     var tab: String?
 
     @Flag(name: .long, help: "launch solstone if not running.")

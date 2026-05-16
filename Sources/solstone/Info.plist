@@ -34,11 +34,11 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 sol pbc. all rights reserved.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>solstone observer connects to your local observer server to send your memories.</string>
+	<string>solstone observer connects to your journal on your local network so it can send your memories there.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>solstone observer hears conversations and meetings so you can find them later. audio stays on your device and goes only to your server.</string>
+	<string>solstone observer hears conversations and meetings so you can find them later. audio stays on your device and goes only to your journal.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>solstone observer takes in your screens along with you to build your personal memory. what it sees stays on your mac and goes only to your configured server — nothing else.</string>
+	<string>solstone observer takes in your screens along with you to build your personal memory. what it sees stays on your mac and goes only to your journal — nothing else.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>solstone observer uses on-device speech recognition to identify audio containing conversation, so only meaningful audio is kept.</string>
 	<key>NSSystemAudioRecordingUsageDescription</key>

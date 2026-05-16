@@ -7,6 +7,7 @@ struct SolMacOpenTabTests {
         #expect(openTabWhitelist == [
             "general",
             "permissions",
+            "journal",
             "service",
             "microphones",
             "privacy",
@@ -19,5 +20,9 @@ struct SolMacOpenTabTests {
     @Test func unknownTabWarnsButDoesNotReject() {
         #expect(openTabWarning(for: "mystery") == "warning: unknown tab 'mystery'; window will open without changing pane")
         #expect(openTabWarning(for: "general") == nil)
+    }
+
+    @Test func journalTabIsAccepted() {
+        #expect(openTabWarning(for: "journal") == nil)
     }
 }

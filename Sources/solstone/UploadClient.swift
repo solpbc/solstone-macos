@@ -38,13 +38,13 @@ public enum UploadError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return "Invalid server URL"
+            return "invalid journal address"
         case .noFiles:
             return "No files to upload"
         case .invalidResponse:
-            return "Invalid server response"
+            return "invalid journal response"
         case .serverError(let code, let message):
-            return "Server error (\(code)): \(message)"
+            return "journal error (\(code)): \(message)"
         }
     }
 }
@@ -132,9 +132,9 @@ public struct UploadClient: Sendable {
         case .notConnectedToInternet:
             return "No internet connection"
         case .cannotFindHost:
-            return "Server not found"
+            return "journal not found"
         case .cannotConnectToHost:
-            return "Cannot connect to server"
+            return "can't reach your journal"
         case .timedOut:
             return "Connection timed out"
         default:
@@ -182,7 +182,7 @@ public struct UploadClient: Sendable {
                 // Check if response is JSON (not HTML login page)
                 if contentType.contains("text/html") || bodyPreview.contains("<!DOCTYPE") || bodyPreview.contains("<html") {
                     Logger.upload.info("testConnection: got HTML instead of JSON - endpoint may not exist")
-                    return "Server returned login page (restart server?)"
+                    return "journal returned a login page (restart solstone?)"
                 }
 
                 switch httpResponse.statusCode {
@@ -194,9 +194,9 @@ public struct UploadClient: Sendable {
                 case 403:
                     return "Observer disabled"
                 case 404:
-                    return "Endpoint not found (server update needed?)"
+                    return "journal endpoint not found (update solstone?)"
                 default:
-                    return "Server error (\(httpResponse.statusCode))"
+                    return "journal error (\(httpResponse.statusCode))"
                 }
             }
             return "Invalid response"

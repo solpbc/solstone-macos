@@ -79,10 +79,10 @@ struct UploadClientTests {
     }
 
     @Test func errorMessagePreservesNonLocalStrings() {
-        #expect(UploadClient.errorMessage(for: URLError(.cannotConnectToHost), host: "localhost") == "Cannot connect to server")
-        #expect(UploadClient.errorMessage(for: URLError(.cannotConnectToHost), host: "example.com") == "Cannot connect to server")
+        #expect(UploadClient.errorMessage(for: URLError(.cannotConnectToHost), host: "localhost") == "can't reach your journal")
+        #expect(UploadClient.errorMessage(for: URLError(.cannotConnectToHost), host: "example.com") == "can't reach your journal")
         #expect(UploadClient.errorMessage(for: URLError(.notConnectedToInternet), host: "example.com") == "No internet connection")
-        #expect(UploadClient.errorMessage(for: URLError(.cannotFindHost), host: "nas.local") == "Server not found")
+        #expect(UploadClient.errorMessage(for: URLError(.cannotFindHost), host: "nas.local") == "journal not found")
         #expect(UploadClient.errorMessage(for: URLError(.timedOut), host: "localhost") == "Connection timed out")
     }
 

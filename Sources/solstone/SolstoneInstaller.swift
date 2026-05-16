@@ -417,7 +417,7 @@ public final class SolstoneInstaller {
         let url = appState.config.serverURL ?? ""
         let key = appState.config.serverKey ?? ""
         guard !url.isEmpty, !key.isEmpty else {
-            postInstallAutoTest = .failure("missing service credentials")
+            postInstallAutoTest = .failure("missing journal credentials")
             return
         }
 
