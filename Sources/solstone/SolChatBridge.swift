@@ -228,9 +228,9 @@ public actor SolChatBridge {
         self.session = URLSession(configuration: config)
     }
 
-    public func configure(serverURL: String, serverKey: String) {
+    public func configure(serverURL: String, serverKey: String) async {
         guard !serverURL.isEmpty, !serverKey.isEmpty else {
-            stop()
+            await stop()
             return
         }
 
@@ -241,7 +241,7 @@ public actor SolChatBridge {
         let hadExistingTask = task != nil
         let hadExistingState = task != nil || watchdog != nil || currentURL != nil || currentKey != nil
             || !pendingByID.isEmpty || staleFlag
-        teardownState(clearConnection: false, publishClear: hadExistingState)
+        await teardownState(clearConnection: false, publishClear: hadExistingState)
         lastHeartbeatAt = Date()
         currentURL = serverURL
         currentKey = serverKey
@@ -260,9 +260,9 @@ public actor SolChatBridge {
         }
     }
 
-    public func stop() {
+    public func stop() async {
         let hadTask = task != nil || watchdog != nil || currentURL != nil || currentKey != nil
-        teardownState(clearConnection: true)
+        await teardownState(clearConnection: true)
 
         if hadTask {
             Logger.callosum.info("Callosum stopped")
@@ -288,7 +288,7 @@ public actor SolChatBridge {
                 try await subscribe(serverURL: serverURL, serverKey: serverKey)
             } catch BridgeError.authStatus(let statusCode) {
                 handleAuthFailure(statusCode: statusCode)
-                teardownState(clearConnection: true)
+                await teardownState(clearConnection: true, joinSubscribeTask: false)
                 return
             } catch {
                 if Task.isCancelled { return }
@@ -440,11 +440,18 @@ public actor SolChatBridge {
         await setPending(mostRecent)
     }
 
-    private func teardownState(clearConnection: Bool, publishClear: Bool = true) {
-        task?.cancel()
-        watchdog?.cancel()
+    private func teardownState(
+        clearConnection: Bool,
+        publishClear: Bool = true,
+        joinSubscribeTask: Bool = true
+    ) async {
+        let pendingTask = task
+        let pendingWatchdog = watchdog
+        pendingTask?.cancel()
+        pendingWatchdog?.cancel()
         task = nil
         watchdog = nil
+
         if clearConnection {
             currentURL = nil
             currentKey = nil
@@ -461,6 +468,11 @@ public actor SolChatBridge {
                 setStale(false)
             }
         }
+
+        if joinSubscribeTask {
+            await pendingTask?.value
+        }
+        await pendingWatchdog?.value
     }
 
     private func eventKindLabel(_ event: SolChatEvent) -> String {

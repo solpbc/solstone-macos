@@ -276,8 +276,7 @@ struct MultiplexerTests {
         let lost = mux.keepaliveLost
 
         await mux.startKeepalive(interval: .milliseconds(20), missedLimit: 3)
-        try await Task.sleep(for: .milliseconds(25))
-        let firstPing = try #require(try await recorder.frames().first { $0.flags == FrameFlags.ping.rawValue })
+        let firstPing = try #require(try await firstPingFrame(from: recorder, timeout: .seconds(1)))
         try await mux.feedInbound(try encodeFrame(buildPong(nonce: firstPing.payload)))
         try await Task.sleep(for: .milliseconds(35))
         await mux.tearDown(reason: .normalShutdown)
@@ -317,6 +316,28 @@ struct MultiplexerTests {
             let stream = try await group.next()!
             group.cancelAll()
             return stream
+        }
+    }
+
+    private func firstPingFrame(from recorder: SinkRecorder, timeout: Duration) async throws -> Frame? {
+        try await withThrowingTaskGroup(of: Frame?.self) { group in
+            group.addTask {
+                while !Task.isCancelled {
+                    let frames = try await recorder.frames()
+                    if let frame = frames.first(where: { $0.flags == FrameFlags.ping.rawValue }) {
+                        return frame
+                    }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+                return nil
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                return nil
+            }
+            let frame = try await group.next()!
+            group.cancelAll()
+            return frame
         }
     }
 
