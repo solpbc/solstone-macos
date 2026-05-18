@@ -52,6 +52,14 @@ struct SolstoneInstallerTests {
                 "--journal",
                 "/tmp/solstone-test-journal"
             ])
+            let observer = try #require(runner.invocations.first { $0.arguments.first == "observer" })
+            #expect(observer.arguments == [
+                "observer",
+                "--json",
+                "create",
+                "solstone-macos",
+                "--reuse-existing"
+            ])
         }
     }
 

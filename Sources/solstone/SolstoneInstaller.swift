@@ -238,7 +238,7 @@ public final class SolstoneInstaller {
         do {
             result = try await subprocessRunner.run(
                 executable: URL(fileURLWithPath: solPath),
-                arguments: ["observer", "--json", "create", "solstone-macos"],
+                arguments: ["observer", "--json", "create", "solstone-macos", "--reuse-existing"],
                 environment: nil,
                 stdoutHandler: { [weak self, output] data in
                     Self.append(data, to: output, stream: .stdout)
