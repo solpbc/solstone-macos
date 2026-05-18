@@ -5,6 +5,18 @@ All notable changes to Solstone Capture will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-05-18
+
+### Changed
+- the bundled solstone is updated. results are more consistent across AI providers, and your provider-tier defaults move to each provider's current model. nothing about how you use solstone changes.
+
+### Fixed
+- a name from your own contacts could be written into your journal as if it had appeared on your screen, when sol had little else to go on for a frame. that no longer happens.
+- on a rare frame, sol could write a long run of repeated text into your journal. that output is now bounded before it's saved, and normal entries are unaffected.
+- when sol fell back to its backup AI provider for a screen or document, the image wasn't reaching the provider, so the journal entry was a guess instead of grounded in what was on screen. the image now reaches every provider.
+- updating solstone on a Mac that already had it installed could fail partway through. some upgrades over an existing install hit this — this resolves it, and updating now completes cleanly.
+
+
 ## [1.2.0] - 2026-05-17
 
 ### Added
