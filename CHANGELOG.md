@@ -5,30 +5,16 @@ All notable changes to Solstone Capture will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.4] - 2026-05-16
+## [1.2.0] - 2026-05-17
 
-<!-- INTERIM engineer-register notes. Owner-facing Sparkle release notes are
-     produced by the CMO changelog-draft macOS live-trial at the phase-3
-     publish gate (vpe/playbooks/solstone-macos-installer-release.md). Do NOT
-     ship the Sparkle appcast from this block as-is. -->
+### Added
+- a plain-language data-flow page now ships with solstone. it lays out what's sent to your AI provider for each task, what stays on your machine, and the Article 8 covenant for what is never sent. linked from setup, the install guide, and the readme.
+- first-run setup now walks through how to power sol: a hosted key to start, your own provider account (a developer key, not a consumer chat plan), and where local-only is headed.
 
 ### Changed
-- copy: settings "service" pane renamed to "journal" across observer surfaces (sidebar, permission dialogs, status, errors, CLI). See records/decisions/260516-cmo-observer-surface-journal-terminology.md.
-- Retired the standalone installer wizard; the bundled install state machine now lives inline in Settings -> Journal with a bundled / external selector.
-- Journal settings now remember whether the observer is connected to bundled solstone or an external journal.
-- Bundled solstone installs show version-aware status, with an upgrade affordance when the installed CLI is behind the bundled version.
-- External journal setup now requires a successful connection test before connecting.
-- Pause-sync moved to the Status tab upload section.
-- The "already installed elsewhere" hint is temporarily gone; bundled-state detection restores equivalent behavior.
-- Removed the automatic browser open during observer registration; the "open journal dashboard" affordance gates browser open.
-- settings sidebar now marks permission and journal tabs that need attention.
-- menubar settings now mirrors attention state so setup gaps are visible without opening the window.
-- bundled-install cards add open journal dashboard and doctor affordances for ready installs.
-- connecting to an external journal now shares durable connection-test state with the app.
-- journal: always-visible bundled/external selector in settings; dashboard button honors persisted serverURL.
-- copy: owner-visible surfaces re-voiced to the two-part owner model (observers + journal, sol the keeper) and the surveillance-verb ban in owner copy. README, CLAUDE/AGENTS, menubar status, and settings tabs updated; architecture register and code identifiers untouched. See records/decisions/260516-cmo-solstone-two-part-model-observers-journal.md.
-- Bundled solstone backend advanced 0.3.2 -> 0.3.4: owners get the 0.3.3 welcome-setup overhaul plus the 0.3.4 default starred-apps, convey browser-back fix, and parakeet config cleanup with this update.
-- Internal stability: swift-test keepalive/teardown races stabilized, build-time terminology guard added, installer known-values reconciled with the backend setup contract.
+- installing solstone now happens inside settings → journal, not a separate window. pick the bundled solstone or connect to your own, see each step as it runs with a details view, and a single badge points you to whatever still needs attention. when it finishes, an "open journal dashboard" button opens it on your terms instead of a browser opening on its own.
+- the menubar and settings wording now follows one model: your observers experience your day along with you, and everything goes to your journal, where sol keeps it. clearer language for what each part does. nothing about how solstone works changed.
+- bundled solstone updated. fresh setup is clearer, the starting nav rail comes ready instead of blank, timezones resolve correctly on Macs, and help points to support.solstone.app.
 
 ## [1.1.3] - 2026-05-14
 
