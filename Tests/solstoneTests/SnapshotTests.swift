@@ -117,9 +117,36 @@ struct SnapshotTests {
     @Test func menuPaused() throws {
         let state = AppState.forSnapshot()
         state.isRecording = true
-        state.pauseManager.pause(for: .indefinite)
+        state.pauseManager.pause(for: .seconds(125))
+        let expectedHeader = pausedHeaderText(timeRemaining: state.pauseManager.formatTimeRemaining())
+        #expect(expectedHeader.hasPrefix("paused - resumes in "))
         let updateController = makeSnapshotUpdateController()
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-paused.png")
+    }
+
+    @Test func menuPausedShort() throws {
+        let longState = AppState.forSnapshot()
+        longState.isRecording = true
+        longState.pauseManager.pause(for: .seconds(125))
+        let headerLong = pausedHeaderText(timeRemaining: longState.pauseManager.formatTimeRemaining())
+
+        let state = AppState.forSnapshot()
+        state.isRecording = true
+        state.pauseManager.pause(for: .seconds(35))
+        let expectedHeader = pausedHeaderText(timeRemaining: state.pauseManager.formatTimeRemaining())
+        #expect(expectedHeader.hasPrefix("paused - resumes in "))
+        #expect(headerLong != expectedHeader)
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-paused-short.png")
+    }
+
+    @Test func menuPausedIndefinite() throws {
+        let state = AppState.forSnapshot()
+        state.isRecording = true
+        state.pauseManager.pause(for: .indefinite)
+        #expect(pausedHeaderText(timeRemaining: state.pauseManager.formatTimeRemaining()) == "paused")
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-paused-indefinite.png")
     }
 
     @Test func menuError() throws {

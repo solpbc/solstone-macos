@@ -131,6 +131,9 @@ struct MenuContent: View {
                     Text(recordingStatusText)
                 }
             }
+        } else if appState.pauseManager.isPaused {
+            let _ = appState.pauseManager.refreshTick
+            Text(pausedHeaderText(timeRemaining: appState.pauseManager.formatTimeRemaining()))
         } else {
             Text(recordingStatusText)
         }
@@ -179,16 +182,7 @@ struct MenuContent: View {
                 }
             }
         } else if appState.pauseManager.isPaused {
-            let _ = appState.pauseManager.refreshTick
-            if let timeText = appState.pauseManager.formatTimeRemaining() {
-                Button("resume (\(timeText) remaining)") {
-                    appState.pauseManager.resume()
-                }
-            } else {
-                Button("resume") {
-                    appState.pauseManager.resume()
-                }
-            }
+            Button("resume") { appState.pauseManager.resume() }
         } else if !appState.isRecording && appState.errorMessage == nil && !appState.permissionsNeedAttention {
             Button("start observing") {
                 Task {
@@ -204,6 +198,13 @@ struct MenuContent: View {
 
 func journalURLToOpen(from serverURL: String?) -> URL? {
     URL(string: serverURL ?? "")
+}
+
+func pausedHeaderText(timeRemaining: String?) -> String {
+    if let t = timeRemaining {
+        return "paused - resumes in \(t)"
+    }
+    return "paused"
 }
 
 func settingsAttentionIconName(anyTabNeedsAttention: Bool) -> String? {
