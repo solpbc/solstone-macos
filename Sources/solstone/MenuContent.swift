@@ -201,10 +201,11 @@ func journalURLToOpen(from serverURL: String?) -> URL? {
 }
 
 func pausedHeaderText(timeRemaining: String?) -> String {
-    if let t = timeRemaining {
-        return "paused - resumes in \(t)"
-    }
-    return "paused"
+    guard let t = timeRemaining else { return "paused" }
+    let compact = t.replacingOccurrences(of: " mins", with: " min")
+                   .replacingOccurrences(of: " secs", with: " sec")
+                   .replacingOccurrences(of: " hrs", with: " hr")
+    return "paused - \(compact) left"
 }
 
 func settingsAttentionIconName(anyTabNeedsAttention: Bool) -> String? {

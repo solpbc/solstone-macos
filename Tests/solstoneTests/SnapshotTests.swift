@@ -119,7 +119,8 @@ struct SnapshotTests {
         state.isRecording = true
         state.pauseManager.pause(for: .seconds(125))
         let expectedHeader = pausedHeaderText(timeRemaining: state.pauseManager.formatTimeRemaining())
-        #expect(expectedHeader.hasPrefix("paused - resumes in "))
+        #expect(expectedHeader.hasPrefix("paused - "))
+        #expect(expectedHeader.hasSuffix(" left"))
         let updateController = makeSnapshotUpdateController()
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-paused.png")
     }
@@ -134,7 +135,8 @@ struct SnapshotTests {
         state.isRecording = true
         state.pauseManager.pause(for: .seconds(35))
         let expectedHeader = pausedHeaderText(timeRemaining: state.pauseManager.formatTimeRemaining())
-        #expect(expectedHeader.hasPrefix("paused - resumes in "))
+        #expect(expectedHeader.hasPrefix("paused - "))
+        #expect(expectedHeader.hasSuffix(" left"))
         #expect(headerLong != expectedHeader)
         let updateController = makeSnapshotUpdateController()
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-paused-short.png")
