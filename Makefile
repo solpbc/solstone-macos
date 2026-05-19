@@ -612,6 +612,11 @@ allow:
 # Generate icon assets from SVG sources in assets/
 # Requires: rsvg-convert (brew install librsvg), iconutil (built-in macOS)
 # Run when SVGs change. Output files are committed so fresh checkouts build cleanly.
+# SOURCE_DATE_EPOCH pins Cairo's PDF /CreationDate + /ID so `rsvg-convert -f pdf`
+# is byte-deterministic. Without it, every run rewrites ALL template PDFs (Cairo
+# embeds a live timestamp + a date-derived /ID), so a one-icon SVG change shows
+# all four PDFs as modified. Value is arbitrary but MUST stay constant forever.
+icons: export SOURCE_DATE_EPOCH := 1700000000
 icons: check-icons-deps
 	@echo "Generating icons from SVG sources..."
 	@mkdir -p Sources/solstone/Resources
