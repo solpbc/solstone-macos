@@ -171,29 +171,35 @@ extension SPL {
 
 private func pairURLMessage(_ error: PairURLError) -> String {
     switch error {
-    case .wrongScheme:
+    case .wrongScheme(nil):
         return "pair url must use https"
-    case .wrongHost:
+    case .wrongScheme(let scheme?):
+        return "pair url scheme must be https, got \(scheme)"
+    case .wrongHost(nil):
         return "pair url must use link.solpbc.org"
-    case .wrongPath:
-        return "pair url must use the /p path"
+    case .wrongHost(let host?):
+        return "pair url host must be link.solpbc.org, got \(host)"
+    case .wrongPath(let path):
+        return "pair url path must be /p, got \(path)"
     case .missingFragment:
         return "pair url is missing its fragment"
-    case .missingField(let field):
-        return "pair url is missing \(field)"
-    case .invalidVersion:
-        return "pair url version is unsupported"
-    case .malformedHomeURL:
-        return "pair url contains a malformed home url"
-    case .nonHTTPSHomeURL:
-        return "pair url home endpoint must use https"
-    case .invalidFingerprint:
-        return "pair url fingerprint must be a sha-256 hex value"
-    case .emptyToken:
-        return "pair url token is empty"
-    case .emptyLabel:
-        return "pair url label is empty"
+    case .invalidBase32(.outOfAlphabet(let character)):
+        return "pair url contains an invalid character: \(character)"
+    case .invalidBase32(.nonCanonicalPadBits):
+        return "pair url contains invalid encoded data"
+    case .invalidVersion(let version):
+        return "pair url version is unsupported: \(hexByte(version))"
+    case .unsupportedAddrType(let addressType):
+        return "pair url address type is unsupported: \(hexByte(addressType))"
+    case .invalidLength(let count):
+        return "pair url data length is invalid: \(count) bytes"
+    case .malformedOuterURL:
+        return "pair url is malformed"
     }
+}
+
+private func hexByte(_ value: UInt8) -> String {
+    String(format: "0x%02x", value)
 }
 
 private func pairErrorCode(_ error: PairError) -> String {

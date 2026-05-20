@@ -109,14 +109,21 @@ actor MockHome {
         guard let port = pairListener?.port?.rawValue else {
             throw MockHomeError.pairServerNotStarted
         }
-        let nonce = Self.base64URL(Self.randomBytes(count: 16))
-        outstandingNonces.insert(nonce)
-        let lanURL = URL(string: "https://127.0.0.1:\(port)/pair?token=\(nonce)")!
-        let pairURL = PairURL(homeURL: lanURL, token: nonce, caFingerprintHex: pairServerFingerprint, label: homeLabel)
-        let shapeURL = URL(string: "https://192.168.99.99:\(port)/pair?token=\(nonce)")!
-        let encodedURL = shapeURL.absoluteString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? shapeURL.absoluteString
-        let encodedLabel = homeLabel.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? homeLabel
-        return (pairURL, "https://link.solpbc.org/p#h=\(encodedURL)&t=\(nonce)&f=\(pairServerFingerprint)&l=\(encodedLabel)&v=1")
+        let nonceBytes = Array(Self.randomBytes(count: 8))
+        let nonceHex = CertChain.hex(nonceBytes)
+        outstandingNonces.insert(nonceHex)
+        let fingerprintBytes = try Self.hexBytes(pairServerFingerprint)
+        guard fingerprintBytes.count >= 16 else {
+            throw MockHomeError.invalidPairServerFingerprint
+        }
+        var blob: [UInt8] = [0x02, 0x01, 0x7F, 0x00, 0x00, 0x01]
+        blob.append(UInt8((port >> 8) & 0xff))
+        blob.append(UInt8(port & 0xff))
+        blob.append(contentsOf: nonceBytes)
+        blob.append(contentsOf: fingerprintBytes.prefix(16))
+        let pairURLString = "https://link.solpbc.org/p#\(Self.encode(blob))"
+        let pairURL = try PairURL.parse(URL(string: pairURLString)!)
+        return (pairURL, pairURLString)
     }
 
     func startTLSMuxListener() async throws -> (host: String, port: UInt16) {
@@ -220,16 +227,14 @@ actor MockHome {
     private func handlePair(_ connection: NWConnection) async {
         do {
             let request = try await MockHTTPConnection.readRequest(from: connection)
-            guard request.method == "POST", request.path.hasPrefix("/pair") else {
+            guard request.method == "POST", request.path == "/app/link/pair" else {
                 try await MockHTTPConnection.send(status: 404, body: #"{"error":"not_found"}"#, to: connection)
                 connection.cancel()
                 return
             }
-            let queryToken = URLComponents(string: request.path)?.queryItems?.first(where: { $0.name == "token" })?.value
             guard let json = try JSONSerialization.jsonObject(with: request.body) as? [String: Any],
                   let nonce = json["nonce"] as? String,
                   let csr = json["csr"] as? String,
-                  queryToken == nonce,
                   outstandingNonces.remove(nonce) != nil else {
                 try await MockHTTPConnection.send(status: 400, body: #"{"error":"bad_request"}"#, to: connection)
                 connection.cancel()
@@ -456,6 +461,49 @@ actor MockHome {
         return Data(bytes)
     }
 
+    private nonisolated static func hexBytes(_ value: String) throws -> [UInt8] {
+        guard value.count.isMultiple(of: 2) else {
+            throw MockHomeError.invalidPairServerFingerprint
+        }
+        var bytes: [UInt8] = []
+        var index = value.startIndex
+        while index < value.endIndex {
+            let next = value.index(index, offsetBy: 2)
+            guard let byte = UInt8(value[index..<next], radix: 16) else {
+                throw MockHomeError.invalidPairServerFingerprint
+            }
+            bytes.append(byte)
+            index = next
+        }
+        return bytes
+    }
+
+    private nonisolated static func encode(_ bytes: [UInt8]) -> String {
+        let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+        var accumulator: UInt64 = 0
+        var bitCount = 0
+        var output = ""
+
+        for byte in bytes {
+            accumulator = (accumulator << 8) | UInt64(byte)
+            bitCount += 8
+
+            while bitCount >= 5 {
+                bitCount -= 5
+                let index = Int((accumulator >> UInt64(bitCount)) & 0x1f)
+                output.append(alphabet[index])
+                accumulator &= (1 << UInt64(bitCount)) - 1
+            }
+        }
+
+        if bitCount > 0 {
+            let index = Int((accumulator << UInt64(5 - bitCount)) & 0x1f)
+            output.append(alphabet[index])
+        }
+
+        return output
+    }
+
     private nonisolated static func base64URL(_ data: Data) -> String {
         data.base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
@@ -467,6 +515,7 @@ actor MockHome {
 enum MockHomeError: Error {
     case listenerMissingPort
     case pairServerNotStarted
+    case invalidPairServerFingerprint
 }
 
 private final class MockAuthorizedClients: @unchecked Sendable {

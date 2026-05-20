@@ -6,10 +6,11 @@ import Foundation
 import Security
 
 final class PinningDelegate: NSObject, URLSessionDelegate, Sendable {
-    let expectedFingerprint: String
+    let expectedFingerprintBytes: [UInt8]
 
-    init(expectedFingerprint: String) {
-        self.expectedFingerprint = expectedFingerprint
+    init(expectedFingerprintBytes: [UInt8]) {
+        precondition(expectedFingerprintBytes.count == 16)
+        self.expectedFingerprintBytes = expectedFingerprintBytes
     }
 
     func urlSession(
@@ -19,7 +20,7 @@ final class PinningDelegate: NSObject, URLSessionDelegate, Sendable {
     ) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = challenge.protectionSpace.serverTrust,
-              Self.fingerprintMatchesPin(serverTrust: trust, expected: expectedFingerprint) else {
+              Self.fingerprintMatchesPin(serverTrust: trust, expectedFingerprintBytes: expectedFingerprintBytes) else {
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
@@ -27,13 +28,20 @@ final class PinningDelegate: NSObject, URLSessionDelegate, Sendable {
         completionHandler(.useCredential, URLCredential(trust: trust))
     }
 
-    static func fingerprintMatchesPin(serverTrust: SecTrust, expected: String) -> Bool {
+    static func fingerprintMatchesPin(serverTrust: SecTrust, expectedFingerprintBytes: [UInt8]) -> Bool {
         guard let chain = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate],
               let leaf = chain.first else {
             return false
         }
         let data = SecCertificateCopyData(leaf) as Data
-        let fingerprint = CertChain.hex(SHA256.hash(data: data))
-        return CertChain.fingerprintsMatch(fingerprint, expected)
+        return pinMatches(certificateDER: data, expectedFingerprintBytes: expectedFingerprintBytes)
+    }
+
+    static func pinMatches(certificateDER: Data, expectedFingerprintBytes: [UInt8]) -> Bool {
+        guard expectedFingerprintBytes.count == 16 else {
+            return false
+        }
+        let digest = Array(SHA256.hash(data: certificateDER))
+        return Array(digest.prefix(16)) == expectedFingerprintBytes
     }
 }

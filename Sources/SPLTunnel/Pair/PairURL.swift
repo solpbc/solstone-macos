@@ -3,12 +3,16 @@
 
 import Foundation
 
-public struct PairURL: Sendable, Equatable {
-    public let homeURL: URL
-    public let token: String
-    public let caFingerprintHex: String
-    public let label: String
-    public let version: Int
+public struct PairURL: Sendable, Equatable, Hashable {
+    public let version: UInt8
+    public let addressBytes: [UInt8]
+    public let port: UInt16
+    public let nonceBytes: [UInt8]
+    public let caFingerprintBytes: [UInt8]
+
+    public var addressString: String {
+        addressBytes.map(String.init).joined(separator: ".")
+    }
 
     public static func parse(_ url: URL) throws -> PairURL {
         try PairURL(url: url)
@@ -16,20 +20,20 @@ public struct PairURL: Sendable, Equatable {
 
     public init(string: String) throws {
         guard let url = URL(string: string) else {
-            throw PairURLError.malformedHomeURL
+            throw PairURLError.malformedOuterURL
         }
         try self.init(url: url)
     }
 
     public init(url: URL) throws {
         guard url.scheme?.lowercased() == "https" else {
-            throw PairURLError.wrongScheme
+            throw PairURLError.wrongScheme(url.scheme)
         }
         guard url.host?.lowercased() == "link.solpbc.org" else {
-            throw PairURLError.wrongHost
+            throw PairURLError.wrongHost(url.host)
         }
         guard url.path == "/p" else {
-            throw PairURLError.wrongPath
+            throw PairURLError.wrongPath(url.path)
         }
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let fragment = components.percentEncodedFragment,
@@ -37,91 +41,50 @@ public struct PairURL: Sendable, Equatable {
             throw PairURLError.missingFragment
         }
 
-        let fields = try Self.fragmentFields(fragment)
-        guard let homeValue = fields["h"] else {
-            throw PairURLError.missingField("h")
-        }
-        guard let token = fields["t"] else {
-            throw PairURLError.missingField("t")
-        }
-        guard let fingerprint = fields["f"] else {
-            throw PairURLError.missingField("f")
-        }
-        guard let label = fields["l"] else {
-            throw PairURLError.missingField("l")
-        }
-        guard fields["v"] == "1" else {
-            throw PairURLError.invalidVersion
+        let bytes: [UInt8]
+        do {
+            bytes = try Crockford32.decode(fragment)
+        } catch let reason as PairURLError.Base32Reason {
+            throw PairURLError.invalidBase32(reason)
         }
 
-        guard let homeURL = URL(string: homeValue),
-              let host = homeURL.host,
-              !host.isEmpty else {
-            throw PairURLError.malformedHomeURL
+        guard !bytes.isEmpty else {
+            throw PairURLError.invalidLength(bytes.count)
         }
-        guard homeURL.scheme?.lowercased() == "https" else {
-            throw PairURLError.nonHTTPSHomeURL
+        guard bytes[0] == 0x02 else {
+            throw PairURLError.invalidVersion(bytes[0])
         }
-        guard !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw PairURLError.emptyToken
+        guard bytes.count >= 2 else {
+            throw PairURLError.invalidLength(bytes.count)
         }
-        guard Self.isValidFingerprint(fingerprint) else {
-            throw PairURLError.invalidFingerprint
+        guard bytes[1] == 0x01 else {
+            throw PairURLError.unsupportedAddrType(bytes[1])
         }
-        guard !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw PairURLError.emptyLabel
+        guard bytes.count == 32 else {
+            throw PairURLError.invalidLength(bytes.count)
         }
 
-        self.homeURL = homeURL
-        self.token = token
-        self.caFingerprintHex = fingerprint.lowercased()
-        self.label = label
-        self.version = 1
-    }
-
-    init(homeURL: URL, token: String, caFingerprintHex: String, label: String, version: Int = 1) {
-        self.homeURL = homeURL
-        self.token = token
-        self.caFingerprintHex = caFingerprintHex.lowercased()
-        self.label = label
-        self.version = version
-    }
-
-    private static func fragmentFields(_ fragment: String) throws -> [String: String] {
-        var fields: [String: String] = [:]
-        for pair in fragment.split(separator: "&", omittingEmptySubsequences: false) {
-            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-            guard parts.count == 2,
-                  let name = percentDecode(String(parts[0])),
-                  let value = percentDecode(String(parts[1])) else {
-                throw PairURLError.missingFragment
-            }
-            fields[name] = value
-        }
-        return fields
-    }
-
-    private static func percentDecode(_ value: String) -> String? {
-        value.replacingOccurrences(of: "+", with: " ").removingPercentEncoding
-    }
-
-    private static func isValidFingerprint(_ value: String) -> Bool {
-        value.count == 64 && value.allSatisfy { character in
-            character.isNumber || ("a"..."f").contains(character.lowercased())
-        }
+        version = bytes[0]
+        addressBytes = Array(bytes[2..<6])
+        port = UInt16(bytes[6]) << 8 | UInt16(bytes[7])
+        nonceBytes = Array(bytes[8..<16])
+        caFingerprintBytes = Array(bytes[16..<32])
     }
 }
 
 public enum PairURLError: Error, Equatable, Sendable {
-    case wrongScheme
-    case wrongHost
-    case wrongPath
+    case wrongScheme(String?)
+    case wrongHost(String?)
+    case wrongPath(String)
     case missingFragment
-    case missingField(String)
-    case invalidVersion
-    case malformedHomeURL
-    case nonHTTPSHomeURL
-    case invalidFingerprint
-    case emptyToken
-    case emptyLabel
+    case invalidBase32(Base32Reason)
+    case invalidVersion(UInt8)
+    case unsupportedAddrType(UInt8)
+    case invalidLength(Int)
+    case malformedOuterURL
+
+    public enum Base32Reason: Error, Equatable, Sendable {
+        case outOfAlphabet(Character)
+        case nonCanonicalPadBits
+    }
 }

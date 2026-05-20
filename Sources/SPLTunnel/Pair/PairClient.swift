@@ -45,7 +45,7 @@ public struct PairClient: Sendable {
         if let injected = self.session {
             session = injected
         } else {
-            let delegate = PinningDelegate(expectedFingerprint: pairURL.caFingerprintHex)
+            let delegate = PinningDelegate(expectedFingerprintBytes: pairURL.caFingerprintBytes)
             session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         }
 
@@ -119,11 +119,13 @@ public struct PairClient: Sendable {
     }
 
     static func makeLANRequest(pairURL: PairURL, csrPEM: String, deviceLabel: String) throws -> URLRequest {
-        var request = URLRequest(url: pairURL.homeURL)
+        // Dotted-quad IPv4 plus UInt16 port and fixed path are parser-controlled.
+        let url = URL(string: "https://\(pairURL.addressString):\(pairURL.port)/app/link/pair")!
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(LANPairRequest(
-            nonce: pairURL.token,
+            nonce: CertChain.hex(pairURL.nonceBytes),
             csr: csrPEM,
             deviceLabel: deviceLabel
         ))

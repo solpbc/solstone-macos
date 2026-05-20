@@ -52,15 +52,6 @@ struct CertChainTests {
         #expect(CertChain.sha256Fingerprint(of: certificate) == cert1Fingerprint)
     }
 
-    @Test func fingerprintsMatchAcceptsPrefixOnEitherSide() {
-        #expect(CertChain.fingerprintsMatch("sha256:\(cert1Fingerprint)", cert1Fingerprint))
-        #expect(CertChain.fingerprintsMatch(cert1Fingerprint, "sha256:\(cert1Fingerprint)"))
-    }
-
-    @Test func fingerprintsMatchIsCaseInsensitive() {
-        #expect(CertChain.fingerprintsMatch(cert1Fingerprint.uppercased(), cert1Fingerprint))
-    }
-
     @Test func invalidPEMThrows() {
         expectThrows(.emptyChain) {
             _ = try CertChain.certificates(fromPEM: "")

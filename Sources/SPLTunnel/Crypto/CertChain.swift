@@ -5,9 +5,9 @@ import Crypto
 import Foundation
 import Security
 
-/// Lode B pins the presented leaf certificate DER (SHA-256), not a CA SPKI
-/// fingerprint. The QR `pin` field naming `ca_fingerprint` is a v1 misnomer;
-/// the value MUST be SHA-256 of the cert the home presents.
+/// Certificate helpers for pair-response storage and leaf-certificate pinning.
+/// PairClient stores the issued client certificate SHA-256 fingerprint, while
+/// PinningDelegate compares the first 16 bytes of the presented leaf DER hash.
 public enum CertChain {
     public static func certificates(fromPEM pem: String) throws -> [SecCertificate] {
         let blocks = try pemBlocks(from: pem, label: "CERTIFICATE")
@@ -26,13 +26,6 @@ public enum CertChain {
     public static func sha256Fingerprint(of certificate: SecCertificate) -> String {
         let data = SecCertificateCopyData(certificate) as Data
         return hex(SHA256.hash(data: data))
-    }
-
-    public static func fingerprintsMatch(_ a: String, _ b: String) -> Bool {
-        guard let lhs = normalizedFingerprint(a), let rhs = normalizedFingerprint(b) else {
-            return false
-        }
-        return lhs == rhs
     }
 
     static func pemBlocks(from pem: String, label: String) throws -> [[UInt8]] {
@@ -56,15 +49,6 @@ public enum CertChain {
         }
 
         return blocks
-    }
-
-    static func normalizedFingerprint(_ value: String) -> String? {
-        let lower = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let stripped = lower.hasPrefix("sha256:") ? String(lower.dropFirst("sha256:".count)) : lower
-        guard !stripped.isEmpty else {
-            return nil
-        }
-        return stripped
     }
 
     static func hex<S: Sequence>(_ bytes: S) -> String where S.Element == UInt8 {

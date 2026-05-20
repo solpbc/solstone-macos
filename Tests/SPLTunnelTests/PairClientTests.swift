@@ -150,13 +150,13 @@ struct PairClientTests {
         )
 
         let request = try #require(PairURLProtocol.store.requests.first)
-        #expect(request.url?.absoluteString == "https://192.168.1.20/pair?token=nonce123")
+        #expect(request.url?.absoluteString == "https://192.0.2.42:7070/app/link/pair")
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(request.value(forHTTPHeaderField: "Accept") == nil)
 
         let body = try jsonBody(index: 0)
-        #expect(body["nonce"] as? String == "nonce123")
+        #expect(body["nonce"] as? String == "a1b2c3d4e5f60718")
         #expect(body["device_label"] as? String == "test mac")
         #expect((body["csr"] as? String)?.hasPrefix("-----BEGIN CERTIFICATE REQUEST-----\n") == true)
     }
@@ -246,12 +246,7 @@ struct PairClientTests {
     }
 
     private func makePairURL() throws -> PairURL {
-        PairURL(
-            homeURL: URL(string: "https://192.168.1.20/pair?token=nonce123")!,
-            token: "nonce123",
-            caFingerprintHex: CertChain.hex(Data(0..<32)),
-            label: "living room mac"
-        )
+        try PairURL.parse(URL(string: "https://link.solpbc.org/p#080W000258DSX8DJRFAEBXG733FAVFQFSBZBNFG14D2PF2DBSQQG")!)
     }
 
     private func lanResponseJSON(localEndpoints: [[String: Any]]? = nil) -> String {

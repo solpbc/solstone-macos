@@ -5,48 +5,37 @@ import Foundation
 import Testing
 import SPLTunnel
 
-// Canonical v1 Universal Link shape:
-// https://link.solpbc.org/p#h=https%3A%2F%2F192.168.1.20%2Fpair%3Ftoken%3Dnonce123&t=nonce123&f=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f&l=living%20room%20mac&v=1
-
 @Suite("PairURL")
 struct PairURLTests {
-    private let fingerprint = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    @Test func canonicalReferenceVectorParses() throws {
+        let pairURL = try PairURL.parse(Self.url(fragment: Self.canonicalBlob))
 
-    @Test func parsesValidUniversalLink() throws {
-        let parsed = try PairURL.parse(makePairURL())
-        #expect(parsed.homeURL.absoluteString == "https://192.168.1.20/pair?token=nonce123")
-        #expect(parsed.token == "nonce123")
-        #expect(parsed.caFingerprintHex == fingerprint)
-        #expect(parsed.label == "living room mac")
-        #expect(parsed.version == 1)
-    }
-
-    @Test func canonicalizesFingerprintAndDecodesPercentEncodedLabel() throws {
-        let parsed = try PairURL.parse(makePairURL(fingerprint: fingerprint.uppercased(), label: "living room mac"))
-        #expect(parsed.caFingerprintHex == fingerprint)
-        #expect(parsed.label == "living room mac")
-    }
-
-    @Test func initStringParsesValidUniversalLink() throws {
-        let parsed = try PairURL(string: makePairURL().absoluteString)
-        #expect(parsed.token == "nonce123")
+        #expect(pairURL.version == 0x02)
+        #expect(pairURL.addressBytes == [0xC0, 0x00, 0x02, 0x2A])
+        #expect(pairURL.addressString == "192.0.2.42")
+        #expect(pairURL.port == 0x1B9E)
+        #expect(pairURL.nonceBytes == [0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18])
+        #expect(pairURL.caFingerprintBytes == [
+            0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF
+        ])
     }
 
     @Test func rejectsWrongScheme() {
-        expectThrows(.wrongScheme) {
-            _ = try PairURL.parse(URL(string: "http://link.solpbc.org/p#\(fragment())")!)
+        expectThrows(.wrongScheme("http")) {
+            _ = try PairURL.parse(URL(string: "http://link.solpbc.org/p#\(Self.canonicalBlob)")!)
         }
     }
 
     @Test func rejectsWrongHost() {
-        expectThrows(.wrongHost) {
-            _ = try PairURL.parse(URL(string: "https://example.com/p#\(fragment())")!)
+        expectThrows(.wrongHost("example.com")) {
+            _ = try PairURL.parse(URL(string: "https://example.com/p#\(Self.canonicalBlob)")!)
         }
     }
 
     @Test func rejectsWrongPath() {
-        expectThrows(.wrongPath) {
-            _ = try PairURL.parse(URL(string: "https://link.solpbc.org/not-p#\(fragment())")!)
+        expectThrows(.wrongPath("/wrong")) {
+            _ = try PairURL.parse(URL(string: "https://link.solpbc.org/wrong#\(Self.canonicalBlob)")!)
         }
     }
 
@@ -56,102 +45,93 @@ struct PairURLTests {
         }
     }
 
-    @Test func rejectsMissingHomeField() {
-        expectThrows(.missingField("h")) {
-            _ = try PairURL.parse(makePairURL(omitting: "h"))
-        }
-    }
-
-    @Test func rejectsMissingTokenField() {
-        expectThrows(.missingField("t")) {
-            _ = try PairURL.parse(makePairURL(omitting: "t"))
-        }
-    }
-
-    @Test func rejectsMissingFingerprintField() {
-        expectThrows(.missingField("f")) {
-            _ = try PairURL.parse(makePairURL(omitting: "f"))
-        }
-    }
-
-    @Test func rejectsMissingLabelField() {
-        expectThrows(.missingField("l")) {
-            _ = try PairURL.parse(makePairURL(omitting: "l"))
+    @Test func rejectsInvalidBase32() {
+        expectThrows(.invalidBase32(.outOfAlphabet("?"))) {
+            _ = try PairURL.parse(Self.url(fragment: "?"))
         }
     }
 
     @Test func rejectsInvalidVersion() {
-        expectThrows(.invalidVersion) {
-            _ = try PairURL.parse(makePairURL(version: "2"))
+        var bytes = Self.canonicalBytes
+        bytes[0] = 0x01
+
+        expectThrows(.invalidVersion(0x01)) {
+            _ = try PairURL.parse(Self.url(fragment: Self.encode(bytes)))
         }
     }
 
-    @Test func rejectsMalformedHomeURL() {
-        expectThrows(.malformedHomeURL) {
-            _ = try PairURL.parse(makePairURL(homeURL: "not a url"))
+    @Test func rejectsIPv4AddressTypeWithLength31() {
+        var bytes = Self.canonicalBytes
+        bytes.removeLast()
+
+        expectThrows(.invalidLength(31)) {
+            _ = try PairURL.parse(Self.url(fragment: Self.encode(bytes)))
         }
     }
 
-    @Test func rejectsNonHTTPSHomeURL() {
-        expectThrows(.nonHTTPSHomeURL) {
-            _ = try PairURL.parse(makePairURL(homeURL: "http://192.168.1.20/pair?token=nonce123"))
+    @Test func rejectsIPv4AddressTypeWithLength33() {
+        var bytes = Self.canonicalBytes
+        bytes.append(0x00)
+
+        expectThrows(.invalidLength(33)) {
+            _ = try PairURL.parse(Self.url(fragment: Self.encode(bytes)))
         }
     }
 
-    @Test func rejectsInvalidFingerprintLength() {
-        expectThrows(.invalidFingerprint) {
-            _ = try PairURL.parse(makePairURL(fingerprint: "abc"))
+    @Test func rejectsReservedIPv6AddressType() {
+        var bytes = Self.canonicalBytes
+        bytes[1] = 0x02
+
+        expectThrows(.unsupportedAddrType(0x02)) {
+            _ = try PairURL.parse(Self.url(fragment: Self.encode(bytes)))
         }
     }
 
-    @Test func rejectsInvalidFingerprintCharacters() {
-        expectThrows(.invalidFingerprint) {
-            _ = try PairURL.parse(makePairURL(fingerprint: String(repeating: "g", count: 64)))
+    @Test func rejectsUnknownAddressType() {
+        var bytes = Self.canonicalBytes
+        bytes[1] = 0x03
+
+        expectThrows(.unsupportedAddrType(0x03)) {
+            _ = try PairURL.parse(Self.url(fragment: Self.encode(bytes)))
         }
     }
 
-    @Test func rejectsEmptyToken() {
-        expectThrows(.emptyToken) {
-            _ = try PairURL.parse(makePairURL(token: ""))
-        }
+    private static let canonicalBlob = "080W000258DSX8DJRFAEBXG733FAVFQFSBZBNFG14D2PF2DBSQQG"
+    private static let canonicalBytes: [UInt8] = [
+        0x02, 0x01, 0xC0, 0x00, 0x02, 0x2A, 0x1B, 0x9E,
+        0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18,
+        0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF
+    ]
+
+    private static func url(fragment: String) -> URL {
+        URL(string: "https://link.solpbc.org/p#\(fragment)")!
     }
 
-    @Test func rejectsEmptyLabel() {
-        expectThrows(.emptyLabel) {
-            _ = try PairURL.parse(makePairURL(label: ""))
-        }
-    }
+    private static func encode(_ bytes: [UInt8]) -> String {
+        let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+        var accumulator: UInt64 = 0
+        var bitCount = 0
+        var output = ""
 
-    private func makePairURL(
-        homeURL: String = "https://192.168.1.20/pair?token=nonce123",
-        token: String = "nonce123",
-        fingerprint: String? = nil,
-        label: String = "living room mac",
-        version: String = "1",
-        omitting omittedField: String? = nil
-    ) -> URL {
-        let values = [
-            "h": encode(homeURL),
-            "t": encode(token),
-            "f": encode(fingerprint ?? self.fingerprint),
-            "l": encode(label),
-            "v": encode(version),
-        ]
-        let fragment = ["h", "t", "f", "l", "v"]
-            .compactMap { key -> String? in
-                guard key != omittedField, let value = values[key] else { return nil }
-                return "\(key)=\(value)"
+        for byte in bytes {
+            accumulator = (accumulator << 8) | UInt64(byte)
+            bitCount += 8
+
+            while bitCount >= 5 {
+                bitCount -= 5
+                let index = Int((accumulator >> UInt64(bitCount)) & 0x1f)
+                output.append(alphabet[index])
+                accumulator &= (1 << UInt64(bitCount)) - 1
             }
-            .joined(separator: "&")
-        return URL(string: "https://link.solpbc.org/p#\(fragment)")!
-    }
+        }
 
-    private func fragment() -> String {
-        makePairURL().fragment!
-    }
+        if bitCount > 0 {
+            let index = Int((accumulator << UInt64(5 - bitCount)) & 0x1f)
+            output.append(alphabet[index])
+        }
 
-    private func encode(_ value: String) -> String {
-        value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
+        return output
     }
 
     private func expectThrows(_ expected: PairURLError, _ operation: () throws -> Void) {
