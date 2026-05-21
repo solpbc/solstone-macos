@@ -172,6 +172,24 @@ enum SolHealthCheck {
     }
 }
 
+internal enum PipelineLivenessProbeOutcome: Equatable, Sendable {
+    case reachable
+    case unreachable
+    case binaryMissing
+}
+
+internal enum PipelineLivenessProbe {
+    static func run(
+        runner: SubprocessRunning = SubprocessRunner(),
+        findSolBinary: @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() }
+    ) async -> PipelineLivenessProbeOutcome {
+        guard let solPath = await findSolBinary() else {
+            return .binaryMissing
+        }
+        return await SolHealthCheck.run(solPath: solPath, runner: runner) ? .reachable : .unreachable
+    }
+}
+
 private actor DataAccumulator {
     private var data = Data()
 

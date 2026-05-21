@@ -54,6 +54,7 @@ public final class AppState {
     public let installer = SolstoneInstaller()
     public let heartbeatService: HeartbeatService
     internal let solChatBridge: SolChatBridge
+    private let isSnapshot: Bool
     public private(set) var config: AppConfig
     private var debugAudioHolder: DebugSettingHolder!
     private var silenceMusicHolder: DebugSettingHolder!
@@ -63,6 +64,9 @@ public final class AppState {
     public internal(set) var isRecording = false
     public internal(set) var isPaused = false
     public internal(set) var errorMessage: String?
+    public internal(set) var pipelineDead = false
+    public internal(set) var pipelineBinaryMissing = false
+    public internal(set) var isRestartingPipeline = false
     public internal(set) var solChatPending: SolChatRequestSummary?
     public internal(set) var solChatStale = false
     public internal(set) var connectionTestState: ConnectionTestState = .idle
@@ -83,6 +87,18 @@ public final class AppState {
     private var permissionPollTimer: Timer?
     /// Prevents concurrent permission check calls (poll interval < check duration)
     private var isCheckingPermissions = false
+    private var pipelineDebounceState = PipelineDebounceState()
+    private var pipelineProbeTimer: Timer?
+    private var pipelineRestartTask: Task<Void, Never>?
+    private var preRestartErrorMessage: String?
+    internal var pipelineRestartLogSink: (@Sendable (PipelineRestartLogEvent) -> Void)?
+    internal var pipelineSolBinaryFinder: @Sendable () async -> String? = {
+        await SolBinaryLocator.findSolBinary()
+    }
+    internal var pipelineRestartRunnerFactory: ((
+        String,
+        (@Sendable (PipelineRestartLogEvent) -> Void)?
+    ) -> PipelineRestartRunner)?
 
     // MARK: - Activation Policy
 
@@ -142,6 +158,33 @@ public final class AppState {
         permissionsNeedAttention || serviceNeedsAttention
     }
 
+    internal var bundledPipelineStatusAvailable: Bool {
+        guard config.serviceMode == .bundled else {
+            return false
+        }
+        return isInstalledPipelineCardState(terminalCardState(main: installer.main, probe: installer.probedVersion))
+    }
+
+    internal var bundledPipelineRestartAvailable: Bool {
+        bundledPipelineStatusAvailable && !pipelineBinaryMissing
+    }
+
+    private func isInstalledPipelineCardState(_ state: InstallerCardState) -> Bool {
+        switch state {
+        case .installedPlaceholder,
+             .done,
+             .installedCurrent,
+             .installedOutdated,
+             .installedUnknown:
+            return true
+        case .detecting,
+             .absent,
+             .installing,
+             .failed:
+            return false
+        }
+    }
+
     // MARK: - Login Item
 
     public internal(set) var isLoginItemEnabled: Bool = false
@@ -170,6 +213,7 @@ public final class AppState {
     public func updateConfig(_ newConfig: AppConfig) {
         let oldConfig = config
         config = newConfig
+        handlePipelineModeTransition(from: oldConfig.serviceMode, to: newConfig.serviceMode)
         uploadCoordinator.updateConfig(newConfig)
         if newConfig.isUploadConfigured,
            let serverURL = newConfig.serverURL,
@@ -282,6 +326,7 @@ public final class AppState {
         self.pauseManager = pauseManager
         self.storageManager = storageManager
         self.audioDeviceMonitor = audioDeviceMonitor
+        self.isSnapshot = false
         self.config = config
         self.heartbeatService = HeartbeatService(
             isPaused: { [pauseManager] in
@@ -413,6 +458,9 @@ public final class AppState {
 
         // Start polling permissions — auto-starts recording when ready
         startPermissionPolling()
+        if config.serviceMode == .bundled {
+            startPipelineProbeTimer()
+        }
 
         // Listen for external defaults changes (e.g. `defaults write` from terminal)
         loadDockModeFromDefaults()
@@ -428,6 +476,14 @@ public final class AppState {
         installer.attach(appState: self)
         solChatTarget.state = self
         AppState.shared = self
+    }
+
+    deinit {
+        MainActor.assumeIsolated {
+            permissionPollTimer?.invalidate()
+            pipelineProbeTimer?.invalidate()
+            pipelineRestartTask?.cancel()
+        }
     }
 
     // MARK: - Snapshot Construction
@@ -450,6 +506,7 @@ public final class AppState {
         self.pauseManager = pauseManager
         self.storageManager = storageManager
         self.audioDeviceMonitor = audioDeviceMonitor
+        self.isSnapshot = true
         self.config = config
         self.heartbeatService = HeartbeatService(
             isPaused: { false },
@@ -565,6 +622,135 @@ public final class AppState {
         }
 
         initialPermissionCheckComplete = true
+    }
+
+    // MARK: - Pipeline Probing
+
+    private func startPipelineProbeTimer() {
+        guard !isSnapshot, config.serviceMode == .bundled else { return }
+
+        Task { @MainActor in
+            await self.pipelineProbeTick()
+        }
+
+        pipelineProbeTimer?.invalidate()
+        pipelineProbeTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.pipelineProbeTick()
+            }
+        }
+        pipelineProbeTimer?.tolerance = 2.0
+    }
+
+    private func stopPipelineProbeTimer() {
+        pipelineProbeTimer?.invalidate()
+        pipelineProbeTimer = nil
+    }
+
+    private func pipelineProbeTick() async {
+        guard config.serviceMode == .bundled else {
+            clearPipelineProbeState()
+            stopPipelineProbeTimer()
+            return
+        }
+        guard !isRestartingPipeline else { return }
+
+        let outcome = await PipelineLivenessProbe.run()
+        let next = pipelineDebounceState.apply(
+            outcome: outcome,
+            now: Date(),
+            currentlyDead: pipelineDead
+        )
+        pipelineDead = next.pipelineDead
+        pipelineBinaryMissing = next.pipelineBinaryMissing
+    }
+
+    private func clearPipelineProbeState() {
+        pipelineDead = false
+        pipelineBinaryMissing = false
+        pipelineDebounceState.reset()
+    }
+
+    private func handlePipelineModeTransition(from oldMode: ServiceMode?, to newMode: ServiceMode?) {
+        if newMode != .bundled {
+            clearPipelineProbeState()
+            stopPipelineProbeTimer()
+            return
+        }
+        if oldMode != .bundled {
+            startPipelineProbeTimer()
+        }
+    }
+
+    public func requestPipelineRestart() {
+        guard bundledPipelineRestartAvailable else { return }
+        guard pipelineRestartTask == nil else {
+            emitPipelineRestartLog(step: .serviceRestart, outcome: "noop", detail: "already-running")
+            return
+        }
+        pipelineRestartTask = Task { @MainActor [weak self] in
+            await self?.runPipelineRestart()
+        }
+    }
+
+    private func runPipelineRestart() async {
+        preRestartErrorMessage = errorMessage
+        isRestartingPipeline = true
+        defer {
+            isRestartingPipeline = false
+            pipelineRestartTask = nil
+            preRestartErrorMessage = nil
+        }
+
+        guard config.serviceMode == .bundled else {
+            emitPipelineRestartLog(step: .serviceRestart, outcome: "noop", detail: "not-bundled")
+            return
+        }
+
+        guard let solPath = await pipelineSolBinaryFinder() else {
+            clearPipelineProbeState()
+            pipelineBinaryMissing = true
+            let message = "restart failed at journal path — solstone is not fully installed"
+            emitPipelineRestartLog(step: .resolveJournal, outcome: "error", detail: "binary-missing")
+            if config.serviceMode == .bundled {
+                errorMessage = message
+            }
+            return
+        }
+
+        let logSink = pipelineRestartLogSink
+        let runner = pipelineRestartRunnerFactory?(solPath, logSink) ?? PipelineRestartRunner(
+            reprobe: {
+                await PipelineLivenessProbe.run()
+            },
+            logSink: logSink,
+            solPath: solPath
+        )
+
+        switch await runner.run() {
+        case .success:
+            clearPipelineProbeState()
+            if config.serviceMode == .bundled {
+                errorMessage = preRestartErrorMessage
+            }
+        case .failure(let failure):
+            if config.serviceMode == .bundled {
+                errorMessage = failure.ownerMessage
+            } else {
+                emitPipelineRestartLog(step: failure.step, outcome: "noop", detail: "mode-changed")
+            }
+        }
+    }
+
+    private func emitPipelineRestartLog(step: RestartFailureStep, outcome: String, detail: String?) {
+        let event = PipelineRestartLogEvent(step: step, outcome: outcome, detail: detail)
+        let detailSuffix = detail.map { " detail=\($0)" } ?? ""
+        if outcome == "error" {
+            Logger.setup.warning("pipeline-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
+        } else {
+            Logger.setup.info("pipeline-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
+        }
+        pipelineRestartLogSink?(event)
     }
 
     // MARK: - Private Methods

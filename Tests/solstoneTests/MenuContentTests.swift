@@ -32,4 +32,36 @@ struct MenuContentTests {
         #expect(journalURLToOpen(from: nil) == nil)
         #expect(journalURLToOpen(from: "") == nil)
     }
+
+    @Test func pipelineStatusRowHelperTruthTable() {
+        let binaryMissing = pipelineStatusRowModel(
+            pipelineDead: true,
+            isRestartingPipeline: false,
+            pipelineBinaryMissing: true
+        )
+        #expect(binaryMissing?.text == "solstone is not fully installed")
+        #expect(binaryMissing?.isEnabled == false)
+
+        let restarting = pipelineStatusRowModel(
+            pipelineDead: true,
+            isRestartingPipeline: true,
+            pipelineBinaryMissing: false
+        )
+        #expect(restarting?.text == "restarting…")
+        #expect(restarting?.isEnabled == false)
+
+        let dead = pipelineStatusRowModel(
+            pipelineDead: true,
+            isRestartingPipeline: false,
+            pipelineBinaryMissing: false
+        )
+        #expect(dead?.text == "pipeline stopped — click to restart")
+        #expect(dead?.isEnabled == true)
+
+        #expect(pipelineStatusRowModel(
+            pipelineDead: false,
+            isRestartingPipeline: false,
+            pipelineBinaryMissing: false
+        ) == nil)
+    }
 }

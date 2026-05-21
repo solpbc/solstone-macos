@@ -161,7 +161,13 @@ struct SolstoneCaptureApp: App {
 
     private var statusAccessibilityLabel: String {
         let baseLabel: String
-        if appState.errorMessage != nil {
+        if appState.bundledPipelineStatusAvailable && appState.pipelineBinaryMissing {
+            baseLabel = "solstone observer — setup needed"
+        } else if appState.bundledPipelineStatusAvailable && appState.isRestartingPipeline {
+            baseLabel = "solstone observer — restarting pipeline"
+        } else if appState.bundledPipelineStatusAvailable && appState.pipelineDead {
+            baseLabel = "solstone observer — pipeline stopped"
+        } else if appState.errorMessage != nil {
             baseLabel = "solstone observer — error"
         } else if appState.pauseManager.isPaused || appState.isPaused {
             baseLabel = "solstone observer — paused"
@@ -282,6 +288,10 @@ private struct StatusIcon: View {
     @State private var hasCheckedSetup = false
 
     private var iconName: String {
+        if appState.bundledPipelineStatusAvailable &&
+            (appState.pipelineDead || appState.pipelineBinaryMissing || appState.isRestartingPipeline) {
+            return "sol-ring-icon-error-template"
+        }
         if appState.errorMessage != nil {
             return "sol-ring-icon-error-template"
         }

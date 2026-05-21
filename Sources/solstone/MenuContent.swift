@@ -108,6 +108,21 @@ struct MenuContent: View {
                 NSApp.activate(ignoringOtherApps: true)
             }
             .foregroundStyle(.red)
+        } else if appState.bundledPipelineStatusAvailable,
+                  let pipelineRow = pipelineStatusRowModel(
+                    pipelineDead: appState.pipelineDead,
+                    isRestartingPipeline: appState.isRestartingPipeline,
+                    pipelineBinaryMissing: appState.pipelineBinaryMissing
+                  ) {
+            if pipelineRow.isEnabled {
+                Button(pipelineRow.text) {
+                    appState.requestPipelineRestart()
+                }
+                .foregroundStyle(.red)
+            } else {
+                Text(pipelineRow.text)
+                    .foregroundStyle(.red)
+            }
         } else if appState.isRecording && !appState.config.isUploadConfigured && !appState.isPaused && !appState.pauseManager.isPaused {
             Button("observing - local only →") {
                 appState.pendingSettingsTab = "journal"
@@ -190,6 +205,13 @@ struct MenuContent: View {
                 }
             }
         }
+
+        if appState.bundledPipelineRestartAvailable {
+            Button("restart pipeline") {
+                appState.requestPipelineRestart()
+            }
+            .disabled(appState.isRestartingPipeline)
+        }
     }
 
     // MARK: - Upload Status Row
@@ -198,6 +220,23 @@ struct MenuContent: View {
 
 func journalURLToOpen(from serverURL: String?) -> URL? {
     URL(string: serverURL ?? "")
+}
+
+func pipelineStatusRowModel(
+    pipelineDead: Bool,
+    isRestartingPipeline: Bool,
+    pipelineBinaryMissing: Bool
+) -> (text: String, isEnabled: Bool)? {
+    if pipelineBinaryMissing {
+        return ("solstone is not fully installed", false)
+    }
+    if isRestartingPipeline {
+        return ("restarting…", false)
+    }
+    if pipelineDead {
+        return ("pipeline stopped — click to restart", true)
+    }
+    return nil
 }
 
 func pausedHeaderText(timeRemaining: String?) -> String {

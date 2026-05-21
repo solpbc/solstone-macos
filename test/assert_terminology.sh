@@ -43,6 +43,7 @@ swift_matches="$(
     -g '!Sources/solstone/InstallerJSONLEvents.swift' \
   | rg -v 'Logger\.' \
   | grep -v '"service", "journal"' \
+  | grep -v '"service", "restart"' \
   || true
 )"
 
