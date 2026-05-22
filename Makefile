@@ -692,4 +692,12 @@ publish-appcast:
 publish-appcast-staging:
 	python3 scripts/publish-appcast.py $(DIST_VERSION) --staging
 
-.PHONY: publish-appcast publish-appcast-staging
+# Cut a GitHub Release: annotated tag + `gh release create` with the DMG
+# attached and CHANGELOG notes. Run AFTER `make publish-appcast` and founder
+# approval — the DMG must still be in CWD (publish-appcast.py's flow scp's it
+# in). Sparkle is the primary update channel; this is source-release hygiene
+# and the GitHub front door. Mirrors solstone / solstone-linux release.sh.
+github-release:
+	@bash scripts/github-release.sh $(DIST_VERSION)
+
+.PHONY: publish-appcast publish-appcast-staging github-release
