@@ -7,6 +7,8 @@ import Testing
 import SolstoneCore
 @testable import solstone
 
+private let testBundledPythonURL = URL(fileURLWithPath: "/bin/echo")
+
 @Suite("SolstoneInstaller")
 @MainActor
 struct SolstoneInstallerTests {
@@ -32,6 +34,7 @@ struct SolstoneInstallerTests {
             let uvURL = try makeUVFixture()
             if choice == .createFresh {
                 enqueueSuccessfulPreclean(runner, journalPath: "/tmp/solstone-test-journal")
+                enqueueSuccessfulBundledPythonPreflight(runner)
                 runner.enqueue("tool", .success())
             }
             runner.enqueue("tool", .success())
@@ -127,6 +130,7 @@ struct SolstoneInstallerTests {
 
     @Test func createFreshSkipsPrecleanWhenNoExistingBinary() async throws {
         let runner = FakeSubprocessRunner()
+        enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success())
         runner.enqueue("tool", .success())
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
@@ -397,6 +401,7 @@ struct SolstoneInstallerTests {
     @Test func uvToolUninstallFailsOnUnknownStderr() async throws {
         let runner = FakeSubprocessRunner()
         let finder = SequencedSolBinaryFinder([nil])
+        enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success(stderr: Data("network error: no route\n".utf8), exitCode: 1))
         let installer = makeInstaller(runner: runner, solBinaryFinder: { finder.next() })
         defer { installer.cancel() }
@@ -410,6 +415,7 @@ struct SolstoneInstallerTests {
     @Test func uvToolInstallFailureAfterCleanUninstallSurfacesAsInstallSolstoneFailure() async throws {
         let runner = FakeSubprocessRunner()
         let finder = SequencedSolBinaryFinder([nil])
+        enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success())
         runner.enqueue("tool", .success(stderr: Data("error: failed to download solstone\n".utf8), exitCode: 1))
         let installer = makeInstaller(runner: runner, solBinaryFinder: { finder.next() })
@@ -438,7 +444,7 @@ struct SolstoneInstallerTests {
             "solstone==\(BundleConfig.solstonePinVersion)",
             "--refresh",
             "--python",
-            BundleConfig.pythonPinVersion
+            testBundledPythonURL.path
         ])
         #expect(!install.arguments.contains("--reinstall"))
     }
@@ -457,7 +463,7 @@ struct SolstoneInstallerTests {
 
         for arguments in [
             ["tool", "uninstall", "solstone"],
-            ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--refresh", "--python", BundleConfig.pythonPinVersion],
+            ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--refresh", "--python", testBundledPythonURL.path],
             ["setup", "--jsonl", "--yes", "--skip-models", "--accept-existing-journal", "--journal", "/tmp/journal"],
             ["observer", "--json", "create", "solstone-macos", "--reuse-existing"],
             ["install-models"]
@@ -663,6 +669,7 @@ struct SolstoneInstallerTests {
         let runner = FakeSubprocessRunner()
         let uvURL = try makeUVFixture()
         enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success(stderr: Data("last error\n".utf8), exitCode: 1))
         let installer = makeInstaller(runner: runner, uvURL: uvURL)
         defer { installer.cancel() }
@@ -681,6 +688,7 @@ struct SolstoneInstallerTests {
         let runner = FakeSubprocessRunner()
         let uvURL = try makeUVFixture()
         enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .failure("launch boom"))
         let installer = makeInstaller(runner: runner, uvURL: uvURL)
         defer { installer.cancel() }
@@ -723,11 +731,13 @@ struct SolstoneInstallerTests {
     private func makeInstaller(
         runner: FakeSubprocessRunner,
         uvURL: URL? = nil,
+        pythonURL: URL? = testBundledPythonURL,
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil }
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
+            bundledPythonURL: pythonURL,
             subprocessRunner: runner,
             solBinaryFinder: solBinaryFinder,
             connectionTester: connectionTester
@@ -737,6 +747,7 @@ struct SolstoneInstallerTests {
     private func makeInstaller(
         runner: FakeSubprocessRunner,
         uvURL: URL? = nil,
+        pythonURL: URL? = testBundledPythonURL,
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
         pidExists: @escaping @Sendable (pid_t) -> Bool,
@@ -747,6 +758,7 @@ struct SolstoneInstallerTests {
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
+            bundledPythonURL: pythonURL,
             subprocessRunner: runner,
             solBinaryFinder: solBinaryFinder,
             connectionTester: connectionTester,
@@ -775,11 +787,19 @@ struct SolstoneInstallerTests {
     }
 
     private func enqueueSuccessfulInstallAfterPreclean(_ runner: FakeSubprocessRunner) {
+        enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success())
         runner.enqueue("tool", .success())
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue("observer", .success(stdout: observerJSON))
         runner.enqueue("install-models", .success())
+    }
+
+    private func enqueueSuccessfulBundledPythonPreflight(_ runner: FakeSubprocessRunner) {
+        runner.enqueue(
+            "codesign",
+            .success(stderr: Data("Identifier=app.solstone.observer.python\n".utf8))
+        )
     }
 
     private func cleanupMessage(step: CleanupStep, why: String) -> String {
@@ -789,6 +809,7 @@ struct SolstoneInstallerTests {
     private func assertUVUninstallTolerance(stderr: String) async throws {
         let runner = FakeSubprocessRunner()
         let finder = SequencedSolBinaryFinder([nil, "/usr/bin/sol"])
+        enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success(stderr: Data(stderr.utf8), exitCode: 1))
         runner.enqueue("tool", .success())
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))

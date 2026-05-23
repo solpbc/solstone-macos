@@ -3,5 +3,5 @@ public enum BundleConfig {
     public static let solstonePinVersion = "0.3.8"
     public static let solstoneMinVersion = "0.3.8"
     public static let bundledUVVersion = "0.11.13"
-    public static let pythonPinVersion = "3.13"
+    public static let bundledPythonBuild = "20260510"
 }

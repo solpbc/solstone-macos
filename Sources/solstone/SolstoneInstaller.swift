@@ -22,6 +22,7 @@ public final class SolstoneInstaller {
 
     private weak var appState: AppState?
     private let uvBinaryURL: URL?
+    private let bundledPythonURL: URL?
     private let subprocessRunner: SubprocessRunning
     private let solBinaryFinder: @Sendable () async -> String?
     private let connectionTester: @Sendable (String, String) async -> String?
@@ -36,16 +37,18 @@ public final class SolstoneInstaller {
     private static let rawLogLimit = 16 * 1024
     private static let stdoutTailLimit = 2 * 1024
 
-    public convenience init(uvBinaryURL: URL? = nil) {
-        self.init(uvBinaryURL: uvBinaryURL, subprocessRunner: SubprocessRunner())
+    public convenience init(uvBinaryURL: URL? = nil, bundledPythonURL: URL? = nil) {
+        self.init(uvBinaryURL: uvBinaryURL, bundledPythonURL: bundledPythonURL, subprocessRunner: SubprocessRunner())
     }
 
     internal convenience init(
         uvBinaryURL: URL? = nil,
+        bundledPythonURL: URL? = nil,
         subprocessRunner: SubprocessRunning = SubprocessRunner()
     ) {
         self.init(
             uvBinaryURL: uvBinaryURL,
+            bundledPythonURL: bundledPythonURL,
             subprocessRunner: subprocessRunner,
             solBinaryFinder: { await SolBinaryLocator.findSolBinary() }
         )
@@ -53,6 +56,7 @@ public final class SolstoneInstaller {
 
     internal init(
         uvBinaryURL: URL? = nil,
+        bundledPythonURL: URL? = nil,
         subprocessRunner: SubprocessRunning = SubprocessRunner(),
         solBinaryFinder: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() },
         connectionTester: @escaping @Sendable (String, String) async -> String? = { url, key in
@@ -70,6 +74,7 @@ public final class SolstoneInstaller {
         orphanGracePeriod: Duration = orphanGracePeriodDefault
     ) {
         self.uvBinaryURL = uvBinaryURL
+        self.bundledPythonURL = bundledPythonURL
         self.subprocessRunner = subprocessRunner
         self.solBinaryFinder = solBinaryFinder
         self.connectionTester = connectionTester
@@ -150,6 +155,10 @@ public final class SolstoneInstaller {
         uvBinaryURL ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/uv")
     }
 
+    private func resolvedBundledPythonURL() -> URL {
+        bundledPythonURL ?? SolstoneRuntimeLayout.bundledPythonURL()
+    }
+
     private func runInstallSolstone() async -> Bool {
         let phase = "uv tool install solstone"
         setMain(.installingSolstone(SubprocessProgress(phase: phase)))
@@ -160,6 +169,9 @@ public final class SolstoneInstaller {
             failMain(.installSolstone(message: error.localizedDescription), category: .disk, logExcerpt: "runtime directory setup failed: \(error.localizedDescription)")
             return false
         }
+
+        let pythonURL = resolvedBundledPythonURL()
+        guard await preflightBundledPython(at: pythonURL) else { return false }
 
         let legacyToolURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".local/share/uv/tools/solstone", isDirectory: true)
@@ -186,7 +198,7 @@ public final class SolstoneInstaller {
         }
 
         guard let install = await runUVToolCommand(
-            arguments: ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--refresh", "--python", BundleConfig.pythonPinVersion],
+            arguments: ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--refresh", "--python", pythonURL.path],
             phase: phase,
             launchDescription: "uv tool install",
             environment: environment
@@ -204,6 +216,54 @@ public final class SolstoneInstaller {
             logExcerpt: Self.lastUsefulLog(stdout: install.stdout, stderr: install.stderr)
         )
         return false
+    }
+
+    private func preflightBundledPython(at url: URL) async -> Bool {
+        let path = url.path
+        let fileManager = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            failMain(.installSolstone(message: "bundled python not found at \(path)"), category: .disk)
+            return false
+        }
+        guard fileManager.isExecutableFile(atPath: path) else {
+            failMain(.installSolstone(message: "bundled python is not executable at \(path)"), category: .permission)
+            return false
+        }
+
+        let output = InstallerOutput()
+        let result: SubprocessResult
+        do {
+            result = try await subprocessRunner.run(
+                executable: URL(fileURLWithPath: "/usr/bin/codesign"),
+                arguments: ["-dvvv", path],
+                environment: nil,
+                stdoutHandler: { data in Self.append(data, to: output, stream: .stdout) },
+                stderrHandler: { data in Self.append(data, to: output, stream: .stderr) }
+            )
+        } catch {
+            failMain(
+                .installSolstone(message: error.localizedDescription),
+                category: .subprocessLaunch,
+                logExcerpt: "bundled python codesign check could not launch: \(error.localizedDescription)"
+            )
+            return false
+        }
+
+        let stdout = output.stdoutString()
+        let stderr = output.stderrString()
+        let codesignOutput = [stdout, stderr]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        guard result.exitCode == 0, codesignOutput.contains("Identifier=app.solstone.observer.python") else {
+            failMain(
+                .installSolstone(message: "bundled python signature identifier mismatch"),
+                category: .unknown,
+                logExcerpt: codesignOutput
+            )
+            return false
+        }
+        return true
     }
 
     private func runUVToolCommand(

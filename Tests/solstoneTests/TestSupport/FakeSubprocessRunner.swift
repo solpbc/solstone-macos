@@ -93,6 +93,7 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
 
     private func responseKey(for executable: URL, arguments: [String]) -> String {
         let executableName = executable.lastPathComponent
+        if executableName == "codesign" { return "codesign" }
         if executableName == "ps" { return "ps" }
         if executableName == "lsof" { return "lsof" }
         guard let first = arguments.first else { return "" }

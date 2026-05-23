@@ -63,6 +63,12 @@ struct SolstoneRuntimeLayoutTests {
         #expect(layout.solBinary.path.hasSuffix("/bin/sol"))
     }
 
+    @Test func bundledPythonURLResolvesInsideAppResources() {
+        let bundleURL = URL(fileURLWithPath: "/tmp/Solstone.app", isDirectory: true)
+
+        #expect(SolstoneRuntimeLayout.bundledPythonURL(bundleURL: bundleURL).path == "/tmp/Solstone.app/Contents/Resources/python/bin/python3.13")
+    }
+
     private var uvKeys: [String] {
         [
             "UV_PYTHON_INSTALL_DIR",

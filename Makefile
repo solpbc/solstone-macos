@@ -1,6 +1,6 @@
 .PHONY: build release release-universal run clean test integration-test snapshot bundle bundle-universal install setup install-app open reset reset-full cert allow check-cert icons check-icons-deps check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg \
-        vendor-uv generate-bundle-config check-versions supply-chain-check release-dmg-smoke brand-sync \
+        vendor-uv vendor-python generate-bundle-config check-versions supply-chain-check release-dmg-smoke brand-sync \
         release-preflight bump-release
 
 # Default goal when running bare `make` — build the project. brand-sync is
@@ -39,6 +39,7 @@ DIST_BUILD             := $(shell python3 -c "import plistlib; print(plistlib.lo
 DMG_NAME               ?= solstone-$(DIST_VERSION).dmg
 SPARKLE_ARTIFACT_DIR   ?= .build/artifacts/sparkle/Sparkle
 SPARKLE_FRAMEWORK      ?= $(SPARKLE_ARTIFACT_DIR)/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
+ENTITLEMENTS_PLIST     := Sources/solstone/entitlements.plist
 
 # uv vendoring
 UV_VERSION ?= 0.11.13
@@ -52,7 +53,15 @@ UV_VENDOR_BINARY := $(UV_VENDOR_DIR)/uv
 # version pins for installer (consumed by BundleConfig)
 SOLSTONE_PIN_VERSION ?= 0.3.8
 SOLSTONE_MIN_VERSION ?= 0.3.8
-PYTHON_PIN_VERSION ?= 3.13
+
+# python-build-standalone vendoring
+PYTHON_BUILD_STANDALONE_VERSION ?= 20260510
+PYTHON_VERSION ?= 3.13.13
+PYTHON_TARBALL_NAME := cpython-$(PYTHON_VERSION)+$(PYTHON_BUILD_STANDALONE_VERSION)-aarch64-apple-darwin-install_only.tar.gz
+PYTHON_RELEASE_URL_BASE ?= https://github.com/astral-sh/python-build-standalone/releases/download/$(PYTHON_BUILD_STANDALONE_VERSION)
+PYTHON_RELEASE_URL := $(PYTHON_RELEASE_URL_BASE)/$(PYTHON_TARBALL_NAME)
+PYTHON_VENDOR_DIR := vendor/python
+PYTHON_VENDOR_SHA_FILE := vendor/python-aarch64-apple-darwin.sha256
 
 check-versions:
 	@[ -n "$(SOLSTONE_PIN_VERSION)" ] || { echo "error: solstone pin version must not be empty"; exit 1; }
@@ -74,6 +83,25 @@ vendor-uv:
 	    echo "vendor: uv $(UV_VERSION) extracted to $(UV_VENDOR_BINARY)"; \
 	fi
 
+vendor-python:
+	@mkdir -p "$(UV_VENDOR_DIR)"
+	@if [ -x "$(PYTHON_VENDOR_DIR)/bin/python3.13" ] && [ -f "$(UV_VENDOR_DIR)/$(PYTHON_TARBALL_NAME)" ] && \
+	    (cd "$(UV_VENDOR_DIR)" && shasum -a 256 -c "$(notdir $(PYTHON_VENDOR_SHA_FILE))" >/dev/null 2>&1); then \
+	    echo "vendor: python-build-standalone $(PYTHON_VERSION)+$(PYTHON_BUILD_STANDALONE_VERSION) already present and sha matches"; \
+	else \
+	    echo "vendor: fetching python-build-standalone $(PYTHON_VERSION)+$(PYTHON_BUILD_STANDALONE_VERSION) from $(PYTHON_RELEASE_URL)"; \
+	    rm -rf "$(PYTHON_VENDOR_DIR)" "$(UV_VENDOR_DIR)/$(PYTHON_TARBALL_NAME)"; \
+	    curl --fail --location --retry 3 --retry-delay 2 --output "$(UV_VENDOR_DIR)/$(PYTHON_TARBALL_NAME)" "$(PYTHON_RELEASE_URL)"; \
+	    (cd "$(UV_VENDOR_DIR)" && shasum -a 256 -c "$(notdir $(PYTHON_VENDOR_SHA_FILE))") || { echo "error: python-build-standalone tarball sha256 mismatch; re-pin intentionally before updating $(PYTHON_VENDOR_SHA_FILE)"; exit 1; }; \
+	    tar -xzf "$(UV_VENDOR_DIR)/$(PYTHON_TARBALL_NAME)" -C "$(UV_VENDOR_DIR)"; \
+	    [ -d "$(PYTHON_VENDOR_DIR)" ] || { echo "error: python-build-standalone did not extract to $(PYTHON_VENDOR_DIR)"; exit 1; }; \
+	    [ -x "$(PYTHON_VENDOR_DIR)/bin/python3.13" ] || { echo "error: bundled python missing executable"; exit 1; }; \
+	    [ -f "$(PYTHON_VENDOR_DIR)/lib/libpython3.13.dylib" ] || { echo "error: bundled python missing libpython3.13.dylib"; exit 1; }; \
+	    [ -d "$(PYTHON_VENDOR_DIR)/lib/python3.13/lib-dynload" ] || { echo "error: bundled python missing lib-dynload"; exit 1; }; \
+	    "$(PYTHON_VENDOR_DIR)/bin/python3.13" --version 2>&1 | grep -F "Python $(PYTHON_VERSION)" >/dev/null || { echo "error: bundled python reported wrong version"; exit 1; }; \
+	    echo "vendor: python-build-standalone $(PYTHON_VERSION)+$(PYTHON_BUILD_STANDALONE_VERSION) extracted to $(PYTHON_VENDOR_DIR)"; \
+	fi
+
 generate-bundle-config: check-versions
 	@SHA="$$(awk '{print $$1; exit}' "$(UV_SHA256_FILE)")"; \
 	    [ -n "$$SHA" ] || { echo "error: could not read sha from $(UV_SHA256_FILE)"; exit 1; }; \
@@ -83,7 +111,7 @@ generate-bundle-config: check-versions
 	        printf '    public static let solstonePinVersion = "%s"\n' "$(SOLSTONE_PIN_VERSION)"; \
 	        printf '    public static let solstoneMinVersion = "%s"\n' "$(SOLSTONE_MIN_VERSION)"; \
 	        printf '    public static let bundledUVVersion = "%s"\n' "$(UV_VERSION)"; \
-	        printf '    public static let pythonPinVersion = "%s"\n' "$(PYTHON_PIN_VERSION)"; \
+	        printf '    public static let bundledPythonBuild = "%s"\n' "$(PYTHON_BUILD_STANDALONE_VERSION)"; \
 	        printf '%s\n' '}'; \
 	    } > Sources/solstone/BundleConfig.swift
 	@echo "generated: Sources/solstone/BundleConfig.swift"
@@ -330,7 +358,7 @@ unlock-signing:
 # Build a universal .app bundle signed with Developer ID Application + hardened runtime.
 # Separate from `bundle-universal` so distribution signing is additive, not destructive —
 # existing self-signed bundle target stays for local dev.
-bundle-dist: unlock-signing signing-check vendor-uv generate-bundle-config release-universal
+bundle-dist: unlock-signing signing-check vendor-uv vendor-python generate-bundle-config release-universal
 	@echo "Creating distribution app bundle..."
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
@@ -343,6 +371,9 @@ bundle-dist: unlock-signing signing-check vendor-uv generate-bundle-config relea
 	@# arm64-only uv; .app remains universal for graceful Intel detection by sol-mac installer
 	@cp $(UV_VENDOR_BINARY) solstone.app/Contents/Resources/uv
 	@chmod +x solstone.app/Contents/Resources/uv
+	@rm -rf solstone.app/Contents/Resources/python
+	@cp -R "$(PYTHON_VENDOR_DIR)" solstone.app/Contents/Resources/python
+	@test -x solstone.app/Contents/Resources/python/bin/python3.13 || { echo "error: bundled python missing executable"; exit 1; }
 	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
@@ -372,11 +403,49 @@ bundle-dist: unlock-signing signing-check vendor-uv generate-bundle-config relea
 	@codesign --verify --strict --verbose=2 solstone.app/Contents/Resources/uv
 	@codesign -dvvv solstone.app/Contents/Resources/uv 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || { echo "error: uv missing team id 7QCG8V4M6H"; exit 1; }
 	@codesign -dvvv solstone.app/Contents/Resources/uv 2>&1 | grep -q 'flags=0x10000(runtime)' || { echo "error: uv missing hardened runtime flag"; exit 1; }
+	@find solstone.app/Contents/Resources/python -type f -name '*.so' -print0 | xargs -0 -I{} codesign --force --options runtime --timestamp \
+		--identifier app.solstone.observer.python \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		"{}"
+	@find solstone.app/Contents/Resources/python -type f -name '*.dylib' -print0 | xargs -0 -I{} codesign --force --options runtime --timestamp \
+		--identifier app.solstone.observer.python \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		"{}"
+	@codesign --force --options runtime --timestamp \
+		--identifier app.solstone.observer.python \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		--entitlements "$(ENTITLEMENTS_PLIST)" \
+		solstone.app/Contents/Resources/python/bin/python3.13
+	@find solstone.app/Contents/Resources/python -type f \( -name '*.so' -o -name '*.dylib' \) -print0 | xargs -0 -I{} codesign --verify --strict --verbose=2 "{}"
+	@codesign --verify --strict --verbose=2 solstone.app/Contents/Resources/python/bin/python3.13
+	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'Identifier=app.solstone.observer.python' || { echo "error: bundled python identifier mismatch"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'TeamIdentifier=7QCG8V4M6H' || { echo "error: bundled python missing team id 7QCG8V4M6H"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'flags=0x10000(runtime)' || { echo "error: bundled python missing hardened runtime flag"; exit 1; }
+	@PYOUT="$$(solstone.app/Contents/Resources/python/bin/python3.13 --version 2>&1)"; \
+		echo "python --version output: $$PYOUT"; \
+		echo "$$PYOUT" | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: bundled python reported wrong version (expected $(PYTHON_VERSION))"; exit 1; }
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		--entitlements Sources/solstone/entitlements.plist \
+		--entitlements "$(ENTITLEMENTS_PLIST)" \
 		solstone.app
-	@codesign --verify --strict --deep --verbose=2 solstone.app
+	@VERIFY_OUT="$$(mktemp -t solstone-codesign-verify)"; \
+		if codesign --verify --strict --deep --verbose=2 solstone.app >"$$VERIFY_OUT" 2>&1; then \
+			rm -f "$$VERIFY_OUT"; \
+		elif grep -Eq '(__pycache__|\.pyc)' "$$VERIFY_OUT"; then \
+			cat "$$VERIFY_OUT"; \
+			echo "codesign verify failed on python bytecode; removing __pycache__ and re-sealing"; \
+			rm -rf solstone.app/Contents/Resources/python/lib/python3.13/encodings/__pycache__; \
+			codesign --force --options runtime --timestamp \
+				--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+				--entitlements "$(ENTITLEMENTS_PLIST)" \
+				solstone.app; \
+			codesign --verify --strict --deep --verbose=2 solstone.app; \
+			rm -f "$$VERIFY_OUT"; \
+		else \
+			cat "$$VERIFY_OUT"; \
+			rm -f "$$VERIFY_OUT"; \
+			exit 1; \
+		fi
 	@echo "✓ Signed: solstone.app"
 
 # Create and sign the DMG using create-dmg. Produces a polished mounted
@@ -438,6 +507,13 @@ verify-notarization: staple
 	@codesign -dvvv solstone.app/Contents/Resources/uv 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || { echo "error: uv missing team id"; exit 1; }
 	@codesign -dvvv solstone.app/Contents/Resources/uv 2>&1 | grep -q 'flags=0x10000(runtime)' || { echo "error: uv missing hardened runtime flag"; exit 1; }
 	@lipo -archs solstone.app/Contents/Resources/uv | grep -q 'arm64' || { echo "error: uv missing arm64 slice"; exit 1; }
+	@find solstone.app/Contents/Resources/python -type f \( -name '*.so' -o -name '*.dylib' \) -print0 | xargs -0 -I{} codesign --verify --strict --verbose=2 "{}"
+	@codesign --verify --strict --verbose=2 solstone.app/Contents/Resources/python/bin/python3.13
+	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'TeamIdentifier=7QCG8V4M6H' || { echo "error: bundled python missing team id"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'flags=0x10000(runtime)' || { echo "error: bundled python missing hardened runtime flag"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'Identifier=app.solstone.observer.python' || { echo "error: bundled python identifier mismatch"; exit 1; }
+	@lipo -archs solstone.app/Contents/Resources/python/bin/python3.13 | grep -q 'arm64' || { echo "error: bundled python missing arm64 slice"; exit 1; }
+	@solstone.app/Contents/Resources/python/bin/python3.13 --version 2>&1 | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: bundled python reported wrong version"; exit 1; }
 	@echo "✓ $(DMG_NAME) notarized + stapled (inner CLI signature verified)"
 
 # One-shot: build + sign + notarize + staple + verify. This is the canonical
@@ -449,11 +525,15 @@ release-dmg: verify-notarization
 	@echo "   Notary:  $(NOTARY_PROFILE)"
 	@echo "   Size:    $$(du -h $(DMG_NAME) | cut -f1)"
 
-supply-chain-check: vendor-uv generate-bundle-config
+supply-chain-check: vendor-uv vendor-python generate-bundle-config
 	@echo "── supply chain checklist ──"
 	@echo "uv version: $(UV_VERSION)"
 	@echo "uv release url: $(UV_RELEASE_URL)"
 	@echo "uv sha256: $$(awk '{print $$1; exit}' "$(UV_SHA256_FILE)")"
+	@echo "python-build-standalone release: $(PYTHON_BUILD_STANDALONE_VERSION)"
+	@echo "python version: $(PYTHON_VERSION)"
+	@echo "python release url: $(PYTHON_RELEASE_URL)"
+	@echo "python sha256: $$(awk '{print $$1; exit}' "$(PYTHON_VENDOR_SHA_FILE)")"
 	@echo "── BundleConfig.swift ──"
 	@cat Sources/solstone/BundleConfig.swift
 	@echo "── bundled-uv codesign ──"
@@ -462,9 +542,16 @@ supply-chain-check: vendor-uv generate-bundle-config
 	else \
 	    echo "(not signed yet — run make bundle-dist to produce signed bundled uv)"; \
 	fi
+	@echo "── bundled-python codesign ──"
+	@if [ -f solstone.app/Contents/Resources/python/bin/python3.13 ]; then \
+	    codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 || true; \
+	else \
+	    echo "(not signed yet — run make bundle-dist to produce signed bundled python)"; \
+	fi
 	@echo "── THIRD_PARTY_NOTICES.md ──"
 	@test -f THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing"; exit 1; }
 	@grep -qiE '^##[[:space:]]+uv' THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing uv entry"; exit 1; }
+	@grep -qiE '^##[[:space:]]+python-build-standalone' THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing python-build-standalone entry"; exit 1; }
 	@echo "supply-chain checklist: ok"
 
 release-dmg-smoke:
@@ -476,6 +563,9 @@ release-dmg-smoke:
 	    OUT="$$("$$MOUNT/solstone.app/Contents/Resources/uv" --version 2>&1)"; \
 	    echo "uv --version output: $$OUT"; \
 	    echo "$$OUT" | grep -q "$(UV_VERSION)" || { echo "error: bundled uv reported wrong version (expected $(UV_VERSION))"; exit 1; }; \
+	    PYOUT="$$("$$MOUNT/solstone.app/Contents/Resources/python/bin/python3.13" --version 2>&1)"; \
+	    echo "python --version output: $$PYOUT"; \
+	    echo "$$PYOUT" | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: bundled python reported wrong version (expected $(PYTHON_VERSION))"; exit 1; }; \
 	    echo "release-dmg-smoke: ok"
 
 # Install development dependencies needed for local build workflows

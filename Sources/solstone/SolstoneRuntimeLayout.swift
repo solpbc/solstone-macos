@@ -17,6 +17,10 @@ struct SolstoneRuntimeLayout: Sendable {
             .appendingPathComponent("sol/runtime", isDirectory: true)
     }
 
+    static func bundledPythonURL(bundleURL: URL = Bundle.main.bundleURL) -> URL {
+        bundleURL.appendingPathComponent("Contents/Resources/python/bin/python3.13")
+    }
+
     var pythonDir: URL { rootURL.appendingPathComponent("python", isDirectory: true) }
     var cacheDir: URL { rootURL.appendingPathComponent("cache", isDirectory: true) }
     var toolsDir: URL { rootURL.appendingPathComponent("tools", isDirectory: true) }
