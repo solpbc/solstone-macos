@@ -52,6 +52,7 @@ UV_VENDOR_BINARY := $(UV_VENDOR_DIR)/uv
 # version pins for installer (consumed by BundleConfig)
 SOLSTONE_PIN_VERSION ?= 0.3.8
 SOLSTONE_MIN_VERSION ?= 0.3.8
+PYTHON_PIN_VERSION ?= 3.13
 
 check-versions:
 	@[ -n "$(SOLSTONE_PIN_VERSION)" ] || { echo "error: solstone pin version must not be empty"; exit 1; }
@@ -82,6 +83,7 @@ generate-bundle-config: check-versions
 	        printf '    public static let solstonePinVersion = "%s"\n' "$(SOLSTONE_PIN_VERSION)"; \
 	        printf '    public static let solstoneMinVersion = "%s"\n' "$(SOLSTONE_MIN_VERSION)"; \
 	        printf '    public static let bundledUVVersion = "%s"\n' "$(UV_VERSION)"; \
+	        printf '    public static let pythonPinVersion = "%s"\n' "$(PYTHON_PIN_VERSION)"; \
 	        printf '%s\n' '}'; \
 	    } > Sources/solstone/BundleConfig.swift
 	@echo "generated: Sources/solstone/BundleConfig.swift"

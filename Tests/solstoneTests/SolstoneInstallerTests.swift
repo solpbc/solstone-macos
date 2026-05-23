@@ -432,8 +432,51 @@ struct SolstoneInstallerTests {
         try await waitUntil { installer.main == .done }
 
         let install = try #require(runner.invocations.first { $0.arguments.starts(with: ["tool", "install"]) })
-        #expect(install.arguments.contains("--refresh"))
+        #expect(install.arguments == [
+            "tool",
+            "install",
+            "solstone==\(BundleConfig.solstonePinVersion)",
+            "--refresh",
+            "--python",
+            BundleConfig.pythonPinVersion
+        ])
         #expect(!install.arguments.contains("--reinstall"))
+    }
+
+    @Test func uvAndPostInstallSubprocessesReceiveRuntimeEnvironment() async throws {
+        let runner = FakeSubprocessRunner()
+        let installedSolPath = SolstoneRuntimeLayout().solBinary.path
+        let finder = SequencedSolBinaryFinder(["/tmp/legacy-sol", installedSolPath])
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let installer = makeInstaller(runner: runner, solBinaryFinder: { finder.next() })
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        for arguments in [
+            ["tool", "uninstall", "solstone"],
+            ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--refresh", "--python", BundleConfig.pythonPinVersion],
+            ["setup", "--jsonl", "--yes", "--skip-models", "--accept-existing-journal", "--journal", "/tmp/journal"],
+            ["observer", "--json", "create", "solstone-macos", "--reuse-existing"],
+            ["install-models"]
+        ] {
+            let invocation = try #require(runner.invocations.first { $0.arguments == arguments })
+            let environment = try #require(invocation.environment)
+            assertRuntimeEnvironment(environment)
+        }
+
+        for arguments in [
+            ["config", "show"],
+            ["service", "uninstall"]
+        ] {
+            let invocation = try #require(runner.invocations.first { $0.arguments == arguments })
+            #expect(invocation.environment == nil)
+        }
+        #expect(runner.invocations.filter { $0.executable.lastPathComponent == "ps" }.allSatisfy { $0.environment == nil })
+        #expect(runner.invocations.filter { $0.executable.lastPathComponent == "lsof" }.allSatisfy { $0.environment == nil })
+        #expect(runner.invocations.first { $0.arguments.first == "setup" }?.executable.path == installedSolPath)
     }
 
     @Test func observerCreateSuccessWritesBundledServiceConfig() async throws {
@@ -756,6 +799,15 @@ struct SolstoneInstallerTests {
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
         try await waitUntil { installer.main == .done }
+    }
+
+    private func assertRuntimeEnvironment(_ environment: [String: String]) {
+        let layout = SolstoneRuntimeLayout()
+        #expect(environment["UV_PYTHON_INSTALL_DIR"] == layout.pythonDir.path)
+        #expect(environment["UV_PYTHON_CACHE_DIR"] == layout.pythonDir.path)
+        #expect(environment["UV_CACHE_DIR"] == layout.cacheDir.path)
+        #expect(environment["UV_TOOL_DIR"] == layout.toolsDir.path)
+        #expect(environment["UV_TOOL_BIN_DIR"] == layout.binDir.path)
     }
 
     private func makeTemporaryDirectory() throws -> URL {

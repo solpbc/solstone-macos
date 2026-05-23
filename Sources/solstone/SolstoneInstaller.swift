@@ -127,7 +127,9 @@ public final class SolstoneInstaller {
         }
 
         let solPath: String?
-        if let existingSolPath {
+        if existingInstallChoice == .createFresh {
+            solPath = await solBinaryFinder()
+        } else if let existingSolPath {
             solPath = existingSolPath
         } else {
             solPath = await solBinaryFinder()
@@ -151,11 +153,26 @@ public final class SolstoneInstaller {
     private func runInstallSolstone() async -> Bool {
         let phase = "uv tool install solstone"
         setMain(.installingSolstone(SubprocessProgress(phase: phase)))
+        let layout = SolstoneRuntimeLayout()
+        do {
+            try layout.ensureCreated()
+        } catch {
+            failMain(.installSolstone(message: error.localizedDescription), category: .disk, logExcerpt: "runtime directory setup failed: \(error.localizedDescription)")
+            return false
+        }
+
+        let legacyToolURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/share/uv/tools/solstone", isDirectory: true)
+        if FileManager.default.fileExists(atPath: legacyToolURL.path) {
+            Logger.setup.info("installer: detected legacy uv tool state at \(legacyToolURL.path, privacy: .public); installing into \(layout.rootURL.path, privacy: .public)")
+        }
+        let environment = layout.uvEnvironment()
 
         guard let uninstall = await runUVToolCommand(
             arguments: ["tool", "uninstall", "solstone"],
             phase: phase,
-            launchDescription: "uv tool uninstall"
+            launchDescription: "uv tool uninstall",
+            environment: environment
         ) else {
             return false
         }
@@ -169,9 +186,10 @@ public final class SolstoneInstaller {
         }
 
         guard let install = await runUVToolCommand(
-            arguments: ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--refresh"],
+            arguments: ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--refresh", "--python", BundleConfig.pythonPinVersion],
             phase: phase,
-            launchDescription: "uv tool install"
+            launchDescription: "uv tool install",
+            environment: environment
         ) else {
             return false
         }
@@ -191,7 +209,8 @@ public final class SolstoneInstaller {
     private func runUVToolCommand(
         arguments: [String],
         phase: String,
-        launchDescription: String
+        launchDescription: String,
+        environment: [String: String]
     ) async -> (result: SubprocessResult, stdout: String, stderr: String)? {
         let output = InstallerOutput()
         let result: SubprocessResult
@@ -199,7 +218,7 @@ public final class SolstoneInstaller {
             result = try await subprocessRunner.run(
                 executable: resolvedUVBinaryURL(),
                 arguments: arguments,
-                environment: nil,
+                environment: environment,
                 stdoutHandler: { [weak self, output] data in
                     Self.append(data, to: output, stream: .stdout)
                     Task { @MainActor in
@@ -346,6 +365,14 @@ public final class SolstoneInstaller {
     private func runSolSetup(solPath: String, journalURL: URL) async -> Bool {
         let phase = "sol setup"
         setMain(.runningSolSetup(SubprocessProgress(phase: phase)))
+        let layout = SolstoneRuntimeLayout()
+        do {
+            try layout.ensureCreated()
+        } catch {
+            failMain(.solSetup(errorCode: nil, message: error.localizedDescription), category: .disk, logExcerpt: "runtime directory setup failed: \(error.localizedDescription)")
+            return false
+        }
+        let environment = layout.uvEnvironment()
 
         let output = InstallerOutput()
         let result: SubprocessResult
@@ -353,7 +380,7 @@ public final class SolstoneInstaller {
             result = try await subprocessRunner.run(
                 executable: URL(fileURLWithPath: solPath),
                 arguments: ["setup", "--jsonl", "--yes", "--skip-models", "--accept-existing-journal", "--journal", journalURL.path],
-                environment: nil,
+                environment: environment,
                 stdoutHandler: { [weak self, output] data in
                     Self.append(data, to: output, stream: .stdout)
                     Task { @MainActor in
@@ -420,13 +447,14 @@ public final class SolstoneInstaller {
     }
 
     private func runObserverCreate(solPath: String, phase: String) async -> Bool {
+        let environment = SolstoneRuntimeLayout().uvEnvironment()
         let output = InstallerOutput()
         let result: SubprocessResult
         do {
             result = try await subprocessRunner.run(
                 executable: URL(fileURLWithPath: solPath),
                 arguments: ["observer", "--json", "create", "solstone-macos", "--reuse-existing"],
-                environment: nil,
+                environment: environment,
                 stdoutHandler: { [weak self, output] data in
                     Self.append(data, to: output, stream: .stdout)
                     Task { @MainActor in
@@ -465,6 +493,7 @@ public final class SolstoneInstaller {
     private func runInstallModels(solPath: String) async {
         let phase = "sol install-models"
         modelsProgress = .running(SubprocessProgress(phase: phase))
+        let environment = SolstoneRuntimeLayout().uvEnvironment()
 
         let output = InstallerOutput()
         let result: SubprocessResult
@@ -472,7 +501,7 @@ public final class SolstoneInstaller {
             result = try await subprocessRunner.run(
                 executable: URL(fileURLWithPath: solPath),
                 arguments: ["install-models"],
-                environment: nil,
+                environment: environment,
                 stdoutHandler: { [weak self, output] data in
                     Self.append(data, to: output, stream: .stdout)
                     Task { @MainActor in

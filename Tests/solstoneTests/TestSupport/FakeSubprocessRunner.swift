@@ -4,6 +4,13 @@ import Foundation
 struct SubprocessInvocation: Sendable, Equatable {
     let executable: URL
     let arguments: [String]
+    let environment: [String: String]?
+
+    init(executable: URL, arguments: [String], environment: [String: String]? = nil) {
+        self.executable = executable
+        self.arguments = arguments
+        self.environment = environment
+    }
 }
 
 final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
@@ -51,7 +58,7 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         stdoutHandler: @escaping @Sendable (Data) -> Void,
         stderrHandler: @escaping @Sendable (Data) -> Void
     ) async throws -> SubprocessResult {
-        let response = nextResponse(executable: executable, arguments: arguments)
+        let response = nextResponse(executable: executable, arguments: arguments, environment: environment)
         if response.delay != .zero {
             try? await Task.sleep(for: response.delay)
         }
@@ -70,11 +77,11 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
     func cancelAll() {
     }
 
-    private func nextResponse(executable: URL, arguments: [String]) -> Response {
+    private func nextResponse(executable: URL, arguments: [String], environment: [String: String]?) -> Response {
         lock.lock()
         defer { lock.unlock() }
 
-        recordedInvocations.append(SubprocessInvocation(executable: executable, arguments: arguments))
+        recordedInvocations.append(SubprocessInvocation(executable: executable, arguments: arguments, environment: environment))
         let key = responseKey(for: executable, arguments: arguments)
         guard var values = responses[key], !values.isEmpty else {
             return .success()
