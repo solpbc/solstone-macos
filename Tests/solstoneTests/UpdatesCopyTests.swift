@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import solstone
 
@@ -53,5 +54,13 @@ struct UpdatesCopyTests {
 
     @Test func privacyFootnoteString() {
         #expect(UpdatesCopy.privacyFootnote == "solstone never sends usage data. update checks only fetch the version manifest.")
+    }
+
+    @Test func releaseNotesOnlineLinkLabelString() {
+        #expect(UpdatesCopy.releaseNotesOnlineLinkLabel == "read the full notes online")
+    }
+
+    @Test func releaseNotesOnlineURLString() {
+        #expect(UpdatesCopy.releaseNotesOnlineURL == URL(string: "https://solstone.app/releases")!)
     }
 }

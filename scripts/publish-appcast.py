@@ -14,6 +14,8 @@ Side effects:
   - curl HEAD sanity checks
 RELEASE-HOST ONLY. Requires: wrangler, curl, PyNaCl.
 """
+from __future__ import annotations
+
 import argparse
 import base64
 import os
@@ -26,8 +28,6 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from typing import NoReturn, Optional, Tuple
-
-import nacl.signing
 
 R2_BUCKET = "solstone-updates"  # TODO-VPE: confirm this matches the real Cloudflare R2 bucket.
 BASE_URL = "https://updates.solstone.app"
@@ -54,6 +54,8 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
         die("command failed: " + " ".join(cmd))
 
 def load_private_key(path: str) -> nacl.signing.SigningKey:
+    import nacl.signing
+
     if not os.path.exists(path):
         die(f"{path}: not found")
     if not os.path.isfile(path):
@@ -77,6 +79,8 @@ def load_private_key(path: str) -> nacl.signing.SigningKey:
     return nacl.signing.SigningKey(seed)
 
 def sign_dmg(key: nacl.signing.SigningKey, dmg_path: str) -> Tuple[str, int]:
+    import nacl.signing
+
     if not os.path.exists(dmg_path):
         die(f"{dmg_path}: not found")
     if not os.path.isfile(dmg_path):
@@ -153,7 +157,7 @@ def build_item(version: str, bundle_version: int, signature: str, length: int, e
     ET.SubElement(item, f"{{{SPARKLE_NS}}}version").text = str(bundle_version)
     ET.SubElement(item, f"{{{SPARKLE_NS}}}shortVersionString").text = version
     ET.SubElement(item, f"{{{SPARKLE_NS}}}minimumSystemVersion").text = MIN_SYSTEM
-    ET.SubElement(item, "description").text = notes
+    ET.SubElement(item, "description", {f"{{{SPARKLE_NS}}}format": "markdown"}).text = notes
     ET.SubElement(item, "enclosure", {"url": enclosure_url, "length": str(length), "type": "application/x-apple-diskimage", f"{{{SPARKLE_NS}}}edSignature": signature})
     return item
 

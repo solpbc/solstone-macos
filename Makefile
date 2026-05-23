@@ -141,6 +141,7 @@ test:
 ci:
 	bash test/assert_terminology.sh
 	swift test
+	python3 -m unittest discover scripts/tests
 
 integration-test:
 	SPL_INTEGRATION=1 swift test --filter 'SPLTunnelTests.IntegrationTests'

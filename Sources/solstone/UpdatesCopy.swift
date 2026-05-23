@@ -15,6 +15,8 @@ enum UpdatesCopy {
     static let unavailableSubtitle = "this build is missing a valid update feed or signing key."
 
     static let releaseNotesTitle = "what's new"
+    static let releaseNotesOnlineLinkLabel = "read the full notes online"
+    static let releaseNotesOnlineURL = URL(string: "https://solstone.app/releases")!
     static let finalizingSuffix = "finalizing"
 
     static let actionCheckNow = "check now"
