@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import Darwin
 import Testing
 import SolstoneCore
 @testable import solstone
@@ -29,6 +30,10 @@ struct SolstoneInstallerTests {
         for choice in [ExistingInstallChoice.createFresh, .acceptExisting] {
             let runner = FakeSubprocessRunner()
             let uvURL = try makeUVFixture()
+            if choice == .createFresh {
+                enqueueSuccessfulPreclean(runner, journalPath: "/tmp/solstone-test-journal")
+                runner.enqueue("tool", .success())
+            }
             runner.enqueue("tool", .success())
             runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
             runner.enqueue("observer", .success(stdout: observerJSON))
@@ -100,6 +105,335 @@ struct SolstoneInstallerTests {
 
         #expect(!runner.invocations.contains { $0.arguments.first == "tool" })
         #expect(runner.invocations.contains { $0.arguments.first == "setup" })
+    }
+
+    @Test func createFreshRunsPrecleanBeforeUvInstall() async throws {
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        let calls = runner.invocations.map(\.arguments)
+        let configIndex = try #require(calls.firstIndex { $0 == ["config", "show"] })
+        let serviceIndex = try #require(calls.firstIndex { $0 == ["service", "uninstall"] })
+        let installIndex = try #require(calls.firstIndex { $0.starts(with: ["tool", "install"]) })
+        #expect(configIndex < serviceIndex)
+        #expect(serviceIndex < installIndex)
+    }
+
+    @Test func createFreshSkipsPrecleanWhenNoExistingBinary() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("tool", .success())
+        runner.enqueue("tool", .success())
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        let finder = SequencedSolBinaryFinder([nil, "/usr/bin/sol"])
+        let installer = makeInstaller(runner: runner, solBinaryFinder: { finder.next() })
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        #expect(!runner.invocations.contains { $0.arguments.first == "config" })
+        #expect(!runner.invocations.contains { $0.arguments.first == "service" })
+        #expect(runner.invocations.contains { $0.arguments.starts(with: ["tool", "install"]) })
+    }
+
+    @Test func acceptExistingSkipsPreclean() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitUntil { installer.main == .done }
+
+        #expect(!runner.invocations.contains { $0.arguments.first == "config" })
+        #expect(!runner.invocations.contains { $0.arguments.first == "service" })
+    }
+
+    @Test func precleanFailsWhenJournalPathCannotResolve() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("config", .success(stderr: Data("config failed\n".utf8), exitCode: 2))
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.cleanup(step: .resolveJournal, message: cleanupMessage(step: .resolveJournal, why: "config failed"))))
+    }
+
+    @Test func precleanTreatsServiceUninstallNonzeroAsFatal() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("config", .success(stdout: Data("path: /tmp/journal\n".utf8)))
+        runner.enqueue("service", .success(stderr: Data("unload failed\n".utf8), exitCode: 1))
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.cleanup(step: .serviceUninstall, message: cleanupMessage(step: .serviceUninstall, why: "unload failed"))))
+    }
+
+    @Test func precleanSkipsPidWaitWhenPidFileMissingOrDead() async throws {
+        let journal = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: journal) }
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: journal.path)
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let probes = LockedProbeCounter(result: false)
+        let installer = makeInstaller(runner: runner, pidExists: { pid in probes.record(pid) })
+        defer { installer.cancel() }
+
+        installer.start(journalURL: journal, existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        #expect(probes.count == 0)
+    }
+
+    @Test func precleanProceedsImmediatelyWhenCapturedPidAlreadyDead() async throws {
+        let journal = try makeTemporaryDirectory()
+        try writeSupervisorPID(12345, journal: journal)
+        defer { try? FileManager.default.removeItem(at: journal) }
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: journal.path)
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let probes = LockedProbeCounter(result: false)
+        let installer = makeInstaller(
+            runner: runner,
+            pidExists: { pid in probes.record(pid) },
+            pidWaitPollInterval: .milliseconds(500)
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: journal, existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        #expect(probes.count <= 2)
+    }
+
+    @Test func precleanWaitsForLiveSupervisorPidThenContinues() async throws {
+        let journal = try makeTemporaryDirectory()
+        try writeSupervisorPID(1234, journal: journal)
+        defer { try? FileManager.default.removeItem(at: journal) }
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: journal.path)
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let probes = SequencedPIDProbe([true, true, false, false])
+        let installer = makeInstaller(runner: runner, pidExists: { pid in probes.next(pid) })
+        defer { installer.cancel() }
+
+        installer.start(journalURL: journal, existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        #expect(probes.count >= 3)
+    }
+
+    @Test func precleanFailsWhenSupervisorPidSurvivesTimeout() async throws {
+        let journal = try makeTemporaryDirectory()
+        try writeSupervisorPID(4321, journal: journal)
+        defer { try? FileManager.default.removeItem(at: journal) }
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("config", .success(stdout: Data("path: \(journal.path)\n".utf8)))
+        runner.enqueue("service", .success())
+        let installer = makeInstaller(
+            runner: runner,
+            pidExists: { _ in true },
+            pidWaitTimeout: .milliseconds(5),
+            pidWaitPollInterval: .milliseconds(1)
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: journal, existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.cleanup(step: .waitForDeath, message: cleanupMessage(step: .waitForDeath, why: "supervisor pid 4321 still alive after 10s"))))
+    }
+
+    @Test func precleanOrphanSweepKillsOnlyPPIDOneSolPrefix() async throws {
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal", psOutput: """
+          111     1 sol:foo
+          222     2 sol:bar
+          333     1 other-process
+        """)
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let signals = LockedSignalRecorder()
+        let installer = makeInstaller(
+            runner: runner,
+            pidExists: { _ in false },
+            terminate: { pid, signal in signals.append(pid: pid, signal: signal); return 0 }
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        #expect(signals.values == [SignalRecord(pid: 111, signal: SIGTERM)])
+    }
+
+    @Test func precleanOrphanSweepSIGKILLsSurvivors() async throws {
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal", psOutput: "111 1 sol:foo\n")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let signals = LockedSignalRecorder()
+        let installer = makeInstaller(
+            runner: runner,
+            pidExists: { _ in true },
+            terminate: { pid, signal in signals.append(pid: pid, signal: signal); return 0 }
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        #expect(signals.values == [
+            SignalRecord(pid: 111, signal: SIGTERM),
+            SignalRecord(pid: 111, signal: SIGKILL)
+        ])
+    }
+
+    @Test func precleanFailsWhenLsofReportsBoundPort7657() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("config", .success(stdout: Data("path: /tmp/journal\n".utf8)))
+        runner.enqueue("service", .success())
+        runner.enqueue("ps", .success())
+        runner.enqueue("lsof", .success(exitCode: 0))
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.cleanup(step: .ports, message: cleanupMessage(step: .ports, why: "port 7657 still bound after sweep"))))
+    }
+
+    @Test func precleanFailsWhenLsofReportsBoundPort5015() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("config", .success(stdout: Data("path: /tmp/journal\n".utf8)))
+        runner.enqueue("service", .success())
+        runner.enqueue("ps", .success())
+        runner.enqueue("lsof", .success(exitCode: 1))
+        runner.enqueue("lsof", .success(exitCode: 0))
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.cleanup(step: .ports, message: cleanupMessage(step: .ports, why: "port 5015 still bound after sweep"))))
+    }
+
+    @Test func precleanAcceptsLsofExitOneAsUnbound() async throws {
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        #expect(runner.invocations.filter { $0.executable.lastPathComponent == "lsof" }.count == 2)
+    }
+
+    @Test func precleanFailsWhenLsofReturnsUnexpectedExit() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("config", .success(stdout: Data("path: /tmp/journal\n".utf8)))
+        runner.enqueue("service", .success())
+        runner.enqueue("ps", .success())
+        runner.enqueue("lsof", .success(exitCode: 2))
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.cleanup(step: .ports, message: cleanupMessage(step: .ports, why: "lsof exited 2 probing port 7657"))))
+    }
+
+    @Test func precleanIdempotentOnHealthyButStoppedInstall() async throws {
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let signals = LockedSignalRecorder()
+        let installer = makeInstaller(
+            runner: runner,
+            pidExists: { _ in false },
+            terminate: { pid, signal in signals.append(pid: pid, signal: signal); return 0 }
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        #expect(signals.values.isEmpty)
+    }
+
+    @Test func failureMessageFormatForEveryCleanupStep() {
+        for step in CleanupStep.allCases {
+            let message = cleanupMessage(step: step, why: "why")
+            #expect(message.hasPrefix("upgrade pre-clean failed at \(step.displayName) — "))
+        }
+    }
+
+    @Test func uvToolUninstallToleratesIsNotInstalledStderr() async throws {
+        try await assertUVUninstallTolerance(stderr: "solstone is not installed\n")
+    }
+
+    @Test func uvToolUninstallToleratesNotCurrentlyInstalledStderr() async throws {
+        try await assertUVUninstallTolerance(stderr: "solstone is not currently installed\n")
+    }
+
+    @Test func uvToolUninstallFailsOnUnknownStderr() async throws {
+        let runner = FakeSubprocessRunner()
+        let finder = SequencedSolBinaryFinder([nil])
+        runner.enqueue("tool", .success(stderr: Data("network error: no route\n".utf8), exitCode: 1))
+        let installer = makeInstaller(runner: runner, solBinaryFinder: { finder.next() })
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.installSolstone(message: "network error: no route")))
+    }
+
+    @Test func uvToolInstallFailureAfterCleanUninstallSurfacesAsInstallSolstoneFailure() async throws {
+        let runner = FakeSubprocessRunner()
+        let finder = SequencedSolBinaryFinder([nil])
+        runner.enqueue("tool", .success())
+        runner.enqueue("tool", .success(stderr: Data("error: failed to download solstone\n".utf8), exitCode: 1))
+        let installer = makeInstaller(runner: runner, solBinaryFinder: { finder.next() })
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.installSolstone(message: "error: failed to download solstone")))
+    }
+
+    @Test func uvToolInstallArgvNoLongerContainsReinstall() async throws {
+        let runner = FakeSubprocessRunner()
+        let finder = SequencedSolBinaryFinder([nil, "/usr/bin/sol"])
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let installer = makeInstaller(runner: runner, solBinaryFinder: { finder.next() })
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        let install = try #require(runner.invocations.first { $0.arguments.starts(with: ["tool", "install"]) })
+        #expect(install.arguments.contains("--refresh"))
+        #expect(!install.arguments.contains("--reinstall"))
     }
 
     @Test func observerCreateSuccessWritesBundledServiceConfig() async throws {
@@ -285,6 +619,7 @@ struct SolstoneInstallerTests {
     private func rawSubprocessFailureUsesLastStderrLine() async throws {
         let runner = FakeSubprocessRunner()
         let uvURL = try makeUVFixture()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
         runner.enqueue("tool", .success(stderr: Data("last error\n".utf8), exitCode: 1))
         let installer = makeInstaller(runner: runner, uvURL: uvURL)
         defer { installer.cancel() }
@@ -302,6 +637,7 @@ struct SolstoneInstallerTests {
     private func launchFailureUsesLocalizedDescription() async throws {
         let runner = FakeSubprocessRunner()
         let uvURL = try makeUVFixture()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
         runner.enqueue("tool", .failure("launch boom"))
         let installer = makeInstaller(runner: runner, uvURL: uvURL)
         defer { installer.cancel() }
@@ -344,13 +680,38 @@ struct SolstoneInstallerTests {
     private func makeInstaller(
         runner: FakeSubprocessRunner,
         uvURL: URL? = nil,
+        solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil }
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
             subprocessRunner: runner,
-            solBinaryFinder: { "/usr/bin/sol" },
+            solBinaryFinder: solBinaryFinder,
             connectionTester: connectionTester
+        )
+    }
+
+    private func makeInstaller(
+        runner: FakeSubprocessRunner,
+        uvURL: URL? = nil,
+        solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
+        connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
+        pidExists: @escaping @Sendable (pid_t) -> Bool,
+        terminate: @escaping @Sendable (pid_t, Int32) -> Int32 = { _, _ in 0 },
+        pidWaitTimeout: Duration = .seconds(1),
+        pidWaitPollInterval: Duration = .milliseconds(1),
+        orphanGracePeriod: Duration = .milliseconds(1)
+    ) -> SolstoneInstaller {
+        SolstoneInstaller(
+            uvBinaryURL: uvURL,
+            subprocessRunner: runner,
+            solBinaryFinder: solBinaryFinder,
+            connectionTester: connectionTester,
+            pidExists: pidExists,
+            terminate: terminate,
+            pidWaitTimeout: pidWaitTimeout,
+            pidWaitPollInterval: pidWaitPollInterval,
+            orphanGracePeriod: orphanGracePeriod
         )
     }
 
@@ -360,6 +721,54 @@ struct SolstoneInstallerTests {
             if case .failed = installer.main { return true }
             return false
         }
+    }
+
+    private func enqueueSuccessfulPreclean(_ runner: FakeSubprocessRunner, journalPath: String, psOutput: String = "") {
+        runner.enqueue("config", .success(stdout: Data("path: \(journalPath)\n".utf8)))
+        runner.enqueue("service", .success(stdout: Data("Service was not installed\n".utf8)))
+        runner.enqueue("ps", .success(stdout: Data(psOutput.utf8)))
+        runner.enqueue("lsof", .success(exitCode: 1))
+        runner.enqueue("lsof", .success(exitCode: 1))
+    }
+
+    private func enqueueSuccessfulInstallAfterPreclean(_ runner: FakeSubprocessRunner) {
+        runner.enqueue("tool", .success())
+        runner.enqueue("tool", .success())
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+    }
+
+    private func cleanupMessage(step: CleanupStep, why: String) -> String {
+        "upgrade pre-clean failed at \(step.displayName) — \(why)"
+    }
+
+    private func assertUVUninstallTolerance(stderr: String) async throws {
+        let runner = FakeSubprocessRunner()
+        let finder = SequencedSolBinaryFinder([nil, "/usr/bin/sol"])
+        runner.enqueue("tool", .success(stderr: Data(stderr.utf8), exitCode: 1))
+        runner.enqueue("tool", .success())
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(runner: runner, solBinaryFinder: { finder.next() })
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+    }
+
+    private func makeTemporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("solstone-installer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func writeSupervisorPID(_ pid: pid_t, journal: URL) throws {
+        let health = journal.appendingPathComponent("health", isDirectory: true)
+        try FileManager.default.createDirectory(at: health, withIntermediateDirectories: true)
+        try Data("\(pid)".utf8).write(to: health.appendingPathComponent("supervisor.pid"))
     }
 
     private func waitUntil(_ predicate: @MainActor () -> Bool) async throws {
@@ -389,5 +798,84 @@ struct SolstoneInstallerTests {
 
     private var observerJSON: Data {
         Data(#"{"name":"solstone-macos","key":"observer-key","prefix":"observer"}"#.utf8)
+    }
+}
+
+private final class SequencedSolBinaryFinder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String?]
+
+    init(_ values: [String?]) {
+        self.values = values
+    }
+
+    func next() -> String? {
+        lock.withLock {
+            if values.isEmpty { return nil }
+            return values.removeFirst()
+        }
+    }
+}
+
+private final class SequencedPIDProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [Bool]
+    private var calls = 0
+
+    init(_ values: [Bool]) {
+        self.values = values
+    }
+
+    var count: Int {
+        lock.withLock { calls }
+    }
+
+    func next(_ pid: pid_t) -> Bool {
+        lock.withLock {
+            calls += 1
+            if values.isEmpty { return false }
+            return values.removeFirst()
+        }
+    }
+}
+
+private final class LockedProbeCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+    private let result: Bool
+
+    init(result: Bool) {
+        self.result = result
+    }
+
+    var count: Int {
+        lock.withLock { calls }
+    }
+
+    func record(_ pid: pid_t) -> Bool {
+        lock.withLock {
+            calls += 1
+            return result
+        }
+    }
+}
+
+private struct SignalRecord: Equatable {
+    let pid: pid_t
+    let signal: Int32
+}
+
+private final class LockedSignalRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var records: [SignalRecord] = []
+
+    var values: [SignalRecord] {
+        lock.withLock { records }
+    }
+
+    func append(pid: pid_t, signal: Int32) {
+        lock.withLock {
+            records.append(SignalRecord(pid: pid, signal: signal))
+        }
     }
 }

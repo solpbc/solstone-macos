@@ -44,6 +44,9 @@ swift_matches="$(
   | rg -v 'Logger\.' \
   | grep -v '"service", "journal"' \
   | grep -v '"service", "restart"' \
+  | grep -v '"service", "uninstall"' \
+  | grep -v '"service-uninstall"' \
+  | grep -v '"sol service uninstall' \
   || true
 )"
 

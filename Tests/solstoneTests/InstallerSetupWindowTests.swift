@@ -11,6 +11,7 @@ struct InstallerCardStateTests {
         #expect(cardState(from: .detecting) == .detecting)
         #expect(cardState(from: .awaitingChoice(existingInstall: false)) == .absent)
         #expect(cardState(from: .awaitingChoice(existingInstall: true)) == .installedPlaceholder)
+        #expect(cardState(from: .cleaningUp(progress)) == .installing)
         #expect(cardState(from: .installingSolstone(progress)) == .installing)
         #expect(cardState(from: .runningSolSetup(progress)) == .installing)
         #expect(cardState(from: .registering(progress)) == .installing)
@@ -51,6 +52,7 @@ struct RowStatusTests {
 
     @Test func detectingStateMapsRows() {
         #expect(rowStatus(for: .checkingSystem, main: .detecting, modelsProgress: .idle) == .running)
+        #expect(rowStatus(for: .cleaningUp, main: .detecting, modelsProgress: .idle) == .pending)
         #expect(rowStatus(for: .installSolstone, main: .detecting, modelsProgress: .idle) == .pending)
         #expect(rowStatus(for: .solSetup, main: .detecting, modelsProgress: .idle) == .pending)
         #expect(rowStatus(for: .registering, main: .detecting, modelsProgress: .idle) == .pending)
@@ -61,15 +63,33 @@ struct RowStatusTests {
         let main = MainState.awaitingChoice(existingInstall: false)
 
         #expect(rowStatus(for: .checkingSystem, main: main, modelsProgress: .idle) == .ok)
+        #expect(rowStatus(for: .cleaningUp, main: main, modelsProgress: .idle) == .pending)
         #expect(rowStatus(for: .installSolstone, main: main, modelsProgress: .idle) == .pending)
         #expect(rowStatus(for: .solSetup, main: main, modelsProgress: .idle) == .pending)
         #expect(rowStatus(for: .registering, main: main, modelsProgress: .idle) == .pending)
+    }
+
+    @Test func cleaningUpRowAppearsBetweenCheckingAndInstall() {
+        #expect(Array(InstallerRow.allCases.prefix(3)) == [.checkingSystem, .cleaningUp, .installSolstone])
+    }
+
+    @Test func cleaningUpMapsRows() {
+        let main = MainState.cleaningUp(progress)
+
+        #expect(rowStatus(for: .checkingSystem, main: main, modelsProgress: .idle) == .ok)
+        #expect(rowStatus(for: .cleaningUp, main: main, modelsProgress: .idle) == .running)
+        #expect(rowStatus(for: .installSolstone, main: main, modelsProgress: .idle) == .pending)
+        #expect(rowStatus(for: .solSetup, main: main, modelsProgress: .idle) == .pending)
+        #expect(rowStatus(for: .registering, main: main, modelsProgress: .idle) == .pending)
+        #expect(currentSubprocessProgress(for: .cleaningUp, main: main, modelsProgress: .idle) == progress)
+        #expect(currentSubprocessProgress(for: .installSolstone, main: main, modelsProgress: .idle) == nil)
     }
 
     @Test func installingSolstoneMapsRows() {
         let main = MainState.installingSolstone(progress)
 
         #expect(rowStatus(for: .checkingSystem, main: main, modelsProgress: .idle) == .ok)
+        #expect(rowStatus(for: .cleaningUp, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .installSolstone, main: main, modelsProgress: .idle) == .running)
         #expect(rowStatus(for: .solSetup, main: main, modelsProgress: .idle) == .pending)
         #expect(rowStatus(for: .registering, main: main, modelsProgress: .idle) == .pending)
@@ -79,6 +99,7 @@ struct RowStatusTests {
         let main = MainState.runningSolSetup(progress)
 
         #expect(rowStatus(for: .checkingSystem, main: main, modelsProgress: .idle) == .ok)
+        #expect(rowStatus(for: .cleaningUp, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .installSolstone, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .solSetup, main: main, modelsProgress: .idle) == .running)
         #expect(rowStatus(for: .registering, main: main, modelsProgress: .idle) == .pending)
@@ -88,6 +109,7 @@ struct RowStatusTests {
         let main = MainState.registering(progress)
 
         #expect(rowStatus(for: .checkingSystem, main: main, modelsProgress: .idle) == .ok)
+        #expect(rowStatus(for: .cleaningUp, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .installSolstone, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .solSetup, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .registering, main: main, modelsProgress: .idle) == .running)
@@ -95,14 +117,25 @@ struct RowStatusTests {
 
     @Test func doneMapsRows() {
         #expect(rowStatus(for: .checkingSystem, main: .done, modelsProgress: .idle) == .ok)
+        #expect(rowStatus(for: .cleaningUp, main: .done, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .installSolstone, main: .done, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .solSetup, main: .done, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .registering, main: .done, modelsProgress: .idle) == .ok)
     }
 
+    @Test func cleanupFailureShowsCleanupRowFailedAndLaterRowsPending() {
+        let main = MainState.failed(.cleanup(step: .ports, message: "upgrade pre-clean failed at check ports — x"))
+
+        #expect(rowStatus(for: .cleaningUp, main: main, modelsProgress: .idle) == .failed(message: "upgrade pre-clean failed at check ports — x"))
+        #expect(rowStatus(for: .installSolstone, main: main, modelsProgress: .idle) == .pending)
+        #expect(rowStatus(for: .solSetup, main: main, modelsProgress: .idle) == .pending)
+        #expect(rowStatus(for: .registering, main: main, modelsProgress: .idle) == .pending)
+    }
+
     @Test func installFailureMapsRows() {
         let main = MainState.failed(.installSolstone(message: "m"))
 
+        #expect(rowStatus(for: .cleaningUp, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .installSolstone, main: main, modelsProgress: .idle) == .failed(message: "m"))
         #expect(rowStatus(for: .solSetup, main: main, modelsProgress: .idle) == .pending)
         #expect(rowStatus(for: .registering, main: main, modelsProgress: .idle) == .pending)
@@ -111,6 +144,7 @@ struct RowStatusTests {
     @Test func setupFailureMapsRows() {
         let main = MainState.failed(.solSetup(errorCode: "X1", message: "m"))
 
+        #expect(rowStatus(for: .cleaningUp, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .installSolstone, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .solSetup, main: main, modelsProgress: .idle) == .failed(message: "m"))
         #expect(rowStatus(for: .registering, main: main, modelsProgress: .idle) == .pending)
@@ -119,6 +153,7 @@ struct RowStatusTests {
     @Test func registeringFailureMapsRows() {
         let main = MainState.failed(.registering(message: "m"))
 
+        #expect(rowStatus(for: .cleaningUp, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .installSolstone, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .solSetup, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .registering, main: main, modelsProgress: .idle) == .failed(message: "m"))
@@ -127,6 +162,7 @@ struct RowStatusTests {
     @Test func installModelsFailureMainMapsMainRows() {
         let main = MainState.failed(.installModels(message: "m"))
 
+        #expect(rowStatus(for: .cleaningUp, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .installSolstone, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .solSetup, main: main, modelsProgress: .idle) == .ok)
         #expect(rowStatus(for: .registering, main: main, modelsProgress: .idle) == .ok)
@@ -145,6 +181,7 @@ struct LogDisclosureStateTests {
     @Test func emptyStateDefaultsDisclosureRowsToCollapsed() {
         let state: [String: Bool] = [:]
 
+        #expect(!isLogExpanded(for: .cleaningUp, in: state))
         #expect(!isLogExpanded(for: .installSolstone, in: state))
         #expect(!isLogExpanded(for: .solSetup, in: state))
         #expect(!isLogExpanded(for: .registering, in: state))
@@ -152,7 +189,7 @@ struct LogDisclosureStateTests {
     }
 
     @Test func explicitTrueExpandsThatRow() {
-        for row in [InstallerRow.installSolstone, .solSetup, .registering, .models] {
+        for row in [InstallerRow.cleaningUp, .installSolstone, .solSetup, .registering, .models] {
             #expect(isLogExpanded(for: row, in: [row.rawValue: true]))
         }
     }

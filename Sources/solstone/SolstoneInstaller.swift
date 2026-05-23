@@ -2,8 +2,13 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import Darwin
 import os
 import SolstoneCore
+
+private let pidWaitTimeoutDefault: Duration = .seconds(10)
+private let pidWaitPollIntervalDefault: Duration = .milliseconds(250)
+private let orphanGracePeriodDefault: Duration = .seconds(3)
 
 @MainActor
 @Observable
@@ -20,6 +25,11 @@ public final class SolstoneInstaller {
     private let subprocessRunner: SubprocessRunning
     private let solBinaryFinder: @Sendable () async -> String?
     private let connectionTester: @Sendable (String, String) async -> String?
+    private let pidExists: @Sendable (pid_t) -> Bool
+    private let terminate: @Sendable (pid_t, Int32) -> Int32
+    private let pidWaitTimeout: Duration
+    private let pidWaitPollInterval: Duration
+    private let orphanGracePeriod: Duration
     private var installTask: Task<Void, Never>?
     private var modelsTask: Task<Void, Never>?
 
@@ -47,12 +57,27 @@ public final class SolstoneInstaller {
         solBinaryFinder: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() },
         connectionTester: @escaping @Sendable (String, String) async -> String? = { url, key in
             await UploadCoordinator.testConnection(serverURL: url, serverKey: key)
-        }
+        },
+        pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
+            if Darwin.kill(pid, 0) == 0 { return true }
+            return errno == EPERM
+        },
+        terminate: @escaping @Sendable (pid_t, Int32) -> Int32 = { pid, signal in
+            Darwin.kill(pid, signal)
+        },
+        pidWaitTimeout: Duration = pidWaitTimeoutDefault,
+        pidWaitPollInterval: Duration = pidWaitPollIntervalDefault,
+        orphanGracePeriod: Duration = orphanGracePeriodDefault
     ) {
         self.uvBinaryURL = uvBinaryURL
         self.subprocessRunner = subprocessRunner
         self.solBinaryFinder = solBinaryFinder
         self.connectionTester = connectionTester
+        self.pidExists = pidExists
+        self.terminate = terminate
+        self.pidWaitTimeout = pidWaitTimeout
+        self.pidWaitPollInterval = pidWaitPollInterval
+        self.orphanGracePeriod = orphanGracePeriod
     }
 
     internal func attach(appState: AppState) {
@@ -93,11 +118,21 @@ public final class SolstoneInstaller {
     }
 
     private func runInstall(journalURL: URL, existingInstallChoice: ExistingInstallChoice) async {
+        let existingSolPath = await solBinaryFinder()
         if existingInstallChoice == .createFresh {
+            if let existingSolPath {
+                guard await runUpgradePreclean(solPath: existingSolPath) else { return }
+            }
             guard await runInstallSolstone() else { return }
         }
 
-        guard let solPath = await solBinaryFinder() else {
+        let solPath: String?
+        if let existingSolPath {
+            solPath = existingSolPath
+        } else {
+            solPath = await solBinaryFinder()
+        }
+        guard let solPath else {
             failMain(
                 .installSolstone(message: existingInstallChoice == .createFresh ? "sol binary not found after install" : "sol binary not found"),
                 category: .subprocessLaunch
@@ -117,12 +152,53 @@ public final class SolstoneInstaller {
         let phase = "uv tool install solstone"
         setMain(.installingSolstone(SubprocessProgress(phase: phase)))
 
+        guard let uninstall = await runUVToolCommand(
+            arguments: ["tool", "uninstall", "solstone"],
+            phase: phase,
+            launchDescription: "uv tool uninstall"
+        ) else {
+            return false
+        }
+        if uninstall.result.exitCode != 0 && !Self.uvUninstallNotInstalled(stderr: uninstall.stderr) {
+            failMain(
+                .installSolstone(message: lastUsefulLine(uninstall.stderr) ?? "uv tool uninstall solstone failed"),
+                category: Self.categorize(stderr: uninstall.stderr),
+                logExcerpt: Self.lastUsefulLog(stdout: uninstall.stdout, stderr: uninstall.stderr)
+            )
+            return false
+        }
+
+        guard let install = await runUVToolCommand(
+            arguments: ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--refresh"],
+            phase: phase,
+            launchDescription: "uv tool install"
+        ) else {
+            return false
+        }
+
+        if install.result.exitCode == 0 {
+            return true
+        }
+
+        failMain(
+            .installSolstone(message: lastUsefulLine(install.stderr) ?? "uv tool install solstone failed"),
+            category: Self.categorize(stderr: install.stderr),
+            logExcerpt: Self.lastUsefulLog(stdout: install.stdout, stderr: install.stderr)
+        )
+        return false
+    }
+
+    private func runUVToolCommand(
+        arguments: [String],
+        phase: String,
+        launchDescription: String
+    ) async -> (result: SubprocessResult, stdout: String, stderr: String)? {
         let output = InstallerOutput()
         let result: SubprocessResult
         do {
             result = try await subprocessRunner.run(
                 executable: resolvedUVBinaryURL(),
-                arguments: ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--reinstall", "--refresh"],
+                arguments: arguments,
                 environment: nil,
                 stdoutHandler: { [weak self, output] data in
                     Self.append(data, to: output, stream: .stdout)
@@ -138,22 +214,133 @@ public final class SolstoneInstaller {
                 }
             )
         } catch {
-            failMain(.installSolstone(message: error.localizedDescription), category: .subprocessLaunch, logExcerpt: "uv tool install subprocess could not launch: \(error.localizedDescription)")
+            failMain(.installSolstone(message: error.localizedDescription), category: .subprocessLaunch, logExcerpt: "\(launchDescription) subprocess could not launch: \(error.localizedDescription)")
+            return nil
+        }
+        return (result, output.stdoutString(), output.stderrString())
+    }
+
+    private func runUpgradePreclean(solPath: String) async -> Bool {
+        let phase = "upgrade pre-clean"
+        setMain(.cleaningUp(SubprocessProgress(phase: phase)))
+        Logger.setup.info("starting upgrade pre-clean")
+
+        let configOutput = InstallerOutput()
+        let configResult: SubprocessResult
+        do {
+            configResult = try await subprocessRunner.run(
+                executable: URL(fileURLWithPath: solPath),
+                arguments: ["config", "show"],
+                environment: nil,
+                stdoutHandler: { data in Self.append(data, to: configOutput, stream: .stdout) },
+                stderrHandler: { data in Self.append(data, to: configOutput, stream: .stderr) }
+            )
+        } catch {
+            failCleanup(step: .resolveJournal, why: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "sol config show subprocess could not launch: \(error.localizedDescription)")
             return false
         }
 
-        let stderr = await output.stderrString()
-        let stdoutText = await output.stdoutString()
-        if result.exitCode == 0 {
-            return true
+        let configStdout = configOutput.stdoutString()
+        let configStderr = configOutput.stderrString()
+        guard configResult.exitCode == 0 else {
+            failCleanup(
+                step: .resolveJournal,
+                why: lastUsefulLine(configStderr) ?? "sol config show exited \(configResult.exitCode)",
+                category: Self.categorize(stderr: configStderr),
+                logExcerpt: Self.lastUsefulLog(stdout: configStdout, stderr: configStderr)
+            )
+            return false
+        }
+        guard let journalPath = parseJournalPath(from: configStdout) else {
+            failCleanup(step: .resolveJournal, why: "could not find the journal", category: .unknown, logExcerpt: configStdout)
+            return false
         }
 
-        failMain(
-            .installSolstone(message: lastUsefulLine(stderr) ?? "uv tool install solstone failed"),
-            category: Self.categorize(stderr: stderr),
-            logExcerpt: Self.lastUsefulLog(stdout: stdoutText, stderr: stderr)
-        )
-        return false
+        let pidURL = URL(fileURLWithPath: journalPath, isDirectory: true)
+            .appendingPathComponent("health/supervisor.pid")
+        let capturedPid = readSupervisorPID(from: pidURL)
+
+        let uninstallOutput = InstallerOutput()
+        let uninstallResult: SubprocessResult
+        do {
+            uninstallResult = try await subprocessRunner.run(
+                executable: URL(fileURLWithPath: solPath),
+                arguments: ["service", "uninstall"],
+                environment: nil,
+                stdoutHandler: { data in Self.append(data, to: uninstallOutput, stream: .stdout) },
+                stderrHandler: { data in Self.append(data, to: uninstallOutput, stream: .stderr) }
+            )
+        } catch {
+            failCleanup(step: .serviceUninstall, why: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "sol service uninstall subprocess could not launch: \(error.localizedDescription)")
+            return false
+        }
+        let uninstallStdout = uninstallOutput.stdoutString()
+        let uninstallStderr = uninstallOutput.stderrString()
+        guard uninstallResult.exitCode == 0 else {
+            failCleanup(
+                step: .serviceUninstall,
+                why: lastUsefulLine(uninstallStderr) ?? "sol service uninstall exited \(uninstallResult.exitCode)",
+                category: Self.categorize(stderr: uninstallStderr),
+                logExcerpt: Self.lastUsefulLog(stdout: uninstallStdout, stderr: uninstallStderr)
+            )
+            return false
+        }
+
+        if let capturedPid {
+            let clock = ContinuousClock()
+            let deadline = clock.now + pidWaitTimeout
+            while clock.now < deadline {
+                if !pidExists(capturedPid) { break }
+                try? await Task.sleep(for: pidWaitPollInterval)
+            }
+            if pidExists(capturedPid) {
+                failCleanup(step: .waitForDeath, why: "supervisor pid \(capturedPid) still alive after 10s", category: .unknown)
+                return false
+            }
+        }
+
+        if let failure = await runInstallerOrphanSweep(
+            runner: subprocessRunner,
+            pidExists: pidExists,
+            terminate: terminate,
+            gracePeriod: orphanGracePeriod
+        ) {
+            failCleanup(step: failure.step, why: failure.message, category: .unknown)
+            return false
+        }
+
+        for port in [7657, 5015] {
+            let result: SubprocessResult
+            do {
+                result = try await subprocessRunner.run(
+                    executable: URL(fileURLWithPath: "/usr/sbin/lsof"),
+                    arguments: ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN"],
+                    environment: nil,
+                    stdoutHandler: { _ in },
+                    stderrHandler: { _ in }
+                )
+            } catch {
+                failCleanup(step: .ports, why: "lsof failed to launch probing port \(port)", category: .subprocessLaunch, logExcerpt: error.localizedDescription)
+                return false
+            }
+
+            switch result.exitCode {
+            case 1:
+                continue
+            case 0:
+                failCleanup(step: .ports, why: "port \(port) still bound after sweep", category: .unknown)
+                return false
+            default:
+                failCleanup(step: .ports, why: "lsof exited \(result.exitCode) probing port \(port)", category: .unknown)
+                return false
+            }
+        }
+
+        return true
+    }
+
+    private func failCleanup(step: CleanupStep, why: String, category: ErrorCategory, logExcerpt: String? = nil) {
+        failMain(.cleanup(step: step, message: Self.cleanupFailureMessage(step: step, why: why)), category: category, logExcerpt: logExcerpt)
     }
 
     private func runSolSetup(solPath: String, journalURL: URL) async -> Bool {
@@ -182,8 +369,8 @@ public final class SolstoneInstaller {
             return false
         }
 
-        let stdout = await output.stdoutString()
-        let stderr = await output.stderrString()
+        let stdout = output.stdoutString()
+        let stderr = output.stderrString()
         let parsed = parseSetupOutput(stdout, phase: phase)
         setMain(.runningSolSetup(parsed.progress))
 
@@ -258,8 +445,8 @@ public final class SolstoneInstaller {
             return false
         }
 
-        let stdout = await output.stdoutData()
-        let stderr = await output.stderrString()
+        let stdout = output.stdoutData()
+        let stderr = output.stderrString()
         guard result.exitCode == 0 else {
             failMain(.registering(message: lastUsefulLine(stderr) ?? "observer create failed"), category: Self.categorize(stderr: stderr), logExcerpt: Self.lastUsefulLog(stdout: String(decoding: stdout, as: UTF8.self), stderr: stderr))
             return false
@@ -304,7 +491,7 @@ public final class SolstoneInstaller {
             return
         }
 
-        let stderr = await output.stderrString()
+        let stderr = output.stderrString()
         if result.exitCode == 0 {
             modelsProgress = .done
         } else {
@@ -490,6 +677,7 @@ public final class SolstoneInstaller {
 
     nonisolated private static func shortMessage(_ failedState: FailedState) -> String {
         switch failedState {
+        case .cleanup(_, let message): return message
         case .installSolstone(let message): return message
         case .solSetup(let code, let message): return code.map { "[\($0)] \(message)" } ?? message
         case .installModels(let message): return message
@@ -499,6 +687,7 @@ public final class SolstoneInstaller {
 
     nonisolated private static func failedStateName(_ failedState: FailedState) -> String {
         switch failedState {
+        case .cleanup: return "cleanup"
         case .installSolstone: return "installSolstone"
         case .solSetup: return "solSetup"
         case .installModels: return "installModels"
@@ -512,7 +701,8 @@ public final class SolstoneInstaller {
         case .main:
             let existing: SubprocessProgress
             switch main {
-            case .installingSolstone(let progress),
+            case .cleaningUp(let progress),
+                 .installingSolstone(let progress),
                  .runningSolSetup(let progress),
                  .registering(let progress):
                 existing = progress
@@ -521,6 +711,8 @@ public final class SolstoneInstaller {
             }
             let updated = updatedProgress(existing, text: text, includeInTail: includeInTail)
             switch main {
+            case .cleaningUp:
+                main = .cleaningUp(updated)
             case .installingSolstone:
                 main = .installingSolstone(updated)
             case .runningSolSetup:
@@ -558,6 +750,8 @@ public final class SolstoneInstaller {
             return "detecting"
         case .awaitingChoice(let existingInstall):
             return "awaiting choice existingInstall=\(existingInstall)"
+        case .cleaningUp:
+            return "cleaning up"
         case .installingSolstone:
             return "installing solstone"
         case .runningSolSetup:
@@ -616,13 +810,17 @@ public final class SolstoneInstaller {
             value.contains("network")
     }
 
+    nonisolated private static func uvUninstallNotInstalled(stderr: String) -> Bool {
+        let lower = stderr.lowercased()
+        return lower.contains("is not installed") || lower.contains("not currently installed")
+    }
+
+    nonisolated private static func cleanupFailureMessage(step: CleanupStep, why: String) -> String {
+        "upgrade pre-clean failed at \(step.displayName) — \(why)"
+    }
+
     nonisolated private static func append(_ data: Data, to output: InstallerOutput, stream: OutputStream) {
-        let semaphore = DispatchSemaphore(value: 0)
-        Task {
-            await output.append(data, stream: stream)
-            semaphore.signal()
-        }
-        semaphore.wait()
+        output.append(data, stream: stream)
     }
 }
 
@@ -636,30 +834,89 @@ private enum OutputStream: Sendable {
     case stderr
 }
 
-private actor InstallerOutput {
+private struct CleanupFailure {
+    let step: CleanupStep
+    let message: String
+}
+
+private final class InstallerOutput: @unchecked Sendable {
+    private let lock = NSLock()
     private var stdout = Data()
     private var stderr = Data()
 
     func append(_ data: Data, stream: OutputStream) {
-        switch stream {
-        case .stdout:
-            stdout.append(data)
-        case .stderr:
-            stderr.append(data)
+        lock.withLock {
+            switch stream {
+            case .stdout:
+                stdout.append(data)
+            case .stderr:
+                stderr.append(data)
+            }
         }
     }
 
     func stdoutData() -> Data {
-        stdout
+        lock.withLock { stdout }
     }
 
     func stdoutString() -> String {
-        String(data: stdout, encoding: .utf8) ?? ""
+        lock.withLock { String(data: stdout, encoding: .utf8) ?? "" }
     }
 
     func stderrString() -> String {
-        String(data: stderr, encoding: .utf8) ?? ""
+        lock.withLock { String(data: stderr, encoding: .utf8) ?? "" }
     }
+}
+
+private func runInstallerOrphanSweep(
+    runner: SubprocessRunning,
+    pidExists: @Sendable (pid_t) -> Bool,
+    terminate: @Sendable (pid_t, Int32) -> Int32,
+    gracePeriod: Duration
+) async -> CleanupFailure? {
+    let output = InstallerOutput()
+    let result: SubprocessResult
+    do {
+        result = try await runner.run(
+            executable: URL(fileURLWithPath: "/bin/ps"),
+            arguments: ["-axo", "pid=,ppid=,comm="],
+            environment: nil,
+            stdoutHandler: { data in
+                output.append(data, stream: .stdout)
+            },
+            stderrHandler: { _ in }
+        )
+    } catch {
+        return CleanupFailure(step: .orphanSweep, message: "ps failed to launch")
+    }
+
+    guard result.exitCode == 0 else {
+        return CleanupFailure(step: .orphanSweep, message: "ps exited \(result.exitCode)")
+    }
+
+    let pids = parsePsOrphanRows(output.stdoutString())
+    var termCount = 0
+    for pid in pids {
+        _ = terminate(pid, SIGTERM)
+        termCount += 1
+    }
+
+    try? await Task.sleep(for: gracePeriod)
+
+    let survivors = pids.filter(pidExists)
+    for pid in survivors {
+        _ = terminate(pid, SIGKILL)
+    }
+
+    Logger.setup.info("preclean orphan sweep parsed=\(pids.count, privacy: .public) term=\(termCount, privacy: .public) survivors=\(survivors.count, privacy: .public)")
+    return nil
+}
+
+private func readSupervisorPID(from url: URL) -> pid_t? {
+    guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let value = Int32(trimmed), value > 0 else { return nil }
+    return pid_t(value)
 }
 
 private struct ParsedSetupOutput {

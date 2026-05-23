@@ -75,7 +75,7 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         defer { lock.unlock() }
 
         recordedInvocations.append(SubprocessInvocation(executable: executable, arguments: arguments))
-        let key = responseKey(for: arguments)
+        let key = responseKey(for: executable, arguments: arguments)
         guard var values = responses[key], !values.isEmpty else {
             return .success()
         }
@@ -84,10 +84,15 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         return response
     }
 
-    private func responseKey(for arguments: [String]) -> String {
+    private func responseKey(for executable: URL, arguments: [String]) -> String {
+        let executableName = executable.lastPathComponent
+        if executableName == "ps" { return "ps" }
+        if executableName == "lsof" { return "lsof" }
         guard let first = arguments.first else { return "" }
         if first == "tool" { return "tool" }
         if first == "setup" { return "setup" }
+        if first == "service" { return "service" }
+        if first == "config" { return "config" }
         if first == "observer" { return "observer" }
         if first == "install-models" { return "install-models" }
         if first == "health" { return "health" }

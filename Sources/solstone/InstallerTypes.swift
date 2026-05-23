@@ -6,11 +6,35 @@ import Foundation
 public enum MainState: Sendable, Equatable {
     case detecting
     case awaitingChoice(existingInstall: Bool)
+    case cleaningUp(SubprocessProgress)
     case installingSolstone(SubprocessProgress)
     case runningSolSetup(SubprocessProgress)
     case registering(SubprocessProgress)
     case done
     case failed(FailedState)
+}
+
+public enum CleanupStep: String, Sendable, Equatable, CaseIterable {
+    case resolveJournal = "resolve-journal"
+    case serviceUninstall = "service-uninstall"
+    case waitForDeath = "wait-for-death"
+    case orphanSweep = "orphan-sweep"
+    case ports
+
+    public var displayName: String {
+        switch self {
+        case .resolveJournal:
+            return "resolve journal"
+        case .serviceUninstall:
+            return "stop pipeline"
+        case .waitForDeath:
+            return "wait for pipeline to stop"
+        case .orphanSweep:
+            return "clear leftover processes"
+        case .ports:
+            return "check ports"
+        }
+    }
 }
 
 public enum ModelsProgress: Sendable, Equatable {
@@ -46,6 +70,7 @@ public struct SubprocessProgress: Sendable, Equatable {
 }
 
 public enum FailedState: Sendable, Equatable {
+    case cleanup(step: CleanupStep, message: String)
     case installSolstone(message: String)
     case solSetup(errorCode: String?, message: String)
     case installModels(message: String)

@@ -33,6 +33,7 @@ enum RowStatus: Equatable {
 
 enum InstallerRow: String, CaseIterable {
     case checkingSystem = "row.checkingSystem"
+    case cleaningUp = "row.cleaningUp"
     case installSolstone = "row.installSolstone"
     case solSetup = "row.solSetup"
     case registering = "row.registering"
@@ -45,7 +46,7 @@ func cardState(from main: MainState) -> InstallerCardState {
         return .detecting
     case .awaitingChoice(let existingInstall):
         return existingInstall ? .installedPlaceholder : .absent
-    case .installingSolstone, .runningSolSetup, .registering:
+    case .cleaningUp, .installingSolstone, .runningSolSetup, .registering:
         return .installing
     case .done:
         return .done
@@ -79,23 +80,41 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
             return .running
         }
         return .ok
-    case .installSolstone:
+    case .cleaningUp:
         switch main {
         case .detecting, .awaitingChoice:
+            return .pending
+        case .cleaningUp:
+            return .running
+        case .installingSolstone, .runningSolSetup, .registering, .done:
+            return .ok
+        case .failed(let failedState):
+            if case .cleanup(_, let message) = failedState {
+                return .failed(message: message)
+            }
+            return .ok
+        }
+    case .installSolstone:
+        switch main {
+        case .detecting, .awaitingChoice, .cleaningUp:
             return .pending
         case .installingSolstone:
             return .running
         case .runningSolSetup, .registering, .done:
             return .ok
         case .failed(let failedState):
-            if case .installSolstone(let message) = failedState {
+            switch failedState {
+            case .installSolstone(let message):
                 return .failed(message: message)
+            case .cleanup:
+                return .pending
+            default:
+                return .ok
             }
-            return .ok
         }
     case .solSetup:
         switch main {
-        case .detecting, .awaitingChoice, .installingSolstone:
+        case .detecting, .awaitingChoice, .cleaningUp, .installingSolstone:
             return .pending
         case .runningSolSetup:
             return .running
@@ -105,7 +124,7 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
             switch failedState {
             case .solSetup(_, let message):
                 return .failed(message: message)
-            case .installSolstone:
+            case .cleanup, .installSolstone:
                 return .pending
             case .registering, .installModels:
                 return .ok
@@ -113,7 +132,7 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
         }
     case .registering:
         switch main {
-        case .detecting, .awaitingChoice, .installingSolstone, .runningSolSetup:
+        case .detecting, .awaitingChoice, .cleaningUp, .installingSolstone, .runningSolSetup:
             return .pending
         case .registering:
             return .running
@@ -123,7 +142,7 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
             switch failedState {
             case .registering(let message):
                 return .failed(message: message)
-            case .installSolstone, .solSetup:
+            case .cleanup, .installSolstone, .solSetup:
                 return .pending
             case .installModels:
                 return .ok
@@ -150,6 +169,11 @@ func currentSubprocessProgress(
 ) -> SubprocessProgress? {
     switch row {
     case .checkingSystem:
+        return nil
+    case .cleaningUp:
+        if case .cleaningUp(let progress) = main {
+            return progress
+        }
         return nil
     case .installSolstone:
         if case .installingSolstone(let progress) = main {

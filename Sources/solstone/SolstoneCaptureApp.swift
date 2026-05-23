@@ -337,7 +337,7 @@ private struct StatusIcon: View {
             }
             .onChange(of: appState.installer.main) { _, newState in
                 switch newState {
-                case .installingSolstone, .runningSolSetup, .registering:
+                case .cleaningUp, .installingSolstone, .runningSolSetup, .registering:
                     updateController.installerDidStart()
                 case .done, .failed:
                     updateController.installerDidFinish()

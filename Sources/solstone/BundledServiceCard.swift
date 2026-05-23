@@ -292,7 +292,7 @@ struct BundledServiceCard: View {
     @ViewBuilder
     private func rowsContent(showModelsWhenActive: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach([InstallerRow.checkingSystem, .installSolstone, .solSetup, .registering], id: \.rawValue) { row in
+            ForEach([InstallerRow.checkingSystem, .cleaningUp, .installSolstone, .solSetup, .registering], id: \.rawValue) { row in
                 rowView(row)
             }
 
@@ -367,7 +367,7 @@ struct BundledServiceCard: View {
 
     private var isInstalling: Bool {
         switch installer.main {
-        case .installingSolstone, .runningSolSetup, .registering:
+        case .cleaningUp, .installingSolstone, .runningSolSetup, .registering:
             return true
         case .detecting, .awaitingChoice, .done, .failed:
             return false
@@ -378,6 +378,8 @@ struct BundledServiceCard: View {
         switch row {
         case .checkingSystem:
             return "checking your system"
+        case .cleaningUp:
+            return "preparing upgrade"
         case .installSolstone:
             return "installing solstone"
         case .solSetup:
@@ -391,6 +393,8 @@ struct BundledServiceCard: View {
 
     private func failureMessage(_ failedState: FailedState) -> String {
         switch failedState {
+        case .cleanup(_, let message):
+            return message
         case .installSolstone(let message),
              .installModels(let message),
              .registering(let message):
