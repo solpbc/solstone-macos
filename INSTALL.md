@@ -27,6 +27,12 @@ if the app exists and shows as connected, you're done.
 - **Xcode availability.** check if `xcodebuild -version` works. if not, the human needs to install Xcode from the App Store before you can build.
 - **Code signing trust.** one step below (`make allow`) requires the human — macOS shows a system password dialog that cannot be automated or run over SSH. the agent can do everything else.
 
+## first-launch permission prompts
+
+macOS may show permission prompts for solstone's python runtime the first time the app starts.
+allow them so sol can read transcripts and observations into your journal.
+Apple may revise the exact wording, so follow the permission intent rather than matching text here.
+
 ## install sequence
 
 1. if not already cloned, clone into solstone's observers directory:

@@ -88,6 +88,10 @@ struct BundledServiceCard: View {
         VStack(alignment: .leading, spacing: 16) {
             journalPathRow(canChange: true)
 
+            Text(firstLaunchPermissionPromptsNote)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             Button("install solstone for me") {
                 installer.start(journalURL: journalURL, existingInstallChoice: .createFresh)
             }
@@ -404,6 +408,9 @@ struct BundledServiceCard: View {
         }
     }
 }
+
+let firstLaunchPermissionPromptsNote: String =
+    "macOS will ask permission for solstone's python runtime on first launch so sol can read transcripts and observations into your journal."
 
 func installedServiceMessage(for state: InstallerCardState) -> String {
     switch state {

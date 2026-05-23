@@ -27,6 +27,20 @@ struct BundledServiceCardTests {
         #expect(installedServiceMessage(for: .installedCurrent(version: "0.3.2")) == "solstone 0.3.2 is ready")
     }
 
+    @Test func firstLaunchPermissionPromptsNoteAvoidsForbiddenTokens() {
+        let copy = firstLaunchPermissionPromptsNote
+        #expect(!copy.isEmpty)
+        let lowered = copy.lowercased()
+        #expect(!lowered.contains("python3.11"))
+        #expect(!lowered.contains("server"))
+        #expect(!lowered.contains("service"))
+        #expect(!lowered.contains("don't worry"))
+        #expect(!lowered.contains("don’t worry"))
+        #expect(!lowered.contains("it's safe"))
+        #expect(!lowered.contains("it’s safe"))
+        #expect(!lowered.contains("ignore"))
+    }
+
     @Test func installedOutdatedUsesReadyCopyAndKeepsUpgradeButton() {
         #expect(
             installedServiceMessage(for: .installedOutdated(installed: "0.3.1", pinned: "0.3.2"))
