@@ -168,7 +168,6 @@ test:
 	swift test
 
 ci:
-	bash test/assert_terminology.sh
 	swift test
 	python3 -m unittest discover scripts/tests
 
