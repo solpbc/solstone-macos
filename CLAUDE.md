@@ -12,31 +12,33 @@ solstone observer is a macOS status bar application — one of the owner's obser
 # Build the package (debug)
 make build
 
-# Build release
-make release
+# Build the signed .app bundle (Developer ID + hardened runtime + bundled uv/python)
+make bundle-dist
 
-# Run the app
+# Launch solstone.app from the source tree and stream logs (requires bundle-dist first)
 make run
 
 # Run tests
 make test
 
-# Create .app bundle
-make bundle
+# Full CI gate (terminology + Swift tests + Python tests)
+make ci
 
 # Install local development/build dependencies
 make install
 make setup
-
-# Install to /Applications
-make install-app
 
 # Clean all build artifacts
 make clean
 
 # Reset TCC permissions and defaults for testing
 make reset
+
+# Build signed + notarized + stapled DMG (release pipeline)
+make release-dmg
 ```
+
+Signing uses the sol pbc Developer ID identities in the sol-signing keychain. There is no self-signed dev cert; see `cto/playbooks/apple-remote-dev.md` for keychain provisioning.
 
 ## Repository Structure
 

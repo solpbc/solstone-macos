@@ -4,6 +4,14 @@ these instructions are for a coding agent and human working together. solstone-m
 
 solstone must already be installed and running. if it isn't, start there: https://solstone.app/install
 
+## default install path — signed DMG
+
+the easiest install is the signed + notarized DMG from <https://updates.solstone.app/>. download, open, drag to `/Applications`. no Xcode, no certificates, no source build. skip ahead to step 6 (register the observer) below.
+
+## source-build path — Apple Developer Program required
+
+build from source only if you need to modify the app or are a sol pbc maintainer. `make bundle-dist` signs under `Developer ID Application: sol pbc (7QCG8V4M6H)` and requires those identities in the local keychain (per `cto/playbooks/apple-remote-dev.md`). a fresh machine without those identities should use the DMG.
+
 ## before you begin
 
 if `sol` is not in PATH, check `~/.local/bin/sol`.
@@ -17,15 +25,16 @@ sol observer list
 
 if the app exists and shows as connected, you're done.
 
-## requirements
+## requirements (source build)
 
 - **Xcode** (full IDE, not just command line tools). this is a large download from the Mac App Store — your human needs to install it if they haven't already.
 - macOS 15.0+
+- sol pbc Developer ID Application + Developer ID Installer identities in the local keychain (sol-signing keychain — see `cto/playbooks/apple-remote-dev.md`)
 
 ## what to sort out together
 
 - **Xcode availability.** check if `xcodebuild -version` works. if not, the human needs to install Xcode from the App Store before you can build.
-- **Code signing trust.** one step below (`make allow`) requires the human — macOS shows a system password dialog that cannot be automated or run over SSH. the agent can do everything else.
+- **Signing keychain unlocked.** `make signing-check` confirms Developer ID identities are present and the notary profile is healthy.
 
 ## first-launch permission prompts
 
@@ -33,7 +42,7 @@ macOS may show permission prompts for solstone's python runtime the first time t
 allow them so sol can read transcripts and observations into your journal.
 Apple may revise the exact wording, so follow the permission intent rather than matching text here.
 
-## install sequence
+## install sequence (source build)
 
 1. if not already cloned, clone into solstone's observers directory:
    ```
@@ -42,36 +51,32 @@ Apple may revise the exact wording, so follow the permission intent rather than 
    cd solstone-macos
    ```
 
-2. install build dependencies and create a self-signed code signing certificate:
+2. install build dependencies and verify the signing keychain:
    ```
    make install
-   make cert
+   make signing-check
    ```
-   `make install` checks for Xcode and installs optional icon dependencies. `make cert` creates a local code signing certificate so the app gets a stable identity (TCC permissions survive rebuilds).
+   `make install` checks for Xcode and installs optional icon dependencies. `make signing-check` confirms the Developer ID identities + notarytool profile are present (auto-restores the notary profile if it has evicted).
 
-3. **[human required]** trust the certificate — macOS will show a system password dialog:
+3. build the signed .app:
    ```
-   make allow
+   make bundle-dist
    ```
-   this cannot be run by an agent or over SSH. the human enters their mac password once and they're done.
+   this builds a universal release binary, vendors uv + python into the bundle, signs everything under Developer ID Application with hardened runtime, and writes `solstone.app` in the source tree.
 
-4. build and install the app:
+4. install to `/Applications` (optional — `make run` launches directly from the source tree):
    ```
-   make install-app
-   ```
-   this builds a release binary, signs it, bundles the app, and copies it to `/Applications`.
-
-5. if macOS blocks the app on first launch, clear the quarantine flag:
-   ```
-   xattr -cr /Applications/solstone.app
+   cp -r solstone.app /Applications/
    ```
 
-6. launch the app:
+5. launch the app:
    ```
-   open /Applications/solstone.app
+   open solstone.app                  # from the source tree
+   # OR
+   open /Applications/solstone.app    # if you copied it
    ```
 
-7. register the observer and push config into the app. this creates the journal-side registration and writes the credentials directly into the app's UserDefaults — the app detects the change automatically and starts syncing:
+6. register the observer and push config into the app. this creates the journal-side registration and writes the credentials directly into the app's UserDefaults — the app detects the change automatically and starts syncing:
    ```
    key=$(sol observer --json create solstone-macos | jq -r .key)
    defaults write app.solstone.observer serverURL "http://localhost:5015"
@@ -85,9 +90,9 @@ Apple may revise the exact wording, so follow the permission intent rather than 
    defaults write app.solstone.observer serverKey "$key"
    ```
 
-8. your human needs to approve **screen recording** and **microphone** permission dialogs when macOS prompts for them.
+7. your human needs to approve **screen recording** and **microphone** permission dialogs when macOS prompts for them.
 
-9. verify the menu bar icon appears and the observer is connected:
+8. verify the menu bar icon appears and the observer is connected:
    ```
    sol observer list
    ```

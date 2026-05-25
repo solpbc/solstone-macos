@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - the journal setup tab now shows an attention badge when the bundled solstone install is outdated, and the upgrade action is highlighted so it is easier to find.
 
+### Removed
+- legacy self-signed dev-loop targets — `make bundle`, `make bundle-universal`, `make install-app`, `make open`, `make cert`, `make allow`, and the `SIGN_IDENTITY ?= solstone dev` default. these predated the Apple Developer Program enrollment (2026-04-20); the canonical build is now `make bundle-dist` which signs under Developer ID Application with hardened runtime and bundles uv + python. `make run` now launches `solstone.app` from the source tree (was `/Applications/solstone.app`).
+
 ## [1.3.1] - 2026-05-24
 
 ### Fixed

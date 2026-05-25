@@ -27,32 +27,33 @@ solstone observer is a macOS status bar app — one of your observers, experienc
 
 ## Install
 
+End users: install the signed + notarized DMG from <https://updates.solstone.app/>.
+
+Source build (requires sol pbc Apple Developer Program identities in the local keychain):
+
 ```bash
 git clone https://github.com/solpbc/solstone-macos.git
 cd solstone-macos
-make install
-make setup
-make install-app
+make install         # dev dependencies (Xcode check, optional librsvg)
+make bundle-dist     # produce signed solstone.app with bundled uv + python
+make run             # launch solstone.app from the source tree + stream logs
 ```
 
-`make install` and `make setup` both prepare the local development environment. `make install-app` builds a release binary, creates an app bundle, and installs it to `/Applications`. The app is unsigned — if macOS Gatekeeper blocks it, either right-click and choose "Open" or run:
-
-```bash
-xattr -cr /Applications/solstone.app
-```
+`make bundle-dist` signs under `Developer ID Application: sol pbc (7QCG8V4M6H)` with hardened runtime. Without those identities the build fails at `signing-check`; install the DMG instead.
 
 ## Building and Running
 
 - `make build` - Build both packages (debug)
 - `make release` - Build both packages (release)
-- `make run` - Run the app
+- `make bundle-dist` - Build the signed .app bundle (Developer ID + hardened runtime)
+- `make run` - Launch `solstone.app` from the source tree and stream logs
 - `make test` - Run tests
-- `make bundle` - Create .app bundle
+- `make ci` - Run terminology + Swift tests + Python tests
 - `make install` - Install local development/build dependencies
 - `make setup` - Alias for `make install`
-- `make install-app` - Install the app to /Applications
 - `make clean` - Clean all build artifacts
 - `make reset` - Reset TCC permissions for testing
+- `make release-dmg` - Build signed + notarized + stapled DMG
 
 ## Architecture
 

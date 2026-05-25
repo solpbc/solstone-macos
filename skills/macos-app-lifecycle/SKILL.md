@@ -89,7 +89,7 @@ Two shutdown paths:
 
 ```bash
 make release-universal                    # arm64 + x86_64
-make bundle-universal                     # .app bundle with Info.plist
+make bundle-dist                          # signed universal .app with hardened runtime
 
 # Sign with hardened runtime (required for notarization)
 codesign --deep --force --options runtime \

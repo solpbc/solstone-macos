@@ -1,4 +1,4 @@
-.PHONY: build release release-universal run clean test integration-test snapshot bundle bundle-universal install setup install-app open reset reset-full cert allow check-cert icons check-icons-deps check-dev-deps ci \
+.PHONY: build release release-universal run clean test integration-test snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg \
         vendor-uv vendor-python generate-bundle-config check-versions supply-chain-check release-dmg-smoke brand-sync \
         release-preflight bump-release
@@ -6,9 +6,6 @@
 # Default goal when running bare `make` — build the project. brand-sync is
 # opt-in (run it manually when the brand spec updates).
 .DEFAULT_GOAL := build
-
-# Code signing identity — run 'make cert' then 'make allow' to create and trust (one-time setup)
-SIGN_IDENTITY ?= solstone dev
 
 # Canonical brand source — only used by `make brand-sync`. Override to point
 # at the sol brand source directory: BRAND_DIR=/path/to/brand make brand-sync
@@ -146,15 +143,17 @@ release-universal:
 	swift build -c release --arch arm64 --arch x86_64
 	swift build -c release --arch arm64 --arch x86_64 --product sol-mac
 
-# Run the installed app and stream all logs to a timestamped file in scratch/
+# Run the built app from the source tree and stream all logs to a timestamped
+# file in scratch/. Run `make bundle-dist` first to produce solstone.app.
 # Keeps capturing across app restarts. Ctrl+C to stop.
 run:
+	@test -d solstone.app || { echo "error: solstone.app not found — run 'make bundle-dist' first"; exit 1; }
 	@mkdir -p scratch; \
 	LOG=scratch/$$(date +%Y%m%d_%H%M%S).log; \
 	echo "Streaming logs → $$LOG  (Ctrl+C to stop)"; \
 	/usr/bin/log stream --predicate 'subsystem == "app.solstone.observer"' --level debug > "$$LOG" 2>&1 & \
 	STREAM_PID=$$!; \
-	open /Applications/solstone.app; \
+	open solstone.app; \
 	trap "kill $$STREAM_PID 2>/dev/null; echo; echo 'Log saved: $$LOG'" INT TERM; \
 	wait $$STREAM_PID
 
@@ -186,54 +185,15 @@ check-dev-deps:
 		  echo "       install the full Xcode app from the Mac App Store, then run it once"; \
 		  exit 1; }
 
-check-cert:
-	@if security find-identity -v -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"'; then \
-		exit 0; \
-	elif security find-identity -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"'; then \
-		echo "error: certificate '$(SIGN_IDENTITY)' exists but is not trusted"; \
-		echo "       run 'make allow' — macOS will ask for your password"; \
-		exit 1; \
-	else \
-		echo "error: signing identity '$(SIGN_IDENTITY)' not found in keychain"; \
-		echo "       run 'make cert' then 'make allow' to create one"; \
-		exit 1; \
-	fi
-
-# Create app bundle for distribution
-bundle: check-cert release
-	@echo "Creating app bundle..."
-	@rm -rf solstone.app
-	@mkdir -p solstone.app/Contents/MacOS
-	@mkdir -p solstone.app/Contents/Resources
-	@cp .build/release/solstone solstone.app/Contents/MacOS/
-	@cp .build/release/sol-mac solstone.app/Contents/MacOS/
-	@cp Sources/solstone/Info.plist solstone.app/Contents/
-	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
-	@cp -r .build/release/solstone_solstone.bundle solstone.app/Contents/Resources/
-	@codesign --force --deep --sign "$(SIGN_IDENTITY)" --entitlements Sources/solstone/entitlements.plist solstone.app
-	@echo "Created solstone.app"
-
-# Create universal app bundle
-bundle-universal: release-universal
-	@echo "Creating universal app bundle..."
-	@rm -rf solstone.app
-	@mkdir -p solstone.app/Contents/MacOS
-	@mkdir -p solstone.app/Contents/Resources
-	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
-	@cp .build/apple/Products/Release/sol-mac solstone.app/Contents/MacOS/
-	@cp Sources/solstone/Info.plist solstone.app/Contents/
-	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
-	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
-	@codesign --force --deep --sign "$(SIGN_IDENTITY)" --entitlements Sources/solstone/entitlements.plist solstone.app
-	@echo "Created universal solstone.app"
-
 # =======================================================================
 # Distribution pipeline: Developer ID signed + notarized DMG
 #
 # Use `make release-dmg` to produce a signed, notarized, stapled DMG ready
-# to hand out for ad-hoc install. All signing runs headless over SSH using
-# the sol-signing keychain (see header). For local debug builds continue
-# to use `bundle` / `bundle-universal` (self-signed `solstone dev` cert).
+# to hand out for ad-hoc install. `make bundle-dist` is the single bundle
+# entry point — produces solstone.app signed under Developer ID Application
+# with hardened runtime + bundled uv + bundled python at Contents/Resources.
+# All signing runs headless over SSH using the sol-signing keychain (see
+# header).
 # =======================================================================
 
 # Read-only check that Developer ID certs + notary profile are ready.
@@ -582,20 +542,10 @@ install: check-dev-deps
 		echo "Install Homebrew and run 'brew install librsvg' if you need 'make icons'"; \
 	fi
 	@echo "Development dependencies are ready."
-	@echo "Use 'make build' for a debug build or 'make install-app' to bundle and copy the app to /Applications."
+	@echo "Use 'make build' for a debug build or 'make bundle-dist' to produce the signed .app."
 
 # Alias for install
 setup: install
-
-# Install the bundled app to /Applications
-install-app: bundle
-	@rm -rf /Applications/solstone.app
-	@cp -r solstone.app /Applications/
-	@echo "Installed to /Applications/solstone.app"
-
-# Open the app
-open: bundle
-	open solstone.app
 
 # Reset TCC permissions and app defaults for testing.
 # NOTE: ScreenCapture is intentionally omitted — on macOS 26, tccutil reset ScreenCapture
@@ -651,56 +601,7 @@ reset-full:
 	@echo "  3. reboot to flush cfprefsd, tccd, and IconServices:"
 	@echo "       sudo shutdown -r now"
 	@echo ""
-	@echo "Then: make install-app && open /Applications/solstone.app"
-
-# Create a self-signed code signing certificate in your login keychain (one-time setup).
-# Using a named cert instead of ad-hoc (-) gives a stable designated requirement so
-# TCC permissions survive rebuilds. Run 'make allow' after this to trust the certificate.
-cert:
-	@if security find-identity -v -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"'; then \
-		echo "Certificate '$(SIGN_IDENTITY)' already exists and is trusted — nothing to do."; \
-		exit 0; \
-	fi
-	@if security find-identity -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"'; then \
-		echo "Certificate '$(SIGN_IDENTITY)' exists but is not trusted — run 'make allow'."; \
-		exit 0; \
-	fi
-	@echo "Creating self-signed code signing certificate '$(SIGN_IDENTITY)'..."
-	@TMPDIR=$$(mktemp -d); \
-	PASS=$$(openssl rand -hex 16); \
-	printf '[req]\ndistinguished_name=dn\nx509_extensions=v3\nprompt=no\n[dn]\nCN=$(SIGN_IDENTITY)\n[v3]\nkeyUsage=critical,digitalSignature,keyCertSign\nextendedKeyUsage=codeSigning\nbasicConstraints=critical,CA:TRUE\n' \
-		> $$TMPDIR/cert.conf; \
-	openssl genrsa -out $$TMPDIR/key.pem 2048 2>/dev/null; \
-	openssl req -new -x509 -key $$TMPDIR/key.pem -out $$TMPDIR/cert.pem \
-		-days 3650 -config $$TMPDIR/cert.conf 2>/dev/null; \
-	openssl pkcs12 -export -legacy -out $$TMPDIR/cert.p12 \
-		-inkey $$TMPDIR/key.pem -in $$TMPDIR/cert.pem -passout pass:$$PASS 2>/dev/null; \
-	security import $$TMPDIR/cert.p12 \
-		-k "$$HOME/Library/Keychains/login.keychain-db" \
-		-T /usr/bin/codesign -P "$$PASS"; \
-	rm -rf $$TMPDIR; \
-	echo "Certificate created. Now run 'make allow' — macOS will ask for your password."
-
-# Trust the self-signed certificate for code signing (one-time setup).
-# This MUST be run by a human at the Mac — macOS shows a system password dialog
-# that cannot be bypassed or automated. Agents cannot run this step.
-allow:
-	@if security find-identity -v -p codesigning 2>/dev/null | grep -q '"$(SIGN_IDENTITY)"'; then \
-		echo "Certificate '$(SIGN_IDENTITY)' is already trusted — nothing to do."; \
-		exit 0; \
-	fi
-	@security find-certificate -c "$(SIGN_IDENTITY)" -p \
-		"$$HOME/Library/Keychains/login.keychain-db" > /dev/null 2>&1 || \
-		{ echo "error: certificate '$(SIGN_IDENTITY)' not found — run 'make cert' first"; exit 1; }
-	@echo "Trusting certificate '$(SIGN_IDENTITY)' — macOS will ask for your password..."
-	@CERT=$$(security find-certificate -c "$(SIGN_IDENTITY)" -p \
-		"$$HOME/Library/Keychains/login.keychain-db"); \
-	TMPFILE=$$(mktemp); \
-	echo "$$CERT" > $$TMPFILE; \
-	security add-trusted-cert -r trustRoot \
-		-k "$$HOME/Library/Keychains/login.keychain-db" $$TMPFILE; \
-	rm -f $$TMPFILE; \
-	echo "Done — '$(SIGN_IDENTITY)' is trusted. Run 'make install-app' to build and install."
+	@echo "Then: make bundle-dist && make run"
 
 # Generate icon assets from SVG sources in assets/
 # Requires: rsvg-convert (brew install librsvg), iconutil (built-in macOS)
