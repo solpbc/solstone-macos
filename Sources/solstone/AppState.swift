@@ -33,6 +33,13 @@ private final class AppStateBridgeTarget: @unchecked Sendable {
 @MainActor
 @Observable
 public final class AppState {
+    private enum PipelineRestartOutcome {
+        case success
+        case failure
+        case modeChanged
+        case binaryMissing
+    }
+
     /// Shared instance for app-wide access (set during init)
     nonisolated(unsafe) public static var shared: AppState?
     private static var snapshotAudioMonitorMode = false
@@ -67,6 +74,8 @@ public final class AppState {
     public internal(set) var pipelineDead = false
     public internal(set) var pipelineBinaryMissing = false
     public internal(set) var isRestartingPipeline = false
+    public internal(set) var restartRequiredBannerVisible: Bool = false
+    private var restartRequiredGeneration: UInt64 = 0
     public internal(set) var solChatPending: SolChatRequestSummary?
     public internal(set) var solChatStale = false
     public internal(set) var connectionTestState: ConnectionTestState = .idle
@@ -709,9 +718,25 @@ public final class AppState {
         }
     }
 
+    // TODO(v1.1): remove once the first production '.bundled'-mode restart-required Settings UI lands (e.g. provider-API-key field).
+    internal func notifyRestartRequiredSettingSaved() {
+        guard config.serviceMode == .bundled else {
+            Logger.setup.info("restart-required banner suppressed: serviceMode is not bundled")
+            return
+        }
+        guard bundledPipelineRestartAvailable else {
+            Logger.setup.info("restart-required banner suppressed: bundled pipeline restart not available")
+            return
+        }
+        restartRequiredGeneration &+= 1
+        restartRequiredBannerVisible = true
+    }
+
     private func runPipelineRestart() async {
         preRestartErrorMessage = errorMessage
         isRestartingPipeline = true
+        let restartStartGeneration = restartRequiredGeneration
+        var restartOutcome: PipelineRestartOutcome = .modeChanged
         defer {
             isRestartingPipeline = false
             pipelineRestartTask = nil
@@ -719,6 +744,7 @@ public final class AppState {
         }
 
         guard config.serviceMode == .bundled else {
+            restartOutcome = .modeChanged
             emitPipelineRestartLog(step: .serviceRestart, outcome: "noop", detail: "not-bundled")
             return
         }
@@ -726,6 +752,7 @@ public final class AppState {
         guard let solPath = await pipelineSolBinaryFinder() else {
             clearPipelineProbeState()
             pipelineBinaryMissing = true
+            restartOutcome = .binaryMissing
             let message = "restart failed at journal path — solstone is not fully installed"
             emitPipelineRestartLog(step: .resolveJournal, outcome: "error", detail: "binary-missing")
             if config.serviceMode == .bundled {
@@ -747,14 +774,22 @@ public final class AppState {
         case .success:
             clearPipelineProbeState()
             if config.serviceMode == .bundled {
+                restartOutcome = .success
                 errorMessage = preRestartErrorMessage
+            } else {
+                restartOutcome = .modeChanged
             }
         case .failure(let failure):
             if config.serviceMode == .bundled {
+                restartOutcome = .failure
                 errorMessage = failure.ownerMessage
             } else {
+                restartOutcome = .modeChanged
                 emitPipelineRestartLog(step: failure.step, outcome: "noop", detail: "mode-changed")
             }
+        }
+        if restartOutcome == .success && restartStartGeneration == restartRequiredGeneration {
+            restartRequiredBannerVisible = false
         }
     }
 

@@ -496,6 +496,8 @@ struct SettingsView: View {
     @ViewBuilder
     private var serviceSection: some View {
         VStack(alignment: .leading, spacing: 16) {
+            restartRequiredBanner
+
             if appState.permissionsNeedAttention {
                 navRow(UICopy.SETTINGS_PREREQ_PERMISSIONS) {
                     selectedTab = .permissions
@@ -530,6 +532,40 @@ struct SettingsView: View {
             case .external:
                 externalServiceSection
             }
+        }
+    }
+
+    @ViewBuilder
+    private var restartRequiredBanner: some View {
+        if appState.restartRequiredBannerVisible
+            && appState.config.serviceMode == .bundled
+            && appState.bundledPipelineRestartAvailable {
+            Button {
+                appState.requestPipelineRestart()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                        .foregroundStyle(.orange)
+                    Text(UICopy.SETTINGS_RESTART_REQUIRED_BANNER)
+                        .font(.callout)
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.orange.opacity(0.12))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(appState.isRestartingPipeline)
+            .accessibilityHint(Text("restart the bundled journal supervisor so the saved change takes effect"))
         }
     }
 
