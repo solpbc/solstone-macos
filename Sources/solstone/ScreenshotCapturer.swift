@@ -94,7 +94,7 @@ public final class ScreenshotCapturer {
                 try await stream.updateContentFilter(filter)
                 if verbose { Logger.capture.debug("ScreenshotCapturer: Updated content filter for display \(self.displayID, privacy: .public)") }
             } catch {
-                Logger.capture.warning("ScreenshotCapturer: Failed to update content filter: \(error, privacy: .public)")
+                Logger.capture.error("Failed to update SCStream config for display \(self.displayID, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
     }

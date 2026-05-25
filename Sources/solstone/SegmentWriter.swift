@@ -95,21 +95,30 @@ public final class SegmentWriter {
     /// Starts recording to this segment
     /// - Parameters:
     ///   - displayInfos: Information about displays to capture
-    ///   - filter: The content filter to use (for window exclusion)
+    ///   - filters: Content filters keyed by display ID
+    ///   - audioFilter: Content filter to use for persistent system audio
     ///   - mics: Initial microphone devices to start recording (optional)
     ///   - micCaptureManager: Shared capture manager for persistent mic engines (optional)
     ///   - systemAudioCaptureManager: Shared capture manager for persistent system audio stream (optional)
     public func start(
         displayInfos: [DisplayInfo],
-        filter: SCContentFilter,
+        filters: [CGDirectDisplayID: SCContentFilter],
+        audioFilter: SCContentFilter?,
         mics: [AudioInputDevice] = [],
         micCaptureManager: MicrophoneCaptureManager? = nil,
         systemAudioCaptureManager: SystemAudioCaptureManager? = nil
     ) async throws {
+        for info in displayInfos {
+            guard filters[info.displayID] != nil else {
+                throw SegmentError.missingContentFilter(displayID: info.displayID)
+            }
+        }
+
         // Create screenshot capturers for each display
         for info in displayInfos {
             let videoURL = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
 
+            let filter = filters[info.displayID]!
             let capturer = try ScreenshotCapturer(
                 displayID: info.displayID,
                 videoURL: videoURL,
@@ -156,8 +165,8 @@ public final class SegmentWriter {
         self.systemAudioCaptureManager = systemAudioCaptureManager
 
         // Start persistent system audio stream and wire callback to this segment's manager
-        if let sysAudioManager = systemAudioCaptureManager {
-            try await sysAudioManager.start(filter: filter)
+        if let sysAudioManager = systemAudioCaptureManager, let audioFilter {
+            try await sysAudioManager.start(filter: audioFilter)
             sysAudioManager.setCallback { [weak manager] buffer in
                 manager?.appendSystemAudio(buffer)
             }
@@ -210,10 +219,15 @@ public final class SegmentWriter {
 
     /// Updates the content filter for window exclusion (video only)
     /// Note: System audio filter is managed by CaptureManager via SystemAudioCaptureManager
-    /// - Parameter filter: The new content filter
-    public func updateContentFilter(_ filter: SCContentFilter) async throws {
+    /// - Parameter filters: New content filters keyed by display ID
+    public func updateContentFilter(_ filters: [CGDirectDisplayID: SCContentFilter]) async throws {
         // Update all screenshot capturers
-        for (_, capturer) in screenshotCapturers {
+        for (displayID, capturer) in screenshotCapturers {
+            guard let filter = filters[displayID] else {
+                let keyList = filters.keys.sorted().map(String.init).joined(separator: ",")
+                Logger.capture.error("Missing SCContentFilter for display \(displayID, privacy: .public); available filter keys=[\(keyList, privacy: .public)]")
+                continue
+            }
             await capturer.updateContentFilter(filter)
         }
     }
@@ -416,6 +430,7 @@ public final class SegmentWriter {
     public enum SegmentError: Error, LocalizedError {
         case failedToCreateScreenshotCapturer(displayID: CGDirectDisplayID)
         case failedToCreateAudioOutput
+        case missingContentFilter(displayID: CGDirectDisplayID)
 
         public var errorDescription: String? {
             switch self {
@@ -423,6 +438,8 @@ public final class SegmentWriter {
                 return "Failed to create screenshot capturer for display \(displayID)"
             case .failedToCreateAudioOutput:
                 return "Failed to create audio output"
+            case .missingContentFilter(let displayID):
+                return "Missing SCContentFilter for display \(displayID)"
             }
         }
     }

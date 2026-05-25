@@ -5,6 +5,12 @@ import Foundation
 import os
 @preconcurrency import ScreenCaptureKit
 
+protocol DisplayIDProvider {
+    var displayID: CGDirectDisplayID { get }
+}
+
+extension SCDisplay: DisplayIDProvider {}
+
 @MainActor
 final class WindowExclusionManager {
     private var windowExclusionDetector: WindowExclusionDetector?
@@ -13,9 +19,9 @@ final class WindowExclusionManager {
     private var isStreamReady: Bool = false
     nonisolated(unsafe) private var activateObserver: NSObjectProtocol?
     nonisolated(unsafe) private var deactivateObserver: NSObjectProtocol?
-    private var onFilterChanged: ((SCContentFilter) async throws -> Void)?
-    private var primaryDisplay: (() -> SCDisplay?)?
-    private var isRecording: (() -> Bool)?
+    private var onFiltersChanged: (@MainActor ([CGDirectDisplayID: SCContentFilter]) async throws -> Void)?
+    private var allDisplays: (@MainActor () -> [SCDisplay]?)?
+    private var isRecording: (@MainActor () -> Bool)?
     private let verbose: Bool
 
     init(
@@ -38,12 +44,12 @@ final class WindowExclusionManager {
     }
 
     func configure(
-        onFilterChanged: @escaping (SCContentFilter) async throws -> Void,
-        primaryDisplay: @escaping () -> SCDisplay?,
-        isRecording: @escaping () -> Bool
+        onFiltersChanged: @MainActor @escaping ([CGDirectDisplayID: SCContentFilter]) async throws -> Void,
+        allDisplays: @MainActor @escaping () -> [SCDisplay]?,
+        isRecording: @MainActor @escaping () -> Bool
     ) {
-        self.onFilterChanged = onFilterChanged
-        self.primaryDisplay = primaryDisplay
+        self.onFiltersChanged = onFiltersChanged
+        self.allDisplays = allDisplays
         self.isRecording = isRecording
 
         guard activateObserver == nil else { return }
@@ -117,6 +123,10 @@ final class WindowExclusionManager {
         }
     }
 
+    nonisolated static func filterMapKeys<D: DisplayIDProvider>(from displays: [D]) -> Set<CGDirectDisplayID> {
+        Set(displays.map(\.displayID))
+    }
+
     /// Starts a timer to periodically check for window exclusions
     private func startWindowExclusionTimer() {
         windowExclusionTimer?.invalidate()
@@ -134,7 +144,8 @@ final class WindowExclusionManager {
         guard isRecording?() == true,
               isStreamReady,
               let detector = windowExclusionDetector,
-              let display = primaryDisplay?() else { return }
+              let displays = allDisplays?(),
+              !displays.isEmpty else { return }
 
         // Detect windows to exclude
         let excludedWindows = await detector.detectExcludedWindows()
@@ -145,14 +156,14 @@ final class WindowExclusionManager {
 
         currentExcludedWindowIDs = newExcludedIDs
 
-        // Create new filter with excluded windows
-        let newFilter = SCContentFilter(
-            display: display,
-            excludingWindows: excludedWindows
+        let filters = Dictionary(
+            uniqueKeysWithValues: displays.map { display in
+                (display.displayID, SCContentFilter(display: display, excludingWindows: excludedWindows))
+            }
         )
 
         do {
-            try await onFilterChanged?(newFilter)
+            try await onFiltersChanged?(filters)
             if !excludedWindows.isEmpty {
                 if verbose { Logger.capture.debug("Updated filter to exclude \(excludedWindows.count, privacy: .public) window(s)") }
             }

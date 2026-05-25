@@ -55,7 +55,7 @@ public final class CaptureManager {
     private var segmentTimer: Timer?
     private var heartbeatTimer: Timer?
     private var displays: [SCDisplay] = []
-    private var contentFilter: SCContentFilter?
+    private var filtersByDisplayID: [CGDirectDisplayID: SCContentFilter] = [:]
     private let verbose: Bool
     private let lifecycleManager = CaptureLifecycleManager()
     private let windowExclusionManager: WindowExclusionManager
@@ -135,12 +135,18 @@ public final class CaptureManager {
         }
 
         windowExclusionManager.configure(
-            onFilterChanged: { [weak self] newFilter in
+            onFiltersChanged: { [weak self] newFilters in
                 guard let self, let segment = self.currentSegment else { return }
-                try await self.systemAudioCaptureManager.updateContentFilter(newFilter)
-                try await segment.updateContentFilter(newFilter)
+                if let audioFilter = self.displays.first.flatMap({ newFilters[$0.displayID] }) {
+                    try await self.systemAudioCaptureManager.updateContentFilter(audioFilter)
+                } else {
+                    let displayID = self.displays.first.map { String($0.displayID) } ?? "nil"
+                    let keyList = newFilters.keys.sorted().map(String.init).joined(separator: ",")
+                    Logger.capture.error("Missing audio SCContentFilter for display \(displayID, privacy: .public); available filter keys=[\(keyList, privacy: .public)]")
+                }
+                try await segment.updateContentFilter(newFilters)
             },
-            primaryDisplay: { [weak self] in self?.displays.first },
+            allDisplays: { [weak self] in self?.displays },
             isRecording: { [weak self] in self?.state.isRecording ?? false }
         )
         lifecycleManager.configure(delegate: self)
@@ -180,23 +186,7 @@ public final class CaptureManager {
         // Ensure storage directory exists
         try storageManager.ensureBaseDirectoryExists()
 
-        // Get available content — throws permissionDenied if screen recording not granted
-        let content: SCShareableContent
-        do {
-            content = try await SCShareableContent.current
-        } catch {
-            Logger.capture.info("[Permissions] SCShareableContent denied: \(error.localizedDescription, privacy: .public)")
-            throw CaptureError.permissionDenied
-        }
-
-        // Get all displays
-        displays = content.displays
-        guard !displays.isEmpty else {
-            throw CaptureError.noDisplaysAvailable
-        }
-
-        // Create content filter for all displays
-        contentFilter = SCContentFilter(display: displays[0], excludingApplications: [], exceptingWindows: [])
+        try await rebuildDisplaysAndFilters()
 
         // Start first segment
         try await startNewSegment()
@@ -370,9 +360,23 @@ public final class CaptureManager {
 
     // MARK: - Private Methods
 
+    private func rebuildDisplaysAndFilters() async throws {
+        let content = try await SCShareableContent.current
+        let newDisplays = content.displays
+        guard !newDisplays.isEmpty else {
+            throw CaptureError.noDisplaysAvailable
+        }
+        displays = newDisplays
+        filtersByDisplayID = Dictionary(
+            uniqueKeysWithValues: newDisplays.map { display in
+                (display.displayID, SCContentFilter(display: display, excludingApplications: [], exceptingWindows: []))
+            }
+        )
+    }
+
     /// Starts a new recording segment
     private func startNewSegment() async throws {
-        guard contentFilter != nil else {
+        guard !displays.isEmpty && !filtersByDisplayID.isEmpty else {
             throw CaptureError.notInitialized
         }
 
@@ -396,7 +400,7 @@ public final class CaptureManager {
     ///   - timePrefix: Time prefix for file naming
     ///   - mics: Microphone devices to start recording
     private func startNewSegmentWithDirectory(_ segmentDir: URL, timePrefix: String, mics: [AudioInputDevice] = []) async throws {
-        guard let filter = contentFilter else {
+        guard !displays.isEmpty && !filtersByDisplayID.isEmpty else {
             throw CaptureError.notInitialized
         }
 
@@ -415,9 +419,16 @@ public final class CaptureManager {
 
         // Start recording - convert to DisplayInfo for sendable compliance
         let displayInfos = displays.map { DisplayInfo(from: $0) }
+        let audioFilter = displays.first.flatMap { filtersByDisplayID[$0.displayID] }
+        if audioFilter == nil {
+            let displayID = displays.first.map { String($0.displayID) } ?? "nil"
+            let keyList = filtersByDisplayID.keys.sorted().map(String.init).joined(separator: ",")
+            Logger.capture.error("Missing audio SCContentFilter for display \(displayID, privacy: .public); available filter keys=[\(keyList, privacy: .public)]")
+        }
         try await segment.start(
             displayInfos: displayInfos,
-            filter: filter,
+            filters: filtersByDisplayID,
+            audioFilter: audioFilter,
             mics: mics,
             micCaptureManager: micCaptureManager,
             systemAudioCaptureManager: systemAudioCaptureManager
@@ -570,27 +581,19 @@ public final class CaptureManager {
 
         Logger.capture.info("Display configuration changed")
 
-        // Get new display list
         do {
-            let content = try await SCShareableContent.current
-            let newDisplays = content.displays
-
-            // Check if displays changed
             let oldIDs = Set(displays.map { $0.displayID })
-            let newIDs = Set(newDisplays.map { $0.displayID })
+            try await rebuildDisplaysAndFilters()
+            let newIDs = Set(displays.map { $0.displayID })
 
             if oldIDs != newIDs {
                 Logger.capture.info("Display set changed, rotating segment")
-                displays = newDisplays
-
-                // Update filter
-                if let firstDisplay = displays.first {
-                    contentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
-                }
-
-                // Force segment rotation to pick up new display config
                 await rotateSegment()
             }
+        } catch CaptureError.noDisplaysAvailable {
+            let error = CaptureError.noDisplaysAvailable
+            Logger.capture.error("No displays available after display change: \(error.localizedDescription, privacy: .public)")
+            await stopRecording()
         } catch {
             Logger.capture.warning("Failed to get updated display list: \(error, privacy: .public)")
         }
@@ -709,13 +712,8 @@ extension CaptureManager: CaptureLifecycleDelegate {
     }
 
     func lifecycleResumeCapture(trigger: String) async throws {
-        let content = try await withTimeout(seconds: 10) {
-            try await SCShareableContent.current
-        }
-        displays = content.displays
-
-        if let firstDisplay = displays.first {
-            contentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
+        try await withTimeout(seconds: 10) {
+            try await self.rebuildDisplaysAndFilters()
         }
 
         try await startNewSegment()
