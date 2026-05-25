@@ -36,6 +36,10 @@ cd "$ROOT_DIR"
 # - CLI back-compat alias case "service", "journal": at
 #   Sources/solstone/SettingsView.swift:165 is explicitly allowlisted for
 #   owners who scripted `open` against the prior tab name in lode waiim7rj AC4.
+# - Settings tab raw value case `service = "service"` is persistence plumbing,
+#   not owner-visible copy.
+# - UICopy's "home server" phrase names an owner-provided machine example,
+#   not the journal/upload referent.
 
 swift_matches="$(
   rg -n --pcre2 '"[^"]*\b(service|server)\b[^"]*"' \
@@ -47,6 +51,8 @@ swift_matches="$(
   | grep -v '"service", "uninstall"' \
   | grep -v '"service-uninstall"' \
   | grep -v '"sol service uninstall' \
+  | grep -vE '^Sources/solstone/SettingsView\.swift:[0-9]+:[[:space:]]+case service = "service"$' \
+  | grep -vE '^Sources/solstone/UICopy\.swift:[0-9]+:.*JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF.*home server' \
   || true
 )"
 

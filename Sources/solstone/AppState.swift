@@ -109,6 +109,7 @@ public final class AppState {
     public internal(set) var isTerminating: Bool = false
     private var activationPolicyWorkItem: DispatchWorkItem?
     private let dockBehaviorDefaultsKey = "SolstoneDockBehavior"
+    private let visitedSettingsTabsDefaultsKey = "SolstoneVisitedSettingsTabs"
     private static let loginLaunchSuppressionInterval: TimeInterval = 2.0
 
 
@@ -139,33 +140,29 @@ public final class AppState {
             return connectionTestState != .success
         case .bundled:
             switch terminalCardState(main: installer.main, probe: installer.probedVersion) {
-            case .absent, .installedOutdated:
+            case .absent, .installedOutdated, .failed:
                 return true
             case .installedCurrent,
                  .installedUnknown,
                  .done,
                  .installedPlaceholder,
                  .detecting,
-                 .installing,
-                 .failed:
+                 .installing:
                 return false
             }
         }
     }
 
+    public var permissionsAreDone: Bool {
+        screenRecordingGranted && microphoneGranted && initialPermissionCheckComplete
+    }
+
+    public var serviceIsDone: Bool {
+        !serviceNeedsAttention && config.serviceMode != nil
+    }
+
     public var anyTabNeedsAttention: Bool {
         permissionsNeedAttention || serviceNeedsAttention
-    }
-
-    internal var bundledPipelineStatusAvailable: Bool {
-        guard config.serviceMode == .bundled else {
-            return false
-        }
-        return isInstalledPipelineCardState(terminalCardState(main: installer.main, probe: installer.probedVersion))
-    }
-
-    internal var bundledPipelineRestartAvailable: Bool {
-        bundledPipelineStatusAvailable && !pipelineBinaryMissing
     }
 
     private func isInstalledPipelineCardState(_ state: InstallerCardState) -> Bool {
@@ -182,6 +179,24 @@ public final class AppState {
              .failed:
             return false
         }
+    }
+
+    public internal(set) var visitedSettingsTabs: Set<String> = []
+
+    func markSettingsTabVisited(_ tab: SettingsView.Tab) {
+        guard visitedSettingsTabs.insert(tab.rawValue).inserted else { return }
+        UserDefaults.standard.set(Array(visitedSettingsTabs).sorted(), forKey: visitedSettingsTabsDefaultsKey)
+    }
+
+    internal var bundledPipelineStatusAvailable: Bool {
+        guard config.serviceMode == .bundled else {
+            return false
+        }
+        return isInstalledPipelineCardState(terminalCardState(main: installer.main, probe: installer.probedVersion))
+    }
+
+    internal var bundledPipelineRestartAvailable: Bool {
+        bundledPipelineStatusAvailable && !pipelineBinaryMissing
     }
 
     // MARK: - Login Item
@@ -462,6 +477,7 @@ public final class AppState {
         }
 
         // Listen for external defaults changes (e.g. `defaults write` from terminal)
+        visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
         loadDockModeFromDefaults()
         loginLaunchSuppressionExpires = Date().addingTimeInterval(Self.loginLaunchSuppressionInterval)
         Task { [weak self] in
@@ -526,6 +542,7 @@ public final class AppState {
 
         captureManager = CaptureManager(storageManager: storageManager)
         uploadCoordinator = UploadCoordinator(forSnapshot: storageManager, config: config)
+        visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
 
         // No callback wiring, no pause restore, no segment recovery,
         // no startRecording, no upload sync, no AppState.shared assignment.

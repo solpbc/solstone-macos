@@ -72,11 +72,11 @@ struct AppStateAttentionTests {
         #expect(!state.serviceNeedsAttention)
     }
 
-    @Test func serviceNeedsAttentionBundledFalseWhenFailed() {
+    @Test func serviceNeedsAttentionBundledTrueWhenFailed() {
         let state = makeState(config: AppConfig(serviceMode: .bundled))
         state.installer.main = .failed(.installSolstone(message: "failed"))
 
-        #expect(!state.serviceNeedsAttention)
+        #expect(state.serviceNeedsAttention)
     }
 
     @Test func serviceNeedsAttentionBundledFalseWhenInstalledCurrent() {
@@ -256,7 +256,137 @@ struct AppStateAttentionTests {
         #expect(!state.serviceNeedsAttention)
     }
 
+    @Test func permissionsAreDoneRequiresAllPermissionInputs() {
+        let missingInitialCheck = makeState()
+        missingInitialCheck.initialPermissionCheckComplete = false
+        missingInitialCheck.screenRecordingGranted = true
+        missingInitialCheck.microphoneGranted = true
+        #expect(!missingInitialCheck.permissionsAreDone)
+
+        let missingScreen = makeState()
+        missingScreen.initialPermissionCheckComplete = true
+        missingScreen.screenRecordingGranted = false
+        missingScreen.microphoneGranted = true
+        #expect(!missingScreen.permissionsAreDone)
+
+        let missingMicrophone = makeState()
+        missingMicrophone.initialPermissionCheckComplete = true
+        missingMicrophone.screenRecordingGranted = true
+        missingMicrophone.microphoneGranted = false
+        #expect(!missingMicrophone.permissionsAreDone)
+
+        let done = makeState()
+        done.initialPermissionCheckComplete = true
+        done.screenRecordingGranted = true
+        done.microphoneGranted = true
+        #expect(done.permissionsAreDone)
+    }
+
+    @Test func visitedSettingsTabsPersistAndRestore() {
+        let key = "SolstoneVisitedSettingsTabs"
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+
+        let state = makeState()
+        state.markSettingsTabVisited(.service)
+        state.markSettingsTabVisited(.service)
+
+        #expect(state.visitedSettingsTabs == ["service"])
+        #expect(UserDefaults.standard.stringArray(forKey: key) == ["service"])
+
+        let restored = makeState()
+        #expect(restored.visitedSettingsTabs == ["service"])
+    }
+
+    @Test func serviceIsDoneMatchesAttentionXorAcrossServiceStateSurface() {
+        let cases = serviceAttentionCases()
+        #expect(cases.count == 41)
+
+        for testCase in cases {
+            let state = makeState(config: AppConfig(serviceMode: testCase.serviceMode))
+            if let main = testCase.main {
+                state.installer.main = main
+            }
+            state.installer.probedVersion = testCase.probe
+            if let connectionTestState = testCase.connectionTestState {
+                state.connectionTestState = connectionTestState
+            }
+
+            #expect(state.serviceIsDone == !state.serviceNeedsAttention, "failed case: \(testCase.name)")
+            if testCase.serviceMode == nil {
+                #expect(!state.serviceIsDone, "nil mode should never be done")
+            }
+        }
+    }
+
     private func makeState(config: AppConfig = AppConfig()) -> AppState {
         AppState.forSnapshot(config: config)
+    }
+
+    private struct ServiceAttentionCase {
+        let name: String
+        let serviceMode: ServiceMode?
+        let main: MainState?
+        let probe: VersionProbeResult?
+        let connectionTestState: ConnectionTestState?
+    }
+
+    private func serviceAttentionCases() -> [ServiceAttentionCase] {
+        let progress = SubprocessProgress(phase: "phase")
+        let mainStates: [(String, MainState)] = [
+            ("detecting", .detecting),
+            ("awaitingChoiceFalse", .awaitingChoice(existingInstall: false)),
+            ("awaitingChoiceTrue", .awaitingChoice(existingInstall: true)),
+            ("cleaningUp", .cleaningUp(progress)),
+            ("installingSolstone", .installingSolstone(progress)),
+            ("runningSolSetup", .runningSolSetup(progress)),
+            ("registering", .registering(progress)),
+            ("done", .done),
+            ("failed", .failed(.installSolstone(message: "failed")))
+        ]
+        let probes: [(String, VersionProbeResult?)] = [
+            ("nilProbe", nil),
+            ("current", .current(version: "0.3.2")),
+            ("outdated", .outdated(installed: "0.3.1", pinned: "0.3.2")),
+            ("unknown", .unknown)
+        ]
+
+        let bundled = mainStates.flatMap { mainName, main in
+            probes.map { probeName, probe in
+                ServiceAttentionCase(
+                    name: "bundled-\(mainName)-\(probeName)",
+                    serviceMode: .bundled,
+                    main: main,
+                    probe: probe,
+                    connectionTestState: nil
+                )
+            }
+        }
+
+        let externalStates: [(String, ConnectionTestState)] = [
+            ("idle", .idle),
+            ("testing", .testing),
+            ("success", .success),
+            ("failure", .failure("offline"))
+        ]
+        let external = externalStates.map { name, state in
+            ServiceAttentionCase(
+                name: "external-\(name)",
+                serviceMode: .external,
+                main: nil,
+                probe: nil,
+                connectionTestState: state
+            )
+        }
+
+        return [
+            ServiceAttentionCase(
+                name: "nil-mode",
+                serviceMode: nil,
+                main: nil,
+                probe: nil,
+                connectionTestState: nil
+            )
+        ] + external + bundled
     }
 }

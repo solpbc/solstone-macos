@@ -42,8 +42,19 @@ func initialServiceMode(for config: AppConfig) -> ServiceMode {
 
 /// Settings window for configuring server upload
 struct SettingsView: View {
-    enum Tab: Hashable {
-        case permissions, observer, service, microphones, privacy, status, updates, help
+    enum Tab: String, Hashable {
+        case permissions = "permissions"
+        case observer = "observer"
+        case service = "service"
+        case microphones = "microphones"
+        case privacy = "privacy"
+        case status = "status"
+        case updates = "updates"
+        case help = "help"
+    }
+
+    private enum SidebarBadgeState {
+        case done, attention, blank
     }
 
     @Bindable var appState: AppState
@@ -99,9 +110,17 @@ struct SettingsView: View {
         NavigationSplitView {
             List(selection: $selectedTab) {
                 Section {
-                    sidebarLabel("permissions", systemImage: "lock.shield", needsAttention: appState.permissionsNeedAttention)
+                    sidebarLabel(
+                        "permissions",
+                        systemImage: "lock.shield",
+                        badge: appState.permissionsAreDone ? .done : (appState.permissionsNeedAttention ? .attention : .blank)
+                    )
                         .tag(Tab.permissions)
-                    sidebarLabel("journal", systemImage: "book.closed", needsAttention: appState.serviceNeedsAttention)
+                    sidebarLabel(
+                        "journal",
+                        systemImage: "book.closed",
+                        badge: appState.serviceIsDone ? .done : (appState.serviceNeedsAttention ? .attention : .blank)
+                    )
                         .tag(Tab.service)
                 } header: {
                     Text("setup")
@@ -146,14 +165,23 @@ struct SettingsView: View {
     @ViewBuilder
     private var detailContent: some View {
         switch selectedTab {
-        case .status: statusTab
-        case .observer: observerTab
-        case .service: serviceTab
-        case .microphones: microphoneTab
-        case .privacy: privacyTab
-        case .permissions: permissionsTab
-        case .updates: UpdatesTabView(controller: updateController)
-        case .help: helpTab
+        case .status:
+            statusTab.onAppear { appState.markSettingsTabVisited(.status) }
+        case .observer:
+            observerTab.onAppear { appState.markSettingsTabVisited(.observer) }
+        case .service:
+            serviceTab.onAppear { appState.markSettingsTabVisited(.service) }
+        case .microphones:
+            microphoneTab.onAppear { appState.markSettingsTabVisited(.microphones) }
+        case .privacy:
+            privacyTab.onAppear { appState.markSettingsTabVisited(.privacy) }
+        case .permissions:
+            permissionsTab.onAppear { appState.markSettingsTabVisited(.permissions) }
+        case .updates:
+            UpdatesTabView(controller: updateController)
+                .onAppear { appState.markSettingsTabVisited(.updates) }
+        case .help:
+            helpTab.onAppear { appState.markSettingsTabVisited(.help) }
         }
     }
 
@@ -175,14 +203,26 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func sidebarLabel(_ title: String, systemImage: String, needsAttention: Bool) -> some View {
+    private func sidebarLabel(_ title: String, systemImage: String, badge: SidebarBadgeState) -> some View {
         let label = Label(title, systemImage: systemImage)
-        if needsAttention {
+        switch badge {
+        case .blank:
+            label
+        case .attention:
             label
                 .badge(Text("!"))
                 .tint(.orange)
-        } else {
-            label
+                .accessibilityLabel("\(title), \(UICopy.SETTINGS_TAB_ATTENTION_A11Y)")
+        case .done:
+            HStack {
+                label
+                Spacer()
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(UICopy.SETTINGS_TAB_DONE_A11Y)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(title), \(UICopy.SETTINGS_TAB_DONE_A11Y)")
         }
     }
 
@@ -288,14 +328,14 @@ struct SettingsView: View {
                 .buttonStyle(.link)
             }
 
-            if appState.screenRecordingGranted && appState.microphoneGranted && !appState.config.isUploadConfigured {
-                HStack {
-                    Spacer()
-                    Button("connect your journal →") {
-                        selectedTab = .service
-                    }
-                    .keyboardShortcut(.defaultAction)
+            if appState.screenRecordingGranted &&
+                appState.microphoneGranted &&
+                !appState.config.isUploadConfigured &&
+                !appState.visitedSettingsTabs.contains(Tab.service.rawValue) {
+                navRow(UICopy.SETTINGS_NEXT_CONNECT_JOURNAL) {
+                    selectedTab = .service
                 }
+                .keyboardShortcut(.defaultAction)
             }
 
             Spacer()
@@ -440,6 +480,11 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 20) {
             serviceSection
             Spacer()
+            if appState.serviceIsDone && !appState.visitedSettingsTabs.contains(Tab.status.rawValue) {
+                navRow(UICopy.SETTINGS_NEXT_CHECK_STATUS) {
+                    selectedTab = .status
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
@@ -451,16 +496,33 @@ struct SettingsView: View {
     @ViewBuilder
     private var serviceSection: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if appState.permissionsNeedAttention {
+                navRow(UICopy.SETTINGS_PREREQ_PERMISSIONS) {
+                    selectedTab = .permissions
+                }
+            }
+
             if let heading = serviceTabHeadingText(for: appState.config.serviceMode) {
                 Text(heading)
                     .font(.headline)
             }
 
             Picker("journal mode", selection: $serviceMode) {
-                Text("bundled").tag(ServiceMode.bundled)
-                Text("external").tag(ServiceMode.external)
+                Text(UICopy.JOURNAL_MODE_THIS_MAC_LABEL).tag(ServiceMode.bundled)
+                Text(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL).tag(ServiceMode.external)
             }
             .pickerStyle(.segmented)
+
+            VStack(alignment: .leading, spacing: 6) {
+                tradeoffLine(
+                    label: UICopy.JOURNAL_MODE_THIS_MAC_LABEL,
+                    text: UICopy.JOURNAL_MODE_THIS_MAC_TRADEOFF
+                )
+                tradeoffLine(
+                    label: UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL,
+                    text: UICopy.JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF
+                )
+            }
 
             switch serviceMode {
             case .bundled:
@@ -469,6 +531,29 @@ struct SettingsView: View {
                 externalServiceSection
             }
         }
+    }
+
+    private func tradeoffLine(label: String, text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text("\(label):")
+                .fontWeight(.semibold)
+            Text(text)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.caption)
+    }
+
+    private func navRow(_ text: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(text)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
     }
 
     @ViewBuilder
