@@ -5,6 +5,12 @@ All notable changes to Solstone Capture will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-05-24
+
+### Fixed
+- per-display segment videos now contain that display's actual pixels. earlier builds always wrote the primary display's pixels into every per-display file, so anyone running solstone on a multi-display Mac was recording the wrong screen until now.
+
+
 ## [1.3.0] - 2026-05-22
 
 ### Added
