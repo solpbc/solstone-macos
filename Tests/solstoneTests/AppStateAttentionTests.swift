@@ -87,12 +87,12 @@ struct AppStateAttentionTests {
         #expect(!state.serviceNeedsAttention)
     }
 
-    @Test func serviceNeedsAttentionBundledFalseWhenInstalledOutdated() {
+    @Test func serviceNeedsAttentionBundledTrueWhenInstalledOutdated() {
         let state = makeState(config: AppConfig(serviceMode: .bundled))
         state.installer.main = .done
         state.installer.probedVersion = .outdated(installed: "0.3.1", pinned: "0.3.2")
 
-        #expect(!state.serviceNeedsAttention)
+        #expect(state.serviceNeedsAttention)
     }
 
     @Test func serviceNeedsAttentionBundledFalseWhenInstalledUnknown() {

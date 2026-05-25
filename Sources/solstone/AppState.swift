@@ -139,10 +139,9 @@ public final class AppState {
             return connectionTestState != .success
         case .bundled:
             switch terminalCardState(main: installer.main, probe: installer.probedVersion) {
-            case .absent:
+            case .absent, .installedOutdated:
                 return true
             case .installedCurrent,
-                 .installedOutdated,
                  .installedUnknown,
                  .done,
                  .installedPlaceholder,

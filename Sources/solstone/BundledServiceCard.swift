@@ -29,7 +29,8 @@ struct BundledServiceCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            switch terminalCardState(main: installer.main, probe: installer.probedVersion) {
+            let state = terminalCardState(main: installer.main, probe: installer.probedVersion)
+            switch state {
             case .detecting:
                 InstallerProgressRowView(
                     label: label(for: .checkingSystem),
@@ -62,6 +63,7 @@ struct BundledServiceCard: View {
                     Button("upgrade to \(pinned)") {
                         installer.start(journalURL: journalURL, existingInstallChoice: .createFresh)
                     }
+                    .modifier(UpgradeAttentionStyle(active: upgradeButtonNeedsAttention(state)))
                     .disabled(isInstalling)
                     installedAffordances
                     autoTestStatusRow
@@ -409,6 +411,18 @@ struct BundledServiceCard: View {
     }
 }
 
+private struct UpgradeAttentionStyle: ViewModifier {
+    let active: Bool
+
+    func body(content: Content) -> some View {
+        if active {
+            content.buttonStyle(.borderedProminent).tint(.orange)
+        } else {
+            content
+        }
+    }
+}
+
 let firstLaunchPermissionPromptsNote: String =
     "macOS will ask permission for solstone's python runtime on first launch so sol can read transcripts and observations into your journal."
 
@@ -422,6 +436,15 @@ func installedServiceMessage(for state: InstallerCardState) -> String {
         return "solstone is installed · couldn't read its version"
     default:
         return ""
+    }
+}
+
+func upgradeButtonNeedsAttention(_ state: InstallerCardState) -> Bool {
+    switch state {
+    case .installedOutdated:
+        return true
+    default:
+        return false
     }
 }
 

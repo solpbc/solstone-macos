@@ -49,6 +49,42 @@ struct BundledServiceCardTests {
         #expect(installedStateShowsDashboardAndDoctor(.installedOutdated(installed: "0.3.1", pinned: "0.3.2")))
     }
 
+    @Test func upgradeButtonNeedsAttentionTrueWhenInstalledOutdated() {
+        #expect(upgradeButtonNeedsAttention(.installedOutdated(installed: "1.2.0", pinned: "1.3.0")))
+    }
+
+    @Test func upgradeButtonNeedsAttentionFalseForDetecting() {
+        #expect(!upgradeButtonNeedsAttention(.detecting))
+    }
+
+    @Test func upgradeButtonNeedsAttentionFalseForAbsent() {
+        #expect(!upgradeButtonNeedsAttention(.absent))
+    }
+
+    @Test func upgradeButtonNeedsAttentionFalseForInstalling() {
+        #expect(!upgradeButtonNeedsAttention(.installing))
+    }
+
+    @Test func upgradeButtonNeedsAttentionFalseForInstalledPlaceholder() {
+        #expect(!upgradeButtonNeedsAttention(.installedPlaceholder))
+    }
+
+    @Test func upgradeButtonNeedsAttentionFalseForDone() {
+        #expect(!upgradeButtonNeedsAttention(.done))
+    }
+
+    @Test func upgradeButtonNeedsAttentionFalseForInstalledCurrent() {
+        #expect(!upgradeButtonNeedsAttention(.installedCurrent(version: "1.3.0")))
+    }
+
+    @Test func upgradeButtonNeedsAttentionFalseForInstalledUnknown() {
+        #expect(!upgradeButtonNeedsAttention(.installedUnknown))
+    }
+
+    @Test func upgradeButtonNeedsAttentionFalseForFailed() {
+        #expect(!upgradeButtonNeedsAttention(.failed(.installSolstone(message: "failed"))))
+    }
+
     @Test func installedUnknownUsesVersionUnavailableCopy() {
         #expect(installedServiceMessage(for: .installedUnknown) == "solstone is installed · couldn't read its version")
     }
