@@ -38,7 +38,7 @@ make reset
 make release-dmg
 ```
 
-Signing uses the sol pbc Developer ID identities in the sol-signing keychain. There is no self-signed dev cert; see `cto/playbooks/apple-remote-dev.md` for keychain provisioning.
+Signing uses the sol pbc Developer ID identities in the sol-signing keychain. There is no self-signed dev cert.
 
 ## Repository Structure
 
