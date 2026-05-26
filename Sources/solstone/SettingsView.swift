@@ -575,7 +575,6 @@ struct SettingsView: View {
                 .fontWeight(.semibold)
             Text(text)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .font(.caption)
     }
