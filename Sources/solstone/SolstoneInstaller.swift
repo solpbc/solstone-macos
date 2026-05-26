@@ -331,18 +331,23 @@ public final class SolstoneInstaller {
         setMain(.cleaningUp(SubprocessProgress(phase: phase)))
         Logger.setup.info("starting upgrade pre-clean")
 
+        let configJournalBinaryPath = SolBinaryLocator.journalPath(siblingOf: solPath)
+        let configUseJournal = fileExists(configJournalBinaryPath)
+        let configExecPath = configUseJournal ? configJournalBinaryPath : solPath
+        let configLabel = "\(configUseJournal ? "journal" : "sol") config show"
+
         let configOutput = InstallerOutput()
         let configResult: SubprocessResult
         do {
             configResult = try await subprocessRunner.run(
-                executable: URL(fileURLWithPath: solPath),
+                executable: URL(fileURLWithPath: configExecPath),
                 arguments: ["config", "show"],
                 environment: nil,
                 stdoutHandler: { data in Self.append(data, to: configOutput, stream: .stdout) },
                 stderrHandler: { data in Self.append(data, to: configOutput, stream: .stderr) }
             )
         } catch {
-            failCleanup(step: .resolveJournal, why: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "sol config show subprocess could not launch: \(error.localizedDescription)")
+            failCleanup(step: .resolveJournal, why: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "\(configLabel) subprocess could not launch: \(error.localizedDescription)")
             return false
         }
 
@@ -351,7 +356,7 @@ public final class SolstoneInstaller {
         guard configResult.exitCode == 0 else {
             failCleanup(
                 step: .resolveJournal,
-                why: lastUsefulLine(configStderr) ?? "sol config show exited \(configResult.exitCode)",
+                why: lastUsefulLine(configStderr) ?? "\(configLabel) exited \(configResult.exitCode)",
                 category: Self.categorize(stderr: configStderr),
                 logExcerpt: Self.lastUsefulLog(stdout: configStdout, stderr: configStderr)
             )

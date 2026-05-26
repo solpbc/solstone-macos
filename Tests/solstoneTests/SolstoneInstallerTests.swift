@@ -156,6 +156,34 @@ struct SolstoneInstallerTests {
         #expect(uninstall.executable.lastPathComponent == "sol")
     }
 
+    @Test func precleanConfigShowInvokesJournalWhenSiblingExists() async throws {
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let installer = makeInstaller(runner: runner, fileExists: { $0.hasSuffix("/journal") })
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        let config = try #require(runner.invocations.first { $0.arguments == ["config", "show"] })
+        #expect(config.executable.lastPathComponent == "journal")
+    }
+
+    @Test func precleanConfigShowFallsBackToSolWhenJournalSiblingMissing() async throws {
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        let config = try #require(runner.invocations.first { $0.arguments == ["config", "show"] })
+        #expect(config.executable.lastPathComponent == "sol")
+    }
+
     @Test func createFreshSkipsPrecleanWhenNoExistingBinary() async throws {
         let runner = FakeSubprocessRunner()
         enqueueSuccessfulBundledPythonPreflight(runner)
