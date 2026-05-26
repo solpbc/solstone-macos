@@ -79,11 +79,40 @@ struct SnapshotTests {
 
         let url = try outputDir.appendingPathComponent(filename)
         try pngData.write(to: url)
+
+        guard let bitmapData = bitmapRep.bitmapData else { return }
+        let bytesPerPixel = bitmapRep.bitsPerPixel / 8
+        let bytesPerRow = bitmapRep.bytesPerRow
+        let width = bitmapRep.pixelsWide
+        let height = bitmapRep.pixelsHigh
+        var backgroundCount = 0
+        for y in 0..<height {
+            for x in 0..<width {
+                let pixel = bitmapData.advanced(by: y * bytesPerRow + x * bytesPerPixel)
+                if pixel[0] >= 250, pixel[1] >= 250, pixel[2] >= 250 {
+                    backgroundCount += 1
+                }
+            }
+        }
+        let whiteRatio = Double(backgroundCount) / Double(width * height)
+        if whiteRatio > emptinessThreshold {
+            throw RenderError.emptyContent(filename: filename, whiteRatio: whiteRatio, threshold: emptinessThreshold)
+        }
     }
 
-    private enum RenderError: Error {
+    private enum RenderError: Error, CustomStringConvertible {
         case noBitmap
         case noPNG
+        case emptyContent(filename: String, whiteRatio: Double, threshold: Double)
+
+        var description: String {
+            switch self {
+            case .noBitmap: return "failed to create bitmap rep"
+            case .noPNG: return "failed to encode PNG"
+            case let .emptyContent(filename, whiteRatio, threshold):
+                return "\(filename): \(String(format: "%.3f", whiteRatio)) near-white exceeds \(String(format: "%.2f", threshold)) threshold"
+            }
+        }
     }
 
     private let menuSize = CGSize(width: 250, height: 350)
@@ -159,6 +188,7 @@ struct SnapshotTests {
     }
 
     private let settingsSize = CGSize(width: 800, height: 560)
+    private let emptinessThreshold = 0.95  // blank-pane regressions (5fd16e5) rendered ~99% near-white; healthy snapshots stay below ~85%
 
     @Test func settingsObserver() throws {
         let state = AppState.forSnapshot()
@@ -322,5 +352,14 @@ struct SnapshotTests {
 
     @Test func about() throws {
         try render(AboutView(), size: aboutSize, to: "about.png")
+    }
+
+    @Test func emptinessGuardFiresOnBlankView() {
+        #expect {
+            try render(Color.white, size: settingsSize, to: "blank-view-guard.png")
+        } throws: { error in
+            guard case RenderError.emptyContent = error else { return false }
+            return true
+        }
     }
 }
