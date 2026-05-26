@@ -72,6 +72,15 @@ struct AppStateAttentionTests {
         #expect(!state.serviceNeedsAttention)
     }
 
+    @Test func serviceNeedsAttentionBundledFalseDuringUpgradeWithOutdatedProbe() {
+        let state = makeState(config: AppConfig(serviceMode: .bundled))
+        state.installer.main = .cleaningUp(SubprocessProgress(phase: "upgrade pre-clean"))
+        state.installer.probedVersion = .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion)
+        state.installer.upgradeInProgress = true
+
+        #expect(!state.serviceNeedsAttention)
+    }
+
     @Test func serviceNeedsAttentionBundledTrueWhenFailed() {
         let state = makeState(config: AppConfig(serviceMode: .bundled))
         state.installer.main = .failed(.installSolstone(message: "failed"))
@@ -87,10 +96,31 @@ struct AppStateAttentionTests {
         #expect(!state.serviceNeedsAttention)
     }
 
-    @Test func serviceNeedsAttentionBundledTrueWhenInstalledOutdated() {
+    @Test func serviceNeedsAttentionBundledFalseWhenInstalledOutdatedWithoutRecord() {
         let state = makeState(config: AppConfig(serviceMode: .bundled))
         state.installer.main = .done
         state.installer.probedVersion = .outdated(installed: "0.3.1", pinned: "0.3.2")
+
+        #expect(!state.serviceNeedsAttention)
+    }
+
+    @Test func serviceNeedsAttentionBundledTrueWhenUpgradeFailed() {
+        let state = makeState(config: AppConfig(serviceMode: .bundled))
+        state.installer.main = .failed(.installSolstone(message: "failed"))
+        state.installer.upgradeFailureRecord = UpgradeFailureRecord(
+            installed: "0.3.1",
+            pinned: BundleConfig.solstonePinVersion,
+            errorDetails: "details"
+        )
+
+        #expect(state.serviceNeedsAttention)
+    }
+
+    @Test func serviceNeedsAttentionBundledTrueWhenPostInstallAutoTestFails() {
+        let state = makeState(config: AppConfig(serviceMode: .bundled))
+        state.installer.main = .done
+        state.installer.probedVersion = .current(version: BundleConfig.solstonePinVersion)
+        state.installer.postInstallAutoTest = .failure("offline")
 
         #expect(state.serviceNeedsAttention)
     }
@@ -300,7 +330,7 @@ struct AppStateAttentionTests {
 
     @Test func serviceIsDoneMatchesAttentionXorAcrossServiceStateSurface() {
         let cases = serviceAttentionCases()
-        #expect(cases.count == 41)
+        #expect(cases.count == 113)
 
         for testCase in cases {
             let state = makeState(config: AppConfig(serviceMode: testCase.serviceMode))
@@ -308,6 +338,7 @@ struct AppStateAttentionTests {
                 state.installer.main = main
             }
             state.installer.probedVersion = testCase.probe
+            state.installer.upgradeFailureRecord = testCase.record
             if let connectionTestState = testCase.connectionTestState {
                 state.connectionTestState = connectionTestState
             }
@@ -328,6 +359,7 @@ struct AppStateAttentionTests {
         let serviceMode: ServiceMode?
         let main: MainState?
         let probe: VersionProbeResult?
+        let record: UpgradeFailureRecord?
         let connectionTestState: ConnectionTestState?
     }
 
@@ -350,16 +382,24 @@ struct AppStateAttentionTests {
             ("outdated", .outdated(installed: "0.3.1", pinned: "0.3.2")),
             ("unknown", .unknown)
         ]
+        let records: [(String, UpgradeFailureRecord?)] = [
+            ("nilRecord", nil),
+            ("matchingRecord", UpgradeFailureRecord(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion, errorDetails: "details")),
+            ("staleRecord", UpgradeFailureRecord(installed: "0.3.1", pinned: "0.3.7", errorDetails: "details"))
+        ]
 
         let bundled = mainStates.flatMap { mainName, main in
-            probes.map { probeName, probe in
-                ServiceAttentionCase(
-                    name: "bundled-\(mainName)-\(probeName)",
-                    serviceMode: .bundled,
-                    main: main,
-                    probe: probe,
-                    connectionTestState: nil
-                )
+            probes.flatMap { probeName, probe in
+                records.map { recordName, record in
+                    ServiceAttentionCase(
+                        name: "bundled-\(mainName)-\(probeName)-\(recordName)",
+                        serviceMode: .bundled,
+                        main: main,
+                        probe: probe,
+                        record: record,
+                        connectionTestState: nil
+                    )
+                }
             }
         }
 
@@ -375,6 +415,7 @@ struct AppStateAttentionTests {
                 serviceMode: .external,
                 main: nil,
                 probe: nil,
+                record: nil,
                 connectionTestState: state
             )
         }
@@ -385,6 +426,7 @@ struct AppStateAttentionTests {
                 serviceMode: nil,
                 main: nil,
                 probe: nil,
+                record: nil,
                 connectionTestState: nil
             )
         ] + external + bundled

@@ -251,7 +251,14 @@ enum FirstLaunchRouting {
         openPermissions: @escaping @MainActor () -> Void,
         openService: @escaping @MainActor () -> Void,
         findSolBinary: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() },
-        healthCheck: @escaping @Sendable (String) async -> Bool = { await SolHealthCheck.run(solPath: $0) }
+        healthCheck: @escaping @Sendable (String) async -> Bool = { await SolHealthCheck.run(solPath: $0) },
+        bundledOutdated: @escaping @Sendable () async -> Bool = {
+            guard let path = await SolBinaryLocator.findSolBinary(),
+                  let installed = await SolHealthCheck.version(solPath: path) else {
+                return false
+            }
+            return installed.compare(BundleConfig.solstonePinVersion, options: .numeric) == .orderedAscending
+        }
     ) async {
         await waitForPermissionCheck()
         if permissionsMissing() {
@@ -265,6 +272,10 @@ enum FirstLaunchRouting {
         }
 
         guard config.serviceMode != .external else { return }
+        if config.serviceMode == .bundled, await bundledOutdated() {
+            openService()
+            return
+        }
         guard isLocalhost(config.serverURL) else { return }
         guard let path = await findSolBinary(), await healthCheck(path) else {
             openService()

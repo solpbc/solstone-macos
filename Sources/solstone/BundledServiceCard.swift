@@ -29,7 +29,11 @@ struct BundledServiceCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            let state = terminalCardState(main: installer.main, probe: installer.probedVersion)
+            let state = terminalCardState(
+                main: installer.main,
+                probe: installer.probedVersion,
+                failureRecord: installer.upgradeFailureRecord
+            )
             switch state {
             case .detecting:
                 InstallerProgressRowView(
@@ -57,19 +61,10 @@ struct BundledServiceCard: View {
                     installedAffordances
                     autoTestStatusRow
                 }
-            case .installedOutdated(let installed, let pinned):
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(installedServiceMessage(for: .installedOutdated(installed: installed, pinned: pinned)))
-                    Button("upgrade to \(pinned)") {
-                        installer.start(journalURL: journalURL, existingInstallChoice: .createFresh)
-                    }
-                    .modifier(UpgradeAttentionStyle(active: upgradeButtonNeedsAttention(state)))
-                    .disabled(isInstalling)
-                    installedAffordances
-                    autoTestStatusRow
-                }
             case .installedUnknown:
                 Text(installedServiceMessage(for: .installedUnknown))
+            case .upgradeFailed(let installed, _, let errorDetails):
+                upgradeFailureContent(installedVersion: installed, errorDetails: errorDetails)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -107,12 +102,16 @@ struct BundledServiceCard: View {
                 openURL(bundledDashboardURL(activeServerURL: URL(string: appState.config.serverURL ?? "")))
             }
 
-            DisclosureGroup(isExpanded: $doctorExpanded) {
-                doctorDisclosureContent
-            } label: {
-                Text("doctor")
-                    .font(.caption)
-            }
+            doctorAffordance
+        }
+    }
+
+    private var doctorAffordance: some View {
+        DisclosureGroup(isExpanded: $doctorExpanded) {
+            doctorDisclosureContent
+        } label: {
+            Text("doctor")
+                .font(.caption)
         }
     }
 
@@ -295,6 +294,43 @@ struct BundledServiceCard: View {
         }
     }
 
+    private func upgradeFailureContent(installedVersion: String, errorDetails: String) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(upgradeFailedStatusMessage(installedVersion: installedVersion))
+                .foregroundStyle(.secondary)
+
+            rowsContent(showModelsWhenActive: true)
+
+            if !errorDetails.isEmpty {
+                DisclosureGroup(isExpanded: $failureDetailsExpanded) {
+                    ScrollView {
+                        Text(errorDetails)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                    }
+                    .frame(minHeight: 120, maxHeight: 280)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                } label: {
+                    Text(failureDetailsExpanded ? "hide details" : "show details")
+                        .font(.caption)
+                }
+            }
+
+            Button(upgradeFailedRetryButtonTitle) {
+                installer.start(
+                    journalURL: journalURL,
+                    existingInstallChoice: .createFresh,
+                    upgradeFromInstalledVersion: installedVersion
+                )
+            }
+
+            doctorAffordance
+        }
+    }
+
     @ViewBuilder
     private func rowsContent(showModelsWhenActive: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -411,27 +447,19 @@ struct BundledServiceCard: View {
     }
 }
 
-private struct UpgradeAttentionStyle: ViewModifier {
-    let active: Bool
-
-    func body(content: Content) -> some View {
-        if active {
-            content.buttonStyle(.borderedProminent).tint(.orange)
-        } else {
-            content
-        }
-    }
-}
-
 let firstLaunchPermissionPromptsNote: String =
     "macOS will ask permission for solstone's python runtime on first launch so sol can read transcripts and observations into your journal."
+
+let upgradeFailedRetryButtonTitle = "try upgrade again"
+
+func upgradeFailedStatusMessage(installedVersion: String) -> String {
+    "couldn't upgrade solstone — still running \(installedVersion)"
+}
 
 func installedServiceMessage(for state: InstallerCardState) -> String {
     switch state {
     case .installedCurrent(let version):
         return "solstone \(version) is ready"
-    case .installedOutdated(let installed, let pinned):
-        return "solstone \(installed) is ready · bundled is \(pinned)"
     case .installedUnknown:
         return "solstone is installed · couldn't read its version"
     default:
@@ -439,18 +467,9 @@ func installedServiceMessage(for state: InstallerCardState) -> String {
     }
 }
 
-func upgradeButtonNeedsAttention(_ state: InstallerCardState) -> Bool {
-    switch state {
-    case .installedOutdated:
-        return true
-    default:
-        return false
-    }
-}
-
 func installedStateShowsDashboardAndDoctor(_ state: InstallerCardState) -> Bool {
     switch state {
-    case .installedCurrent, .installedOutdated:
+    case .installedCurrent:
         return true
     default:
         return false

@@ -7,8 +7,8 @@ enum InstallerCardState: Equatable {
     case installedPlaceholder
     case done
     case installedCurrent(version: String)
-    case installedOutdated(installed: String, pinned: String)
     case installedUnknown
+    case upgradeFailed(installed: String, pinned: String, errorDetails: String)
     case failed(FailedState)
 }
 
@@ -55,16 +55,37 @@ func cardState(from main: MainState) -> InstallerCardState {
     }
 }
 
-func terminalCardState(main: MainState, probe: VersionProbeResult?) -> InstallerCardState {
+func terminalCardState(
+    main: MainState,
+    probe: VersionProbeResult?,
+    failureRecord: UpgradeFailureRecord?
+) -> InstallerCardState {
     let intermediate = cardState(from: main)
+    if case .failed = intermediate {
+        if let failureRecord, failureRecord.pinned == BundleConfig.solstonePinVersion {
+            return .upgradeFailed(
+                installed: failureRecord.installed,
+                pinned: failureRecord.pinned,
+                errorDetails: failureRecord.errorDetails
+            )
+        }
+        return intermediate
+    }
     guard let probe else { return intermediate }
     switch intermediate {
     case .installedPlaceholder, .done:
         switch probe {
         case .current(let version):
             return .installedCurrent(version: version)
-        case .outdated(let installed, let pinned):
-            return .installedOutdated(installed: installed, pinned: pinned)
+        case .outdated:
+            if let failureRecord, failureRecord.pinned == BundleConfig.solstonePinVersion {
+                return .upgradeFailed(
+                    installed: failureRecord.installed,
+                    pinned: failureRecord.pinned,
+                    errorDetails: failureRecord.errorDetails
+                )
+            }
+            return .installing
         case .unknown:
             return .installedUnknown
         }

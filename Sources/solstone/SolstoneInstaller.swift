@@ -19,11 +19,14 @@ public final class SolstoneInstaller {
     public internal(set) var modelsProgress: ModelsProgress = .idle
     public internal(set) var lastFailureCategory: ErrorCategory?
     public internal(set) var lastFailureLog: String?
+    public internal(set) var upgradeFailureRecord: UpgradeFailureRecord?
+    public internal(set) var upgradeInProgress: Bool = false
 
     private weak var appState: AppState?
     private let uvBinaryURL: URL?
     private let bundledPythonURL: URL?
     private let subprocessRunner: SubprocessRunning
+    private let failureRecordStore: UpgradeFailureRecordStoring
     private let solBinaryFinder: @Sendable () async -> String?
     private let connectionTester: @Sendable (String, String) async -> String?
     private let fileExists: @Sendable (String) -> Bool
@@ -34,6 +37,7 @@ public final class SolstoneInstaller {
     private let orphanGracePeriod: Duration
     private var installTask: Task<Void, Never>?
     private var modelsTask: Task<Void, Never>?
+    private var upgradingFromInstalledVersion: String?
 
     private static let rawLogLimit = 16 * 1024
     private static let stdoutTailLimit = 2 * 1024
@@ -59,6 +63,7 @@ public final class SolstoneInstaller {
         uvBinaryURL: URL? = nil,
         bundledPythonURL: URL? = nil,
         subprocessRunner: SubprocessRunning = SubprocessRunner(),
+        failureRecordStore: UpgradeFailureRecordStoring = UserDefaultsUpgradeFailureRecordStore(),
         solBinaryFinder: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() },
         connectionTester: @escaping @Sendable (String, String) async -> String? = { url, key in
             await UploadCoordinator.testConnection(serverURL: url, serverKey: key)
@@ -78,6 +83,7 @@ public final class SolstoneInstaller {
         self.uvBinaryURL = uvBinaryURL
         self.bundledPythonURL = bundledPythonURL
         self.subprocessRunner = subprocessRunner
+        self.failureRecordStore = failureRecordStore
         self.solBinaryFinder = solBinaryFinder
         self.connectionTester = connectionTester
         self.fileExists = fileExists
@@ -86,6 +92,7 @@ public final class SolstoneInstaller {
         self.pidWaitTimeout = pidWaitTimeout
         self.pidWaitPollInterval = pidWaitPollInterval
         self.orphanGracePeriod = orphanGracePeriod
+        self.upgradeFailureRecord = failureRecordStore.load()
     }
 
     internal func attach(appState: AppState) {
@@ -97,23 +104,40 @@ public final class SolstoneInstaller {
         let found = await solBinaryFinder() != nil
         setMain(.awaitingChoice(existingInstall: found))
         if found {
-            Task { await probeVersion() }
+            Task { await self.probeVersionAndAutoUpgrade() }
         }
         return found
     }
 
-    public func start(journalURL: URL, existingInstallChoice: ExistingInstallChoice) {
+    public func start(
+        journalURL: URL,
+        existingInstallChoice: ExistingInstallChoice,
+        upgradeFromInstalledVersion: String? = nil
+    ) {
         guard installTask == nil else {
             Logger.setup.warning("installer: start requested while already running")
             return
         }
 
+        if let upgradeFromInstalledVersion {
+            clearUpgradeFailureRecord()
+            upgradeInProgress = true
+            upgradingFromInstalledVersion = upgradeFromInstalledVersion
+            appState?.notifyUpgradeStarted()
+        } else {
+            upgradeInProgress = false
+            upgradingFromInstalledVersion = nil
+        }
         lastFailureCategory = nil
         lastFailureLog = nil
         modelsProgress = .idle
         installTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.installTask = nil }
+            defer {
+                self.installTask = nil
+                self.upgradeInProgress = false
+                self.upgradingFromInstalledVersion = nil
+            }
             await self.runInstall(journalURL: journalURL, existingInstallChoice: existingInstallChoice)
         }
     }
@@ -511,6 +535,7 @@ public final class SolstoneInstaller {
 
         if await runObserverCreate(solPath: solPath, phase: phase) {
             setMain(.done)
+            clearUpgradeFailureRecord()
             Task {
                 await probeVersion()
                 await runPostInstallAutoTest()
@@ -701,6 +726,22 @@ public final class SolstoneInstaller {
         }
     }
 
+    internal func probeVersionAndAutoUpgrade() async {
+        await probeVersion()
+        guard case .outdated(let installed, _) = probedVersion else { return }
+        if upgradeFailureRecord?.pinned == BundleConfig.solstonePinVersion {
+            return
+        }
+        if upgradeFailureRecord != nil {
+            clearUpgradeFailureRecord()
+        }
+        start(
+            journalURL: Self.defaultJournalURL(),
+            existingInstallChoice: .createFresh,
+            upgradeFromInstalledVersion: installed
+        )
+    }
+
     public func runPostInstallAutoTest() async {
         guard let appState else { return }
         let url = appState.config.serverURL ?? ""
@@ -769,12 +810,34 @@ public final class SolstoneInstaller {
     private func failMain(_ failedState: FailedState, category: ErrorCategory, logExcerpt: String? = nil) {
         lastFailureCategory = category
         lastFailureLog = (logExcerpt?.isEmpty == false) ? logExcerpt : nil
+        if let upgradingFromInstalledVersion {
+            persistUpgradeFailure(installed: upgradingFromInstalledVersion, details: lastFailureLog)
+        }
         let msg = Self.shortMessage(failedState)
         Logger.setup.warning("installer: failed (\(Self.failedStateName(failedState), privacy: .public)): \(msg, privacy: .public)")
         if let log = lastFailureLog {
             Logger.setup.warning("installer: failure log excerpt:\n\(log, privacy: .public)")
         }
         setMain(.failed(failedState))
+    }
+
+    private static func defaultJournalURL() -> URL {
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("journal")
+    }
+
+    private func persistUpgradeFailure(installed: String, details: String?) {
+        let record = UpgradeFailureRecord(
+            installed: installed,
+            pinned: BundleConfig.solstonePinVersion,
+            errorDetails: details ?? ""
+        )
+        upgradeFailureRecord = record
+        failureRecordStore.save(record)
+    }
+
+    internal func clearUpgradeFailureRecord() {
+        upgradeFailureRecord = nil
+        failureRecordStore.clear()
     }
 
     nonisolated private static func shortMessage(_ failedState: FailedState) -> String {

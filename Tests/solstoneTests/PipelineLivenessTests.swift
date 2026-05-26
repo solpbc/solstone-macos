@@ -244,6 +244,29 @@ struct PipelineLivenessTests {
         #expect(!state.pipelineBinaryMissing)
     }
 
+    @Test func notifyUpgradeStartedClearsPipelineProbeState() {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        state.pipelineDead = true
+        state.pipelineBinaryMissing = true
+
+        state.notifyUpgradeStarted()
+
+        #expect(!state.pipelineDead)
+        #expect(!state.pipelineBinaryMissing)
+    }
+
+    @Test func pipelineProbeTickReturnsEarlyDuringUpgrade() async {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        state.installer.upgradeInProgress = true
+        state.pipelineDead = true
+        state.pipelineBinaryMissing = false
+
+        await state.pipelineProbeTick()
+
+        #expect(state.pipelineDead)
+        #expect(!state.pipelineBinaryMissing)
+    }
+
     @Test @MainActor func pipelineSurfaceAvailabilityRequiresInstalledBundledState() {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         state.installer.main = .detecting
@@ -260,6 +283,16 @@ struct PipelineLivenessTests {
         state.pipelineBinaryMissing = false
 
         #expect(state.bundledPipelineRestartAvailable)
+
+        state.installer.main = .failed(.installSolstone(message: "failed"))
+        state.installer.upgradeFailureRecord = UpgradeFailureRecord(
+            installed: "0.3.1",
+            pinned: BundleConfig.solstonePinVersion,
+            errorDetails: "details"
+        )
+
+        #expect(!state.bundledPipelineStatusAvailable)
+        #expect(!state.bundledPipelineRestartAvailable)
 
         state.updateConfig(AppConfig(serviceMode: .external))
 

@@ -636,6 +636,230 @@ struct SolstoneInstallerTests {
         #expect(installer.probedVersion == .unknown)
     }
 
+    @Test func postDetectOutdatedAutoUpgradesOnceAndReachesDone() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) 0.3.1\n".utf8)))
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        _ = await installer.detect()
+        try await waitUntil { installer.main == .done }
+
+        #expect(!installer.upgradeInProgress)
+        #expect(installer.upgradeFailureRecord == nil)
+        #expect(runner.invocations.filter { $0.arguments.starts(with: ["tool", "install"]) }.count == 1)
+    }
+
+    @Test func postInstallOutdatedProbeDoesNotAutoUpgrade() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) 0.3.1\n".utf8)))
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitUntil { installer.probedVersion == .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion) }
+
+        #expect(installer.main == .done)
+        #expect(!runner.invocations.contains { $0.arguments.starts(with: ["tool", "install"]) })
+    }
+
+    @Test func matchingUpgradeFailureRecordSuppressesAutoUpgrade() async {
+        let store = InMemoryUpgradeFailureRecordStore(record: UpgradeFailureRecord(
+            installed: "0.3.1",
+            pinned: BundleConfig.solstonePinVersion,
+            errorDetails: "details"
+        ))
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) 0.3.1\n".utf8)))
+        let installer = makeInstaller(runner: runner, failureRecordStore: store)
+        installer.main = .awaitingChoice(existingInstall: true)
+
+        await installer.probeVersionAndAutoUpgrade()
+
+        #expect(!runner.invocations.contains { $0.arguments.starts(with: ["tool", "install"]) })
+        #expect(terminalCardState(
+            main: installer.main,
+            probe: installer.probedVersion,
+            failureRecord: installer.upgradeFailureRecord
+        ) == .upgradeFailed(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion, errorDetails: "details"))
+    }
+
+    @Test func staleUpgradeFailureRecordClearsAndAutoUpgradeFires() async throws {
+        let store = InMemoryUpgradeFailureRecordStore(record: UpgradeFailureRecord(
+            installed: "0.3.1",
+            pinned: "0.3.7",
+            errorDetails: "old"
+        ))
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) 0.3.1\n".utf8)))
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let installer = makeInstaller(runner: runner, failureRecordStore: store)
+        defer { installer.cancel() }
+
+        await installer.probeVersionAndAutoUpgrade()
+        try await waitUntil { installer.main == .done }
+
+        #expect(installer.upgradeFailureRecord == nil)
+        #expect(store.load() == nil)
+        #expect(runner.invocations.filter { $0.arguments.starts(with: ["tool", "install"]) }.count == 1)
+    }
+
+    @Test func concurrentAutoUpgradeFireStartsSingleRun() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) 0.3.1\n".utf8)))
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) 0.3.1\n".utf8)))
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        let first = Task { await installer.probeVersionAndAutoUpgrade() }
+        let second = Task { await installer.probeVersionAndAutoUpgrade() }
+        await first.value
+        await second.value
+        try await waitUntil { installer.main == .done }
+
+        #expect(runner.invocations.filter { $0.arguments.starts(with: ["tool", "install"]) }.count == 1)
+    }
+
+    @Test func upgradeRunFailurePersistsFailureRecord() async throws {
+        let store = InMemoryUpgradeFailureRecordStore()
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulBundledPythonPreflight(runner)
+        runner.enqueue("tool", .success())
+        runner.enqueue("tool", .success(stderr: Data("error: failed to download solstone\n".utf8), exitCode: 1))
+        let installer = makeInstaller(runner: runner, failureRecordStore: store)
+        defer { installer.cancel() }
+
+        installer.start(
+            journalURL: URL(fileURLWithPath: "/tmp/journal"),
+            existingInstallChoice: .createFresh,
+            upgradeFromInstalledVersion: "0.3.1"
+        )
+        try await waitForTerminal(installer)
+
+        let record = try #require(store.load())
+        #expect(record.installed == "0.3.1")
+        #expect(record.pinned == BundleConfig.solstonePinVersion)
+        #expect(record.errorDetails.contains("error: failed to download solstone"))
+        #expect(terminalCardState(
+            main: installer.main,
+            probe: installer.probedVersion,
+            failureRecord: installer.upgradeFailureRecord
+        ) == .upgradeFailed(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion, errorDetails: record.errorDetails))
+    }
+
+    @Test func successfulUpgradeClearsFailureRecord() async throws {
+        let store = InMemoryUpgradeFailureRecordStore(record: UpgradeFailureRecord(
+            installed: "0.3.1",
+            pinned: BundleConfig.solstonePinVersion,
+            errorDetails: "old"
+        ))
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let installer = makeInstaller(runner: runner, failureRecordStore: store)
+        defer { installer.cancel() }
+
+        installer.start(
+            journalURL: URL(fileURLWithPath: "/tmp/journal"),
+            existingInstallChoice: .createFresh,
+            upgradeFromInstalledVersion: "0.3.1"
+        )
+        try await waitUntil { installer.main == .done }
+
+        #expect(installer.upgradeFailureRecord == nil)
+        #expect(store.load() == nil)
+    }
+
+    @Test func modelsFailureDuringUpgradeDoesNotPersistFailureRecord() async throws {
+        let store = InMemoryUpgradeFailureRecordStore()
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulBundledPythonPreflight(runner)
+        runner.enqueue("tool", .success())
+        runner.enqueue("tool", .success())
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success(stderr: Data("models failed\n".utf8), exitCode: 1))
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let installer = makeInstaller(runner: runner, failureRecordStore: store)
+        defer { installer.cancel() }
+
+        installer.start(
+            journalURL: URL(fileURLWithPath: "/tmp/journal"),
+            existingInstallChoice: .createFresh,
+            upgradeFromInstalledVersion: "0.3.1"
+        )
+        try await waitUntil {
+            if case .failed("models failed") = installer.modelsProgress { return true }
+            return false
+        }
+        try await waitUntil { installer.probedVersion == .current(version: BundleConfig.solstonePinVersion) }
+
+        #expect(installer.main == .done)
+        #expect(installer.upgradeFailureRecord == nil)
+        #expect(store.load() == nil)
+        #expect(terminalCardState(
+            main: installer.main,
+            probe: installer.probedVersion,
+            failureRecord: installer.upgradeFailureRecord
+        ) == .installedCurrent(version: BundleConfig.solstonePinVersion))
+    }
+
+    @Test func freshInstallFailureDoesNotPersistUpgradeRecord() async throws {
+        let store = InMemoryUpgradeFailureRecordStore()
+        let runner = FakeSubprocessRunner()
+        let finder = SequencedSolBinaryFinder([nil])
+        enqueueSuccessfulBundledPythonPreflight(runner)
+        runner.enqueue("tool", .success())
+        runner.enqueue("tool", .success(stderr: Data("error: failed to download solstone\n".utf8), exitCode: 1))
+        let installer = makeInstaller(runner: runner, failureRecordStore: store, solBinaryFinder: { finder.next() })
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.upgradeFailureRecord == nil)
+        #expect(store.load() == nil)
+        #expect(terminalCardState(
+            main: installer.main,
+            probe: installer.probedVersion,
+            failureRecord: installer.upgradeFailureRecord
+        ) == .failed(.installSolstone(message: "error: failed to download solstone")))
+    }
+
+    @Test func upgradeStartClearsRecordSynchronously() {
+        let store = InMemoryUpgradeFailureRecordStore(record: UpgradeFailureRecord(
+            installed: "0.3.1",
+            pinned: BundleConfig.solstonePinVersion,
+            errorDetails: "old"
+        ))
+        let runner = FakeSubprocessRunner()
+        let installer = makeInstaller(runner: runner, failureRecordStore: store)
+        defer { installer.cancel() }
+
+        installer.start(
+            journalURL: URL(fileURLWithPath: "/tmp/journal"),
+            existingInstallChoice: .createFresh,
+            upgradeFromInstalledVersion: "0.3.1"
+        )
+
+        #expect(installer.upgradeFailureRecord == nil)
+        #expect(store.load() == nil)
+        #expect(installer.upgradeInProgress)
+    }
+
     @Test func jsonlEdgeFixtures_driveExpectedOutcomes() async throws {
         let expectations: [(String, Bool)] = [
             ("golden_ok", true),
@@ -792,6 +1016,7 @@ struct SolstoneInstallerTests {
         runner: FakeSubprocessRunner,
         uvURL: URL? = nil,
         pythonURL: URL? = testBundledPythonURL,
+        failureRecordStore: UpgradeFailureRecordStoring = InMemoryUpgradeFailureRecordStore(),
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
         fileExists: @escaping @Sendable (String) -> Bool = { _ in false }
@@ -800,6 +1025,7 @@ struct SolstoneInstallerTests {
             uvBinaryURL: uvURL,
             bundledPythonURL: pythonURL,
             subprocessRunner: runner,
+            failureRecordStore: failureRecordStore,
             solBinaryFinder: solBinaryFinder,
             connectionTester: connectionTester,
             fileExists: fileExists
@@ -810,6 +1036,7 @@ struct SolstoneInstallerTests {
         runner: FakeSubprocessRunner,
         uvURL: URL? = nil,
         pythonURL: URL? = testBundledPythonURL,
+        failureRecordStore: UpgradeFailureRecordStoring = InMemoryUpgradeFailureRecordStore(),
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
         fileExists: @escaping @Sendable (String) -> Bool = { _ in false },
@@ -823,6 +1050,7 @@ struct SolstoneInstallerTests {
             uvBinaryURL: uvURL,
             bundledPythonURL: pythonURL,
             subprocessRunner: runner,
+            failureRecordStore: failureRecordStore,
             solBinaryFinder: solBinaryFinder,
             connectionTester: connectionTester,
             fileExists: fileExists,
@@ -935,6 +1163,37 @@ struct SolstoneInstallerTests {
 
     private var observerJSON: Data {
         Data(#"{"name":"solstone-macos","key":"observer-key","prefix":"observer"}"#.utf8)
+    }
+}
+
+@Suite("UpgradeFailureRecordStore")
+@MainActor
+struct UpgradeFailureRecordStoreTests {
+    @Test func userDefaultsStoreRoundTripsRecord() throws {
+        let suiteName = "solstone-upgrade-record-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        let store = UserDefaultsUpgradeFailureRecordStore(defaults: defaults)
+        let record = UpgradeFailureRecord(installed: "0.3.1", pinned: "0.3.8", errorDetails: "details")
+
+        store.save(record)
+        #expect(store.load() == record)
+
+        store.clear()
+        #expect(store.load() == nil)
+    }
+
+    @Test func inMemoryStoreRoundTripsRecord() {
+        let store = InMemoryUpgradeFailureRecordStore()
+        let record = UpgradeFailureRecord(installed: "0.3.1", pinned: "0.3.8", errorDetails: "details")
+
+        #expect(store.load() == nil)
+        store.save(record)
+        #expect(store.load() == record)
+        store.clear()
+        #expect(store.load() == nil)
     }
 }
 

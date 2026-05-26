@@ -89,3 +89,15 @@ public enum ExistingInstallChoice: Sendable, Equatable {
     case createFresh
     case acceptExisting
 }
+
+public struct UpgradeFailureRecord: Codable, Equatable, Sendable {
+    public let installed: String
+    public let pinned: String
+    public let errorDetails: String
+
+    public init(installed: String, pinned: String, errorDetails: String) {
+        self.installed = installed
+        self.pinned = pinned
+        self.errorDetails = errorDetails
+    }
+}

@@ -58,7 +58,7 @@ public final class AppState {
     public let audioDeviceMonitor: AudioDeviceMonitor
     public private(set) var captureManager: CaptureManager!
     public private(set) var uploadCoordinator: UploadCoordinator!
-    public let installer = SolstoneInstaller()
+    public let installer: SolstoneInstaller
     public let heartbeatService: HeartbeatService
     internal let solChatBridge: SolChatBridge
     private let isSnapshot: Bool
@@ -148,8 +148,15 @@ public final class AppState {
         case .external:
             return connectionTestState != .success
         case .bundled:
-            switch terminalCardState(main: installer.main, probe: installer.probedVersion) {
-            case .absent, .installedOutdated, .failed:
+            if case .failure = installer.postInstallAutoTest {
+                return true
+            }
+            switch terminalCardState(
+                main: installer.main,
+                probe: installer.probedVersion,
+                failureRecord: installer.upgradeFailureRecord
+            ) {
+            case .absent, .upgradeFailed, .failed:
                 return true
             case .installedCurrent,
                  .installedUnknown,
@@ -179,12 +186,12 @@ public final class AppState {
         case .installedPlaceholder,
              .done,
              .installedCurrent,
-             .installedOutdated,
              .installedUnknown:
             return true
         case .detecting,
              .absent,
              .installing,
+             .upgradeFailed,
              .failed:
             return false
         }
@@ -201,7 +208,11 @@ public final class AppState {
         guard config.serviceMode == .bundled else {
             return false
         }
-        return isInstalledPipelineCardState(terminalCardState(main: installer.main, probe: installer.probedVersion))
+        return isInstalledPipelineCardState(terminalCardState(
+            main: installer.main,
+            probe: installer.probedVersion,
+            failureRecord: installer.upgradeFailureRecord
+        ))
     }
 
     internal var bundledPipelineRestartAvailable: Bool {
@@ -351,6 +362,7 @@ public final class AppState {
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isSnapshot = false
         self.config = config
+        self.installer = SolstoneInstaller()
         self.heartbeatService = HeartbeatService(
             isPaused: { [pauseManager] in
                 pauseManager.isPaused
@@ -532,6 +544,7 @@ public final class AppState {
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isSnapshot = true
         self.config = config
+        self.installer = SolstoneInstaller(failureRecordStore: InMemoryUpgradeFailureRecordStore())
         self.heartbeatService = HeartbeatService(
             isPaused: { false },
             postHeartbeat: { _, _, _ in }
@@ -672,12 +685,13 @@ public final class AppState {
         pipelineProbeTimer = nil
     }
 
-    private func pipelineProbeTick() async {
+    internal func pipelineProbeTick() async {
         guard config.serviceMode == .bundled else {
             clearPipelineProbeState()
             stopPipelineProbeTimer()
             return
         }
+        guard !installer.upgradeInProgress else { return }
         guard !isRestartingPipeline else { return }
 
         let outcome = await PipelineLivenessProbe.run()
@@ -694,6 +708,10 @@ public final class AppState {
         pipelineDead = false
         pipelineBinaryMissing = false
         pipelineDebounceState.reset()
+    }
+
+    internal func notifyUpgradeStarted() {
+        clearPipelineProbeState()
     }
 
     private func handlePipelineModeTransition(from oldMode: ServiceMode?, to newMode: ServiceMode?) {

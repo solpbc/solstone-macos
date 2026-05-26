@@ -17,7 +17,8 @@ struct FirstLaunchRoutingTests {
             openPermissions: { openedPermissions = true },
             openService: { openedService = true },
             findSolBinary: { nil },
-            healthCheck: { _ in true }
+            healthCheck: { _ in true },
+            bundledOutdated: { false }
         )
 
         #expect(checkedPermissions)
@@ -36,7 +37,8 @@ struct FirstLaunchRoutingTests {
             openPermissions: { openedPermissions = true },
             openService: { openedService = true },
             findSolBinary: { nil },
-            healthCheck: { _ in true }
+            healthCheck: { _ in true },
+            bundledOutdated: { false }
         )
 
         #expect(!openedPermissions)
@@ -54,7 +56,8 @@ struct FirstLaunchRoutingTests {
             openPermissions: { openedPermissions = true },
             openService: { openedService = true },
             findSolBinary: { nil },
-            healthCheck: { _ in false }
+            healthCheck: { _ in false },
+            bundledOutdated: { false }
         )
 
         #expect(!openedPermissions)
@@ -71,7 +74,8 @@ struct FirstLaunchRoutingTests {
             openPermissions: {},
             openService: { openedService = true },
             findSolBinary: { "/usr/bin/sol" },
-            healthCheck: { _ in true }
+            healthCheck: { _ in true },
+            bundledOutdated: { false }
         )
 
         #expect(!openedService)
@@ -87,7 +91,8 @@ struct FirstLaunchRoutingTests {
             openPermissions: {},
             openService: { openedService = true },
             findSolBinary: { nil },
-            healthCheck: { _ in true }
+            healthCheck: { _ in true },
+            bundledOutdated: { false }
         )
 
         #expect(openedService)
@@ -103,7 +108,8 @@ struct FirstLaunchRoutingTests {
             openPermissions: {},
             openService: { openedService = true },
             findSolBinary: { "/usr/bin/sol" },
-            healthCheck: { _ in false }
+            healthCheck: { _ in false },
+            bundledOutdated: { false }
         )
 
         #expect(openedService)
@@ -119,7 +125,8 @@ struct FirstLaunchRoutingTests {
             openPermissions: {},
             openService: { openedService = true },
             findSolBinary: { nil },
-            healthCheck: { _ in false }
+            healthCheck: { _ in false },
+            bundledOutdated: { false }
         )
 
         #expect(!openedService)
@@ -137,11 +144,46 @@ struct FirstLaunchRoutingTests {
                 openPermissions: { permissionOpenCount += 1 },
                 openService: { serviceOpenCount += 1 },
                 findSolBinary: { nil },
-                healthCheck: { _ in true }
+                healthCheck: { _ in true },
+                bundledOutdated: { false }
             )
         }
 
         #expect(permissionOpenCount == 0)
         #expect(serviceOpenCount == 2)
+    }
+
+    @Test func firstLaunch_bundledOutdated_opensService() async {
+        var openedService = false
+
+        await FirstLaunchRouting.route(
+            config: AppConfig(serverURL: "http://localhost:5015", serverKey: "key", serviceMode: .bundled),
+            waitForPermissionCheck: {},
+            permissionsMissing: { false },
+            openPermissions: {},
+            openService: { openedService = true },
+            findSolBinary: { "/usr/bin/sol" },
+            healthCheck: { _ in true },
+            bundledOutdated: { true }
+        )
+
+        #expect(openedService)
+    }
+
+    @Test func firstLaunch_externalOutdated_noops() async {
+        var openedService = false
+
+        await FirstLaunchRouting.route(
+            config: AppConfig(serverURL: "http://localhost:5015", serverKey: "key", serviceMode: .external),
+            waitForPermissionCheck: {},
+            permissionsMissing: { false },
+            openPermissions: {},
+            openService: { openedService = true },
+            findSolBinary: { "/usr/bin/sol" },
+            healthCheck: { _ in false },
+            bundledOutdated: { true }
+        )
+
+        #expect(!openedService)
     }
 }
