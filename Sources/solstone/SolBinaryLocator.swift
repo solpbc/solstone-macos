@@ -44,6 +44,10 @@ internal enum SolBinaryLocator {
         }
     }
 
+    static func journalPath(siblingOf solPath: String) -> String {
+        URL(fileURLWithPath: solPath).deletingLastPathComponent().appendingPathComponent("journal").path
+    }
+
     private static func append(_ data: Data, to output: SolBinaryLocatorOutput) {
         let semaphore = DispatchSemaphore(value: 0)
         Task {

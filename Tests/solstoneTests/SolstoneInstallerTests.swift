@@ -128,6 +128,34 @@ struct SolstoneInstallerTests {
         #expect(serviceIndex < installIndex)
     }
 
+    @Test func precleanInvokesJournalWhenSiblingExists() async throws {
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let installer = makeInstaller(runner: runner, fileExists: { $0.hasSuffix("/journal") })
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        let uninstall = try #require(runner.invocations.first { $0.arguments == ["service", "uninstall"] })
+        #expect(uninstall.executable.lastPathComponent == "journal")
+    }
+
+    @Test func precleanFallsBackToSolWhenJournalSiblingMissing() async throws {
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        let uninstall = try #require(runner.invocations.first { $0.arguments == ["service", "uninstall"] })
+        #expect(uninstall.executable.lastPathComponent == "sol")
+    }
+
     @Test func createFreshSkipsPrecleanWhenNoExistingBinary() async throws {
         let runner = FakeSubprocessRunner()
         enqueueSuccessfulBundledPythonPreflight(runner)
@@ -161,6 +189,38 @@ struct SolstoneInstallerTests {
 
         #expect(!runner.invocations.contains { $0.arguments.first == "config" })
         #expect(!runner.invocations.contains { $0.arguments.first == "service" })
+    }
+
+    @Test func runSolSetupInvokesJournal() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitUntil { installer.main == .done }
+
+        let setup = try #require(runner.invocations.first { $0.arguments.first == "setup" })
+        #expect(setup.executable.lastPathComponent == "journal")
+    }
+
+    @Test func runInstallModelsInvokesJournal() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitUntil {
+            runner.invocations.contains { $0.arguments.first == "install-models" }
+        }
+
+        let installModels = try #require(runner.invocations.first { $0.arguments.first == "install-models" })
+        #expect(installModels.executable.lastPathComponent == "journal")
     }
 
     @Test func precleanFailsWhenJournalPathCannotResolve() async throws {
@@ -482,7 +542,7 @@ struct SolstoneInstallerTests {
         }
         #expect(runner.invocations.filter { $0.executable.lastPathComponent == "ps" }.allSatisfy { $0.environment == nil })
         #expect(runner.invocations.filter { $0.executable.lastPathComponent == "lsof" }.allSatisfy { $0.environment == nil })
-        #expect(runner.invocations.first { $0.arguments.first == "setup" }?.executable.path == installedSolPath)
+        #expect(runner.invocations.first { $0.arguments.first == "setup" }?.executable.path == SolBinaryLocator.journalPath(siblingOf: installedSolPath))
     }
 
     @Test func observerCreateSuccessWritesBundledServiceConfig() async throws {
@@ -733,14 +793,16 @@ struct SolstoneInstallerTests {
         uvURL: URL? = nil,
         pythonURL: URL? = testBundledPythonURL,
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
-        connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil }
+        connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
+        fileExists: @escaping @Sendable (String) -> Bool = { _ in false }
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
             bundledPythonURL: pythonURL,
             subprocessRunner: runner,
             solBinaryFinder: solBinaryFinder,
-            connectionTester: connectionTester
+            connectionTester: connectionTester,
+            fileExists: fileExists
         )
     }
 
@@ -750,6 +812,7 @@ struct SolstoneInstallerTests {
         pythonURL: URL? = testBundledPythonURL,
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
+        fileExists: @escaping @Sendable (String) -> Bool = { _ in false },
         pidExists: @escaping @Sendable (pid_t) -> Bool,
         terminate: @escaping @Sendable (pid_t, Int32) -> Int32 = { _, _ in 0 },
         pidWaitTimeout: Duration = .seconds(1),
@@ -762,6 +825,7 @@ struct SolstoneInstallerTests {
             subprocessRunner: runner,
             solBinaryFinder: solBinaryFinder,
             connectionTester: connectionTester,
+            fileExists: fileExists,
             pidExists: pidExists,
             terminate: terminate,
             pidWaitTimeout: pidWaitTimeout,

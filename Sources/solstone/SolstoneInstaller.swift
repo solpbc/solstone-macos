@@ -26,6 +26,7 @@ public final class SolstoneInstaller {
     private let subprocessRunner: SubprocessRunning
     private let solBinaryFinder: @Sendable () async -> String?
     private let connectionTester: @Sendable (String, String) async -> String?
+    private let fileExists: @Sendable (String) -> Bool
     private let pidExists: @Sendable (pid_t) -> Bool
     private let terminate: @Sendable (pid_t, Int32) -> Int32
     private let pidWaitTimeout: Duration
@@ -62,6 +63,7 @@ public final class SolstoneInstaller {
         connectionTester: @escaping @Sendable (String, String) async -> String? = { url, key in
             await UploadCoordinator.testConnection(serverURL: url, serverKey: key)
         },
+        fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
         pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
             if Darwin.kill(pid, 0) == 0 { return true }
             return errno == EPERM
@@ -78,6 +80,7 @@ public final class SolstoneInstaller {
         self.subprocessRunner = subprocessRunner
         self.solBinaryFinder = solBinaryFinder
         self.connectionTester = connectionTester
+        self.fileExists = fileExists
         self.pidExists = pidExists
         self.terminate = terminate
         self.pidWaitTimeout = pidWaitTimeout
@@ -339,30 +342,38 @@ public final class SolstoneInstaller {
             .appendingPathComponent("health/supervisor.pid")
         let capturedPid = readSupervisorPID(from: pidURL)
 
-        let uninstallOutput = InstallerOutput()
-        let uninstallResult: SubprocessResult
         do {
-            uninstallResult = try await subprocessRunner.run(
-                executable: URL(fileURLWithPath: solPath),
-                arguments: ["service", "uninstall"],
-                environment: nil,
-                stdoutHandler: { data in Self.append(data, to: uninstallOutput, stream: .stdout) },
-                stderrHandler: { data in Self.append(data, to: uninstallOutput, stream: .stderr) }
-            )
-        } catch {
-            failCleanup(step: .serviceUninstall, why: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "sol service uninstall subprocess could not launch: \(error.localizedDescription)")
-            return false
-        }
-        let uninstallStdout = uninstallOutput.stdoutString()
-        let uninstallStderr = uninstallOutput.stderrString()
-        guard uninstallResult.exitCode == 0 else {
-            failCleanup(
-                step: .serviceUninstall,
-                why: lastUsefulLine(uninstallStderr) ?? "sol service uninstall exited \(uninstallResult.exitCode)",
-                category: Self.categorize(stderr: uninstallStderr),
-                logExcerpt: Self.lastUsefulLog(stdout: uninstallStdout, stderr: uninstallStderr)
-            )
-            return false
+            let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
+            let useJournal = fileExists(journalPath)
+            let uninstallExecPath = useJournal ? journalPath : solPath
+            let uninstallArguments = ["service", "uninstall"]
+            let uninstallLabel = "\(useJournal ? "journal" : "sol") \(uninstallArguments.joined(separator: " "))"
+
+            let uninstallOutput = InstallerOutput()
+            let uninstallResult: SubprocessResult
+            do {
+                uninstallResult = try await subprocessRunner.run(
+                    executable: URL(fileURLWithPath: uninstallExecPath),
+                    arguments: uninstallArguments,
+                    environment: nil,
+                    stdoutHandler: { data in Self.append(data, to: uninstallOutput, stream: .stdout) },
+                    stderrHandler: { data in Self.append(data, to: uninstallOutput, stream: .stderr) }
+                )
+            } catch {
+                failCleanup(step: .serviceUninstall, why: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "\(uninstallLabel) subprocess could not launch: \(error.localizedDescription)")
+                return false
+            }
+            let uninstallStdout = uninstallOutput.stdoutString()
+            let uninstallStderr = uninstallOutput.stderrString()
+            guard uninstallResult.exitCode == 0 else {
+                failCleanup(
+                    step: .serviceUninstall,
+                    why: lastUsefulLine(uninstallStderr) ?? "\(uninstallLabel) exited \(uninstallResult.exitCode)",
+                    category: Self.categorize(stderr: uninstallStderr),
+                    logExcerpt: Self.lastUsefulLog(stdout: uninstallStdout, stderr: uninstallStderr)
+                )
+                return false
+            }
         }
 
         if let capturedPid {
@@ -423,7 +434,8 @@ public final class SolstoneInstaller {
     }
 
     private func runSolSetup(solPath: String, journalURL: URL) async -> Bool {
-        let phase = "sol setup"
+        let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
+        let phase = "journal setup"
         setMain(.runningSolSetup(SubprocessProgress(phase: phase)))
         let layout = SolstoneRuntimeLayout()
         do {
@@ -438,7 +450,7 @@ public final class SolstoneInstaller {
         let result: SubprocessResult
         do {
             result = try await subprocessRunner.run(
-                executable: URL(fileURLWithPath: solPath),
+                executable: URL(fileURLWithPath: journalPath),
                 arguments: ["setup", "--jsonl", "--yes", "--skip-models", "--accept-existing-journal", "--journal", journalURL.path],
                 environment: environment,
                 stdoutHandler: { [weak self, output] data in
@@ -452,7 +464,7 @@ public final class SolstoneInstaller {
                 }
             )
         } catch {
-            failMain(.solSetup(errorCode: nil, message: error.localizedDescription), category: .subprocessLaunch, logExcerpt: "sol setup subprocess could not launch: \(error.localizedDescription)")
+            failMain(.solSetup(errorCode: nil, message: error.localizedDescription), category: .subprocessLaunch, logExcerpt: "journal setup subprocess could not launch: \(error.localizedDescription)")
             return false
         }
 
@@ -472,7 +484,7 @@ public final class SolstoneInstaller {
             let message = failure?.message
                 ?? lastUsefulLine(stderr)
                 ?? parsed.lastRenderedLine
-                ?? "sol setup failed"
+                ?? "journal setup failed"
             failMain(
                 .solSetup(errorCode: failure?.errorCode, message: message),
                 category: Self.categorize(stderr: stderr),
@@ -551,7 +563,8 @@ public final class SolstoneInstaller {
     }
 
     private func runInstallModels(solPath: String) async {
-        let phase = "sol install-models"
+        let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
+        let phase = "journal install-models"
         modelsProgress = .running(SubprocessProgress(phase: phase))
         let environment = SolstoneRuntimeLayout().uvEnvironment()
 
@@ -559,7 +572,7 @@ public final class SolstoneInstaller {
         let result: SubprocessResult
         do {
             result = try await subprocessRunner.run(
-                executable: URL(fileURLWithPath: solPath),
+                executable: URL(fileURLWithPath: journalPath),
                 arguments: ["install-models"],
                 environment: environment,
                 stdoutHandler: { [weak self, output] data in
@@ -584,7 +597,7 @@ public final class SolstoneInstaller {
         if result.exitCode == 0 {
             modelsProgress = .done
         } else {
-            modelsProgress = .failed(message: lastUsefulLine(stderr) ?? "sol install-models failed")
+            modelsProgress = .failed(message: lastUsefulLine(stderr) ?? "journal install-models failed")
         }
     }
 
@@ -844,7 +857,7 @@ public final class SolstoneInstaller {
         case .installingSolstone:
             return "installing solstone"
         case .runningSolSetup:
-            return "running sol setup"
+            return "running journal setup"
         case .registering:
             return "registering"
         case .done:
