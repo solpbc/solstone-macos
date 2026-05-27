@@ -733,18 +733,20 @@ public final class SolstoneInstaller {
 
     internal func probeVersionAndAutoUpgrade() async {
         await probeVersion()
-        guard case .outdated(let installed, _) = probedVersion else { return }
-        if upgradeFailureRecord?.pinned == BundleConfig.solstonePinVersion {
-            return
+        switch probedVersion {
+        case .current:
+            if upgradeFailureRecord != nil {
+                clearUpgradeFailureRecord()
+            }
+        case .outdated(let installed, _):
+            start(
+                journalURL: Self.defaultJournalURL(),
+                existingInstallChoice: .createFresh,
+                upgradeFromInstalledVersion: installed
+            )
+        case .unknown, .none:
+            break
         }
-        if upgradeFailureRecord != nil {
-            clearUpgradeFailureRecord()
-        }
-        start(
-            journalURL: Self.defaultJournalURL(),
-            existingInstallChoice: .createFresh,
-            upgradeFromInstalledVersion: installed
-        )
     }
 
     public func runPostInstallAutoTest() async {

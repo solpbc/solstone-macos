@@ -33,6 +33,7 @@ public final class UserDefaultsUpgradeFailureRecordStore: UpgradeFailureRecordSt
 internal final class InMemoryUpgradeFailureRecordStore: UpgradeFailureRecordStoring, @unchecked Sendable {
     private let lock = NSLock()
     private var record: UpgradeFailureRecord?
+    private var _clearCallCount = 0
 
     init(record: UpgradeFailureRecord? = nil) {
         self.record = record
@@ -51,6 +52,11 @@ internal final class InMemoryUpgradeFailureRecordStore: UpgradeFailureRecordStor
     func clear() {
         lock.withLock {
             record = nil
+            _clearCallCount += 1
         }
+    }
+
+    var clearCallCount: Int {
+        lock.withLock { _clearCallCount }
     }
 }
