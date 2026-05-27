@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-05-26
+
+### Fixed
+- solstone now recovers automatically when segment rotation stalls after pause/resume, so your journal keeps receiving uploads without needing to quit and relaunch. previously, on rare occasions, the app could appear to be recording while no new segments reached your journal until the app was restarted.
+
 ### Changed
 - the journal setup tab now shows an attention badge when the bundled solstone install is outdated, and the upgrade action is highlighted so it is easier to find.
 

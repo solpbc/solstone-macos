@@ -4,9 +4,22 @@
 import Foundation
 import os
 
+public protocol AudioRemixing: Sendable {
+    func remix(
+        inputs: [AudioRemixerInput],
+        to outputURL: URL,
+        deleteSourceFiles: Bool,
+        silenceMusic: Bool
+    ) async throws -> AudioRemixerResult
+}
+
+extension AudioRemixer: AudioRemixing {}
+
 /// Manages background audio remix operations
 /// Processes jobs sequentially to avoid CPU contention
 public actor RemixQueue {
+    public typealias RemixerFactory = @Sendable (_ verbose: Bool, _ debugKeepRejected: Bool) -> any AudioRemixing
+
     /// Data needed to process a remix in the background
     public struct RemixJob: Sendable {
         let segmentDirectory: URL
@@ -30,10 +43,16 @@ public actor RemixQueue {
     /// Callback invoked when a segment completes (for triggering upload)
     private var onSegmentComplete: (@Sendable (URL) async -> Void)?
 
+    private let remixerFactory: RemixerFactory
+
     /// Shared instance
     public static let shared = RemixQueue()
 
-    private init() {}
+    init(remixerFactory: @escaping RemixerFactory = { verbose, debugKeepRejected in
+        AudioRemixer(verbose: verbose, debugKeepRejected: debugKeepRejected)
+    }) {
+        self.remixerFactory = remixerFactory
+    }
 
     /// Set the callback for when segments complete remixing
     public func setOnSegmentComplete(_ callback: (@Sendable (URL) async -> Void)?) {
@@ -50,6 +69,8 @@ public actor RemixQueue {
     public func waitForCompletion() async {
         await processingTask?.value
     }
+
+    internal var isProcessingForTesting: Bool { isProcessing }
 
     /// Start processing if not already running
     private func startProcessingIfNeeded() {
@@ -82,16 +103,22 @@ public actor RemixQueue {
 
         if !job.audioInputs.isEmpty {
             do {
-                let remixer = AudioRemixer(verbose: false, debugKeepRejected: job.debugKeepRejected)
-                let result = try await remixer.remix(
-                    inputs: job.audioInputs,
-                    to: audioOutputURL,
-                    deleteSourceFiles: true,
-                    silenceMusic: job.silenceMusic
-                )
+                let remixer = remixerFactory(false, job.debugKeepRejected)
+                let result = try await withTimeout(seconds: 60) {
+                    try await remixer.remix(
+                        inputs: job.audioInputs,
+                        to: audioOutputURL,
+                        deleteSourceFiles: true,
+                        silenceMusic: job.silenceMusic
+                    )
+                }
                 Logger.storage.info("Remix complete: \(result.tracksWritten, privacy: .public) tracks, \(result.tracksSkipped, privacy: .public) skipped")
             } catch AudioRemixerError.noTracksToWrite {
                 Logger.storage.info("No audio tracks to write (all silent)")
+            } catch is TimeoutError {
+                Logger.storage.error("Background remix timed out for \(job.segmentDirectory.lastPathComponent, privacy: .public); marking segment failed")
+                await markIncompleteSegmentAsFailed(job.segmentDirectory)
+                return
             } catch {
                 Logger.storage.error("Background remix failed: \(error, privacy: .public)")
                 // Continue with rename anyway - video is still valid

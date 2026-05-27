@@ -22,7 +22,12 @@ public final class StorageManager: Sendable {
         return formatter
     }()
 
-    public init() {
+    public init(baseDirectory: URL? = nil) {
+        if let baseDirectory {
+            self.baseDirectory = baseDirectory
+            return
+        }
+
         // ~/Library/Application Support/Solstone/captures/
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         self.baseDirectory = appSupport.appendingPathComponent("Solstone/captures", isDirectory: true)

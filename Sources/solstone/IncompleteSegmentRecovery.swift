@@ -8,7 +8,7 @@ import os
 
 /// Recovers orphaned .incomplete segment directories on startup
 /// Attempts to remix audio and rename files/directories to final format
-public final class IncompleteSegmentRecovery: Sendable {
+public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Sendable {
     private let verbose: Bool
 
     /// Minimum age (in seconds) for a segment to be considered stale and recoverable
@@ -313,22 +313,6 @@ public final class IncompleteSegmentRecovery: Sendable {
 
     /// Mark a segment as failed by renaming from .incomplete to .failed
     private func markAsFailed(_ url: URL) async -> Bool {
-        let fm = FileManager.default
-        let dirName = url.lastPathComponent
-
-        guard dirName.hasSuffix(".incomplete") else { return false }
-
-        let failedName = String(dirName.dropLast(".incomplete".count)) + ".failed"
-        let parentDir = url.deletingLastPathComponent()
-        let failedURL = parentDir.appendingPathComponent(failedName)
-
-        do {
-            try fm.moveItem(at: url, to: failedURL)
-            Logger.storage.warning("Marked segment as failed: \(dirName, privacy: .public) -> \(failedName, privacy: .public)")
-            return false
-        } catch {
-            Logger.storage.error("Failed to mark segment as failed: \(error, privacy: .public)")
-            return false
-        }
+        await markIncompleteSegmentAsFailed(url)
     }
 }

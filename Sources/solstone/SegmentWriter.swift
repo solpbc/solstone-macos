@@ -41,20 +41,67 @@ public struct SegmentCaptureResult: Sendable {
     public let micMetadataJSON: String?
 }
 
+@MainActor
+public protocol SegmentScreenshotCapturing: AnyObject, Sendable {
+    func start() async throws
+    func stop() async
+    func updateContentFilter(_ filter: SCContentFilter) async
+    func finishWithTimeout(seconds: Double) async -> Result<(URL, Int), Error>?
+}
+
+public protocol SegmentAudioManaging: AnyObject, Sendable {
+    func setSegmentStartTime(_ time: CMTime)
+    func startSystemAudio() throws -> String
+    func appendSystemAudio(_ sampleBuffer: CMSampleBuffer)
+    func addMicrophone(_ device: AudioInputDevice) throws -> String
+    func removeMicrophone(deviceUID: String)
+    func hasMicrophone(deviceUID: String) -> Bool
+    func activeMicrophoneUIDs() -> [String]
+    func getMicMetadata() -> [[String: Any]]
+    func finishAll() async -> [AudioRemixerInput]
+    func finishAndRemix(
+        to outputURL: URL,
+        debugKeepRejected: Bool,
+        deleteSourceFiles: Bool,
+        silenceMusic: Bool
+    ) async throws -> AudioRemixerResult
+}
+
+extension ScreenshotCapturer: SegmentScreenshotCapturing {}
+extension PerSourceAudioManager: SegmentAudioManaging {}
+
 /// Manages recording for a single 5-minute segment
 /// Thread safety: Always accessed from MainActor context (via CaptureManager)
 @MainActor
 public final class SegmentWriter {
+    public typealias ScreenshotCapturerFactory = @MainActor @Sendable (
+        _ info: DisplayInfo,
+        _ videoURL: URL,
+        _ frameRate: Double,
+        _ duration: Double?,
+        _ contentFilter: SCContentFilter?,
+        _ verbose: Bool
+    ) throws -> any SegmentScreenshotCapturing
+
+    public typealias AudioManagerFactory = @Sendable (
+        _ outputDirectory: URL,
+        _ timePrefix: String,
+        _ captureManager: MicrophoneCaptureManager?,
+        _ verbose: Bool
+    ) -> any SegmentAudioManaging
+
     /// The directory containing this segment's files (initially HHMMSS.incomplete)
     public let outputDirectory: URL
 
     /// The time prefix for file naming (e.g., "143022")
     public let timePrefix: String
 
-    private var screenshotCapturers: [CGDirectDisplayID: ScreenshotCapturer] = [:]
-    private var audioManager: PerSourceAudioManager?
+    private var screenshotCapturers: [CGDirectDisplayID: any SegmentScreenshotCapturing] = [:]
+    private var audioManager: (any SegmentAudioManaging)?
     private var systemAudioCaptureManager: SystemAudioCaptureManager?
     private let verbose: Bool
+    private let screenshotCapturerFactory: ScreenshotCapturerFactory
+    private let audioManagerFactory: AudioManagerFactory
 
     /// When true, move rejected audio tracks to rejected/ subfolder instead of deleting
     private let debugKeepRejectedAudio: Bool
@@ -83,13 +130,55 @@ public final class SegmentWriter {
         timePrefix: String,
         debugKeepRejectedAudio: Bool = false,
         silenceMusic: Bool = true,
-        verbose: Bool = false
+        verbose: Bool = false,
+        screenshotCapturerFactory: @escaping ScreenshotCapturerFactory = SegmentWriter.defaultScreenshotCapturerFactory,
+        audioManagerFactory: @escaping AudioManagerFactory = SegmentWriter.defaultAudioManagerFactory
     ) {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
         self.debugKeepRejectedAudio = debugKeepRejectedAudio
         self.silenceMusic = silenceMusic
         self.verbose = verbose
+        self.screenshotCapturerFactory = screenshotCapturerFactory
+        self.audioManagerFactory = audioManagerFactory
+    }
+
+    public static let defaultScreenshotCapturerFactory: ScreenshotCapturerFactory = { info, videoURL, frameRate, duration, contentFilter, verbose in
+        guard let contentFilter else {
+            throw SegmentError.missingContentFilter(displayID: info.displayID)
+        }
+
+        let capturer = try ScreenshotCapturer(
+            displayID: info.displayID,
+            videoURL: videoURL,
+            width: info.width,
+            height: info.height,
+            frameRate: frameRate,
+            duration: duration,
+            contentFilter: contentFilter,
+            verbose: verbose
+        )
+        capturer.onHealthFailure = {
+            Logger.capture.warning("ScreenshotCapturer: health failure reported for display \(info.displayID, privacy: .public)")
+        }
+        return capturer
+    }
+
+    public static let defaultAudioManagerFactory: AudioManagerFactory = { outputDirectory, timePrefix, captureManager, verbose in
+        if let captureManager {
+            return PerSourceAudioManager(
+                outputDirectory: outputDirectory,
+                timePrefix: timePrefix,
+                captureManager: captureManager,
+                verbose: verbose
+            )
+        }
+
+        return PerSourceAudioManager(
+            outputDirectory: outputDirectory,
+            timePrefix: timePrefix,
+            verbose: verbose
+        )
     }
 
     /// Starts recording to this segment
@@ -108,82 +197,61 @@ public final class SegmentWriter {
         micCaptureManager: MicrophoneCaptureManager? = nil,
         systemAudioCaptureManager: SystemAudioCaptureManager? = nil
     ) async throws {
-        for info in displayInfos {
-            guard filters[info.displayID] != nil else {
-                throw SegmentError.missingContentFilter(displayID: info.displayID)
-            }
-        }
-
-        // Create screenshot capturers for each display
-        for info in displayInfos {
-            let videoURL = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
-
-            let filter = filters[info.displayID]!
-            let capturer = try ScreenshotCapturer(
-                displayID: info.displayID,
-                videoURL: videoURL,
-                width: info.width,
-                height: info.height,
-                frameRate: Self.frameRate,
-                duration: Self.segmentDuration,
-                contentFilter: filter,
-                verbose: verbose
-            )
-            capturer.onHealthFailure = {
-                Logger.capture.warning("ScreenshotCapturer: health failure reported for display \(info.displayID, privacy: .public)")
-            }
-
-            screenshotCapturers[info.displayID] = capturer
-        }
-
-        // Create per-source audio manager (with shared capture manager if provided)
-        let manager: PerSourceAudioManager
-        if let captureManager = micCaptureManager {
-            manager = PerSourceAudioManager(
-                outputDirectory: outputDirectory,
-                timePrefix: timePrefix,
-                captureManager: captureManager,
-                verbose: verbose
-            )
-        } else {
-            manager = PerSourceAudioManager(
-                outputDirectory: outputDirectory,
-                timePrefix: timePrefix,
-                verbose: verbose
-            )
-        }
+        var constructedCapturers: [CGDirectDisplayID: any SegmentScreenshotCapturing] = [:]
+        let manager = audioManagerFactory(outputDirectory, timePrefix, micCaptureManager, verbose)
         self.audioManager = manager
 
-        // Record segment start time
-        let segmentStartTime = CMClockGetTime(CMClockGetHostTimeClock())
-        manager.setSegmentStartTime(segmentStartTime)
-
-        // Start system audio writer
-        _ = try manager.startSystemAudio()
-
-        // Store reference to persistent system audio manager
-        self.systemAudioCaptureManager = systemAudioCaptureManager
-
-        // Start persistent system audio stream and wire callback to this segment's manager
-        if let sysAudioManager = systemAudioCaptureManager, let audioFilter {
-            try await sysAudioManager.start(filter: audioFilter)
-            sysAudioManager.setCallback { [weak manager] buffer in
-                manager?.appendSystemAudio(buffer)
+        do {
+            // Create screenshot capturers for each display
+            for info in displayInfos {
+                let videoURL = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
+                let capturer = try screenshotCapturerFactory(
+                    info,
+                    videoURL,
+                    Self.frameRate,
+                    Self.segmentDuration,
+                    filters[info.displayID],
+                    verbose
+                )
+                constructedCapturers[info.displayID] = capturer
             }
-        }
 
-        // Start initial microphones
-        for device in mics {
-            do {
-                _ = try manager.addMicrophone(device)
-            } catch {
-                Logger.capture.warning("Failed to start mic \(device.name, privacy: .public): \(error, privacy: .public)")
+            screenshotCapturers = constructedCapturers
+
+            // Record segment start time
+            let segmentStartTime = CMClockGetTime(CMClockGetHostTimeClock())
+            manager.setSegmentStartTime(segmentStartTime)
+
+            // Start system audio writer
+            _ = try manager.startSystemAudio()
+
+            // Store reference to persistent system audio manager
+            self.systemAudioCaptureManager = systemAudioCaptureManager
+
+            // Start persistent system audio stream and wire callback to this segment's manager
+            if let sysAudioManager = systemAudioCaptureManager, let audioFilter {
+                try await sysAudioManager.start(filter: audioFilter)
+                sysAudioManager.setCallback { [weak manager] buffer in
+                    manager?.appendSystemAudio(buffer)
+                }
             }
-        }
 
-        // Start all screenshot capturers
-        for (_, capturer) in screenshotCapturers {
-            await capturer.start()
+            // Start initial microphones
+            for device in mics {
+                do {
+                    _ = try manager.addMicrophone(device)
+                } catch {
+                    Logger.capture.warning("Failed to start mic \(device.name, privacy: .public): \(error, privacy: .public)")
+                }
+            }
+
+            // Start all screenshot capturers
+            for (_, capturer) in screenshotCapturers {
+                try await capturer.start()
+            }
+        } catch {
+            await rollbackStart(manager: manager, capturers: constructedCapturers)
+            throw error
         }
 
         captureStartTime = Date()
@@ -238,7 +306,15 @@ public final class SegmentWriter {
         Logger.capture.info("Stopping \(self.screenshotCapturers.count, privacy: .public) screenshot capturer(s)...")
         for (displayID, capturer) in screenshotCapturers {
             Logger.capture.info("Stopping capturer for display \(displayID, privacy: .public)...")
-            await capturer.stop()
+            do {
+                try await withTimeout(seconds: 5) {
+                    await capturer.stop()
+                }
+            } catch is TimeoutError {
+                Logger.capture.warning("Timeout stopping capturer for display \(displayID, privacy: .public)")
+            } catch {
+                Logger.capture.warning("Error stopping capturer for display \(displayID, privacy: .public): \(error, privacy: .public)")
+            }
         }
 
         // Clear system audio callback (stream keeps running for next segment)
@@ -248,13 +324,17 @@ public final class SegmentWriter {
         if let manager = audioManager {
             let audioURL = outputDirectory.appendingPathComponent("\(timePrefix)_audio.m4a")
             do {
-                let result = try await manager.finishAndRemix(
-                    to: audioURL,
-                    debugKeepRejected: debugKeepRejectedAudio,
-                    deleteSourceFiles: true,
-                    silenceMusic: silenceMusic
-                )
+                let result = try await withTimeout(seconds: 15) {
+                    try await manager.finishAndRemix(
+                        to: audioURL,
+                        debugKeepRejected: self.debugKeepRejectedAudio,
+                        deleteSourceFiles: true,
+                        silenceMusic: self.silenceMusic
+                    )
+                }
                 Logger.capture.info("Audio remix complete: \(result.tracksWritten, privacy: .public) tracks, \(result.tracksSkipped, privacy: .public) skipped")
+            } catch is TimeoutError {
+                Logger.capture.error("Audio remix timed out; leaving source audio files for recovery")
             } catch {
                 Logger.capture.error("Audio remix failed: \(error, privacy: .public)")
             }
@@ -289,7 +369,15 @@ public final class SegmentWriter {
         Logger.capture.info("Stopping \(self.screenshotCapturers.count, privacy: .public) screenshot capturer(s) for background remix...")
         for (displayID, capturer) in screenshotCapturers {
             if verbose { Logger.capture.debug("Stopping capturer for display \(displayID, privacy: .public)...") }
-            await capturer.stop()
+            do {
+                try await withTimeout(seconds: 5) {
+                    await capturer.stop()
+                }
+            } catch is TimeoutError {
+                Logger.capture.warning("Timeout stopping capturer for display \(displayID, privacy: .public)")
+            } catch {
+                Logger.capture.warning("Error stopping capturer for display \(displayID, privacy: .public): \(error, privacy: .public)")
+            }
         }
 
         // Clear system audio callback (stream keeps running for next segment)
@@ -313,7 +401,17 @@ public final class SegmentWriter {
         // Finish audio writers (but don't remix - returns inputs for background remix)
         var audioInputs: [AudioRemixerInput] = []
         if let manager = audioManager {
-            audioInputs = await manager.finishAll()
+            do {
+                audioInputs = try await withTimeout(seconds: 10) {
+                    await manager.finishAll()
+                }
+            } catch is TimeoutError {
+                Logger.capture.warning("Timed out finishing audio writers; proceeding without audio inputs")
+                audioInputs = []
+            } catch {
+                Logger.capture.warning("Failed to finish audio writers: \(error, privacy: .public)")
+                audioInputs = []
+            }
         }
 
         // Finish all screenshot capturers (video writers)
@@ -424,6 +522,37 @@ public final class SegmentWriter {
         } catch {
             Logger.capture.warning("Failed to write metadata file: \(error, privacy: .public)")
         }
+    }
+
+    private func rollbackStart(
+        manager: any SegmentAudioManaging,
+        capturers: [CGDirectDisplayID: any SegmentScreenshotCapturing]
+    ) async {
+        Logger.capture.warning("Rolling back partially started segment: \(self.outputDirectory.lastPathComponent, privacy: .public)")
+        systemAudioCaptureManager?.clearCallback()
+
+        for (displayID, capturer) in capturers {
+            do {
+                try await withTimeout(seconds: 5) {
+                    await capturer.stop()
+                }
+            } catch {
+                Logger.capture.warning("Failed to stop capturer during rollback for display \(displayID, privacy: .public): \(error, privacy: .public)")
+            }
+        }
+
+        do {
+            _ = try await withTimeout(seconds: 5) {
+                await manager.finishAll()
+            }
+        } catch {
+            Logger.capture.warning("Failed to finish audio writers during rollback: \(error, privacy: .public)")
+        }
+
+        screenshotCapturers.removeAll()
+        audioManager = nil
+        systemAudioCaptureManager = nil
+        captureStartTime = nil
     }
 
     /// Errors that can occur during segment recording

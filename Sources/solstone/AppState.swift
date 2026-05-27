@@ -60,6 +60,7 @@ public final class AppState {
     public private(set) var uploadCoordinator: UploadCoordinator!
     public let installer: SolstoneInstaller
     public let heartbeatService: HeartbeatService
+    public let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
     internal let solChatBridge: SolChatBridge
     private let isSnapshot: Bool
     public private(set) var config: AppConfig
@@ -363,6 +364,7 @@ public final class AppState {
         self.isSnapshot = false
         self.config = config
         self.installer = SolstoneInstaller()
+        self.recoveryCoordinator = .shared
         self.heartbeatService = HeartbeatService(
             isPaused: { [pauseManager] in
                 pauseManager.isPaused
@@ -418,7 +420,8 @@ public final class AppState {
             excludePrivateBrowsing: config.excludePrivateBrowsing,
             excludedTitlePatterns: config.excludedTitlePatterns,
             microphoneGain: config.microphoneGain,
-            verbose: false
+            verbose: false,
+            recoveryCoordinator: recoveryCoordinator
         )
         self.debugAudioHolder = debugAudioHolder
         self.silenceMusicHolder = silenceMusicHolder
@@ -468,13 +471,7 @@ public final class AppState {
         syncMicrophonePriorityList()
 
         // Recover any incomplete segments from previous sessions
-        Task.detached {
-            let recovery = IncompleteSegmentRecovery(verbose: false)
-            let recovered = await recovery.recoverAll()
-            if recovered > 0 {
-                Logger.general.info("Recovered \(recovered, privacy: .public) incomplete segment(s)")
-            }
-        }
+        recoveryCoordinator.scheduleDetached()
 
         // Sync any pending uploads on startup
         if config.serverURL != nil {
@@ -545,6 +542,7 @@ public final class AppState {
         self.isSnapshot = true
         self.config = config
         self.installer = SolstoneInstaller(failureRecordStore: InMemoryUpgradeFailureRecordStore())
+        self.recoveryCoordinator = .shared
         self.heartbeatService = HeartbeatService(
             isPaused: { false },
             postHeartbeat: { _, _, _ in }
