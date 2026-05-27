@@ -120,8 +120,9 @@ public actor RemixQueue {
                 await markIncompleteSegmentAsFailed(job.segmentDirectory)
                 return
             } catch {
-                Logger.storage.error("Background remix failed: \(error, privacy: .public)")
-                // Continue with rename anyway - video is still valid
+                Logger.storage.error("Background remix failed for \(job.segmentDirectory.lastPathComponent, privacy: .public): \(error, privacy: .public)")
+                await markIncompleteSegmentAsFailed(job.segmentDirectory)
+                return
             }
         }
 

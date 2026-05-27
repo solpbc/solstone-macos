@@ -10,13 +10,18 @@ import os
 /// Attempts to remix audio and rename files/directories to final format
 public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Sendable {
     private let verbose: Bool
+    private let remixerFactory: @Sendable (Bool) -> any AudioRemixing
 
     /// Minimum age (in seconds) for a segment to be considered stale and recoverable
     /// Segments newer than this are assumed to be actively recording
     private let minimumAge: TimeInterval = 120  // 2 minutes
 
-    public init(verbose: Bool = false) {
+    public init(
+        verbose: Bool = false,
+        remixerFactory: @escaping @Sendable (Bool) -> any AudioRemixing = { AudioRemixer(verbose: $0) }
+    ) {
         self.verbose = verbose
+        self.remixerFactory = remixerFactory
     }
 
     /// Scan captures directory and recover any incomplete segments
@@ -86,7 +91,7 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
     /// Recover a single incomplete segment directory
     /// - Parameter url: Path to the .incomplete directory
     /// - Returns: true if recovery succeeded
-    private func recoverSegment(at url: URL) async -> Bool {
+    internal func recoverSegment(at url: URL) async -> Bool {
         let fm = FileManager.default
         let dirName = url.lastPathComponent
 
@@ -144,17 +149,20 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
                 if inputs.isEmpty {
                     Logger.storage.warning("No valid audio inputs for remix in \(dirName, privacy: .public)")
                 } else {
-                    let remixer = AudioRemixer(verbose: verbose)
+                    let remixer = makeRemixer(verbose: verbose)
                     let result = try await remixer.remix(
                         inputs: inputs,
                         to: consolidatedAudioURL,
-                        deleteSourceFiles: true
+                        deleteSourceFiles: true,
+                        silenceMusic: true
                     )
                     Logger.storage.info("Remixed \(result.tracksWritten, privacy: .public) track(s), skipped \(result.tracksSkipped, privacy: .public)")
                 }
+            } catch AudioRemixerError.noTracksToWrite {
+                Logger.storage.info("No audio tracks to write during recovery for \(dirName, privacy: .public)")
             } catch {
                 Logger.storage.warning("Audio remix failed for \(dirName, privacy: .public): \(error, privacy: .public)")
-                // Continue with recovery anyway - at least save the video
+                return await markAsFailed(url)
             }
         }
 
@@ -181,6 +189,11 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
             Logger.storage.warning("Failed to rename directory \(dirName, privacy: .public): \(error, privacy: .public)")
             return await markAsFailed(url)
         }
+    }
+
+    /// Create the remixer used for recovery.
+    private func makeRemixer(verbose: Bool) -> any AudioRemixing {
+        remixerFactory(verbose)
     }
 
     /// Build AudioRemixerInput array from audio files

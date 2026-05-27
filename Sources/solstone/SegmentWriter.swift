@@ -99,6 +99,7 @@ public final class SegmentWriter {
     private var screenshotCapturers: [CGDirectDisplayID: any SegmentScreenshotCapturing] = [:]
     private var audioManager: (any SegmentAudioManaging)?
     private var systemAudioCaptureManager: SystemAudioCaptureManager?
+    private var audioRemixFailed = false
     private let verbose: Bool
     private let screenshotCapturerFactory: ScreenshotCapturerFactory
     private let audioManagerFactory: AudioManagerFactory
@@ -333,10 +334,14 @@ public final class SegmentWriter {
                     )
                 }
                 Logger.capture.info("Audio remix complete: \(result.tracksWritten, privacy: .public) tracks, \(result.tracksSkipped, privacy: .public) skipped")
-            } catch is TimeoutError {
-                Logger.capture.error("Audio remix timed out; leaving source audio files for recovery")
+            } catch AudioRemixerError.noTracksToWrite {
+                Logger.capture.info("Audio remix produced no tracks; finalizing segment without audio")
+            } catch let error as TimeoutError {
+                Logger.capture.error("Audio remix timed out for \(self.outputDirectory.lastPathComponent, privacy: .public): \(error, privacy: .public); leaving source audio files for recovery")
+                audioRemixFailed = true
             } catch {
-                Logger.capture.error("Audio remix failed: \(error, privacy: .public)")
+                Logger.capture.error("Audio remix failed for \(self.outputDirectory.lastPathComponent, privacy: .public): \(error, privacy: .public)")
+                audioRemixFailed = true
             }
         }
 
@@ -458,6 +463,16 @@ public final class SegmentWriter {
         let micMetadata = getMicMetadata()
 
         await finish()
+
+        if audioRemixFailed {
+            await markIncompleteSegmentAsFailed(outputDirectory)
+            let failedDirectory = outputDirectory.deletingLastPathComponent()
+                .appendingPathComponent(outputDirectory.lastPathComponent.replacingOccurrences(of: ".incomplete", with: ".failed"))
+            if FileManager.default.fileExists(atPath: failedDirectory.path) {
+                return failedDirectory
+            }
+            return outputDirectory
+        }
 
         // Write metadata file if we have mic metadata
         if !micMetadata.isEmpty {

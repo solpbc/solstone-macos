@@ -4,6 +4,8 @@ import Foundation
 import Testing
 @testable import solstone
 
+struct SyntheticRemixError: Error, Sendable {}
+
 final class LockedCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
@@ -62,6 +64,7 @@ final class FakeAudioManager: SegmentAudioManaging, @unchecked Sendable {
         case normal
         case hangFinishAll
         case hangFinishAndRemix
+        case throwFromFinishAndRemix(any Error & Sendable)
     }
 
     let behavior: Behavior
@@ -113,6 +116,9 @@ final class FakeAudioManager: SegmentAudioManaging, @unchecked Sendable {
         silenceMusic: Bool
     ) async throws -> AudioRemixerResult {
         finishAndRemixCount.increment()
+        if case .throwFromFinishAndRemix(let error) = behavior {
+            throw error
+        }
         if case .hangFinishAndRemix = behavior {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(100))
@@ -214,10 +220,12 @@ final class FakeRemixer: AudioRemixing, @unchecked Sendable {
     enum Behavior: Sendable {
         case hang
         case success
+        case throwing(any Error & Sendable)
     }
 
     let behavior: Behavior
     let remixCount = LockedCounter()
+    let recordedSilenceMusic = LockedArray<Bool>([])
 
     init(_ behavior: Behavior) {
         self.behavior = behavior
@@ -230,6 +238,7 @@ final class FakeRemixer: AudioRemixing, @unchecked Sendable {
         silenceMusic: Bool
     ) async throws -> AudioRemixerResult {
         remixCount.increment()
+        recordedSilenceMusic.append(silenceMusic)
         switch behavior {
         case .hang:
             while !Task.isCancelled {
@@ -239,6 +248,8 @@ final class FakeRemixer: AudioRemixing, @unchecked Sendable {
         case .success:
             try Data("ok".utf8).write(to: outputURL)
             return AudioRemixerResult(tracksWritten: 1, tracksSkipped: 0, sourceFiles: [])
+        case .throwing(let error):
+            throw error
         }
     }
 }
@@ -280,6 +291,16 @@ final class LockedArray<Element: Sendable>: @unchecked Sendable {
             guard !values.isEmpty else { return defaultValue }
             return values.removeFirst()
         }
+    }
+
+    func append(_ value: Element) {
+        lock.withLock {
+            values.append(value)
+        }
+    }
+
+    var all: [Element] {
+        lock.withLock { values }
     }
 }
 

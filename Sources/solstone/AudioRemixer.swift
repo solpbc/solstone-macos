@@ -19,6 +19,24 @@ public struct AudioRemixerInput: Sendable {
     }
 }
 
+internal func filterReadableAudioInputs(_ inputs: [AudioRemixerInput]) async -> (readable: [AudioRemixerInput], skippedUnreadable: Int) {
+    var readable: [AudioRemixerInput] = []
+    var skippedUnreadable = 0
+
+    for input in inputs {
+        let tracks = try? await AVURLAsset(url: input.url).loadTracks(withMediaType: .audio)
+        guard let tracks, !tracks.isEmpty else {
+            Logger.audio.warning("Unreadable audio source skipped: \(input.url.lastPathComponent, privacy: .public)")
+            skippedUnreadable += 1
+            continue
+        }
+
+        readable.append(input)
+    }
+
+    return (readable, skippedUnreadable)
+}
+
 /// Result of the remix operation
 public struct AudioRemixerResult: Sendable {
     /// Number of tracks written to output
@@ -78,12 +96,14 @@ public final class AudioRemixer: Sendable {
             throw AudioRemixerError.noInputs
         }
 
+        let readableInputs = await filterReadableAudioInputs(inputs)
+        let inputs = readableInputs.readable
         let outputDirectory = outputURL.deletingLastPathComponent()
 
         // Filter inputs - skip tracks with no audio or no speech
         let filterStart = ContinuousClock.now
         var tracksToProcess: [(input: AudioRemixerInput, asset: AVURLAsset)] = []
-        var skippedCount = 0
+        var skippedCount = readableInputs.skippedUnreadable
         // Silence ranges for system audio tracks (keyed by index in tracksToProcess)
         var silenceRangesMap: [Int: [CMTimeRange]] = [:]
 
