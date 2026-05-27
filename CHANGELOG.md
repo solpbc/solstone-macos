@@ -5,6 +5,22 @@ All notable changes to Solstone Capture will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-05-27
+
+### Added
+- a new newsletters page in the sidebar. read the facet newsletters sol writes for you from their own surface, with copy and PDF download.
+
+### Changed
+- the bundled solstone is updated. the activity participation tab now renders as a structured list, with attendees and mentioned grouped separately, per-entry provenance, and a "less certain" tag on lower-confidence entries. previously it rendered as a raw JSON block.
+- the chat surface gets a small refresh: sol's thinking summary now appears alongside the response when the AI provider returns one, a liveness placeholder shows while sol is working, errors offer a retry, and labels for what sol is doing read in plain language.
+
+### Fixed
+- the weekly reflection page now fills in. on busier journals, sol was stopping before it got to the writing, so the page rendered empty. that's resolved.
+- a name that only appeared in a transcript, without other corroboration, no longer surfaces as a meeting attendee on the activity participation tab. it shows up under "mentioned" instead.
+- some of sol's background work running through google could fail silently on the default configuration. a request-budget calculation was landing one over the supported maximum, rejecting every call; the calculation is corrected.
+- sidebar labels for apps like "transcripts," "activities," and "settings" no longer truncate when the sidebar is expanded.
+
+
 ## [Unreleased]
 
 ## [1.3.2] - 2026-05-26
