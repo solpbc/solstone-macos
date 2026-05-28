@@ -5,6 +5,15 @@ All notable changes to Solstone Capture will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-05-27
+
+### Changed
+- the bundled solstone is updated.
+
+### Fixed
+- your segment audio now stays with its segment. on 1.3.3, if a recording finished in a way solstone couldn't fully process, the segment could reach your journal with its screen but without its audio, even when a good recording was sitting on your machine. now those recordings are kept safe on disk and the segment is marked for another pass instead of going up incomplete.
+- the upgrade-failed notice no longer lingers once you're current. if an earlier upgrade ran into trouble, the notice could stay up after the problem was resolved, and an outdated install could stop retrying the upgrade on launch. solstone now re-runs the upgrade when it's behind and clears the notice once you're on the latest.
+
 ## [1.3.3] - 2026-05-27
 
 ### Added
