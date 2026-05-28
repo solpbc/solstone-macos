@@ -29,10 +29,27 @@ struct SolHealthCheckTests {
         }
     }
 
-    @Test func doctorThrowsOnNonZeroExit() async throws {
+    @Test func doctorReturnsReportOnNonZeroExitWithFailingCheck() async throws {
+        let json = #"{"checks":[{"name":"port_available","status":"fail","severity":"blocker","detail":"port busy","fix":"free the port"}],"summary":null}"#
+        let runner = FakeDoctorRunner(stdout: Data(json.utf8), exitCode: 1)
+
+        let report = try await SolHealthCheck.doctor(runner: runner, solPath: "/usr/bin/sol")
+
+        #expect(report.checks.contains { $0.status == .fail })
+    }
+
+    @Test func doctorThrowsEmptyOutputOnNonZeroExitWithEmptyStdout() async throws {
         let runner = FakeDoctorRunner(stderr: Data("port busy\n".utf8), exitCode: 2)
 
-        await #expect(throws: DoctorError.subprocessFailed(exitCode: 2, stderr: "port busy")) {
+        await #expect(throws: DoctorError.emptyOutput) {
+            _ = try await SolHealthCheck.doctor(runner: runner, solPath: "/usr/bin/sol")
+        }
+    }
+
+    @Test func doctorThrowsParseFailureOnNonZeroExitWithGarbage() async throws {
+        let runner = FakeDoctorRunner(stdout: Data("{".utf8), exitCode: 1)
+
+        await #expect(throws: DoctorError.self) {
             _ = try await SolHealthCheck.doctor(runner: runner, solPath: "/usr/bin/sol")
         }
     }

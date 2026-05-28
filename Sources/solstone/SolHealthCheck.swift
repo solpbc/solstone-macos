@@ -125,10 +125,8 @@ enum SolHealthCheck {
         }
 
         let stdoutAccumulator = DataAccumulator()
-        let stderrAccumulator = DataAccumulator()
-        let result: SubprocessResult
         do {
-            result = try await withTimeout(seconds: 10.0) {
+            _ = try await withTimeout(seconds: 10.0) {
                 try await runner.run(
                     executable: URL(fileURLWithPath: resolvedSolPath),
                     arguments: ["doctor", "--json"],
@@ -136,18 +134,11 @@ enum SolHealthCheck {
                     stdoutHandler: { data in
                         append(data, to: stdoutAccumulator)
                     },
-                    stderrHandler: { data in
-                        append(data, to: stderrAccumulator)
-                    }
+                    stderrHandler: { _ in }
                 )
             }
         } catch {
             throw DoctorError.subprocessFailed(exitCode: -1, stderr: error.localizedDescription)
-        }
-
-        let stderrString = await stderrAccumulator.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard result.exitCode == 0 else {
-            throw DoctorError.subprocessFailed(exitCode: result.exitCode, stderr: stderrString.isEmpty ? nil : stderrString)
         }
 
         let stdoutString = await stdoutAccumulator.string
