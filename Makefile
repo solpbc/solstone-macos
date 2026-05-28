@@ -168,8 +168,7 @@ test:
 	swift test
 
 ci:
-	swift test
-	python3 -m unittest discover scripts/tests
+	@./scripts/run-ci.sh
 
 integration-test:
 	SPL_INTEGRATION=1 swift test --filter 'SPLTunnelTests.IntegrationTests'
