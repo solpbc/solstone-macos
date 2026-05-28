@@ -242,6 +242,19 @@ final class UpdateController {
         defaults.set(Self.encode(result), forKey: Self.lastCheckResultKey)
     }
 
+    var updateIsAvailable: Bool {
+        switch state {
+        case .updateAvailable, .readyToInstall: return true
+        default: return false
+        }
+    }
+
+    var updateCheckFailed: Bool { lastCheckResult == .failed }
+
+    var updatesNeedAttention: Bool { updateIsAvailable || updateCheckFailed }
+
+    var updatesAreCurrent: Bool { lastCheckResult == .upToDate }
+
     private func ensureUpdaterStarted() -> Bool {
         if updaterStarted {
             return true

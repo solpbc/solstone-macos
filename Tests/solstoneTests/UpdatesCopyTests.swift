@@ -4,10 +4,6 @@ import Testing
 
 @Suite("UpdatesCopy")
 struct UpdatesCopyTests {
-    @Test func menuBarCheckForUpdatesString() {
-        #expect(UpdatesCopy.menuBarCheckForUpdates == "check for updates…")
-    }
-
     @Test func updateAvailableTitleString() {
         #expect(UpdatesCopy.updateAvailableTitle(version: "1.1.0") == "version 1.1.0 is available")
     }

@@ -178,10 +178,6 @@ public final class AppState {
         !serviceNeedsAttention && config.serviceMode != nil
     }
 
-    public var anyTabNeedsAttention: Bool {
-        permissionsNeedAttention || serviceNeedsAttention
-    }
-
     private func isInstalledPipelineCardState(_ state: InstallerCardState) -> Bool {
         switch state {
         case .installedPlaceholder,

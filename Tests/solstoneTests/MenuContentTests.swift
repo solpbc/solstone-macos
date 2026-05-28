@@ -20,17 +20,80 @@ struct MenuContentTests {
         #expect(pausedHeaderText(timeRemaining: "1 min") != pausedHeaderText(timeRemaining: nil))
     }
 
-    @Test func settingsButtonShowsAttentionIconWhenAnyTabNeedsAttention() {
-        #expect(settingsAttentionIconName(anyTabNeedsAttention: true) == "exclamationmark.circle.fill")
-    }
-
-    @Test func settingsButtonOmitsAttentionIconWhenNoTabsNeedAttention() {
-        #expect(settingsAttentionIconName(anyTabNeedsAttention: false) == nil)
-    }
-
     @Test func openJournalIgnoresInvalidConfiguredURL() {
         #expect(journalURLToOpen(from: nil) == nil)
         #expect(journalURLToOpen(from: "") == nil)
+    }
+
+    @Test func firstSettingsAttentionTruthTable() {
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: false,
+            journalNeedsAttention: false,
+            updateIsAvailable: false,
+            updateCheckFailed: false
+        ) == nil)
+
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: true,
+            journalNeedsAttention: false,
+            updateIsAvailable: false,
+            updateCheckFailed: false
+        ) == .permissions)
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: false,
+            journalNeedsAttention: true,
+            updateIsAvailable: false,
+            updateCheckFailed: false
+        ) == .journal)
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: false,
+            journalNeedsAttention: false,
+            updateIsAvailable: true,
+            updateCheckFailed: false
+        ) == .updateAvailable)
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: false,
+            journalNeedsAttention: false,
+            updateIsAvailable: false,
+            updateCheckFailed: true
+        ) == .updateCheckFailed)
+
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: true,
+            journalNeedsAttention: true,
+            updateIsAvailable: false,
+            updateCheckFailed: false
+        ) == .permissions)
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: true,
+            journalNeedsAttention: false,
+            updateIsAvailable: true,
+            updateCheckFailed: false
+        ) == .permissions)
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: true,
+            journalNeedsAttention: false,
+            updateIsAvailable: false,
+            updateCheckFailed: true
+        ) == .permissions)
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: false,
+            journalNeedsAttention: true,
+            updateIsAvailable: true,
+            updateCheckFailed: false
+        ) == .journal)
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: false,
+            journalNeedsAttention: true,
+            updateIsAvailable: false,
+            updateCheckFailed: true
+        ) == .journal)
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: false,
+            journalNeedsAttention: false,
+            updateIsAvailable: true,
+            updateCheckFailed: true
+        ) == .updateAvailable)
     }
 
     @Test func pipelineStatusRowHelperTruthTable() {

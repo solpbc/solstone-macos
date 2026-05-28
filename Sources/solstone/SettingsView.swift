@@ -136,7 +136,13 @@ struct SettingsView: View {
 
                 Section {
                     Label("status", systemImage: "info.circle").tag(Tab.status)
-                    Label(UpdatesCopy.tabTitle, systemImage: "arrow.down.circle").tag(Tab.updates)
+                    sidebarLabel(
+                        UpdatesCopy.tabTitle,
+                        systemImage: "arrow.down.circle",
+                        badge: updateController.updatesNeedAttention ? .attention : (updateController.updatesAreCurrent ? .done : .blank),
+                        doneAccessibilityLabel: UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y
+                    )
+                        .tag(Tab.updates)
                     Label("help", systemImage: "questionmark.circle").tag(Tab.help)
                 } header: {
                     Text("system")
@@ -203,7 +209,12 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func sidebarLabel(_ title: String, systemImage: String, badge: SidebarBadgeState) -> some View {
+    private func sidebarLabel(
+        _ title: String,
+        systemImage: String,
+        badge: SidebarBadgeState,
+        doneAccessibilityLabel: String = UICopy.SETTINGS_TAB_DONE_A11Y
+    ) -> some View {
         let label = Label(title, systemImage: systemImage)
         switch badge {
         case .blank:
@@ -219,10 +230,10 @@ struct SettingsView: View {
                 Spacer()
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.secondary)
-                    .accessibilityLabel(UICopy.SETTINGS_TAB_DONE_A11Y)
+                    .accessibilityLabel(doneAccessibilityLabel)
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(title), \(UICopy.SETTINGS_TAB_DONE_A11Y)")
+            .accessibilityLabel("\(title), \(doneAccessibilityLabel)")
         }
     }
 

@@ -39,6 +39,26 @@ struct UICopyTests {
         #expect(UICopy.SETTINGS_TAB_ATTENTION_A11Y == "needs attention")
     }
 
+    @Test func settingsTabUpdatesDoneA11yString() {
+        #expect(UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y == "up to date")
+    }
+
+    @Test func settingsAttentionPermissionsString() {
+        #expect(UICopy.SETTINGS_ATTENTION_PERMISSIONS == "permissions needed")
+    }
+
+    @Test func settingsAttentionJournalString() {
+        #expect(UICopy.SETTINGS_ATTENTION_JOURNAL == "journal setup needed")
+    }
+
+    @Test func settingsAttentionUpdateAvailableString() {
+        #expect(UICopy.SETTINGS_ATTENTION_UPDATE_AVAILABLE == "update available")
+    }
+
+    @Test func settingsAttentionUpdateCheckFailedString() {
+        #expect(UICopy.SETTINGS_ATTENTION_UPDATE_CHECK_FAILED == "update check failed")
+    }
+
     @Test func settingsRestartRequiredBannerString() {
         #expect(UICopy.SETTINGS_RESTART_REQUIRED_BANNER == "restart needed for this to take effect \u{2014} restart now \u{2192}")
     }

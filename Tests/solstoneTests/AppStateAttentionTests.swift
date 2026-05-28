@@ -174,22 +174,6 @@ struct AppStateAttentionTests {
         #expect(!state.serviceNeedsAttention)
     }
 
-    @Test func anyTabNeedsAttentionCombinesPermissionsAndService() {
-        let state = makeState(config: AppConfig(serviceMode: .external))
-        state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = true
-        state.microphoneGranted = true
-        state.connectionTestState = .success
-        #expect(!state.anyTabNeedsAttention)
-
-        state.microphoneGranted = false
-        #expect(state.anyTabNeedsAttention)
-
-        state.microphoneGranted = true
-        state.connectionTestState = .idle
-        #expect(state.anyTabNeedsAttention)
-    }
-
     @Test func externalURLFieldEditResetsSuccessfulConnectionTestToIdle() {
         let state = makeState(config: AppConfig(serviceMode: .external))
         state.connectionTestState = .success

@@ -1,7 +1,6 @@
 import Foundation
 
 enum UpdatesCopy {
-    static let menuBarCheckForUpdates = "check for updates…"
     static let tabTitle = "updates"
 
     static let checkingTitle = "checking for updates"

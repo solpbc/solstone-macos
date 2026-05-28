@@ -50,23 +50,21 @@ struct MenuContent: View {
                 appState.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
             } label: {
-                if let iconName = settingsAttentionIconName(anyTabNeedsAttention: appState.anyTabNeedsAttention) {
+                if let reason = firstSettingsAttention(
+                    permissionsNeedAttention: appState.permissionsNeedAttention,
+                    journalNeedsAttention: appState.serviceNeedsAttention,
+                    updateIsAvailable: updateController.updateIsAvailable,
+                    updateCheckFailed: updateController.updateCheckFailed
+                ) {
                     Label {
-                        Text("settings...")
+                        Text("settings… — \(settingsAttentionSuffix(reason))")
                     } icon: {
-                        Image(systemName: iconName)
+                        Image(systemName: "exclamationmark.circle.fill")
                             .foregroundStyle(.orange)
                     }
                 } else {
-                    Text("settings...")
+                    Text("settings…")
                 }
-            }
-            Button(UpdatesCopy.menuBarCheckForUpdates) {
-                appState.pendingSettingsTab = "updates"
-                openWindow(id: "settings")
-                appState.didOpenWindow(.settings)
-                NSApp.activate(ignoringOtherApps: true)
-                updateController.checkForUpdates()
             }
             Button("about solstone observer") {
                 openWindow(id: "about")
@@ -247,6 +245,28 @@ func pausedHeaderText(timeRemaining: String?) -> String {
     return "paused - \(compact) left"
 }
 
-func settingsAttentionIconName(anyTabNeedsAttention: Bool) -> String? {
-    anyTabNeedsAttention ? "exclamationmark.circle.fill" : nil
+enum SettingsAttentionReason: Equatable {
+    case permissions, journal, updateAvailable, updateCheckFailed
+}
+
+func firstSettingsAttention(
+    permissionsNeedAttention: Bool,
+    journalNeedsAttention: Bool,
+    updateIsAvailable: Bool,
+    updateCheckFailed: Bool
+) -> SettingsAttentionReason? {
+    if permissionsNeedAttention { return .permissions }
+    if journalNeedsAttention { return .journal }
+    if updateIsAvailable { return .updateAvailable }
+    if updateCheckFailed { return .updateCheckFailed }
+    return nil
+}
+
+func settingsAttentionSuffix(_ reason: SettingsAttentionReason) -> String {
+    switch reason {
+    case .permissions: return UICopy.SETTINGS_ATTENTION_PERMISSIONS
+    case .journal: return UICopy.SETTINGS_ATTENTION_JOURNAL
+    case .updateAvailable: return UICopy.SETTINGS_ATTENTION_UPDATE_AVAILABLE
+    case .updateCheckFailed: return UICopy.SETTINGS_ATTENTION_UPDATE_CHECK_FAILED
+    }
 }
