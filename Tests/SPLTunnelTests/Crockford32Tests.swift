@@ -63,8 +63,8 @@ struct Crockford32Tests {
         var generator = LCG(state: 0xDEADBEEF)
 
         for _ in 0..<128 {
-            var bytes = (0..<32).map { _ in generator.nextByte() }
-            bytes[0] = 0x02
+            var bytes = (0..<40).map { _ in generator.nextByte() }
+            bytes[0] = 0x04
             bytes[1] = 0x01
 
             let pairURL = try PairURL.parse(URL(string: "https://link.solpbc.org/p#\(Self.encode(bytes))")!)
@@ -72,8 +72,8 @@ struct Crockford32Tests {
             #expect(pairURL.addressBytes == Array(bytes[2..<6]))
             #expect(pairURL.addressString == Array(bytes[2..<6]).map(String.init).joined(separator: "."))
             #expect(pairURL.port == UInt16(bytes[6]) << 8 | UInt16(bytes[7]))
-            #expect(pairURL.nonceBytes == Array(bytes[8..<16]))
-            #expect(pairURL.caFingerprintBytes == Array(bytes[16..<32]))
+            #expect(pairURL.nonceBytes == Array(bytes[8..<24]))
+            #expect(pairURL.caFingerprintBytes == Array(bytes[24..<40]))
         }
     }
 

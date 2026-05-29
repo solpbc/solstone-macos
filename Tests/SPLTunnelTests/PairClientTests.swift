@@ -156,7 +156,7 @@ struct PairClientTests {
         #expect(request.value(forHTTPHeaderField: "Accept") == nil)
 
         let body = try jsonBody(index: 0)
-        #expect(body["nonce"] as? String == "a1b2c3d4e5f60718")
+        #expect(body["nonce"] as? String == "a1b2c3d4e5f607181122334455667788")
         #expect(body["device_label"] as? String == "test mac")
         #expect((body["csr"] as? String)?.hasPrefix("-----BEGIN CERTIFICATE REQUEST-----\n") == true)
     }
@@ -246,7 +246,7 @@ struct PairClientTests {
     }
 
     private func makePairURL() throws -> PairURL {
-        try PairURL.parse(URL(string: "https://link.solpbc.org/p#080W000258DSX8DJRFAEBXG733FAVFQFSBZBNFG14D2PF2DBSQQG")!)
+        try PairURL.parse(URL(string: "https://link.solpbc.org/p#0G0W000258DSX8DJRFAEBXG7308J4CT4ANK7F26YNPZEZJQYQAZ028T5CY4TQKFF")!)
     }
 
     private func lanResponseJSON(localEndpoints: [[String: Any]]? = nil) -> String {

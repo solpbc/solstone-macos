@@ -51,7 +51,7 @@ public struct PairURL: Sendable, Equatable, Hashable {
         guard !bytes.isEmpty else {
             throw PairURLError.invalidLength(bytes.count)
         }
-        guard bytes[0] == 0x02 else {
+        guard bytes[0] == 0x04 else {
             throw PairURLError.invalidVersion(bytes[0])
         }
         guard bytes.count >= 2 else {
@@ -60,15 +60,15 @@ public struct PairURL: Sendable, Equatable, Hashable {
         guard bytes[1] == 0x01 else {
             throw PairURLError.unsupportedAddrType(bytes[1])
         }
-        guard bytes.count == 32 else {
+        guard bytes.count == 40 else {
             throw PairURLError.invalidLength(bytes.count)
         }
 
         version = bytes[0]
         addressBytes = Array(bytes[2..<6])
         port = UInt16(bytes[6]) << 8 | UInt16(bytes[7])
-        nonceBytes = Array(bytes[8..<16])
-        caFingerprintBytes = Array(bytes[16..<32])
+        nonceBytes = Array(bytes[8..<24])
+        caFingerprintBytes = Array(bytes[24..<40])
     }
 }
 

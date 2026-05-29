@@ -10,11 +10,11 @@ struct PairURLTests {
     @Test func canonicalReferenceVectorParses() throws {
         let pairURL = try PairURL.parse(Self.url(fragment: Self.canonicalBlob))
 
-        #expect(pairURL.version == 0x02)
+        #expect(pairURL.version == 0x04)
         #expect(pairURL.addressBytes == [0xC0, 0x00, 0x02, 0x2A])
         #expect(pairURL.addressString == "192.0.2.42")
         #expect(pairURL.port == 0x1B9E)
-        #expect(pairURL.nonceBytes == [0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18])
+        #expect(pairURL.nonceBytes == [0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88])
         #expect(pairURL.caFingerprintBytes == [
             0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,
             0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF
@@ -60,20 +60,26 @@ struct PairURLTests {
         }
     }
 
-    @Test func rejectsIPv4AddressTypeWithLength31() {
+    @Test func rejectsLegacyV2DirectBlob() {
+        expectThrows(.invalidVersion(0x02)) {
+            _ = try PairURL.parse(Self.url(fragment: "080W000258DSX8DJRFAEBXG733FAVFQFSBZBNFG14D2PF2DBSQQG"))
+        }
+    }
+
+    @Test func rejectsIPv4AddressTypeWithLength39() {
         var bytes = Self.canonicalBytes
         bytes.removeLast()
 
-        expectThrows(.invalidLength(31)) {
+        expectThrows(.invalidLength(39)) {
             _ = try PairURL.parse(Self.url(fragment: Self.encode(bytes)))
         }
     }
 
-    @Test func rejectsIPv4AddressTypeWithLength33() {
+    @Test func rejectsIPv4AddressTypeWithLength41() {
         var bytes = Self.canonicalBytes
         bytes.append(0x00)
 
-        expectThrows(.invalidLength(33)) {
+        expectThrows(.invalidLength(41)) {
             _ = try PairURL.parse(Self.url(fragment: Self.encode(bytes)))
         }
     }
@@ -96,10 +102,11 @@ struct PairURLTests {
         }
     }
 
-    private static let canonicalBlob = "080W000258DSX8DJRFAEBXG733FAVFQFSBZBNFG14D2PF2DBSQQG"
+    private static let canonicalBlob = "0G0W000258DSX8DJRFAEBXG7308J4CT4ANK7F26YNPZEZJQYQAZ028T5CY4TQKFF"
     private static let canonicalBytes: [UInt8] = [
-        0x02, 0x01, 0xC0, 0x00, 0x02, 0x2A, 0x1B, 0x9E,
+        0x04, 0x01, 0xC0, 0x00, 0x02, 0x2A, 0x1B, 0x9E,
         0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18,
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
         0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,
         0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF
     ]

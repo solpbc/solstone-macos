@@ -109,14 +109,14 @@ actor MockHome {
         guard let port = pairListener?.port?.rawValue else {
             throw MockHomeError.pairServerNotStarted
         }
-        let nonceBytes = Array(Self.randomBytes(count: 8))
+        let nonceBytes = Array(Self.randomBytes(count: 16))
         let nonceHex = CertChain.hex(nonceBytes)
         outstandingNonces.insert(nonceHex)
         let fingerprintBytes = try Self.hexBytes(pairServerFingerprint)
         guard fingerprintBytes.count >= 16 else {
             throw MockHomeError.invalidPairServerFingerprint
         }
-        var blob: [UInt8] = [0x02, 0x01, 0x7F, 0x00, 0x00, 0x01]
+        var blob: [UInt8] = [0x04, 0x01, 0x7F, 0x00, 0x00, 0x01]
         blob.append(UInt8((port >> 8) & 0xff))
         blob.append(UInt8(port & 0xff))
         blob.append(contentsOf: nonceBytes)
