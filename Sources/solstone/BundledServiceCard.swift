@@ -136,6 +136,15 @@ struct BundledServiceCard: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
+                    ForEach(appProbeChecks(
+                        screenRecordingGranted: appState.screenRecordingGranted,
+                        microphoneGranted: appState.microphoneGranted,
+                        permissionCheckComplete: appState.initialPermissionCheckComplete,
+                        ipcServiceRunning: appState.ipcServiceRunning
+                    ), id: \.name) { check in
+                        doctorCheckRow(check)
+                    }
+
                     switch doctorResult {
                     case nil:
                         EmptyView()
@@ -212,7 +221,7 @@ struct BundledServiceCard: View {
         let runner = doctorRunner
         doctorTask = Task { @MainActor in
             do {
-                let report = try await SolHealthCheck.doctor(runner: runner)
+                let report = try await SolHealthCheck.journalDoctorWithFallback(runner: runner)
                 guard !Task.isCancelled else { return }
                 doctorResult = .success(report)
             } catch {

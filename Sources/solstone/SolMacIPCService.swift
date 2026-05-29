@@ -16,6 +16,8 @@ public final class SolMacIPCService {
     private var listener: NWListener?
     private var activeHandlers: [UUID: ConnectionHandler] = [:]
 
+    public var isRunning: Bool { listener != nil }
+
     public init(responder: SolMacResponder, socketURL: URL = SolMacIPCConstants.socketURL) {
         self.responder = responder
         self.socketURL = socketURL

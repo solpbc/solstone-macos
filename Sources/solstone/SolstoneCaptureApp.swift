@@ -82,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let responder = SolMacResponder(appState: state)
             let service = SolMacIPCService(responder: responder)
             service.start()
+            state.ipcServiceRunning = service.isRunning
             ipcService = service
         } else {
             Logger.general.error("AppState.shared nil in applicationDidFinishLaunching")

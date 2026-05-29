@@ -73,6 +73,7 @@ public final class AppState {
     public internal(set) var isPaused = false
     public internal(set) var errorMessage: String?
     public internal(set) var pipelineDead = false
+    public internal(set) var ipcServiceRunning = false
     public internal(set) var pipelineBinaryMissing = false
     public internal(set) var isRestartingPipeline = false
     public internal(set) var restartRequiredBannerVisible: Bool = false

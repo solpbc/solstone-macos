@@ -115,6 +115,35 @@ enum SolHealthCheck {
     }
 
     static func doctor(runner: SubprocessRunning, solPath: String? = nil) async throws -> DoctorReport {
+        let resolvedSolPath = try await resolveSolPath(solPath)
+
+        return try await runDoctor(executable: URL(fileURLWithPath: resolvedSolPath), runner: runner)
+    }
+
+    static func journalDoctorWithFallback(
+        runner: SubprocessRunner = SubprocessRunner(),
+        solPath: String? = nil
+    ) async throws -> DoctorReport {
+        try await journalDoctorWithFallback(runner: runner as SubprocessRunning, solPath: solPath)
+    }
+
+    static func journalDoctorWithFallback(
+        runner: SubprocessRunning,
+        solPath: String? = nil
+    ) async throws -> DoctorReport {
+        let resolvedSolPath = try await resolveSolPath(solPath)
+        let solURL = URL(fileURLWithPath: resolvedSolPath)
+        let journalURL = URL(fileURLWithPath: SolBinaryLocator.journalPath(siblingOf: resolvedSolPath))
+
+        do {
+            return try await runDoctor(executable: journalURL, runner: runner)
+        } catch is DoctorError {
+            // Forward-compat: older runtimes may not have `journal doctor`.
+            return try await runDoctor(executable: solURL, runner: runner)
+        }
+    }
+
+    private static func resolveSolPath(_ solPath: String?) async throws -> String {
         let resolvedSolPath: String
         if let solPath {
             resolvedSolPath = solPath
@@ -123,12 +152,15 @@ enum SolHealthCheck {
         } else {
             throw DoctorError.solBinaryNotFound
         }
+        return resolvedSolPath
+    }
 
+    private static func runDoctor(executable: URL, runner: SubprocessRunning) async throws -> DoctorReport {
         let stdoutAccumulator = DataAccumulator()
         do {
             _ = try await withTimeout(seconds: 10.0) {
                 try await runner.run(
-                    executable: URL(fileURLWithPath: resolvedSolPath),
+                    executable: executable,
                     arguments: ["doctor", "--json"],
                     environment: nil,
                     stdoutHandler: { data in
@@ -161,6 +193,70 @@ enum SolHealthCheck {
         }
         semaphore.wait()
     }
+}
+
+func appProbeChecks(
+    screenRecordingGranted: Bool,
+    microphoneGranted: Bool,
+    permissionCheckComplete: Bool,
+    ipcServiceRunning: Bool
+) -> [DoctorCheck] {
+    [
+        permissionProbeCheck(
+            name: "screen recording",
+            granted: screenRecordingGranted,
+            permissionCheckComplete: permissionCheckComplete,
+            fix: "open System Settings › Privacy & Security and allow Screen Recording for solstone observer"
+        ),
+        permissionProbeCheck(
+            name: "microphone",
+            granted: microphoneGranted,
+            permissionCheckComplete: permissionCheckComplete,
+            fix: "open System Settings › Privacy & Security and allow Microphone for solstone observer"
+        ),
+        DoctorCheck(
+            name: "ipc service",
+            status: ipcServiceRunning ? .ok : .warn,
+            severity: nil,
+            detail: ipcServiceRunning ? "ipc service running" : "ipc service not available",
+            fix: nil
+        ),
+    ]
+}
+
+private func permissionProbeCheck(
+    name: String,
+    granted: Bool,
+    permissionCheckComplete: Bool,
+    fix: String
+) -> DoctorCheck {
+    if !permissionCheckComplete {
+        return DoctorCheck(
+            name: name,
+            status: .warn,
+            severity: nil,
+            detail: "unknown — checking permissions",
+            fix: nil
+        )
+    }
+
+    if granted {
+        return DoctorCheck(
+            name: name,
+            status: .ok,
+            severity: nil,
+            detail: "granted",
+            fix: nil
+        )
+    }
+
+    return DoctorCheck(
+        name: name,
+        status: .fail,
+        severity: nil,
+        detail: "denied",
+        fix: fix
+    )
 }
 
 internal enum PipelineLivenessProbeOutcome: Equatable, Sendable {
