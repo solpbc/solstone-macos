@@ -50,6 +50,10 @@ struct SolBinaryLocatorTests {
         guard FileManager.default.fileExists(atPath: preferred) else {
             return
         }
+        let runtimePath = SolstoneRuntimeLayout().solBinary.path
+        guard !FileManager.default.fileExists(atPath: runtimePath) else {
+            return
+        }
 
         let found = await SolBinaryLocator.findSolBinary()
         #expect(found == preferred)
