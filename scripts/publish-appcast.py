@@ -35,6 +35,9 @@ PROD_PREFIX = "solstone-macos"
 STAGING_PREFIX = "solstone-macos/_staging"
 SPARKLE_NS = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 MIN_SYSTEM = "15.0"
+# Standard Sparkle "full release notes" hook — points the updater's full-notes
+# link at the branded, appcast-driven release history page (solstone.app/releases).
+FULL_RELEASE_NOTES_LINK = "https://solstone.app/releases"
 DEFAULT_KEY_PATH = "/tmp/sparkle-priv.key"
 
 ET.register_namespace("sparkle", SPARKLE_NS)
@@ -157,6 +160,7 @@ def build_item(version: str, bundle_version: int, signature: str, length: int, e
     ET.SubElement(item, f"{{{SPARKLE_NS}}}version").text = str(bundle_version)
     ET.SubElement(item, f"{{{SPARKLE_NS}}}shortVersionString").text = version
     ET.SubElement(item, f"{{{SPARKLE_NS}}}minimumSystemVersion").text = MIN_SYSTEM
+    ET.SubElement(item, f"{{{SPARKLE_NS}}}fullReleaseNotesLink").text = FULL_RELEASE_NOTES_LINK
     ET.SubElement(item, "description", {f"{{{SPARKLE_NS}}}format": "markdown"}).text = notes
     ET.SubElement(item, "enclosure", {"url": enclosure_url, "length": str(length), "type": "application/x-apple-diskimage", f"{{{SPARKLE_NS}}}edSignature": signature})
     return item
