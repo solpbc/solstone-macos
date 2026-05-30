@@ -5,6 +5,20 @@ All notable changes to Solstone Capture will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.5] - 2026-05-30
+
+### Added
+- you can now reach your journal from your phone or laptop even when they're away from your home machine. a single connections page shows how you connect, your network access, and your paired devices. pair a new one with a fresh code, give each device a name, and remove any device with one tap.
+- the local model that runs entirely on your machine can now take in images as well as text. nothing new leaves your machine.
+
+### Changed
+- the local model now stays ready in the background instead of starting on demand, so sol doesn't wait on it; fresh installs start it reliably the first time, and downloading a model shows real progress.
+- update status is now a first-class signal. the Updates row in Settings and the menu flag when an update is waiting or a check didn't go through, and clear once you're current.
+
+### Fixed
+- the health panel in Settings now shows each individual check, so you can see exactly which permission or service needs attention. if you saw a single "doctor failed" warning on 1.3.4, you'll now see the specific check instead, with the rest still passing.
+- your journal now shows when a moment has been transcribed but not yet thought through, instead of looking finished, and catches those moments up on its own.
+
 ## [1.3.4] - 2026-05-27
 
 ### Changed
