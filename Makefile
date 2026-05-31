@@ -678,10 +678,32 @@ check-icons-deps:
 # release host during the release playbook. They require wrangler and the
 # local vault private key.
 # ────────────────────────────────────────────────────────────────
-publish-appcast:
+
+# Cloudflare account id (account "jer") — wrangler whoami must list this.
+CF_ACCOUNT_ID          ?= 3f2c1528c7d4d9685819ea9e9e307c92
+
+# Wrangler/CF-auth preflight. Run on the RELEASE HOST *before* dispatching the
+# pro5e DMG build — wrangler's session OAuth degrades silently on a ~24h cadence,
+# and the R2 publish is the final step, so a stale token otherwise wastes the
+# full ~6min build + notarize before failing. `wrangler whoami` exercises the
+# same account-lookup path that breaks on degrade; we assert exit 0 AND that the
+# account id is listed (a set CLOUDFLARE_API_TOKEN shadowing the OAuth session
+# surfaces here too). NOT `/user/tokens/verify` — it reports "Invalid API Token"
+# for OAuth tokens even when healthy.
+publish-preflight:
+	@echo "preflight: checking wrangler Cloudflare auth on the release host…"
+	@out="$$(wrangler whoami 2>&1)"; rc=$$?; \
+	if [ $$rc -ne 0 ] || ! printf '%s' "$$out" | grep -q '$(CF_ACCOUNT_ID)'; then \
+		echo "error: wrangler Cloudflare auth is degraded — run 'wrangler login' (browser OAuth refresh), then retry." >&2; \
+		echo "       expected account id $(CF_ACCOUNT_ID) in 'wrangler whoami' output." >&2; \
+		exit 1; \
+	fi; \
+	echo "preflight: wrangler OK (account $(CF_ACCOUNT_ID))"
+
+publish-appcast: publish-preflight
 	python3 scripts/publish-appcast.py $(DIST_VERSION)
 
-publish-appcast-staging:
+publish-appcast-staging: publish-preflight
 	python3 scripts/publish-appcast.py $(DIST_VERSION) --staging
 
 # Cut a GitHub Release: annotated tag + `gh release create` with the DMG
@@ -692,4 +714,4 @@ publish-appcast-staging:
 github-release:
 	@bash scripts/github-release.sh $(DIST_VERSION)
 
-.PHONY: publish-appcast publish-appcast-staging github-release
+.PHONY: publish-preflight publish-appcast publish-appcast-staging github-release

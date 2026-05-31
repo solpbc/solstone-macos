@@ -39,6 +39,9 @@ MIN_SYSTEM = "15.0"
 # link at the branded, appcast-driven release history page (solstone.app/releases).
 FULL_RELEASE_NOTES_LINK = "https://solstone.app/releases"
 DEFAULT_KEY_PATH = "/tmp/sparkle-priv.key"
+# Cloudflare account id (account "jer"). wrangler whoami must list this — used by
+# preflight_wrangler() to catch a silently-degraded OAuth token before any upload.
+CF_ACCOUNT_ID = "3f2c1528c7d4d9685819ea9e9e307c92"
 
 ET.register_namespace("sparkle", SPARKLE_NS)
 
@@ -191,11 +194,36 @@ def head_check(url: str) -> None:
     if status != "200":
         die(f"{url}: HEAD returned HTTP {status}")
 
+def preflight_wrangler() -> None:
+    """Fail fast if wrangler's Cloudflare auth has degraded.
+
+    wrangler's session OAuth token degrades silently on a ~24h cadence; when it
+    does, the R2 uploads below fail with a generic "retrieve account IDs" error
+    only after the DMG has already been signed and the upload started. Running
+    `wrangler whoami` first exercises the same account-lookup path that breaks on
+    degrade, so a stale token is caught before any upload. Assert both a clean
+    exit and that the expected account id is listed (a set CLOUDFLARE_API_TOKEN
+    that shadows the OAuth session also surfaces here). Note: /user/tokens/verify
+    is NOT a valid health check for OAuth tokens — it returns "Invalid API Token"
+    even when the OAuth session is healthy.
+    """
+    try:
+        proc = subprocess.run(["wrangler", "whoami"], capture_output=True, text=True)
+    except FileNotFoundError:
+        die("wrangler not found on PATH — publish-appcast.py runs on the release host only.")
+    # Check both streams — wrangler routes the whoami table to stdout or stderr
+    # depending on TTY/pipe detection, so don't assume which one carries the id.
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0 or CF_ACCOUNT_ID not in combined:
+        die("wrangler Cloudflare auth is degraded — run 'wrangler login' "
+            "(browser OAuth refresh), then retry.")
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Publish a Sparkle 2 appcast release.")
     parser.add_argument("version", help='CFBundleShortVersionString, e.g. "1.1.0"')
     parser.add_argument("--staging", action="store_true", help="Publish to the staging feed")
     args = parser.parse_args()
+    preflight_wrangler()  # catch degraded wrangler auth before signing/uploading anything
     prefix = STAGING_PREFIX if args.staging else PROD_PREFIX
     key_path = os.environ.get("SOLSTONE_SPARKLE_KEY_PATH", DEFAULT_KEY_PATH)
     dmg_name = f"solstone-{args.version}.dmg"
