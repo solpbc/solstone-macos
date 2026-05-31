@@ -5,6 +5,19 @@ All notable changes to Solstone Capture will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.6] - 2026-05-31
+
+### Added
+- you can now re-run sol's thinking on any day right from the page. "process now" picks up where it left off; "redo from scratch" starts the day over.
+
+### Changed
+- the on-device option is now a single "Local (on-device)" choice, and on your Mac it runs entirely on your machine, including sol's thinking. nothing leaves your machine, with no cloud fallback.
+- your journal now tells you plainly whether it's caught up. the stats and health pages show an honest "is my journal caught up?" answer, plus a "days that need a hand" list for any day sol can't finish on its own, like one with corrupted media or a step that keeps failing. catch-up runs on its own in the background and never leaves older days behind.
+
+### Fixed
+- your journal no longer shows finished work as still pending. days that hit an earlier error but later completed were being counted as outstanding, so the backlog looked larger than it was. the count now reflects what's actually still incomplete.
+
+
 ## [1.3.5] - 2026-05-30
 
 ### Added
