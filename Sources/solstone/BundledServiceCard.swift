@@ -658,7 +658,13 @@ struct FailureDiagnosticInput: Equatable {
 func buildFailureDiagnosticMarkdown(_ input: FailureDiagnosticInput, doctorReport: DoctorReport?) -> String {
     var lines = [
         "these details came from the solstone installer failure card.",
-        "share them with support when an install or upgrade needs review.",
+        "share them with a coding agent or support to diagnose the failure below.",
+        "",
+        "about solstone-macos: it installs solstone for you, bundling a python runtime",
+        "and uv, installing the solstone python package into",
+        "~/Library/Application Support/sol/runtime, then running `journal setup`",
+        "(steps: doctor, journal, models, skills, wrapper, service). this report was",
+        "captured at the step that failed.",
         "",
         "phase: \(input.phase)",
     ]
@@ -711,7 +717,7 @@ func buildFailureDiagnosticMarkdown(_ input: FailureDiagnosticInput, doctorRepor
         "- runtime: ~/Library/Application Support/sol/runtime",
         "- sol: ~/.local/bin/sol",
         "- repo: https://github.com/solpbc/solstone-macos",
-        "- log show: /usr/bin/log show --predicate 'subsystem == \"app.solstone.observer\"' --last 30m --style compact",
+        "- log show: /usr/bin/log show --predicate 'subsystem == \"app.solstone.observer\" AND category == \"setup\"' --last 30m --info --debug --style compact",
         "",
         "log excerpt:",
         "```",
