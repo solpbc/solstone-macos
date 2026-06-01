@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - upgrading over an older install no longer stops because the `sol` or `journal` shortcut in your shell points somewhere stale. setup now repairs the shortcuts it owns and keeps going.
 - sol's background thinking can ask your journal for identity, routines, health, and talent context again. those approved journal tools were being turned away before sol could use them; now they work without widening what sol is allowed to run.
 - fresh bundled installs resolve cleanly when the app installs solstone. the bundled journal now uses matching telemetry packages for sol's thinking runtime, so setup no longer lands on an incompatible dependency mix.
+- upgrades can continue when launchd reports a transient service-start error after the bundled journal has actually started and become healthy.
 
 ## [1.3.6] - 2026-05-31
 
