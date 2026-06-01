@@ -68,6 +68,29 @@ struct SolMacWireTests {
         #expect(matches.count >= 2)
     }
 
+    @Test func statusInfoCarriesAudioReconciledCount() throws {
+        let status = StatusInfo(
+            isRecording: true,
+            isPaused: false,
+            pauseAutoResumeAt: nil,
+            serverURL: "https://example.com",
+            serverConfigured: true,
+            segmentTimeRemainingSeconds: nil,
+            pendingUploadCount: 0,
+            lastSyncedAt: nil,
+            lastError: nil,
+            appVersion: "1.0",
+            appBuild: "100",
+            screenRecordingGranted: true,
+            microphoneGranted: true,
+            audioReconciledCount: 1
+        )
+
+        let decoded = try IPCWire.decoder.decode(StatusInfo.self, from: try IPCWire.encoder.encode(status))
+
+        #expect(decoded.audioReconciledCount == 1)
+    }
+
     @Test func responseEncodingIsDeterministic() throws {
         let response = makeStatusResponse()
 
@@ -127,6 +150,7 @@ struct SolMacWireTests {
         #expect(status.appBuild == "100")
         #expect(status.screenRecordingGranted == nil)
         #expect(status.microphoneGranted == nil)
+        #expect(status.audioReconciledCount == nil)
 
         guard case .ok(.empty) = responses[1].result else {
             Issue.record("Expected second fixture response to be .ok(.empty)")
@@ -150,6 +174,7 @@ struct SolMacWireTests {
         #expect(status.appBuild == "110")
         #expect(status.screenRecordingGranted == true)
         #expect(status.microphoneGranted == true)
+        #expect(status.audioReconciledCount == nil)
 
         guard case .ok(.empty) = responses[1].result else {
             Issue.record("Expected second v1.1.0 fixture response to be .ok(.empty)")
@@ -184,7 +209,8 @@ struct SolMacWireTests {
             appVersion: "1.0",
             appBuild: "100",
             screenRecordingGranted: true,
-            microphoneGranted: false
+            microphoneGranted: false,
+            audioReconciledCount: 1
         )
     }
 
@@ -235,6 +261,7 @@ struct SolMacWireTests {
             #expect(lhsInfo.appBuild == rhsInfo.appBuild)
             #expect(lhsInfo.screenRecordingGranted == rhsInfo.screenRecordingGranted)
             #expect(lhsInfo.microphoneGranted == rhsInfo.microphoneGranted)
+            #expect(lhsInfo.audioReconciledCount == rhsInfo.audioReconciledCount)
         case (.versionInfo(let lhsInfo), .versionInfo(let rhsInfo)):
             #expect(lhsInfo.appVersion == rhsInfo.appVersion)
             #expect(lhsInfo.appBuild == rhsInfo.appBuild)

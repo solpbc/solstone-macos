@@ -144,7 +144,8 @@ public final class SolMacResponder {
             appVersion: versionInfo.appVersion,
             appBuild: versionInfo.appBuild,
             screenRecordingGranted: appState.screenRecordingGranted,
-            microphoneGranted: appState.microphoneGranted
+            microphoneGranted: appState.microphoneGranted,
+            audioReconciledCount: appState.audioReconciledCount
         )
     }
 

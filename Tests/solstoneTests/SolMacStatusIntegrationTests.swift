@@ -9,7 +9,9 @@ import SolstoneCore
 struct SolMacStatusIntegrationTests {
     @Test func statusRoundTripFormatsExpectedFields() async throws {
         let socketURL = makeSocketURL()
-        let service = startService(at: socketURL)
+        let appState = AppState.forSnapshot()
+        appState.audioReconciledCount = 2
+        let service = startService(at: socketURL, appState: appState)
         defer { service.stop() }
 
         let response = try await SolMacClient.send(
@@ -31,12 +33,14 @@ struct SolMacStatusIntegrationTests {
         #expect(formatted.contains("serverConfigured=false"))
         #expect(formatted.contains("pendingUploadCount=0"))
         #expect(formatted.contains("segmentTimeRemainingSeconds=<unset>"))
+        #expect(formatted.contains("audioReconciledCount=2"))
+        #expect(status.audioReconciledCount == 2)
     }
 
-    private func startService(at socketURL: URL) -> SolMacIPCService {
+    private func startService(at socketURL: URL, appState: AppState = AppState.forSnapshot()) -> SolMacIPCService {
         try? FileManager.default.removeItem(at: socketURL)
         let service = SolMacIPCService(
-            responder: SolMacResponder(appState: AppState.forSnapshot()),
+            responder: SolMacResponder(appState: appState),
             socketURL: socketURL
         )
         service.start()

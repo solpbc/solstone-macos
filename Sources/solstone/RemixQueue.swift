@@ -15,6 +15,12 @@ public protocol AudioRemixing: Sendable {
 
 extension AudioRemixer: AudioRemixing {}
 
+public enum SegmentReconciliation: Sendable {
+    case normal
+    case recovered(Int)
+    case failed(String)
+}
+
 /// Manages background audio remix operations
 /// Processes jobs sequentially to avoid CPU contention
 public actor RemixQueue {
@@ -41,7 +47,7 @@ public actor RemixQueue {
     private var isProcessing = false
 
     /// Callback invoked when a segment completes (for triggering upload)
-    private var onSegmentComplete: (@Sendable (URL) async -> Void)?
+    private var onSegmentComplete: (@Sendable (URL, SegmentReconciliation) async -> Void)?
 
     private let remixerFactory: RemixerFactory
 
@@ -55,7 +61,7 @@ public actor RemixQueue {
     }
 
     /// Set the callback for when segments complete remixing
-    public func setOnSegmentComplete(_ callback: (@Sendable (URL) async -> Void)?) {
+    public func setOnSegmentComplete(_ callback: (@Sendable (URL, SegmentReconciliation) async -> Void)?) {
         onSegmentComplete = callback
     }
 
@@ -100,6 +106,7 @@ public actor RemixQueue {
         // Remix audio if we have inputs
         // Create output with final name directly (no rename needed)
         let audioOutputURL = job.segmentDirectory.appendingPathComponent("\(segmentKey)_audio.m4a")
+        var reconciliation: SegmentReconciliation = .normal
 
         if !job.audioInputs.isEmpty {
             do {
@@ -123,6 +130,37 @@ public actor RemixQueue {
                 Logger.storage.error("Background remix failed for \(job.segmentDirectory.lastPathComponent, privacy: .public): \(error, privacy: .public)")
                 await markIncompleteSegmentAsFailed(job.segmentDirectory)
                 return
+            }
+        } else {
+            let files = (try? fm.contentsOfDirectory(at: job.segmentDirectory, includingPropertiesForKeys: nil)) ?? []
+            let sources = audioSourceFiles(in: files, timePrefix: job.timePrefix)
+            if !sources.isEmpty && !fm.fileExists(atPath: audioOutputURL.path) {
+                Logger.storage.warning("audioInputs empty but \(sources.count, privacy: .public) audio source file(s) on disk for \(job.timePrefix, privacy: .public); reconstructing")
+                let inputs = await buildAudioInputs(from: sources, timePrefix: job.timePrefix, verbose: false)
+                if inputs.isEmpty {
+                    Logger.storage.info("reconstruction produced no valid inputs for \(job.timePrefix, privacy: .public); finalizing screen-only")
+                } else {
+                    do {
+                        let remixer = remixerFactory(false, job.debugKeepRejected)
+                        let result = try await withTimeout(seconds: 60) {
+                            try await remixer.remix(
+                                inputs: inputs,
+                                to: audioOutputURL,
+                                deleteSourceFiles: true,
+                                silenceMusic: job.silenceMusic
+                            )
+                        }
+                        Logger.storage.info("reconstruction recovered \(result.tracksWritten, privacy: .public) track(s) for \(job.timePrefix, privacy: .public)")
+                        reconciliation = .recovered(result.tracksWritten)
+                    } catch AudioRemixerError.noTracksToWrite {
+                        Logger.storage.info("reconstruction found all sources silent for \(job.timePrefix, privacy: .public); finalizing screen-only")
+                    } catch {
+                        Logger.storage.error("reconstruction remix failed for \(job.timePrefix, privacy: .public), marking segment failed: \(error, privacy: .public)")
+                        await markIncompleteSegmentAsFailed(job.segmentDirectory)
+                        await onSegmentComplete?(job.segmentDirectory, .failed("audio reconciliation failed; segment preserved for recovery"))
+                        return
+                    }
+                }
             }
         }
 
@@ -168,11 +206,11 @@ public actor RemixQueue {
             Logger.storage.info("Renamed segment: \(job.timePrefix, privacy: .public).incomplete -> \(segmentKey, privacy: .public)")
 
             // Trigger upload callback
-            await onSegmentComplete?(finalDirectory)
+            await onSegmentComplete?(finalDirectory, reconciliation)
         } catch {
             Logger.storage.warning("Failed to rename segment directory: \(error, privacy: .public)")
             // Try to trigger upload with original path anyway
-            await onSegmentComplete?(job.segmentDirectory)
+            await onSegmentComplete?(job.segmentDirectory, reconciliation)
         }
     }
 }

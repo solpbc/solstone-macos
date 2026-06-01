@@ -7,20 +7,18 @@ import Testing
 
 @Suite("IncompleteSegmentRecovery")
 struct IncompleteSegmentRecoveryTests {
-    private let recovery = IncompleteSegmentRecovery(verbose: false)
-
     @Test func parseTrackTypeSystemAudio() {
-        let result = recovery.parseTrackType(from: "143022_audio_system.m4a", timePrefix: "143022")
+        let result = parseTrackType(from: "143022_audio_system.m4a", timePrefix: "143022")
         #expect(result == .systemAudio)
     }
 
     @Test func parseTrackTypeMicrophone() {
-        let result = recovery.parseTrackType(from: "143022_audio_BuiltInMicrophoneDevice.m4a", timePrefix: "143022")
+        let result = parseTrackType(from: "143022_audio_BuiltInMicrophoneDevice.m4a", timePrefix: "143022")
         #expect(result == .microphone(name: "BuiltInMicrophoneDevice", deviceUID: "BuiltInMicrophoneDevice"))
     }
 
     @Test func parseTrackTypeMalformedReturnsMicrophone() {
-        let result = recovery.parseTrackType(from: "garbage.txt", timePrefix: "143022")
+        let result = parseTrackType(from: "garbage.txt", timePrefix: "143022")
         #expect(result == .microphone(name: "Unknown", deviceUID: "unknown"))
     }
 

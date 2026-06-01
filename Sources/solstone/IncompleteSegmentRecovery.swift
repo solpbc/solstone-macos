@@ -129,10 +129,7 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
 
         // Find individual audio files (exclude consolidated audio file)
         // Pattern: HHMMSS_audio_*.m4a but NOT HHMMSS_audio.m4a
-        let audioFiles = files.filter { file in
-            let name = file.lastPathComponent
-            return name.hasPrefix("\(timePrefix)_audio_") && name.hasSuffix(".m4a")
-        }
+        let audioFiles = audioSourceFiles(in: files, timePrefix: timePrefix)
 
         // Check if consolidated audio already exists
         let consolidatedAudioName = "\(timePrefix)_audio.m4a"
@@ -144,7 +141,7 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
             Logger.storage.info("Remixing \(audioFiles.count, privacy: .public) audio file(s) for \(dirName, privacy: .public)")
 
             do {
-                let inputs = try await buildAudioInputs(from: audioFiles, timePrefix: timePrefix)
+                let inputs = await buildAudioInputs(from: audioFiles, timePrefix: timePrefix, verbose: verbose)
 
                 if inputs.isEmpty {
                     Logger.storage.warning("No valid audio inputs for remix in \(dirName, privacy: .public)")
@@ -194,109 +191,6 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
     /// Create the remixer used for recovery.
     private func makeRemixer(verbose: Bool) -> any AudioRemixing {
         remixerFactory(verbose)
-    }
-
-    /// Build AudioRemixerInput array from audio files
-    private func buildAudioInputs(from audioFiles: [URL], timePrefix: String) async throws -> [AudioRemixerInput] {
-        var inputs: [AudioRemixerInput] = []
-        let fm = FileManager.default
-
-        // Find the earliest creation time to use as base
-        var baseTime = Date.distantFuture
-        for file in audioFiles {
-            if let attrs = try? fm.attributesOfItem(atPath: file.path),
-               let creationDate = attrs[.creationDate] as? Date
-            {
-                if creationDate < baseTime {
-                    baseTime = creationDate
-                }
-            }
-        }
-
-        if baseTime == Date.distantFuture {
-            baseTime = Date()
-        }
-
-        for audioURL in audioFiles {
-            guard let timingInfo = await buildTimingInfo(for: audioURL, baseTime: baseTime, timePrefix: timePrefix) else {
-                if verbose { Logger.storage.debug("Skipping audio file (no timing info): \(audioURL.lastPathComponent, privacy: .public)") }
-                continue
-            }
-
-            inputs.append(AudioRemixerInput(url: audioURL, timingInfo: timingInfo))
-        }
-
-        // Sort: system audio first, then mics by source ID
-        inputs.sort { a, b in
-            let aIsSystem = a.timingInfo.trackType.sourceID == "system"
-            let bIsSystem = b.timingInfo.trackType.sourceID == "system"
-
-            if aIsSystem && !bIsSystem { return true }
-            if !aIsSystem && bIsSystem { return false }
-            return a.timingInfo.trackType.sourceID < b.timingInfo.trackType.sourceID
-        }
-
-        return inputs
-    }
-
-    /// Build timing info for an audio file based on file metadata
-    private func buildTimingInfo(for audioURL: URL, baseTime: Date, timePrefix: String) async -> AudioTrackTimingInfo? {
-        let fm = FileManager.default
-        let asset = AVURLAsset(url: audioURL)
-
-        // Get duration from asset
-        guard let assetDuration = try? await asset.load(.duration),
-              CMTimeGetSeconds(assetDuration) > 0
-        else {
-            return nil
-        }
-
-        // Get creation time for start offset
-        let creationDate: Date
-        if let attrs = try? fm.attributesOfItem(atPath: audioURL.path),
-           let date = attrs[.creationDate] as? Date
-        {
-            creationDate = date
-        } else {
-            creationDate = baseTime
-        }
-
-        let startOffsetSeconds = max(0, creationDate.timeIntervalSince(baseTime))
-        let startOffset = CMTime(seconds: startOffsetSeconds, preferredTimescale: 48000)
-        let endOffset = CMTimeAdd(startOffset, assetDuration)
-
-        // Parse track type from filename
-        let trackType = parseTrackType(from: audioURL.lastPathComponent, timePrefix: timePrefix)
-
-        return AudioTrackTimingInfo(
-            startOffset: startOffset,
-            endOffset: endOffset,
-            trackType: trackType,
-            hasAudio: true
-        )
-    }
-
-    /// Parse track type from filename
-    /// Examples:
-    ///   - 143022_audio_system.m4a -> .systemAudio
-    ///   - 143022_audio_BuiltInMicrophoneDevice.m4a -> .microphone(name: "BuiltInMicrophoneDevice", deviceUID: "BuiltInMicrophoneDevice")
-    func parseTrackType(from filename: String, timePrefix: String) -> AudioTrackType {
-        // Remove prefix and suffix: "143022_audio_" ... ".m4a"
-        let prefix = "\(timePrefix)_audio_"
-        let suffix = ".m4a"
-
-        guard filename.hasPrefix(prefix), filename.hasSuffix(suffix) else {
-            return .microphone(name: "Unknown", deviceUID: "unknown")
-        }
-
-        let deviceID = String(filename.dropFirst(prefix.count).dropLast(suffix.count))
-
-        if deviceID == "system" {
-            return .systemAudio
-        } else {
-            // Use device ID as both name and UID (we don't have the original name)
-            return .microphone(name: deviceID, deviceUID: deviceID)
-        }
     }
 
     /// Rename all files in directory to include duration suffix

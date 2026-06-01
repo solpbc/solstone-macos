@@ -225,6 +225,7 @@ final class FakeRemixer: AudioRemixing, @unchecked Sendable {
 
     let behavior: Behavior
     let remixCount = LockedCounter()
+    let recordedInputs = LockedArray<[AudioRemixerInput]>([])
     let recordedSilenceMusic = LockedArray<Bool>([])
 
     init(_ behavior: Behavior) {
@@ -238,6 +239,7 @@ final class FakeRemixer: AudioRemixing, @unchecked Sendable {
         silenceMusic: Bool
     ) async throws -> AudioRemixerResult {
         remixCount.increment()
+        recordedInputs.append(inputs)
         recordedSilenceMusic.append(silenceMusic)
         switch behavior {
         case .hang:

@@ -269,6 +269,7 @@ public struct StatusInfo: Codable, Sendable {
     public let appBuild: String
     public let screenRecordingGranted: Bool?
     public let microphoneGranted: Bool?
+    public let audioReconciledCount: Int?
 
     public init(
         isRecording: Bool,
@@ -283,7 +284,8 @@ public struct StatusInfo: Codable, Sendable {
         appVersion: String,
         appBuild: String,
         screenRecordingGranted: Bool? = nil,
-        microphoneGranted: Bool? = nil
+        microphoneGranted: Bool? = nil,
+        audioReconciledCount: Int? = nil
     ) {
         self.isRecording = isRecording
         self.isPaused = isPaused
@@ -298,6 +300,7 @@ public struct StatusInfo: Codable, Sendable {
         self.appBuild = appBuild
         self.screenRecordingGranted = screenRecordingGranted
         self.microphoneGranted = microphoneGranted
+        self.audioReconciledCount = audioReconciledCount
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -314,6 +317,7 @@ public struct StatusInfo: Codable, Sendable {
         case appBuild
         case screenRecordingGranted
         case microphoneGranted
+        case audioReconciledCount
     }
 
     public init(from decoder: Decoder) throws {
@@ -331,6 +335,7 @@ public struct StatusInfo: Codable, Sendable {
         self.appBuild = try container.decode(String.self, forKey: .appBuild)
         self.screenRecordingGranted = try container.decodeIfPresent(Bool.self, forKey: .screenRecordingGranted)
         self.microphoneGranted = try container.decodeIfPresent(Bool.self, forKey: .microphoneGranted)
+        self.audioReconciledCount = try container.decodeIfPresent(Int.self, forKey: .audioReconciledCount)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -348,6 +353,7 @@ public struct StatusInfo: Codable, Sendable {
         try container.encode(appBuild, forKey: .appBuild)
         try container.encodeIfPresent(screenRecordingGranted, forKey: .screenRecordingGranted)
         try container.encodeIfPresent(microphoneGranted, forKey: .microphoneGranted)
+        try container.encodeIfPresent(audioReconciledCount, forKey: .audioReconciledCount)
     }
 }
 

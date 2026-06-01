@@ -16,7 +16,8 @@ func formatStatus(_ status: StatusInfo) -> String {
         "appVersion=\(status.appVersion)",
         "appBuild=\(status.appBuild)",
         "screenRecordingGranted=\(formatStatusBool(status.screenRecordingGranted))",
-        "microphoneGranted=\(formatStatusBool(status.microphoneGranted))"
+        "microphoneGranted=\(formatStatusBool(status.microphoneGranted))",
+        "audioReconciledCount=\(status.audioReconciledCount.map(String.init) ?? "<unset>")"
     ].joined(separator: "\n")
 }
 

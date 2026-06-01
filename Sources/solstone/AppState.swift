@@ -72,6 +72,7 @@ public final class AppState {
     public internal(set) var isRecording = false
     public internal(set) var isPaused = false
     public internal(set) var errorMessage: String?
+    public internal(set) var audioReconciledCount: Int = 0
     public internal(set) var pipelineDead = false
     public internal(set) var ipcServiceRunning = false
     public internal(set) var pipelineBinaryMissing = false
@@ -439,9 +440,18 @@ public final class AppState {
 
         // Background remix completion (rotation) - triggers upload
         Task {
-            await RemixQueue.shared.setOnSegmentComplete { [weak self] _ in
+            await RemixQueue.shared.setOnSegmentComplete { [weak self] _, reconciliation in
                 await MainActor.run {
-                    self?.uploadCoordinator.triggerSync()
+                    guard let self else { return }
+                    switch reconciliation {
+                    case .normal:
+                        self.uploadCoordinator.triggerSync()
+                    case .recovered:
+                        self.audioReconciledCount += 1
+                        self.uploadCoordinator.triggerSync()
+                    case .failed(let message):
+                        self.errorMessage = message
+                    }
                 }
             }
         }
