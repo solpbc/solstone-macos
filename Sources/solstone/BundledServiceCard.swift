@@ -8,7 +8,7 @@ struct BundledServiceCard: View {
     var copyToClipboard: (String) -> Void
     @State private var journalURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("journal")
     @State private var showLogPerRow: [String: Bool] = [:]
-    @State private var failureDetailsExpanded = true
+    @State private var failureDetailsExpanded = false
     @State private var failureDiagnosticCopied = false
     @State private var doctorRunner: SubprocessRunner
     @State private var doctorTask: Task<Void, Never>?
