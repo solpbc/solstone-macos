@@ -61,6 +61,7 @@ struct SolstoneInstallerTests {
                 "/tmp/solstone-test-journal"
             ])
             let observer = try #require(runner.invocations.first { $0.arguments.first == "observer" })
+            #expect(observer.executable.path == SolBinaryLocator.journalPath(siblingOf: "/usr/bin/sol"))
             #expect(observer.arguments == [
                 "observer",
                 "--json",

@@ -533,7 +533,7 @@ public final class SolstoneInstaller {
     }
 
     private func enterRegistering(solPath: String) async {
-        let phase = "sol observer create"
+        let phase = "journal observer create"
         setMain(.registering(SubprocessProgress(phase: phase)))
 
         modelsTask = Task { [weak self] in
@@ -551,12 +551,13 @@ public final class SolstoneInstaller {
     }
 
     private func runObserverCreate(solPath: String, phase: String) async -> Bool {
+        let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
         let environment = SolstoneRuntimeLayout().uvEnvironment()
         let output = InstallerOutput()
         let result: SubprocessResult
         do {
             result = try await subprocessRunner.run(
-                executable: URL(fileURLWithPath: solPath),
+                executable: URL(fileURLWithPath: journalPath),
                 arguments: ["observer", "--json", "create", "solstone-macos", "--reuse-existing"],
                 environment: environment,
                 stdoutHandler: { [weak self, output] data in
@@ -573,7 +574,7 @@ public final class SolstoneInstaller {
                 }
             )
         } catch {
-            failMain(.registering(message: error.localizedDescription), category: .subprocessLaunch, logExcerpt: "sol observer create subprocess could not launch: \(error.localizedDescription)")
+            failMain(.registering(message: error.localizedDescription), category: .subprocessLaunch, logExcerpt: "journal observer create subprocess could not launch: \(error.localizedDescription)")
             return false
         }
 
