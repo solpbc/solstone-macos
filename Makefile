@@ -573,19 +573,7 @@ supply-chain-check: vendor-uv vendor-python generate-bundle-config
 	    echo "(not signed yet — run make bundle-dist to produce signed bundled python)"; \
 	fi
 	@echo "── bundled backend wheelhouse ──"
-	@if [ -f "$(WHEELHOUSE_MANIFEST)" ]; then \
-	    echo "manifest: $(WHEELHOUSE_MANIFEST)"; \
-	    (cd "$(WHEELHOUSE_DIR)" && shasum -a 256 -c "$(notdir $(WHEELHOUSE_MANIFEST))") || { echo "error: wheelhouse sha256 manifest verification failed"; exit 1; }; \
-	    PINNED_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
-	    [ "$$PINNED_COUNT" = "1" ] || { echo "error: expected exactly one solstone-$(SOLSTONE_PIN_VERSION)-*.whl in $(WHEELHOUSE_DIR)"; exit 1; }; \
-	    PINNED_WHEEL="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | head -n 1)"; \
-	    PINNED_VERSION="$$(python3 scripts/wheelhouse_helper.py wheel-version "$$PINNED_WHEEL")"; \
-	    [ "$$PINNED_VERSION" = "$(SOLSTONE_PIN_VERSION)" ] || { echo "error: sibling backend version $$PINNED_VERSION != pinned $(SOLSTONE_PIN_VERSION) — re-pin or update sibling"; exit 1; }; \
-	    RUNTIME_DIRS="$$(find "$(WHEELHOUSE_DIR)" -mindepth 1 -type d \( -name '__pycache__' -o -name '.venv' -o -name 'venv' -o -name 'cache' -o -name 'model' -o -name 'models' \) -print)"; \
-	    [ -z "$$RUNTIME_DIRS" ] || { echo "error: wheelhouse contains runtime/cache/model dirs"; echo "$$RUNTIME_DIRS"; exit 1; }; \
-	else \
-	    echo "(not built yet — run make vendor-wheelhouse)"; \
-	fi
+	@python3 scripts/wheelhouse_helper.py verify-wheelhouse "$(WHEELHOUSE_DIR)" "$(SOLSTONE_PIN_VERSION)"
 	@echo "── THIRD_PARTY_NOTICES.md ──"
 	@test -f THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing"; exit 1; }
 	@grep -qiE '^##[[:space:]]+uv' THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing uv entry"; exit 1; }
