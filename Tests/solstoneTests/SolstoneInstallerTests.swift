@@ -129,6 +129,29 @@ struct SolstoneInstallerTests {
         #expect(serviceIndex < installIndex)
     }
 
+    @Test func upgradePathTargetsResolvedJournalNotCallerDefault() async throws {
+        let runner = FakeSubprocessRunner()
+        enqueueSuccessfulPreclean(runner, journalPath: "/data/solstone/relocated-journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        let setup = try #require(runner.invocations.first { $0.arguments.first == "setup" })
+        #expect(setup.arguments == [
+            "setup",
+            "--jsonl",
+            "--yes",
+            "--skip-models",
+            "--accept-existing-journal",
+            "--journal",
+            "/data/solstone/relocated-journal"
+        ])
+        #expect(!setup.arguments.contains("/tmp/journal"))
+    }
+
     @Test func precleanInvokesJournalWhenSiblingExists() async throws {
         let runner = FakeSubprocessRunner()
         enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
@@ -203,6 +226,8 @@ struct SolstoneInstallerTests {
         #expect(!runner.invocations.contains { $0.arguments.first == "config" })
         #expect(!runner.invocations.contains { $0.arguments.first == "service" })
         #expect(runner.invocations.contains { $0.arguments.starts(with: ["tool", "install"]) })
+        let setup = try #require(runner.invocations.first { $0.arguments.first == "setup" })
+        #expect(Array(setup.arguments.suffix(2)) == ["--journal", "/tmp/journal"])
     }
 
     @Test func acceptExistingSkipsPreclean() async throws {
@@ -262,6 +287,19 @@ struct SolstoneInstallerTests {
         try await waitForTerminal(installer)
 
         #expect(installer.main == .failed(.cleanup(step: .resolveJournal, message: cleanupMessage(step: .resolveJournal, why: "config failed"))))
+    }
+
+    @Test func precleanFailsWhenConfigOutputUnparseable() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("config", .success(stdout: Data("path: relative/not-absolute\n".utf8)))
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.cleanup(step: .resolveJournal, message: cleanupMessage(step: .resolveJournal, why: "could not find the journal"))))
+        #expect(!runner.invocations.contains { $0.arguments.first == "setup" })
     }
 
     @Test func precleanTreatsServiceUninstallNonzeroAsFatal() async throws {

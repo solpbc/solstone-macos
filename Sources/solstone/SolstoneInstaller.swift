@@ -153,9 +153,11 @@ public final class SolstoneInstaller {
 
     private func runInstall(journalURL: URL, existingInstallChoice: ExistingInstallChoice) async {
         let existingSolPath = await solBinaryFinder()
+        var effectiveJournalURL = journalURL
         if existingInstallChoice == .createFresh {
             if let existingSolPath {
-                guard await runUpgradePreclean(solPath: existingSolPath) else { return }
+                guard let resolvedJournalURL = await runUpgradePreclean(solPath: existingSolPath) else { return }
+                effectiveJournalURL = resolvedJournalURL
             }
             guard await runInstallSolstone() else { return }
         }
@@ -176,7 +178,7 @@ public final class SolstoneInstaller {
             return
         }
 
-        guard await runSolSetup(solPath: solPath, journalURL: journalURL) else { return }
+        guard await runSolSetup(solPath: solPath, journalURL: effectiveJournalURL) else { return }
         await enterRegistering(solPath: solPath)
     }
 
@@ -328,7 +330,7 @@ public final class SolstoneInstaller {
         return (result, output.stdoutString(), output.stderrString())
     }
 
-    private func runUpgradePreclean(solPath: String) async -> Bool {
+    private func runUpgradePreclean(solPath: String) async -> URL? {
         let phase = "upgrade pre-clean"
         setMain(.cleaningUp(SubprocessProgress(phase: phase)))
         Logger.setup.info("starting upgrade pre-clean")
@@ -350,7 +352,7 @@ public final class SolstoneInstaller {
             )
         } catch {
             failCleanup(step: .resolveJournal, why: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "\(configLabel) subprocess could not launch: \(error.localizedDescription)")
-            return false
+            return nil
         }
 
         let configStdout = configOutput.stdoutString()
@@ -362,11 +364,11 @@ public final class SolstoneInstaller {
                 category: Self.categorize(stderr: configStderr),
                 logExcerpt: Self.lastUsefulLog(stdout: configStdout, stderr: configStderr)
             )
-            return false
+            return nil
         }
         guard let journalPath = parseJournalPath(from: configStdout) else {
             failCleanup(step: .resolveJournal, why: "could not find the journal", category: .unknown, logExcerpt: configStdout)
-            return false
+            return nil
         }
 
         let pidURL = URL(fileURLWithPath: journalPath, isDirectory: true)
@@ -392,7 +394,7 @@ public final class SolstoneInstaller {
                 )
             } catch {
                 failCleanup(step: .serviceUninstall, why: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "\(uninstallLabel) subprocess could not launch: \(error.localizedDescription)")
-                return false
+                return nil
             }
             let uninstallStdout = uninstallOutput.stdoutString()
             let uninstallStderr = uninstallOutput.stderrString()
@@ -403,7 +405,7 @@ public final class SolstoneInstaller {
                     category: Self.categorize(stderr: uninstallStderr),
                     logExcerpt: Self.lastUsefulLog(stdout: uninstallStdout, stderr: uninstallStderr)
                 )
-                return false
+                return nil
             }
         }
 
@@ -416,7 +418,7 @@ public final class SolstoneInstaller {
             }
             if pidExists(capturedPid) {
                 failCleanup(step: .waitForDeath, why: "supervisor pid \(capturedPid) still alive after 10s", category: .unknown)
-                return false
+                return nil
             }
         }
 
@@ -427,7 +429,7 @@ public final class SolstoneInstaller {
             gracePeriod: orphanGracePeriod
         ) {
             failCleanup(step: failure.step, why: failure.message, category: .unknown)
-            return false
+            return nil
         }
 
         for port in [7657, 5015] {
@@ -442,7 +444,7 @@ public final class SolstoneInstaller {
                 )
             } catch {
                 failCleanup(step: .ports, why: "lsof failed to launch probing port \(port)", category: .subprocessLaunch, logExcerpt: error.localizedDescription)
-                return false
+                return nil
             }
 
             switch result.exitCode {
@@ -450,14 +452,14 @@ public final class SolstoneInstaller {
                 continue
             case 0:
                 failCleanup(step: .ports, why: "port \(port) still bound after sweep", category: .unknown)
-                return false
+                return nil
             default:
                 failCleanup(step: .ports, why: "lsof exited \(result.exitCode) probing port \(port)", category: .unknown)
-                return false
+                return nil
             }
         }
 
-        return true
+        return URL(fileURLWithPath: journalPath, isDirectory: true)
     }
 
     private func failCleanup(step: CleanupStep, why: String, category: ErrorCategory, logExcerpt: String? = nil) {
