@@ -296,15 +296,8 @@ struct BundledServiceCard: View {
     }
 
     private func upgradeFailureContent(installedVersion: String, pinnedVersion: String, errorDetails: String) -> some View {
-        let summary: String
-        if case .failed(let failedState) = installer.main {
-            summary = failureMessage(failedState)
-        } else {
-            summary = upgradeFailedStatusMessage(installedVersion: installedVersion)
-        }
-
-        return failureCardBody(
-            summary: summary,
+        failureCardBody(
+            summary: upgradeFailedStatusMessage(installedVersion: installedVersion),
             retryTitle: upgradeFailedRetryButtonTitle,
             retryAction: {
                 installer.start(

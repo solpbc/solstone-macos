@@ -40,7 +40,7 @@ func initialServiceMode(for config: AppConfig) -> ServiceMode {
     config.serviceMode ?? .bundled
 }
 
-private struct SettingsDetailScrollEdgeModifier: ViewModifier {
+private struct SettingsPaneScrollEdgeModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
@@ -161,13 +161,14 @@ struct SettingsView: View {
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
+            .modifier(SettingsPaneScrollEdgeModifier())
         } detail: {
             ScrollView {
                 detailContent
                     .padding(20)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .modifier(SettingsDetailScrollEdgeModifier())
+            .modifier(SettingsPaneScrollEdgeModifier())
         }
         .frame(minWidth: 720, minHeight: 500)
         .onAppear {

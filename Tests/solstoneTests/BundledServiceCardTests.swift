@@ -79,6 +79,11 @@ struct BundledServiceCardTests {
         #expect(sanitizedInlineFailureMessage("no network connection") == "no network connection")
     }
 
+    @Test func sanitizerKeepsUpgradeStatusSummary() {
+        let summary = upgradeFailedStatusMessage(installedVersion: "0.4.7")
+        #expect(sanitizedInlineFailureMessage(summary) == "couldn't upgrade solstone — still running 0.4.7")
+    }
+
     @Test func failureDiagnosticRetainsRawRedirectionText() {
         let raw = "'observer' moved to 'journal observer' — run that instead."
         let markdown = buildFailureDiagnosticMarkdown(
