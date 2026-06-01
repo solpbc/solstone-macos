@@ -15,7 +15,7 @@ enum UpdatesCopy {
 
     static let releaseNotesTitle = "what's new"
     static let releaseNotesOnlineLinkLabel = "read the full notes online"
-    static let releaseNotesOnlineURL = URL(string: "https://solstone.app/releases")!
+    static let releaseNotesOnlineURL = URL(string: "https://solstone.app/releases/macos")!
     static let finalizingSuffix = "finalizing"
 
     static let actionCheckNow = "check now"

@@ -36,8 +36,8 @@ STAGING_PREFIX = "solstone-macos/_staging"
 SPARKLE_NS = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 MIN_SYSTEM = "15.0"
 # Standard Sparkle "full release notes" hook — points the updater's full-notes
-# link at the branded, appcast-driven release history page (solstone.app/releases).
-FULL_RELEASE_NOTES_LINK = "https://solstone.app/releases"
+# link at the branded, appcast-driven macOS release history page.
+FULL_RELEASE_NOTES_LINK = "https://solstone.app/releases/macos"
 DEFAULT_KEY_PATH = "/tmp/sparkle-priv.key"
 # Cloudflare account id (account "jer"). wrangler whoami must list this — used by
 # preflight_wrangler() to catch a silently-degraded OAuth token before any upload.

@@ -85,6 +85,7 @@ struct ReleaseNotesViewModelTests {
 
         #expect(model.onlineLinkLabel == UpdatesCopy.releaseNotesOnlineLinkLabel)
         #expect(model.onlineLinkURL == UpdatesCopy.releaseNotesOnlineURL)
+        #expect(model.onlineLinkURL == URL(string: "https://solstone.app/releases/macos")!)
     }
 
     private enum TestParseError: Error {

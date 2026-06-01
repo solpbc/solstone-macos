@@ -57,6 +57,6 @@ struct UpdatesCopyTests {
     }
 
     @Test func releaseNotesOnlineURLString() {
-        #expect(UpdatesCopy.releaseNotesOnlineURL == URL(string: "https://solstone.app/releases")!)
+        #expect(UpdatesCopy.releaseNotesOnlineURL == URL(string: "https://solstone.app/releases/macos")!)
     }
 }
