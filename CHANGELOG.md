@@ -5,6 +5,13 @@ All notable changes to Solstone Capture will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.7] - 2026-05-31
+
+### Fixed
+- upgrading over an older install no longer stops because the `sol` or `journal` shortcut in your shell points somewhere stale. setup now repairs the shortcuts it owns and keeps going.
+- sol's background thinking can ask your journal for identity, routines, health, and talent context again. those approved journal tools were being turned away before sol could use them; now they work without widening what sol is allowed to run.
+- fresh bundled installs resolve cleanly when the app installs solstone. the bundled journal now uses matching telemetry packages for sol's thinking runtime, so setup no longer lands on an incompatible dependency mix.
+
 ## [1.3.6] - 2026-05-31
 
 ### Added
