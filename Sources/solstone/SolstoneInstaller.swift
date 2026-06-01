@@ -19,6 +19,7 @@ public final class SolstoneInstaller {
     public internal(set) var modelsProgress: ModelsProgress = .idle
     public internal(set) var lastFailureCategory: ErrorCategory?
     public internal(set) var lastFailureLog: String?
+    public internal(set) var lastSetupProgress: SubprocessProgress?
     public internal(set) var upgradeFailureRecord: UpgradeFailureRecord?
     public internal(set) var upgradeInProgress: Bool = false
 
@@ -130,6 +131,7 @@ public final class SolstoneInstaller {
         }
         lastFailureCategory = nil
         lastFailureLog = nil
+        lastSetupProgress = nil
         modelsProgress = .idle
         installTask = Task { [weak self] in
             guard let self else { return }
@@ -817,6 +819,7 @@ public final class SolstoneInstaller {
     private func failMain(_ failedState: FailedState, category: ErrorCategory, logExcerpt: String? = nil) {
         lastFailureCategory = category
         lastFailureLog = (logExcerpt?.isEmpty == false) ? logExcerpt : nil
+        lastSetupProgress = currentMainProgress()
         if let upgradingFromInstalledVersion {
             persistUpgradeFailure(installed: upgradingFromInstalledVersion, details: lastFailureLog)
         }
@@ -826,6 +829,18 @@ public final class SolstoneInstaller {
             Logger.setup.warning("installer: failure log excerpt:\n\(log, privacy: .public)")
         }
         setMain(.failed(failedState))
+    }
+
+    private func currentMainProgress() -> SubprocessProgress? {
+        switch main {
+        case .cleaningUp(let progress),
+             .installingSolstone(let progress),
+             .runningSolSetup(let progress),
+             .registering(let progress):
+            return progress
+        case .detecting, .awaitingChoice, .done, .failed:
+            return nil
+        }
     }
 
     private static func defaultJournalURL() -> URL {

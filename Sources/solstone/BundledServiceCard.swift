@@ -5,9 +5,11 @@ import SolstoneCore
 struct BundledServiceCard: View {
     @Bindable var appState: AppState
     var openURL: (URL) -> Void
+    var copyToClipboard: (String) -> Void
     @State private var journalURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("journal")
     @State private var showLogPerRow: [String: Bool] = [:]
     @State private var failureDetailsExpanded = true
+    @State private var failureDiagnosticCopied = false
     @State private var doctorRunner: SubprocessRunner
     @State private var doctorTask: Task<Void, Never>?
     @State private var doctorResult: Result<DoctorReport, Error>?
@@ -16,10 +18,15 @@ struct BundledServiceCard: View {
     init(
         appState: AppState,
         openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
+        copyToClipboard: @escaping (String) -> Void = {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString($0, forType: .string)
+        },
         doctorRunner: SubprocessRunner = SubprocessRunner()
     ) {
         self.appState = appState
         self.openURL = openURL
+        self.copyToClipboard = copyToClipboard
         self._doctorRunner = State(initialValue: doctorRunner)
     }
 
@@ -63,8 +70,8 @@ struct BundledServiceCard: View {
                 }
             case .installedUnknown:
                 Text(installedServiceMessage(for: .installedUnknown))
-            case .upgradeFailed(let installed, _, let errorDetails):
-                upgradeFailureContent(installedVersion: installed, errorDetails: errorDetails)
+            case .upgradeFailed(let installed, let pinned, let errorDetails):
+                upgradeFailureContent(installedVersion: installed, pinnedVersion: pinned, errorDetails: errorDetails)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -300,10 +307,15 @@ struct BundledServiceCard: View {
             Button("try again") {
                 installer.start(journalURL: journalURL, existingInstallChoice: .createFresh)
             }
+
+            failureDiagnosticFooter(markdown: buildFailureDiagnosticMarkdown(
+                failureDiagnosticInput(failedState),
+                doctorReport: successfulDoctorReport
+            ))
         }
     }
 
-    private func upgradeFailureContent(installedVersion: String, errorDetails: String) -> some View {
+    private func upgradeFailureContent(installedVersion: String, pinnedVersion: String, errorDetails: String) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(upgradeFailedStatusMessage(installedVersion: installedVersion))
                 .foregroundStyle(.secondary)
@@ -336,8 +348,26 @@ struct BundledServiceCard: View {
                 )
             }
 
+            failureDiagnosticFooter(markdown: buildFailureDiagnosticMarkdown(
+                upgradeFailureDiagnosticInput(
+                    installedVersion: installedVersion,
+                    pinnedVersion: pinnedVersion,
+                    errorDetails: errorDetails
+                ),
+                doctorReport: nil
+            ))
+
             doctorAffordance
         }
+    }
+
+    private func failureDiagnosticFooter(markdown: String) -> some View {
+        FailureDiagnosticFooter(
+            markdown: markdown,
+            copyToClipboard: copyToClipboard,
+            copied: $failureDiagnosticCopied,
+            openURL: openURL
+        )
     }
 
     @ViewBuilder
@@ -409,6 +439,82 @@ struct BundledServiceCard: View {
         if panel.runModal() == .OK, let url = panel.url {
             journalURL = url
         }
+    }
+
+    private var successfulDoctorReport: DoctorReport? {
+        if case .success(let report) = doctorResult {
+            return report
+        }
+        return nil
+    }
+
+    private func failureDiagnosticInput(_ failedState: FailedState) -> FailureDiagnosticInput {
+        diagnosticInput(
+            phase: label(for: rowForFailure(failedState)),
+            errorCode: errorCode(for: failedState),
+            errorMessage: failureMessage(failedState),
+            installedVersion: nil,
+            pinnedVersion: BundleConfig.solstonePinVersion,
+            logExcerpt: installer.lastFailureLog
+        )
+    }
+
+    private func upgradeFailureDiagnosticInput(
+        installedVersion: String,
+        pinnedVersion: String,
+        errorDetails: String
+    ) -> FailureDiagnosticInput {
+        let failedState: FailedState?
+        if case .failed(let state) = installer.main {
+            failedState = state
+        } else {
+            failedState = nil
+        }
+
+        return diagnosticInput(
+            phase: failedState.map { label(for: rowForFailure($0)) } ?? label(for: .installSolstone),
+            errorCode: failedState.flatMap(errorCode(for:)),
+            errorMessage: failedState.map(failureMessage) ?? upgradeFailedStatusMessage(installedVersion: installedVersion),
+            installedVersion: installedVersion,
+            pinnedVersion: pinnedVersion,
+            logExcerpt: errorDetails
+        )
+    }
+
+    private func diagnosticInput(
+        phase: String,
+        errorCode: String?,
+        errorMessage: String,
+        installedVersion: String?,
+        pinnedVersion: String,
+        logExcerpt: String?
+    ) -> FailureDiagnosticInput {
+        let progress = installer.lastSetupProgress
+        return FailureDiagnosticInput(
+            phase: phase,
+            stepIndex: progress?.stepIndex,
+            stepTotal: progress?.stepTotal,
+            currentStep: progress?.currentStep,
+            errorCode: errorCode,
+            errorMessage: errorMessage,
+            category: installer.lastFailureCategory.map { String(describing: $0) } ?? "unknown",
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+            appBuild: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
+            pinnedSolstoneVersion: pinnedVersion,
+            bundledPythonBuild: BundleConfig.bundledPythonBuild,
+            bundledUVVersion: BundleConfig.bundledUVVersion,
+            macOSVersion: currentMacOSVersionString(),
+            architecture: currentArchitectureString(),
+            installedVersion: installedVersion,
+            logExcerpt: logExcerpt
+        )
+    }
+
+    private func errorCode(for failedState: FailedState) -> String? {
+        if case .solSetup(let errorCode, _) = failedState {
+            return errorCode
+        }
+        return nil
     }
 
     private var isDetecting: Bool {
@@ -528,4 +634,182 @@ func cancelDoctorTask(_ task: inout Task<Void, Never>?, cancelRunner: () -> Void
     task?.cancel()
     task = nil
     cancelRunner()
+}
+
+struct FailureDiagnosticInput: Equatable {
+    let phase: String
+    let stepIndex: Int?
+    let stepTotal: Int?
+    let currentStep: String?
+    let errorCode: String?
+    let errorMessage: String
+    let category: String
+    let appVersion: String
+    let appBuild: String
+    let pinnedSolstoneVersion: String
+    let bundledPythonBuild: String
+    let bundledUVVersion: String
+    let macOSVersion: String
+    let architecture: String
+    let installedVersion: String?
+    let logExcerpt: String?
+}
+
+func buildFailureDiagnosticMarkdown(_ input: FailureDiagnosticInput, doctorReport: DoctorReport?) -> String {
+    var lines = [
+        "these details came from the solstone installer failure card.",
+        "share them with support when an install or upgrade needs review.",
+        "",
+        "phase: \(input.phase)",
+    ]
+
+    if let stepIndex = input.stepIndex,
+       let stepTotal = input.stepTotal,
+       let currentStep = input.currentStep,
+       !currentStep.isEmpty {
+        lines.append("step: \(stepIndex)/\(stepTotal) · \(currentStep)")
+    }
+
+    let errorPrefix: String
+    if let errorCode = input.errorCode, !errorCode.isEmpty {
+        errorPrefix = "[\(errorCode)] "
+    } else {
+        errorPrefix = ""
+    }
+    lines.append("error: \(errorPrefix)\(input.errorMessage)")
+    lines.append("category: \(input.category)")
+
+    lines.append(contentsOf: [
+        "",
+        "versions:",
+        "- app: \(input.appVersion) (\(input.appBuild))",
+        "- bundled solstone pinned: \(input.pinnedSolstoneVersion)",
+        "- bundled python build: \(input.bundledPythonBuild)",
+        "- bundled uv: \(input.bundledUVVersion)",
+    ])
+    if let installedVersion = input.installedVersion, !installedVersion.isEmpty {
+        lines.append("- upgrade: installed \(installedVersion) → pinned \(input.pinnedSolstoneVersion)")
+    }
+
+    lines.append(contentsOf: [
+        "",
+        "system:",
+        "- macOS: \(input.macOSVersion)",
+        "- arch: \(input.architecture)",
+    ])
+
+    let doctorLines = doctorReport?.checks.compactMap(failureDiagnosticDoctorLine)
+    if let doctorLines, !doctorLines.isEmpty {
+        lines.append("")
+        lines.append("doctor checks:")
+        lines.append(contentsOf: doctorLines)
+    }
+
+    lines.append(contentsOf: [
+        "",
+        "dig deeper:",
+        "- runtime: ~/Library/Application Support/sol/runtime",
+        "- sol: ~/.local/bin/sol",
+        "- repo: https://github.com/solpbc/solstone-macos",
+        "- log show: /usr/bin/log show --predicate 'subsystem == \"app.solstone.observer\"' --last 30m --style compact",
+        "",
+        "log excerpt:",
+        "```",
+        input.logExcerpt?.isEmpty == false ? input.logExcerpt! : "no recent installer detail available",
+        "```",
+        "",
+        "get help → https://support.solstone.app",
+    ])
+
+    return lines.joined(separator: "\n")
+}
+
+private func failureDiagnosticDoctorLine(_ check: DoctorCheck) -> String? {
+    let status: String
+    switch check.status {
+    case .fail:
+        status = "fail"
+    case .warn:
+        status = "warn"
+    case .ok, .skip, .unknown:
+        return nil
+    }
+
+    let base = "- \(check.name) · \(status)"
+    if let detail = check.detail, !detail.isEmpty {
+        return "\(base) · \(detail)"
+    }
+    return base
+}
+
+func rowForFailure(_ failedState: FailedState) -> InstallerRow {
+    switch failedState {
+    case .cleanup:
+        return .cleaningUp
+    case .installSolstone:
+        return .installSolstone
+    case .solSetup:
+        return .solSetup
+    case .installModels:
+        return .models
+    case .registering:
+        return .registering
+    }
+}
+
+@MainActor
+func copyFailureDiagnostic(markdown: String, copyToClipboard: (String) -> Void, copied: Binding<Bool>) {
+    copyToClipboard(markdown)
+    copied.wrappedValue = true
+}
+
+private struct FailureDiagnosticFooter: View {
+    let markdown: String
+    let copyToClipboard: (String) -> Void
+    @Binding var copied: Bool
+    let openURL: (URL) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button {
+                copyFailureDiagnostic(markdown: markdown, copyToClipboard: copyToClipboard, copied: $copied)
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(2))
+                    copied = false
+                }
+            } label: {
+                Label("copy error details", systemImage: "doc.on.doc")
+            }
+
+            if copied {
+                Text("copied ✓")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button {
+                openURL(failureDiagnosticSupportURL)
+            } label: {
+                Label("get help", systemImage: "questionmark.circle")
+            }
+            .buttonStyle(.link)
+        }
+    }
+}
+
+let failureDiagnosticSupportURL = URL(string: "https://support.solstone.app")!
+
+func currentMacOSVersionString() -> String {
+    let version = ProcessInfo.processInfo.operatingSystemVersion
+    return "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
+}
+
+func currentArchitectureString() -> String {
+    #if arch(arm64)
+    return "arm64"
+    #elseif arch(x86_64)
+    return "x86_64"
+    #else
+    return "unknown"
+    #endif
 }
