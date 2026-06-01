@@ -1,6 +1,6 @@
 .PHONY: build release release-universal run clean test integration-test snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg \
-        vendor-uv vendor-python generate-bundle-config check-versions supply-chain-check release-dmg-smoke brand-sync \
+        vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke brand-sync \
         release-preflight bump-release
 
 # Default goal when running bare `make` — build the project. brand-sync is
@@ -60,6 +60,15 @@ PYTHON_RELEASE_URL := $(PYTHON_RELEASE_URL_BASE)/$(PYTHON_TARBALL_NAME)
 PYTHON_VENDOR_DIR := vendor/python
 PYTHON_VENDOR_SHA_FILE := vendor/python-aarch64-apple-darwin.sha256
 
+# bundled backend wheelhouse
+SOLSTONE_SRC_DIR ?= ../solstone
+SOLSTONE_REF ?= HEAD
+WHEELHOUSE_DIR := vendor/solstone-wheelhouse
+WHEELHOUSE_MANIFEST := $(WHEELHOUSE_DIR)/MANIFEST.sha256
+WHEELHOUSE_PLATFORM_TAG ?= macosx_15_0_arm64
+WHEELHOUSE_ABI ?= cp313
+WHEELHOUSE_PYTHON_TAG ?= 3.13
+
 check-versions:
 	@[ -n "$(SOLSTONE_PIN_VERSION)" ] || { echo "error: solstone pin version must not be empty"; exit 1; }
 	@printf '0.2.1\n%s\n' "$(SOLSTONE_MIN_VERSION)" | sort -V -C || { echo "error: solstone minimum version must be >= 0.2.1 (got $(SOLSTONE_MIN_VERSION))"; exit 1; }
@@ -98,6 +107,60 @@ vendor-python:
 	    "$(PYTHON_VENDOR_DIR)/bin/python3.13" --version 2>&1 | grep -F "Python $(PYTHON_VERSION)" >/dev/null || { echo "error: bundled python reported wrong version"; exit 1; }; \
 	    echo "vendor: python-build-standalone $(PYTHON_VERSION)+$(PYTHON_BUILD_STANDALONE_VERSION) extracted to $(PYTHON_VENDOR_DIR)"; \
 	fi
+
+vendor-wheelhouse: check-versions vendor-uv vendor-python
+	@set -e; \
+	    if [ "$$(uname -s)" != "Darwin" ] || [ "$$(uname -m)" != "arm64" ]; then \
+	        echo "error: vendor-wheelhouse must run on a macOS arm64 host (pip evaluates dependency markers against the running host; mlx requires darwin+arm64)"; \
+	        exit 1; \
+	    fi; \
+	    if [ ! -d "$(SOLSTONE_SRC_DIR)/.git" ]; then \
+	        echo "error: SOLSTONE_SRC_DIR '$(SOLSTONE_SRC_DIR)' is not a git repo; set SOLSTONE_SRC_DIR=/path/to/solstone"; \
+	        exit 1; \
+	    fi; \
+	    git -C "$(SOLSTONE_SRC_DIR)" rev-parse --verify "$(SOLSTONE_REF)" >/dev/null 2>&1 || { echo "error: SOLSTONE_REF '$(SOLSTONE_REF)' not found in $(SOLSTONE_SRC_DIR)"; exit 1; }; \
+	    if [ -d "$(WHEELHOUSE_DIR)" ] && [ -f "$(WHEELHOUSE_MANIFEST)" ] && \
+	        (cd "$(WHEELHOUSE_DIR)" && shasum -a 256 -c "$(notdir $(WHEELHOUSE_MANIFEST))" >/dev/null 2>&1); then \
+	        COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone-*.whl' | wc -l | tr -d ' ')"; \
+	        if [ "$$COUNT" = "1" ]; then \
+	            CACHED_WHEEL="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone-*.whl' | head -n 1)"; \
+	            CACHED_VERSION="$$(python3 scripts/wheelhouse_helper.py wheel-version "$$CACHED_WHEEL" 2>/dev/null || true)"; \
+	            if [ "$$CACHED_VERSION" = "$(SOLSTONE_PIN_VERSION)" ]; then \
+	                echo "vendor: solstone wheelhouse $(SOLSTONE_PIN_VERSION) already present and verified"; \
+	                exit 0; \
+	            fi; \
+	        fi; \
+	    fi; \
+	    EXPORT_DIR="$$(mktemp -d -t solstone-export)"; \
+	    BUILD_DIR="$$(mktemp -d -t solstone-wheelhouse)"; \
+	    trap 'rm -rf "$$EXPORT_DIR" "$$BUILD_DIR"' EXIT; \
+	    echo "vendor: building solstone wheelhouse from $(SOLSTONE_SRC_DIR) at $(SOLSTONE_REF)"; \
+	    ARCHIVE_TAR="$$BUILD_DIR/solstone-src.tar"; \
+	    git -C "$(SOLSTONE_SRC_DIR)" archive "$(SOLSTONE_REF)" > "$$ARCHIVE_TAR" || { echo "error: failed to archive $(SOLSTONE_SRC_DIR) at $(SOLSTONE_REF)"; exit 1; }; \
+	    tar -x -f "$$ARCHIVE_TAR" -C "$$EXPORT_DIR" || { echo "error: failed to extract solstone archive"; exit 1; }; \
+	    "$(UV_VENDOR_BINARY)" build --wheel --out-dir "$$BUILD_DIR" "$$EXPORT_DIR" || { echo "error: uv build failed for $(SOLSTONE_SRC_DIR) at $(SOLSTONE_REF)"; exit 1; }; \
+	    BUILT_COUNT="$$(find "$$BUILD_DIR" -maxdepth 1 -type f -name 'solstone-*.whl' | wc -l | tr -d ' ')"; \
+	    [ "$$BUILT_COUNT" = "1" ] || { echo "error: uv build did not produce exactly one solstone wheel"; exit 1; }; \
+	    BUILT_WHEEL="$$(find "$$BUILD_DIR" -maxdepth 1 -type f -name 'solstone-*.whl' | head -n 1)"; \
+	    BUILT_VERSION="$$(python3 scripts/wheelhouse_helper.py wheel-version "$$BUILT_WHEEL")"; \
+	    [ "$$BUILT_VERSION" = "$(SOLSTONE_PIN_VERSION)" ] || { echo "error: sibling backend version $$BUILT_VERSION != pinned $(SOLSTONE_PIN_VERSION) — re-pin or update sibling"; exit 1; }; \
+	    rm -rf "$(WHEELHOUSE_DIR)"; \
+	    mkdir -p "$(WHEELHOUSE_DIR)"; \
+	    mv "$$BUILT_WHEEL" "$(WHEELHOUSE_DIR)/"; \
+	    REQS="$$BUILD_DIR/requirements.txt"; \
+	    (cd "$$EXPORT_DIR" && "$(abspath $(UV_VENDOR_BINARY))" export --frozen --no-dev --no-emit-project --no-editable --python "$(abspath $(PYTHON_VENDOR_DIR))/bin/python3.13" -o "$$REQS") || { echo "error: uv export failed"; exit 1; }; \
+	    "$(PYTHON_VENDOR_DIR)/bin/python3.13" -m pip download -r "$$REQS" --only-binary=:all: --dest "$(WHEELHOUSE_DIR)" --platform "$(WHEELHOUSE_PLATFORM_TAG)" --python-version "$(WHEELHOUSE_PYTHON_TAG)" --implementation cp --abi "$(WHEELHOUSE_ABI)" || { echo "error: pip wheel download failed"; exit 1; }; \
+	    PINNED_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
+	    [ "$$PINNED_COUNT" = "1" ] || { echo "error: expected exactly one solstone-$(SOLSTONE_PIN_VERSION)-*.whl in $(WHEELHOUSE_DIR)"; exit 1; }; \
+	    WHEEL_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name '*.whl' | wc -l | tr -d ' ')"; \
+	    [ "$$WHEEL_COUNT" -gt 1 ] || { echo "error: dependency wheel download produced no dependency wheels"; exit 1; }; \
+	    NON_WHEELS="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f ! -name '*.whl' -print)"; \
+	    [ -z "$$NON_WHEELS" ] || { echo "error: wheelhouse contains non-wheel payload files"; echo "$$NON_WHEELS"; exit 1; }; \
+	    RUNTIME_DIRS="$$(find "$(WHEELHOUSE_DIR)" -mindepth 1 -type d \( -name '__pycache__' -o -name '.venv' -o -name 'venv' -o -name 'cache' -o -name 'model' -o -name 'models' \) -print)"; \
+	    [ -z "$$RUNTIME_DIRS" ] || { echo "error: wheelhouse contains runtime/cache/model dirs"; echo "$$RUNTIME_DIRS"; exit 1; }; \
+	    (cd "$(WHEELHOUSE_DIR)" && shasum -a 256 *.whl > "$(notdir $(WHEELHOUSE_MANIFEST))"); \
+	    (cd "$(WHEELHOUSE_DIR)" && shasum -a 256 -c "$(notdir $(WHEELHOUSE_MANIFEST))") || { echo "error: wheelhouse sha256 manifest verification failed"; exit 1; }; \
+	    echo "vendor: solstone wheelhouse $(SOLSTONE_PIN_VERSION) built at $(WHEELHOUSE_DIR)"
 
 generate-bundle-config: check-versions
 	@SHA="$$(awk '{print $$1; exit}' "$(UV_SHA256_FILE)")"; \
@@ -316,7 +379,7 @@ unlock-signing:
 # Build a universal .app bundle signed with Developer ID Application + hardened runtime.
 # Separate from `bundle-universal` so distribution signing is additive, not destructive —
 # existing self-signed bundle target stays for local dev.
-bundle-dist: unlock-signing signing-check vendor-uv vendor-python generate-bundle-config release-universal
+bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelhouse generate-bundle-config release-universal
 	@echo "Creating distribution app bundle..."
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
@@ -382,6 +445,9 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python generate-bundl
 	@PYOUT="$$(solstone.app/Contents/Resources/python/bin/python3.13 --version 2>&1)"; \
 		echo "python --version output: $$PYOUT"; \
 		echo "$$PYOUT" | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: bundled python reported wrong version (expected $(PYTHON_VERSION))"; exit 1; }
+	@rm -rf solstone.app/Contents/Resources/wheelhouse
+	@cp -R "$(WHEELHOUSE_DIR)" solstone.app/Contents/Resources/wheelhouse
+	@(cd solstone.app/Contents/Resources/wheelhouse && shasum -a 256 -c MANIFEST.sha256) || { echo "error: bundled wheelhouse sha256 manifest verification failed"; exit 1; }
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		--entitlements "$(ENTITLEMENTS_PLIST)" \
@@ -506,6 +572,20 @@ supply-chain-check: vendor-uv vendor-python generate-bundle-config
 	else \
 	    echo "(not signed yet — run make bundle-dist to produce signed bundled python)"; \
 	fi
+	@echo "── bundled backend wheelhouse ──"
+	@if [ -f "$(WHEELHOUSE_MANIFEST)" ]; then \
+	    echo "manifest: $(WHEELHOUSE_MANIFEST)"; \
+	    (cd "$(WHEELHOUSE_DIR)" && shasum -a 256 -c "$(notdir $(WHEELHOUSE_MANIFEST))") || { echo "error: wheelhouse sha256 manifest verification failed"; exit 1; }; \
+	    PINNED_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
+	    [ "$$PINNED_COUNT" = "1" ] || { echo "error: expected exactly one solstone-$(SOLSTONE_PIN_VERSION)-*.whl in $(WHEELHOUSE_DIR)"; exit 1; }; \
+	    PINNED_WHEEL="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | head -n 1)"; \
+	    PINNED_VERSION="$$(python3 scripts/wheelhouse_helper.py wheel-version "$$PINNED_WHEEL")"; \
+	    [ "$$PINNED_VERSION" = "$(SOLSTONE_PIN_VERSION)" ] || { echo "error: sibling backend version $$PINNED_VERSION != pinned $(SOLSTONE_PIN_VERSION) — re-pin or update sibling"; exit 1; }; \
+	    RUNTIME_DIRS="$$(find "$(WHEELHOUSE_DIR)" -mindepth 1 -type d \( -name '__pycache__' -o -name '.venv' -o -name 'venv' -o -name 'cache' -o -name 'model' -o -name 'models' \) -print)"; \
+	    [ -z "$$RUNTIME_DIRS" ] || { echo "error: wheelhouse contains runtime/cache/model dirs"; echo "$$RUNTIME_DIRS"; exit 1; }; \
+	else \
+	    echo "(not built yet — run make vendor-wheelhouse)"; \
+	fi
 	@echo "── THIRD_PARTY_NOTICES.md ──"
 	@test -f THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing"; exit 1; }
 	@grep -qiE '^##[[:space:]]+uv' THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing uv entry"; exit 1; }
@@ -524,6 +604,8 @@ release-dmg-smoke:
 	    PYOUT="$$("$$MOUNT/solstone.app/Contents/Resources/python/bin/python3.13" --version 2>&1)"; \
 	    echo "python --version output: $$PYOUT"; \
 	    echo "$$PYOUT" | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: bundled python reported wrong version (expected $(PYTHON_VERSION))"; exit 1; }; \
+	    test -f "$$MOUNT/solstone.app/Contents/Resources/wheelhouse/MANIFEST.sha256" || { echo "error: bundled wheelhouse manifest missing"; exit 1; }; \
+	    (cd "$$MOUNT/solstone.app/Contents/Resources/wheelhouse" && shasum -a 256 -c MANIFEST.sha256) || { echo "error: bundled wheelhouse sha256 manifest verification failed"; exit 1; }; \
 	    echo "release-dmg-smoke: ok"
 
 # Install development dependencies needed for local build workflows
