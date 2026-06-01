@@ -16,6 +16,7 @@ struct InstallerCardStateTests {
         #expect(cardState(from: .installingSolstone(progress)) == .installing)
         #expect(cardState(from: .runningSolSetup(progress)) == .installing)
         #expect(cardState(from: .registering(progress)) == .installing)
+        #expect(cardState(from: .externallyManaged(solPath: "/opt/sol")) == .externallyManaged(solPath: "/opt/sol", probe: nil))
         #expect(cardState(from: .done) == .done)
         #expect(cardState(from: .failed(.installSolstone(message: "x"))) == .failed(.installSolstone(message: "x")))
     }
@@ -35,6 +36,14 @@ struct InstallerCardStateTests {
             == .installing
         )
         #expect(terminalCardState(main: .done, probe: .unknown, failureRecord: nil) == .installedUnknown)
+    }
+
+    @Test func terminalCardStateMapsExternalStatesPassively() {
+        let main = MainState.externallyManaged(solPath: "/opt/sol")
+        #expect(terminalCardState(main: main, probe: nil, failureRecord: nil) == .externallyManaged(solPath: "/opt/sol", probe: nil))
+        #expect(terminalCardState(main: main, probe: .current(version: "0.4.8"), failureRecord: nil) == .externallyManaged(solPath: "/opt/sol", probe: .current(version: "0.4.8")))
+        #expect(terminalCardState(main: main, probe: .outdated(installed: "0.3.1", pinned: "0.4.8"), failureRecord: nil) == .externallyManaged(solPath: "/opt/sol", probe: .outdated(installed: "0.3.1", pinned: "0.4.8")))
+        #expect(terminalCardState(main: main, probe: .unknown, failureRecord: nil) == .externallyManaged(solPath: "/opt/sol", probe: .unknown))
     }
 
     @Test func terminalCardStateAppliesUpgradeFailureTruthTable() {
@@ -87,6 +96,7 @@ struct ServiceModeControlCompressionTests {
         #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .done))
         #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .installedCurrent(version: "0.4.8")))
         #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .installedUnknown))
+        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .externallyManaged(solPath: "/opt/sol", probe: nil)))
     }
 
     @Test func externalModeNeverCompressesControls() {

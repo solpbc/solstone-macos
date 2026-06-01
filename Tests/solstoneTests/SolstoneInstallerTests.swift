@@ -72,14 +72,12 @@ struct SolstoneInstallerTests {
         }
     }
 
-    @Test func detect_returnsTrue_whenSolBinaryPresent() async {
-        let preferred = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".local/bin/sol").path
-        guard FileManager.default.fileExists(atPath: preferred) else {
-            return
-        }
-
-        let installer = SolstoneInstaller()
+    @Test func detect_returnsTrue_whenAppManagedSolBinaryPresent() async {
+        let runner = FakeSubprocessRunner()
+        let installer = makeInstaller(
+            runner: runner,
+            solOwnershipResolver: { _ in .appManaged(solPath: "/usr/bin/sol") }
+        )
         let found = await installer.detect()
         #expect(found)
         #expect(installer.main == .awaitingChoice(existingInstall: true))
@@ -673,6 +671,99 @@ struct SolstoneInstallerTests {
         }
     }
 
+    @Test func externalManagedDetectCurrentOnlyProbesVersionAndPreservesConfig() async throws {
+        try await assertExternalManagedDetect(
+            config: AppConfig(serverURL: "http://localhost:5015", serverKey: "existing-key", serviceMode: nil),
+            versionStdout: "sol (solstone) \(BundleConfig.solstonePinVersion)\n",
+            expectedProbe: .current(version: BundleConfig.solstonePinVersion)
+        )
+    }
+
+    @Test func externalManagedDetectOutdatedOnlyProbesVersionAndPreservesConfig() async throws {
+        try await assertExternalManagedDetect(
+            config: AppConfig(serverURL: "http://localhost:5015", serverKey: "existing-key", serviceMode: nil),
+            versionStdout: "sol (solstone) 0.3.1\n",
+            expectedProbe: .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion)
+        )
+    }
+
+    @Test func externalManagedDetectUnknownOnlyProbesVersionAndPreservesConfig() async throws {
+        try await assertExternalManagedDetect(
+            config: AppConfig(serverURL: "http://localhost:5015", serverKey: "existing-key", serviceMode: nil),
+            versionStdout: "unparseable\n",
+            expectedProbe: .unknown
+        )
+    }
+
+    @Test func externalManagedDetectWithPersistedBundledModeDoesNotDestructOrMutateConfig() async throws {
+        try await assertExternalManagedDetect(
+            config: AppConfig(serverURL: ServiceMode.bundledServiceURL, serverKey: "bundled-key", serviceMode: .bundled),
+            versionStdout: "sol (solstone) 0.3.1\n",
+            expectedProbe: .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion)
+        )
+    }
+
+    @Test func staleRuntimeWithExternalWrapperAndCredsDoesNotDestructOrMutateConfig() async throws {
+        try await assertExternalManagedDetect(
+            config: AppConfig(serverURL: "http://127.0.0.1:5015", serverKey: "loopback-key", serviceMode: nil),
+            versionStdout: "sol (solstone) 0.3.1\n",
+            expectedProbe: .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion),
+            solPath: "/repo/.venv/bin/sol"
+        )
+    }
+
+    @Test func appManagedUpgradePassesResolvedJournalRootToSetup() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) 0.3.1\n".utf8)))
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/existing-journal")
+        enqueueSuccessfulInstallAfterPreclean(runner)
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let installer = makeInstaller(
+            runner: runner,
+            solOwnershipResolver: { _ in .appManaged(solPath: "/usr/bin/sol") }
+        )
+        defer { installer.cancel() }
+
+        _ = await installer.detect()
+        try await waitUntil { installer.main == .done }
+
+        let setup = try #require(runner.invocations.first { $0.arguments.first == "setup" })
+        #expect(setup.arguments.contains("--journal"))
+        #expect(setup.arguments.contains("/tmp/existing-journal"))
+        #expect(!setup.arguments.contains(URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("journal").path))
+    }
+
+    @Test func appManagedUpgradeAbortsBeforeDestructiveWorkWhenJournalRootMissing() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(stdout: Data("sol (solstone) 0.3.1\n".utf8)))
+        runner.enqueue("config", .success(stderr: Data("config failed\n".utf8), exitCode: 2))
+        let installer = makeInstaller(
+            runner: runner,
+            solOwnershipResolver: { _ in .appManaged(solPath: "/usr/bin/sol") }
+        )
+        defer { installer.cancel() }
+
+        _ = await installer.detect()
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.cleanup(step: .resolveJournal, message: cleanupMessage(step: .resolveJournal, why: "config failed"))))
+        assertNoDestructiveInstallerInvocations(runner)
+    }
+
+    @Test func detectAbsentKeepsFreshInstallChoiceUnchanged() async {
+        let runner = FakeSubprocessRunner()
+        let installer = makeInstaller(
+            runner: runner,
+            solOwnershipResolver: { _ in .absent }
+        )
+
+        let found = await installer.detect()
+
+        #expect(!found)
+        #expect(installer.main == .awaitingChoice(existingInstall: false))
+        #expect(runner.invocations.isEmpty)
+    }
+
     @Test func probeVersionMapsCurrentVersion() async {
         let runner = FakeSubprocessRunner()
         runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
@@ -709,7 +800,10 @@ struct SolstoneInstallerTests {
         enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
         enqueueSuccessfulInstallAfterPreclean(runner)
         runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
-        let installer = makeInstaller(runner: runner)
+        let installer = makeInstaller(
+            runner: runner,
+            solOwnershipResolver: { _ in .appManaged(solPath: "/usr/bin/sol") }
+        )
         defer { installer.cancel() }
 
         _ = await installer.detect()
@@ -1199,12 +1293,51 @@ struct SolstoneInstallerTests {
         }
     }
 
+    private func assertExternalManagedDetect(
+        config: AppConfig,
+        versionStdout: String,
+        expectedProbe: VersionProbeResult,
+        solPath: String = "/opt/homebrew/bin/sol"
+    ) async throws {
+        let appState = AppState.forSnapshot(config: config)
+        let originalURL = appState.config.serverURL
+        let originalKey = appState.config.serverKey
+        let originalMode = appState.config.serviceMode
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(stdout: Data(versionStdout.utf8)))
+        let installer = makeInstaller(
+            runner: runner,
+            solOwnershipResolver: { _ in .externallyManaged(solPath: solPath) }
+        )
+        installer.attach(appState: appState)
+        defer { installer.cancel() }
+
+        let found = await installer.detect()
+        try await waitUntil { installer.probedVersion == expectedProbe }
+
+        #expect(found)
+        #expect(installer.main == .externallyManaged(solPath: solPath))
+        #expect(appState.config.serverURL == originalURL)
+        #expect(appState.config.serverKey == originalKey)
+        #expect(appState.config.serviceMode == originalMode)
+        assertNoDestructiveInstallerInvocations(runner)
+    }
+
+    private func assertNoDestructiveInstallerInvocations(_ runner: FakeSubprocessRunner) {
+        let destructiveFirstArguments = Set(["tool", "service", "setup", "observer", "install-models"])
+        #expect(!runner.invocations.contains { invocation in
+            guard let first = invocation.arguments.first else { return false }
+            return destructiveFirstArguments.contains(first)
+        })
+    }
+
     private func makeInstaller(
         runner: FakeSubprocessRunner,
         uvURL: URL? = nil,
         pythonURL: URL? = testBundledPythonURL,
         failureRecordStore: UpgradeFailureRecordStoring = InMemoryUpgradeFailureRecordStore(),
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
+        solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
         fileExists: @escaping @Sendable (String) -> Bool = { _ in false }
     ) -> SolstoneInstaller {
@@ -1214,6 +1347,7 @@ struct SolstoneInstallerTests {
             subprocessRunner: runner,
             failureRecordStore: failureRecordStore,
             solBinaryFinder: solBinaryFinder,
+            solOwnershipResolver: solOwnershipResolver,
             connectionTester: connectionTester,
             fileExists: fileExists
         )
@@ -1225,6 +1359,7 @@ struct SolstoneInstallerTests {
         pythonURL: URL? = testBundledPythonURL,
         failureRecordStore: UpgradeFailureRecordStoring = InMemoryUpgradeFailureRecordStore(),
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
+        solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
         fileExists: @escaping @Sendable (String) -> Bool = { _ in false },
         pidExists: @escaping @Sendable (pid_t) -> Bool,
@@ -1239,6 +1374,7 @@ struct SolstoneInstallerTests {
             subprocessRunner: runner,
             failureRecordStore: failureRecordStore,
             solBinaryFinder: solBinaryFinder,
+            solOwnershipResolver: solOwnershipResolver,
             connectionTester: connectionTester,
             fileExists: fileExists,
             pidExists: pidExists,

@@ -70,6 +70,8 @@ struct BundledServiceCard: View {
                 }
             case .installedUnknown:
                 Text(installedServiceMessage(for: .installedUnknown))
+            case .externallyManaged(let solPath, let probe):
+                externalManagedContent(solPath: solPath, probe: probe)
             case .upgradeFailed(let installed, let pinned, let errorDetails):
                 upgradeFailureContent(installedVersion: installed, pinnedVersion: pinned, errorDetails: errorDetails)
             }
@@ -110,6 +112,23 @@ struct BundledServiceCard: View {
             }
 
             doctorAffordance
+        }
+    }
+
+    private func externalManagedContent(solPath: String, probe: VersionProbeResult?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(externalManagedTitle)
+            Text(externalManagedBody)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(externalManagedVersionLine(for: probe))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(externalManagedPathCaption(solPath))
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
     }
 
@@ -624,6 +643,27 @@ func installedServiceMessage(for state: InstallerCardState) -> String {
     default:
         return ""
     }
+}
+
+let externalManagedTitle = "solstone is managed outside this app"
+
+let externalManagedBody = "this Mac can connect in another-machine mode, or keep using the local journal already set up here."
+
+func externalManagedVersionLine(for probe: VersionProbeResult?) -> String {
+    switch probe {
+    case nil:
+        return "checking version..."
+    case .current(let version):
+        return "found solstone \(version)"
+    case .outdated(let installed, let pinned):
+        return "found solstone \(installed); this app includes \(pinned)"
+    case .unknown:
+        return "couldn't read the solstone version"
+    }
+}
+
+func externalManagedPathCaption(_ path: String) -> String {
+    "using \(path)"
 }
 
 func installedStateShowsDashboardAndDoctor(_ state: InstallerCardState) -> Bool {

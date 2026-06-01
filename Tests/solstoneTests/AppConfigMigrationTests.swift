@@ -5,18 +5,6 @@ import SolstoneCore
 @Suite("AppConfigMigration", .serialized)
 @MainActor
 struct AppConfigMigrationTests {
-    @Test func inferServiceModeExactBundledURL() {
-        #expect(AppConfig.inferServiceMode(from: "http://localhost:5015") == .bundled)
-    }
-
-    @Test func inferServiceModeRejectsNonExactURLs() {
-        #expect(AppConfig.inferServiceMode(from: "http://localhost:5015/") == nil)
-        #expect(AppConfig.inferServiceMode(from: "https://localhost:5015") == nil)
-        #expect(AppConfig.inferServiceMode(from: "http://127.0.0.1:5015") == nil)
-        #expect(AppConfig.inferServiceMode(from: "") == nil)
-        #expect(AppConfig.inferServiceMode(from: nil) == nil)
-    }
-
     @Test func serviceModeBundledRoundTripsThroughDefaults() throws {
         clearServiceDefaults()
         defer { clearServiceDefaults() }
@@ -37,7 +25,7 @@ struct AppConfigMigrationTests {
         #expect(AppConfig.load().serviceMode == .external)
     }
 
-    @Test func loadBackfillsBundledServiceModeFromExactURL() throws {
+    @Test func loadLeavesServiceModeNilForExactBundledURL() throws {
         clearServiceDefaults()
         defer { clearServiceDefaults() }
 
@@ -46,8 +34,8 @@ struct AppConfigMigrationTests {
         UserDefaults.standard.removeObject(forKey: "serviceMode")
 
         let loaded = AppConfig.load()
-        #expect(loaded.serviceMode == .bundled)
-        #expect(UserDefaults.standard.string(forKey: "serviceMode") == "bundled")
+        #expect(loaded.serviceMode == nil)
+        #expect(UserDefaults.standard.string(forKey: "serviceMode") == nil)
     }
 
     @Test func loadLeavesServiceModeNilForExternalURL() throws {

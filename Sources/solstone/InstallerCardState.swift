@@ -9,6 +9,7 @@ enum InstallerCardState: Equatable {
     case done
     case installedCurrent(version: String)
     case installedUnknown
+    case externallyManaged(solPath: String, probe: VersionProbeResult?)
     case upgradeFailed(installed: String, pinned: String, errorDetails: String)
     case failed(FailedState)
 }
@@ -49,6 +50,8 @@ func cardState(from main: MainState) -> InstallerCardState {
         return existingInstall ? .installedPlaceholder : .absent
     case .cleaningUp, .installingSolstone, .runningSolSetup, .registering:
         return .installing
+    case .externallyManaged(let solPath):
+        return .externallyManaged(solPath: solPath, probe: nil)
     case .done:
         return .done
     case .failed(let failedState):
@@ -62,6 +65,9 @@ func terminalCardState(
     failureRecord: UpgradeFailureRecord?
 ) -> InstallerCardState {
     let intermediate = cardState(from: main)
+    if case .externallyManaged(let solPath, _) = intermediate {
+        return .externallyManaged(solPath: solPath, probe: probe)
+    }
     if case .failed = intermediate {
         if let failureRecord, failureRecord.pinned == BundleConfig.solstonePinVersion {
             return .upgradeFailed(
@@ -100,7 +106,7 @@ func shouldCompressServiceModeControls(mode: ServiceMode, cardState: InstallerCa
     switch cardState {
     case .installing, .failed, .upgradeFailed:
         return true
-    case .detecting, .absent, .installedPlaceholder, .done, .installedCurrent, .installedUnknown:
+    case .detecting, .absent, .installedPlaceholder, .done, .installedCurrent, .installedUnknown, .externallyManaged:
         return false
     }
 }
@@ -114,7 +120,7 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
         return .ok
     case .cleaningUp:
         switch main {
-        case .detecting, .awaitingChoice:
+        case .detecting, .awaitingChoice, .externallyManaged:
             return .pending
         case .cleaningUp:
             return .running
@@ -128,7 +134,7 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
         }
     case .installSolstone:
         switch main {
-        case .detecting, .awaitingChoice, .cleaningUp:
+        case .detecting, .awaitingChoice, .cleaningUp, .externallyManaged:
             return .pending
         case .installingSolstone:
             return .running
@@ -146,7 +152,7 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
         }
     case .solSetup:
         switch main {
-        case .detecting, .awaitingChoice, .cleaningUp, .installingSolstone:
+        case .detecting, .awaitingChoice, .cleaningUp, .installingSolstone, .externallyManaged:
             return .pending
         case .runningSolSetup:
             return .running
@@ -164,7 +170,7 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
         }
     case .registering:
         switch main {
-        case .detecting, .awaitingChoice, .cleaningUp, .installingSolstone, .runningSolSetup:
+        case .detecting, .awaitingChoice, .cleaningUp, .installingSolstone, .runningSolSetup, .externallyManaged:
             return .pending
         case .registering:
             return .running

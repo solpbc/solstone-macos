@@ -163,6 +163,7 @@ public final class AppState {
                 return true
             case .installedCurrent,
                  .installedUnknown,
+                 .externallyManaged,
                  .done,
                  .installedPlaceholder,
                  .detecting,
@@ -190,6 +191,7 @@ public final class AppState {
         case .detecting,
              .absent,
              .installing,
+             .externallyManaged,
              .upgradeFailed,
              .failed:
             return false

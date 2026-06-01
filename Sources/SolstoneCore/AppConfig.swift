@@ -57,11 +57,6 @@ public struct AppConfig: Sendable {
         public static let solInitiatedChatNotificationsEnabled = false
     }
 
-    public static func inferServiceMode(from serverURL: String?) -> ServiceMode? {
-        guard serverURL == ServiceMode.bundledServiceURL else { return nil }
-        return .bundled
-    }
-
     public static let knownKeys: [String] = [
         "microphonePriority", "excludedApps", "excludedTitlePatterns",
         "excludePrivateBrowsing", "serverURL", "serverKey",
@@ -217,10 +212,6 @@ public struct AppConfig: Sendable {
         let serviceMode: ServiceMode?
         if let raw = defaults.string(forKey: Keys.serviceMode), let parsed = ServiceMode(rawValue: raw) {
             serviceMode = parsed
-        } else if let inferred = AppConfig.inferServiceMode(from: serverURL) {
-            defaults.set(inferred.rawValue, forKey: Keys.serviceMode)
-            Logger.general.info("Migrated serviceMode to \(inferred.rawValue, privacy: .public) based on serverURL")
-            serviceMode = inferred
         } else {
             serviceMode = nil
         }

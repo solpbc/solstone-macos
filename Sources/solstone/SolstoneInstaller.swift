@@ -29,6 +29,7 @@ public final class SolstoneInstaller {
     private let subprocessRunner: SubprocessRunning
     private let failureRecordStore: UpgradeFailureRecordStoring
     private let solBinaryFinder: @Sendable () async -> String?
+    private let solOwnershipResolver: @Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership
     private let connectionTester: @Sendable (String, String) async -> String?
     private let fileExists: @Sendable (String) -> Bool
     private let pidExists: @Sendable (pid_t) -> Bool
@@ -66,6 +67,7 @@ public final class SolstoneInstaller {
         subprocessRunner: SubprocessRunning = SubprocessRunner(),
         failureRecordStore: UpgradeFailureRecordStoring = UserDefaultsUpgradeFailureRecordStore(),
         solBinaryFinder: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() },
+        solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
         connectionTester: @escaping @Sendable (String, String) async -> String? = { url, key in
             await UploadCoordinator.testConnection(serverURL: url, serverKey: key)
         },
@@ -86,8 +88,12 @@ public final class SolstoneInstaller {
         self.subprocessRunner = subprocessRunner
         self.failureRecordStore = failureRecordStore
         self.solBinaryFinder = solBinaryFinder
-        self.connectionTester = connectionTester
         self.fileExists = fileExists
+        self.solOwnershipResolver = solOwnershipResolver ?? SolOwnership.defaultResolver(
+            runner: subprocessRunner,
+            fileExists: fileExists
+        )
+        self.connectionTester = connectionTester
         self.pidExists = pidExists
         self.terminate = terminate
         self.pidWaitTimeout = pidWaitTimeout
@@ -102,12 +108,20 @@ public final class SolstoneInstaller {
 
     public func detect() async -> Bool {
         setMain(.detecting)
-        let found = await solBinaryFinder() != nil
-        setMain(.awaitingChoice(existingInstall: found))
-        if found {
-            Task { await self.probeVersionAndAutoUpgrade() }
+        let ownership = await solOwnershipResolver(hasLocalJournalCreds())
+        switch ownership {
+        case .absent:
+            setMain(.awaitingChoice(existingInstall: false))
+            return false
+        case .appManaged(let solPath):
+            setMain(.awaitingChoice(existingInstall: true))
+            Task { await self.probeVersionAndAutoUpgrade(solPath: solPath) }
+            return true
+        case .externallyManaged(let solPath):
+            setMain(.externallyManaged(solPath: solPath))
+            Task { await self.probeVersion(at: solPath) }
+            return true
         }
-        return found
     }
 
     public func start(
@@ -151,13 +165,23 @@ public final class SolstoneInstaller {
         subprocessRunner.cancelAll()
     }
 
+    private func hasLocalJournalCreds() -> Bool {
+        guard let config = appState?.config,
+              LoopbackHost.isLocalhost(config.serverURL),
+              let key = config.serverKey,
+              !key.isEmpty else {
+            return false
+        }
+        return true
+    }
+
     private func runInstall(journalURL: URL, existingInstallChoice: ExistingInstallChoice) async {
         let existingSolPath = await solBinaryFinder()
-        var effectiveJournalURL = journalURL
+        var setupJournalURL = journalURL
         if existingInstallChoice == .createFresh {
             if let existingSolPath {
-                guard let resolvedJournalURL = await runUpgradePreclean(solPath: existingSolPath) else { return }
-                effectiveJournalURL = resolvedJournalURL
+                guard let preservedJournalURL = await runUpgradePreclean(solPath: existingSolPath) else { return }
+                setupJournalURL = preservedJournalURL
             }
             guard await runInstallSolstone() else { return }
         }
@@ -178,7 +202,7 @@ public final class SolstoneInstaller {
             return
         }
 
-        guard await runSolSetup(solPath: solPath, journalURL: effectiveJournalURL) else { return }
+        guard await runSolSetup(solPath: solPath, journalURL: setupJournalURL) else { return }
         await enterRegistering(solPath: solPath)
     }
 
@@ -366,12 +390,13 @@ public final class SolstoneInstaller {
             )
             return nil
         }
-        guard let journalPath = parseJournalPath(from: configStdout) else {
+        guard let resolvedJournalPath = parseJournalPath(from: configStdout) else {
             failCleanup(step: .resolveJournal, why: "could not find the journal", category: .unknown, logExcerpt: configStdout)
             return nil
         }
 
-        let pidURL = URL(fileURLWithPath: journalPath, isDirectory: true)
+        let resolvedJournalURL = URL(fileURLWithPath: resolvedJournalPath, isDirectory: true)
+        let pidURL = resolvedJournalURL
             .appendingPathComponent("health/supervisor.pid")
         let capturedPid = readSupervisorPID(from: pidURL)
 
@@ -459,7 +484,7 @@ public final class SolstoneInstaller {
             }
         }
 
-        return URL(fileURLWithPath: journalPath, isDirectory: true)
+        return resolvedJournalURL
     }
 
     private func failCleanup(step: CleanupStep, why: String, category: ErrorCategory, logExcerpt: String? = nil) {
@@ -723,9 +748,14 @@ public final class SolstoneInstaller {
             probedVersion = nil
             return
         }
+        _ = await probeVersion(at: solPath)
+    }
+
+    @discardableResult
+    private func probeVersion(at solPath: String) async -> VersionProbeResult? {
         guard let installed = await SolHealthCheck.version(solPath: solPath, runner: subprocessRunner) else {
             probedVersion = .unknown
-            return
+            return probedVersion
         }
         let pinned = BundleConfig.solstonePinVersion
         let comparison = installed.compare(pinned, options: .numeric)
@@ -734,10 +764,15 @@ public final class SolstoneInstaller {
         } else {
             probedVersion = .current(version: installed)
         }
+        return probedVersion
     }
 
-    internal func probeVersionAndAutoUpgrade() async {
-        await probeVersion()
+    internal func probeVersionAndAutoUpgrade(solPath knownSolPath: String? = nil) async {
+        if let knownSolPath {
+            _ = await probeVersion(at: knownSolPath)
+        } else {
+            await probeVersion()
+        }
         switch probedVersion {
         case .current:
             if upgradeFailureRecord != nil {
@@ -841,7 +876,7 @@ public final class SolstoneInstaller {
              .runningSolSetup(let progress),
              .registering(let progress):
             return progress
-        case .detecting, .awaitingChoice, .done, .failed:
+        case .detecting, .awaitingChoice, .externallyManaged, .done, .failed:
             return nil
         }
     }
@@ -948,6 +983,8 @@ public final class SolstoneInstaller {
             return "running journal setup"
         case .registering:
             return "registering"
+        case .externallyManaged:
+            return "externally managed"
         case .done:
             return "done"
         case .failed:

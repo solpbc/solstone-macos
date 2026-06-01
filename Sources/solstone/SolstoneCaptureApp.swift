@@ -277,18 +277,11 @@ enum FirstLaunchRouting {
             openService()
             return
         }
-        guard isLocalhost(config.serverURL) else { return }
+        guard LoopbackHost.isLocalhost(config.serverURL) else { return }
         guard let path = await findSolBinary(), await healthCheck(path) else {
             openService()
             return
         }
-    }
-
-    private static func isLocalhost(_ serverURL: String?) -> Bool {
-        guard let serverURL, let host = URL(string: serverURL)?.host?.lowercased() else {
-            return false
-        }
-        return host == "localhost" || host == "127.0.0.1"
     }
 }
 
@@ -351,7 +344,7 @@ private struct StatusIcon: View {
                 switch newState {
                 case .cleaningUp, .installingSolstone, .runningSolSetup, .registering:
                     updateController.installerDidStart()
-                case .done, .failed:
+                case .externallyManaged, .done, .failed:
                     updateController.installerDidFinish()
                 case .detecting, .awaitingChoice:
                     break

@@ -46,6 +46,25 @@ struct BundledServiceCardTests {
         #expect(installedServiceMessage(for: .installedUnknown) == "solstone is installed · couldn't read its version")
     }
 
+    @Test func externalManagedCopyAvoidsForbiddenTokens() {
+        let copies = [
+            externalManagedTitle,
+            externalManagedBody,
+            externalManagedVersionLine(for: nil),
+            externalManagedVersionLine(for: .current(version: "0.4.8")),
+            externalManagedVersionLine(for: .outdated(installed: "0.3.1", pinned: "0.4.8")),
+            externalManagedVersionLine(for: .unknown),
+            externalManagedPathCaption("/opt/homebrew/bin/sol"),
+        ]
+        let forbidden = ["server", "capture", "record", "monitor", "track", "collect", "watch"]
+        for copy in copies {
+            let lowered = copy.lowercased()
+            for token in forbidden {
+                #expect(!lowered.contains(token))
+            }
+        }
+    }
+
     @Test func upgradeFailedStatusMessageUsesSpecLiteral() {
         #expect(upgradeFailedStatusMessage(installedVersion: "0.3.1") == "couldn't upgrade solstone — still running 0.3.1")
     }
