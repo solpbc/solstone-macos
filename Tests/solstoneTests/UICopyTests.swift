@@ -62,4 +62,8 @@ struct UICopyTests {
     @Test func settingsRestartRequiredBannerString() {
         #expect(UICopy.SETTINGS_RESTART_REQUIRED_BANNER == "restart needed for this to take effect \u{2014} restart now \u{2192}")
     }
+
+    @Test func installerInlineFailureGenericString() {
+        #expect(UICopy.INSTALLER_INLINE_FAILURE_GENERIC == "setup hit a snag \u{2014} retry below, or open details to share with support.")
+    }
 }

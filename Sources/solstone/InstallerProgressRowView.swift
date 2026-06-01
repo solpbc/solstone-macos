@@ -15,6 +15,7 @@ struct InstallerProgressRowView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(label)
                         .font(.headline)
+                        .foregroundStyle(status == .ok ? .secondary : .primary)
 
                     if case .running = status, let currentStep = progress?.currentStep {
                         Text(currentStep)
@@ -23,7 +24,7 @@ struct InstallerProgressRowView: View {
                     }
 
                     if case .failed(let message) = status {
-                        Text("couldn't finish — " + message)
+                        Text("couldn't finish — " + sanitizedInlineFailureMessage(message))
                             .font(.caption)
                             .foregroundStyle(.red)
                     }

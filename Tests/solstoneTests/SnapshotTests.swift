@@ -234,6 +234,29 @@ struct SnapshotTests {
         )
     }
 
+    @Test func settingsServiceUpgradeFailed() throws {
+        let rawMessage = "'observer' moved to 'journal observer' — run that instead."
+        let rawLog = """
+        uv tool install solstone==\(BundleConfig.solstonePinVersion)
+        error: \(rawMessage)
+        """
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        state.installer.main = .failed(.registering(message: rawMessage))
+        state.installer.modelsProgress = .done
+        state.installer.lastFailureLog = rawLog
+        state.installer.upgradeFailureRecord = UpgradeFailureRecord(
+            installed: "0.4.7",
+            pinned: BundleConfig.solstonePinVersion,
+            errorDetails: rawLog
+        )
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .service),
+            size: settingsSize,
+            to: "settings-service-upgrade-failed.png"
+        )
+    }
+
     @Test func settingsMicrophones() throws {
         let config = AppConfig(
             microphonePriority: [

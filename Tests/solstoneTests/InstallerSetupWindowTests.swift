@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import SolstoneCore
 @testable import solstone
 
 @Suite("cardState")
@@ -61,6 +62,42 @@ struct InstallerCardStateTests {
             terminalCardState(main: .installingSolstone(progress), probe: .current(version: "0.3.2"), failureRecord: nil)
             == .installing
         )
+    }
+}
+
+@Suite("service mode control compression")
+struct ServiceModeControlCompressionTests {
+    @Test func bundledActiveAndFailedStatesCompressControls() {
+        let failed = InstallerCardState.failed(.registering(message: "m"))
+        let upgradeFailed = InstallerCardState.upgradeFailed(
+            installed: "0.4.7",
+            pinned: BundleConfig.solstonePinVersion,
+            errorDetails: "details"
+        )
+
+        #expect(shouldCompressServiceModeControls(mode: .bundled, cardState: .installing))
+        #expect(shouldCompressServiceModeControls(mode: .bundled, cardState: failed))
+        #expect(shouldCompressServiceModeControls(mode: .bundled, cardState: upgradeFailed))
+    }
+
+    @Test func bundledPassiveStatesKeepControls() {
+        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .detecting))
+        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .absent))
+        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .installedPlaceholder))
+        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .done))
+        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .installedCurrent(version: "0.4.8")))
+        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .installedUnknown))
+    }
+
+    @Test func externalModeNeverCompressesControls() {
+        let upgradeFailed = InstallerCardState.upgradeFailed(
+            installed: "0.4.7",
+            pinned: BundleConfig.solstonePinVersion,
+            errorDetails: "details"
+        )
+
+        #expect(!shouldCompressServiceModeControls(mode: .external, cardState: .installing))
+        #expect(!shouldCompressServiceModeControls(mode: .external, cardState: upgradeFailed))
     }
 }
 

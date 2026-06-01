@@ -40,6 +40,17 @@ func initialServiceMode(for config: AppConfig) -> ServiceMode {
     config.serviceMode ?? .bundled
 }
 
+private struct SettingsDetailScrollEdgeModifier: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.scrollEdgeEffectStyle(.hard, for: .top)
+        } else {
+            content
+        }
+    }
+}
+
 /// Settings window for configuring server upload
 struct SettingsView: View {
     enum Tab: String, Hashable {
@@ -151,9 +162,12 @@ struct SettingsView: View {
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
         } detail: {
-            detailContent
-                .padding(20)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            ScrollView {
+                detailContent
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .modifier(SettingsDetailScrollEdgeModifier())
         }
         .frame(minWidth: 720, minHeight: 500)
         .onAppear {
@@ -506,6 +520,13 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var serviceSection: some View {
+        let cardState = terminalCardState(
+            main: appState.installer.main,
+            probe: appState.installer.probedVersion,
+            failureRecord: appState.installer.upgradeFailureRecord
+        )
+        let compress = shouldCompressServiceModeControls(mode: serviceMode, cardState: cardState)
+
         VStack(alignment: .leading, spacing: 16) {
             restartRequiredBanner
 
@@ -515,26 +536,28 @@ struct SettingsView: View {
                 }
             }
 
-            if let heading = serviceTabHeadingText(for: appState.config.serviceMode) {
-                Text(heading)
-                    .font(.headline)
-            }
+            if !compress {
+                if let heading = serviceTabHeadingText(for: appState.config.serviceMode) {
+                    Text(heading)
+                        .font(.headline)
+                }
 
-            Picker("journal mode", selection: $serviceMode) {
-                Text(UICopy.JOURNAL_MODE_THIS_MAC_LABEL).tag(ServiceMode.bundled)
-                Text(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL).tag(ServiceMode.external)
-            }
-            .pickerStyle(.segmented)
+                Picker("journal mode", selection: $serviceMode) {
+                    Text(UICopy.JOURNAL_MODE_THIS_MAC_LABEL).tag(ServiceMode.bundled)
+                    Text(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL).tag(ServiceMode.external)
+                }
+                .pickerStyle(.segmented)
 
-            VStack(alignment: .leading, spacing: 6) {
-                tradeoffLine(
-                    label: UICopy.JOURNAL_MODE_THIS_MAC_LABEL,
-                    text: UICopy.JOURNAL_MODE_THIS_MAC_TRADEOFF
-                )
-                tradeoffLine(
-                    label: UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL,
-                    text: UICopy.JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF
-                )
+                VStack(alignment: .leading, spacing: 6) {
+                    tradeoffLine(
+                        label: UICopy.JOURNAL_MODE_THIS_MAC_LABEL,
+                        text: UICopy.JOURNAL_MODE_THIS_MAC_TRADEOFF
+                    )
+                    tradeoffLine(
+                        label: UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL,
+                        text: UICopy.JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF
+                    )
+                }
             }
 
             switch serviceMode {
@@ -847,96 +870,94 @@ struct SettingsView: View {
     // MARK: - Privacy Tab
 
     private var privacyTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                GroupBox("excluded apps") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("windows from these apps are always excluded.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 16) {
+            GroupBox("excluded apps") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("windows from these apps are always excluded.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                        if appState.config.excludedApps.isEmpty {
-                            Text("no apps excluded")
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.vertical, 20)
-                        } else {
-                            VStack(spacing: 4) {
-                                ForEach(Array(appState.config.excludedApps.enumerated()), id: \.offset) { index, app in
-                                    HStack {
-                                        Text(app.name)
-                                        Spacer()
-                                        Button(action: { deleteExcludedApp(at: index) }) {
-                                            Image(systemName: "minus.circle")
-                                                .foregroundStyle(.red)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .help("remove app")
+                    if appState.config.excludedApps.isEmpty {
+                        Text("no apps excluded")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 20)
+                    } else {
+                        VStack(spacing: 4) {
+                            ForEach(Array(appState.config.excludedApps.enumerated()), id: \.offset) { index, app in
+                                HStack {
+                                    Text(app.name)
+                                    Spacer()
+                                    Button(action: { deleteExcludedApp(at: index) }) {
+                                        Image(systemName: "minus.circle")
+                                            .foregroundStyle(.red)
                                     }
-                                    .padding(.vertical, 2)
+                                    .buttonStyle(.plain)
+                                    .help("remove app")
                                 }
+                                .padding(.vertical, 2)
                             }
                         }
-
-                        HStack {
-                            TextField("app name (e.g., slack)", text: $newExcludedApp)
-                                .textFieldStyle(.roundedBorder)
-                                .onSubmit { addExcludedApp() }
-                            Button("add") { addExcludedApp() }
-                                .disabled(newExcludedApp.trimmingCharacters(in: .whitespaces).isEmpty)
-                        }
                     }
-                    .padding(.vertical, 4)
-                }
 
-                GroupBox("title patterns") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("hide windows whose title contains these keywords.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        if appState.config.excludedTitlePatterns.isEmpty {
-                            Text("no patterns added")
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.vertical, 20)
-                        } else {
-                            VStack(spacing: 4) {
-                                ForEach(Array(appState.config.excludedTitlePatterns.enumerated()), id: \.offset) { index, pattern in
-                                    HStack {
-                                        Text(pattern)
-                                        Spacer()
-                                        Button(action: { deleteTitlePattern(at: index) }) {
-                                            Image(systemName: "minus.circle")
-                                                .foregroundStyle(.red)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .help("remove pattern")
-                                    }
-                                    .padding(.vertical, 2)
-                                }
-                            }
-                        }
-
-                        HStack {
-                            TextField("reddit, facebook, etc.", text: $newTitlePattern)
-                                .textFieldStyle(.roundedBorder)
-                                .onSubmit { addTitlePattern() }
-                            Button("add") { addTitlePattern() }
-                                .disabled(newTitlePattern.trimmingCharacters(in: .whitespaces).isEmpty)
-                        }
+                    HStack {
+                        TextField("app name (e.g., slack)", text: $newExcludedApp)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { addExcludedApp() }
+                        Button("add") { addExcludedApp() }
+                            .disabled(newExcludedApp.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
-                    .padding(.vertical, 4)
                 }
-
-                GroupBox("private browsing") {
-                    Toggle("exclude private/incognito browser windows", isOn: excludePrivateBrowsingBinding)
-                        .help("automatically excludes safari private, chrome incognito, and firefox private browsing windows")
-                        .padding(.vertical, 4)
-                }
+                .padding(.vertical, 4)
             }
-            .padding(.vertical, 4)
+
+            GroupBox("title patterns") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("hide windows whose title contains these keywords.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if appState.config.excludedTitlePatterns.isEmpty {
+                        Text("no patterns added")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 20)
+                    } else {
+                        VStack(spacing: 4) {
+                            ForEach(Array(appState.config.excludedTitlePatterns.enumerated()), id: \.offset) { index, pattern in
+                                HStack {
+                                    Text(pattern)
+                                    Spacer()
+                                    Button(action: { deleteTitlePattern(at: index) }) {
+                                        Image(systemName: "minus.circle")
+                                            .foregroundStyle(.red)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("remove pattern")
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    }
+
+                    HStack {
+                        TextField("reddit, facebook, etc.", text: $newTitlePattern)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { addTitlePattern() }
+                        Button("add") { addTitlePattern() }
+                            .disabled(newTitlePattern.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            GroupBox("private browsing") {
+                Toggle("exclude private/incognito browser windows", isOn: excludePrivateBrowsingBinding)
+                    .help("automatically excludes safari private, chrome incognito, and firefox private browsing windows")
+                    .padding(.vertical, 4)
+            }
         }
+        .padding(.vertical, 4)
     }
 
     private var excludePrivateBrowsingBinding: Binding<Bool> {

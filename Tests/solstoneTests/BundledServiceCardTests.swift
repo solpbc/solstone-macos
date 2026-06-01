@@ -54,6 +54,41 @@ struct BundledServiceCardTests {
         #expect(upgradeFailedRetryButtonTitle == "try upgrade again")
     }
 
+    @Test func sanitizerHidesRawRedirectionCopy() {
+        #expect(
+            sanitizedInlineFailureMessage("'observer' moved to 'journal observer' — run that instead.")
+            == UICopy.INSTALLER_INLINE_FAILURE_GENERIC
+        )
+    }
+
+    @Test func sanitizerHidesRawBackendPatterns() {
+        let rawMessages = [
+            "first line\nsecond line",
+            "Traceback (most recent call last): ...",
+            "error: something failed",
+            "try `journal observer create`",
+            "command not found",
+        ]
+
+        for message in rawMessages {
+            #expect(sanitizedInlineFailureMessage(message) == UICopy.INSTALLER_INLINE_FAILURE_GENERIC)
+        }
+    }
+
+    @Test func sanitizerPassesThroughCleanShortMessages() {
+        #expect(sanitizedInlineFailureMessage("no network connection") == "no network connection")
+    }
+
+    @Test func failureDiagnosticRetainsRawRedirectionText() {
+        let raw = "'observer' moved to 'journal observer' — run that instead."
+        let markdown = buildFailureDiagnosticMarkdown(
+            diagnosticInput(errorMessage: raw, logExcerpt: raw),
+            doctorReport: nil
+        )
+
+        #expect(markdown.contains(raw))
+    }
+
     @Test func installedUnknownOmitsUpgradeDashboardAndDoctor() {
         #expect(!installedStateShowsDashboardAndDoctor(.installedUnknown))
     }

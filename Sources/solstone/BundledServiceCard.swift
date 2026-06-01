@@ -280,84 +280,102 @@ struct BundledServiceCard: View {
     }
 
     private func failureContent(_ failedState: FailedState) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(failureMessage(failedState))
-                .foregroundStyle(.secondary)
-
-            rowsContent(showModelsWhenActive: true)
-
-            if let logExcerpt = installer.lastFailureLog, !logExcerpt.isEmpty {
-                DisclosureGroup(isExpanded: $failureDetailsExpanded) {
-                    ScrollView {
-                        Text(logExcerpt)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
-                    }
-                    .frame(minHeight: 120, maxHeight: 280)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                } label: {
-                    Text(failureDetailsExpanded ? "hide details" : "show details")
-                        .font(.caption)
-                }
-            }
-
-            Button("try again") {
+        failureCardBody(
+            summary: failureMessage(failedState),
+            retryTitle: "try again",
+            retryAction: {
                 installer.start(journalURL: journalURL, existingInstallChoice: .createFresh)
-            }
-
-            failureDiagnosticFooter(markdown: buildFailureDiagnosticMarkdown(
+            },
+            rawDetails: installer.lastFailureLog,
+            diagnosticMarkdown: buildFailureDiagnosticMarkdown(
                 failureDiagnosticInput(failedState),
                 doctorReport: successfulDoctorReport
-            ))
-        }
+            ),
+            showDoctor: false
+        )
     }
 
     private func upgradeFailureContent(installedVersion: String, pinnedVersion: String, errorDetails: String) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(upgradeFailedStatusMessage(installedVersion: installedVersion))
-                .foregroundStyle(.secondary)
+        let summary: String
+        if case .failed(let failedState) = installer.main {
+            summary = failureMessage(failedState)
+        } else {
+            summary = upgradeFailedStatusMessage(installedVersion: installedVersion)
+        }
 
-            rowsContent(showModelsWhenActive: true)
-
-            if !errorDetails.isEmpty {
-                DisclosureGroup(isExpanded: $failureDetailsExpanded) {
-                    ScrollView {
-                        Text(errorDetails)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
-                    }
-                    .frame(minHeight: 120, maxHeight: 280)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                } label: {
-                    Text(failureDetailsExpanded ? "hide details" : "show details")
-                        .font(.caption)
-                }
-            }
-
-            Button(upgradeFailedRetryButtonTitle) {
+        return failureCardBody(
+            summary: summary,
+            retryTitle: upgradeFailedRetryButtonTitle,
+            retryAction: {
                 installer.start(
                     journalURL: journalURL,
                     existingInstallChoice: .createFresh,
                     upgradeFromInstalledVersion: installedVersion
                 )
-            }
-
-            failureDiagnosticFooter(markdown: buildFailureDiagnosticMarkdown(
+            },
+            rawDetails: errorDetails,
+            diagnosticMarkdown: buildFailureDiagnosticMarkdown(
                 upgradeFailureDiagnosticInput(
                     installedVersion: installedVersion,
                     pinnedVersion: pinnedVersion,
                     errorDetails: errorDetails
                 ),
                 doctorReport: nil
-            ))
+            ),
+            showDoctor: true
+        )
+    }
 
-            doctorAffordance
+    private func failureCardBody(
+        summary: String,
+        retryTitle: String,
+        retryAction: @escaping () -> Void,
+        rawDetails: String?,
+        diagnosticMarkdown: String,
+        showDoctor: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundStyle(.red)
+                    Text(sanitizedInlineFailureMessage(summary))
+                        .foregroundStyle(.secondary)
+                }
+
+                Button(retryTitle, action: retryAction)
+            }
+
+            rowsContent(showModelsWhenActive: false)
+
+            if installer.modelsProgress != .idle {
+                Divider()
+                rowView(.models)
+            }
+
+            if let rawDetails, !rawDetails.isEmpty {
+                DisclosureGroup(isExpanded: $failureDetailsExpanded) {
+                    ScrollView {
+                        Text(rawDetails)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                    }
+                    .frame(minHeight: 120, maxHeight: 280)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                } label: {
+                    Text(failureDetailsExpanded ? "hide details" : "show details")
+                        .font(.caption)
+                }
+            }
+
+            failureDiagnosticFooter(markdown: diagnosticMarkdown)
+
+            if showDoctor {
+                doctorAffordance
+            }
         }
     }
 
@@ -522,15 +540,6 @@ struct BundledServiceCard: View {
         return false
     }
 
-    private var isInstalling: Bool {
-        switch installer.main {
-        case .cleaningUp, .installingSolstone, .runningSolSetup, .registering:
-            return true
-        case .detecting, .awaitingChoice, .done, .failed:
-            return false
-        }
-    }
-
     private func label(for row: InstallerRow) -> String {
         switch row {
         case .checkingSystem:
@@ -569,6 +578,48 @@ let upgradeFailedRetryButtonTitle = "try upgrade again"
 
 func upgradeFailedStatusMessage(installedVersion: String) -> String {
     "couldn't upgrade solstone — still running \(installedVersion)"
+}
+
+func sanitizedInlineFailureMessage(_ message: String) -> String {
+    let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return UICopy.INSTALLER_INLINE_FAILURE_GENERIC }
+
+    if trimmed.contains(where: \.isNewline) {
+        return UICopy.INSTALLER_INLINE_FAILURE_GENERIC
+    }
+
+    let lowercased = trimmed.lowercased()
+    let rawSubstrings = [
+        "traceback",
+        "command not found",
+        "run that instead",
+        "moved to",
+        "deprecated",
+        "error:",
+    ]
+    if rawSubstrings.contains(where: { lowercased.contains($0) }) {
+        return UICopy.INSTALLER_INLINE_FAILURE_GENERIC
+    }
+
+    if trimmed.contains("`") {
+        return UICopy.INSTALLER_INLINE_FAILURE_GENERIC
+    }
+
+    let hasQuotedCommandToken = trimmed.range(
+        of: #"'[\w][\w .\-/]*'"#,
+        options: .regularExpression
+    ) != nil
+    if hasQuotedCommandToken {
+        return UICopy.INSTALLER_INLINE_FAILURE_GENERIC
+    }
+
+    let commandTokens = ["observer", "journal", "sol", "uv", "python", "pip"]
+    if lowercased.contains(" instead") &&
+        commandTokens.contains(where: { lowercased.contains($0) }) {
+        return UICopy.INSTALLER_INLINE_FAILURE_GENERIC
+    }
+
+    return trimmed
 }
 
 func installedServiceMessage(for state: InstallerCardState) -> String {

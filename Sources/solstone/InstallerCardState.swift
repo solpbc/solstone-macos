@@ -1,4 +1,5 @@
 import Foundation
+import SolstoneCore
 
 enum InstallerCardState: Equatable {
     case detecting
@@ -91,6 +92,16 @@ func terminalCardState(
         }
     default:
         return intermediate
+    }
+}
+
+func shouldCompressServiceModeControls(mode: ServiceMode, cardState: InstallerCardState) -> Bool {
+    guard mode == .bundled else { return false }
+    switch cardState {
+    case .installing, .failed, .upgradeFailed:
+        return true
+    case .detecting, .absent, .installedPlaceholder, .done, .installedCurrent, .installedUnknown:
+        return false
     }
 }
 
