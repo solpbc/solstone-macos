@@ -22,62 +22,6 @@ struct IncompleteSegmentRecoveryTests {
         #expect(result == .microphone(name: "Unknown", deviceUID: "unknown"))
     }
 
-    @Test func recoverSegmentMarksFailedWhenRemixThrows() async throws {
-        let root = try makeTempDirectory("recovery-remix-throws")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let fixture = try await makeIncompleteSegment(root: root)
-        let audio = try #require(fixture.audio)
-
-        let recovery = IncompleteSegmentRecovery(
-            verbose: false,
-            remixerFactory: { _ in FakeRemixer(.throwing(SyntheticRemixError())) }
-        )
-
-        let recovered = await recovery.recoverSegment(at: fixture.dir)
-
-        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
-        #expect(recovered == false)
-        #expect(FileManager.default.fileExists(atPath: failedDir.path))
-        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent(audio.lastPathComponent).path))
-        #expect(!FileManager.default.fileExists(atPath: fixture.dir.path))
-    }
-
-    @Test func recoverSegmentContinuesWhenNoTracksToWrite() async throws {
-        let root = try makeTempDirectory("recovery-no-tracks")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let fixture = try await makeIncompleteSegment(root: root)
-
-        let recovery = IncompleteSegmentRecovery(
-            verbose: false,
-            remixerFactory: { _ in FakeRemixer(.throwing(AudioRemixerError.noTracksToWrite)) }
-        )
-
-        let recovered = await recovery.recoverSegment(at: fixture.dir)
-
-        let finalizedDir = try finalizedSegmentDirectory(in: root, timePrefix: "120000")
-        let finalDir = try #require(finalizedDir)
-        #expect(recovered == true)
-        #expect(FileManager.default.fileExists(atPath: finalDir.path))
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed").path))
-    }
-
-    @Test func recoverSegmentUsesFactoryAndPassesSilenceMusicTrue() async throws {
-        let root = try makeTempDirectory("recovery-silence-music")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let fixture = try await makeIncompleteSegment(root: root)
-        let fakeRemixer = FakeRemixer(.success)
-
-        let recovery = IncompleteSegmentRecovery(
-            verbose: false,
-            remixerFactory: { _ in fakeRemixer }
-        )
-
-        let recovered = await recovery.recoverSegment(at: fixture.dir)
-
-        #expect(recovered == true)
-        #expect(fakeRemixer.recordedSilenceMusic.all == [true])
-    }
-
     @Test @MainActor func stalenessFloorUsesSegmentDurationPlusMargin() {
         #expect(IncompleteSegmentRecovery.stalenessMargin == 60)
         #expect(IncompleteSegmentRecovery.minimumStaleAge == SegmentWriter.segmentDuration + IncompleteSegmentRecovery.stalenessMargin)
@@ -118,15 +62,14 @@ struct IncompleteSegmentRecoveryTests {
             audio: .corrupt,
             createdSecondsAgo: 3600
         )
-        let recovery = makeScanLoopRecovery(root: root)
+        let finalizer = FakeFinalizer()
+        let recovery = makeScanLoopRecovery(root: root, finalizer: finalizer)
 
         let count = await recovery.recoverAll(excludingActiveSegment: fixture.dir.standardizedFileURL.path)
-        let parent = fixture.dir.deletingLastPathComponent()
+        let enqueued = enqueuedPathSet(finalizer)
 
         #expect(count == 0)
-        #expect(FileManager.default.fileExists(atPath: fixture.dir.path))
-        #expect(!FileManager.default.fileExists(atPath: parent.appendingPathComponent("120000.failed", isDirectory: true).path))
-        #expect(try finalizedSegmentDirectory(in: parent, timePrefix: "120000") == nil)
+        #expect(!enqueued.contains(fixture.dir.standardizedFileURL.path))
     }
 
     @Test func recoverAllExclusionUsesFullPathNotBasename() async throws {
@@ -144,14 +87,15 @@ struct IncompleteSegmentRecoveryTests {
             time: "114500",
             createdSecondsAgo: 3600
         )
-        let recovery = makeScanLoopRecovery(root: root)
+        let finalizer = FakeFinalizer()
+        let recovery = makeScanLoopRecovery(root: root, finalizer: finalizer)
 
-        _ = await recovery.recoverAll(excludingActiveSegment: today.dir.standardizedFileURL.path)
-        let otherParent = other.dir.deletingLastPathComponent()
+        let count = await recovery.recoverAll(excludingActiveSegment: today.dir.standardizedFileURL.path)
+        let enqueued = enqueuedPathSet(finalizer)
 
-        #expect(FileManager.default.fileExists(atPath: today.dir.path))
-        #expect(!FileManager.default.fileExists(atPath: other.dir.path))
-        #expect(try finalizedSegmentDirectory(in: otherParent, timePrefix: "114500") != nil)
+        #expect(count == 1)
+        #expect(!enqueued.contains(today.dir.standardizedFileURL.path))
+        #expect(enqueued.contains(other.dir.standardizedFileURL.path))
     }
 
     @Test func recoverAllWithExclusionMissRecoversNormally() async throws {
@@ -163,89 +107,178 @@ struct IncompleteSegmentRecoveryTests {
             time: "121500",
             createdSecondsAgo: 3600
         )
-        let recovery = makeScanLoopRecovery(root: root)
+        let finalizer = FakeFinalizer()
+        let recovery = makeScanLoopRecovery(root: root, finalizer: finalizer)
 
         let count = await recovery.recoverAll(excludingActiveSegment: root.appendingPathComponent("missing.incomplete").path)
-        let parent = fixture.dir.deletingLastPathComponent()
+        let enqueued = enqueuedPathSet(finalizer)
 
         #expect(count >= 1)
-        #expect(!FileManager.default.fileExists(atPath: fixture.dir.path))
-        #expect(try finalizedSegmentDirectory(in: parent, timePrefix: "121500") != nil)
+        #expect(enqueued.contains(fixture.dir.standardizedFileURL.path))
     }
 
-    @Test func recoverAllMarksCorruptExpectedAudioFailed() async throws {
-        let root = try makeTempDirectory("recovery-corrupt-audio")
+    @Test func recoverAllEnqueuesEligibleOrphansRegardlessOfAudioContent() async throws {
+        let root = try makeTempDirectory("recovery-audio-content")
         defer { try? FileManager.default.removeItem(at: root) }
-        let fixture = try await makeIncompleteSegment(
+        let corrupt = try await makeIncompleteSegment(
             root: root,
             date: "2026-06-02",
             time: "123000",
             audio: .corrupt,
             createdSecondsAgo: 3600
         )
-        let recovery = makeScanLoopRecovery(root: root)
-
-        let count = await recovery.recoverAll(excludingActiveSegment: nil)
-        let parent = fixture.dir.deletingLastPathComponent()
-
-        #expect(count == 0)
-        #expect(!FileManager.default.fileExists(atPath: fixture.dir.path))
-        #expect(FileManager.default.fileExists(atPath: parent.appendingPathComponent("123000.failed", isDirectory: true).path))
-        #expect(try finalizedSegmentDirectory(in: parent, timePrefix: "123000") == nil)
-    }
-
-    @Test func recoverAllFinalizesAudioLessScreenOnlySegment() async throws {
-        let root = try makeTempDirectory("recovery-screen-only")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let fixture = try await makeIncompleteSegment(
+        let audioLess = try await makeIncompleteSegment(
             root: root,
             date: "2026-06-02",
             time: "124500",
             audio: .none,
             createdSecondsAgo: 3600
         )
-        let recovery = makeScanLoopRecovery(root: root)
-
-        let count = await recovery.recoverAll(excludingActiveSegment: nil)
-        let parent = fixture.dir.deletingLastPathComponent()
-
-        #expect(count >= 1)
-        #expect(!FileManager.default.fileExists(atPath: fixture.dir.path))
-        #expect(try finalizedSegmentDirectory(in: parent, timePrefix: "124500") != nil)
-    }
-
-    @Test func recoverAllFinalizesValidAudioSegment() async throws {
-        let root = try makeTempDirectory("recovery-valid-audio")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let fixture = try await makeIncompleteSegment(
+        let valid = try await makeIncompleteSegment(
             root: root,
             date: "2026-06-02",
             time: "130000",
             createdSecondsAgo: 3600
         )
-        let recovery = makeScanLoopRecovery(root: root)
+        let finalizer = FakeFinalizer()
+        let recovery = makeScanLoopRecovery(root: root, finalizer: finalizer)
 
         let count = await recovery.recoverAll(excludingActiveSegment: nil)
-        let parent = fixture.dir.deletingLastPathComponent()
+        let enqueued = enqueuedPathSet(finalizer)
 
-        #expect(count >= 1)
-        #expect(!FileManager.default.fileExists(atPath: fixture.dir.path))
-        #expect(try finalizedSegmentDirectory(in: parent, timePrefix: "130000") != nil)
+        #expect(count == 3)
+        #expect(enqueued.contains(corrupt.dir.standardizedFileURL.path))
+        #expect(enqueued.contains(audioLess.dir.standardizedFileURL.path))
+        #expect(enqueued.contains(valid.dir.standardizedFileURL.path))
+    }
+
+    @Test func recoverAllExcludesInFlightSegment() async throws {
+        let root = try makeTempDirectory("recovery-in-flight")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try await makeIncompleteSegment(
+            root: root,
+            date: "2026-06-02",
+            time: "131500",
+            createdSecondsAgo: 3600
+        )
+        let path = fixture.dir.standardizedFileURL.path
+        let finalizer = FakeFinalizer(inFlight: [path])
+        let recovery = makeScanLoopRecovery(root: root, finalizer: finalizer)
+
+        let count = await recovery.recoverAll(excludingActiveSegment: nil)
+        let enqueued = enqueuedPathSet(finalizer)
+
+        #expect(count == 0)
+        #expect(!enqueued.contains(path))
+    }
+
+    @Test func recoverAllExcludesTooRecentSegment() async throws {
+        let root = try makeTempDirectory("recovery-too-recent")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try await makeIncompleteSegment(
+            root: root,
+            date: "2026-06-02",
+            time: "133000",
+            createdSecondsAgo: 1
+        )
+        let finalizer = FakeFinalizer()
+        let recovery = makeScanLoopRecovery(root: root, finalizer: finalizer)
+
+        let count = await recovery.recoverAll(excludingActiveSegment: nil)
+        let enqueued = enqueuedPathSet(finalizer)
+
+        #expect(count == 0)
+        #expect(!enqueued.contains(fixture.dir.standardizedFileURL.path))
+    }
+
+    @Test func recoverAllContinuesAfterUnlistableDateEntry() async throws {
+        let root = try makeTempDirectory("recovery-partial-failure")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try await makeIncompleteSegment(
+            root: root,
+            date: "2026-06-02",
+            time: "134500",
+            createdSecondsAgo: 3600
+        )
+        let brokenDateEntry = root.appendingPathComponent("2026-06-01")
+        try Data("not a directory".utf8).write(to: brokenDateEntry)
+        #expect((try? FileManager.default.contentsOfDirectory(at: brokenDateEntry, includingPropertiesForKeys: [.isDirectoryKey, .creationDateKey], options: [.skipsHiddenFiles])) == nil)
+        let finalizer = FakeFinalizer()
+        let recovery = makeScanLoopRecovery(root: root, finalizer: finalizer)
+
+        let count = await recovery.recoverAll(excludingActiveSegment: nil)
+        let enqueued = enqueuedPathSet(finalizer)
+
+        #expect(count == 1)
+        #expect(enqueued.contains(fixture.dir.standardizedFileURL.path))
+    }
+
+    @Test func recoverAllEnqueuedOrphansAreFinalizedByRealQueue() async throws {
+        let root = try makeTempDirectory("recovery-real-finalizer")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let readable = try await makeIncompleteSegment(
+            root: root,
+            date: "2026-06-02",
+            time: "140000",
+            audio: .validM4A,
+            createdSecondsAgo: 3600
+        )
+        let corrupt = try await makeIncompleteSegment(
+            root: root,
+            date: "2026-06-02",
+            time: "141500",
+            audio: .corrupt,
+            createdSecondsAgo: 3600
+        )
+        let noVideo = try await makeIncompleteSegment(
+            root: root,
+            date: "2026-06-02",
+            time: "143000",
+            audio: .none,
+            createdSecondsAgo: 3600
+        )
+        let files = try FileManager.default.contentsOfDirectory(at: noVideo.dir, includingPropertiesForKeys: nil)
+        for file in files where file.pathExtension == "mp4" {
+            try FileManager.default.removeItem(at: file)
+        }
+
+        let queue = RemixQueue { _, _ in
+            AudioRemixer(verbose: false, debugKeepRejected: false)
+        }
+        let recovery = IncompleteSegmentRecovery(capturesDirectory: root, finalizer: queue)
+
+        let count = await recovery.recoverAll(excludingActiveSegment: nil)
+        await queue.waitForCompletion()
+
+        let parent = readable.dir.deletingLastPathComponent()
+        #expect(count == 3)
+        #expect(try finalizedSegmentDirectory(in: parent, timePrefix: "140000") != nil)
+        #expect(FileManager.default.fileExists(atPath: parent.appendingPathComponent("141500.failed", isDirectory: true).path))
+        #expect(FileManager.default.fileExists(atPath: parent.appendingPathComponent("143000.failed", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: readable.dir.path))
+        #expect(!FileManager.default.fileExists(atPath: corrupt.dir.path))
+        #expect(!FileManager.default.fileExists(atPath: noVideo.dir.path))
     }
 
     private func finalizedSegmentDirectory(in root: URL, timePrefix: String) throws -> URL? {
         let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
-        guard let name = names.first(where: { $0.hasPrefix("\(timePrefix)_") }) else {
+        guard let name = names.first(where: {
+            $0.hasPrefix("\(timePrefix)_") && !$0.hasSuffix(".failed") && !$0.hasSuffix(".incomplete")
+        }) else {
             return nil
         }
         return root.appendingPathComponent(name, isDirectory: true)
     }
 
-    private func makeScanLoopRecovery(root: URL) -> IncompleteSegmentRecovery {
+    private func enqueuedPathSet(_ finalizer: FakeFinalizer) -> Set<String> {
+        Set(finalizer.enqueuedDirectories.all.map { $0.standardizedFileURL.path })
+    }
+
+    private func makeScanLoopRecovery(root: URL, finalizer: FakeFinalizer = FakeFinalizer()) -> IncompleteSegmentRecovery {
         IncompleteSegmentRecovery(
             verbose: false,
             capturesDirectory: root,
-            remixerFactory: { _ in FakeRemixer(.success) }
+            finalizer: finalizer
         )
     }
 }

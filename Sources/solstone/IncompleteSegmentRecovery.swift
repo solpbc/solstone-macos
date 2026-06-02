@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-import AVFoundation
-import CoreMedia
 import Foundation
 import os
 
-/// Recovers orphaned .incomplete segment directories on app startup and in-session via the capture heartbeat.
-/// Remixes per-source audio and finalizes files/directories to HHMMSS_<duration>, excluding the
-/// currently-recording segment by full standardized path so live recording is never finalized out from under the pipeline.
+/// Discovers orphaned .incomplete segment directories on app startup and in-session via the capture heartbeat
+/// and enqueues them as orphan finalize jobs to the RemixQueue committer, skipping the active recording
+/// segment by full standardized path, in-flight jobs, and segments too recent to be stale.
 public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Sendable {
     private let verbose: Bool
     private let capturesDirectory: URL?
-    private let remixerFactory: @Sendable (Bool) -> any AudioRemixing
+    private let finalizer: any SegmentFinalizing
 
     static let stalenessMargin: TimeInterval = 60
     @MainActor
@@ -26,15 +24,15 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
     public init(
         verbose: Bool = false,
         capturesDirectory: URL? = nil,
-        remixerFactory: @escaping @Sendable (Bool) -> any AudioRemixing = { AudioRemixer(verbose: $0) }
+        finalizer: any SegmentFinalizing = RemixQueue.shared
     ) {
         self.verbose = verbose
         self.capturesDirectory = capturesDirectory
-        self.remixerFactory = remixerFactory
+        self.finalizer = finalizer
     }
 
-    /// Scan captures directory and recover any incomplete segments
-    /// - Returns: Number of successfully recovered segments
+    /// Scan captures directory and enqueue any stale incomplete segments.
+    /// - Returns: Number of segments enqueued for finalize.
     public func recoverAll(excludingActiveSegment activeSegmentPath: String? = nil) async -> Int {
         let fm = FileManager.default
         let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -44,8 +42,9 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
             return 0
         }
 
-        var recoveredCount = 0
+        var enqueuedCount = 0
         let minimumStaleAge = await Self.minimumStaleAge
+        let inFlight = await finalizer.inFlightPaths()
 
         // Find all date directories
         guard let dateDirs = try? fm.contentsOfDirectory(
@@ -71,13 +70,14 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
                     continue
                 }
 
-                // Skip .failed directories
-                guard !segmentDir.lastPathComponent.hasSuffix(".failed") else {
+                let path = segmentDir.standardizedFileURL.path
+                if let activeSegmentPath, path == activeSegmentPath {
+                    if verbose { Logger.storage.debug("Skipping active recording segment: \(segmentDir.lastPathComponent, privacy: .public)") }
                     continue
                 }
 
-                if let activeSegmentPath, segmentDir.standardizedFileURL.path == activeSegmentPath {
-                    if verbose { Logger.storage.debug("Skipping active recording segment: \(segmentDir.lastPathComponent, privacy: .public)") }
+                if inFlight.contains(path) {
+                    if verbose { Logger.storage.debug("Skipping in-flight segment: \(segmentDir.lastPathComponent, privacy: .public)") }
                     continue
                 }
 
@@ -87,147 +87,23 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
                     continue
                 }
 
-                Logger.storage.info("Attempting to recover incomplete segment: \(segmentDir.lastPathComponent, privacy: .public)")
+                Logger.storage.info("Enqueuing incomplete segment for finalize: \(segmentDir.lastPathComponent, privacy: .public)")
 
-                if await recoverSegment(at: segmentDir) {
-                    recoveredCount += 1
-                }
+                let timePrefix = String(segmentDir.lastPathComponent.dropLast(".incomplete".count))
+                let job = RemixQueue.RemixJob(
+                    segmentDirectory: segmentDir,
+                    timePrefix: timePrefix,
+                    captureStartTime: nil,
+                    audioInputs: [],
+                    debugKeepRejected: false,
+                    silenceMusic: true,
+                    micMetadataJSON: nil
+                )
+                await finalizer.enqueue(job)
+                enqueuedCount += 1
             }
         }
 
-        return recoveredCount
-    }
-
-    /// Recover a single incomplete segment directory
-    /// - Parameter url: Path to the .incomplete directory
-    /// - Returns: true if recovery succeeded
-    internal func recoverSegment(at url: URL) async -> Bool {
-        let fm = FileManager.default
-        let dirName = url.lastPathComponent
-
-        // Parse timePrefix from directory name (e.g., "143022" from "143022.incomplete")
-        guard dirName.hasSuffix(".incomplete") else { return false }
-        let timePrefix = String(dirName.dropLast(".incomplete".count))
-
-        // List all files in the directory
-        guard let files = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) else {
-            Logger.storage.warning("Failed to list contents of \(dirName, privacy: .public)")
-            return await markAsFailed(url)
-        }
-
-        // Find video file(s) to get duration
-        let videoFiles = files.filter { $0.pathExtension == "mp4" }
-        guard let primaryVideo = videoFiles.first else {
-            Logger.storage.warning("No video file found in \(dirName, privacy: .public)")
-            return await markAsFailed(url)
-        }
-
-        // Get duration from video file
-        let duration: Int
-        do {
-            let asset = AVURLAsset(url: primaryVideo)
-            let videoDuration = try await asset.load(.duration)
-            duration = Int(CMTimeGetSeconds(videoDuration))
-            if duration <= 0 {
-                Logger.storage.warning("Video has zero duration in \(dirName, privacy: .public)")
-                return await markAsFailed(url)
-            }
-        } catch {
-            Logger.storage.warning("Failed to get video duration in \(dirName, privacy: .public): \(error, privacy: .public)")
-            return await markAsFailed(url)
-        }
-
-        // Check if consolidated audio already exists
-        // Pattern: HHMMSS_audio.m4a (consolidated) vs HHMMSS_audio_*.m4a (per-source)
-        let consolidatedAudioName = "\(timePrefix)_audio.m4a"
-        let consolidatedAudioURL = url.appendingPathComponent(consolidatedAudioName)
-        let hasConsolidatedAudio = fm.fileExists(atPath: consolidatedAudioURL.path)
-
-        // Reconstruct per-source audio into the consolidated file unless one already exists.
-        if !hasConsolidatedAudio {
-            switch await classifyAudioSources(in: files, timePrefix: timePrefix, verbose: verbose) {
-            case .noSources:
-                break  // no per-source audio: finalize screen-only
-            case .unreadable:
-                Logger.storage.warning("No valid audio inputs for remix in \(dirName, privacy: .public)")
-                return await markAsFailed(url)
-            case .ready(let inputs):
-                Logger.storage.info("Remixing \(inputs.count, privacy: .public) audio source(s) for \(dirName, privacy: .public)")
-                do {
-                    let remixer = makeRemixer(verbose: verbose)
-                    let result = try await remixer.remix(
-                        inputs: inputs,
-                        to: consolidatedAudioURL,
-                        deleteSourceFiles: true,
-                        silenceMusic: true
-                    )
-                    Logger.storage.info("Remixed \(result.tracksWritten, privacy: .public) track(s), skipped \(result.tracksSkipped, privacy: .public)")
-                } catch AudioRemixerError.noTracksToWrite {
-                    Logger.storage.info("No audio tracks to write during recovery for \(dirName, privacy: .public)")
-                } catch {
-                    Logger.storage.warning("Audio remix failed for \(dirName, privacy: .public): \(error, privacy: .public)")
-                    return await markAsFailed(url)
-                }
-            }
-        }
-
-        // Build new segment key with duration
-        let segmentKey = "\(timePrefix)_\(duration)"
-
-        // Rename all files to include duration
-        do {
-            try renameFilesWithDuration(in: url, timePrefix: timePrefix, segmentKey: segmentKey)
-        } catch {
-            Logger.storage.warning("Failed to rename files in \(dirName, privacy: .public): \(error, privacy: .public)")
-            return await markAsFailed(url)
-        }
-
-        // Rename directory from .incomplete to final format
-        let parentDir = url.deletingLastPathComponent()
-        let finalURL = parentDir.appendingPathComponent(segmentKey)
-
-        do {
-            try fm.moveItem(at: url, to: finalURL)
-            Logger.storage.info("Recovered segment: \(dirName, privacy: .public) -> \(segmentKey, privacy: .public)")
-            return true
-        } catch {
-            Logger.storage.warning("Failed to rename directory \(dirName, privacy: .public): \(error, privacy: .public)")
-            return await markAsFailed(url)
-        }
-    }
-
-    /// Create the remixer used for recovery.
-    private func makeRemixer(verbose: Bool) -> any AudioRemixing {
-        remixerFactory(verbose)
-    }
-
-    /// Rename all files in directory to include duration suffix
-    private func renameFilesWithDuration(in directory: URL, timePrefix: String, segmentKey: String) throws {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
-            return
-        }
-
-        for file in files {
-            let filename = file.lastPathComponent
-
-            // Only rename files that start with the time prefix
-            guard filename.hasPrefix(timePrefix) else { continue }
-
-            // Replace timePrefix with segmentKey (which includes duration)
-            let newFilename = segmentKey + filename.dropFirst(timePrefix.count)
-            let newURL = directory.appendingPathComponent(newFilename)
-
-            // Skip if already renamed
-            if filename == newFilename { continue }
-
-            try fm.moveItem(at: file, to: newURL)
-            if verbose { Logger.storage.debug("Renamed: \(filename, privacy: .public) -> \(newFilename, privacy: .public)") }
-        }
-    }
-
-    /// Mark a segment as failed by renaming from .incomplete to .failed
-    private func markAsFailed(_ url: URL) async -> Bool {
-        await markIncompleteSegmentAsFailed(url)
+        return enqueuedCount
     }
 }

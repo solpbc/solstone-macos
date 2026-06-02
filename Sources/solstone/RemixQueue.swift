@@ -17,6 +17,11 @@ public protocol AudioRemixing: Sendable {
 
 extension AudioRemixer: AudioRemixing {}
 
+public protocol SegmentFinalizing: Sendable {
+    func enqueue(_ job: RemixQueue.RemixJob) async
+    func inFlightPaths() async -> Set<String>
+}
+
 public enum SegmentReconciliation: Sendable {
     case normal
     case recovered(Int)
@@ -262,3 +267,5 @@ public actor RemixQueue {
         }
     }
 }
+
+extension RemixQueue: SegmentFinalizing {}

@@ -300,6 +300,21 @@ final class CountingRecovery: IncompleteSegmentRecovering, @unchecked Sendable {
     }
 }
 
+final class FakeFinalizer: SegmentFinalizing, @unchecked Sendable {
+    let enqueuedDirectories = LockedArray<URL>([])
+    private let inFlight: Set<String>
+
+    init(inFlight: Set<String> = []) {
+        self.inFlight = inFlight
+    }
+
+    func enqueue(_ job: RemixQueue.RemixJob) async {
+        enqueuedDirectories.append(job.segmentDirectory)
+    }
+
+    func inFlightPaths() async -> Set<String> { inFlight }
+}
+
 final class LockedArray<Element: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [Element]

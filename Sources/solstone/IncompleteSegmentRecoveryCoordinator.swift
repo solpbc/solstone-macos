@@ -31,11 +31,11 @@ public actor IncompleteSegmentRecoveryCoordinator {
         isRecovering = true
         defer { isRecovering = false }
 
-        let recovered = await recoveryFactory().recoverAll(excludingActiveSegment: activeSegmentPath)
-        if recovered > 0 {
-            Logger.general.info("Recovered \(recovered, privacy: .public) incomplete segment(s)")
+        let enqueued = await recoveryFactory().recoverAll(excludingActiveSegment: activeSegmentPath)
+        if enqueued > 0 {
+            Logger.general.info("Enqueued \(enqueued, privacy: .public) incomplete segment(s) for finalize")
         }
-        return recovered
+        return enqueued
     }
 
     public nonisolated func scheduleDetached(excludingActiveSegment activeSegmentPath: String? = nil) {
