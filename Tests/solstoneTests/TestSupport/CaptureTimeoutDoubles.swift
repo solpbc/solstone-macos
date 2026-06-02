@@ -6,6 +6,19 @@ import Testing
 
 struct SyntheticRemixError: Error, Sendable {}
 
+final class RemixGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var released = false
+
+    func release() {
+        lock.withLock { released = true }
+    }
+
+    var isReleased: Bool {
+        lock.withLock { released }
+    }
+}
+
 final class LockedCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
@@ -220,6 +233,7 @@ final class FakeRemixer: AudioRemixing, @unchecked Sendable {
     enum Behavior: Sendable {
         case hang
         case success
+        case gatedSuccess(RemixGate)
         case throwing(any Error & Sendable)
     }
 
@@ -248,6 +262,12 @@ final class FakeRemixer: AudioRemixing, @unchecked Sendable {
             }
             return AudioRemixerResult(tracksWritten: 0, tracksSkipped: 0, sourceFiles: [])
         case .success:
+            try Data("ok".utf8).write(to: outputURL)
+            return AudioRemixerResult(tracksWritten: 1, tracksSkipped: 0, sourceFiles: [])
+        case .gatedSuccess(let gate):
+            while !gate.isReleased && !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
             try Data("ok".utf8).write(to: outputURL)
             return AudioRemixerResult(tracksWritten: 1, tracksSkipped: 0, sourceFiles: [])
         case .throwing(let error):

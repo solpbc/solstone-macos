@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import AVFoundation
 import CoreMedia
 import Foundation
 import Testing
@@ -8,6 +9,42 @@ import Testing
 
 @Suite("RemixQueue timeout")
 struct RemixQueueTimeoutTests {
+    @Test func duplicateEnqueueWhileProcessingIsIgnored() async throws {
+        let root = try makeTempDirectory("remix-queue-dedup")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let audio = dir.appendingPathComponent("120000_audio_system.m4a")
+        try Data("audio".utf8).write(to: audio)
+
+        let gate = RemixGate()
+        let fakeRemixer = FakeRemixer(.gatedSuccess(gate))
+        let completionCount = LockedCounter()
+        let queue = RemixQueue { _, _ in fakeRemixer }
+        await queue.setOnSegmentComplete { _, _ in
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeJob(dir: dir, timePrefix: "120000", inputURL: audio))
+        try await waitUntil(timeout: .seconds(5)) {
+            fakeRemixer.remixCount.count == 1
+        }
+
+        #expect(await queue.inFlightPaths().contains(dir.standardizedFileURL.path))
+
+        await queue.enqueue(makeJob(dir: dir, timePrefix: "120000", inputURL: audio))
+        gate.release()
+        await queue.waitForCompletion()
+
+        let finalized = try segmentDirectories(in: root).filter {
+            $0.hasPrefix("120000_") && !$0.hasSuffix(".failed") && !$0.hasSuffix(".incomplete")
+        }
+        #expect(fakeRemixer.remixCount.count == 1)
+        #expect(completionCount.count == 1)
+        #expect(finalized.count == 1)
+        #expect(await queue.inFlightPaths().isEmpty)
+    }
+
     @Test func timedOutJobIsFailedAndQueueContinues() async throws {
         let root = try makeTempDirectory("remix-queue")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -41,6 +78,7 @@ struct RemixQueueTimeoutTests {
 
         #expect(await queue.isProcessingForTesting == false)
         #expect(completionCount.count == 1)
+        #expect(await queue.inFlightPaths().isEmpty)
     }
 
     @Test func genericRemixFailureIsFailedAndQueueStopsWithoutUpload() async throws {
@@ -271,6 +309,134 @@ struct RemixQueueTimeoutTests {
         #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
     }
 
+    @Test func orphanWithReadableAudioSourcesReconstructsAndFinalizes() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-readable")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let mp4 = dir.appendingPathComponent("120000_display_42_screen.mp4")
+        try await makeTinyValidMP4(at: mp4, seconds: 1.2)
+        try await makeTinyValidM4A(at: dir.appendingPathComponent("120000_audio_system.m4a"))
+        let expectedDuration = try await probedMP4DurationSeconds(mp4)
+        let segmentKey = "120000_\(expectedDuration)"
+
+        let fakeRemixer = FakeRemixer(.success)
+        let completionCount = LockedCounter()
+        let completedOutcome = LockedValue<SegmentReconciliation>()
+        let queue = RemixQueue { _, _ in fakeRemixer }
+        await queue.setOnSegmentComplete { _, reconciliation in
+            completedOutcome.set(reconciliation)
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        let finalDir = root.appendingPathComponent(segmentKey, isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: finalDir.path))
+        #expect(completionCount.count == 1)
+        #expect(fakeRemixer.remixCount.count == 1)
+        let outcome = try #require(completedOutcome.current)
+        guard case .recovered = outcome else {
+            Issue.record("Expected recovered reconciliation")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: finalDir.appendingPathComponent("\(segmentKey)_audio.m4a").path))
+    }
+
+    @Test func orphanWithoutMP4MarksFailedWithoutCompletionAndReleasesInFlight() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-no-mp4")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let completionCount = LockedCounter()
+        let queue = RemixQueue { _, _ in FakeRemixer(.success) }
+        await queue.setOnSegmentComplete { _, _ in
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+
+        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
+        try await waitUntil(timeout: .seconds(5)) {
+            FileManager.default.fileExists(atPath: failedDir.path)
+        }
+        await queue.waitForCompletion()
+
+        #expect(completionCount.count == 0)
+        #expect(await queue.inFlightPaths().isEmpty)
+    }
+
+    @Test func orphanWithInvalidDurationMP4MarksFailedWithoutCompletion() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-invalid-duration")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let mp4 = dir.appendingPathComponent("120000_display_42_screen.mp4")
+        try Data("video".utf8).write(to: mp4)
+        do {
+            let duration = try await AVURLAsset(url: mp4).load(.duration)
+            if Int(CMTimeGetSeconds(duration)) > 0 {
+                // Keep this guard deterministic on OSes that can load the bogus bytes.
+                try await makeTinyValidMP4(at: mp4, seconds: 0.2)
+            }
+        } catch {
+            // On this OS, the bogus bytes throw while loading duration.
+        }
+
+        let completionCount = LockedCounter()
+        let queue = RemixQueue { _, _ in FakeRemixer(.success) }
+        await queue.setOnSegmentComplete { _, _ in
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+
+        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
+        try await waitUntil(timeout: .seconds(5)) {
+            FileManager.default.fileExists(atPath: failedDir.path)
+        }
+        await queue.waitForCompletion()
+
+        #expect(completionCount.count == 0)
+    }
+
+    @Test func orphanWithCorruptAudioMarksFailedAndReportsReconciliation() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-corrupt-audio")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try await makeTinyValidMP4(at: dir.appendingPathComponent("120000_display_42_screen.mp4"), seconds: 1.2)
+        let corruptAudio = dir.appendingPathComponent("120000_audio_system.m4a")
+        try corruptM4A(at: corruptAudio)
+
+        let fakeRemixer = FakeRemixer(.success)
+        let completionCount = LockedCounter()
+        let completedOutcome = LockedValue<SegmentReconciliation>()
+        let queue = RemixQueue { _, _ in fakeRemixer }
+        await queue.setOnSegmentComplete { _, reconciliation in
+            completedOutcome.set(reconciliation)
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+
+        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
+        try await waitUntil(timeout: .seconds(5)) {
+            FileManager.default.fileExists(atPath: failedDir.path)
+        }
+        await queue.waitForCompletion()
+
+        #expect(completionCount.count == 1)
+        let outcome = try #require(completedOutcome.current)
+        guard case .failed = outcome else {
+            Issue.record("Expected failed reconciliation")
+            return
+        }
+        #expect(fakeRemixer.remixCount.count == 0)
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent(corruptAudio.lastPathComponent).path))
+    }
+
     @Test func emptyInputsWithPreexistingConsolidatedAudioDoesNotReconstruct() async throws {
         let root = try makeTempDirectory("remix-queue-existing-audio")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -300,6 +466,106 @@ struct RemixQueueTimeoutTests {
         #expect(completionCount.count == 1)
         #expect(fakeRemixer.remixCount.count == 0)
         #expect(try Data(contentsOf: consolidatedAudio) == existingBytes)
+    }
+
+    @Test func orphanWithTimePrefixConsolidatedAudioDoesNotReconstructAndRenamesAudio() async throws {
+        let root = try makeTempDirectory("remix-queue-existing-time-prefix-audio")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let mp4 = dir.appendingPathComponent("120000_display_42_screen.mp4")
+        try await makeTinyValidMP4(at: mp4, seconds: 1.2)
+        let expectedDuration = try await probedMP4DurationSeconds(mp4)
+        let segmentKey = "120000_\(expectedDuration)"
+        let existingBytes = Data("existing time prefix audio".utf8)
+        try existingBytes.write(to: dir.appendingPathComponent("120000_audio.m4a"))
+
+        let fakeRemixer = FakeRemixer(.success)
+        let completionCount = LockedCounter()
+        let queue = RemixQueue { _, _ in fakeRemixer }
+        await queue.setOnSegmentComplete { _, _ in
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        let finalDir = root.appendingPathComponent(segmentKey, isDirectory: true)
+        let consolidatedAudio = finalDir.appendingPathComponent("\(segmentKey)_audio.m4a")
+        #expect(completionCount.count == 1)
+        #expect(fakeRemixer.remixCount.count == 0)
+        #expect(try Data(contentsOf: consolidatedAudio) == existingBytes)
+    }
+
+    @Test func orphanMixedFormFilesAreRenamedIdempotently() async throws {
+        let root = try makeTempDirectory("remix-queue-idempotent-rename")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let timePrefixMP4 = dir.appendingPathComponent("120000_display_99_screen.mp4")
+        try await makeTinyValidMP4(at: timePrefixMP4, seconds: 1.2)
+        let expectedDuration = try await probedMP4DurationSeconds(timePrefixMP4)
+        let segmentKey = "120000_\(expectedDuration)"
+
+        try await makeTinyValidMP4(
+            at: dir.appendingPathComponent("\(segmentKey)_display_42_screen.mp4"),
+            seconds: 1.2
+        )
+        let existingAudioBytes = Data("existing segment key audio".utf8)
+        try existingAudioBytes.write(to: dir.appendingPathComponent("\(segmentKey)_audio.m4a"))
+        try Data("source audio".utf8).write(to: dir.appendingPathComponent("120000_audio_system.m4a"))
+        try Data("{\"ok\":true}".utf8).write(to: dir.appendingPathComponent("120000_meta.json"))
+        try Data("unrelated".utf8).write(to: dir.appendingPathComponent("note.txt"))
+
+        let fakeRemixer = FakeRemixer(.success)
+        let completionCount = LockedCounter()
+        let queue = RemixQueue { _, _ in fakeRemixer }
+        await queue.setOnSegmentComplete { _, _ in
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        let finalDir = root.appendingPathComponent(segmentKey, isDirectory: true)
+        let names = try Set(FileManager.default.contentsOfDirectory(atPath: finalDir.path))
+        #expect(completionCount.count == 1)
+        #expect(fakeRemixer.remixCount.count == 0)
+        #expect(names.contains("\(segmentKey)_display_42_screen.mp4"))
+        #expect(names.contains("\(segmentKey)_display_99_screen.mp4"))
+        #expect(names.contains("\(segmentKey)_audio_system.m4a"))
+        #expect(names.contains("\(segmentKey)_meta.json"))
+        #expect(names.contains("note.txt"))
+        #expect(!names.contains { $0.hasPrefix("\(segmentKey)_\(expectedDuration)_") })
+        #expect(try Data(contentsOf: finalDir.appendingPathComponent("\(segmentKey)_audio.m4a")) == existingAudioBytes)
+    }
+
+    @Test func orphanCommitFailureLeavesIncompleteDirectoryAndDoesNotComplete() async throws {
+        let root = try makeTempDirectory("remix-queue-commit-failure")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let mp4 = dir.appendingPathComponent("120000_display_42_screen.mp4")
+        try await makeTinyValidMP4(at: mp4, seconds: 1.2)
+        let expectedDuration = try await probedMP4DurationSeconds(mp4)
+        let segmentKey = "120000_\(expectedDuration)"
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent(segmentKey, isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        let completionCount = LockedCounter()
+        let queue = RemixQueue { _, _ in FakeRemixer(.success) }
+        await queue.setOnSegmentComplete { _, _ in
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(completionCount.count == 0)
+        #expect(FileManager.default.fileExists(atPath: dir.path))
+        #expect(await queue.inFlightPaths().isEmpty)
     }
 
     private func makeDir(root: URL, name: String) throws -> URL {
@@ -332,7 +598,7 @@ struct RemixQueueTimeoutTests {
     private func makeEmptyJob(
         dir: URL,
         timePrefix: String,
-        captureStartTime: Date = Date().addingTimeInterval(-1)
+        captureStartTime: Date? = Date().addingTimeInterval(-1)
     ) -> RemixQueue.RemixJob {
         RemixQueue.RemixJob(
             segmentDirectory: dir,
@@ -343,6 +609,23 @@ struct RemixQueueTimeoutTests {
             silenceMusic: true,
             micMetadataJSON: nil
         )
+    }
+
+    private func makeOrphanJob(dir: URL, timePrefix: String) -> RemixQueue.RemixJob {
+        RemixQueue.RemixJob(
+            segmentDirectory: dir,
+            timePrefix: timePrefix,
+            captureStartTime: nil,
+            audioInputs: [],
+            debugKeepRejected: false,
+            silenceMusic: true,
+            micMetadataJSON: nil
+        )
+    }
+
+    private func probedMP4DurationSeconds(_ url: URL) async throws -> Int {
+        let duration = try await AVURLAsset(url: url).load(.duration)
+        return Int(CMTimeGetSeconds(duration))
     }
 
     private func segmentDirectories(in root: URL) throws -> [String] {

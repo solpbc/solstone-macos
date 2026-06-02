@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import AVFoundation
+import CoreMedia
 import Foundation
 import os
 
@@ -30,7 +32,7 @@ public actor RemixQueue {
     public struct RemixJob: Sendable {
         let segmentDirectory: URL
         let timePrefix: String
-        let captureStartTime: Date
+        let captureStartTime: Date?
         let audioInputs: [AudioRemixerInput]
         let debugKeepRejected: Bool
         let silenceMusic: Bool
@@ -39,6 +41,9 @@ public actor RemixQueue {
 
     /// Pending jobs waiting to be processed
     private var pendingJobs: [RemixJob] = []
+
+    /// Standardized segment directory paths currently queued or processing
+    private var inFlightDirectoryPaths: Set<String> = []
 
     /// Task handling sequential job processing
     private var processingTask: Task<Void, Never>?
@@ -67,6 +72,12 @@ public actor RemixQueue {
 
     /// Enqueue a remix job for background processing
     public func enqueue(_ job: RemixJob) {
+        let key = job.segmentDirectory.standardizedFileURL.path
+        guard !inFlightDirectoryPaths.contains(key) else {
+            Logger.storage.debug("Duplicate enqueue ignored for \(job.segmentDirectory.lastPathComponent, privacy: .public)")
+            return
+        }
+        inFlightDirectoryPaths.insert(key)
         pendingJobs.append(job)
         startProcessingIfNeeded()
     }
@@ -77,6 +88,8 @@ public actor RemixQueue {
     }
 
     internal var isProcessingForTesting: Bool { isProcessing }
+
+    public func inFlightPaths() -> Set<String> { inFlightDirectoryPaths }
 
     /// Start processing if not already running
     private func startProcessingIfNeeded() {
@@ -95,10 +108,38 @@ public actor RemixQueue {
 
     /// Process a single remix job
     private func processJob(_ job: RemixJob) async {
+        let key = job.segmentDirectory.standardizedFileURL.path
+        defer { inFlightDirectoryPaths.remove(key) }
+
         let fm = FileManager.default
 
         // Calculate actual duration and segment key
-        let actualDuration = Int(Date().timeIntervalSince(job.captureStartTime))
+        let actualDuration: Int
+        if let start = job.captureStartTime {
+            actualDuration = Int(Date().timeIntervalSince(start))
+        } else {
+            do {
+                let primaryMP4 = try fm.contentsOfDirectory(at: job.segmentDirectory, includingPropertiesForKeys: nil)
+                    .filter { $0.pathExtension == "mp4" }
+                    .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                    .first
+
+                guard let primaryMP4 else {
+                    await markIncompleteSegmentAsFailed(job.segmentDirectory)
+                    return
+                }
+
+                let duration = try await AVURLAsset(url: primaryMP4).load(.duration)
+                actualDuration = Int(CMTimeGetSeconds(duration))
+                guard actualDuration > 0 else {
+                    await markIncompleteSegmentAsFailed(job.segmentDirectory)
+                    return
+                }
+            } catch {
+                await markIncompleteSegmentAsFailed(job.segmentDirectory)
+                return
+            }
+        }
         let segmentKey = "\(job.timePrefix)_\(actualDuration)"
 
         Logger.storage.info("Background remix: \(job.timePrefix, privacy: .public) -> \(segmentKey, privacy: .public)")
@@ -133,7 +174,10 @@ public actor RemixQueue {
             }
         } else {
             let files = (try? fm.contentsOfDirectory(at: job.segmentDirectory, includingPropertiesForKeys: nil)) ?? []
-            if !fm.fileExists(atPath: audioOutputURL.path) {
+            let timePrefixAudioURL = job.segmentDirectory.appendingPathComponent("\(job.timePrefix)_audio.m4a")
+            let hasConsolidatedAudio = fm.fileExists(atPath: audioOutputURL.path)
+                || fm.fileExists(atPath: timePrefixAudioURL.path)
+            if !hasConsolidatedAudio {
                 switch await classifyAudioSources(in: files, timePrefix: job.timePrefix, verbose: false) {
                 case .noSources:
                     break  // genuinely audio-less: finalize screen-only
@@ -179,18 +223,20 @@ public actor RemixQueue {
             }
         }
 
-        // Rename video files to include duration (only .mp4 files need renaming)
+        // Rename segment files to include duration
         do {
             let files = try fm.contentsOfDirectory(at: job.segmentDirectory, includingPropertiesForKeys: nil)
             for fileURL in files {
                 let filename = fileURL.lastPathComponent
 
-                // Only rename video files (mp4) that have the old prefix
-                guard filename.hasPrefix("\(job.timePrefix)_") && filename.hasSuffix(".mp4") else {
+                if filename.hasPrefix("\(segmentKey)_") {
                     continue
                 }
 
-                // Replace timePrefix_ with segmentKey_ in filename
+                guard filename.hasPrefix("\(job.timePrefix)_") else {
+                    continue
+                }
+
                 let suffix = filename.dropFirst(job.timePrefix.count + 1)  // +1 for underscore
                 let newFilename = "\(segmentKey)_\(suffix)"
                 let newFileURL = job.segmentDirectory.appendingPathComponent(newFilename)
@@ -198,7 +244,7 @@ public actor RemixQueue {
                 try fm.moveItem(at: fileURL, to: newFileURL)
             }
         } catch {
-            Logger.storage.warning("Failed to rename video files: \(error, privacy: .public)")
+            Logger.storage.warning("Failed to rename segment files: \(error, privacy: .public)")
         }
 
         // Rename directory from HHMMSS.incomplete to HHMMSS_duration
@@ -213,8 +259,6 @@ public actor RemixQueue {
             await onSegmentComplete?(finalDirectory, reconciliation)
         } catch {
             Logger.storage.warning("Failed to rename segment directory: \(error, privacy: .public)")
-            // Try to trigger upload with original path anyway
-            await onSegmentComplete?(job.segmentDirectory, reconciliation)
         }
     }
 }
