@@ -383,7 +383,9 @@ public final class SolstoneInstaller {
                 "--no-index",
                 "--offline",
                 "--python",
-                pythonURL.path
+                pythonURL.path,
+                "--no-python-downloads",
+                "--force"
             ],
             phase: phase,
             launchDescription: "uv tool install",

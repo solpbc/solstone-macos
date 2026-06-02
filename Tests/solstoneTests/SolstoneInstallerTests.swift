@@ -601,7 +601,9 @@ struct SolstoneInstallerTests {
             "--no-index",
             "--offline",
             "--python",
-            testBundledPythonURL.path
+            testBundledPythonURL.path,
+            "--no-python-downloads",
+            "--force"
         ])
         #expect(install.timeout == .seconds(120))
         #expect(!install.arguments.contains("--reinstall"))
