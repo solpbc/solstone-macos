@@ -448,6 +448,10 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 	@rm -rf solstone.app/Contents/Resources/wheelhouse
 	@cp -R "$(WHEELHOUSE_DIR)" solstone.app/Contents/Resources/wheelhouse
 	@(cd solstone.app/Contents/Resources/wheelhouse && shasum -a 256 -c MANIFEST.sha256) || { echo "error: bundled wheelhouse sha256 manifest verification failed"; exit 1; }
+	@python3 scripts/sign_wheelhouse_native.py solstone.app/Contents/Resources/wheelhouse \
+		--identity "$(DEVELOPER_ID_APP)" \
+		--keychain "$(SIGNING_KEYCHAIN)"
+	@(cd solstone.app/Contents/Resources/wheelhouse && shasum -a 256 -c MANIFEST.sha256) || { echo "error: bundled signed wheelhouse sha256 manifest verification failed"; exit 1; }
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		--entitlements "$(ENTITLEMENTS_PLIST)" \
