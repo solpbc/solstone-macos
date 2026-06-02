@@ -146,6 +146,8 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
                 return .failed(message: message)
             case .cleanup:
                 return .pending
+            case .upgradeCutoverFailed(let message):
+                return .failed(message: message)
             default:
                 return .ok
             }
@@ -164,7 +166,7 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
                 return .failed(message: message)
             case .cleanup, .installSolstone:
                 return .pending
-            case .registering, .installModels:
+            case .registering, .installModels, .upgradeCutoverFailed:
                 return .ok
             }
         }
@@ -180,7 +182,7 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
             switch failedState {
             case .registering(let message):
                 return .failed(message: message)
-            case .cleanup, .installSolstone, .solSetup:
+            case .cleanup, .installSolstone, .solSetup, .upgradeCutoverFailed:
                 return .pending
             case .installModels:
                 return .ok

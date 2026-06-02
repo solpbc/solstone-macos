@@ -22,18 +22,20 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         var exitCode: Int32 = 0
         var delay: Duration = .zero
         var throwMessage: String?
+        var sideEffect: (@Sendable () -> Void)?
 
         static func success(
             stdout: Data = Data(),
             stderr: Data = Data(),
             exitCode: Int32 = 0,
-            delay: Duration = .zero
+            delay: Duration = .zero,
+            sideEffect: (@Sendable () -> Void)? = nil
         ) -> Response {
-            Response(stdout: stdout, stderr: stderr, exitCode: exitCode, delay: delay)
+            Response(stdout: stdout, stderr: stderr, exitCode: exitCode, delay: delay, sideEffect: sideEffect)
         }
 
-        static func failure(_ message: String) -> Response {
-            Response(throwMessage: message)
+        static func failure(_ message: String, sideEffect: (@Sendable () -> Void)? = nil) -> Response {
+            Response(throwMessage: message, sideEffect: sideEffect)
         }
     }
 
@@ -69,6 +71,7 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         if response.delay != .zero {
             try? await Task.sleep(for: response.delay)
         }
+        response.sideEffect?()
         if let message = response.throwMessage {
             throw FakeRunError(message: message)
         }

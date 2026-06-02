@@ -575,7 +575,8 @@ struct BundledServiceCard: View {
             return message
         case .installSolstone(let message),
              .installModels(let message),
-             .registering(let message):
+             .registering(let message),
+             .upgradeCutoverFailed(let message):
             return message
         case .solSetup(_, let message):
             return message
@@ -837,6 +838,8 @@ func rowForFailure(_ failedState: FailedState) -> InstallerRow {
     case .cleanup:
         return .cleaningUp
     case .installSolstone:
+        return .installSolstone
+    case .upgradeCutoverFailed:
         return .installSolstone
     case .solSetup:
         return .solSetup

@@ -76,6 +76,7 @@ public enum FailedState: Sendable, Equatable {
     case solSetup(errorCode: String?, message: String)
     case installModels(message: String)
     case registering(message: String)
+    case upgradeCutoverFailed(message: String)
 }
 
 public enum ErrorCategory: Sendable, Equatable {

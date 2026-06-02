@@ -33,6 +33,9 @@ public final class SolstoneInstaller {
     private let runtimeRootURL: URL
     private let subprocessRunner: SubprocessRunning
     private let failureRecordStore: UpgradeFailureRecordStoring
+    private let inProgressMarkerStore: InProgressUpgradeMarkerStoring
+    private let runtimeVersionTokenProvider: @Sendable () -> String
+    private let wrapperDirURL: URL
     private let solBinaryFinder: @Sendable () async -> String?
     private let solOwnershipResolver: @Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership
     private let connectionTester: @Sendable (String, String) async -> String?
@@ -58,7 +61,10 @@ public final class SolstoneInstaller {
         runtimeRootURL: URL? = nil,
         stagedInstallTimeout: Duration = .seconds(120),
         stagedVerifyTimeout: Duration = .seconds(10),
-        subprocessTimeoutGracePeriod: Duration = .seconds(2)
+        subprocessTimeoutGracePeriod: Duration = .seconds(2),
+        inProgressMarkerStore: InProgressUpgradeMarkerStoring = UserDefaultsInProgressUpgradeMarkerStore(),
+        runtimeVersionTokenProvider: @escaping @Sendable () -> String = { UUID().uuidString },
+        wrapperDirURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin", isDirectory: true)
     ) {
         self.init(
             uvBinaryURL: uvBinaryURL,
@@ -66,6 +72,9 @@ public final class SolstoneInstaller {
             wheelhouseURL: wheelhouseURL,
             runtimeRootURL: runtimeRootURL,
             subprocessRunner: SubprocessRunner(timeoutGracePeriod: subprocessTimeoutGracePeriod),
+            inProgressMarkerStore: inProgressMarkerStore,
+            runtimeVersionTokenProvider: runtimeVersionTokenProvider,
+            wrapperDirURL: wrapperDirURL,
             stagedInstallTimeout: stagedInstallTimeout,
             stagedVerifyTimeout: stagedVerifyTimeout
         )
@@ -78,6 +87,9 @@ public final class SolstoneInstaller {
         runtimeRootURL: URL? = nil,
         subprocessRunner: SubprocessRunning,
         failureRecordStore: UpgradeFailureRecordStoring = UserDefaultsUpgradeFailureRecordStore(),
+        inProgressMarkerStore: InProgressUpgradeMarkerStoring = UserDefaultsInProgressUpgradeMarkerStore(),
+        runtimeVersionTokenProvider: @escaping @Sendable () -> String = { UUID().uuidString },
+        wrapperDirURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin", isDirectory: true),
         solBinaryFinder: (@Sendable () async -> String?)? = nil,
         solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
         connectionTester: @escaping @Sendable (String, String) async -> String? = { url, key in
@@ -104,6 +116,9 @@ public final class SolstoneInstaller {
         self.runtimeRootURL = resolvedRuntimeRootURL
         self.subprocessRunner = subprocessRunner
         self.failureRecordStore = failureRecordStore
+        self.inProgressMarkerStore = inProgressMarkerStore
+        self.runtimeVersionTokenProvider = runtimeVersionTokenProvider
+        self.wrapperDirURL = wrapperDirURL
         self.solBinaryFinder = solBinaryFinder ?? {
             await SolBinaryLocator.findSolBinary(rootURL: resolvedRuntimeRootURL)
         }
@@ -199,12 +214,11 @@ public final class SolstoneInstaller {
 
     private func runInstall(journalURL: URL, existingInstallChoice: ExistingInstallChoice) async {
         let existingSolPath = await solBinaryFinder()
-        var setupJournalURL = journalURL
+        let setupJournalURL = journalURL
         if existingInstallChoice == .createFresh {
             if let existingSolPath {
-                guard let preservedJournalURL = await runUpgradePreclean(solPath: existingSolPath) else { return }
-                setupJournalURL = preservedJournalURL
-                guard await runInstallSolstone() else { return }
+                await runAppManagedUpgrade(oldSolPath: existingSolPath)
+                return
             } else {
                 guard await runStagedInstall() else { return }
             }
@@ -226,7 +240,12 @@ public final class SolstoneInstaller {
             return
         }
 
-        guard await runSolSetup(solPath: solPath, journalURL: setupJournalURL) else { return }
+        guard await runSolSetup(
+            solPath: solPath,
+            journalURL: setupJournalURL,
+            layout: .active(rootURL: runtimeRootURL),
+            skipService: false
+        ) else { return }
         await enterRegistering(solPath: solPath)
     }
 
@@ -242,83 +261,37 @@ public final class SolstoneInstaller {
         wheelhouseURL ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/wheelhouse", isDirectory: true)
     }
 
-    private func runInstallSolstone() async -> Bool {
-        let phase = "uv tool install solstone"
-        setMain(.installingSolstone(SubprocessProgress(phase: phase)))
-        // Deferred cutover path for existing installs; fresh installs use runStagedInstall().
-        let layout = SolstoneRuntimeLayout(rootURL: runtimeRootURL)
+    private func runStagedInstall() async -> Bool {
+        let pin = BundleConfig.solstonePinVersion
+        guard let layout = await stageAndVerifySolstone(versionID: pin) else { return false }
+
         do {
-            try layout.ensureCreated()
-        } catch {
-            failMain(.installSolstone(message: error.localizedDescription), category: .disk, logExcerpt: "runtime directory setup failed: \(error.localizedDescription)")
-            return false
-        }
-
-        let pythonURL = resolvedBundledPythonURL()
-        guard await preflightBundledPython(at: pythonURL) else { return false }
-
-        let legacyToolURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".local/share/uv/tools/solstone", isDirectory: true)
-        if FileManager.default.fileExists(atPath: legacyToolURL.path) {
-            Logger.setup.info("installer: detected legacy uv tool state at \(legacyToolURL.path, privacy: .public); installing into \(layout.rootURL.path, privacy: .public)")
-        }
-        let environment = layout.uvEnvironment()
-
-        guard let uninstall = await runUVToolCommand(
-            arguments: ["tool", "uninstall", "solstone"],
-            phase: phase,
-            launchDescription: "uv tool uninstall",
-            environment: environment
-        ) else {
-            return false
-        }
-        if uninstall.result.exitCode != 0 && !Self.uvUninstallNotInstalled(stderr: uninstall.stderr) {
-            failMain(
-                .installSolstone(message: lastUsefulLine(uninstall.stderr) ?? "uv tool uninstall solstone failed"),
-                category: Self.categorize(stderr: uninstall.stderr),
-                logExcerpt: Self.lastUsefulLog(stdout: uninstall.stdout, stderr: uninstall.stderr)
-            )
-            return false
-        }
-
-        guard let install = await runUVToolCommand(
-            arguments: ["tool", "install", "solstone==\(BundleConfig.solstonePinVersion)", "--refresh", "--python", pythonURL.path],
-            phase: phase,
-            launchDescription: "uv tool install",
-            environment: environment
-        ) else {
-            return false
-        }
-
-        if install.result.exitCode == 0 {
+            try layout.activate()
+            Logger.setup.info("installer: activated staged solstone \(pin, privacy: .public)")
             return true
+        } catch {
+            failMain(.installSolstone(message: error.localizedDescription), category: .disk, logExcerpt: "failed to activate staged runtime: \(error.localizedDescription)")
+            return false
         }
-
-        failMain(
-            .installSolstone(message: lastUsefulLine(install.stderr) ?? "uv tool install solstone failed"),
-            category: Self.categorize(stderr: install.stderr),
-            logExcerpt: Self.lastUsefulLog(stdout: install.stdout, stderr: install.stderr)
-        )
-        return false
     }
 
-    private func runStagedInstall() async -> Bool {
+    private func stageAndVerifySolstone(versionID: String) async -> SolstoneRuntimeLayout? {
         let phase = "uv tool install solstone"
         setMain(.installingSolstone(SubprocessProgress(phase: phase)))
         let pin = BundleConfig.solstonePinVersion
-        let layout = SolstoneRuntimeLayout.staging(rootURL: runtimeRootURL, version: pin)
+        let layout = SolstoneRuntimeLayout.staging(rootURL: runtimeRootURL, version: versionID)
         let fileManager = FileManager.default
-        let versionURL = layout.versionsDir.appendingPathComponent(pin, isDirectory: true)
+        let versionURL = layout.versionsDir.appendingPathComponent(versionID, isDirectory: true)
 
         Logger.setup.info("installer: staging solstone \(pin, privacy: .public) into \(versionURL.path, privacy: .public)")
         if fileManager.fileExists(atPath: versionURL.path) {
-            if SolstoneRuntimeLayout.readActiveVersion(rootURL: runtimeRootURL) == pin {
+            if SolstoneRuntimeLayout.readActiveVersion(rootURL: runtimeRootURL) == versionID {
                 failMain(
                     .installSolstone(message: "cannot re-stage the active version (out of scope this lode)"),
                     category: .disk,
                     logExcerpt: "staged version directory is active: \(versionURL.path)"
                 )
-                return false
+                return nil
             }
             do {
                 try fileManager.removeItem(at: versionURL)
@@ -328,7 +301,7 @@ public final class SolstoneInstaller {
                     category: .disk,
                     logExcerpt: "failed to remove stale staged version \(versionURL.path): \(error.localizedDescription)"
                 )
-                return false
+                return nil
             }
         }
 
@@ -336,11 +309,11 @@ public final class SolstoneInstaller {
             try layout.ensureCreated()
         } catch {
             failMain(.installSolstone(message: error.localizedDescription), category: .disk, logExcerpt: "staged runtime directory setup failed: \(error.localizedDescription)")
-            return false
+            return nil
         }
 
         let pythonURL = resolvedBundledPythonURL()
-        guard await preflightBundledPython(at: pythonURL) else { return false }
+        guard await preflightBundledPython(at: pythonURL) else { return nil }
 
         let wheelhouse = resolvedWheelhouseURL()
         let wheels: [URL]
@@ -361,7 +334,7 @@ public final class SolstoneInstaller {
                 category: .disk,
                 logExcerpt: error.localizedDescription
             )
-            return false
+            return nil
         }
 
         guard wheels.count == 1, let projectWheel = wheels.first else {
@@ -369,7 +342,7 @@ public final class SolstoneInstaller {
                 .installSolstone(message: "expected exactly one bundled solstone-\(pin)-*.whl in \(wheelhouse.path), found \(wheels.count)"),
                 category: .disk
             )
-            return false
+            return nil
         }
 
         let environment = layout.uvEnvironment()
@@ -392,7 +365,7 @@ public final class SolstoneInstaller {
             environment: environment,
             timeout: stagedInstallTimeout
         ) else {
-            return false
+            return nil
         }
 
         guard install.result.exitCode == 0 else {
@@ -401,7 +374,7 @@ public final class SolstoneInstaller {
                 category: Self.categorize(stderr: install.stderr),
                 logExcerpt: Self.lastUsefulLog(stdout: install.stdout, stderr: install.stderr)
             )
-            return false
+            return nil
         }
 
         let installedVersion = await stagedSolVersion(solPath: layout.solBinary.path, environment: environment)
@@ -411,17 +384,10 @@ public final class SolstoneInstaller {
                 category: .unknown,
                 logExcerpt: "expected \(pin), got \(installedVersion ?? "unknown")"
             )
-            return false
+            return nil
         }
 
-        do {
-            try layout.activate()
-            Logger.setup.info("installer: activated staged solstone \(pin, privacy: .public)")
-            return true
-        } catch {
-            failMain(.installSolstone(message: error.localizedDescription), category: .disk, logExcerpt: "failed to activate staged runtime: \(error.localizedDescription)")
-            return false
-        }
+        return layout
     }
 
     private func stagedSolVersion(solPath: String, environment: [String: String]) async -> String? {
@@ -525,14 +491,14 @@ public final class SolstoneInstaller {
         return (result, output.stdoutString(), output.stderrString())
     }
 
-    private func runUpgradePreclean(solPath: String) async -> URL? {
+    private func resolveExistingInstallJournal(oldSolPath: String) async -> (journalURL: URL, supervisorPID: pid_t?)? {
         let phase = "upgrade pre-clean"
         setMain(.cleaningUp(SubprocessProgress(phase: phase)))
-        Logger.setup.info("starting upgrade pre-clean")
+        Logger.setup.info("resolving existing journal before upgrade")
 
-        let configJournalBinaryPath = SolBinaryLocator.journalPath(siblingOf: solPath)
+        let configJournalBinaryPath = SolBinaryLocator.journalPath(siblingOf: oldSolPath)
         let configUseJournal = fileExists(configJournalBinaryPath)
-        let configExecPath = configUseJournal ? configJournalBinaryPath : solPath
+        let configExecPath = configUseJournal ? configJournalBinaryPath : oldSolPath
         let configLabel = "\(configUseJournal ? "journal" : "sol") config show"
 
         let configOutput = InstallerOutput()
@@ -571,41 +537,48 @@ public final class SolstoneInstaller {
             .appendingPathComponent("health/supervisor.pid")
         let capturedPid = readSupervisorPID(from: pidURL)
 
-        do {
-            let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
-            let useJournal = fileExists(journalPath)
-            let uninstallExecPath = useJournal ? journalPath : solPath
-            let uninstallArguments = ["service", "uninstall"]
-            let uninstallLabel = "\(useJournal ? "journal" : "sol") \(uninstallArguments.joined(separator: " "))"
+        return (resolvedJournalURL, capturedPid)
+    }
 
-            let uninstallOutput = InstallerOutput()
-            let uninstallResult: SubprocessResult
-            do {
-                uninstallResult = try await subprocessRunner.run(
-                    executable: URL(fileURLWithPath: uninstallExecPath),
-                    arguments: uninstallArguments,
-                    environment: nil,
-                    stdoutHandler: { data in Self.append(data, to: uninstallOutput, stream: .stdout) },
-                    stderrHandler: { data in Self.append(data, to: uninstallOutput, stream: .stderr) }
-                )
-            } catch {
-                failCleanup(step: .serviceUninstall, why: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "\(uninstallLabel) subprocess could not launch: \(error.localizedDescription)")
-                return nil
-            }
-            let uninstallStdout = uninstallOutput.stdoutString()
-            let uninstallStderr = uninstallOutput.stderrString()
-            guard uninstallResult.exitCode == 0 else {
-                failCleanup(
-                    step: .serviceUninstall,
-                    why: lastUsefulLine(uninstallStderr) ?? "\(uninstallLabel) exited \(uninstallResult.exitCode)",
-                    category: Self.categorize(stderr: uninstallStderr),
-                    logExcerpt: Self.lastUsefulLog(stdout: uninstallStdout, stderr: uninstallStderr)
-                )
-                return nil
-            }
+    private func stopOldService(oldSolPath: String, journalURL: URL, supervisorPID: pid_t?) async -> StopOldServiceFailure? {
+        let phase = "upgrade pre-clean"
+        setMain(.cleaningUp(SubprocessProgress(phase: phase)))
+        Logger.setup.info("stopping old service for upgrade journal \(journalURL.path, privacy: .public)")
+
+        let journalPath = SolBinaryLocator.journalPath(siblingOf: oldSolPath)
+        let useJournal = fileExists(journalPath)
+        let uninstallExecPath = useJournal ? journalPath : oldSolPath
+        let uninstallArguments = ["service", "uninstall"]
+        let uninstallLabel = "\(useJournal ? "journal" : "sol") \(uninstallArguments.joined(separator: " "))"
+
+        let uninstallOutput = InstallerOutput()
+        let uninstallResult: SubprocessResult
+        do {
+            uninstallResult = try await subprocessRunner.run(
+                executable: URL(fileURLWithPath: uninstallExecPath),
+                arguments: uninstallArguments,
+                environment: nil,
+                stdoutHandler: { data in Self.append(data, to: uninstallOutput, stream: .stdout) },
+                stderrHandler: { data in Self.append(data, to: uninstallOutput, stream: .stderr) }
+            )
+        } catch {
+            return StopOldServiceFailure(
+                step: .serviceUninstall,
+                message: error.localizedDescription,
+                logExcerpt: "\(uninstallLabel) subprocess could not launch: \(error.localizedDescription)"
+            )
+        }
+        let uninstallStdout = uninstallOutput.stdoutString()
+        let uninstallStderr = uninstallOutput.stderrString()
+        guard uninstallResult.exitCode == 0 else {
+            return StopOldServiceFailure(
+                step: .serviceUninstall,
+                message: lastUsefulLine(uninstallStderr) ?? "\(uninstallLabel) exited \(uninstallResult.exitCode)",
+                logExcerpt: Self.lastUsefulLog(stdout: uninstallStdout, stderr: uninstallStderr)
+            )
         }
 
-        if let capturedPid {
+        if let capturedPid = supervisorPID {
             let clock = ContinuousClock()
             let deadline = clock.now + pidWaitTimeout
             while clock.now < deadline {
@@ -613,8 +586,7 @@ public final class SolstoneInstaller {
                 try? await Task.sleep(for: pidWaitPollInterval)
             }
             if pidExists(capturedPid) {
-                failCleanup(step: .waitForDeath, why: "supervisor pid \(capturedPid) still alive after 10s", category: .unknown)
-                return nil
+                return StopOldServiceFailure(step: .waitForDeath, message: "supervisor pid \(capturedPid) still alive after 10s")
             }
         }
 
@@ -624,8 +596,7 @@ public final class SolstoneInstaller {
             terminate: terminate,
             gracePeriod: orphanGracePeriod
         ) {
-            failCleanup(step: failure.step, why: failure.message, category: .unknown)
-            return nil
+            return StopOldServiceFailure(step: failure.step, message: failure.message)
         }
 
         for port in [7657, 5015] {
@@ -639,34 +610,308 @@ public final class SolstoneInstaller {
                     stderrHandler: { _ in }
                 )
             } catch {
-                failCleanup(step: .ports, why: "lsof failed to launch probing port \(port)", category: .subprocessLaunch, logExcerpt: error.localizedDescription)
-                return nil
+                return StopOldServiceFailure(step: .ports, message: "lsof failed to launch probing port \(port)", logExcerpt: error.localizedDescription)
             }
 
             switch result.exitCode {
             case 1:
                 continue
             case 0:
-                failCleanup(step: .ports, why: "port \(port) still bound after sweep", category: .unknown)
-                return nil
+                return StopOldServiceFailure(step: .ports, message: "port \(port) still bound after sweep")
             default:
-                failCleanup(step: .ports, why: "lsof exited \(result.exitCode) probing port \(port)", category: .unknown)
-                return nil
+                return StopOldServiceFailure(step: .ports, message: "lsof exited \(result.exitCode) probing port \(port)")
             }
         }
 
-        return resolvedJournalURL
+        return nil
+    }
+
+    private func runAppManagedUpgrade(oldSolPath: String) async {
+        guard let resolved = await resolveExistingInstallJournal(oldSolPath: oldSolPath) else { return }
+
+        let pin = BundleConfig.solstonePinVersion
+        let upgradeID = runtimeVersionTokenProvider()
+        let versionID = "\(pin)+\(upgradeID)"
+        let stagedMarkerLayout = SolstoneRuntimeLayout.staging(rootURL: runtimeRootURL, version: versionID)
+        saveInProgressMarker(
+            upgradeID: upgradeID,
+            versionID: versionID,
+            oldSolPath: oldSolPath,
+            resolvedJournal: resolved.journalURL,
+            stagedLayout: stagedMarkerLayout,
+            phase: .staging
+        )
+
+        guard let stagedLayout = await stageAndVerifySolstone(versionID: versionID) else { return }
+
+        let wrapperSnapshot = snapshotWrappers()
+        let currentSnapshot = snapshotCurrentLink()
+        var didActivate = false
+
+        saveInProgressMarker(
+            upgradeID: upgradeID,
+            versionID: versionID,
+            oldSolPath: oldSolPath,
+            resolvedJournal: resolved.journalURL,
+            stagedLayout: stagedLayout,
+            phase: .stoppingOld
+        )
+        if let failure = await stopOldService(oldSolPath: oldSolPath, journalURL: resolved.journalURL, supervisorPID: resolved.supervisorPID) {
+            let detail = [
+                Self.cleanupFailureMessage(step: failure.step, why: failure.message),
+                failure.logExcerpt
+            ]
+            .compactMap { $0 }
+            .joined(separator: "\n")
+            await recover(
+                resolvedJournal: resolved.journalURL,
+                oldSolPath: oldSolPath,
+                wrapperSnapshot: wrapperSnapshot,
+                currentSnapshot: currentSnapshot,
+                didActivate: didActivate,
+                underlyingDetail: detail
+            )
+            return
+        }
+
+        saveInProgressMarker(
+            upgradeID: upgradeID,
+            versionID: versionID,
+            oldSolPath: oldSolPath,
+            resolvedJournal: resolved.journalURL,
+            stagedLayout: stagedLayout,
+            phase: .settingUp
+        )
+        guard await runSolSetup(solPath: stagedLayout.solBinary.path, journalURL: resolved.journalURL, layout: stagedLayout, skipService: true) else {
+            await recover(
+                resolvedJournal: resolved.journalURL,
+                oldSolPath: oldSolPath,
+                wrapperSnapshot: wrapperSnapshot,
+                currentSnapshot: currentSnapshot,
+                didActivate: didActivate,
+                underlyingDetail: lastFailureLog ?? "journal setup failed"
+            )
+            return
+        }
+
+        saveInProgressMarker(
+            upgradeID: upgradeID,
+            versionID: versionID,
+            oldSolPath: oldSolPath,
+            resolvedJournal: resolved.journalURL,
+            stagedLayout: stagedLayout,
+            phase: .activating
+        )
+        do {
+            try stagedLayout.activate()
+            didActivate = true
+            Logger.setup.info("installer: activated staged solstone \(versionID, privacy: .public)")
+        } catch {
+            await recover(
+                resolvedJournal: resolved.journalURL,
+                oldSolPath: oldSolPath,
+                wrapperSnapshot: wrapperSnapshot,
+                currentSnapshot: currentSnapshot,
+                didActivate: didActivate,
+                underlyingDetail: "failed to activate staged runtime: \(error.localizedDescription)"
+            )
+            return
+        }
+
+        saveInProgressMarker(
+            upgradeID: upgradeID,
+            versionID: versionID,
+            oldSolPath: oldSolPath,
+            resolvedJournal: resolved.journalURL,
+            stagedLayout: stagedLayout,
+            phase: .startingService
+        )
+        let stagedJournalPath = stagedLayout.binDir.appendingPathComponent("journal").path
+        if let serviceFailure = await installAndStartService(journalPath: stagedJournalPath, environment: stagedLayout.uvEnvironment()) {
+            await recover(
+                resolvedJournal: resolved.journalURL,
+                oldSolPath: oldSolPath,
+                wrapperSnapshot: wrapperSnapshot,
+                currentSnapshot: currentSnapshot,
+                didActivate: didActivate,
+                underlyingDetail: serviceFailure
+            )
+            return
+        }
+
+        saveInProgressMarker(
+            upgradeID: upgradeID,
+            versionID: versionID,
+            oldSolPath: oldSolPath,
+            resolvedJournal: resolved.journalURL,
+            stagedLayout: stagedLayout,
+            phase: .registering
+        )
+        await enterRegistering(solPath: stagedLayout.solBinary.path)
+    }
+
+    private func saveInProgressMarker(
+        upgradeID: String,
+        versionID: String,
+        oldSolPath: String,
+        resolvedJournal: URL,
+        stagedLayout: SolstoneRuntimeLayout,
+        phase: InProgressUpgradePhase
+    ) {
+        inProgressMarkerStore.save(InProgressUpgradeMarker(
+            upgradeID: upgradeID,
+            pinned: BundleConfig.solstonePinVersion,
+            oldVersion: upgradingFromInstalledVersion ?? "",
+            oldSolPath: oldSolPath,
+            resolvedJournalPath: resolvedJournal.path,
+            stagedRuntimeID: versionID,
+            stagedRuntimePath: stagedLayout.rootURL.appendingPathComponent("versions/\(versionID)", isDirectory: true).path,
+            phase: phase
+        ))
+    }
+
+    private func snapshotWrappers() -> WrapperSnapshot {
+        WrapperSnapshot(
+            sol: readWrapperSnapshot(named: "sol"),
+            journal: readWrapperSnapshot(named: "journal")
+        )
+    }
+
+    private func readWrapperSnapshot(named name: String) -> Data? {
+        let url = wrapperDirURL.appendingPathComponent(name)
+        return try? Data(contentsOf: url)
+    }
+
+    private func snapshotCurrentLink() -> String? {
+        let currentLink = SolstoneRuntimeLayout(rootURL: runtimeRootURL).currentLink
+        return try? FileManager.default.destinationOfSymbolicLink(atPath: currentLink.path)
+    }
+
+    private func recover(
+        resolvedJournal: URL,
+        oldSolPath: String,
+        wrapperSnapshot: WrapperSnapshot,
+        currentSnapshot: String?,
+        didActivate: Bool,
+        underlyingDetail: String
+    ) async {
+        let currentResult = didActivate ? rollbackCurrentLink(to: currentSnapshot) : "not needed"
+        let wrapperResult = restoreWrappers(from: wrapperSnapshot)
+        let oldServiceResult = await restartOldService(oldSolPath: oldSolPath)
+        let loud = [
+            "upgrade cutover failed: \(underlyingDetail)",
+            "journal: \(resolvedJournal.path)",
+            "wrapper restore: \(wrapperResult)",
+            "current rollback: \(currentResult)",
+            "old service restart: \(oldServiceResult)"
+        ].joined(separator: "\n")
+        failMain(.upgradeCutoverFailed(message: loud), category: .unknown, logExcerpt: loud)
+    }
+
+    private func rollbackCurrentLink(to snapshot: String?) -> String {
+        let layout = SolstoneRuntimeLayout(rootURL: runtimeRootURL)
+        let fileManager = FileManager.default
+        do {
+            try fileManager.createDirectory(at: layout.rootURL, withIntermediateDirectories: true)
+            if let snapshot {
+                let tempLink = layout.rootURL.appendingPathComponent(".current.rollback-\(UUID().uuidString)")
+                do {
+                    try fileManager.createSymbolicLink(atPath: tempLink.path, withDestinationPath: snapshot)
+                    if Darwin.rename(tempLink.path, layout.currentLink.path) != 0 {
+                        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                    }
+                } catch {
+                    try? fileManager.removeItem(at: tempLink)
+                    throw error
+                }
+                return "restored \(snapshot)"
+            }
+            if fileManager.fileExists(atPath: layout.currentLink.path) {
+                try fileManager.removeItem(at: layout.currentLink)
+            }
+            return "removed current"
+        } catch {
+            return "failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func restoreWrappers(from snapshot: WrapperSnapshot) -> String {
+        let results = [
+            restoreWrapper(named: "sol", data: snapshot.sol),
+            restoreWrapper(named: "journal", data: snapshot.journal)
+        ]
+        return results.joined(separator: "; ")
+    }
+
+    private func restoreWrapper(named name: String, data: Data?) -> String {
+        guard let data else { return "\(name): not snapshotted" }
+        let url = wrapperDirURL.appendingPathComponent(name)
+        do {
+            let current = try? Data(contentsOf: url)
+            guard current != data else { return "\(name): unchanged" }
+            try FileManager.default.createDirectory(at: wrapperDirURL, withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return "\(name): restored"
+        } catch {
+            return "\(name): failed \(error.localizedDescription)"
+        }
+    }
+
+    private func installAndStartService(journalPath: String, environment: [String: String]?) async -> String? {
+        if let install = await runServiceCommand(journalPath: journalPath, arguments: ["service", "install"], environment: environment) {
+            return install
+        }
+        if let start = await runServiceCommand(journalPath: journalPath, arguments: ["service", "start"], environment: environment) {
+            return start
+        }
+        return nil
+    }
+
+    private func restartOldService(oldSolPath: String) async -> String {
+        let oldJournalPath = SolBinaryLocator.journalPath(siblingOf: oldSolPath)
+        let install = await runServiceCommand(journalPath: oldJournalPath, arguments: ["service", "install"], environment: nil)
+        let start = await runServiceCommand(journalPath: oldJournalPath, arguments: ["service", "start"], environment: nil)
+        if install == nil && start == nil {
+            return "service install/start ok"
+        }
+        return [install.map { "install \($0)" }, start.map { "start \($0)" }]
+            .compactMap { $0 }
+            .joined(separator: "; ")
+    }
+
+    private func runServiceCommand(journalPath: String, arguments: [String], environment: [String: String]?) async -> String? {
+        let output = InstallerOutput()
+        do {
+            let result = try await subprocessRunner.run(
+                executable: URL(fileURLWithPath: journalPath),
+                arguments: arguments,
+                environment: environment,
+                stdoutHandler: { data in Self.append(data, to: output, stream: .stdout) },
+                stderrHandler: { data in Self.append(data, to: output, stream: .stderr) }
+            )
+            guard result.exitCode == 0 else {
+                let stderr = output.stderrString()
+                return lastUsefulLine(stderr) ?? "\(arguments.joined(separator: " ")) exited \(result.exitCode)"
+            }
+            return nil
+        } catch {
+            return "\(arguments.joined(separator: " ")) could not launch: \(error.localizedDescription)"
+        }
     }
 
     private func failCleanup(step: CleanupStep, why: String, category: ErrorCategory, logExcerpt: String? = nil) {
         failMain(.cleanup(step: step, message: Self.cleanupFailureMessage(step: step, why: why)), category: category, logExcerpt: logExcerpt)
     }
 
-    private func runSolSetup(solPath: String, journalURL: URL) async -> Bool {
+    private func runSolSetup(
+        solPath: String,
+        journalURL: URL,
+        layout: SolstoneRuntimeLayout,
+        skipService: Bool
+    ) async -> Bool {
         let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
         let phase = "journal setup"
         setMain(.runningSolSetup(SubprocessProgress(phase: phase)))
-        let layout = SolstoneRuntimeLayout.active(rootURL: runtimeRootURL)
         do {
             try layout.ensureCreated()
         } catch {
@@ -677,10 +922,14 @@ public final class SolstoneInstaller {
 
         let output = InstallerOutput()
         let result: SubprocessResult
+        var arguments = ["setup", "--jsonl", "--yes", "--skip-models", "--accept-existing-journal", "--journal", journalURL.path]
+        if skipService {
+            arguments.append("--skip-service")
+        }
         do {
             result = try await subprocessRunner.run(
                 executable: URL(fileURLWithPath: journalPath),
-                arguments: ["setup", "--jsonl", "--yes", "--skip-models", "--accept-existing-journal", "--journal", journalURL.path],
+                arguments: arguments,
                 environment: environment,
                 stdoutHandler: { [weak self, output] data in
                     Self.append(data, to: output, stream: .stdout)
@@ -741,6 +990,7 @@ public final class SolstoneInstaller {
         if await runObserverCreate(solPath: solPath, phase: phase) {
             setMain(.done)
             clearUpgradeFailureRecord()
+            inProgressMarkerStore.clear()
             Task {
                 await probeVersion()
                 await runPostInstallAutoTest()
@@ -1078,6 +1328,7 @@ public final class SolstoneInstaller {
         case .solSetup(let code, let message): return code.map { "[\($0)] \(message)" } ?? message
         case .installModels(let message): return message
         case .registering(let message): return message
+        case .upgradeCutoverFailed(let message): return message
         }
     }
 
@@ -1088,6 +1339,7 @@ public final class SolstoneInstaller {
         case .solSetup: return "solSetup"
         case .installModels: return "installModels"
         case .registering: return "registering"
+        case .upgradeCutoverFailed: return "upgradeCutoverFailed"
         }
     }
 
@@ -1208,11 +1460,6 @@ public final class SolstoneInstaller {
             value.contains("network")
     }
 
-    nonisolated private static func uvUninstallNotInstalled(stderr: String) -> Bool {
-        let lower = stderr.lowercased()
-        return lower.contains("is not installed") || lower.contains("not currently installed")
-    }
-
     nonisolated private static func cleanupFailureMessage(step: CleanupStep, why: String) -> String {
         "upgrade pre-clean failed at \(step.displayName) — \(why)"
     }
@@ -1235,6 +1482,23 @@ private enum OutputStream: Sendable {
 private struct CleanupFailure {
     let step: CleanupStep
     let message: String
+}
+
+private struct StopOldServiceFailure {
+    let step: CleanupStep
+    let message: String
+    let logExcerpt: String?
+
+    init(step: CleanupStep, message: String, logExcerpt: String? = nil) {
+        self.step = step
+        self.message = message
+        self.logExcerpt = logExcerpt
+    }
+}
+
+private struct WrapperSnapshot {
+    let sol: Data?
+    let journal: Data?
 }
 
 private final class InstallerOutput: @unchecked Sendable {
