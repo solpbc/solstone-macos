@@ -5,6 +5,18 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.8] - 2026-06-02
+
+### Changed
+- updated the bundled solstone journal to 0.4.9 →
+- upgrades now stage and verify the new bundled journal before switching the app over. if staging fails, your current install keeps running instead of being torn down first.
+- settings now recognizes journals you manage yourself, including one you run from source. it shows their version without trying to reinstall them or move them to the default journal.
+
+### Fixed
+- upgrades run by the app keep using the journal path already configured on your Mac, so a journal outside the default folder stays connected through the upgrade.
+- segments no longer finish without audio when valid audio files are still on disk. solstone reconciles those files before the segment is marked complete.
+- install and upgrade failure cards now put the summary first, keep retry nearby, and leave the details available for support.
+
 ## [1.3.7] - 2026-05-31
 
 ### Fixed
