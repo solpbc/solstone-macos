@@ -69,5 +69,5 @@ Sources/solstone/Resources/AppIcon.iconset/
 # Wrangler local state (used by extro-sites tooling occasionally invoked from this repo)
 .wrangler/
 
-# Python __pycache__ from build/release scripts
-scripts/__pycache__/
+# Python __pycache__ from build/release scripts (recursive — also scripts/tests/)
+scripts/**/__pycache__/
