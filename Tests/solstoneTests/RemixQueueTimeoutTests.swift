@@ -120,8 +120,10 @@ struct RemixQueueTimeoutTests {
 
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
+        let completedOutcome = LockedValue<SegmentReconciliation>()
         let queue = RemixQueue { _, _ in fakeRemixer }
-        await queue.setOnSegmentComplete { _, _ in
+        await queue.setOnSegmentComplete { _, reconciliation in
+            completedOutcome.set(reconciliation)
             completionCount.increment()
         }
 
@@ -131,6 +133,11 @@ struct RemixQueueTimeoutTests {
         await queue.waitForCompletion()
 
         #expect(completionCount.count == 1)
+        let outcome = try #require(completedOutcome.current)
+        guard case .recovered = outcome else {
+            Issue.record("Expected recovered reconciliation")
+            return
+        }
         #expect(fakeRemixer.recordedInputs.all.first?.count == 2)
         #expect(fakeRemixer.remixCount.count == 1)
         #expect(FileManager.default.fileExists(atPath: finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_audio.m4a").path))
@@ -225,6 +232,42 @@ struct RemixQueueTimeoutTests {
         }
         #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent(systemAudio.lastPathComponent).path))
         #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent(micAudio.lastPathComponent).path))
+        #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
+    }
+
+    @Test func emptyInputsWithUnreadableAudioSourcesMarksFailedWithoutFinalizing() async throws {
+        let root = try makeTempDirectory("remix-queue-unreadable")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let corruptAudio = dir.appendingPathComponent("120000_audio_system.m4a")
+        try corruptM4A(at: corruptAudio)
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        // .success is the trap-guard: .failed is reachable here ONLY via correct .unreadable
+        // classification. A wrong .unreadable->.ready impl would finalize _NNN and fail this test.
+        let fakeRemixer = FakeRemixer(.success)
+        let completionCount = LockedCounter()
+        let completedOutcome = LockedValue<SegmentReconciliation>()
+        let queue = RemixQueue { _, _ in fakeRemixer }
+        await queue.setOnSegmentComplete { _, reconciliation in
+            completedOutcome.set(reconciliation)
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000"))
+
+        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
+        try await waitUntil(timeout: .seconds(5)) {
+            FileManager.default.fileExists(atPath: failedDir.path)
+        }
+        await queue.waitForCompletion()
+
+        #expect(completionCount.count == 1)
+        let outcome = try #require(completedOutcome.current)
+        guard case .failed = outcome else { Issue.record("Expected failed reconciliation"); return }
+        #expect(fakeRemixer.remixCount.count == 0)  // unreadable path never remixes
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("120000_audio_system.m4a").path))
         #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
     }
 

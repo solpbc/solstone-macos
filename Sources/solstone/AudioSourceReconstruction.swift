@@ -13,6 +13,22 @@ func audioSourceFiles(in files: [URL], timePrefix: String) -> [URL] {
     }
 }
 
+/// Single source of truth for classifying a segment directory's on-disk audio source files.
+enum AudioSourceReadiness {
+    case noSources                  // no per-source audio files present
+    case ready([AudioRemixerInput]) // sources present and at least one is readable
+    case unreadable                 // sources present but none yielded valid timing
+}
+
+/// Classify the per-source audio files in `files` into one readiness state.
+/// Composes `audioSourceFiles` + `buildAudioInputs` so both reconstruction call sites share one decision.
+func classifyAudioSources(in files: [URL], timePrefix: String, verbose: Bool) async -> AudioSourceReadiness {
+    let sources = audioSourceFiles(in: files, timePrefix: timePrefix)
+    guard !sources.isEmpty else { return .noSources }
+    let inputs = await buildAudioInputs(from: sources, timePrefix: timePrefix, verbose: verbose)
+    return inputs.isEmpty ? .unreadable : .ready(inputs)
+}
+
 func buildAudioInputs(from audioFiles: [URL], timePrefix: String, verbose: Bool) async -> [AudioRemixerInput] {
     var inputs: [AudioRemixerInput] = []
     let fm = FileManager.default

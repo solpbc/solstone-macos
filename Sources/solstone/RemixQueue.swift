@@ -133,13 +133,12 @@ public actor RemixQueue {
             }
         } else {
             let files = (try? fm.contentsOfDirectory(at: job.segmentDirectory, includingPropertiesForKeys: nil)) ?? []
-            let sources = audioSourceFiles(in: files, timePrefix: job.timePrefix)
-            if !sources.isEmpty && !fm.fileExists(atPath: audioOutputURL.path) {
-                Logger.storage.warning("audioInputs empty but \(sources.count, privacy: .public) audio source file(s) on disk for \(job.timePrefix, privacy: .public); reconstructing")
-                let inputs = await buildAudioInputs(from: sources, timePrefix: job.timePrefix, verbose: false)
-                if inputs.isEmpty {
-                    Logger.storage.info("reconstruction produced no valid inputs for \(job.timePrefix, privacy: .public); finalizing screen-only")
-                } else {
+            if !fm.fileExists(atPath: audioOutputURL.path) {
+                switch await classifyAudioSources(in: files, timePrefix: job.timePrefix, verbose: false) {
+                case .noSources:
+                    break  // genuinely audio-less: finalize screen-only
+                case .ready(let inputs):
+                    Logger.storage.warning("audioInputs empty but \(inputs.count, privacy: .public) readable audio source(s) on disk for \(job.timePrefix, privacy: .public); reconstructing")
                     do {
                         let remixer = remixerFactory(false, job.debugKeepRejected)
                         let result = try await withTimeout(seconds: 60) {
@@ -160,6 +159,11 @@ public actor RemixQueue {
                         await onSegmentComplete?(job.segmentDirectory, .failed("audio reconciliation failed; segment preserved for recovery"))
                         return
                     }
+                case .unreadable:
+                    Logger.storage.error("audio source(s) present but unreadable for \(job.timePrefix, privacy: .public); marking segment failed (closes req_3f7idhvd)")
+                    await markIncompleteSegmentAsFailed(job.segmentDirectory)
+                    await onSegmentComplete?(job.segmentDirectory, .failed("audio sources unreadable; segment preserved for recovery"))
+                    return
                 }
             }
         }

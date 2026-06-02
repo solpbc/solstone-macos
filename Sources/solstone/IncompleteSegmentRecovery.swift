@@ -137,26 +137,23 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
             return await markAsFailed(url)
         }
 
-        // Find individual audio files (exclude consolidated audio file)
-        // Pattern: HHMMSS_audio_*.m4a but NOT HHMMSS_audio.m4a
-        let audioFiles = audioSourceFiles(in: files, timePrefix: timePrefix)
-
         // Check if consolidated audio already exists
+        // Pattern: HHMMSS_audio.m4a (consolidated) vs HHMMSS_audio_*.m4a (per-source)
         let consolidatedAudioName = "\(timePrefix)_audio.m4a"
         let consolidatedAudioURL = url.appendingPathComponent(consolidatedAudioName)
         let hasConsolidatedAudio = fm.fileExists(atPath: consolidatedAudioURL.path)
 
-        // If we have individual audio files and no consolidated audio, remix them
-        if !audioFiles.isEmpty && !hasConsolidatedAudio {
-            Logger.storage.info("Remixing \(audioFiles.count, privacy: .public) audio file(s) for \(dirName, privacy: .public)")
-
-            do {
-                let inputs = await buildAudioInputs(from: audioFiles, timePrefix: timePrefix, verbose: verbose)
-
-                if inputs.isEmpty {
-                    Logger.storage.warning("No valid audio inputs for remix in \(dirName, privacy: .public)")
-                    return await markAsFailed(url)
-                } else {
+        // Reconstruct per-source audio into the consolidated file unless one already exists.
+        if !hasConsolidatedAudio {
+            switch await classifyAudioSources(in: files, timePrefix: timePrefix, verbose: verbose) {
+            case .noSources:
+                break  // no per-source audio: finalize screen-only
+            case .unreadable:
+                Logger.storage.warning("No valid audio inputs for remix in \(dirName, privacy: .public)")
+                return await markAsFailed(url)
+            case .ready(let inputs):
+                Logger.storage.info("Remixing \(inputs.count, privacy: .public) audio source(s) for \(dirName, privacy: .public)")
+                do {
                     let remixer = makeRemixer(verbose: verbose)
                     let result = try await remixer.remix(
                         inputs: inputs,
@@ -165,12 +162,12 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
                         silenceMusic: true
                     )
                     Logger.storage.info("Remixed \(result.tracksWritten, privacy: .public) track(s), skipped \(result.tracksSkipped, privacy: .public)")
+                } catch AudioRemixerError.noTracksToWrite {
+                    Logger.storage.info("No audio tracks to write during recovery for \(dirName, privacy: .public)")
+                } catch {
+                    Logger.storage.warning("Audio remix failed for \(dirName, privacy: .public): \(error, privacy: .public)")
+                    return await markAsFailed(url)
                 }
-            } catch AudioRemixerError.noTracksToWrite {
-                Logger.storage.info("No audio tracks to write during recovery for \(dirName, privacy: .public)")
-            } catch {
-                Logger.storage.warning("Audio remix failed for \(dirName, privacy: .public): \(error, privacy: .public)")
-                return await markAsFailed(url)
             }
         }
 
