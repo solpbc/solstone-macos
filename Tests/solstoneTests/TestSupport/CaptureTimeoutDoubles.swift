@@ -269,7 +269,7 @@ final class CountingRecovery: IncompleteSegmentRecovering, @unchecked Sendable {
         self.behavior = behavior
     }
 
-    func recoverAll() async -> Int {
+    func recoverAll(excludingActiveSegment activeSegmentPath: String?) async -> Int {
         count.increment()
         if case .hang = behavior {
             while !Task.isCancelled {

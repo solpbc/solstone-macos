@@ -229,7 +229,7 @@ public final class CaptureManager {
     public func startRecording(disabledMicUIDs: Set<String> = []) async throws {
         self.disabledMicUIDs = disabledMicUIDs
         guard state.isIdle || state.isPaused else { return }
-        recoveryCoordinator.scheduleDetached()
+        recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
 
         // Clear any stale recovery state (e.g., user manually restarted while paused from sleep/lock)
         lifecycleManager.reset(stopRecovery: false)
@@ -536,7 +536,7 @@ public final class CaptureManager {
         let segmentName = currentSegment?.outputDirectory.lastPathComponent ?? "none"
         let sysAudio = systemAudioCaptureManager.isRunning ? "running" : "stopped"
         Logger.capture.info("[Heartbeat] state=\(self.state.label, privacy: .public) displays=\(self.displays.count, privacy: .public) segment=\(segmentName, privacy: .public) rotation_in=\(Int(self.segmentTimeRemaining), privacy: .public)s sysaudio=\(sysAudio, privacy: .public)")
-        recoveryCoordinator.scheduleDetached()
+        recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
     }
 
     private func stopHeartbeat() {
@@ -633,7 +633,7 @@ public final class CaptureManager {
                 currentSegment = nil
             }
             await markIncompleteSegmentAsFailed(newSegmentDir)
-            recoveryCoordinator.scheduleDetached()
+            recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
             scheduleDelayedRotationRetry()
             return
         } catch {
@@ -841,7 +841,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
     }
 
     func lifecycleResumeCapture(trigger: String) async throws {
-        recoveryCoordinator.scheduleDetached()
+        recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
 
         if !allowsEmptyDisplayConfigurationForTesting {
             try await withTimeout(seconds: 10) { @MainActor in

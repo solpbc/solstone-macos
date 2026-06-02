@@ -13,6 +13,56 @@ private enum MediaFixtureError: Error {
     case pixelBufferFailed(CVReturn)
 }
 
+enum IncompleteSegmentAudio {
+    case validM4A
+    case corrupt
+    case none
+}
+
+@discardableResult
+func makeIncompleteSegment(
+    root: URL,
+    date: String? = nil,
+    time: String = "120000",
+    audio: IncompleteSegmentAudio = .validM4A,
+    createdSecondsAgo: TimeInterval = 0
+) async throws -> (dir: URL, audio: URL?) {
+    let fm = FileManager.default
+    let parent = date.map { root.appendingPathComponent($0, isDirectory: true) } ?? root
+    try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+
+    let dir = parent.appendingPathComponent("\(time).incomplete", isDirectory: true)
+    try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+
+    try await makeTinyValidMP4(
+        at: dir.appendingPathComponent("\(time)_display_42_screen.mp4"),
+        seconds: 1.2
+    )
+
+    let audioURL: URL?
+    switch audio {
+    case .validM4A:
+        let a = dir.appendingPathComponent("\(time)_audio_system.m4a")
+        try await makeTinyValidM4A(at: a)
+        audioURL = a
+    case .corrupt:
+        let a = dir.appendingPathComponent("\(time)_audio_system.m4a")
+        try corruptM4A(at: a)
+        audioURL = a
+    case .none:
+        audioURL = nil
+    }
+
+    if createdSecondsAgo > 0 {
+        try fm.setAttributes(
+            [.creationDate: Date(timeIntervalSinceNow: -createdSecondsAgo)],
+            ofItemAtPath: dir.path
+        )
+    }
+
+    return (dir, audioURL)
+}
+
 func makeTinyValidM4A(at url: URL, seconds: Double = 0.2) async throws {
     try? FileManager.default.removeItem(at: url)
 

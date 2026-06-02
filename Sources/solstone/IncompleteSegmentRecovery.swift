@@ -6,36 +6,46 @@ import CoreMedia
 import Foundation
 import os
 
-/// Recovers orphaned .incomplete segment directories on startup
-/// Attempts to remix audio and rename files/directories to final format
+/// Recovers orphaned .incomplete segment directories on app startup and in-session via the capture heartbeat.
+/// Remixes per-source audio and finalizes files/directories to HHMMSS_<duration>, excluding the
+/// currently-recording segment by full standardized path so live recording is never finalized out from under the pipeline.
 public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Sendable {
     private let verbose: Bool
+    private let capturesDirectory: URL?
     private let remixerFactory: @Sendable (Bool) -> any AudioRemixing
 
-    /// Minimum age (in seconds) for a segment to be considered stale and recoverable
-    /// Segments newer than this are assumed to be actively recording
-    private let minimumAge: TimeInterval = 120  // 2 minutes
+    static let stalenessMargin: TimeInterval = 60
+    @MainActor
+    static var minimumStaleAge: TimeInterval { SegmentWriter.segmentDuration + stalenessMargin }
+
+    static func shouldSkipAsTooRecent(creationDate: Date?, now: Date, minimumAge: TimeInterval) -> Bool {
+        guard let creationDate else { return true }
+        return now.timeIntervalSince(creationDate) < minimumAge
+    }
 
     public init(
         verbose: Bool = false,
+        capturesDirectory: URL? = nil,
         remixerFactory: @escaping @Sendable (Bool) -> any AudioRemixing = { AudioRemixer(verbose: $0) }
     ) {
         self.verbose = verbose
+        self.capturesDirectory = capturesDirectory
         self.remixerFactory = remixerFactory
     }
 
     /// Scan captures directory and recover any incomplete segments
     /// - Returns: Number of successfully recovered segments
-    public func recoverAll() async -> Int {
+    public func recoverAll(excludingActiveSegment activeSegmentPath: String? = nil) async -> Int {
         let fm = FileManager.default
         let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let capturesDir = appSupport.appendingPathComponent("Solstone/captures", isDirectory: true)
+        let capturesDir = capturesDirectory ?? appSupport.appendingPathComponent("Solstone/captures", isDirectory: true)
 
         guard fm.fileExists(atPath: capturesDir.path) else {
             return 0
         }
 
         var recoveredCount = 0
+        let minimumStaleAge = await Self.minimumStaleAge
 
         // Find all date directories
         guard let dateDirs = try? fm.contentsOfDirectory(
@@ -66,15 +76,15 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
                     continue
                 }
 
-                // Check if directory is old enough to be stale
-                if let attrs = try? fm.attributesOfItem(atPath: segmentDir.path),
-                   let creationDate = attrs[.creationDate] as? Date
-                {
-                    let age = Date().timeIntervalSince(creationDate)
-                    if age < minimumAge {
-                        if verbose { Logger.storage.debug("Skipping recent incomplete segment: \(segmentDir.lastPathComponent, privacy: .public)") }
-                        continue
-                    }
+                if let activeSegmentPath, segmentDir.standardizedFileURL.path == activeSegmentPath {
+                    if verbose { Logger.storage.debug("Skipping active recording segment: \(segmentDir.lastPathComponent, privacy: .public)") }
+                    continue
+                }
+
+                let creationDate = (try? fm.attributesOfItem(atPath: segmentDir.path))?[.creationDate] as? Date
+                if Self.shouldSkipAsTooRecent(creationDate: creationDate, now: Date(), minimumAge: minimumStaleAge) {
+                    if verbose { Logger.storage.debug("Skipping recent incomplete segment: \(segmentDir.lastPathComponent, privacy: .public)") }
+                    continue
                 }
 
                 Logger.storage.info("Attempting to recover incomplete segment: \(segmentDir.lastPathComponent, privacy: .public)")
@@ -145,6 +155,7 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
 
                 if inputs.isEmpty {
                     Logger.storage.warning("No valid audio inputs for remix in \(dirName, privacy: .public)")
+                    return await markAsFailed(url)
                 } else {
                     let remixer = makeRemixer(verbose: verbose)
                     let result = try await remixer.remix(

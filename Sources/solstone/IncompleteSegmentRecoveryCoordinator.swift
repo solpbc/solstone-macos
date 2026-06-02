@@ -5,7 +5,7 @@ import Foundation
 import os
 
 public protocol IncompleteSegmentRecovering: Sendable {
-    func recoverAll() async -> Int
+    func recoverAll(excludingActiveSegment activeSegmentPath: String?) async -> Int
 }
 
 public actor IncompleteSegmentRecoveryCoordinator {
@@ -22,7 +22,7 @@ public actor IncompleteSegmentRecoveryCoordinator {
         self.recoveryFactory = recoveryFactory
     }
 
-    public func recoverAll() async -> Int {
+    public func recoverAll(excludingActiveSegment activeSegmentPath: String? = nil) async -> Int {
         guard !isRecovering else {
             Logger.storage.info("Incomplete segment recovery skipped because another recovery is already running")
             return 0
@@ -31,16 +31,16 @@ public actor IncompleteSegmentRecoveryCoordinator {
         isRecovering = true
         defer { isRecovering = false }
 
-        let recovered = await recoveryFactory().recoverAll()
+        let recovered = await recoveryFactory().recoverAll(excludingActiveSegment: activeSegmentPath)
         if recovered > 0 {
             Logger.general.info("Recovered \(recovered, privacy: .public) incomplete segment(s)")
         }
         return recovered
     }
 
-    public nonisolated func scheduleDetached() {
-        Task.detached { [self] in
-            _ = await recoverAll()
+    public nonisolated func scheduleDetached(excludingActiveSegment activeSegmentPath: String? = nil) {
+        Task.detached { [self, activeSegmentPath] in
+            _ = await recoverAll(excludingActiveSegment: activeSegmentPath)
         }
     }
 }
