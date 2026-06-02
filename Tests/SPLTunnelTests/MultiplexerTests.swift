@@ -34,7 +34,7 @@ private actor KeepaliveTickGate {
     private var arrival: CheckedContinuation<Void, Never>?
 
     // Injected as the Multiplexer's keepalive sleeper. Parks each loop iteration
-    // until the test calls release(). The Duration is ignored — the gate controls timing.
+    // until the test calls release(). The Duration is ignored; the gate controls timing.
     func tick() async {
         await withCheckedContinuation { continuation in
             parkedTick = continuation
