@@ -2,6 +2,8 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
+import SolstoneCore
 
 internal enum SolOwnership: Equatable {
     case absent
@@ -74,13 +76,34 @@ internal enum SolOwnership: Equatable {
         }
 
         let candidates = paths.map { path in
-            (path: path, resolved: canonicalPath(path))
+            (path: path, resolved: managedWrapperTarget(forFileAt: path) ?? canonicalPath(path))
         }
-        return classify(
+        let verdict = classify(
             candidates: candidates,
             runtimeRoot: canonicalPath(rootURL.path),
             hasLocalJournalCreds: hasLocalJournalCreds
         )
+        let verdictName: String = {
+            switch verdict {
+            case .absent:
+                return "absent"
+            case .appManaged:
+                return "appManaged"
+            case .externallyManaged:
+                return "externallyManaged"
+            }
+        }()
+        let chosenSolPath: String = {
+            switch verdict {
+            case .absent:
+                return ""
+            case .appManaged(let p), .externallyManaged(let p):
+                return p
+            }
+        }()
+        let candidateTrace = candidates.map { "\($0.path) -> \($0.resolved)" }.joined(separator: "; ")
+        Logger.setup.notice("sol ownership resolved: verdict=\(verdictName, privacy: .public) chosen=\(chosenSolPath, privacy: .public) hasLocalJournalCreds=\(hasLocalJournalCreds, privacy: .public) candidates=\(candidateTrace, privacy: .public)")
+        return verdict
     }
 
     private static func whichSol(runner: SubprocessRunning) async -> String? {
@@ -99,6 +122,33 @@ internal enum SolOwnership: Equatable {
         } catch {
             return nil
         }
+    }
+
+    private static func managedWrapperTarget(forFileAt path: String) -> String? {
+        guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
+        let hasMarker = lines.contains { line in
+            if line.contains("managed by 'journal config'") {
+                return true
+            }
+            let trimmedLeading = line.drop(while: { $0.isWhitespace })
+            return trimmedLeading.hasPrefix("# managed-version:")
+        }
+        guard hasMarker else { return nil }
+
+        let prefix = "SOL_BIN='"
+        guard let solBinLine = lines.first(where: { line in
+            let trimmedLeading = line.drop(while: { $0.isWhitespace })
+            return trimmedLeading.hasPrefix(prefix)
+        }) else {
+            return nil
+        }
+        let trimmedLeading = solBinLine.drop(while: { $0.isWhitespace })
+        let remainder = trimmedLeading.dropFirst(prefix.count)
+        guard let closingQuote = remainder.firstIndex(of: "'") else { return nil }
+        let value = String(remainder[..<closingQuote])
+        guard !value.isEmpty else { return nil }
+        return canonicalPath(value)
     }
 
     private static func canonicalPath(_ path: String) -> String {

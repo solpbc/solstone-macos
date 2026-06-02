@@ -1217,17 +1217,31 @@ public final class SolstoneInstaller {
 
     @discardableResult
     private func probeVersion(at solPath: String) async -> VersionProbeResult? {
+        let pinned = BundleConfig.solstonePinVersion
         guard let installed = await SolHealthCheck.version(solPath: solPath, runner: subprocessRunner) else {
             probedVersion = .unknown
+            Logger.setup.notice("sol version probe: solPath=\(solPath, privacy: .public) unknown pinned=\(pinned, privacy: .public)")
             return probedVersion
         }
-        let pinned = BundleConfig.solstonePinVersion
         let comparison = installed.compare(pinned, options: .numeric)
         if comparison == .orderedAscending {
             probedVersion = .outdated(installed: installed, pinned: pinned)
         } else {
             probedVersion = .current(version: installed)
         }
+        let resultText: String = {
+            switch probedVersion {
+            case .outdated(let i, let p):
+                return "outdated installed=\(i) pinned=\(p)"
+            case .current(let v):
+                return "current installed=\(v)"
+            case .unknown:
+                return "unknown"
+            case .none:
+                return "none"
+            }
+        }()
+        Logger.setup.notice("sol version probe: solPath=\(solPath, privacy: .public) \(resultText, privacy: .public) pinned=\(BundleConfig.solstonePinVersion, privacy: .public)")
         return probedVersion
     }
 
@@ -1239,16 +1253,19 @@ public final class SolstoneInstaller {
         }
         switch probedVersion {
         case .current:
+            Logger.setup.notice("sol materialization decision: result=current action=none")
             if upgradeFailureRecord != nil {
                 clearUpgradeFailureRecord()
             }
         case .outdated(let installed, _):
+            Logger.setup.notice("sol materialization decision: result=outdated installed=\(installed, privacy: .public) pinned=\(BundleConfig.solstonePinVersion, privacy: .public) action=start-upgrade")
             start(
                 journalURL: Self.defaultJournalURL(),
                 existingInstallChoice: .createFresh,
                 upgradeFromInstalledVersion: installed
             )
         case .unknown, .none:
+            Logger.setup.notice("sol materialization decision: result=unknown action=none")
             break
         }
     }
