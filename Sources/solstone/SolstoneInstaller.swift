@@ -9,6 +9,9 @@ import SolstoneCore
 private let pidWaitTimeoutDefault: Duration = .seconds(10)
 private let pidWaitPollIntervalDefault: Duration = .milliseconds(250)
 private let orphanGracePeriodDefault: Duration = .seconds(3)
+private let stagedInstallTimeoutDefault: Duration = .seconds(120)
+private let stagedVerifyTimeoutDefault: Duration = .seconds(10)
+private let subprocessTimeoutGracePeriodDefault: Duration = .seconds(2)
 
 @MainActor
 @Observable
@@ -26,6 +29,8 @@ public final class SolstoneInstaller {
     private weak var appState: AppState?
     private let uvBinaryURL: URL?
     private let bundledPythonURL: URL?
+    private let wheelhouseURL: URL?
+    private let runtimeRootURL: URL
     private let subprocessRunner: SubprocessRunning
     private let failureRecordStore: UpgradeFailureRecordStoring
     private let solBinaryFinder: @Sendable () async -> String?
@@ -37,6 +42,8 @@ public final class SolstoneInstaller {
     private let pidWaitTimeout: Duration
     private let pidWaitPollInterval: Duration
     private let orphanGracePeriod: Duration
+    private let stagedInstallTimeout: Duration
+    private let stagedVerifyTimeout: Duration
     private var installTask: Task<Void, Never>?
     private var modelsTask: Task<Void, Never>?
     private var upgradingFromInstalledVersion: String?
@@ -44,29 +51,34 @@ public final class SolstoneInstaller {
     private static let rawLogLimit = 16 * 1024
     private static let stdoutTailLimit = 2 * 1024
 
-    public convenience init(uvBinaryURL: URL? = nil, bundledPythonURL: URL? = nil) {
-        self.init(uvBinaryURL: uvBinaryURL, bundledPythonURL: bundledPythonURL, subprocessRunner: SubprocessRunner())
-    }
-
-    internal convenience init(
+    public convenience init(
         uvBinaryURL: URL? = nil,
         bundledPythonURL: URL? = nil,
-        subprocessRunner: SubprocessRunning = SubprocessRunner()
+        wheelhouseURL: URL? = nil,
+        runtimeRootURL: URL? = nil,
+        stagedInstallTimeout: Duration = .seconds(120),
+        stagedVerifyTimeout: Duration = .seconds(10),
+        subprocessTimeoutGracePeriod: Duration = .seconds(2)
     ) {
         self.init(
             uvBinaryURL: uvBinaryURL,
             bundledPythonURL: bundledPythonURL,
-            subprocessRunner: subprocessRunner,
-            solBinaryFinder: { await SolBinaryLocator.findSolBinary() }
+            wheelhouseURL: wheelhouseURL,
+            runtimeRootURL: runtimeRootURL,
+            subprocessRunner: SubprocessRunner(timeoutGracePeriod: subprocessTimeoutGracePeriod),
+            stagedInstallTimeout: stagedInstallTimeout,
+            stagedVerifyTimeout: stagedVerifyTimeout
         )
     }
 
     internal init(
         uvBinaryURL: URL? = nil,
         bundledPythonURL: URL? = nil,
-        subprocessRunner: SubprocessRunning = SubprocessRunner(),
+        wheelhouseURL: URL? = nil,
+        runtimeRootURL: URL? = nil,
+        subprocessRunner: SubprocessRunning,
         failureRecordStore: UpgradeFailureRecordStoring = UserDefaultsUpgradeFailureRecordStore(),
-        solBinaryFinder: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() },
+        solBinaryFinder: (@Sendable () async -> String?)? = nil,
         solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
         connectionTester: @escaping @Sendable (String, String) async -> String? = { url, key in
             await UploadCoordinator.testConnection(serverURL: url, serverKey: key)
@@ -81,17 +93,25 @@ public final class SolstoneInstaller {
         },
         pidWaitTimeout: Duration = pidWaitTimeoutDefault,
         pidWaitPollInterval: Duration = pidWaitPollIntervalDefault,
-        orphanGracePeriod: Duration = orphanGracePeriodDefault
+        orphanGracePeriod: Duration = orphanGracePeriodDefault,
+        stagedInstallTimeout: Duration = stagedInstallTimeoutDefault,
+        stagedVerifyTimeout: Duration = stagedVerifyTimeoutDefault
     ) {
+        let resolvedRuntimeRootURL = runtimeRootURL ?? SolstoneRuntimeLayout.defaultRootURL
         self.uvBinaryURL = uvBinaryURL
         self.bundledPythonURL = bundledPythonURL
+        self.wheelhouseURL = wheelhouseURL
+        self.runtimeRootURL = resolvedRuntimeRootURL
         self.subprocessRunner = subprocessRunner
         self.failureRecordStore = failureRecordStore
-        self.solBinaryFinder = solBinaryFinder
+        self.solBinaryFinder = solBinaryFinder ?? {
+            await SolBinaryLocator.findSolBinary(rootURL: resolvedRuntimeRootURL)
+        }
         self.fileExists = fileExists
         self.solOwnershipResolver = solOwnershipResolver ?? SolOwnership.defaultResolver(
             runner: subprocessRunner,
-            fileExists: fileExists
+            fileExists: fileExists,
+            rootURL: resolvedRuntimeRootURL
         )
         self.connectionTester = connectionTester
         self.pidExists = pidExists
@@ -99,6 +119,8 @@ public final class SolstoneInstaller {
         self.pidWaitTimeout = pidWaitTimeout
         self.pidWaitPollInterval = pidWaitPollInterval
         self.orphanGracePeriod = orphanGracePeriod
+        self.stagedInstallTimeout = stagedInstallTimeout
+        self.stagedVerifyTimeout = stagedVerifyTimeout
         self.upgradeFailureRecord = failureRecordStore.load()
     }
 
@@ -182,8 +204,10 @@ public final class SolstoneInstaller {
             if let existingSolPath {
                 guard let preservedJournalURL = await runUpgradePreclean(solPath: existingSolPath) else { return }
                 setupJournalURL = preservedJournalURL
+                guard await runInstallSolstone() else { return }
+            } else {
+                guard await runStagedInstall() else { return }
             }
-            guard await runInstallSolstone() else { return }
         }
 
         let solPath: String?
@@ -214,10 +238,15 @@ public final class SolstoneInstaller {
         bundledPythonURL ?? SolstoneRuntimeLayout.bundledPythonURL()
     }
 
+    private func resolvedWheelhouseURL() -> URL {
+        wheelhouseURL ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/wheelhouse", isDirectory: true)
+    }
+
     private func runInstallSolstone() async -> Bool {
         let phase = "uv tool install solstone"
         setMain(.installingSolstone(SubprocessProgress(phase: phase)))
-        let layout = SolstoneRuntimeLayout()
+        // Deferred cutover path for existing installs; fresh installs use runStagedInstall().
+        let layout = SolstoneRuntimeLayout(rootURL: runtimeRootURL)
         do {
             try layout.ensureCreated()
         } catch {
@@ -273,6 +302,144 @@ public final class SolstoneInstaller {
         return false
     }
 
+    private func runStagedInstall() async -> Bool {
+        let phase = "uv tool install solstone"
+        setMain(.installingSolstone(SubprocessProgress(phase: phase)))
+        let pin = BundleConfig.solstonePinVersion
+        let layout = SolstoneRuntimeLayout.staging(rootURL: runtimeRootURL, version: pin)
+        let fileManager = FileManager.default
+        let versionURL = layout.versionsDir.appendingPathComponent(pin, isDirectory: true)
+
+        Logger.setup.info("installer: staging solstone \(pin, privacy: .public) into \(versionURL.path, privacy: .public)")
+        if fileManager.fileExists(atPath: versionURL.path) {
+            if SolstoneRuntimeLayout.readActiveVersion(rootURL: runtimeRootURL) == pin {
+                failMain(
+                    .installSolstone(message: "cannot re-stage the active version (out of scope this lode)"),
+                    category: .disk,
+                    logExcerpt: "staged version directory is active: \(versionURL.path)"
+                )
+                return false
+            }
+            do {
+                try fileManager.removeItem(at: versionURL)
+            } catch {
+                failMain(
+                    .installSolstone(message: error.localizedDescription),
+                    category: .disk,
+                    logExcerpt: "failed to remove stale staged version \(versionURL.path): \(error.localizedDescription)"
+                )
+                return false
+            }
+        }
+
+        do {
+            try layout.ensureCreated()
+        } catch {
+            failMain(.installSolstone(message: error.localizedDescription), category: .disk, logExcerpt: "staged runtime directory setup failed: \(error.localizedDescription)")
+            return false
+        }
+
+        let pythonURL = resolvedBundledPythonURL()
+        guard await preflightBundledPython(at: pythonURL) else { return false }
+
+        let wheelhouse = resolvedWheelhouseURL()
+        let wheels: [URL]
+        do {
+            wheels = try fileManager.contentsOfDirectory(
+                at: wheelhouse,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+            .filter { url in
+                let name = url.lastPathComponent
+                return name.hasPrefix("solstone-\(pin)-") && name.hasSuffix(".whl")
+            }
+            .sorted { $0.path < $1.path }
+        } catch {
+            failMain(
+                .installSolstone(message: "bundled wheelhouse not found at \(wheelhouse.path)"),
+                category: .disk,
+                logExcerpt: error.localizedDescription
+            )
+            return false
+        }
+
+        guard wheels.count == 1, let projectWheel = wheels.first else {
+            failMain(
+                .installSolstone(message: "expected exactly one bundled solstone-\(pin)-*.whl in \(wheelhouse.path), found \(wheels.count)"),
+                category: .disk
+            )
+            return false
+        }
+
+        let environment = layout.uvEnvironment()
+        guard let install = await runUVToolCommand(
+            arguments: [
+                "tool",
+                "install",
+                projectWheel.path,
+                "--find-links",
+                wheelhouse.path,
+                "--no-index",
+                "--offline",
+                "--python",
+                pythonURL.path
+            ],
+            phase: phase,
+            launchDescription: "uv tool install",
+            environment: environment,
+            timeout: stagedInstallTimeout
+        ) else {
+            return false
+        }
+
+        guard install.result.exitCode == 0 else {
+            failMain(
+                .installSolstone(message: lastUsefulLine(install.stderr) ?? "uv tool install solstone failed"),
+                category: Self.categorize(stderr: install.stderr),
+                logExcerpt: Self.lastUsefulLog(stdout: install.stdout, stderr: install.stderr)
+            )
+            return false
+        }
+
+        let installedVersion = await stagedSolVersion(solPath: layout.solBinary.path, environment: environment)
+        guard installedVersion == pin else {
+            failMain(
+                .installSolstone(message: "staged solstone version mismatch"),
+                category: .unknown,
+                logExcerpt: "expected \(pin), got \(installedVersion ?? "unknown")"
+            )
+            return false
+        }
+
+        do {
+            try layout.activate()
+            Logger.setup.info("installer: activated staged solstone \(pin, privacy: .public)")
+            return true
+        } catch {
+            failMain(.installSolstone(message: error.localizedDescription), category: .disk, logExcerpt: "failed to activate staged runtime: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func stagedSolVersion(solPath: String, environment: [String: String]) async -> String? {
+        let output = InstallerOutput()
+        do {
+            let result = try await subprocessRunner.run(
+                executable: URL(fileURLWithPath: solPath),
+                arguments: ["--version"],
+                environment: environment,
+                timeout: stagedVerifyTimeout,
+                stdoutHandler: { data in Self.append(data, to: output, stream: .stdout) },
+                stderrHandler: { _ in }
+            )
+            guard result.exitCode == 0 else { return nil }
+            return SolVersionParser.parse(output.stdoutString())
+        } catch {
+            return nil
+        }
+    }
+
     private func preflightBundledPython(at url: URL) async -> Bool {
         let path = url.path
         let fileManager = FileManager.default
@@ -325,7 +492,8 @@ public final class SolstoneInstaller {
         arguments: [String],
         phase: String,
         launchDescription: String,
-        environment: [String: String]
+        environment: [String: String],
+        timeout: Duration? = nil
     ) async -> (result: SubprocessResult, stdout: String, stderr: String)? {
         let output = InstallerOutput()
         let result: SubprocessResult
@@ -334,6 +502,7 @@ public final class SolstoneInstaller {
                 executable: resolvedUVBinaryURL(),
                 arguments: arguments,
                 environment: environment,
+                timeout: timeout,
                 stdoutHandler: { [weak self, output] data in
                     Self.append(data, to: output, stream: .stdout)
                     Task { @MainActor in
@@ -495,7 +664,7 @@ public final class SolstoneInstaller {
         let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
         let phase = "journal setup"
         setMain(.runningSolSetup(SubprocessProgress(phase: phase)))
-        let layout = SolstoneRuntimeLayout()
+        let layout = SolstoneRuntimeLayout.active(rootURL: runtimeRootURL)
         do {
             try layout.ensureCreated()
         } catch {
@@ -579,7 +748,7 @@ public final class SolstoneInstaller {
 
     private func runObserverCreate(solPath: String, phase: String) async -> Bool {
         let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
-        let environment = SolstoneRuntimeLayout().uvEnvironment()
+        let environment = SolstoneRuntimeLayout.active(rootURL: runtimeRootURL).uvEnvironment()
         let output = InstallerOutput()
         let result: SubprocessResult
         do {
@@ -626,7 +795,7 @@ public final class SolstoneInstaller {
         let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
         let phase = "journal install-models"
         modelsProgress = .running(SubprocessProgress(phase: phase))
-        let environment = SolstoneRuntimeLayout().uvEnvironment()
+        let environment = SolstoneRuntimeLayout.active(rootURL: runtimeRootURL).uvEnvironment()
 
         let output = InstallerOutput()
         let result: SubprocessResult

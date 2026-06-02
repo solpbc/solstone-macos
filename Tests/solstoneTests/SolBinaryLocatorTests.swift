@@ -18,6 +18,31 @@ struct SolBinaryLocatorTests {
         #expect(found?.hasSuffix("/sol/runtime/bin/sol") == true)
     }
 
+    @Test func findSolBinary_prefersActiveVersionedRuntimePath() async throws {
+        let root = try makeTemporaryDirectory().appendingPathComponent("runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let layout = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.8"))
+        try layout.ensureCreated()
+        try Data("sol\n".utf8).write(to: layout.solBinary)
+        try layout.activate()
+
+        let found = await SolBinaryLocator.findSolBinary(rootURL: root)
+
+        #expect(found == layout.solBinary.path)
+    }
+
+    @Test func findSolBinary_fallsBackToFlatRuntimeWithoutCurrent() async throws {
+        let root = try makeTemporaryDirectory().appendingPathComponent("runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let layout = SolstoneRuntimeLayout(rootURL: root)
+        try layout.ensureCreated()
+        try Data("sol\n".utf8).write(to: layout.solBinary)
+
+        let found = await SolBinaryLocator.findSolBinary(rootURL: root)
+
+        #expect(found == layout.solBinary.path)
+    }
+
     @Test func findSolBinary_fallsBackToLegacyLocalBinSol() async {
         let runtimePath = SolstoneRuntimeLayout().solBinary.path
         let legacyPath = FileManager.default.homeDirectoryForCurrentUser
@@ -66,5 +91,12 @@ struct SolBinaryLocatorTests {
         }
 
         #expect(found.hasSuffix("/sol"))
+    }
+
+    private func makeTemporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("solbinarylocator-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 }

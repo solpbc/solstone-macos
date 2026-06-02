@@ -5,11 +5,13 @@ struct SubprocessInvocation: Sendable, Equatable {
     let executable: URL
     let arguments: [String]
     let environment: [String: String]?
+    let timeout: Duration?
 
-    init(executable: URL, arguments: [String], environment: [String: String]? = nil) {
+    init(executable: URL, arguments: [String], environment: [String: String]? = nil, timeout: Duration? = nil) {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
+        self.timeout = timeout
     }
 }
 
@@ -55,10 +57,15 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         executable: URL,
         arguments: [String],
         environment: [String: String]?,
+        timeout: Duration?,
         stdoutHandler: @escaping @Sendable (Data) -> Void,
         stderrHandler: @escaping @Sendable (Data) -> Void
     ) async throws -> SubprocessResult {
-        let response = nextResponse(executable: executable, arguments: arguments, environment: environment)
+        let response = nextResponse(executable: executable, arguments: arguments, environment: environment, timeout: timeout)
+        if let timeout, response.delay >= timeout {
+            try? await Task.sleep(for: timeout)
+            return SubprocessResult(exitCode: 137, terminationReason: .uncaughtSignal)
+        }
         if response.delay != .zero {
             try? await Task.sleep(for: response.delay)
         }
@@ -77,11 +84,11 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
     func cancelAll() {
     }
 
-    private func nextResponse(executable: URL, arguments: [String], environment: [String: String]?) -> Response {
+    private func nextResponse(executable: URL, arguments: [String], environment: [String: String]?, timeout: Duration?) -> Response {
         lock.lock()
         defer { lock.unlock() }
 
-        recordedInvocations.append(SubprocessInvocation(executable: executable, arguments: arguments, environment: environment))
+        recordedInvocations.append(SubprocessInvocation(executable: executable, arguments: arguments, environment: environment, timeout: timeout))
         let key = responseKey(for: executable, arguments: arguments)
         guard var values = responses[key], !values.isEmpty else {
             return .success()

@@ -196,7 +196,7 @@ doctor checks:
 
 dig deeper:
 - runtime: ~/Library/Application Support/sol/runtime
-- sol: ~/.local/bin/sol
+- sol: ~/Library/Application Support/sol/runtime/current/bin/sol (or runtime/bin/sol for legacy installs)
 - repo: https://github.com/solpbc/solstone-macos
 - log show: /usr/bin/log show --predicate 'subsystem == "app.solstone.observer" AND category == "setup"' --last 30m --info --debug --style compact
 
@@ -310,7 +310,7 @@ error: network is unreachable
 
     @Test func failureDiagnosticAvoidsForbiddenPublicHygieneTokens() {
         let markdown = buildFailureDiagnosticMarkdown(
-            diagnosticInput(logExcerpt: "target: ~/Library/Application Support/sol/runtime\nsol: ~/.local/bin/sol"),
+            diagnosticInput(logExcerpt: "target: ~/Library/Application Support/sol/runtime\nsol: ~/Library/Application Support/sol/runtime/current/bin/sol"),
             doctorReport: DoctorReport(checks: [
                 DoctorCheck(name: "journal command", status: .warn, severity: nil, detail: "setup state needs attention", fix: nil),
             ], summary: nil)
@@ -321,7 +321,7 @@ error: network is unreachable
         }
         #expect(markdown.contains("https://github.com/solpbc/solstone-macos"))
         #expect(markdown.contains("~/Library/Application Support/sol/runtime"))
-        #expect(markdown.contains("~/.local/bin/sol"))
+        #expect(markdown.contains("~/Library/Application Support/sol/runtime/current/bin/sol"))
         #expect(markdown.contains("https://support.solstone.app"))
     }
 

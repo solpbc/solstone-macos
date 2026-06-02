@@ -208,14 +208,25 @@ struct SolstoneInstallerTests {
 
     @Test func createFreshSkipsPrecleanWhenNoExistingBinary() async throws {
         let runner = FakeSubprocessRunner()
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+        let stagedSolPath = SolstoneRuntimeLayout
+            .staging(rootURL: fixtureURLs.runtimeRoot, version: BundleConfig.solstonePinVersion)
+            .solBinary
+            .path
         enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success())
-        runner.enqueue("tool", .success())
+        runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue("observer", .success(stdout: observerJSON))
         runner.enqueue("install-models", .success())
-        let finder = SequencedSolBinaryFinder([nil, "/usr/bin/sol"])
-        let installer = makeInstaller(runner: runner, solBinaryFinder: { finder.next() })
+        let finder = SequencedSolBinaryFinder([nil, stagedSolPath])
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            solBinaryFinder: { finder.next() }
+        )
         defer { installer.cancel() }
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
@@ -226,6 +237,7 @@ struct SolstoneInstallerTests {
         #expect(runner.invocations.contains { $0.arguments.starts(with: ["tool", "install"]) })
         let setup = try #require(runner.invocations.first { $0.arguments.first == "setup" })
         #expect(Array(setup.arguments.suffix(2)) == ["--journal", "/tmp/journal"])
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == BundleConfig.solstonePinVersion)
     }
 
     @Test func acceptExistingSkipsPreclean() async throws {
@@ -525,7 +537,8 @@ struct SolstoneInstallerTests {
 
     @Test func uvToolUninstallFailsOnUnknownStderr() async throws {
         let runner = FakeSubprocessRunner()
-        let finder = SequencedSolBinaryFinder([nil])
+        let finder = SequencedSolBinaryFinder(["/usr/bin/sol"])
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
         enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success(stderr: Data("network error: no route\n".utf8), exitCode: 1))
         let installer = makeInstaller(runner: runner, solBinaryFinder: { finder.next() })
@@ -539,7 +552,8 @@ struct SolstoneInstallerTests {
 
     @Test func uvToolInstallFailureAfterCleanUninstallSurfacesAsInstallSolstoneFailure() async throws {
         let runner = FakeSubprocessRunner()
-        let finder = SequencedSolBinaryFinder([nil])
+        let finder = SequencedSolBinaryFinder(["/usr/bin/sol"])
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
         enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success())
         runner.enqueue("tool", .success(stderr: Data("error: failed to download solstone\n".utf8), exitCode: 1))
@@ -554,24 +568,182 @@ struct SolstoneInstallerTests {
 
     @Test func uvToolInstallArgvNoLongerContainsReinstall() async throws {
         let runner = FakeSubprocessRunner()
-        let finder = SequencedSolBinaryFinder([nil, "/usr/bin/sol"])
-        enqueueSuccessfulInstallAfterPreclean(runner)
-        let installer = makeInstaller(runner: runner, solBinaryFinder: { finder.next() })
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+        let stagedLayout = SolstoneRuntimeLayout.staging(
+            rootURL: fixtureURLs.runtimeRoot,
+            version: BundleConfig.solstonePinVersion
+        )
+        let finder = SequencedSolBinaryFinder([nil, stagedLayout.solBinary.path])
+        enqueueSuccessfulBundledPythonPreflight(runner)
+        runner.enqueue("tool", .success())
+        runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            solBinaryFinder: { finder.next() }
+        )
         defer { installer.cancel() }
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
         try await waitUntil { installer.main == .done }
 
         let install = try #require(runner.invocations.first { $0.arguments.starts(with: ["tool", "install"]) })
-        #expect(install.arguments == [
-            "tool",
-            "install",
-            "solstone==\(BundleConfig.solstonePinVersion)",
-            "--refresh",
+        #expect(Array(install.arguments.prefix(2)) == ["tool", "install"])
+        #expect(URL(fileURLWithPath: install.arguments[2]).lastPathComponent == "solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl")
+        #expect(Array(install.arguments.dropFirst(3)) == [
+            "--find-links",
+            fixtureURLs.wheelhouse.path,
+            "--no-index",
+            "--offline",
             "--python",
             testBundledPythonURL.path
         ])
+        #expect(install.timeout == .seconds(120))
         #expect(!install.arguments.contains("--reinstall"))
+        #expect(!install.arguments.contains("--refresh"))
+        #expect(!runner.invocations.contains { $0.arguments == ["tool", "uninstall", "solstone"] })
+        assertRuntimeEnvironment(try #require(install.environment), layout: stagedLayout)
+    }
+
+    @Test func stagedInstallVersionMismatchDoesNotActivate() async throws {
+        let runner = FakeSubprocessRunner()
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+        let finder = SequencedSolBinaryFinder([nil])
+        enqueueSuccessfulBundledPythonPreflight(runner)
+        runner.enqueue("tool", .success())
+        runner.enqueue("--version", .success(stdout: Data("solstone 0.0.0\n".utf8)))
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            solBinaryFinder: { finder.next() }
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.installSolstone(message: "staged solstone version mismatch")))
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == nil)
+    }
+
+    @Test func stagedInstallWheelhouseCardinalityFailuresDoNotActivate() async throws {
+        for wheelNames in [[], [
+            "solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl",
+            "solstone-\(BundleConfig.solstonePinVersion)-2-py3-none-any.whl"
+        ]] {
+            let runner = FakeSubprocessRunner()
+            let fixtureURLs = try makeStagedInstallFixture(wheelNames: wheelNames)
+            defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+            let finder = SequencedSolBinaryFinder([nil])
+            enqueueSuccessfulBundledPythonPreflight(runner)
+            let installer = makeInstaller(
+                runner: runner,
+                wheelhouseURL: fixtureURLs.wheelhouse,
+                runtimeRootURL: fixtureURLs.runtimeRoot,
+                solBinaryFinder: { finder.next() }
+            )
+            defer { installer.cancel() }
+
+            installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+            try await waitForTerminal(installer)
+
+            if case .failed(.installSolstone(let message)) = installer.main {
+                #expect(message.contains("expected exactly one bundled solstone-\(BundleConfig.solstonePinVersion)-*.whl"))
+            } else {
+                Issue.record("expected installSolstone failure")
+            }
+            #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == nil)
+        }
+    }
+
+    @Test func stagedInstallTimeoutDoesNotActivate() async throws {
+        let runner = FakeSubprocessRunner()
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+        let finder = SequencedSolBinaryFinder([nil])
+        enqueueSuccessfulBundledPythonPreflight(runner)
+        runner.enqueue("tool", .success(delay: .milliseconds(50)))
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            solBinaryFinder: { finder.next() },
+            stagedInstallTimeout: .milliseconds(10)
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.installSolstone(message: "uv tool install solstone failed")))
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == nil)
+    }
+
+    @Test func stagedInstallRemovesStaleSameVersionBeforeStaging() async throws {
+        let runner = FakeSubprocessRunner()
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+        let stagedLayout = SolstoneRuntimeLayout.staging(
+            rootURL: fixtureURLs.runtimeRoot,
+            version: BundleConfig.solstonePinVersion
+        )
+        try FileManager.default.createDirectory(at: stagedLayout.binDir, withIntermediateDirectories: true)
+        let staleMarker = stagedLayout.binDir.appendingPathComponent("stale")
+        try Data("stale\n".utf8).write(to: staleMarker)
+        let finder = SequencedSolBinaryFinder([nil, stagedLayout.solBinary.path])
+        enqueueSuccessfulBundledPythonPreflight(runner)
+        runner.enqueue("tool", .success())
+        runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            solBinaryFinder: { finder.next() }
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        #expect(!FileManager.default.fileExists(atPath: staleMarker.path))
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == BundleConfig.solstonePinVersion)
+    }
+
+    @Test func stagedInstallRefusesActiveSameVersion() async throws {
+        let runner = FakeSubprocessRunner()
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+        let stagedLayout = SolstoneRuntimeLayout.staging(
+            rootURL: fixtureURLs.runtimeRoot,
+            version: BundleConfig.solstonePinVersion
+        )
+        try stagedLayout.ensureCreated()
+        try stagedLayout.activate()
+        let finder = SequencedSolBinaryFinder([nil])
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            solBinaryFinder: { finder.next() }
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .failed(.installSolstone(message: "cannot re-stage the active version (out of scope this lode)")))
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == BundleConfig.solstonePinVersion)
+        #expect(runner.invocations.isEmpty)
     }
 
     @Test func uvAndPostInstallSubprocessesReceiveRuntimeEnvironment() async throws {
@@ -1101,11 +1273,18 @@ struct SolstoneInstallerTests {
     @Test func freshInstallFailureDoesNotPersistUpgradeRecord() async throws {
         let store = InMemoryUpgradeFailureRecordStore()
         let runner = FakeSubprocessRunner()
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
         let finder = SequencedSolBinaryFinder([nil])
         enqueueSuccessfulBundledPythonPreflight(runner)
-        runner.enqueue("tool", .success())
         runner.enqueue("tool", .success(stderr: Data("error: failed to download solstone\n".utf8), exitCode: 1))
-        let installer = makeInstaller(runner: runner, failureRecordStore: store, solBinaryFinder: { finder.next() })
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            failureRecordStore: store,
+            solBinaryFinder: { finder.next() }
+        )
         defer { installer.cancel() }
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
@@ -1118,6 +1297,7 @@ struct SolstoneInstallerTests {
             probe: installer.probedVersion,
             failureRecord: installer.upgradeFailureRecord
         ) == .failed(.installSolstone(message: "error: failed to download solstone")))
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == nil)
     }
 
     @Test func upgradeStartClearsRecordSynchronously() {
@@ -1335,21 +1515,29 @@ struct SolstoneInstallerTests {
         runner: FakeSubprocessRunner,
         uvURL: URL? = nil,
         pythonURL: URL? = testBundledPythonURL,
+        wheelhouseURL: URL? = nil,
+        runtimeRootURL: URL? = nil,
         failureRecordStore: UpgradeFailureRecordStoring = InMemoryUpgradeFailureRecordStore(),
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
         solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
-        fileExists: @escaping @Sendable (String) -> Bool = { _ in false }
+        fileExists: @escaping @Sendable (String) -> Bool = { _ in false },
+        stagedInstallTimeout: Duration = .seconds(120),
+        stagedVerifyTimeout: Duration = .seconds(10)
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
             bundledPythonURL: pythonURL,
+            wheelhouseURL: wheelhouseURL,
+            runtimeRootURL: runtimeRootURL,
             subprocessRunner: runner,
             failureRecordStore: failureRecordStore,
             solBinaryFinder: solBinaryFinder,
             solOwnershipResolver: solOwnershipResolver,
             connectionTester: connectionTester,
-            fileExists: fileExists
+            fileExists: fileExists,
+            stagedInstallTimeout: stagedInstallTimeout,
+            stagedVerifyTimeout: stagedVerifyTimeout
         )
     }
 
@@ -1357,6 +1545,8 @@ struct SolstoneInstallerTests {
         runner: FakeSubprocessRunner,
         uvURL: URL? = nil,
         pythonURL: URL? = testBundledPythonURL,
+        wheelhouseURL: URL? = nil,
+        runtimeRootURL: URL? = nil,
         failureRecordStore: UpgradeFailureRecordStoring = InMemoryUpgradeFailureRecordStore(),
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
         solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
@@ -1366,11 +1556,15 @@ struct SolstoneInstallerTests {
         terminate: @escaping @Sendable (pid_t, Int32) -> Int32 = { _, _ in 0 },
         pidWaitTimeout: Duration = .seconds(1),
         pidWaitPollInterval: Duration = .milliseconds(1),
-        orphanGracePeriod: Duration = .milliseconds(1)
+        orphanGracePeriod: Duration = .milliseconds(1),
+        stagedInstallTimeout: Duration = .seconds(120),
+        stagedVerifyTimeout: Duration = .seconds(10)
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
             bundledPythonURL: pythonURL,
+            wheelhouseURL: wheelhouseURL,
+            runtimeRootURL: runtimeRootURL,
             subprocessRunner: runner,
             failureRecordStore: failureRecordStore,
             solBinaryFinder: solBinaryFinder,
@@ -1381,7 +1575,9 @@ struct SolstoneInstallerTests {
             terminate: terminate,
             pidWaitTimeout: pidWaitTimeout,
             pidWaitPollInterval: pidWaitPollInterval,
-            orphanGracePeriod: orphanGracePeriod
+            orphanGracePeriod: orphanGracePeriod,
+            stagedInstallTimeout: stagedInstallTimeout,
+            stagedVerifyTimeout: stagedVerifyTimeout
         )
     }
 
@@ -1423,7 +1619,8 @@ struct SolstoneInstallerTests {
 
     private func assertUVUninstallTolerance(stderr: String) async throws {
         let runner = FakeSubprocessRunner()
-        let finder = SequencedSolBinaryFinder([nil, "/usr/bin/sol"])
+        let finder = SequencedSolBinaryFinder(["/usr/bin/sol", "/usr/bin/sol"])
+        enqueueSuccessfulPreclean(runner, journalPath: "/tmp/journal")
         enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success(stderr: Data(stderr.utf8), exitCode: 1))
         runner.enqueue("tool", .success())
@@ -1444,6 +1641,34 @@ struct SolstoneInstallerTests {
         #expect(environment["UV_CACHE_DIR"] == layout.cacheDir.path)
         #expect(environment["UV_TOOL_DIR"] == layout.toolsDir.path)
         #expect(environment["UV_TOOL_BIN_DIR"] == layout.binDir.path)
+    }
+
+    private func assertRuntimeEnvironment(_ environment: [String: String], layout: SolstoneRuntimeLayout) {
+        #expect(environment["UV_PYTHON_INSTALL_DIR"] == layout.pythonDir.path)
+        #expect(environment["UV_PYTHON_CACHE_DIR"] == layout.pythonDir.path)
+        #expect(environment["UV_CACHE_DIR"] == layout.cacheDir.path)
+        #expect(environment["UV_TOOL_DIR"] == layout.toolsDir.path)
+        #expect(environment["UV_TOOL_BIN_DIR"] == layout.binDir.path)
+    }
+
+    private func makeStagedInstallFixture(
+        wheelNames: [String] = ["solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl"]
+    ) throws -> (workspace: URL, runtimeRoot: URL, wheelhouse: URL) {
+        let workspace = try makeTemporaryDirectory(prefix: "solstone-staged-install")
+        let runtimeRoot = workspace.appendingPathComponent("runtime", isDirectory: true)
+        let wheelhouse = workspace.appendingPathComponent("wheelhouse", isDirectory: true)
+        try FileManager.default.createDirectory(at: wheelhouse, withIntermediateDirectories: true)
+        for name in wheelNames {
+            try Data("wheel\n".utf8).write(to: wheelhouse.appendingPathComponent(name))
+        }
+        return (workspace, runtimeRoot, wheelhouse)
+    }
+
+    private func makeTemporaryDirectory(prefix: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 
     private func makeTemporaryDirectory() throws -> URL {

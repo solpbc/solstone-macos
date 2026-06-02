@@ -53,6 +53,107 @@ struct SolstoneRuntimeLayoutTests {
         }
     }
 
+    @Test func versionedModeKeepsPythonAndCacheAtRoot() {
+        let root = URL(fileURLWithPath: "/tmp/solstone-runtime-layout-tests/runtime", isDirectory: true)
+        let layout = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.8"))
+
+        #expect(layout.pythonDir.path == root.appendingPathComponent("python").path)
+        #expect(layout.cacheDir.path == root.appendingPathComponent("cache").path)
+        #expect(layout.toolsDir.path == root.appendingPathComponent("versions/0.4.8/tools").path)
+        #expect(layout.binDir.path == root.appendingPathComponent("versions/0.4.8/bin").path)
+        #expect(layout.solBinary.path == root.appendingPathComponent("versions/0.4.8/bin/sol").path)
+    }
+
+    @Test func ensureCreatedForVersionedDoesNotCreatePerVersionSharedDirs() throws {
+        let root = try makeTemporaryDirectory().appendingPathComponent("runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let layout = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.8"))
+
+        try layout.ensureCreated()
+
+        for dir in [layout.rootURL, layout.pythonDir, layout.cacheDir, layout.toolsDir, layout.binDir] {
+            var isDirectory: ObjCBool = false
+            #expect(FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDirectory))
+            #expect(isDirectory.boolValue)
+        }
+        let versionRoot = root.appendingPathComponent("versions/0.4.8", isDirectory: true)
+        for forbidden in ["python", "cache", "model", "models"] {
+            #expect(!FileManager.default.fileExists(atPath: versionRoot.appendingPathComponent(forbidden).path))
+        }
+    }
+
+    @Test func readActiveVersionHandlesExpectedSymlinks() throws {
+        let root = try makeTemporaryDirectory().appendingPathComponent("runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let layout = SolstoneRuntimeLayout(rootURL: root)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("versions/0.4.8", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: root) == nil)
+        try FileManager.default.createSymbolicLink(atPath: layout.currentLink.path, withDestinationPath: "versions/0.4.8")
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: root) == "0.4.8")
+
+        try FileManager.default.removeItem(at: layout.currentLink)
+        try FileManager.default.createSymbolicLink(
+            at: layout.currentLink,
+            withDestinationURL: root.appendingPathComponent("versions/0.4.8", isDirectory: true)
+        )
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: root) == "0.4.8")
+    }
+
+    @Test func readActiveVersionRejectsDanglingAndOutsideTargets() throws {
+        let root = try makeTemporaryDirectory().appendingPathComponent("runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let layout = SolstoneRuntimeLayout(rootURL: root)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        try FileManager.default.createSymbolicLink(atPath: layout.currentLink.path, withDestinationPath: "versions/missing")
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: root) == nil)
+
+        try FileManager.default.removeItem(at: layout.currentLink)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("elsewhere", isDirectory: true), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: layout.currentLink.path, withDestinationPath: "elsewhere")
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: root) == nil)
+    }
+
+    @Test func activateWritesRelativeCurrentSymlinkAndReplacesExisting() throws {
+        let root = try makeTemporaryDirectory().appendingPathComponent("runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let first = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.8"))
+        let second = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.9"))
+        try first.ensureCreated()
+        try second.ensureCreated()
+
+        try first.activate()
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: first.currentLink.path) == "versions/0.4.8")
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: root) == "0.4.8")
+
+        try second.activate()
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: first.currentLink.path) == "versions/0.4.9")
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: root) == "0.4.9")
+    }
+
+    @Test func flatActivateThrows() throws {
+        #expect(throws: SolstoneRuntimeLayout.ActivationError.self) {
+            try SolstoneRuntimeLayout(rootURL: try makeTemporaryDirectory()).activate()
+        }
+    }
+
+    @Test func solCandidatePathsPreferActiveVersionThenFlat() throws {
+        let root = try makeTemporaryDirectory().appendingPathComponent("runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let layout = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.8"))
+        try layout.ensureCreated()
+        try layout.activate()
+
+        #expect(SolstoneRuntimeLayout.solCandidatePaths(rootURL: root) == [
+            root.appendingPathComponent("versions/0.4.8/bin/sol").path,
+            root.appendingPathComponent("bin/sol").path
+        ])
+    }
+
     @Test func pathConstantsHaveStableSuffixes() {
         let layout = makeLayout()
 
@@ -61,6 +162,19 @@ struct SolstoneRuntimeLayoutTests {
         #expect(layout.toolsDir.path.hasSuffix("/tools"))
         #expect(layout.binDir.path.hasSuffix("/bin"))
         #expect(layout.solBinary.path.hasSuffix("/bin/sol"))
+    }
+
+    @Test func versionedPathConstantsHaveStableSuffixes() {
+        let root = URL(fileURLWithPath: "/tmp/solstone-runtime-layout-tests/runtime", isDirectory: true)
+        let layout = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.8"))
+
+        #expect(layout.versionsDir.path.hasSuffix("/versions"))
+        #expect(layout.currentLink.path.hasSuffix("/current"))
+        #expect(layout.pythonDir.path.hasSuffix("/python"))
+        #expect(layout.cacheDir.path.hasSuffix("/cache"))
+        #expect(layout.toolsDir.path.hasSuffix("/versions/0.4.8/tools"))
+        #expect(layout.binDir.path.hasSuffix("/versions/0.4.8/bin"))
+        #expect(layout.solBinary.path.hasSuffix("/versions/0.4.8/bin/sol"))
     }
 
     @Test func bundledPythonURLResolvesInsideAppResources() {

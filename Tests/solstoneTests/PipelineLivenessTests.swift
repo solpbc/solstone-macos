@@ -361,6 +361,7 @@ private final class SequencedSubprocessFake: SubprocessRunning, @unchecked Senda
         executable: URL,
         arguments: [String],
         environment: [String: String]?,
+        timeout: Duration?,
         stdoutHandler: @escaping @Sendable (Data) -> Void,
         stderrHandler: @escaping @Sendable (Data) -> Void
     ) async throws -> SubprocessResult {

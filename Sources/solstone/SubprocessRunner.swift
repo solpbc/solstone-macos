@@ -10,11 +10,31 @@ internal protocol SubprocessRunning: Sendable {
         executable: URL,
         arguments: [String],
         environment: [String: String]?,
+        timeout: Duration?,
         stdoutHandler: @escaping @Sendable (Data) -> Void,
         stderrHandler: @escaping @Sendable (Data) -> Void
     ) async throws -> SubprocessResult
 
     func cancelAll()
+}
+
+extension SubprocessRunning {
+    func run(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String]?,
+        stdoutHandler: @escaping @Sendable (Data) -> Void,
+        stderrHandler: @escaping @Sendable (Data) -> Void
+    ) async throws -> SubprocessResult {
+        try await run(
+            executable: executable,
+            arguments: arguments,
+            environment: environment,
+            timeout: nil,
+            stdoutHandler: stdoutHandler,
+            stderrHandler: stderrHandler
+        )
+    }
 }
 
 internal struct SubprocessResult: Sendable, Equatable {
@@ -24,13 +44,30 @@ internal struct SubprocessResult: Sendable, Equatable {
 
 internal final class SubprocessRunner: SubprocessRunning {
     private let registry = RunningProcessRegistry()
+    private let pidExists: @Sendable (pid_t) -> Bool
+    private let terminate: @Sendable (pid_t, Int32) -> Int32
+    private let timeoutGracePeriod: Duration
 
-    internal init() {}
+    internal init(
+        pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
+            if Darwin.kill(pid, 0) == 0 { return true }
+            return errno == EPERM
+        },
+        terminate: @escaping @Sendable (pid_t, Int32) -> Int32 = { pid, signal in
+            Darwin.kill(pid, signal)
+        },
+        timeoutGracePeriod: Duration = .seconds(2)
+    ) {
+        self.pidExists = pidExists
+        self.terminate = terminate
+        self.timeoutGracePeriod = timeoutGracePeriod
+    }
 
     internal func run(
         executable: URL,
         arguments: [String],
         environment: [String: String]?,
+        timeout: Duration?,
         stdoutHandler: @escaping @Sendable (Data) -> Void,
         stderrHandler: @escaping @Sendable (Data) -> Void
     ) async throws -> SubprocessResult {
@@ -63,9 +100,11 @@ internal final class SubprocessRunner: SubprocessRunning {
             )
 
             let processToken = UUID()
+            let timeoutHandle = SubprocessTimeoutHandle()
             let completion = SubprocessCompletion(
                 continuation: continuation,
-                cleanup: { [registry, processToken] in
+                cleanup: { [registry, processToken, timeoutHandle] in
+                    timeoutHandle.cancel()
                     registry.deregister(processToken)
                 }
             )
@@ -98,6 +137,7 @@ internal final class SubprocessRunner: SubprocessRunning {
             }
 
             process.terminationHandler = { proc in
+                timeoutHandle.cancel()
                 let result = SubprocessResult(
                     exitCode: proc.terminationStatus,
                     terminationReason: proc.terminationReason
@@ -127,11 +167,21 @@ internal final class SubprocessRunner: SubprocessRunning {
             do {
                 registry.register(process, token: processToken)
                 try process.run()
+                if let timeout {
+                    timeoutHandle.schedule(
+                        timeout: timeout,
+                        gracePeriod: timeoutGracePeriod,
+                        pid: process.processIdentifier,
+                        pidExists: pidExists,
+                        terminate: terminate
+                    )
+                }
                 stdoutSource.resume()
                 stderrSource.resume()
             } catch {
                 stdoutSource.cancel()
                 stderrSource.cancel()
+                timeoutHandle.cancel()
                 registry.deregister(processToken)
                 continuation.resume(throwing: error)
             }
@@ -140,6 +190,57 @@ internal final class SubprocessRunner: SubprocessRunning {
 
     internal func cancelAll() {
         registry.cancelAll()
+    }
+}
+
+internal final class SubprocessTimeoutHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: Task<Void, Never>?
+    private var cancelled = false
+
+    func schedule(
+        timeout: Duration,
+        gracePeriod: Duration,
+        pid: pid_t,
+        pidExists: @escaping @Sendable (pid_t) -> Bool,
+        terminate: @escaping @Sendable (pid_t, Int32) -> Int32
+    ) {
+        let newTask = Task.detached { [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled, self?.isCancelled == false else { return }
+            _ = terminate(pid, SIGTERM)
+            try? await Task.sleep(for: gracePeriod)
+            guard !Task.isCancelled, self?.isCancelled == false else { return }
+            if pidExists(pid) {
+                _ = terminate(pid, SIGKILL)
+            }
+        }
+        var shouldCancel = false
+        lock.lock()
+        if cancelled {
+            shouldCancel = true
+        } else {
+            task = newTask
+        }
+        lock.unlock()
+        if shouldCancel {
+            newTask.cancel()
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let current = task
+        task = nil
+        lock.unlock()
+        current?.cancel()
+    }
+
+    private var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
     }
 }
 

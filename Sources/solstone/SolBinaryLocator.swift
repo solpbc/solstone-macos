@@ -6,17 +6,18 @@ import Foundation
 internal enum SolBinaryLocator {
     static func findSolBinary(
         runner: SubprocessRunning = SubprocessRunner(),
+        rootURL: URL = SolstoneRuntimeLayout.defaultRootURL,
         fileExists: @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
     ) async -> String? {
-        let runtimeSol = SolstoneRuntimeLayout().solBinary.path
-        if fileExists(runtimeSol) {
-            return runtimeSol
-        }
-
+        var candidates = SolstoneRuntimeLayout.solCandidatePaths(rootURL: rootURL)
         let preferred = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".local/bin/sol").path
-        if fileExists(preferred) {
-            return preferred
+        candidates.append(preferred)
+
+        for path in candidates {
+            if fileExists(path) {
+                return path
+            }
         }
 
         let output = SolBinaryLocatorOutput()

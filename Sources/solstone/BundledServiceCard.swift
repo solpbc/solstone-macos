@@ -799,7 +799,7 @@ func buildFailureDiagnosticMarkdown(_ input: FailureDiagnosticInput, doctorRepor
         "",
         "dig deeper:",
         "- runtime: ~/Library/Application Support/sol/runtime",
-        "- sol: ~/.local/bin/sol",
+        "- sol: ~/Library/Application Support/sol/runtime/current/bin/sol (or runtime/bin/sol for legacy installs)",
         "- repo: https://github.com/solpbc/solstone-macos",
         "- log show: /usr/bin/log show --predicate 'subsystem == \"app.solstone.observer\" AND category == \"setup\"' --last 30m --info --debug --style compact",
         "",

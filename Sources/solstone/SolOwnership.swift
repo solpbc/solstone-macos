@@ -38,14 +38,16 @@ internal enum SolOwnership: Equatable {
     static func defaultResolver(
         runner: SubprocessRunning = SubprocessRunner(),
         fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
-        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        rootURL: URL = SolstoneRuntimeLayout.defaultRootURL
     ) -> @Sendable (Bool) async -> SolOwnership {
         { hasLocalJournalCreds in
             await resolve(
                 hasLocalJournalCreds: hasLocalJournalCreds,
                 runner: runner,
                 fileExists: fileExists,
-                homeDirectory: homeDirectory
+                homeDirectory: homeDirectory,
+                rootURL: rootURL
             )
         }
     }
@@ -54,16 +56,14 @@ internal enum SolOwnership: Equatable {
         hasLocalJournalCreds: Bool,
         runner: SubprocessRunning,
         fileExists: @Sendable (String) -> Bool,
-        homeDirectory: URL
+        homeDirectory: URL,
+        rootURL: URL
     ) async -> SolOwnership {
-        let runtimeLayout = SolstoneRuntimeLayout()
         var paths: [String] = []
 
-        let runtimeSol = runtimeLayout.solBinary.path
-        if fileExists(runtimeSol) {
-            paths.append(runtimeSol)
+        for candidate in SolstoneRuntimeLayout.solCandidatePaths(rootURL: rootURL) where fileExists(candidate) {
+            paths.append(candidate)
         }
-
         let preferred = homeDirectory.appendingPathComponent(".local/bin/sol").path
         if fileExists(preferred) {
             paths.append(preferred)
@@ -78,7 +78,7 @@ internal enum SolOwnership: Equatable {
         }
         return classify(
             candidates: candidates,
-            runtimeRoot: canonicalPath(runtimeLayout.rootURL.path),
+            runtimeRoot: canonicalPath(rootURL.path),
             hasLocalJournalCreds: hasLocalJournalCreds
         )
     }

@@ -550,7 +550,10 @@ public final class AppState {
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isSnapshot = true
         self.config = config
-        self.installer = SolstoneInstaller(failureRecordStore: InMemoryUpgradeFailureRecordStore())
+        self.installer = SolstoneInstaller(
+            subprocessRunner: SubprocessRunner(),
+            failureRecordStore: InMemoryUpgradeFailureRecordStore()
+        )
         self.recoveryCoordinator = .shared
         self.heartbeatService = HeartbeatService(
             isPaused: { false },

@@ -23,6 +23,12 @@ struct SolOwnershipTests {
         #expect(SolOwnership.classify(candidates: [candidate], runtimeRoot: "/tmp/runtime", hasLocalJournalCreds: true) == .appManaged(solPath: candidate.path))
     }
 
+    @Test func classifyVersionedRuntimePathIsAppManaged() {
+        let candidate = (path: "/tmp/runtime/versions/0.4.8/bin/sol", resolved: "/tmp/runtime/versions/0.4.8/bin/sol")
+
+        #expect(SolOwnership.classify(candidates: [candidate], runtimeRoot: "/tmp/runtime", hasLocalJournalCreds: false) == .appManaged(solPath: candidate.path))
+    }
+
     @Test func classifyExternalOnlyWithoutCredsIsExternal() {
         let candidate = (path: "/opt/homebrew/bin/sol", resolved: "/opt/homebrew/bin/sol")
 
@@ -75,6 +81,27 @@ struct SolOwnershipTests {
         #expect(ownership == .externallyManaged(solPath: preferred))
         #expect(runner.invocations.map(\.executable.path) == ["/usr/bin/which"])
         #expect(runner.invocations.map(\.arguments) == [["sol"]])
+    }
+
+    @Test func resolverPrefersActiveVersionedRuntimeWithoutCreds() async throws {
+        let root = try makeTemporaryDirectory()
+            .appendingPathComponent("runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let layout = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.8"))
+        try layout.ensureCreated()
+        try Data("sol\n".utf8).write(to: layout.solBinary)
+        try layout.activate()
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("sol", .success(stdout: Data("/opt/which/sol\n".utf8)))
+        let resolver = SolOwnership.defaultResolver(
+            runner: runner,
+            fileExists: { FileManager.default.fileExists(atPath: $0) },
+            rootURL: root
+        )
+
+        let ownership = await resolver(false)
+
+        #expect(ownership == .appManaged(solPath: layout.solBinary.path))
     }
 
     @Test func resolverClassifiesSymlinkedLocalBinByResolvedTarget() async throws {

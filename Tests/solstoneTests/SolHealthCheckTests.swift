@@ -206,6 +206,7 @@ private final class FakeDoctorRunner: SubprocessRunning, @unchecked Sendable {
         executable: URL,
         arguments: [String],
         environment: [String: String]?,
+        timeout: Duration?,
         stdoutHandler: @escaping @Sendable (Data) -> Void,
         stderrHandler: @escaping @Sendable (Data) -> Void
     ) async throws -> SubprocessResult {
