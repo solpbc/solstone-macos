@@ -265,6 +265,7 @@ final class CountingRecovery: IncompleteSegmentRecovering, @unchecked Sendable {
 
 final class FakeFinalizer: SegmentFinalizing, @unchecked Sendable {
     let enqueuedDirectories = LockedArray<URL>([])
+    let events = LockedArray<String>([])
     private let inFlight: Set<String>
 
     init(inFlight: Set<String> = []) {
@@ -273,9 +274,14 @@ final class FakeFinalizer: SegmentFinalizing, @unchecked Sendable {
 
     func enqueue(_ job: RemixQueue.RemixJob) async {
         enqueuedDirectories.append(job.segmentDirectory)
+        events.append("enqueue")
     }
 
     func inFlightPaths() async -> Set<String> { inFlight }
+
+    func waitForCompletion() async {
+        events.append("wait")
+    }
 }
 
 final class LockedArray<Element: Sendable>: @unchecked Sendable {

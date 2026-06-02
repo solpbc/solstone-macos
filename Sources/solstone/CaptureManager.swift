@@ -92,6 +92,7 @@ public final class CaptureManager {
     private let windowExclusionManager: WindowExclusionManager
     private let segmentFactory: SegmentFactory
     private let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
+    private let finalizer: any SegmentFinalizing
     // Test-only bypass for fake segment factories without ScreenCaptureKit display state; defaults false.
     private let allowsEmptyDisplayConfigurationForTesting: Bool
 
@@ -152,6 +153,7 @@ public final class CaptureManager {
             )
         },
         recoveryCoordinator: IncompleteSegmentRecoveryCoordinator = .shared,
+        finalizer: any SegmentFinalizing = RemixQueue.shared,
         allowsEmptyDisplayConfigurationForTesting: Bool = false
     ) {
         self.storageManager = storageManager
@@ -160,6 +162,7 @@ public final class CaptureManager {
         self.verbose = verbose
         self.segmentFactory = segmentFactory
         self.recoveryCoordinator = recoveryCoordinator
+        self.finalizer = finalizer
         self.allowsEmptyDisplayConfigurationForTesting = allowsEmptyDisplayConfigurationForTesting
         self.micCaptureManager = MicrophoneCaptureManager(gain: microphoneGain, verbose: verbose)
         self.windowExclusionManager = WindowExclusionManager(
@@ -303,7 +306,7 @@ public final class CaptureManager {
             if let result {
                 await enqueueRemix(result)
             }
-            await RemixQueue.shared.waitForCompletion()
+            await finalizer.waitForCompletion()
         }
 
         // Stop all persistent captures (only when fully stopping recording)
@@ -336,7 +339,7 @@ public final class CaptureManager {
             if let result {
                 await enqueueRemix(result)
             }
-            await RemixQueue.shared.waitForCompletion()
+            await finalizer.waitForCompletion()
         }
 
         // Stop all persistent captures during pause
@@ -651,7 +654,7 @@ public final class CaptureManager {
             silenceMusic: result.silenceMusic,
             micMetadataJSON: result.micMetadataJSON
         )
-        await RemixQueue.shared.enqueue(job)
+        await finalizer.enqueue(job)
     }
 
     private func logSegmentSummary(_ result: SegmentCaptureResult) {
@@ -872,14 +875,14 @@ extension CaptureManager: CaptureLifecycleDelegate {
 
             Task {
                 Logger.capture.info("Starting processing and upload in background before sleep")
-                await RemixQueue.shared.waitForCompletion()
+                await self.finalizer.waitForCompletion()
                 Logger.capture.info("Processing and upload completed before sleep")
                 ProcessInfo.processInfo.endActivity(activity)
             }
         } else {
             Task {
                 Logger.capture.info("Waiting for segment processing after lock: \(url.lastPathComponent, privacy: .public)")
-                await RemixQueue.shared.waitForCompletion()
+                await self.finalizer.waitForCompletion()
             }
         }
     }

@@ -20,6 +20,7 @@ extension AudioRemixer: AudioRemixing {}
 public protocol SegmentFinalizing: Sendable {
     func enqueue(_ job: RemixQueue.RemixJob) async
     func inFlightPaths() async -> Set<String>
+    func waitForCompletion() async
 }
 
 public enum SegmentReconciliation: Sendable {
