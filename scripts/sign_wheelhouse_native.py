@@ -36,6 +36,29 @@ def find_record(root: pathlib.Path) -> pathlib.Path:
     return records[0]
 
 
+def checked_member_path(root: pathlib.Path, member_name: str) -> pathlib.Path:
+    member = pathlib.PurePosixPath(member_name)
+    if member.is_absolute() or not member.parts or any(part == ".." for part in member.parts):
+        raise ValueError(f"unsafe wheel member path: {member_name}")
+    return root.joinpath(*member.parts)
+
+
+def extract_wheel(archive: zipfile.ZipFile, root: pathlib.Path) -> None:
+    for info in archive.infolist():
+        target = checked_member_path(root, info.filename)
+        if info.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(info) as source, target.open("wb") as output:
+            shutil.copyfileobj(source, output)
+
+        mode = (info.external_attr >> 16) & 0o777
+        if mode:
+            target.chmod(mode)
+
+
 def rewrite_record(root: pathlib.Path) -> None:
     record = find_record(root)
     rows = []
@@ -98,7 +121,7 @@ def sign_wheel(path: pathlib.Path, args: argparse.Namespace) -> int:
         root.mkdir()
         with zipfile.ZipFile(path) as archive:
             original_infos = {info.filename: info for info in archive.infolist()}
-            archive.extractall(root)
+            extract_wheel(archive, root)
 
         native_payloads = sorted(p for p in root.rglob("*") if p.is_file() and is_native_payload(p))
         if not native_payloads:

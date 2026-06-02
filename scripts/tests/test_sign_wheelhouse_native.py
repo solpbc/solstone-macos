@@ -124,6 +124,33 @@ class SignWheelhouseNativeTest(unittest.TestCase):
             for wheel in sorted(root.glob("*.whl")):
                 self.assertIn(f"{hashlib.sha256(wheel.read_bytes()).hexdigest()}  {wheel.name}", manifest)
 
+    def test_rejects_unsafe_wheel_member_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            with zipfile.ZipFile(root / "bad-1.0.0-py3-none-any.whl", "w") as archive:
+                archive.writestr("../bad.cpython-313-darwin.so", b"bad")
+                archive.writestr("bad-1.0.0.dist-info/RECORD", "")
+            write_manifest(root)
+            fake_codesign, _log = make_fake_codesign(root)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(HELPER),
+                    str(root),
+                    "--identity",
+                    "Developer ID Application: test",
+                    "--codesign",
+                    str(fake_codesign),
+                ],
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unsafe wheel member path", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
