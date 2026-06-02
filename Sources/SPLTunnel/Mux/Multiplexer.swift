@@ -35,6 +35,7 @@ public actor Multiplexer {
     }
 
     private let sink: @Sendable (Data) async throws -> Void
+    private let sleeper: @Sendable (Duration) async throws -> Void
     private let role: Role
     internal nonisolated let incomingStreams: AsyncStream<MuxStream>
     private let incomingContinuation: AsyncStream<MuxStream>.Continuation
@@ -49,10 +50,19 @@ public actor Multiplexer {
     private var missedPings = 0
 
     public init(sink: @escaping @Sendable (Data) async throws -> Void, role: Role = .dialer) {
+        self.init(sink: sink, role: role, sleeper: { try await Task.sleep(for: $0) })
+    }
+
+    internal init(
+        sink: @escaping @Sendable (Data) async throws -> Void,
+        role: Role = .dialer,
+        sleeper: @escaping @Sendable (Duration) async throws -> Void
+    ) {
         let incoming = AsyncStream<MuxStream>.makeStream()
         let keepalive = AsyncStream<Void>.makeStream()
         self.sink = sink
         self.role = role
+        self.sleeper = sleeper
         self.incomingStreams = incoming.stream
         self.incomingContinuation = incoming.continuation
         self.keepaliveLostStream = keepalive.stream
@@ -205,7 +215,7 @@ public actor Multiplexer {
     private func runKeepalive(interval: Duration, missedLimit: Int) async {
         while !Task.isCancelled {
             do {
-                try await Task.sleep(for: interval)
+                try await sleeper(interval)
                 try await sendKeepalivePing(missedLimit: missedLimit)
             } catch {
                 await tearDown(reason: .transportFailure)

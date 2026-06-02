@@ -29,6 +29,35 @@ private actor SinkRecorder {
     }
 }
 
+private actor KeepaliveTickGate {
+    private var parkedTick: CheckedContinuation<Void, Never>?
+    private var arrival: CheckedContinuation<Void, Never>?
+
+    // Injected as the Multiplexer's keepalive sleeper. Parks each loop iteration
+    // until the test calls release(). The Duration is ignored — the gate controls timing.
+    func tick() async {
+        await withCheckedContinuation { continuation in
+            parkedTick = continuation
+            arrival?.resume()
+            arrival = nil
+        }
+    }
+
+    // Blocks until the keepalive loop is parked at a tick. Returning guarantees the
+    // previous iteration (and its PING write) has completed.
+    func waitForTick() async {
+        if parkedTick != nil { return }
+        await withCheckedContinuation { continuation in arrival = continuation }
+    }
+
+    // Releases exactly one parked tick so a single keepalive iteration runs.
+    func release() {
+        guard let continuation = parkedTick else { return }
+        parkedTick = nil
+        continuation.resume()
+    }
+}
+
 private actor CompletionFlag {
     private var complete = false
 
@@ -260,11 +289,19 @@ struct MultiplexerTests {
 
     @Test("keepalive sends pings at configured cadence")
     func keepaliveSendsPingsAtCadence() async throws {
-        let (mux, recorder) = makeMultiplexer()
+        let (mux, recorder, gate) = makeGatedMultiplexer()
 
-        await mux.startKeepalive(interval: .milliseconds(20), missedLimit: 10)
-        try await Task.sleep(for: .milliseconds(75))
+        // Interval is ignored; the gate drives ticks deterministically.
+        await mux.startKeepalive(missedLimit: 10)
+
+        await gate.waitForTick()   // parked before ping #1
+        await gate.release()       // -> ping #1
+        await gate.waitForTick()   // parked before ping #2 (ping #1 now written)
+        await gate.release()       // -> ping #2
+        await gate.waitForTick()   // parked before ping #3 (ping #2 now written)
+
         await mux.tearDown(reason: .normalShutdown)
+        await gate.release()       // flush the parked iteration so it observes tornDown and exits
 
         let frames = try await recorder.frames()
         #expect(frames.filter { $0.streamID == 0 && $0.flags == FrameFlags.ping.rawValue }.count >= 2)
@@ -272,26 +309,52 @@ struct MultiplexerTests {
 
     @Test("matching PONG resets missed ping count")
     func matchingPongResetsMissedPingCount() async throws {
-        let (mux, recorder) = makeMultiplexer()
+        let (mux, recorder, gate) = makeGatedMultiplexer()
         let lost = mux.keepaliveLost
 
-        await mux.startKeepalive(interval: .milliseconds(20), missedLimit: 3)
-        let firstPing = try #require(try await firstPingFrame(from: recorder, timeout: .seconds(1)))
-        try await mux.feedInbound(try encodeFrame(buildPong(nonce: firstPing.payload)))
-        try await Task.sleep(for: .milliseconds(35))
-        await mux.tearDown(reason: .normalShutdown)
+        // Interval is ignored; the gate drives ticks deterministically.
+        await mux.startKeepalive(missedLimit: 3)
 
-        #expect(try await firstKeepaliveLost(from: lost, timeout: .milliseconds(20)) == false)
+        await gate.waitForTick()   // parked before ping #1
+        await gate.release()       // -> ping #1, pendingPingNonce set
+        await gate.waitForTick()   // ping #1 written
+
+        let firstPing = try #require(
+            try await recorder.frames().first { $0.streamID == 0 && $0.flags == FrameFlags.ping.rawValue }
+        )
+        try await mux.feedInbound(try encodeFrame(buildPong(nonce: firstPing.payload)))  // resets missedPings, clears nonce
+
+        await gate.release()       // -> ping #2 (pendingPingNonce was cleared, so a fresh ping is sent)
+        await gate.waitForTick()   // ping #2 written; loop still alive
+
+        await mux.tearDown(reason: .normalShutdown)   // finishes the keepaliveLost stream
+        await gate.release()                          // flush parked iteration -> observes tornDown and exits
+
+        var lostIterator = lost.makeAsyncIterator()
+        #expect(await lostIterator.next() == nil)      // no keepaliveLost was emitted before finish
+
+        let pings = try await recorder.frames().filter { $0.streamID == 0 && $0.flags == FrameFlags.ping.rawValue }
+        #expect(pings.count == 2)                       // a new ping was sent after the matching pong
     }
 
     @Test("three missed pongs triggers keepalive lost")
     func missedPongsTriggerKeepaliveLost() async throws {
-        let (mux, _) = makeMultiplexer()
+        let (mux, _, gate) = makeGatedMultiplexer()
         let lost = mux.keepaliveLost
 
-        await mux.startKeepalive(interval: .milliseconds(10), missedLimit: 3)
+        // Interval is ignored; the gate drives ticks deterministically.
+        await mux.startKeepalive(missedLimit: 3)
 
-        #expect(try await firstKeepaliveLost(from: lost, timeout: .milliseconds(120)))
+        // Drive four iterations with no PONG. Iterations 1-3 send pings (missed 0,1,2);
+        // the 4th reaches missedPings == 3 and yields keepaliveLost, then the loop exits.
+        for _ in 0..<4 {
+            await gate.waitForTick()
+            await gate.release()
+        }
+
+        var lostIterator = lost.makeAsyncIterator()
+        #expect(await lostIterator.next() != nil)   // keepaliveLost fired; blocks only until the yield, no wall-clock wait
+
         await mux.tearDown(reason: .transportFailure)
     }
 
@@ -301,6 +364,16 @@ struct MultiplexerTests {
             await recorder.record(data)
         }
         return (mux, recorder)
+    }
+
+    private func makeGatedMultiplexer() -> (Multiplexer, SinkRecorder, KeepaliveTickGate) {
+        let recorder = SinkRecorder()
+        let gate = KeepaliveTickGate()
+        let mux = Multiplexer(
+            sink: { data in await recorder.record(data) },
+            sleeper: { _ in await gate.tick() }
+        )
+        return (mux, recorder, gate)
     }
 
     private func firstIncomingStream(from incoming: AsyncStream<MuxStream>) async throws -> MuxStream? {
@@ -316,44 +389,6 @@ struct MultiplexerTests {
             let stream = try await group.next()!
             group.cancelAll()
             return stream
-        }
-    }
-
-    private func firstPingFrame(from recorder: SinkRecorder, timeout: Duration) async throws -> Frame? {
-        try await withThrowingTaskGroup(of: Frame?.self) { group in
-            group.addTask {
-                while !Task.isCancelled {
-                    let frames = try await recorder.frames()
-                    if let frame = frames.first(where: { $0.flags == FrameFlags.ping.rawValue }) {
-                        return frame
-                    }
-                    try await Task.sleep(for: .milliseconds(5))
-                }
-                return nil
-            }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                return nil
-            }
-            let frame = try await group.next()!
-            group.cancelAll()
-            return frame
-        }
-    }
-
-    private func firstKeepaliveLost(from stream: AsyncStream<Void>, timeout: Duration) async throws -> Bool {
-        try await withThrowingTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                var iterator = stream.makeAsyncIterator()
-                return await iterator.next() != nil
-            }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                return false
-            }
-            let result = try await group.next()!
-            group.cancelAll()
-            return result
         }
     }
 }
