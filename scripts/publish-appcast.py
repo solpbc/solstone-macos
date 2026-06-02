@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import os
 import plistlib
 import re
@@ -39,6 +40,8 @@ MIN_SYSTEM = "15.0"
 # link at the branded, appcast-driven macOS release history page.
 FULL_RELEASE_NOTES_LINK = "https://solstone.app/releases/macos"
 DEFAULT_KEY_PATH = "/tmp/sparkle-priv.key"
+DEFAULT_R2_CREDENTIALS_PATH = "/home/jer/projects/extro/cso/vault/credentials/cloudflare-r2.json"
+WRANGLER_MAX_UPLOAD_BYTES = 300 * 1024 * 1024
 # Cloudflare account id (account "jer"). wrangler whoami must list this — used by
 # preflight_wrangler() to catch a silently-degraded OAuth token before any upload.
 CF_ACCOUNT_ID = "3f2c1528c7d4d9685819ea9e9e307c92"
@@ -185,7 +188,47 @@ def serialize_appcast(tree: ET.ElementTree) -> bytes:
     ET.indent(tree, space="  ")
     return ET.tostring(tree.getroot(), encoding="UTF-8", xml_declaration=True)
 
+def load_r2_credentials() -> dict[str, str]:
+    path = os.environ.get("SOLSTONE_R2_CREDENTIALS_PATH", DEFAULT_R2_CREDENTIALS_PATH)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        die(f"{path}: cannot load R2 credentials: {exc}")
+
+    required = ("access_key_id", "secret_access_key", "endpoint")
+    missing = [key for key in required if not raw.get(key)]
+    if missing:
+        die(f"{path}: missing R2 credential fields: {', '.join(missing)}")
+    return {key: str(raw[key]) for key in required}
+
+def upload_r2_s3(local_path: str, r2_key: str, content_type: str) -> None:
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError as exc:
+        die(f"boto3/botocore unavailable for R2 multipart upload: {exc}")
+
+    creds = load_r2_credentials()
+    try:
+        client = boto3.client(
+            "s3",
+            endpoint_url=creds["endpoint"],
+            aws_access_key_id=creds["access_key_id"],
+            aws_secret_access_key=creds["secret_access_key"],
+            region_name="auto",
+            config=Config(signature_version="s3v4"),
+        )
+        client.upload_file(local_path, R2_BUCKET, r2_key, ExtraArgs={"ContentType": content_type})
+    except Exception as exc:
+        die(f"R2 multipart upload failed for {r2_key}: {exc}")
+
 def upload(local_path: str, r2_key: str, content_type: str) -> None:
+    size = os.path.getsize(local_path)
+    if size > WRANGLER_MAX_UPLOAD_BYTES:
+        upload_r2_s3(local_path, r2_key, content_type)
+        return
+
     run(["wrangler", "r2", "object", "put", f"{R2_BUCKET}/{r2_key}",
          f"--file={local_path}", "--remote", f"--content-type={content_type}"])
 

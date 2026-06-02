@@ -1,5 +1,7 @@
 import importlib.util
+import os
 import pathlib
+import tempfile
 import types
 import unittest
 from unittest import mock
@@ -89,6 +91,37 @@ class PreflightWranglerTest(unittest.TestCase):
             raise FileNotFoundError()
 
         self._assert_dies(missing)
+
+
+class UploadRoutingTest(unittest.TestCase):
+    def test_small_upload_uses_wrangler(self):
+        module = load_publish_appcast()
+        with tempfile.NamedTemporaryFile() as tmp:
+            tmp.write(b"small")
+            tmp.flush()
+            calls = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append(cmd)
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with mock.patch.object(module, "run", fake_run), mock.patch.object(module, "upload_r2_s3") as s3:
+                module.upload(tmp.name, "path/object.txt", "text/plain")
+
+        self.assertFalse(s3.called)
+        self.assertEqual(calls[0][0:4], ["wrangler", "r2", "object", "put"])
+        self.assertIn("solstone-updates/path/object.txt", calls[0])
+
+    def test_large_upload_uses_r2_s3_fallback(self):
+        module = load_publish_appcast()
+        with tempfile.NamedTemporaryFile() as tmp:
+            with mock.patch.object(os.path, "getsize", return_value=module.WRANGLER_MAX_UPLOAD_BYTES + 1), \
+                 mock.patch.object(module, "run") as run, \
+                 mock.patch.object(module, "upload_r2_s3") as s3:
+                module.upload(tmp.name, "path/object.dmg", "application/x-apple-diskimage")
+
+        self.assertFalse(run.called)
+        s3.assert_called_once_with(tmp.name, "path/object.dmg", "application/x-apple-diskimage")
 
 
 if __name__ == "__main__":
