@@ -11,6 +11,8 @@ private let pidWaitPollIntervalDefault: Duration = .milliseconds(250)
 private let orphanGracePeriodDefault: Duration = .seconds(3)
 private let stagedInstallTimeoutDefault: Duration = .seconds(120)
 private let stagedVerifyTimeoutDefault: Duration = .seconds(10)
+private let stagedInstallMaxAttemptsDefault: Int = 3
+private let stagedInstallRetryBackoffDefault: Duration = .seconds(2)
 private let subprocessTimeoutGracePeriodDefault: Duration = .seconds(2)
 
 @MainActor
@@ -46,6 +48,8 @@ public final class SolstoneInstaller {
     private let pidWaitPollInterval: Duration
     private let orphanGracePeriod: Duration
     private let stagedInstallTimeout: Duration
+    private let stagedInstallMaxAttempts: Int
+    private let stagedInstallRetryBackoff: Duration
     private let stagedVerifyTimeout: Duration
     private var installTask: Task<Void, Never>?
     private var modelsTask: Task<Void, Never>?
@@ -60,6 +64,8 @@ public final class SolstoneInstaller {
         wheelhouseURL: URL? = nil,
         runtimeRootURL: URL? = nil,
         stagedInstallTimeout: Duration = .seconds(120),
+        stagedInstallMaxAttempts: Int = 3,
+        stagedInstallRetryBackoff: Duration = .seconds(2),
         stagedVerifyTimeout: Duration = .seconds(10),
         subprocessTimeoutGracePeriod: Duration = .seconds(2),
         inProgressMarkerStore: InProgressUpgradeMarkerStoring = UserDefaultsInProgressUpgradeMarkerStore(),
@@ -76,6 +82,8 @@ public final class SolstoneInstaller {
             runtimeVersionTokenProvider: runtimeVersionTokenProvider,
             wrapperDirURL: wrapperDirURL,
             stagedInstallTimeout: stagedInstallTimeout,
+            stagedInstallMaxAttempts: stagedInstallMaxAttempts,
+            stagedInstallRetryBackoff: stagedInstallRetryBackoff,
             stagedVerifyTimeout: stagedVerifyTimeout
         )
     }
@@ -107,6 +115,8 @@ public final class SolstoneInstaller {
         pidWaitPollInterval: Duration = pidWaitPollIntervalDefault,
         orphanGracePeriod: Duration = orphanGracePeriodDefault,
         stagedInstallTimeout: Duration = stagedInstallTimeoutDefault,
+        stagedInstallMaxAttempts: Int = stagedInstallMaxAttemptsDefault,
+        stagedInstallRetryBackoff: Duration = stagedInstallRetryBackoffDefault,
         stagedVerifyTimeout: Duration = stagedVerifyTimeoutDefault
     ) {
         let resolvedRuntimeRootURL = runtimeRootURL ?? SolstoneRuntimeLayout.defaultRootURL
@@ -135,6 +145,8 @@ public final class SolstoneInstaller {
         self.pidWaitPollInterval = pidWaitPollInterval
         self.orphanGracePeriod = orphanGracePeriod
         self.stagedInstallTimeout = stagedInstallTimeout
+        self.stagedInstallMaxAttempts = stagedInstallMaxAttempts
+        self.stagedInstallRetryBackoff = stagedInstallRetryBackoff
         self.stagedVerifyTimeout = stagedVerifyTimeout
         self.upgradeFailureRecord = failureRecordStore.load()
     }
@@ -346,35 +358,63 @@ public final class SolstoneInstaller {
         }
 
         let environment = layout.uvEnvironment()
-        guard let install = await runUVToolCommand(
-            arguments: [
-                "tool",
-                "install",
-                projectWheel.path,
-                "--find-links",
-                wheelhouse.path,
-                "--no-index",
-                "--offline",
-                "--python",
-                pythonURL.path,
-                "--no-python-downloads",
-                "--force"
-            ],
-            phase: phase,
-            launchDescription: "uv tool install",
-            environment: environment,
-            timeout: stagedInstallTimeout
-        ) else {
-            return nil
-        }
-
-        guard install.result.exitCode == 0 else {
-            failMain(
-                .installSolstone(message: lastUsefulLine(install.stderr) ?? "uv tool install solstone failed"),
-                category: Self.categorize(stderr: install.stderr),
-                logExcerpt: Self.lastUsefulLog(stdout: install.stdout, stderr: install.stderr)
+        let arguments = [
+            "tool",
+            "install",
+            projectWheel.path,
+            "--find-links",
+            wheelhouse.path,
+            "--no-index",
+            "--offline",
+            "--python",
+            pythonURL.path,
+            "--no-python-downloads",
+            "--force"
+        ]
+        let maxAttempts = stagedInstallMaxAttempts
+        let retryBackoff = stagedInstallRetryBackoff
+        var attempt = 1
+        installLoop:
+        while true {
+            if maxAttempts > 1 {
+                Logger.setup.info("installer: uv tool install attempt \(attempt, privacy: .public) of \(maxAttempts, privacy: .public)")
+            }
+            let outcome = await runUVToolCommand(
+                arguments: arguments,
+                phase: phase,
+                environment: environment,
+                timeout: stagedInstallTimeout
             )
-            return nil
+            switch outcome {
+            case .ran(result: let result, stdout: _, stderr: _) where result.exitCode == 0:
+                break installLoop
+            case .ran(result: _, stdout: let stdout, stderr: let stderr):
+                if attempt >= maxAttempts {
+                    failMain(
+                        .installSolstone(message: lastUsefulLine(stderr) ?? "uv tool install solstone failed"),
+                        category: Self.categorize(stderr: stderr),
+                        logExcerpt: Self.lastUsefulLog(stdout: stdout, stderr: stderr)
+                    )
+                    return nil
+                }
+            case .launchFailed(message: let message):
+                if attempt >= maxAttempts {
+                    failMain(
+                        .installSolstone(message: message),
+                        category: .subprocessLaunch,
+                        logExcerpt: "uv tool install subprocess could not launch: \(message)"
+                    )
+                    return nil
+                }
+            }
+            if retryBackoff > .zero {
+                do {
+                    try await Task.sleep(for: retryBackoff)
+                } catch {
+                    return nil
+                }
+            }
+            attempt += 1
         }
 
         let installedVersion = await stagedSolVersion(solPath: layout.solBinary.path, environment: environment)
@@ -456,13 +496,17 @@ public final class SolstoneInstaller {
         return true
     }
 
+    private enum UVToolOutcome {
+        case ran(result: SubprocessResult, stdout: String, stderr: String)
+        case launchFailed(message: String)
+    }
+
     private func runUVToolCommand(
         arguments: [String],
         phase: String,
-        launchDescription: String,
         environment: [String: String],
         timeout: Duration? = nil
-    ) async -> (result: SubprocessResult, stdout: String, stderr: String)? {
+    ) async -> UVToolOutcome {
         let output = InstallerOutput()
         let result: SubprocessResult
         do {
@@ -485,10 +529,9 @@ public final class SolstoneInstaller {
                 }
             )
         } catch {
-            failMain(.installSolstone(message: error.localizedDescription), category: .subprocessLaunch, logExcerpt: "\(launchDescription) subprocess could not launch: \(error.localizedDescription)")
-            return nil
+            return .launchFailed(message: error.localizedDescription)
         }
-        return (result, output.stdoutString(), output.stderrString())
+        return .ran(result: result, stdout: output.stdoutString(), stderr: output.stderrString())
     }
 
     private func resolveExistingInstallJournal(oldSolPath: String) async -> (journalURL: URL, supervisorPID: pid_t?)? {
