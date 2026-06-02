@@ -5,6 +5,16 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.9] - 2026-06-02
+
+### Changed
+- updated the bundled solstone journal to 0.4.10 →
+- when you stop or pause solstone, or your Mac sleeps or locks, and the last segment's audio can't be read yet, solstone now keeps that segment and tells you, instead of finishing it with screen only. nothing is quietly set aside.
+
+### Fixed
+- if a segment finished with its screen but without its audio, even though good audio was sitting on your Mac, that's resolved. a timing issue could finish the segment that was in progress right then before its audio had finished saving; the way solstone finishes and recovers segments was reworked so the in-progress segment is never finished early and its audio is kept with it. this goes deeper than the 1.3.8 reconciliation, closing the same gap at its source. everything stays on your machine, as always.
+- for a journal you manage yourself, including one you run from source, the bundled journal now stays up to date through upgrades. some self-managed setups had the journal fall a release behind because the app didn't recognize its own shortcut; it does now.
+
 ## [1.3.8] - 2026-06-02
 
 ### Changed
