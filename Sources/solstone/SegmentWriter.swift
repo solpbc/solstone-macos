@@ -59,12 +59,6 @@ public protocol SegmentAudioManaging: AnyObject, Sendable {
     func activeMicrophoneUIDs() -> [String]
     func getMicMetadata() -> [[String: Any]]
     func finishAll() async -> [AudioRemixerInput]
-    func finishAndRemix(
-        to outputURL: URL,
-        debugKeepRejected: Bool,
-        deleteSourceFiles: Bool,
-        silenceMusic: Bool
-    ) async throws -> AudioRemixerResult
 }
 
 extension ScreenshotCapturer: SegmentScreenshotCapturing {}
@@ -99,7 +93,6 @@ public final class SegmentWriter {
     private var screenshotCapturers: [CGDirectDisplayID: any SegmentScreenshotCapturing] = [:]
     private var audioManager: (any SegmentAudioManaging)?
     private var systemAudioCaptureManager: SystemAudioCaptureManager?
-    private var audioRemixFailed = false
     private let verbose: Bool
     private let screenshotCapturerFactory: ScreenshotCapturerFactory
     private let audioManagerFactory: AudioManagerFactory
@@ -301,71 +294,6 @@ public final class SegmentWriter {
         }
     }
 
-    /// Finishes recording, remixes audio, and closes all files
-    public func finish() async {
-        // Stop all screenshot capturers first
-        Logger.capture.info("Stopping \(self.screenshotCapturers.count, privacy: .public) screenshot capturer(s)...")
-        for (displayID, capturer) in screenshotCapturers {
-            Logger.capture.info("Stopping capturer for display \(displayID, privacy: .public)...")
-            do {
-                try await withTimeout(seconds: 5) {
-                    await capturer.stop()
-                }
-            } catch is TimeoutError {
-                Logger.capture.warning("Timeout stopping capturer for display \(displayID, privacy: .public)")
-            } catch {
-                Logger.capture.warning("Error stopping capturer for display \(displayID, privacy: .public): \(error, privacy: .public)")
-            }
-        }
-
-        // Clear system audio callback (stream keeps running for next segment)
-        systemAudioCaptureManager?.clearCallback()
-
-        // Finish audio manager and remix to single file
-        if let manager = audioManager {
-            let audioURL = outputDirectory.appendingPathComponent("\(timePrefix)_audio.m4a")
-            do {
-                let result = try await withTimeout(seconds: 15) {
-                    try await manager.finishAndRemix(
-                        to: audioURL,
-                        debugKeepRejected: self.debugKeepRejectedAudio,
-                        deleteSourceFiles: true,
-                        silenceMusic: self.silenceMusic
-                    )
-                }
-                Logger.capture.info("Audio remix complete: \(result.tracksWritten, privacy: .public) tracks, \(result.tracksSkipped, privacy: .public) skipped")
-            } catch AudioRemixerError.noTracksToWrite {
-                Logger.capture.info("Audio remix produced no tracks; finalizing segment without audio")
-            } catch let error as TimeoutError {
-                Logger.capture.error("Audio remix timed out for \(self.outputDirectory.lastPathComponent, privacy: .public): \(error, privacy: .public); leaving source audio files for recovery")
-                audioRemixFailed = true
-            } catch {
-                Logger.capture.error("Audio remix failed for \(self.outputDirectory.lastPathComponent, privacy: .public): \(error, privacy: .public)")
-                audioRemixFailed = true
-            }
-        }
-
-        // Finish all screenshot capturers (video writers)
-        Logger.capture.info("Finishing \(self.screenshotCapturers.count, privacy: .public) video output(s)...")
-        for (displayID, capturer) in screenshotCapturers {
-            Logger.capture.info("Waiting for video finish on display \(displayID, privacy: .public)...")
-            let result = await capturer.finishWithTimeout(seconds: 10)
-            if let result {
-                Logger.capture.info("Video finish callback fired for display \(displayID, privacy: .public)")
-                switch result {
-                case let .success((url, frameCount)):
-                    Logger.capture.info("Saved video for display \(displayID, privacy: .public): \(url.lastPathComponent, privacy: .public) (\(frameCount, privacy: .public) frames)")
-                case let .failure(error):
-                    Logger.capture.warning("Error finishing video for display \(displayID, privacy: .public): \(error, privacy: .public)")
-                }
-            }
-            Logger.capture.info("Video finish complete for display \(displayID, privacy: .public)")
-        }
-        Logger.capture.info("All video outputs finished")
-
-        if verbose { Logger.capture.debug("Finished segment: \(self.outputDirectory.lastPathComponent, privacy: .public)") }
-    }
-
     /// Finishes capture and returns data for background remix
     /// Does NOT wait for remix - returns immediately after streams stop
     /// Use this for segment rotation to minimize gap between segments
@@ -454,89 +382,6 @@ public final class SegmentWriter {
     /// Get mic metadata collected during this segment
     public func getMicMetadata() -> [[String: Any]] {
         return audioManager?.getMicMetadata() ?? []
-    }
-
-    /// Finishes recording and renames segment to reflect actual duration
-    /// - Returns: URL to the renamed segment directory, or original if rename failed
-    public func finishAndRename() async -> URL {
-        // Capture mic metadata before finish() clears the audio manager state
-        let micMetadata = getMicMetadata()
-
-        await finish()
-
-        if audioRemixFailed {
-            await markIncompleteSegmentAsFailed(outputDirectory)
-            let failedDirectory = outputDirectory.deletingLastPathComponent()
-                .appendingPathComponent(outputDirectory.lastPathComponent.replacingOccurrences(of: ".incomplete", with: ".failed"))
-            if FileManager.default.fileExists(atPath: failedDirectory.path) {
-                return failedDirectory
-            }
-            return outputDirectory
-        }
-
-        // Write metadata file if we have mic metadata
-        if !micMetadata.isEmpty {
-            writeMetadataFile(mics: micMetadata)
-        }
-
-        // Calculate actual duration
-        guard let startTime = captureStartTime else {
-            Logger.capture.warning("No capture start time recorded, keeping original segment name")
-            return outputDirectory
-        }
-
-        let actualDuration = Int(Date().timeIntervalSince(startTime))
-        let segmentKey = "\(timePrefix)_\(actualDuration)"
-
-        Logger.capture.info("Finalizing segment: \(self.timePrefix, privacy: .public).incomplete -> \(segmentKey, privacy: .public)")
-
-        let fm = FileManager.default
-
-        // Rename files inside the directory to add duration
-        // From: 143022_audio.m4a -> 143022_127_audio.m4a
-        do {
-            let files = try fm.contentsOfDirectory(at: outputDirectory, includingPropertiesForKeys: nil)
-            for fileURL in files {
-                let filename = fileURL.lastPathComponent
-                // Replace timePrefix_ with segmentKey_ in filename
-                if filename.hasPrefix("\(timePrefix)_") {
-                    let suffix = filename.dropFirst(timePrefix.count + 1)  // +1 for underscore
-                    let newFilename = "\(segmentKey)_\(suffix)"
-                    let newFileURL = outputDirectory.appendingPathComponent(newFilename)
-                    try fm.moveItem(at: fileURL, to: newFileURL)
-                }
-            }
-        } catch {
-            Logger.capture.warning("Failed to rename segment files: \(error, privacy: .public)")
-            return outputDirectory
-        }
-
-        // Rename the directory from HHMMSS.incomplete to HHMMSS_duration
-        let parentDir = outputDirectory.deletingLastPathComponent()
-        let newDirectory = parentDir.appendingPathComponent(segmentKey)
-
-        do {
-            try fm.moveItem(at: outputDirectory, to: newDirectory)
-            Logger.capture.info("Renamed segment directory to: \(segmentKey, privacy: .public)")
-            return newDirectory
-        } catch {
-            Logger.capture.warning("Failed to rename segment directory: \(error, privacy: .public)")
-            return outputDirectory
-        }
-    }
-
-    /// Write metadata file to segment directory
-    private func writeMetadataFile(mics: [[String: Any]]) {
-        let metaURL = outputDirectory.appendingPathComponent("\(timePrefix)_meta.json")
-        let metadata: [String: Any] = ["mics": mics]
-
-        do {
-            let data = try JSONSerialization.data(withJSONObject: metadata, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: metaURL)
-            if verbose { Logger.capture.debug("Wrote metadata file: \(metaURL.lastPathComponent, privacy: .public)") }
-        } catch {
-            Logger.capture.warning("Failed to write metadata file: \(error, privacy: .public)")
-        }
     }
 
     private func rollbackStart(

@@ -280,34 +280,6 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         return mics.map { $0.toMetadata() }
     }
 
-    /// Finish all writers, remix to single file, and optionally delete source files
-    /// - Parameters:
-    ///   - outputURL: The final combined audio file URL
-    ///   - debugKeepRejected: Move rejected tracks to rejected/ subfolder instead of deleting
-    ///   - deleteSourceFiles: Delete individual source files after remix
-    ///   - silenceMusic: Silence music-only portions of system audio
-    /// - Returns: The remix result
-    public func finishAndRemix(
-        to outputURL: URL,
-        debugKeepRejected: Bool = false,
-        deleteSourceFiles: Bool = true,
-        silenceMusic: Bool = true
-    ) async throws -> AudioRemixerResult {
-        let inputs = await finishAll()
-
-        guard !inputs.isEmpty else {
-            throw AudioRemixerError.noInputs
-        }
-
-        let remixer = AudioRemixer(verbose: verbose, debugKeepRejected: debugKeepRejected)
-        return try await remixer.remix(
-            inputs: inputs,
-            to: outputURL,
-            deleteSourceFiles: deleteSourceFiles,
-            silenceMusic: silenceMusic
-        )
-    }
-
     // MARK: - Private
 
     private func makeURL(for sourceID: String) -> URL {

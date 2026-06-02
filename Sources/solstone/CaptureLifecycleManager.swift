@@ -127,8 +127,8 @@ final class CaptureLifecycleManager {
 
         let completedURL = await delegate?.lifecyclePauseCapture(trigger: "sleep", stopAudio: false)
 
-        // Use beginActivity to request time for upload before system suspends
-        // Fire async to avoid blocking MainActor during sleep transition
+        // Use beginActivity to request time for remix commit before system suspends.
+        // Fire async to avoid blocking MainActor during sleep transition.
         if let url = completedURL {
             delegate?.lifecycleProcessSegment(url, useSleepActivity: true)
         }
@@ -183,7 +183,7 @@ final class CaptureLifecycleManager {
 
         let completedURL = await delegate?.lifecyclePauseCapture(trigger: "lock", stopAudio: true)
 
-        // Trigger upload callback
+        // Drain the remix queue so the locked segment is committed.
         if let url = completedURL {
             delegate?.lifecycleProcessSegment(url, useSleepActivity: false)
         }

@@ -19,7 +19,6 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
         systemAudioCaptureManager: SystemAudioCaptureManager?
     ) async throws
     func finishCapture() async -> SegmentCaptureResult?
-    func finishAndRename() async -> URL
     func updateContentFilter(_ filters: [CGDirectDisplayID: SCContentFilter]) async throws
     func addMicrophone(_ device: AudioInputDevice) throws
     func removeMicrophone(deviceUID: String)
@@ -122,9 +121,6 @@ public final class CaptureManager {
     private var disabledMicUIDs: Set<String> = []
 
     public private(set) var state: State = .idle
-
-    /// Called when a segment completes (for upload)
-    public var onSegmentComplete: ((URL) async -> Void)?
 
     /// Called when state changes
     public var onStateChanged: ((State) -> Void)?
@@ -300,11 +296,14 @@ public final class CaptureManager {
         cancelPendingRotationRetry()
         lifecycleManager.reset(stopRecovery: true)
 
-        // Finish current segment and rename to actual duration
-        var completedSegmentURL: URL?
+        // Finish current segment and enqueue remix before tearing down persistent captures.
         if let segment = currentSegment {
-            completedSegmentURL = await segment.finishAndRename()
+            let result = await segment.finishCapture()
             currentSegment = nil
+            if let result {
+                await enqueueRemix(result)
+            }
+            await RemixQueue.shared.waitForCompletion()
         }
 
         // Stop all persistent captures (only when fully stopping recording)
@@ -317,11 +316,6 @@ public final class CaptureManager {
         onStateChanged?(state)
 
         Logger.capture.info("Stopped recording")
-
-        // Trigger upload callback
-        if let url = completedSegmentURL, let callback = onSegmentComplete {
-            await callback(url)
-        }
     }
 
     /// Pauses recording (used for sleep/lock lifecycle events)
@@ -335,11 +329,14 @@ public final class CaptureManager {
         cancelPendingRotationRetry()
         lifecycleManager.reset(stopRecovery: true)
 
-        // Finish current segment and rename to actual duration
-        var completedSegmentURL: URL?
+        // Finish current segment and enqueue remix before tearing down persistent captures.
         if let segment = currentSegment {
-            completedSegmentURL = await segment.finishAndRename()
+            let result = await segment.finishCapture()
             currentSegment = nil
+            if let result {
+                await enqueueRemix(result)
+            }
+            await RemixQueue.shared.waitForCompletion()
         }
 
         // Stop all persistent captures during pause
@@ -352,11 +349,6 @@ public final class CaptureManager {
         onStateChanged?(state)
 
         Logger.capture.info("Paused recording")
-
-        // Trigger upload callback
-        if let url = completedSegmentURL, let callback = onSegmentComplete {
-            await callback(url)
-        }
     }
 
     /// Resumes recording after pause
@@ -645,17 +637,21 @@ public final class CaptureManager {
         // Enqueue remix for background processing
         // RemixQueue will handle: remix, file rename, directory rename, and upload trigger
         if let result = captureResult {
-            let job = RemixQueue.RemixJob(
-                segmentDirectory: result.segmentDirectory,
-                timePrefix: result.timePrefix,
-                captureStartTime: result.captureStartTime,
-                audioInputs: result.audioInputs,
-                debugKeepRejected: result.debugKeepRejected,
-                silenceMusic: result.silenceMusic,
-                micMetadataJSON: result.micMetadataJSON
-            )
-            await RemixQueue.shared.enqueue(job)
+            await enqueueRemix(result)
         }
+    }
+
+    private func enqueueRemix(_ result: SegmentCaptureResult) async {
+        let job = RemixQueue.RemixJob(
+            segmentDirectory: result.segmentDirectory,
+            timePrefix: result.timePrefix,
+            captureStartTime: result.captureStartTime,
+            audioInputs: result.audioInputs,
+            debugKeepRejected: result.debugKeepRejected,
+            silenceMusic: result.silenceMusic,
+            micMetadataJSON: result.micMetadataJSON
+        )
+        await RemixQueue.shared.enqueue(job)
     }
 
     private func logSegmentSummary(_ result: SegmentCaptureResult) {
@@ -821,10 +817,13 @@ extension CaptureManager: CaptureLifecycleDelegate {
         stopHeartbeat()
         cancelPendingRotationRetry()
 
-        var completedSegmentURL: URL?
+        var result: SegmentCaptureResult?
         if let segment = currentSegment {
-            completedSegmentURL = await segment.finishAndRename()
+            result = await segment.finishCapture()
             currentSegment = nil
+            if let result {
+                await enqueueRemix(result)
+            }
         }
 
         if stopAudio {
@@ -837,7 +836,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: \(trigger, privacy: .public))")
         onStateChanged?(state)
 
-        return completedSegmentURL
+        return result?.segmentDirectory
     }
 
     func lifecycleResumeCapture(trigger: String) async throws {
@@ -865,8 +864,6 @@ extension CaptureManager: CaptureLifecycleDelegate {
     }
 
     func lifecycleProcessSegment(_ url: URL, useSleepActivity: Bool) {
-        guard let callback = onSegmentComplete else { return }
-
         if useSleepActivity {
             let activity = ProcessInfo.processInfo.beginActivity(
                 options: [.suddenTerminationDisabled, .automaticTerminationDisabled],
@@ -875,13 +872,14 @@ extension CaptureManager: CaptureLifecycleDelegate {
 
             Task {
                 Logger.capture.info("Starting processing and upload in background before sleep")
-                await callback(url)
+                await RemixQueue.shared.waitForCompletion()
                 Logger.capture.info("Processing and upload completed before sleep")
                 ProcessInfo.processInfo.endActivity(activity)
             }
         } else {
             Task {
-                await callback(url)
+                Logger.capture.info("Waiting for segment processing after lock: \(url.lastPathComponent, privacy: .public)")
+                await RemixQueue.shared.waitForCompletion()
             }
         }
     }

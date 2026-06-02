@@ -56,53 +56,6 @@ struct SegmentWriterTimeoutTests {
         #expect(fakeAudio.finishAllCount.count == 1)
     }
 
-    @Test func finishReturnsWhenFinishAndRemixHangsAndLeavesSourceAudio() async throws {
-        let dir = try makeTempDirectory("segment-remix-hang")
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let sourceAudio = dir.appendingPathComponent("120000_audio_system.m4a")
-        try Data("audio".utf8).write(to: sourceAudio)
-
-        let fakeAudio = FakeAudioManager(behavior: .hangFinishAndRemix)
-        let writer = makeWriter(
-            dir: dir,
-            capturer: FakeScreenshotCapturer(),
-            audioManager: fakeAudio
-        )
-
-        try await startWriter(writer)
-
-        let clock = ContinuousClock()
-        let start = clock.now
-        await writer.finish()
-        let elapsed = start.duration(to: clock.now)
-
-        #expect(elapsed < .seconds(20))
-        #expect(FileManager.default.fileExists(atPath: sourceAudio.path))
-        #expect(fakeAudio.finishAndRemixCount.count == 1)
-    }
-
-    @Test func finishAndRenameUsesBoundedFinishPath() async throws {
-        let dir = try makeTempDirectory("segment-finish-rename")
-        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
-
-        let fakeAudio = FakeAudioManager(behavior: .hangFinishAndRemix)
-        let writer = makeWriter(
-            dir: dir,
-            capturer: FakeScreenshotCapturer(),
-            audioManager: fakeAudio
-        )
-
-        try await startWriter(writer)
-
-        let clock = ContinuousClock()
-        let start = clock.now
-        _ = await writer.finishAndRename()
-        let elapsed = start.duration(to: clock.now)
-
-        #expect(elapsed < .seconds(20))
-        #expect(fakeAudio.finishAndRemixCount.count == 1)
-    }
-
     @Test func startFailureRollsBackStartedSources() async throws {
         let dir = try makeTempDirectory("segment-start-rollback")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -124,74 +77,6 @@ struct SegmentWriterTimeoutTests {
             #expect(fakeAudio.finishAllCount.count == 1)
             #expect(writer.activeMicrophoneUIDs().isEmpty)
         }
-    }
-
-    @Test func finishAndRenameMarksIncompleteFailedWhenAudioRemixThrows() async throws {
-        let root = try makeTempDirectory("segment-remix-throws")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let dir = try makeIncompleteSegmentDirectory(root: root)
-        let sourceAudio = dir.appendingPathComponent("120000_audio_system.m4a")
-        try Data("audio".utf8).write(to: sourceAudio)
-
-        let writer = makeWriter(
-            dir: dir,
-            capturer: FakeScreenshotCapturer(),
-            audioManager: FakeAudioManager(behavior: .throwFromFinishAndRemix(SyntheticRemixError()))
-        )
-
-        try await startWriter(writer)
-
-        let result = await writer.finishAndRename()
-        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
-
-        #expect(result.lastPathComponent == "120000.failed")
-        #expect(FileManager.default.fileExists(atPath: failedDir.path))
-        #expect(!FileManager.default.fileExists(atPath: dir.path))
-        #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
-        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("120000_audio_system.m4a").path))
-    }
-
-    @Test func finishAndRenameFinalizesIncompleteWhenAudioRemixHasNoTracksToWrite() async throws {
-        let root = try makeTempDirectory("segment-remix-empty")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let dir = try makeIncompleteSegmentDirectory(root: root)
-        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
-
-        let writer = makeWriter(
-            dir: dir,
-            capturer: FakeScreenshotCapturer(),
-            audioManager: FakeAudioManager(behavior: .throwFromFinishAndRemix(AudioRemixerError.noTracksToWrite))
-        )
-
-        try await startWriter(writer)
-
-        let result = await writer.finishAndRename()
-
-        #expect(result.lastPathComponent.hasPrefix("120000_"))
-        #expect(!result.lastPathComponent.hasSuffix(".failed"))
-        #expect(FileManager.default.fileExists(atPath: result.path))
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed").path))
-        #expect(try FileManager.default.contentsOfDirectory(atPath: result.path).contains { $0.hasSuffix("_screen.mp4") })
-    }
-
-    @Test func finishAndRenameMarksIncompleteFailedWhenAudioRemixTimesOut() async throws {
-        let root = try makeTempDirectory("segment-remix-timeout-failed")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let dir = try makeIncompleteSegmentDirectory(root: root)
-
-        let writer = makeWriter(
-            dir: dir,
-            capturer: FakeScreenshotCapturer(),
-            audioManager: FakeAudioManager(behavior: .hangFinishAndRemix)
-        )
-
-        try await startWriter(writer)
-
-        let result = await writer.finishAndRename()
-
-        #expect(result.lastPathComponent == "120000.failed")
-        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed").path))
-        #expect(!FileManager.default.fileExists(atPath: dir.path))
     }
 
     private func makeWriter(
@@ -217,13 +102,4 @@ struct SegmentWriterTimeoutTests {
         try await writer.start(displayInfos: [display], filters: [:], audioFilter: nil)
     }
 
-    private func makeIncompleteSegmentDirectory(root: URL) throws -> URL {
-        let dir = root.appendingPathComponent("120000.incomplete", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    private func segmentDirectories(in root: URL) throws -> [String] {
-        try FileManager.default.contentsOfDirectory(atPath: root.path)
-    }
 }

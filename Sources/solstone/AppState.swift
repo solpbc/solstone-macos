@@ -435,12 +435,7 @@ public final class AppState {
             }
         }
 
-        // Direct segment completion (stop/pause/sleep) - triggers upload
-        captureManager.onSegmentComplete = { [weak self] _ in
-            self?.uploadCoordinator.triggerSync()
-        }
-
-        // Background remix completion (rotation) - triggers upload
+        // Single segment-completion nudge for rotation, recovery, stop/pause, sleep, and lock.
         Task {
             await RemixQueue.shared.setOnSegmentComplete { [weak self] _, reconciliation in
                 await MainActor.run {

@@ -76,15 +76,12 @@ final class FakeAudioManager: SegmentAudioManaging, @unchecked Sendable {
     enum Behavior: Sendable {
         case normal
         case hangFinishAll
-        case hangFinishAndRemix
-        case throwFromFinishAndRemix(any Error & Sendable)
     }
 
     let behavior: Behavior
     let startSystemAudioCount = LockedCounter()
     let addMicrophoneCount = LockedCounter()
     let finishAllCount = LockedCounter()
-    let finishAndRemixCount = LockedCounter()
 
     init(behavior: Behavior = .normal) {
         self.behavior = behavior
@@ -121,34 +118,6 @@ final class FakeAudioManager: SegmentAudioManaging, @unchecked Sendable {
         }
         return []
     }
-
-    func finishAndRemix(
-        to outputURL: URL,
-        debugKeepRejected: Bool,
-        deleteSourceFiles: Bool,
-        silenceMusic: Bool
-    ) async throws -> AudioRemixerResult {
-        finishAndRemixCount.increment()
-        if case .throwFromFinishAndRemix(let error) = behavior {
-            throw error
-        }
-        if case .hangFinishAndRemix = behavior {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-            throw CancellationError()
-        }
-        if deleteSourceFiles {
-            let fm = FileManager.default
-            let dir = outputURL.deletingLastPathComponent()
-            if let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
-                for file in files where file.lastPathComponent.contains("_audio_") {
-                    try? fm.removeItem(at: file)
-                }
-            }
-        }
-        return AudioRemixerResult(tracksWritten: 0, tracksSkipped: 0, sourceFiles: [])
-    }
 }
 
 @MainActor
@@ -163,7 +132,6 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
     let startBehavior: FakeSegmentStartBehavior
     let startCount = LockedCounter()
     let finishCaptureCount = LockedCounter()
-    let finishAndRenameCount = LockedCounter()
 
     init(
         outputDirectory: URL,
@@ -210,11 +178,6 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
                 micMetadataJSON: nil
             )
         }
-    }
-
-    func finishAndRename() async -> URL {
-        finishAndRenameCount.increment()
-        return outputDirectory
     }
 
     func updateContentFilter(_ filters: [CGDirectDisplayID: SCContentFilter]) async throws {}

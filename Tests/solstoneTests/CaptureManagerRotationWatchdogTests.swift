@@ -201,44 +201,6 @@ struct CaptureManagerRotationWatchdogTests {
         #expect(factoryCalls.count == 2)
     }
 
-    @Test func userStopPausePathUsesBoundedSegmentFinish() async throws {
-        let root = try makeTempDirectory("capture-user-pause")
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let writer = try await makeStartedBoundedPauseWriter(root: root)
-        let manager = CaptureManager(
-            storageManager: StorageManager(baseDirectory: root),
-            allowsEmptyDisplayConfigurationForTesting: true
-        )
-        manager.seedRecordingForTesting(currentSegment: writer)
-
-        let clock = ContinuousClock()
-        let start = clock.now
-        await manager.stopRecording()
-        let elapsed = start.duration(to: clock.now)
-
-        #expect(elapsed < .seconds(20))
-    }
-
-    @Test func lifecyclePausePathUsesBoundedSegmentFinish() async throws {
-        let root = try makeTempDirectory("capture-lifecycle-pause")
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let writer = try await makeStartedBoundedPauseWriter(root: root)
-        let manager = CaptureManager(
-            storageManager: StorageManager(baseDirectory: root),
-            allowsEmptyDisplayConfigurationForTesting: true
-        )
-        manager.seedRecordingForTesting(currentSegment: writer)
-
-        let clock = ContinuousClock()
-        let start = clock.now
-        _ = await manager.lifecyclePauseCapture(trigger: "test", stopAudio: false)
-        let elapsed = start.duration(to: clock.now)
-
-        #expect(elapsed < .seconds(20))
-    }
-
     private func makeSegmentDir(root: URL, name: String) throws -> URL {
         let dir = root.appendingPathComponent("2026-05-26", isDirectory: true)
             .appendingPathComponent(name, isDirectory: true)
@@ -264,24 +226,6 @@ struct CaptureManagerRotationWatchdogTests {
             guard let url = item as? URL else { return nil }
             return url.lastPathComponent.hasPrefix(prefix) ? url : nil
         }
-    }
-
-    private func makeStartedBoundedPauseWriter(root: URL) async throws -> SegmentWriter {
-        let dir = try makeSegmentDir(root: root, name: "444444.incomplete")
-        let writer = SegmentWriter(
-            outputDirectory: dir,
-            timePrefix: "444444",
-            screenshotCapturerFactory: { _, _, _, _, _, _ in FakeScreenshotCapturer() },
-            audioManagerFactory: { _, _, _, _ in FakeAudioManager(behavior: .hangFinishAndRemix) }
-        )
-        let display = DisplayInfo(
-            displayID: 7,
-            width: 100,
-            height: 100,
-            bounds: .zero
-        )
-        try await writer.start(displayInfos: [display], filters: [:], audioFilter: nil)
-        return writer
     }
 
     nonisolated private static func currentTimePrefix() -> String {
