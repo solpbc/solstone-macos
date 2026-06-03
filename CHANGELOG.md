@@ -5,6 +5,13 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.11] - 2026-06-03
+
+### Fixed
+- the menu and Settings now use the same journal status, so a healthy journal is not shown as stopped in one place and synced in another.
+- if the bundled journal needs attention, the menu opens Settings instead of trying to restart from the dropdown. restart now lives in the journal settings pane, where the status reason is visible.
+- the app now says journal throughout the menu, Settings, install status, and accessibility labels. the old technical wording is gone.
+
 ## [1.3.10] - 2026-06-03
 
 ### Changed
