@@ -360,15 +360,15 @@ struct BundledServiceCard: View {
         }
     }
 
-    private func upgradeFailureContent(installedVersion: String, pinnedVersion: String, errorDetails: String) -> some View {
+    private func upgradeFailureContent(installedVersion: String?, pinnedVersion: String, errorDetails: String) -> some View {
         failureCardBody(
-            summary: upgradeFailedStatusMessage(installedVersion: installedVersion),
-            retryTitle: upgradeFailedRetryButtonTitle,
+            summary: upgradeFailedStatusMessage(installedVersion: installedVersion, pinnedVersion: pinnedVersion),
+            retryTitle: upgradeFailureRetryButtonTitle(installedVersion: installedVersion, pinnedVersion: pinnedVersion),
             retryAction: {
-                installer.start(
+                installer.retryUpgradeFailure(
                     journalURL: journalURL,
-                    existingInstallChoice: .createFresh,
-                    upgradeFromInstalledVersion: installedVersion
+                    installedVersion: installedVersion,
+                    pinnedVersion: pinnedVersion
                 )
             },
             rawDetails: errorDetails,
@@ -562,7 +562,7 @@ struct BundledServiceCard: View {
     }
 
     private func upgradeFailureDiagnosticInput(
-        installedVersion: String,
+        installedVersion: String?,
         pinnedVersion: String,
         errorDetails: String
     ) -> FailureDiagnosticInput {
@@ -576,7 +576,7 @@ struct BundledServiceCard: View {
         return diagnosticInput(
             phase: failedState.map { label(for: rowForFailure($0)) } ?? label(for: .installSolstone),
             errorCode: failedState.flatMap(errorCode(for:)),
-            errorMessage: failedState.map(failureMessage) ?? upgradeFailedStatusMessage(installedVersion: installedVersion),
+            errorMessage: failedState.map(failureMessage) ?? upgradeFailedStatusMessage(installedVersion: installedVersion, pinnedVersion: pinnedVersion),
             installedVersion: installedVersion,
             pinnedVersion: pinnedVersion,
             logExcerpt: errorDetails
@@ -660,9 +660,23 @@ let firstLaunchPermissionPromptsNote: String =
     "macOS will ask permission for solstone's python runtime on first launch so sol can read transcripts and observations into your journal."
 
 let upgradeFailedRetryButtonTitle = "try upgrade again"
+let registerAgainRetryButtonTitle = "try registering again"
 
-func upgradeFailedStatusMessage(installedVersion: String) -> String {
-    "couldn't upgrade solstone — still running \(installedVersion)"
+func upgradeFailureRetryButtonTitle(installedVersion: String?, pinnedVersion: String) -> String {
+    if installedVersion == pinnedVersion {
+        return registerAgainRetryButtonTitle
+    }
+    return upgradeFailedRetryButtonTitle
+}
+
+func upgradeFailedStatusMessage(installedVersion: String?, pinnedVersion: String) -> String {
+    guard let installedVersion, !installedVersion.isEmpty else {
+        return "upgrade may be incomplete — couldn't confirm the running version"
+    }
+    if installedVersion == pinnedVersion {
+        return "upgraded solstone to \(pinnedVersion) — couldn't register this observer"
+    }
+    return "couldn't upgrade solstone — still running \(installedVersion)"
 }
 
 func sanitizedInlineFailureMessage(_ message: String) -> String {

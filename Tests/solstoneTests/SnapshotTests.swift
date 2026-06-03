@@ -245,7 +245,7 @@ struct SnapshotTests {
         state.installer.modelsProgress = .done
         state.installer.lastFailureLog = rawLog
         state.installer.upgradeFailureRecord = UpgradeFailureRecord(
-            installed: "0.4.7",
+            installed: BundleConfig.solstonePinVersion,
             pinned: BundleConfig.solstonePinVersion,
             errorDetails: rawLog
         )

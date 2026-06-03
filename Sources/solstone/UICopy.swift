@@ -15,4 +15,6 @@ public enum UICopy {
     public static let SETTINGS_ATTENTION_UPDATE_CHECK_FAILED = "update check failed"
     public static let SETTINGS_RESTART_REQUIRED_BANNER = "restart needed for this to take effect — restart now →"
     public static let INSTALLER_INLINE_FAILURE_GENERIC = "setup hit a snag — retry below, or open details to share with support."
+    public static let INSTALLER_READINESS_TIMEOUT = "solstone didn't become ready in time"
+    public static let INSTALLER_READINESS_GATE_FAILED = "couldn't get solstone ready for this observer"
 }

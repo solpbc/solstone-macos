@@ -137,6 +137,279 @@ struct SolstoneInstallerTests {
         try await assertState4(observerSucceeds: false, expectsDone: false)
     }
 
+    @Test func upgradeReadinessGateDefersObserverCreateUntilUpCompletes() async throws {
+        let runner = FakeSubprocessRunner()
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+        let upDone = LockedStringBox()
+        let observerSawUp = LockedStringBox()
+        enqueueSuccessfulUpgrade(
+            runner,
+            resolvedJournal: "/tmp/journal",
+            readinessGate: .success(delay: .milliseconds(50), sideEffect: {
+                upDone.set("done")
+            }),
+            observer: .success(stdout: observerJSON, sideEffect: {
+                observerSawUp.set(upDone.value == "done" ? "yes" : "no")
+            })
+        )
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        #expect(observerSawUp.value == "yes")
+        #expect(runner.invocations.filter { $0.arguments.first == "observer" }.count == 1)
+    }
+
+    @Test func freshInstallReadinessGateDefersObserverCreateUntilUpCompletes() async throws {
+        let runner = FakeSubprocessRunner()
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+        let stagedSolPath = SolstoneRuntimeLayout
+            .staging(rootURL: fixtureURLs.runtimeRoot, version: BundleConfig.solstonePinVersion)
+            .solBinary
+            .path
+        let finder = SequencedSolBinaryFinder([nil, stagedSolPath])
+        let upDone = LockedStringBox()
+        let observerSawUp = LockedStringBox()
+        enqueueSuccessfulBundledPythonPreflight(runner)
+        runner.enqueue("tool", .success())
+        runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("up", .success(delay: .milliseconds(50), sideEffect: {
+            upDone.set("done")
+        }))
+        runner.enqueue("observer", .success(stdout: observerJSON, sideEffect: {
+            observerSawUp.set(upDone.value == "done" ? "yes" : "no")
+        }))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            solBinaryFinder: { finder.next() }
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.main == .done }
+
+        #expect(observerSawUp.value == "yes")
+        #expect(runner.invocations.filter { $0.arguments.first == "observer" }.count == 1)
+    }
+
+    @Test func readinessGateTimeoutStderrFailsRegisteringWithoutStillRunningCopy() async throws {
+        let installer = try await installerAfterUpgradeReadinessFailure(
+            readinessGate: .success(
+                stderr: Data("Service did not become ready within 60s — run 'journal service status' or 'journal doctor' for diagnostics\n".utf8),
+                exitCode: 1
+            )
+        )
+
+        if case .failed(.registering(let message)) = installer.main {
+            #expect(message == UICopy.INSTALLER_READINESS_TIMEOUT)
+            #expect(!message.contains("still running"))
+        } else {
+            Issue.record("expected registering failure")
+        }
+        let details = installer.upgradeFailureRecord?.errorDetails ?? ""
+        #expect(!details.contains("still running"))
+    }
+
+    @Test func readinessGateOuterTimeoutFailsAsReadinessTimeout() async throws {
+        let installer = try await installerAfterUpgradeReadinessFailure(
+            readinessGate: .success(delay: .milliseconds(10)),
+            readinessGateTimeout: .milliseconds(10)
+        )
+
+        if case .failed(.registering(let message)) = installer.main {
+            #expect(message == UICopy.INSTALLER_READINESS_TIMEOUT)
+        } else {
+            Issue.record("expected registering failure")
+        }
+        #expect(installer.upgradeFailureRecord?.installed == BundleConfig.solstonePinVersion)
+    }
+
+    @Test func readinessGateLaunchFailureUsesGateFailureCopy() async throws {
+        let installer = try await installerAfterUpgradeReadinessFailure(
+            readinessGate: .failure("launch boom")
+        )
+
+        if case .failed(.registering(let message)) = installer.main {
+            #expect(message == UICopy.INSTALLER_READINESS_GATE_FAILED)
+            #expect(!message.contains("still running"))
+        } else {
+            Issue.record("expected registering failure")
+        }
+    }
+
+    @Test func readinessGateOtherNonzeroUsesGateFailureCopyAndLogDetail() async throws {
+        let installer = try await installerAfterUpgradeReadinessFailure(
+            readinessGate: .success(stderr: Data("launchctl failed\n".utf8), exitCode: 1)
+        )
+
+        if case .failed(.registering(let message)) = installer.main {
+            #expect(message == UICopy.INSTALLER_READINESS_GATE_FAILED)
+        } else {
+            Issue.record("expected registering failure")
+        }
+        #expect(installer.upgradeFailureRecord?.errorDetails.contains("launchctl failed") == true)
+    }
+
+    @Test func postActivationRegisteringFailurePersistsReprobedPinnedVersion() async throws {
+        let store = InMemoryUpgradeFailureRecordStore()
+        let runner = FakeSubprocessRunner()
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+        enqueueSuccessfulUpgrade(
+            runner,
+            resolvedJournal: "/tmp/journal",
+            observer: .success(stderr: Data("observer failed\n".utf8), exitCode: 1)
+        )
+        runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            failureRecordStore: store
+        )
+        defer { installer.cancel() }
+
+        installer.start(
+            journalURL: URL(fileURLWithPath: "/tmp/journal"),
+            existingInstallChoice: .createFresh,
+            upgradeFromInstalledVersion: "0.3.1"
+        )
+        try await waitForTerminal(installer)
+
+        let record = try #require(store.load())
+        #expect(record.installed == BundleConfig.solstonePinVersion)
+        #expect(upgradeFailedStatusMessage(installedVersion: record.installed, pinnedVersion: record.pinned) == "upgraded solstone to \(BundleConfig.solstonePinVersion) — couldn't register this observer")
+    }
+
+    @Test func postActivationRegisteringFailurePersistsUnknownWhenReprobeNil() async throws {
+        let store = InMemoryUpgradeFailureRecordStore()
+        let runner = FakeSubprocessRunner()
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+        enqueueSuccessfulUpgrade(
+            runner,
+            resolvedJournal: "/tmp/journal",
+            observer: .success(stderr: Data("observer failed\n".utf8), exitCode: 1)
+        )
+        runner.enqueue("--version", .success(exitCode: 1))
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            failureRecordStore: store
+        )
+        defer { installer.cancel() }
+
+        installer.start(
+            journalURL: URL(fileURLWithPath: "/tmp/journal"),
+            existingInstallChoice: .createFresh,
+            upgradeFromInstalledVersion: "0.3.1"
+        )
+        try await waitForTerminal(installer)
+
+        let record = try #require(store.load())
+        #expect(record.installed == nil)
+        #expect(upgradeFailedStatusMessage(installedVersion: record.installed, pinnedVersion: record.pinned) == "upgrade may be incomplete — couldn't confirm the running version")
+    }
+
+    @Test func upgradeFailureRetryConfirmedNewAcceptsExistingAndRegisters() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("up", .success())
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.retryUpgradeFailure(
+            journalURL: URL(fileURLWithPath: "/tmp/journal"),
+            installedVersion: BundleConfig.solstonePinVersion,
+            pinnedVersion: BundleConfig.solstonePinVersion
+        )
+        try await waitUntil { installer.main == .done }
+
+        #expect(!runner.invocations.contains { $0.arguments.starts(with: ["tool", "install"]) })
+        let upIndex = try #require(runner.invocations.firstIndex { $0.arguments.first == "up" })
+        let observerIndex = try #require(runner.invocations.firstIndex { $0.arguments.first == "observer" })
+        #expect(upIndex < observerIndex)
+    }
+
+    @Test func upgradeFailureRetryUnknownAcceptsExistingAndRegisters() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("up", .success())
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.retryUpgradeFailure(
+            journalURL: URL(fileURLWithPath: "/tmp/journal"),
+            installedVersion: nil,
+            pinnedVersion: BundleConfig.solstonePinVersion
+        )
+        try await waitUntil { installer.main == .done }
+
+        #expect(!runner.invocations.contains { $0.arguments.starts(with: ["tool", "install"]) })
+        let upIndex = try #require(runner.invocations.firstIndex { $0.arguments.first == "up" })
+        let observerIndex = try #require(runner.invocations.firstIndex { $0.arguments.first == "observer" })
+        #expect(upIndex < observerIndex)
+    }
+
+    @Test func singleInFlightStartRejectedDuringReadinessGate() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("up", .success(delay: .milliseconds(50)))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitUntil {
+            runner.invocations.contains { $0.arguments.first == "up" }
+        }
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/other-journal"), existingInstallChoice: .acceptExisting)
+        try await waitUntil { installer.main == .done }
+
+        #expect(runner.invocations.filter { $0.arguments.first == "setup" }.count == 1)
+        #expect(runner.invocations.filter { $0.arguments.first == "up" }.count == 1)
+        #expect(runner.invocations.filter { $0.arguments.first == "observer" }.count == 1)
+    }
+
+    @Test func readinessGateHappyPathClearsFailureRecord() async throws {
+        let store = InMemoryUpgradeFailureRecordStore(record: UpgradeFailureRecord(
+            installed: "0.3.1",
+            pinned: BundleConfig.solstonePinVersion,
+            errorDetails: "old"
+        ))
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("up", .success())
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(runner: runner, failureRecordStore: store)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitUntil { installer.main == .done }
+
+        #expect(installer.upgradeFailureRecord == nil)
+        #expect(store.load() == nil)
+    }
+
     @Test func existingInstall_choiceSkipsSubprocess() async throws {
         let runner = FakeSubprocessRunner()
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
@@ -2175,7 +2448,8 @@ struct SolstoneInstallerTests {
         stagedInstallTimeout: Duration = .seconds(120),
         stagedInstallMaxAttempts: Int = 1,
         stagedInstallRetryBackoff: Duration = .zero,
-        stagedVerifyTimeout: Duration = .seconds(10)
+        stagedVerifyTimeout: Duration = .seconds(10),
+        readinessGateTimeout: Duration = .seconds(120)
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
@@ -2194,7 +2468,8 @@ struct SolstoneInstallerTests {
             stagedInstallTimeout: stagedInstallTimeout,
             stagedInstallMaxAttempts: stagedInstallMaxAttempts,
             stagedInstallRetryBackoff: stagedInstallRetryBackoff,
-            stagedVerifyTimeout: stagedVerifyTimeout
+            stagedVerifyTimeout: stagedVerifyTimeout,
+            readinessGateTimeout: readinessGateTimeout
         )
     }
 
@@ -2220,7 +2495,8 @@ struct SolstoneInstallerTests {
         stagedInstallTimeout: Duration = .seconds(120),
         stagedInstallMaxAttempts: Int = 1,
         stagedInstallRetryBackoff: Duration = .zero,
-        stagedVerifyTimeout: Duration = .seconds(10)
+        stagedVerifyTimeout: Duration = .seconds(10),
+        readinessGateTimeout: Duration = .seconds(120)
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
@@ -2244,7 +2520,8 @@ struct SolstoneInstallerTests {
             stagedInstallTimeout: stagedInstallTimeout,
             stagedInstallMaxAttempts: stagedInstallMaxAttempts,
             stagedInstallRetryBackoff: stagedInstallRetryBackoff,
-            stagedVerifyTimeout: stagedVerifyTimeout
+            stagedVerifyTimeout: stagedVerifyTimeout,
+            readinessGateTimeout: readinessGateTimeout
         )
     }
 
@@ -2256,13 +2533,45 @@ struct SolstoneInstallerTests {
         }
     }
 
+    private func installerAfterUpgradeReadinessFailure(
+        readinessGate: FakeSubprocessRunner.Response,
+        readinessGateTimeout: Duration = .seconds(120)
+    ) async throws -> SolstoneInstaller {
+        let runner = FakeSubprocessRunner()
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+        enqueueSuccessfulUpgrade(
+            runner,
+            resolvedJournal: "/tmp/journal",
+            readinessGate: readinessGate
+        )
+        runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            readinessGateTimeout: readinessGateTimeout
+        )
+        defer { installer.cancel() }
+
+        installer.start(
+            journalURL: URL(fileURLWithPath: "/tmp/journal"),
+            existingInstallChoice: .createFresh,
+            upgradeFromInstalledVersion: "0.3.1"
+        )
+        try await waitForTerminal(installer)
+        return installer
+    }
+
     private func enqueueSuccessfulUpgrade(
         _ runner: FakeSubprocessRunner,
         resolvedJournal: String = "/tmp/journal",
         psOutput: String = "",
         setupSideEffect: (@Sendable () -> Void)? = nil,
         newInstall: FakeSubprocessRunner.Response = .success(),
-        newStart: FakeSubprocessRunner.Response = .success()
+        newStart: FakeSubprocessRunner.Response = .success(),
+        readinessGate: FakeSubprocessRunner.Response = .success(),
+        observer: FakeSubprocessRunner.Response? = nil
     ) {
         runner.enqueue("config", .success(stdout: Data("path: \(resolvedJournal)\n".utf8)))
         enqueueSuccessfulBundledPythonPreflight(runner)
@@ -2275,7 +2584,8 @@ struct SolstoneInstallerTests {
         runner.enqueue("setup", .success(stdout: fixture("golden_ok"), sideEffect: setupSideEffect))
         runner.enqueue("service", newInstall)
         runner.enqueue("service", newStart)
-        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("up", readinessGate)
+        runner.enqueue("observer", observer ?? .success(stdout: observerJSON))
         runner.enqueue("install-models", .success())
     }
 
@@ -2392,6 +2702,21 @@ struct UpgradeFailureRecordStoreTests {
 
         store.clear()
         #expect(store.load() == nil)
+    }
+
+    @Test func userDefaultsStoreLoadsLegacyRecordWithInstalledString() throws {
+        let suiteName = "solstone-upgrade-record-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        let store = UserDefaultsUpgradeFailureRecordStore(defaults: defaults)
+        defaults.set(
+            Data(#"{"installed":"0.3.1","pinned":"0.3.8","errorDetails":"details"}"#.utf8),
+            forKey: "SolstoneUpgradeFailureRecord"
+        )
+
+        #expect(store.load() == UpgradeFailureRecord(installed: "0.3.1", pinned: "0.3.8", errorDetails: "details"))
     }
 
     @Test func inMemoryStoreRoundTripsRecord() {

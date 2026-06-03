@@ -49,12 +49,14 @@ struct InstallerCardStateTests {
     @Test func terminalCardStateAppliesUpgradeFailureTruthTable() {
         let progress = SubprocessProgress(phase: "phase")
         let matching = UpgradeFailureRecord(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion, errorDetails: "details")
+        let unknown = UpgradeFailureRecord(installed: nil, pinned: BundleConfig.solstonePinVersion, errorDetails: "details")
         let stale = UpgradeFailureRecord(installed: "0.3.1", pinned: "0.3.7", errorDetails: "details")
         let failed = MainState.failed(.installSolstone(message: "failed"))
 
         #expect(terminalCardState(main: failed, probe: nil, failureRecord: nil) == .failed(.installSolstone(message: "failed")))
         #expect(terminalCardState(main: failed, probe: nil, failureRecord: stale) == .failed(.installSolstone(message: "failed")))
         #expect(terminalCardState(main: failed, probe: nil, failureRecord: matching) == .upgradeFailed(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion, errorDetails: "details"))
+        #expect(terminalCardState(main: failed, probe: nil, failureRecord: unknown) == .upgradeFailed(installed: nil, pinned: BundleConfig.solstonePinVersion, errorDetails: "details"))
         #expect(terminalCardState(main: .done, probe: nil, failureRecord: matching) == .done)
         #expect(terminalCardState(main: .awaitingChoice(existingInstall: true), probe: nil, failureRecord: matching) == .installedPlaceholder)
         #expect(terminalCardState(main: .done, probe: .current(version: "0.3.8"), failureRecord: matching) == .installedCurrent(version: "0.3.8"))

@@ -10,7 +10,7 @@ enum InstallerCardState: Equatable {
     case installedCurrent(version: String)
     case installedUnknown
     case externallyManaged(solPath: String, probe: VersionProbeResult?)
-    case upgradeFailed(installed: String, pinned: String, errorDetails: String)
+    case upgradeFailed(installed: String?, pinned: String, errorDetails: String)
     case failed(FailedState)
 }
 

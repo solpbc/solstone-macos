@@ -65,12 +65,47 @@ struct BundledServiceCardTests {
         }
     }
 
+    @Test func readinessAndUpgradeFailureCopyAvoidsForbiddenTokensAndStartsLowercase() {
+        let copies = [
+            UICopy.INSTALLER_READINESS_TIMEOUT,
+            UICopy.INSTALLER_READINESS_GATE_FAILED,
+            registerAgainRetryButtonTitle,
+            upgradeFailedStatusMessage(installedVersion: "0.4.0", pinnedVersion: "0.4.0"),
+            upgradeFailedStatusMessage(installedVersion: nil, pinnedVersion: "0.4.0"),
+        ]
+        let forbidden = ["server", "capture", "record", "monitor", "track", "collect", "watch"]
+        for copy in copies {
+            if let firstScalar = copy.unicodeScalars.first {
+                #expect(CharacterSet.lowercaseLetters.contains(firstScalar))
+            } else {
+                Issue.record("expected non-empty copy")
+            }
+            let lowered = copy.lowercased()
+            let words = Set(lowered.split { !$0.isLetter }.map(String.init))
+            for token in forbidden {
+                #expect(!words.contains(token))
+            }
+        }
+    }
+
     @Test func upgradeFailedStatusMessageUsesSpecLiteral() {
-        #expect(upgradeFailedStatusMessage(installedVersion: "0.3.1") == "couldn't upgrade solstone — still running 0.3.1")
+        #expect(upgradeFailedStatusMessage(installedVersion: "0.3.1", pinnedVersion: "0.4.0") == "couldn't upgrade solstone — still running 0.3.1")
+    }
+
+    @Test func upgradeFailedStatusMessageUsesConfirmedNewLiteral() {
+        #expect(upgradeFailedStatusMessage(installedVersion: "0.4.0", pinnedVersion: "0.4.0") == "upgraded solstone to 0.4.0 — couldn't register this observer")
+    }
+
+    @Test func upgradeFailedStatusMessageUsesUnknownLiteral() {
+        #expect(upgradeFailedStatusMessage(installedVersion: nil, pinnedVersion: "0.4.0") == "upgrade may be incomplete — couldn't confirm the running version")
     }
 
     @Test func upgradeFailedRetryButtonTitleUsesSpecLiteral() {
         #expect(upgradeFailedRetryButtonTitle == "try upgrade again")
+    }
+
+    @Test func upgradeFailureRetryButtonTitleUsesRegisteringLiteralForConfirmedNew() {
+        #expect(upgradeFailureRetryButtonTitle(installedVersion: "0.4.0", pinnedVersion: "0.4.0") == "try registering again")
     }
 
     @Test func sanitizerHidesRawRedirectionCopy() {
@@ -99,8 +134,13 @@ struct BundledServiceCardTests {
     }
 
     @Test func sanitizerKeepsUpgradeStatusSummary() {
-        let summary = upgradeFailedStatusMessage(installedVersion: "0.4.7")
+        let summary = upgradeFailedStatusMessage(installedVersion: "0.4.7", pinnedVersion: "0.4.8")
         #expect(sanitizedInlineFailureMessage(summary) == "couldn't upgrade solstone — still running 0.4.7")
+    }
+
+    @Test func sanitizerKeepsReadinessGateSummaries() {
+        #expect(sanitizedInlineFailureMessage(UICopy.INSTALLER_READINESS_TIMEOUT) == UICopy.INSTALLER_READINESS_TIMEOUT)
+        #expect(sanitizedInlineFailureMessage(UICopy.INSTALLER_READINESS_GATE_FAILED) == UICopy.INSTALLER_READINESS_GATE_FAILED)
     }
 
     @Test func failureDiagnosticRetainsRawRedirectionText() {
@@ -263,6 +303,15 @@ get help → https://support.solstone.app
         )
 
         #expect(markdown.contains("- upgrade: installed 0.4.5 → pinned 0.4.6"))
+    }
+
+    @Test func failureDiagnosticOmitsInstalledToPinnedLineWhenInstalledUnknown() {
+        let markdown = buildFailureDiagnosticMarkdown(
+            diagnosticInput(installedVersion: nil),
+            doctorReport: nil
+        )
+
+        #expect(!markdown.contains("- upgrade: installed"))
     }
 
     @Test func failureDiagnosticUsesUpgradeErrorDetailsAsLogExcerpt() {

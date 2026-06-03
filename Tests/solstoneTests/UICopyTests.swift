@@ -66,4 +66,12 @@ struct UICopyTests {
     @Test func installerInlineFailureGenericString() {
         #expect(UICopy.INSTALLER_INLINE_FAILURE_GENERIC == "setup hit a snag \u{2014} retry below, or open details to share with support.")
     }
+
+    @Test func installerReadinessTimeoutString() {
+        #expect(UICopy.INSTALLER_READINESS_TIMEOUT == "solstone didn\u{0027}t become ready in time")
+    }
+
+    @Test func installerReadinessGateFailedString() {
+        #expect(UICopy.INSTALLER_READINESS_GATE_FAILED == "couldn\u{0027}t get solstone ready for this observer")
+    }
 }
