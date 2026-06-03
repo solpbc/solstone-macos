@@ -5,6 +5,14 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.10] - 2026-06-03
+
+### Changed
+- the journal settings stay fully visible and usable in every installer state. if you manage your own journal, you can still see bundled install and failure status while another mode is selected, and switching journal modes no longer cancels an install that's already running.
+- app updates and installs no longer get in each other's way. while solstone is installing, automatic update checks hold off so the two don't collide, but you can still check for updates yourself anytime; if an update is waiting, it picks up once the install finishes.
+
+### Fixed
+- during a fresh install or an app-run upgrade, solstone now waits for your journal to be fully ready before connecting your observers, so setup no longer moves ahead before the journal can accept them. if an upgrade does hit a snag after the new version is already in place, the status card now reflects what actually happened and points you to the right next step instead of restarting the whole upgrade.
 ## [1.3.9] - 2026-06-02
 
 ### Changed
