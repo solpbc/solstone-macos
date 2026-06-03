@@ -25,7 +25,8 @@ struct UpdatesWireUpTests {
             "AXID.Updates.automaticDownloads",
             "AXID.Updates.releaseNotesOnline",
             "AXID.Updates.releaseNotes",
-            "AXID.Updates.downloadProgress"
+            "AXID.Updates.downloadProgress",
+            "AXID.Updates.deferredInstallState"
         ]
 
         for reference in references {

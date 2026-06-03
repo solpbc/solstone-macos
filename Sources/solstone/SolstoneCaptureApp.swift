@@ -152,12 +152,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct SolstoneCaptureApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @State private var appState = AppState()
-    @State private var updateController = UpdateController()
+    @State private var appState: AppState
+    @State private var updateController: UpdateController
 
     init() {
         // Configure unbuffered output for stderr
         Stderr.setUnbuffered()
+
+        let appState = AppState()
+        _appState = State(initialValue: appState)
+        _updateController = State(initialValue: UpdateController(
+            exclusivity: { appState.installer.exclusiveOperationInProgress }
+        ))
     }
 
     private var statusAccessibilityLabel: String {
@@ -345,16 +351,6 @@ private struct StatusIcon: View {
                     openPermissions: openPermissions,
                     openService: openService
                 )
-            }
-            .onChange(of: appState.installer.main) { _, newState in
-                switch newState {
-                case .cleaningUp, .installingSolstone, .runningSolSetup, .registering:
-                    updateController.installerDidStart()
-                case .externallyManaged, .done, .failed:
-                    updateController.installerDidFinish()
-                case .detecting, .awaitingChoice:
-                    break
-                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .solMacOpenSettings)) { _ in
                 openWindow(id: "settings")

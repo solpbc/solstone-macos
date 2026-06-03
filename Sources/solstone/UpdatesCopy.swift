@@ -10,6 +10,10 @@ enum UpdatesCopy {
     static let errorTitle = "update check failed"
     static func errorMessage() -> String { "we couldn't check right now." }
 
+    static func errorWithAvailableMessage(version: String) -> String {
+        "we couldn't check right now. version \(version) was found earlier."
+    }
+
     static let unavailableTitle = "updates unavailable"
     static let unavailableSubtitle = "this build is missing a valid update feed or signing key."
 
@@ -64,6 +68,16 @@ enum UpdatesCopy {
     static func updateAvailableSubtitle(version: String) -> String {
         "solstone observer \(version) is ready to download."
     }
+
+    static func updateAvailableCheckSubtitle(version: String) -> String {
+        "version \(version) was found earlier. check again to continue."
+    }
+
+    static func deferredTitle(version: String) -> String {
+        version.isEmpty ? "deferred update" : "deferred update \(version)"
+    }
+
+    static let deferredSubtitle = "deferred — will continue after journal setup."
 
     static func downloadingTitle(version: String) -> String {
         "downloading \(version)"

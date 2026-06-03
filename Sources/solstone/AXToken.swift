@@ -175,15 +175,13 @@ extension ConnectionTestState {
     }
 }
 
-extension UpdateState {
+extension UpdateActivity {
     var axToken: String {
         switch self {
         case .idle:
             return "idle"
         case .checking:
             return "checking"
-        case .updateAvailable:
-            return "update_available"
         case .downloading:
             return "downloading"
         case .extracting:
@@ -192,10 +190,6 @@ extension UpdateState {
             return "ready_to_install"
         case .installing:
             return "installing"
-        case .noUpdateAvailable:
-            return "up_to_date"
-        case .error:
-            return "error"
         }
     }
 }

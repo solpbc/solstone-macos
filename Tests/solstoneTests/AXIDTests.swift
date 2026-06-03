@@ -103,15 +103,12 @@ struct AXIDTests {
         expectToken(ConnectionTestState.success.axToken, "success")
         expectToken(ConnectionTestState.failure("boom").axToken, "failure")
 
-        expectToken(UpdateState.idle.axToken, "idle")
-        expectToken(UpdateState.checking.axToken, "checking")
-        expectToken(UpdateState.updateAvailable(version: "1.0.0", releaseNotes: nil).axToken, "update_available")
-        expectToken(UpdateState.downloading(version: "1.0.0", receivedBytes: 1, totalBytes: 2).axToken, "downloading")
-        expectToken(UpdateState.extracting(version: "1.0.0", progress: 0.5).axToken, "extracting")
-        expectToken(UpdateState.readyToInstall(version: "1.0.0", releaseNotes: nil).axToken, "ready_to_install")
-        expectToken(UpdateState.installing(version: "1.0.0").axToken, "installing")
-        expectToken(UpdateState.noUpdateAvailable.axToken, "up_to_date")
-        expectToken(UpdateState.error(message: "boom").axToken, "error")
+        expectToken(UpdateActivity.idle.axToken, "idle")
+        expectToken(UpdateActivity.checking.axToken, "checking")
+        expectToken(UpdateActivity.downloading(version: "1.0.0", receivedBytes: 1, totalBytes: 2).axToken, "downloading")
+        expectToken(UpdateActivity.extracting(version: "1.0.0", progress: 0.5).axToken, "extracting")
+        expectToken(UpdateActivity.readyToInstall(version: "1.0.0", releaseNotes: nil).axToken, "ready_to_install")
+        expectToken(UpdateActivity.installing(version: "1.0.0").axToken, "installing")
 
         expectToken(SettingsView.SidebarBadgeState.attention.axToken, "attention")
         expectToken(SettingsView.SidebarBadgeState.done.axToken, "done")
@@ -378,6 +375,7 @@ struct AXIDTests {
             AXID.Updates.releaseNotesOnline,
             AXID.Updates.downloadProgress,
             AXID.Updates.extractProgress,
+            AXID.Updates.deferredInstallState,
             AXID.Updates.automaticChecks,
             AXID.Updates.frequencyPicker,
             AXID.Updates.frequencyState,

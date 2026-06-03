@@ -12,6 +12,29 @@ private let testBundledPythonURL = URL(fileURLWithPath: "/bin/echo")
 @Suite("SolstoneInstaller")
 @MainActor
 struct SolstoneInstallerTests {
+    @Test func exclusiveOperationInProgressMatchesActiveMainStates() {
+        let installer = makeInstaller(runner: FakeSubprocessRunner())
+        defer { installer.cancel() }
+        let progress = SubprocessProgress(phase: "phase")
+        let cases: [(MainState, Bool)] = [
+            (.detecting, false),
+            (.awaitingChoice(existingInstall: false), false),
+            (.awaitingChoice(existingInstall: true), false),
+            (.cleaningUp(progress), true),
+            (.installingSolstone(progress), true),
+            (.runningSolSetup(progress), true),
+            (.registering(progress), true),
+            (.externallyManaged(solPath: "/opt/sol"), false),
+            (.done, false),
+            (.failed(.installSolstone(message: "failed")), false)
+        ]
+
+        for (state, expected) in cases {
+            installer.main = state
+            #expect(installer.exclusiveOperationInProgress == expected)
+        }
+    }
+
     @Test func runningSolSetup_exitZero_transitionsTo_registering() async throws {
         let runner = FakeSubprocessRunner()
         runner.enqueue("setup", .success(stdout: fixture("golden_ok"), delay: .milliseconds(0)))

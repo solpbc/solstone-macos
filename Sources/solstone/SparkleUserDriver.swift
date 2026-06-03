@@ -25,26 +25,16 @@ final class SparkleUserDriver: NSObject, SPUUserDriver {
     }
 
     func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) {
-        controller.stashCancellation(cancellation)
-        controller.state = .checking
+        controller.beginUserInitiatedCheck(cancellation: cancellation)
     }
 
     func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
-        let version = appcastItem.displayVersionString
-        let releaseNotes = appcastItem.itemDescription
-        controller.setLatestUpdate(version: version, releaseNotes: releaseNotes)
-        controller.stashChoiceReply(reply)
-
-        switch state.stage {
-        case .notDownloaded:
-            controller.state = .updateAvailable(version: version, releaseNotes: releaseNotes)
-            controller.updateLastCheck(.updateFound(version: version))
-        case .downloaded, .installing:
-            controller.state = .readyToInstall(version: version, releaseNotes: releaseNotes)
-            controller.updateLastCheck(.updateFound(version: version))
-        @unknown default:
-            controller.state = .readyToInstall(version: version, releaseNotes: releaseNotes)
-        }
+        controller.presentUpdateFound(
+            version: appcastItem.displayVersionString,
+            releaseNotes: appcastItem.itemDescription,
+            state: state,
+            reply: reply
+        )
     }
 
     func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {
@@ -59,21 +49,17 @@ final class SparkleUserDriver: NSObject, SPUUserDriver {
 
     func showUpdateNotFoundWithError(_ error: Error, acknowledgement: @escaping () -> Void) {
         Logger.setup.error("Sparkle no-update result: \(String(describing: error), privacy: .public)")
-        controller.clearPendingInteractions()
-        controller.state = .noUpdateAvailable
-        controller.updateLastCheck(.upToDate)
+        controller.presentNoUpdateFound()
         acknowledgement()
     }
 
     func showUpdaterError(_ error: Error, acknowledgement: @escaping () -> Void) {
-        controller.setOpaqueError(error)
-        controller.updateLastCheck(.failed)
+        controller.presentUpdaterError(error)
         acknowledgement()
     }
 
     func showDownloadInitiated(cancellation: @escaping () -> Void) {
-        controller.stashCancellation(cancellation)
-        controller.state = .downloading(version: controller.latestVersion ?? "", receivedBytes: 0, totalBytes: nil)
+        controller.beginDownload(cancellation: cancellation)
     }
 
     func showDownloadDidReceiveExpectedContentLength(_ expectedContentLength: UInt64) {
@@ -85,36 +71,28 @@ final class SparkleUserDriver: NSObject, SPUUserDriver {
     }
 
     func showDownloadDidStartExtractingUpdate() {
-        controller.clearPendingCancellation()
-        controller.state = .extracting(version: controller.latestVersion ?? "", progress: 0)
+        controller.beginExtracting()
     }
 
     func showExtractionReceivedProgress(_ progress: Double) {
-        controller.state = .extracting(version: controller.latestVersion ?? "", progress: progress)
+        controller.updateExtractionProgress(progress)
     }
 
     func showReady(toInstallAndRelaunch reply: @escaping (SPUUserUpdateChoice) -> Void) {
-        controller.stashChoiceReply(reply)
-        controller.state = .readyToInstall(
-            version: controller.latestVersion ?? "",
-            releaseNotes: controller.latestReleaseNotes
-        )
+        controller.readyToInstall(reply: reply)
     }
 
     func showInstallingUpdate(withApplicationTerminated applicationTerminated: Bool, retryTerminatingApplication: @escaping () -> Void) {
-        controller.clearPendingCancellation()
-        controller.state = .installing(version: controller.latestVersion ?? "")
+        controller.installingUpdate()
     }
 
     func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) {
-        controller.clearPendingInteractions()
-        controller.state = .idle
+        controller.updateInstalledAndRelaunched()
         acknowledgement()
     }
 
     func dismissUpdateInstallation() {
-        controller.clearPendingInteractions()
-        controller.state = .idle
+        controller.dismissUpdateInstallation()
     }
 
     func showUpdateInFocus() {

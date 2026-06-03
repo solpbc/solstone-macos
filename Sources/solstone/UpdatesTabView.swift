@@ -11,7 +11,7 @@ struct UpdatesTabView: View {
         VStack(alignment: .leading, spacing: 16) {
             AXStateCompanion(
                 id: AXID.Updates.statusState,
-                value: controller.state.axToken
+                value: controller.statusAXToken
             )
             if !controller.canCheckForUpdates {
                 titleBlock(
@@ -43,7 +43,7 @@ struct UpdatesTabView: View {
             }
             .accessibilityIdentifier(AXID.Updates.debugStatePicker)
             .onChange(of: debugFixture) { _, fixture in
-                controller.state = fixture.sampleState
+                fixture.apply(to: controller)
             }
             #endif
         }
@@ -74,7 +74,7 @@ struct UpdatesTabView: View {
 
     @ViewBuilder
     private var headerTrailing: some View {
-        switch controller.state {
+        switch controller.activity {
         case .checking:
             HStack(spacing: 8) {
                 ProgressView()
@@ -95,23 +95,11 @@ struct UpdatesTabView: View {
 
     @ViewBuilder
     private var transientBlock: some View {
-        switch controller.state {
-        case .idle, .noUpdateAvailable, .checking:
+        switch controller.activity {
+        case .idle:
+            idleTransientBlock
+        case .checking:
             EmptyView()
-        case .updateAvailable(let version, let releaseNotes):
-            titleBlock(
-                title: UpdatesCopy.updateAvailableTitle(version: version),
-                subtitle: UpdatesCopy.updateAvailableSubtitle(version: version)
-            )
-            releaseNotesSection(releaseNotes)
-            actionRow(
-                primaryTitle: UpdatesCopy.actionDownload,
-                primaryAction: controller.install,
-                primaryID: AXID.Updates.download,
-                secondaryTitle: UpdatesCopy.actionDismiss,
-                secondaryAction: controller.dismiss,
-                secondaryID: AXID.Updates.dismiss
-            )
         case .downloading(let version, let receivedBytes, let totalBytes):
             titleBlock(
                 title: UpdatesCopy.downloadingTitle(version: version),
@@ -154,11 +142,46 @@ struct UpdatesTabView: View {
                 subtitle: UpdatesCopy.installingSubtitle
             )
             ProgressView()
-        case .error(let message):
-            titleBlock(
-                title: UpdatesCopy.errorTitle,
-                subtitle: message
-            )
+        }
+    }
+
+    @ViewBuilder
+    private var idleTransientBlock: some View {
+        if let deferred = controller.deferredInstallIntent {
+            deferredBlock(deferred)
+        } else if controller.updateCheckFailed {
+            failedBlock
+        } else if let update = controller.availableUpdate {
+            availableBlock(update)
+        } else {
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func deferredBlock(_ deferred: DeferredInstallIntent) -> some View {
+        titleBlock(
+            title: UpdatesCopy.deferredTitle(version: deferred.version),
+            subtitle: UpdatesCopy.deferredSubtitle
+        )
+        AXStateCompanion(
+            id: AXID.Updates.deferredInstallState,
+            value: "deferred"
+        )
+        actionRow(
+            primaryTitle: UpdatesCopy.actionCheckAgain,
+            primaryAction: controller.checkForUpdates,
+            primaryID: AXID.Updates.check
+        )
+    }
+
+    @ViewBuilder
+    private var failedBlock: some View {
+        titleBlock(
+            title: UpdatesCopy.errorTitle,
+            subtitle: failedSubtitle()
+        )
+        if controller.hasLiveUpdateReply {
             actionRow(
                 primaryTitle: UpdatesCopy.actionRetry,
                 primaryAction: controller.checkForUpdates,
@@ -167,7 +190,48 @@ struct UpdatesTabView: View {
                 secondaryAction: controller.dismiss,
                 secondaryID: AXID.Updates.dismiss
             )
+        } else {
+            actionRow(
+                primaryTitle: UpdatesCopy.actionRetry,
+                primaryAction: controller.checkForUpdates,
+                primaryID: AXID.Updates.retry
+            )
         }
+    }
+
+    @ViewBuilder
+    private func availableBlock(_ update: AvailableUpdate) -> some View {
+        titleBlock(
+            title: UpdatesCopy.updateAvailableTitle(version: update.version),
+            subtitle: controller.canActOnAvailableUpdateDirectly
+                ? UpdatesCopy.updateAvailableSubtitle(version: update.version)
+                : UpdatesCopy.updateAvailableCheckSubtitle(version: update.version)
+        )
+        releaseNotesSection(update.releaseNotes)
+        if controller.canActOnAvailableUpdateDirectly {
+            actionRow(
+                primaryTitle: UpdatesCopy.actionDownload,
+                primaryAction: controller.install,
+                primaryID: AXID.Updates.download,
+                secondaryTitle: UpdatesCopy.actionDismiss,
+                secondaryAction: controller.dismiss,
+                secondaryID: AXID.Updates.dismiss
+            )
+        } else {
+            actionRow(
+                primaryTitle: UpdatesCopy.actionCheckAgain,
+                primaryAction: controller.checkForUpdates,
+                primaryID: AXID.Updates.check
+            )
+        }
+    }
+
+    private func failedSubtitle() -> String {
+        if let version = controller.availableUpdate?.version {
+            return UpdatesCopy.errorWithAvailableMessage(version: version)
+        }
+
+        return UpdatesCopy.errorMessage()
     }
 
     private var autoUpdateGroupBox: some View {
@@ -209,10 +273,13 @@ struct UpdatesTabView: View {
 
         let relative = date.formatted(.relative(presentation: .named))
 
-        switch controller.lastCheckResult {
+        switch controller.reconciledStatus.lastCheck?.outcome {
         case .upToDate:
             return UpdatesCopy.lastCheckedUpToDate(relative: relative)
-        case .updateFound(let version):
+        case .found:
+            guard let version = controller.reconciledStatus.availableVersion else {
+                return UpdatesCopy.lastCheckedGeneric(relative: relative)
+            }
             return UpdatesCopy.lastCheckedUpdateFound(relative: relative, version: version)
         case .failed:
             return UpdatesCopy.lastCheckedFailed(relative: relative)
@@ -377,7 +444,7 @@ private extension UpdatesTabView {
         case extracting
         case readyToInstall
         case installing
-        case noUpdateAvailable
+        case upToDate
         case error
 
         var id: String { rawValue }
@@ -399,26 +466,56 @@ private extension UpdatesTabView {
 - pages occasionally got stuck loading on a cold start, and the paused and error menu-bar icons had lost their sun in 1.2.1. both are resolved, alongside internal stability improvements.
 """
 
-        var sampleState: UpdateState {
+        @MainActor
+        func apply(to controller: UpdateController) {
+            let now = Date()
             switch self {
             case .idle:
-                .idle
+                controller.applyDebugFixture(activity: .idle)
             case .checking:
-                .checking
+                controller.applyDebugFixture(activity: .checking)
             case .updateAvailable:
-                .updateAvailable(version: "1.3.0", releaseNotes: Self._debugReleaseNotes_1_3_0)
+                controller.applyDebugFixture(
+                    activity: .idle,
+                    availableUpdate: AvailableUpdate(version: "1.3.0", releaseNotes: Self._debugReleaseNotes_1_3_0),
+                    lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found),
+                    hasLiveChoiceReply: true
+                )
             case .downloading:
-                .downloading(version: "1.1.0", receivedBytes: 1_048_576, totalBytes: 4_194_304)
+                controller.applyDebugFixture(
+                    activity: .downloading(version: "1.1.0", receivedBytes: 1_048_576, totalBytes: 4_194_304),
+                    availableUpdate: AvailableUpdate(version: "1.1.0", releaseNotes: nil),
+                    lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found)
+                )
             case .extracting:
-                .extracting(version: "1.1.0", progress: 0.5)
+                controller.applyDebugFixture(
+                    activity: .extracting(version: "1.1.0", progress: 0.5),
+                    availableUpdate: AvailableUpdate(version: "1.1.0", releaseNotes: nil),
+                    lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found)
+                )
             case .readyToInstall:
-                .readyToInstall(version: "1.3.0", releaseNotes: Self._debugReleaseNotes_1_3_0)
+                controller.applyDebugFixture(
+                    activity: .readyToInstall(version: "1.3.0", releaseNotes: Self._debugReleaseNotes_1_3_0),
+                    availableUpdate: AvailableUpdate(version: "1.3.0", releaseNotes: Self._debugReleaseNotes_1_3_0),
+                    lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found),
+                    hasLiveChoiceReply: true
+                )
             case .installing:
-                .installing(version: "1.1.0")
-            case .noUpdateAvailable:
-                .noUpdateAvailable
+                controller.applyDebugFixture(
+                    activity: .installing(version: "1.1.0"),
+                    availableUpdate: AvailableUpdate(version: "1.1.0", releaseNotes: nil),
+                    lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found)
+                )
+            case .upToDate:
+                controller.applyDebugFixture(
+                    activity: .idle,
+                    lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .upToDate)
+                )
             case .error:
-                .error(message: UpdatesCopy.errorMessage())
+                controller.applyDebugFixture(
+                    activity: .idle,
+                    lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .failed)
+                )
             }
         }
     }

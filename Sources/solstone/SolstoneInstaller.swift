@@ -26,6 +26,19 @@ public final class SolstoneInstaller {
     public internal(set) var lastFailureLog: String?
     public internal(set) var lastSetupProgress: SubprocessProgress?
     public internal(set) var upgradeFailureRecord: UpgradeFailureRecord?
+    /// True while the bundled-journal installer owns exclusive setup/upgrade work
+    /// that should defer automatic Sparkle update checks and install activation.
+    public var exclusiveOperationInProgress: Bool {
+        switch main {
+        case .cleaningUp, .installingSolstone, .runningSolSetup, .registering:
+            return true
+        case .detecting, .awaitingChoice, .externallyManaged, .done, .failed:
+            return false
+        }
+    }
+
+    /// Narrow app-managed journal upgrade signal used only to suppress pipeline
+    /// liveness probing while an existing bundled runtime is being replaced.
     public internal(set) var upgradeInProgress: Bool = false
 
     private weak var appState: AppState?

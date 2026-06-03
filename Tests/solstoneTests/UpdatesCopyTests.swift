@@ -12,6 +12,13 @@ struct UpdatesCopyTests {
         #expect(UpdatesCopy.updateAvailableSubtitle(version: "1.1.0") == "solstone observer 1.1.0 is ready to download.")
     }
 
+    @Test func updateAvailableCheckSubtitleString() {
+        #expect(
+            UpdatesCopy.updateAvailableCheckSubtitle(version: "1.1.0")
+                == "version 1.1.0 was found earlier. check again to continue."
+        )
+    }
+
     @Test func downloadingTitleString() {
         #expect(UpdatesCopy.downloadingTitle(version: "1.1.0") == "downloading 1.1.0")
     }
@@ -46,6 +53,18 @@ struct UpdatesCopyTests {
 
     @Test func errorMessageString() {
         #expect(UpdatesCopy.errorMessage() == "we couldn't check right now.")
+    }
+
+    @Test func errorWithAvailableMessageString() {
+        #expect(
+            UpdatesCopy.errorWithAvailableMessage(version: "1.1.0")
+                == "we couldn't check right now. version 1.1.0 was found earlier."
+        )
+    }
+
+    @Test func deferredStrings() {
+        #expect(UpdatesCopy.deferredTitle(version: "1.1.0") == "deferred update 1.1.0")
+        #expect(UpdatesCopy.deferredSubtitle == "deferred — will continue after journal setup.")
     }
 
     @Test func privacyFootnoteString() {

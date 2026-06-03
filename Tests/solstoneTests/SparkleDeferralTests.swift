@@ -1,4 +1,5 @@
 import Foundation
+import Sparkle
 import Testing
 @testable import solstone
 
@@ -7,80 +8,210 @@ import Testing
 struct SparkleDeferralTests {
     private let validFeedURL = "https://updates.solstone.app/solstone-macos/appcast.xml"
     private let validPublicKey = "11qYAYKxCrfVS/7TyWQHOg7hcvPa9jIlrwIaaPcHUho="
-    private let stashKey = "solstone.installer.preInstallerAutoCheckPreference"
+    private let statusKey = "solstone.updates.status"
+    private let legacyLastCheckedAtKey = "solstone.updates.lastCheckedAt"
+    private let legacyLastCheckResultKey = "solstone.updates.lastCheckResult"
 
-    @Test func installerStartDisablesThenRestoresAutomaticChecks() {
-        clearStash()
-        defer { clearStash() }
-        let controller = makeController()
+    @Test func delegateGateAllowsManualChecksAndBlocksAutomaticAndProbeChecksDuringExclusive() async {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
 
-        controller.installerDidStart()
-        #expect(controller.automaticChecksEnabled == false)
+        await setExclusive(signal, to: true, controller: controller)
 
-        controller.installerDidFinish()
-        #expect(controller.automaticChecksEnabled == true)
+        #expect(controller.shouldAllowSparkleUpdateCheck(.updates))
+        #expect(!controller.shouldAllowSparkleUpdateCheck(.updatesInBackground))
+        #expect(!controller.shouldAllowSparkleUpdateCheck(.updateInformation))
     }
 
-    @Test func installerFinishRestoresPriorDisabledPreference() {
-        clearStash()
-        defer { clearStash() }
-        let controller = makeController()
-        controller.automaticChecksEnabled = false
+    @Test func installDuringExclusiveDefersLiveReplyUntilSignalClears() async {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+        var installed = false
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: "notes"),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: "notes"),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { choice in
+                installed = choice == .install
+            }
+        )
 
-        controller.installerDidStart()
-        #expect(controller.automaticChecksEnabled == false)
+        await setExclusive(signal, to: true, controller: controller)
+        controller.install()
 
-        controller.installerDidFinish()
-        #expect(controller.automaticChecksEnabled == false)
+        #expect(!installed)
+        #expect(controller.deferredInstallIntent?.version == "1.3.9")
+        #expect(controller.hasLiveUpdateReply)
+        #expect(controller.activity == .idle)
+
+        await setExclusive(signal, to: false, controller: controller)
+
+        #expect(installed)
+        #expect(controller.deferredInstallIntent == nil)
+        #expect(!controller.hasLiveUpdateReply)
     }
 
-    @Test func installerStartCancelsPendingUpdateCheck() {
-        clearStash()
-        defer { clearStash() }
-        let controller = makeController()
-        var didCancel = false
-        controller.stashCancellation {
-            didCancel = true
+    @Test func deferredIntentWithMissingReplyFallsBackToCheckWhenSignalClears() async {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+        var checks = 0
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found)
+        )
+
+        await setExclusive(signal, to: true, controller: controller)
+        controller.install()
+        await setExclusive(signal, to: false, controller: controller)
+
+        #expect(checks == 1)
+        #expect(controller.activity == .checking)
+        #expect(controller.deferredInstallIntent == nil)
+    }
+
+    @Test func signalClearWithDurableAvailableFactAndNoLiveReplyTriggersCheck() async {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+        var checks = 0
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found)
+        )
+
+        await setExclusive(signal, to: true, controller: controller)
+        await setExclusive(signal, to: false, controller: controller)
+
+        #expect(checks == 1)
+        #expect(controller.activity == .checking)
+    }
+
+    @Test func signalClearWithLiveReplyDoesNotStartRedundantCheck() async {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+        var checks = 0
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            hasLiveChoiceReply: true
+        )
+
+        await setExclusive(signal, to: true, controller: controller)
+        await setExclusive(signal, to: false, controller: controller)
+
+        #expect(checks == 0)
+        #expect(controller.activity == .idle)
+        #expect(controller.hasLiveUpdateReply)
+    }
+
+    @Test func blockedBackgroundCheckTriggersOneCheckOnSignalClear() async {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+        var checks = 0
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+
+        await setExclusive(signal, to: true, controller: controller)
+        #expect(!controller.shouldAllowSparkleUpdateCheck(.updatesInBackground))
+        await setExclusive(signal, to: false, controller: controller)
+
+        #expect(checks == 1)
+        #expect(controller.activity == .checking)
+
+        controller.applyDebugFixture(activity: .idle)
+        await setExclusive(signal, to: true, controller: controller)
+        await setExclusive(signal, to: false, controller: controller)
+
+        #expect(checks == 1)
+    }
+
+    @Test func noDurableFactNoBlockedCheckAndNoDeferredIntentDoesNothingOnSignalClear() async {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+        var checks = 0
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+        controller.applyDebugFixture(activity: .idle)
+
+        await setExclusive(signal, to: true, controller: controller)
+        await setExclusive(signal, to: false, controller: controller)
+
+        #expect(checks == 0)
+        #expect(controller.activity == .idle)
+    }
+
+    @Test func stuckExclusiveSignalKeepsDeferredIntentQueryable() async {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+        var installed = false
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { choice in
+                installed = choice == .install
+            }
+        )
+
+        await setExclusive(signal, to: true, controller: controller)
+        controller.install()
+        await Task.yield()
+
+        #expect(!installed)
+        #expect(controller.deferredInstallIntent?.version == "1.3.9")
+        #expect(controller.updatesNeedAttention)
+        #expect(controller.statusAXToken == "deferred_install")
+    }
+
+    private func makeController(exclusivity signal: ExclusiveSignal) -> UpdateController {
+        clearDefaults()
+        return UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            exclusivity: { signal.value }
+        ) { _, _ in
+            nil
         }
-        controller.state = .checking
-
-        controller.installerDidStart()
-
-        #expect(didCancel)
-        #expect(controller.state == .idle)
-        #expect(controller.automaticChecksEnabled == false)
     }
 
-    @Test func doubleStartDoesNotClobberStashedPreference() {
-        clearStash()
-        defer { clearStash() }
-        let controller = makeController()
+    private func setExclusive(
+        _ signal: ExclusiveSignal,
+        to value: Bool,
+        controller: UpdateController
+    ) async {
+        var observed = false
+        controller.onExclusivityReevaluated = { newValue in
+            if newValue == value {
+                observed = true
+            }
+        }
 
-        controller.installerDidStart()
-        controller.installerDidStart()
-        controller.installerDidFinish()
+        signal.value = value
 
-        #expect(controller.automaticChecksEnabled == true)
+        for _ in 0..<20 {
+            await Task.yield()
+            if observed, controller.exclusiveOperationInProgress == value {
+                break
+            }
+        }
+
+        controller.onExclusivityReevaluated = nil
+        #expect(observed)
+        #expect(controller.exclusiveOperationInProgress == value)
     }
 
-    @Test("preference restored on next launch when prior install was interrupted")
-    func persistedStashRecoveryOnInit() {
-        clearStash()
-        defer { clearStash() }
-
-        UserDefaults.standard.set(true, forKey: stashKey)
-
-        let controller = makeController()
-
-        #expect(controller.automaticChecksEnabled == true)
-        #expect(UserDefaults.standard.object(forKey: stashKey) == nil)
+    private func clearDefaults() {
+        UserDefaults.standard.removeObject(forKey: statusKey)
+        UserDefaults.standard.removeObject(forKey: legacyLastCheckedAtKey)
+        UserDefaults.standard.removeObject(forKey: legacyLastCheckResultKey)
     }
+}
 
-    private func makeController() -> UpdateController {
-        UpdateController(feedURL: validFeedURL, publicKey: validPublicKey) { _ in nil }
-    }
-
-    private func clearStash() {
-        UserDefaults.standard.removeObject(forKey: stashKey)
-    }
+@MainActor
+@Observable
+private final class ExclusiveSignal {
+    var value = false
 }

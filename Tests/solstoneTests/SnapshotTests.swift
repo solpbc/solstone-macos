@@ -60,7 +60,7 @@ struct SnapshotTests {
     }
 
     private func makeSnapshotUpdateController() -> UpdateController {
-        UpdateController(feedURL: nil, publicKey: nil) { _ in nil }
+        UpdateController(feedURL: nil, publicKey: nil) { _, _ in nil }
     }
 
     private func render<V: View>(_ view: V, size: CGSize, to filename: String) throws {

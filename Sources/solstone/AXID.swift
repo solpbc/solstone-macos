@@ -233,6 +233,7 @@ enum AXID {
         static let releaseNotesOnline = "updates.releaseNotes.online"
         static let downloadProgress = "updates.downloadProgress.state"
         static let extractProgress = "updates.extractProgress.state"
+        static let deferredInstallState = "updates.deferredInstall.state"
         static let automaticChecks = "updates.preferences.automaticChecks"
         static let frequencyPicker = "updates.preferences.frequency"
         static let frequencyState = "updates.preferences.frequency.state"
