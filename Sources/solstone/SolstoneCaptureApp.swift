@@ -292,23 +292,27 @@ private struct StatusIcon: View {
     @Environment(\.openWindow) private var openWindow
     @State private var hasCheckedSetup = false
 
-    private var iconName: String {
+    private var iconState: MenubarIconState {
         if appState.bundledPipelineStatusAvailable &&
             (appState.pipelineDead || appState.pipelineBinaryMissing || appState.isRestartingPipeline) {
-            return "sol-ring-icon-error-template"
+            return .error
         }
         if appState.errorMessage != nil {
-            return "sol-ring-icon-error-template"
+            return .error
         }
         if !appState.isRecording || appState.isPaused || appState.pauseManager.isPaused {
-            return "sol-ring-icon-paused-template"
+            return .paused
         }
         switch appState.uploadCoordinator.status {
         case .synced, .syncing, .uploading:
-            return "sol-ring-template"
+            return .recording
         case .notSynced, .retrying, .offline:
-            return "sol-ring-icon-half-template"
+            return .offline
         }
+    }
+
+    private var iconName: String {
+        iconState.iconName
     }
 
     var body: some View {
@@ -316,6 +320,8 @@ private struct StatusIcon: View {
             .overlay(alignment: .bottomTrailing) {
                 overlayView
             }
+            .accessibilityIdentifier(AXID.Menubar.statusIconState)
+            .accessibilityValue(iconState.axToken)
             .task {
                 guard !hasCheckedSetup else { return }
                 hasCheckedSetup = true

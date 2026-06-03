@@ -64,7 +64,7 @@ struct SettingsView: View {
         case help = "help"
     }
 
-    private enum SidebarBadgeState {
+    enum SidebarBadgeState: CaseIterable {
         case done, attention, blank
     }
 
@@ -118,17 +118,19 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: .constant(.all)) {
             List(selection: $selectedTab) {
                 Section {
                     sidebarLabel(
                         "permissions",
+                        tab: .permissions,
                         systemImage: "lock.shield",
                         badge: appState.permissionsAreDone ? .done : (appState.permissionsNeedAttention ? .attention : .blank)
                     )
                         .tag(Tab.permissions)
                     sidebarLabel(
                         "journal",
+                        tab: .service,
                         systemImage: "book.closed",
                         badge: appState.serviceIsDone ? .done : (appState.serviceNeedsAttention ? .attention : .blank)
                     )
@@ -138,23 +140,24 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Label("general", systemImage: "gearshape").tag(Tab.observer)
-                    Label("microphones", systemImage: "mic").tag(Tab.microphones)
-                    Label("privacy", systemImage: "eye.slash").tag(Tab.privacy)
+                    sidebarPlainLabel("general", tab: .observer, systemImage: "gearshape").tag(Tab.observer)
+                    sidebarPlainLabel("microphones", tab: .microphones, systemImage: "mic").tag(Tab.microphones)
+                    sidebarPlainLabel("privacy", tab: .privacy, systemImage: "eye.slash").tag(Tab.privacy)
                 } header: {
                     Text("preferences")
                 }
 
                 Section {
-                    Label("status", systemImage: "info.circle").tag(Tab.status)
+                    sidebarPlainLabel("status", tab: .status, systemImage: "info.circle").tag(Tab.status)
                     sidebarLabel(
                         UpdatesCopy.tabTitle,
+                        tab: .updates,
                         systemImage: "arrow.down.circle",
                         badge: updateController.updatesNeedAttention ? .attention : (updateController.updatesAreCurrent ? .done : .blank),
                         doneAccessibilityLabel: UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y
                     )
                         .tag(Tab.updates)
-                    Label("help", systemImage: "questionmark.circle").tag(Tab.help)
+                    sidebarPlainLabel("help", tab: .help, systemImage: "questionmark.circle").tag(Tab.help)
                 } header: {
                     Text("system")
                 }
@@ -224,8 +227,21 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
+    private func sidebarPlainLabel(_ title: String, tab: Tab, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .accessibilityIdentifier(AXID.Settings.Sidebar.tab(tab))
+            .overlay(alignment: .topLeading) {
+                AXStateCompanion(
+                    id: AXID.Settings.Sidebar.tabState(tab),
+                    value: SidebarBadgeState.blank.axToken
+                )
+            }
+    }
+
+    @ViewBuilder
     private func sidebarLabel(
         _ title: String,
+        tab: Tab,
         systemImage: String,
         badge: SidebarBadgeState,
         doneAccessibilityLabel: String = UICopy.SETTINGS_TAB_DONE_A11Y
@@ -234,11 +250,19 @@ struct SettingsView: View {
         switch badge {
         case .blank:
             label
+                .accessibilityIdentifier(AXID.Settings.Sidebar.tab(tab))
+                .overlay(alignment: .topLeading) {
+                    sidebarBadgeStateCompanion(tab: tab, badge: badge)
+                }
         case .attention:
             label
                 .badge(Text("!"))
                 .tint(.orange)
                 .accessibilityLabel("\(title), \(UICopy.SETTINGS_TAB_ATTENTION_A11Y)")
+                .accessibilityIdentifier(AXID.Settings.Sidebar.tab(tab))
+                .overlay(alignment: .topLeading) {
+                    sidebarBadgeStateCompanion(tab: tab, badge: badge)
+                }
         case .done:
             HStack {
                 label
@@ -249,10 +273,32 @@ struct SettingsView: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(title), \(doneAccessibilityLabel)")
+            .accessibilityIdentifier(AXID.Settings.Sidebar.tab(tab))
+            .overlay(alignment: .topLeading) {
+                sidebarBadgeStateCompanion(tab: tab, badge: badge)
+            }
         }
     }
 
+    private func sidebarBadgeStateCompanion(tab: Tab, badge: SidebarBadgeState) -> some View {
+        AXStateCompanion(
+            id: AXID.Settings.Sidebar.tabState(tab),
+            value: badge.axToken
+        )
+    }
+
     // MARK: - Permissions Tab
+
+    private var screenRecordingPermissionAXState: AXPermissionState {
+        if appState.screenRecordingGranted || restartCountdown != nil {
+            return .granted
+        }
+        return screenRecordingPrompted ? .waiting : .denied
+    }
+
+    private var microphonePermissionAXState: AXPermissionState {
+        appState.microphoneGranted ? .granted : .denied
+    }
 
     private var permissionsTab: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -264,6 +310,10 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("screen recording")
                         .font(.headline)
+                    AXStateCompanion(
+                        id: AXID.Settings.Permissions.screenRecordingState,
+                        value: screenRecordingPermissionAXState.axToken
+                    )
                     if appState.screenRecordingGranted {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark.circle.fill")
@@ -284,6 +334,11 @@ struct SettingsView: View {
                                         .foregroundStyle(.secondary)
                                     Spacer()
                                     Button("restart now") { relaunchApp() }
+                                        .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingRestartNow)
+                                    AXStateCompanion(
+                                        id: AXID.Settings.Permissions.screenRecordingRestartCountdown,
+                                        value: axIntegerString(countdown)
+                                    )
                                 }
                             } else {
                                 Spacer()
@@ -300,6 +355,7 @@ struct SettingsView: View {
                                         PermissionChecker().promptScreenRecording()
                                         screenRecordingPrompted = true
                                     }
+                                    .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingEnable)
                                 }
                             }
                         }
@@ -314,6 +370,10 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("microphone")
                         .font(.headline)
+                    AXStateCompanion(
+                        id: AXID.Settings.Permissions.microphoneState,
+                        value: microphonePermissionAXState.axToken
+                    )
                     if appState.microphoneGranted {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark.circle.fill")
@@ -333,6 +393,7 @@ struct SettingsView: View {
                                     appState.microphoneGranted = PermissionChecker().microphoneGranted
                                 }
                             }
+                            .accessibilityIdentifier(AXID.Settings.Permissions.microphoneGrantAccess)
                         }
                     }
                 }
@@ -352,6 +413,7 @@ struct SettingsView: View {
                 }
                 .font(.caption)
                 .buttonStyle(.link)
+                .accessibilityIdentifier(AXID.Settings.Permissions.systemSettingsOpen)
             }
 
             if appState.screenRecordingGranted &&
@@ -362,6 +424,7 @@ struct SettingsView: View {
                     selectedTab = .service
                 }
                 .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier(AXID.Settings.Permissions.nextConnectJournal)
             }
 
             Spacer()
@@ -419,16 +482,20 @@ struct SettingsView: View {
                     get: { appState.isLoginItemEnabled },
                     set: { appState.setLoginItemEnabled($0) }
                 ))
+                .accessibilityIdentifier(AXID.Settings.Observer.startAtLogin)
                 .padding(.vertical, 4)
             }
 
             GroupBox("notifications") {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("notify me on sol-initiated chats", isOn: solChatNotificationsBinding)
+                        .accessibilityIdentifier(AXID.Settings.Observer.solChatNotifications)
                     if showsNotificationDeniedExplainer {
                         Text("system notifications are off — enable in System Settings → Notifications → solstone observer")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .accessibilityIdentifier(AXID.Settings.Observer.notificationDeniedState)
+                            .accessibilityValue(String(showsNotificationDeniedExplainer))
                     }
                 }
                 .padding(.vertical, 4)
@@ -443,6 +510,10 @@ struct SettingsView: View {
                         ProgressView()
                             .scaleEffect(0.5)
                     }
+                    AXStateCompanion(
+                        id: AXID.Settings.Observer.storageUsedState,
+                        value: storageUsedMB.map(axIntegerString) ?? ""
+                    )
                 }
                 .padding(.vertical, 4)
 
@@ -455,7 +526,12 @@ struct SettingsView: View {
                         Text("60 days").tag(60)
                         Text("forever").tag(-1)
                     }
+                    .accessibilityIdentifier(AXID.Settings.Observer.cacheRetentionPicker)
                     .frame(width: 120)
+                    AXStateCompanion(
+                        id: AXID.Settings.Observer.cacheRetentionState,
+                        value: axIntegerString(appState.config.cacheRetentionDays)
+                    )
                 }
                 .padding(.vertical, 4)
 
@@ -463,6 +539,7 @@ struct SettingsView: View {
                     Button("open in Finder") {
                         NSWorkspace.shared.open(appState.storageManager.baseDirectory)
                     }
+                    .accessibilityIdentifier(AXID.Settings.Observer.cacheFolderOpen)
                 }
                 .padding(.vertical, 4)
                 }
@@ -510,6 +587,7 @@ struct SettingsView: View {
                 navRow(UICopy.SETTINGS_NEXT_CHECK_STATUS) {
                     selectedTab = .status
                 }
+                .accessibilityIdentifier(AXID.Settings.Service.nextCheckStatus)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -535,6 +613,7 @@ struct SettingsView: View {
                 navRow(UICopy.SETTINGS_PREREQ_PERMISSIONS) {
                     selectedTab = .permissions
                 }
+                .accessibilityIdentifier(AXID.Settings.Service.prereqPermissions)
             }
 
             if !compress {
@@ -548,6 +627,12 @@ struct SettingsView: View {
                     Text(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL).tag(ServiceMode.external)
                 }
                 .pickerStyle(.segmented)
+                .accessibilityIdentifier(AXID.Settings.Service.journalModePicker)
+
+                AXStateCompanion(
+                    id: AXID.Settings.Service.journalModeState,
+                    value: serviceMode.rawValue
+                )
 
                 VStack(alignment: .leading, spacing: 6) {
                     tradeoffLine(
@@ -600,6 +685,7 @@ struct SettingsView: View {
             }
             .buttonStyle(.plain)
             .disabled(appState.isRestartingPipeline)
+            .accessibilityIdentifier(AXID.Settings.Service.restartRequiredBanner)
             .accessibilityHint(Text("restart the bundled journal supervisor so the saved change takes effect"))
         }
     }
@@ -632,17 +718,20 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Link("setup guide: solstone.app/install", destination: URL(string: "https://solstone.app/install")!)
                     .font(.callout)
+                    .accessibilityIdentifier(AXID.Settings.Service.externalSetupGuide)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("address").font(.caption).foregroundStyle(.secondary)
                     TextField("localhost, host:port, or https://...", text: $observerURL)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier(AXID.Settings.Service.externalAddress)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("key").font(.caption).foregroundStyle(.secondary)
                     TextField("paste key from your journal", text: $observerKey)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier(AXID.Settings.Service.externalKey)
                 }
 
                 HStack {
@@ -650,6 +739,7 @@ struct SettingsView: View {
                         testServiceConnection()
                     }
                     .disabled(observerURL.isEmpty || observerKey.isEmpty || appState.connectionTestState == .testing)
+                    .accessibilityIdentifier(AXID.Settings.Service.externalTestConnection)
 
                     Button("connect") {
                         let url = normalizeServerURL(observerURL)
@@ -660,6 +750,7 @@ struct SettingsView: View {
                         observerKey: observerKey,
                         connectionTestState: appState.connectionTestState
                     ))
+                    .accessibilityIdentifier(AXID.Settings.Service.externalConnect)
 
                     if appState.connectionTestState == .testing {
                         ProgressView()
@@ -667,6 +758,11 @@ struct SettingsView: View {
                     } else {
                         connectionTestIcon
                     }
+
+                    AXStateCompanion(
+                        id: AXID.Settings.Service.externalConnectionTestState,
+                        value: appState.connectionTestState.axToken
+                    )
                 }
 
                 if appState.connectionTestState == .success {
@@ -675,6 +771,7 @@ struct SettingsView: View {
                     }
                     .font(.caption)
                     .buttonStyle(.link)
+                    .accessibilityIdentifier(AXID.Settings.Service.externalViewStatus)
                 }
             }
             .padding(.vertical, 4)
@@ -790,6 +887,7 @@ struct SettingsView: View {
                             }
                         }
                         .listStyle(.bordered)
+                        .accessibilityIdentifier(AXID.Settings.Microphones.priorityList)
                         .frame(minHeight: 120, maxHeight: 200)
                     }
                 }
@@ -808,6 +906,11 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    .accessibilityIdentifier(AXID.Settings.Microphones.gainPicker)
+                    AXStateCompanion(
+                        id: AXID.Settings.Microphones.gainState,
+                        value: axIntegerString(Int(appState.config.microphoneGain.rounded()))
+                    )
                 }
                 .padding(.vertical, 4)
             }
@@ -816,6 +919,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("silence music in system audio", isOn: silenceMusicBinding)
                         .help("silences background music when nobody's talking")
+                        .accessibilityIdentifier(AXID.Settings.Microphones.silenceMusic)
 
                     Text("silences portions of system audio where music is detected but no speech.")
                         .font(.caption)
@@ -895,18 +999,24 @@ struct SettingsView: View {
                                     }
                                     .buttonStyle(.plain)
                                     .help("remove app")
+                                    .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppRemove(app.name))
                                 }
                                 .padding(.vertical, 2)
+                                .accessibilityIdentifier(AXID.Settings.Privacy.excludedApp(app.name))
+                                .accessibilityValue(app.name)
                             }
                         }
+                        .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppsList)
                     }
 
                     HStack {
                         TextField("app name (e.g., slack)", text: $newExcludedApp)
                             .textFieldStyle(.roundedBorder)
                             .onSubmit { addExcludedApp() }
+                            .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppField)
                         Button("add") { addExcludedApp() }
                             .disabled(newExcludedApp.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppAdd)
                     }
                 }
                 .padding(.vertical, 4)
@@ -935,18 +1045,24 @@ struct SettingsView: View {
                                     }
                                     .buttonStyle(.plain)
                                     .help("remove pattern")
+                                    .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternRemove(pattern))
                                 }
                                 .padding(.vertical, 2)
+                                .accessibilityIdentifier(AXID.Settings.Privacy.titlePattern(pattern))
+                                .accessibilityValue(pattern)
                             }
                         }
+                        .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternsList)
                     }
 
                     HStack {
                         TextField("reddit, facebook, etc.", text: $newTitlePattern)
                             .textFieldStyle(.roundedBorder)
                             .onSubmit { addTitlePattern() }
+                            .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternField)
                         Button("add") { addTitlePattern() }
                             .disabled(newTitlePattern.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternAdd)
                     }
                 }
                 .padding(.vertical, 4)
@@ -955,6 +1071,7 @@ struct SettingsView: View {
             GroupBox("private browsing") {
                 Toggle("exclude private/incognito browser windows", isOn: excludePrivateBrowsingBinding)
                     .help("automatically excludes safari private, chrome incognito, and firefox private browsing windows")
+                    .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsing)
                     .padding(.vertical, 4)
             }
         }
@@ -1013,12 +1130,18 @@ struct SettingsView: View {
 
     // MARK: - Status Tab
 
+    private var renderedObservationAXState: SettingsObservationAXState {
+        SettingsObservationAXState(isRecording: appState.isRecording, isPaused: appState.isPaused)
+    }
+
     private var statusTab: some View {
         VStack(alignment: .leading, spacing: 20) {
             GroupBox("observing") {
                 VStack(alignment: .leading, spacing: 8) {
                     LabeledContent("state") {
                         Text(appState.isRecording ? (appState.isPaused ? "paused" : "observing") : "stopped")
+                            .accessibilityIdentifier(AXID.Settings.Status.observingState)
+                            .accessibilityValue(renderedObservationAXState.axToken)
                     }
 
                     if appState.isRecording && !appState.isPaused {
@@ -1029,6 +1152,10 @@ struct SettingsView: View {
                                 let mins = Int(remaining) / 60
                                 let secs = Int(remaining) % 60
                                 Text(String(format: "%d:%02d", mins, secs))
+                                AXStateCompanion(
+                                    id: AXID.Settings.Status.nextSegmentSeconds,
+                                    value: axIntegerString(Int(remaining))
+                                )
                             }
                         }
                     }
@@ -1041,6 +1168,8 @@ struct SettingsView: View {
                     LabeledContent("journal") {
                         Text(appState.config.serverURL ?? "not configured")
                             .foregroundStyle(appState.config.serverURL == nil ? .secondary : .primary)
+                            .accessibilityIdentifier(AXID.Settings.Status.uploadJournalState)
+                            .accessibilityValue(appState.config.serverURL ?? "")
                     }
                     uploadStatusView
                     Toggle("pause sync", isOn: Binding(
@@ -1053,26 +1182,33 @@ struct SettingsView: View {
                     ))
                     .disabled(!appState.config.isUploadConfigured)
                     .help("keeps observing locally but stops sending to your journal")
+                    .accessibilityIdentifier(AXID.Settings.Status.pauseSync)
                     if let lastSynced = appState.uploadCoordinator.lastSyncedAt {
                         LabeledContent("last synced") {
                             Text(lastSynced, style: .relative)
                                 .foregroundStyle(.secondary)
+                                .accessibilityIdentifier(AXID.Settings.Status.lastSyncedState)
+                                .accessibilityValue(axIntegerString(Int(lastSynced.timeIntervalSince1970)))
                         }
                     }
                     if let error = appState.uploadCoordinator.lastError {
                         Text(error)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .accessibilityIdentifier(AXID.Settings.Status.lastErrorState)
+                            .accessibilityValue(error)
                     }
                     Button("resync all") {
                         appState.uploadCoordinator.forceFullSync()
                     }
                     .help("re-check all days, including previously synced ones")
+                    .accessibilityIdentifier(AXID.Settings.Status.resyncAll)
                     Button("configure journal →") {
                         selectedTab = .service
                     }
                     .font(.caption)
                     .buttonStyle(.link)
+                    .accessibilityIdentifier(AXID.Settings.Status.configureJournal)
                 }
                 .padding(.vertical, 4)
             }
@@ -1082,8 +1218,10 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("1-minute segments", isOn: debugSegmentsBinding)
                         .help("use 1-minute segments instead of 5-minute for testing")
+                        .accessibilityIdentifier(AXID.Settings.Status.debugOneMinuteSegments)
                     Toggle("keep rejected audio", isOn: debugKeepRejectedBinding)
                         .help("move rejected mic tracks to rejected/ folder instead of deleting")
+                        .accessibilityIdentifier(AXID.Settings.Status.debugKeepRejectedAudio)
                 }
                 .padding(.vertical, 4)
             }
@@ -1128,15 +1266,46 @@ struct SettingsView: View {
         let status = appState.uploadCoordinator.status
         let pending = appState.uploadCoordinator.pendingCount
 
-        HStack {
-            statusIcon(for: status)
-            Text(statusText(for: status))
-            Spacer()
-            if pending > 0 {
-                Text("\(pending) pending")
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                statusIcon(for: status)
+                Text(statusText(for: status))
+                Spacer()
+                if pending > 0 {
+                    Text("\(pending) pending")
+                        .foregroundStyle(.secondary)
+                }
             }
+            .accessibilityIdentifier(AXID.Settings.Status.uploadState)
+            .accessibilityValue(status.axToken)
+
+            AXStateCompanion(
+                id: AXID.Settings.Status.uploadChecked,
+                value: axIntegerString(uploadCheckedCount(for: status))
+            )
+            AXStateCompanion(
+                id: AXID.Settings.Status.uploadTotal,
+                value: axIntegerString(uploadTotalCount(for: status))
+            )
+            AXStateCompanion(
+                id: AXID.Settings.Status.uploadPending,
+                value: axIntegerString(pending)
+            )
         }
+    }
+
+    private func uploadCheckedCount(for status: UploadCoordinator.Status) -> Int {
+        if case .syncing(let checked, _) = status {
+            return checked
+        }
+        return 0
+    }
+
+    private func uploadTotalCount(for status: UploadCoordinator.Status) -> Int {
+        if case .syncing(_, let total) = status {
+            return total
+        }
+        return 0
     }
 
     private func statusIcon(for status: UploadCoordinator.Status) -> some View {
@@ -1227,11 +1396,13 @@ struct SettingsView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(height: 160)
+                    .accessibilityIdentifier(AXID.Settings.Help.agentInstructions)
 
                     Button("copy") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(agentInstructions, forType: .string)
                     }
+                    .accessibilityIdentifier(AXID.Settings.Help.copyAgentInstructions)
                 }
                 .padding(.vertical, 4)
             }
@@ -1243,21 +1414,29 @@ struct SettingsView: View {
                             .frame(width: 16, height: 16)
                         Text("observing, connected")
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier(AXID.Settings.Help.iconStateRecording)
                     HStack(spacing: 6) {
                         bundleImage("sol-ring-icon-half-template", isTemplate: true)
                             .frame(width: 16, height: 16)
                         Text("observing, offline")
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier(AXID.Settings.Help.iconStateOffline)
                     HStack(spacing: 6) {
                         bundleImage("sol-ring-icon-paused-template", isTemplate: true)
                             .frame(width: 16, height: 16)
                         Text("paused or stopped")
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier(AXID.Settings.Help.iconStatePaused)
                     HStack(spacing: 6) {
                         bundleImage("sol-ring-icon-error-template", isTemplate: true)
                             .frame(width: 16, height: 16)
                         Text("error")
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier(AXID.Settings.Help.iconStateError)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
@@ -1282,6 +1461,12 @@ struct MicrophoneRow: View {
         return entry.isDisabled ? .orange : .green
     }
 
+    private var axStateValue: String {
+        let connection = entry.isConnected ? "connected" : "disconnected"
+        let enabled = entry.isDisabled ? "disabled" : "enabled"
+        return "\(connection)_\(enabled)"
+    }
+
     var body: some View {
         HStack {
             // Connection status indicator
@@ -1303,6 +1488,7 @@ struct MicrophoneRow: View {
             }
             .buttonStyle(.plain)
             .help(entry.isDisabled ? "enable microphone" : "disable microphone")
+            .accessibilityIdentifier(AXID.Settings.Microphones.deviceToggle(entry.uid))
 
             // Delete button (only for connected mics)
             if entry.isConnected {
@@ -1312,6 +1498,7 @@ struct MicrophoneRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("remove from priority list")
+                .accessibilityIdentifier(AXID.Settings.Microphones.deviceRemove(entry.uid))
             } else {
                 Text("disconnected")
                     .font(.caption)
@@ -1319,5 +1506,7 @@ struct MicrophoneRow: View {
             }
         }
         .padding(.vertical, 2)
+        .accessibilityIdentifier(AXID.Settings.Microphones.device(entry.uid))
+        .accessibilityValue(axStateValue)
     }
 }

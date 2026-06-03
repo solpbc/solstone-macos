@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct InstallerProgressRowView: View {
+    let row: InstallerRow
     let label: String
     let status: RowStatus
     let progress: SubprocessProgress?
@@ -11,6 +12,8 @@ struct InstallerProgressRowView: View {
             HStack(alignment: .top, spacing: 10) {
                 statusIcon
                     .frame(width: 18, height: 18)
+                    .accessibilityIdentifier(AXID.Installer.stepState(row))
+                    .accessibilityValue(status.axToken)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(label)
@@ -21,6 +24,8 @@ struct InstallerProgressRowView: View {
                         Text(currentStep)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .accessibilityIdentifier(AXID.Installer.stepCurrentStep(row))
+                            .accessibilityValue(currentStep)
                     }
 
                     if case .failed(let message) = status {
@@ -37,6 +42,7 @@ struct InstallerProgressRowView: View {
                         isExpanded.toggle()
                     }
                     .font(.caption)
+                    .accessibilityIdentifier(AXID.Installer.stepDetails(row))
                 }
             }
 
@@ -51,8 +57,11 @@ struct InstallerProgressRowView: View {
                 .frame(minHeight: 96, maxHeight: 180)
                 .background(Color(nsColor: .textBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
+                .accessibilityIdentifier(AXID.Installer.stepLog(row))
+                .accessibilityValue(renderedLog)
             }
         }
+        .accessibilityIdentifier(AXID.Installer.step(row))
     }
 
     @ViewBuilder
@@ -73,6 +82,7 @@ struct InstallerProgressRowView: View {
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
                 .foregroundStyle(.red)
+                .accessibilityLabel("failed")
         }
     }
 }

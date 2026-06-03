@@ -20,10 +20,12 @@ struct AboutView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 64, height: 64)
+                    .accessibilityIdentifier(AXID.About.logo)
 
                 Text("solstone observer")
                     .font(.title)
                     .fontWeight(.bold)
+                    .accessibilityIdentifier(AXID.About.title)
             }
 
             Spacer().frame(height: 16)
@@ -32,6 +34,8 @@ struct AboutView: View {
                 Text("version \(version)")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier(AXID.About.versionState)
+                    .accessibilityValue(version)
 
                 Text("by sol pbc")
                     .font(.callout)
@@ -54,8 +58,10 @@ struct AboutView: View {
             VStack(spacing: 4) {
                 Link("source code on github", destination: URL(string: "https://github.com/solpbc/solstone-macos")!)
                     .font(.callout)
+                    .accessibilityIdentifier(AXID.About.sourceCode)
                 Link("solstone.app", destination: URL(string: "https://solstone.app")!)
                     .font(.callout)
+                    .accessibilityIdentifier(AXID.About.website)
             }
         }
         .padding(30)

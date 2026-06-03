@@ -9,11 +9,16 @@ struct UpdatesTabView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            AXStateCompanion(
+                id: AXID.Updates.statusState,
+                value: controller.state.axToken
+            )
             if !controller.canCheckForUpdates {
                 titleBlock(
                     title: UpdatesCopy.unavailableTitle,
                     subtitle: UpdatesCopy.unavailableSubtitle
                 )
+                .accessibilityIdentifier(AXID.Updates.unavailable)
             } else {
                 header
                 transientBlock
@@ -36,6 +41,7 @@ struct UpdatesTabView: View {
                     Text(fixture.rawValue).tag(fixture)
                 }
             }
+            .accessibilityIdentifier(AXID.Updates.debugStatePicker)
             .onChange(of: debugFixture) { _, fixture in
                 controller.state = fixture.sampleState
             }
@@ -76,12 +82,14 @@ struct UpdatesTabView: View {
                 Text(UpdatesCopy.checkingInline)
                     .foregroundStyle(.secondary)
                 Button(UpdatesCopy.actionCancel, action: controller.cancel)
+                    .accessibilityIdentifier(AXID.Updates.cancel)
             }
         default:
             Button(
                 controller.lastCheckedAt == nil ? UpdatesCopy.actionCheckNow : UpdatesCopy.actionCheckAgain,
                 action: controller.checkForUpdates
             )
+            .accessibilityIdentifier(AXID.Updates.check)
         }
     }
 
@@ -99,8 +107,10 @@ struct UpdatesTabView: View {
             actionRow(
                 primaryTitle: UpdatesCopy.actionDownload,
                 primaryAction: controller.install,
+                primaryID: AXID.Updates.download,
                 secondaryTitle: UpdatesCopy.actionDismiss,
-                secondaryAction: controller.dismiss
+                secondaryAction: controller.dismiss,
+                secondaryID: AXID.Updates.dismiss
             )
         case .downloading(let version, let receivedBytes, let totalBytes):
             titleBlock(
@@ -108,13 +118,21 @@ struct UpdatesTabView: View {
                 subtitle: UpdatesCopy.downloadingSubtitle(receivedBytes: receivedBytes, totalBytes: totalBytes)
             )
             progressView(receivedBytes: receivedBytes, totalBytes: totalBytes)
-            actionRow(primaryTitle: UpdatesCopy.actionCancel, primaryAction: controller.cancel)
+            actionRow(
+                primaryTitle: UpdatesCopy.actionCancel,
+                primaryAction: controller.cancel,
+                primaryID: AXID.Updates.cancel
+            )
         case .extracting(let version, let progress):
             titleBlock(
                 title: UpdatesCopy.extractingTitle(version: version),
                 subtitle: UpdatesCopy.extractingSubtitle
             )
             ProgressView(value: min(max(0.9 + (progress * 0.1), 0.9), 1.0))
+            AXStateCompanion(
+                id: AXID.Updates.extractProgress,
+                value: axPercentString(progress)
+            )
             actionRow(primaryTitle: nil, primaryAction: nil)
         case .readyToInstall(let version, let releaseNotes):
             titleBlock(
@@ -125,8 +143,10 @@ struct UpdatesTabView: View {
             actionRow(
                 primaryTitle: UpdatesCopy.actionInstall,
                 primaryAction: controller.install,
+                primaryID: AXID.Updates.install,
                 secondaryTitle: UpdatesCopy.actionDismiss,
-                secondaryAction: controller.dismiss
+                secondaryAction: controller.dismiss,
+                secondaryID: AXID.Updates.dismiss
             )
         case .installing(let version):
             titleBlock(
@@ -142,8 +162,10 @@ struct UpdatesTabView: View {
             actionRow(
                 primaryTitle: UpdatesCopy.actionRetry,
                 primaryAction: controller.checkForUpdates,
+                primaryID: AXID.Updates.retry,
                 secondaryTitle: UpdatesCopy.actionDismiss,
-                secondaryAction: controller.dismiss
+                secondaryAction: controller.dismiss,
+                secondaryID: AXID.Updates.dismiss
             )
         }
     }
@@ -152,6 +174,7 @@ struct UpdatesTabView: View {
         GroupBox(label: Text(UpdatesCopy.autoUpdateGroupTitle).font(.headline)) {
             VStack(alignment: .leading, spacing: 12) {
                 Toggle(UpdatesCopy.autoCheckToggleLabel, isOn: $controller.automaticChecksEnabled)
+                    .accessibilityIdentifier(AXID.Updates.automaticChecks)
 
                 Picker(UpdatesCopy.frequencyPickerLabel, selection: frequencyBinding) {
                     ForEach(FrequencyOption.allCases) { option in
@@ -159,8 +182,14 @@ struct UpdatesTabView: View {
                     }
                 }
                 .disabled(!controller.automaticChecksEnabled)
+                .accessibilityIdentifier(AXID.Updates.frequencyPicker)
+                AXStateCompanion(
+                    id: AXID.Updates.frequencyState,
+                    value: frequencyBinding.wrappedValue.rawValue
+                )
 
                 Toggle(UpdatesCopy.autoDownloadToggleLabel, isOn: $controller.automaticDownloadsEnabled)
+                    .accessibilityIdentifier(AXID.Updates.automaticDownloads)
             }
             .padding(.vertical, 4)
         }
@@ -226,7 +255,9 @@ struct UpdatesTabView: View {
 
                 Link(model.onlineLinkLabel, destination: model.onlineLinkURL)
                     .font(.callout)
+                    .accessibilityIdentifier(AXID.Updates.releaseNotesOnline)
             }
+            .accessibilityIdentifier(AXID.Updates.releaseNotes)
         }
     }
 
@@ -255,10 +286,16 @@ struct UpdatesTabView: View {
 
     @ViewBuilder
     private func progressView(receivedBytes: UInt64, totalBytes: UInt64?) -> some View {
-        if let totalBytes, totalBytes > 0 {
-            ProgressView(value: Double(receivedBytes), total: Double(totalBytes))
-        } else {
-            ProgressView()
+        VStack(alignment: .leading, spacing: 0) {
+            if let totalBytes, totalBytes > 0 {
+                ProgressView(value: Double(receivedBytes), total: Double(totalBytes))
+            } else {
+                ProgressView()
+            }
+            AXStateCompanion(
+                id: AXID.Updates.downloadProgress,
+                value: axDownloadPercentString(receivedBytes: receivedBytes, totalBytes: totalBytes)
+            )
         }
     }
 
@@ -266,19 +303,31 @@ struct UpdatesTabView: View {
     private func actionRow(
         primaryTitle: String?,
         primaryAction: (() -> Void)?,
+        primaryID: String? = nil,
         secondaryTitle: String? = nil,
-        secondaryAction: (() -> Void)? = nil
+        secondaryAction: (() -> Void)? = nil,
+        secondaryID: String? = nil
     ) -> some View {
         if primaryTitle != nil || secondaryTitle != nil {
             HStack {
                 if let primaryTitle, let primaryAction {
-                    Button(primaryTitle, action: primaryAction)
+                    actionButton(primaryTitle, id: primaryID, action: primaryAction)
                 }
 
                 if let secondaryTitle, let secondaryAction {
-                    Button(secondaryTitle, action: secondaryAction)
+                    actionButton(secondaryTitle, id: secondaryID, action: secondaryAction)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func actionButton(_ title: String, id: String?, action: @escaping () -> Void) -> some View {
+        if let id {
+            Button(title, action: action)
+                .accessibilityIdentifier(id)
+        } else {
+            Button(title, action: action)
         }
     }
 }

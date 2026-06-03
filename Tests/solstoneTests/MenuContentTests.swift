@@ -104,6 +104,7 @@ struct MenuContentTests {
         )
         #expect(binaryMissing?.text == "solstone is not fully installed")
         #expect(binaryMissing?.isEnabled == false)
+        #expect(binaryMissing?.state == .pipelineMissing)
 
         let restarting = pipelineStatusRowModel(
             pipelineDead: true,
@@ -112,6 +113,7 @@ struct MenuContentTests {
         )
         #expect(restarting?.text == "restarting…")
         #expect(restarting?.isEnabled == false)
+        #expect(restarting?.state == .pipelineRestarting)
 
         let dead = pipelineStatusRowModel(
             pipelineDead: true,
@@ -120,6 +122,7 @@ struct MenuContentTests {
         )
         #expect(dead?.text == "pipeline stopped — click to restart")
         #expect(dead?.isEnabled == true)
+        #expect(dead?.state == .pipelineDead)
 
         #expect(pipelineStatusRowModel(
             pipelineDead: false,

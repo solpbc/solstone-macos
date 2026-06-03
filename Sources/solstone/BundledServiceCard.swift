@@ -41,9 +41,14 @@ struct BundledServiceCard: View {
                 probe: installer.probedVersion,
                 failureRecord: installer.upgradeFailureRecord
             )
+            AXStateCompanion(
+                id: AXID.Installer.terminalState,
+                value: state.axToken
+            )
             switch state {
             case .detecting:
                 InstallerProgressRowView(
+                    row: .checkingSystem,
                     label: label(for: .checkingSystem),
                     status: .running,
                     progress: nil,
@@ -65,11 +70,15 @@ struct BundledServiceCard: View {
             case .installedCurrent(let version):
                 VStack(alignment: .leading, spacing: 12) {
                     Text(installedServiceMessage(for: .installedCurrent(version: version)))
+                        .accessibilityIdentifier(AXID.Installer.installedMessageState)
+                        .accessibilityValue(InstallerCardState.installedCurrent(version: version).axToken)
                     installedAffordances
                     autoTestStatusRow
                 }
             case .installedUnknown:
                 Text(installedServiceMessage(for: .installedUnknown))
+                    .accessibilityIdentifier(AXID.Installer.installedMessageState)
+                    .accessibilityValue(InstallerCardState.installedUnknown.axToken)
             case .externallyManaged(let solPath, let probe):
                 externalManagedContent(solPath: solPath, probe: probe)
             case .upgradeFailed(let installed, let pinned, let errorDetails):
@@ -102,6 +111,7 @@ struct BundledServiceCard: View {
                 installer.start(journalURL: journalURL, existingInstallChoice: .createFresh)
             }
             .disabled(isDetecting)
+            .accessibilityIdentifier(AXID.Installer.install)
         }
     }
 
@@ -110,6 +120,7 @@ struct BundledServiceCard: View {
             Button("open journal dashboard") {
                 openURL(bundledDashboardURL(activeServerURL: URL(string: appState.config.serverURL ?? "")))
             }
+            .accessibilityIdentifier(AXID.Installer.openDashboard)
 
             doctorAffordance
         }
@@ -118,6 +129,8 @@ struct BundledServiceCard: View {
     private func externalManagedContent(solPath: String, probe: VersionProbeResult?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(externalManagedTitle)
+                .accessibilityIdentifier(AXID.Installer.externalManagedState)
+                .accessibilityValue(InstallerCardState.externallyManaged(solPath: solPath, probe: probe).axToken)
             Text(externalManagedBody)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -129,6 +142,8 @@ struct BundledServiceCard: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .accessibilityIdentifier(AXID.Installer.externalManagedPathState)
+                .accessibilityValue(solPath)
         }
     }
 
@@ -139,6 +154,7 @@ struct BundledServiceCard: View {
             Text("doctor")
                 .font(.caption)
         }
+        .accessibilityIdentifier(AXID.Installer.doctorDisclosure)
     }
 
     @ViewBuilder
@@ -149,6 +165,7 @@ struct BundledServiceCard: View {
                     restartDoctor()
                 }
                 .disabled(doctorResult == nil && doctorTask != nil)
+                .accessibilityIdentifier(AXID.Installer.doctorRefresh)
 
                 if doctorResult == nil {
                     HStack(spacing: 8) {
@@ -157,6 +174,9 @@ struct BundledServiceCard: View {
                         Text("checking...")
                             .foregroundStyle(.secondary)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier(AXID.Installer.doctorProgressState)
+                    .accessibilityValue(String(doctorResult == nil))
                 }
             }
 
@@ -188,6 +208,7 @@ struct BundledServiceCard: View {
             .frame(minHeight: 120, maxHeight: 320)
             .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 6))
+            .accessibilityIdentifier(AXID.Installer.doctorChecklist)
         }
     }
 
@@ -223,6 +244,9 @@ struct BundledServiceCard: View {
                 }
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(AXID.Installer.doctorCheck(check.name))
+        .accessibilityValue(check.status.axToken)
     }
 
     private func doctorErrorRow(_ error: Error) -> some View {
@@ -234,10 +258,14 @@ struct BundledServiceCard: View {
                     .foregroundStyle(.red)
                     .lineLimit(3)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier(AXID.Installer.doctorErrorState)
+            .accessibilityValue(doctorErrorPreview(error))
 
             Button("try again") {
                 restartDoctor()
             }
+            .accessibilityIdentifier(AXID.Installer.doctorRetry)
         }
     }
 
@@ -276,6 +304,9 @@ struct BundledServiceCard: View {
                 Text("verifying connection...")
                     .foregroundStyle(.secondary)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier(AXID.Installer.autoTestState)
+            .accessibilityValue(AutoTestState.verifying.axToken)
         case .success:
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle.fill")
@@ -283,6 +314,9 @@ struct BundledServiceCard: View {
                 Text("connected")
                     .foregroundStyle(.secondary)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier(AXID.Installer.autoTestState)
+            .accessibilityValue(AutoTestState.success.axToken)
         case .failure(let message):
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
@@ -291,9 +325,13 @@ struct BundledServiceCard: View {
                     Text(message)
                         .foregroundStyle(.red)
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(AXID.Installer.autoTestState)
+                .accessibilityValue(AutoTestState.failure(message).axToken)
                 Button("retry") {
                     Task { await installer.runPostInstallAutoTest() }
                 }
+                .accessibilityIdentifier(AXID.Installer.autoTestRetry)
             }
         }
     }
@@ -312,6 +350,14 @@ struct BundledServiceCard: View {
             ),
             showDoctor: false
         )
+        .overlay(alignment: .topLeading) {
+            if case .cleanup(let step, _) = failedState {
+                AXStateCompanion(
+                    id: AXID.Installer.cleanupStep(step),
+                    value: RowStatus.failed(message: failureMessage(failedState)).axToken
+                )
+            }
+        }
     }
 
     private func upgradeFailureContent(installedVersion: String, pinnedVersion: String, errorDetails: String) -> some View {
@@ -354,8 +400,12 @@ struct BundledServiceCard: View {
                     Text(sanitizedInlineFailureMessage(summary))
                         .foregroundStyle(.secondary)
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(AXID.Installer.failureSummaryState)
+                .accessibilityValue(sanitizedInlineFailureMessage(summary))
 
                 Button(retryTitle, action: retryAction)
+                    .accessibilityIdentifier(AXID.Installer.failureRetry)
             }
 
             rowsContent(showModelsWhenActive: false)
@@ -377,10 +427,13 @@ struct BundledServiceCard: View {
                     .frame(minHeight: 120, maxHeight: 280)
                     .background(Color(nsColor: .textBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .accessibilityIdentifier(AXID.Installer.failureLog)
+                    .accessibilityValue(rawDetails)
                 } label: {
                     Text(failureDetailsExpanded ? "hide details" : "show details")
                         .font(.caption)
                 }
+                .accessibilityIdentifier(AXID.Installer.failureDetails)
             }
 
             failureDiagnosticFooter(markdown: diagnosticMarkdown)
@@ -418,6 +471,7 @@ struct BundledServiceCard: View {
         let status = rowStatus(for: row, main: installer.main, modelsProgress: installer.modelsProgress)
         let progress = currentSubprocessProgress(for: row, main: installer.main, modelsProgress: installer.modelsProgress)
         return InstallerProgressRowView(
+            row: row,
             label: label(for: row),
             status: status,
             progress: progress,
@@ -426,10 +480,20 @@ struct BundledServiceCard: View {
                 set: { showLogPerRow[row.rawValue] = $0 }
             )
         )
+        .overlay(alignment: .topLeading) {
+            if row == .models {
+                AXStateCompanion(
+                    id: AXID.Installer.modelDownloadProgress,
+                    value: axModelDownloadPercentString(installer.modelsProgress)
+                )
+            }
+        }
     }
 
     private func journalPathRow(canChange: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let isRestricted = isJournalPathTccRestricted(journalURL)
+
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text("your journal lives in:")
                     .font(.headline)
@@ -439,6 +503,8 @@ struct BundledServiceCard: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .accessibilityIdentifier(AXID.Installer.journalPathState)
+                    .accessibilityValue(journalURL.path)
 
                 Spacer()
 
@@ -446,10 +512,16 @@ struct BundledServiceCard: View {
                     Button("change...") {
                         changeJournalPath()
                     }
+                    .accessibilityIdentifier(AXID.Installer.journalChange)
                 }
             }
 
-            if isJournalPathTccRestricted(journalURL) {
+            AXStateCompanion(
+                id: AXID.Installer.journalTCCRestrictedState,
+                value: String(isRestricted)
+            )
+
+            if isRestricted {
                 Text("macos may ask permission to write here.")
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -873,11 +945,14 @@ private struct FailureDiagnosticFooter: View {
             } label: {
                 Label("copy error details", systemImage: "doc.on.doc")
             }
+            .accessibilityIdentifier(AXID.Installer.diagnosticCopy)
 
             if copied {
                 Text("copied ✓")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier(AXID.Installer.diagnosticCopiedState)
+                    .accessibilityValue(String(copied))
             }
 
             Button {
@@ -886,6 +961,7 @@ private struct FailureDiagnosticFooter: View {
                 Label("get help", systemImage: "questionmark.circle")
             }
             .buttonStyle(.link)
+            .accessibilityIdentifier(AXID.Installer.diagnosticHelp)
         }
     }
 }

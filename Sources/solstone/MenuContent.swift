@@ -18,6 +18,7 @@ struct MenuContent: View {
                         await AppState.shared?.solChatBridge.handleClick(requestID: pending.id)
                     }
                 }
+                .accessibilityIdentifier(AXID.Menubar.pendingChatButton)
             }
 
             Divider()
@@ -26,6 +27,10 @@ struct MenuContent: View {
         // Status section
         Section {
             statusRow
+            AXStateCompanion(
+                id: AXID.Menubar.statusRowState,
+                value: statusRowAXValue
+            )
         }
 
         Divider()
@@ -44,6 +49,7 @@ struct MenuContent: View {
                         NSWorkspace.shared.open(url)
                     }
                 }
+                .accessibilityIdentifier(AXID.Menubar.openJournalButton)
             }
             Button {
                 openWindow(id: "settings")
@@ -66,11 +72,13 @@ struct MenuContent: View {
                     Text("settings…")
                 }
             }
+            .accessibilityIdentifier(AXID.Menubar.settingsButton)
             Button("about solstone observer") {
                 openWindow(id: "about")
                 appState.didOpenWindow(.about)
                 NSApp.activate(ignoringOtherApps: true)
             }
+            .accessibilityIdentifier(AXID.Menubar.aboutButton)
         }
 
         Divider()
@@ -84,12 +92,15 @@ struct MenuContent: View {
                 NSApp.terminate(nil)
             }
         }
+        .accessibilityIdentifier(AXID.Menubar.quitButton)
     }
 
     // MARK: - Status Row
 
     @ViewBuilder
     private var statusRow: some View {
+        let rowState = statusRowState
+
         if appState.permissionsNeedAttention {
             Button("permissions needed — open settings →") {
                 appState.pendingSettingsTab = "permissions"
@@ -98,6 +109,7 @@ struct MenuContent: View {
                 NSApp.activate(ignoringOtherApps: true)
             }
             .foregroundStyle(.red)
+            .accessibilityIdentifier(AXID.Menubar.permissionsButton)
         } else if let error = appState.errorMessage {
             Button("error: \(error)") {
                 appState.pendingSettingsTab = "status"
@@ -106,6 +118,7 @@ struct MenuContent: View {
                 NSApp.activate(ignoringOtherApps: true)
             }
             .foregroundStyle(.red)
+            .accessibilityIdentifier(AXID.Menubar.errorButton)
         } else if appState.bundledPipelineStatusAvailable,
                   let pipelineRow = pipelineStatusRowModel(
                     pipelineDead: appState.pipelineDead,
@@ -117,9 +130,12 @@ struct MenuContent: View {
                     appState.requestPipelineRestart()
                 }
                 .foregroundStyle(.red)
+                .accessibilityIdentifier(AXID.Menubar.pipelineState)
             } else {
                 Text(pipelineRow.text)
                     .foregroundStyle(.red)
+                    .accessibilityIdentifier(AXID.Menubar.pipelineState)
+                    .accessibilityValue(rowState.axToken)
             }
         } else if appState.isRecording && !appState.config.isUploadConfigured && !appState.isPaused && !appState.pauseManager.isPaused {
             Button("observing - local only →") {
@@ -128,6 +144,7 @@ struct MenuContent: View {
                 appState.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
             }
+            .accessibilityIdentifier(AXID.Menubar.localOnlyButton)
         } else if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused {
             if appState.config.syncPaused {
                 Text(recordingStatusText)
@@ -140,15 +157,58 @@ struct MenuContent: View {
                         appState.didOpenWindow(.settings)
                         NSApp.activate(ignoringOtherApps: true)
                     }
+                    .accessibilityIdentifier(AXID.Menubar.offlineButton)
                 default:
                     Text(recordingStatusText)
+                        .accessibilityValue(rowState.axToken)
                 }
             }
         } else if appState.pauseManager.isPaused {
             let _ = appState.pauseManager.refreshTick
             Text(pausedHeaderText(timeRemaining: appState.pauseManager.formatTimeRemaining()))
+                .accessibilityValue(rowState.axToken)
         } else {
             Text(recordingStatusText)
+                .accessibilityValue(rowState.axToken)
+        }
+    }
+
+    private var statusRowAXValue: String {
+        statusRowState.axToken
+    }
+
+    private var statusRowState: MenubarStatusRowState {
+        if appState.permissionsNeedAttention {
+            return .permissions
+        }
+        if appState.errorMessage != nil {
+            return .error
+        }
+        if appState.bundledPipelineStatusAvailable,
+           let pipelineRow = pipelineStatusRowModel(
+            pipelineDead: appState.pipelineDead,
+            isRestartingPipeline: appState.isRestartingPipeline,
+            pipelineBinaryMissing: appState.pipelineBinaryMissing
+           ) {
+            return pipelineRow.state
+        }
+        if appState.isRecording && !appState.config.isUploadConfigured && !appState.isPaused && !appState.pauseManager.isPaused {
+            return .localOnly
+        }
+        if appState.pauseManager.isPaused || appState.isPaused {
+            return .paused
+        }
+        if !appState.isRecording {
+            return .stopped
+        }
+        if appState.config.syncPaused {
+            return .observing
+        }
+        switch appState.uploadCoordinator.status {
+        case .synced, .syncing, .uploading:
+            return .observing
+        case .notSynced, .retrying, .offline:
+            return .offline
         }
     }
 
@@ -184,24 +244,31 @@ struct MenuContent: View {
                 Button("15 minutes") {
                     appState.pauseManager.pause(for: .minutes(15))
                 }
+                .accessibilityIdentifier(AXID.Menubar.pauseFifteenMinutes)
                 Button("30 minutes") {
                     appState.pauseManager.pause(for: .minutes(30))
                 }
+                .accessibilityIdentifier(AXID.Menubar.pauseThirtyMinutes)
                 Button("1 hour") {
                     appState.pauseManager.pause(for: .minutes(60))
                 }
+                .accessibilityIdentifier(AXID.Menubar.pauseOneHour)
                 Button("until I resume") {
                     appState.pauseManager.pause(for: .indefinite)
                 }
+                .accessibilityIdentifier(AXID.Menubar.pauseIndefinite)
             }
+            .accessibilityIdentifier(AXID.Menubar.pauseMenu)
         } else if appState.pauseManager.isPaused {
             Button("resume") { appState.pauseManager.resume() }
+                .accessibilityIdentifier(AXID.Menubar.resumeButton)
         } else if !appState.isRecording && appState.errorMessage == nil && !appState.permissionsNeedAttention {
             Button("start observing") {
                 Task {
                     await appState.startRecording()
                 }
             }
+            .accessibilityIdentifier(AXID.Menubar.startObservingButton)
         }
 
         if appState.bundledPipelineRestartAvailable {
@@ -209,6 +276,7 @@ struct MenuContent: View {
                 appState.requestPipelineRestart()
             }
             .disabled(appState.isRestartingPipeline)
+            .accessibilityIdentifier(AXID.Menubar.restartPipelineButton)
         }
     }
 
@@ -224,15 +292,15 @@ func pipelineStatusRowModel(
     pipelineDead: Bool,
     isRestartingPipeline: Bool,
     pipelineBinaryMissing: Bool
-) -> (text: String, isEnabled: Bool)? {
+) -> (text: String, isEnabled: Bool, state: MenubarStatusRowState)? {
     if pipelineBinaryMissing {
-        return ("solstone is not fully installed", false)
+        return ("solstone is not fully installed", false, .pipelineMissing)
     }
     if isRestartingPipeline {
-        return ("restarting…", false)
+        return ("restarting…", false, .pipelineRestarting)
     }
     if pipelineDead {
-        return ("pipeline stopped — click to restart", true)
+        return ("pipeline stopped — click to restart", true, .pipelineDead)
     }
     return nil
 }
