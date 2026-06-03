@@ -101,8 +101,16 @@ func terminalCardState(
     }
 }
 
+/// Pinned contract: mode controls render in every installer state.
+/// Retained as the unit-testable seam asserting that behavior.
 func shouldCompressServiceModeControls(mode: ServiceMode, cardState: InstallerCardState) -> Bool {
-    guard mode == .bundled else { return false }
+    false
+}
+
+/// Whether the bundled install surface (progress or failure) should stay
+/// observable regardless of which journal mode is selected in the picker.
+/// `.detecting` is transient and not attention-worthy, so it is excluded.
+func shouldShowBundledStatusSurface(cardState: InstallerCardState) -> Bool {
     switch cardState {
     case .installing, .failed, .upgradeFailed:
         return true

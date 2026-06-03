@@ -78,38 +78,56 @@ struct InstallerCardStateTests {
 
 @Suite("service mode control compression")
 struct ServiceModeControlCompressionTests {
-    @Test func bundledActiveAndFailedStatesCompressControls() {
-        let failed = InstallerCardState.failed(.registering(message: "m"))
-        let upgradeFailed = InstallerCardState.upgradeFailed(
-            installed: "0.4.7",
-            pinned: BundleConfig.solstonePinVersion,
-            errorDetails: "details"
-        )
+    private static let failedCardState = InstallerCardState.failed(.registering(message: "m"))
+    private static let upgradeFailedCardState = InstallerCardState.upgradeFailed(
+        installed: "0.4.7",
+        pinned: BundleConfig.solstonePinVersion,
+        errorDetails: "details"
+    )
 
-        #expect(shouldCompressServiceModeControls(mode: .bundled, cardState: .installing))
-        #expect(shouldCompressServiceModeControls(mode: .bundled, cardState: failed))
-        #expect(shouldCompressServiceModeControls(mode: .bundled, cardState: upgradeFailed))
+    // This fixture list must cover every InstallerCardState case; the predicate's
+    // exhaustive switch is the compile-time backstop.
+    private static let allCardStateFixtures: [InstallerCardState] = [
+        .detecting,
+        .absent,
+        .installing,
+        .installedPlaceholder,
+        .done,
+        .installedCurrent(version: "1.0.0"),
+        .installedUnknown,
+        .externallyManaged(solPath: "/usr/local/bin/sol", probe: nil),
+        upgradeFailedCardState,
+        failedCardState
+    ]
+
+    private static let bundledStatusSurfaceFixtures: [InstallerCardState] = [
+        .installing,
+        failedCardState,
+        upgradeFailedCardState
+    ]
+
+    private static var passiveCardStateFixtures: [InstallerCardState] {
+        allCardStateFixtures.filter { !bundledStatusSurfaceFixtures.contains($0) }
     }
 
-    @Test func bundledPassiveStatesKeepControls() {
-        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .detecting))
-        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .absent))
-        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .installedPlaceholder))
-        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .done))
-        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .installedCurrent(version: "0.4.8")))
-        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .installedUnknown))
-        #expect(!shouldCompressServiceModeControls(mode: .bundled, cardState: .externallyManaged(solPath: "/opt/sol", probe: nil)))
+    @Test func modeControlsNeverCompressForAnyModeOrCardState() {
+        for mode in [ServiceMode.bundled, .external] {
+            for cardState in Self.allCardStateFixtures {
+                #expect(!shouldCompressServiceModeControls(mode: mode, cardState: cardState))
+            }
+        }
     }
 
-    @Test func externalModeNeverCompressesControls() {
-        let upgradeFailed = InstallerCardState.upgradeFailed(
-            installed: "0.4.7",
-            pinned: BundleConfig.solstonePinVersion,
-            errorDetails: "details"
-        )
+    @Test func bundledStatusSurfaceShowsActiveAndFailedStates() {
+        for cardState in Self.bundledStatusSurfaceFixtures {
+            #expect(shouldShowBundledStatusSurface(cardState: cardState))
+        }
+    }
 
-        #expect(!shouldCompressServiceModeControls(mode: .external, cardState: .installing))
-        #expect(!shouldCompressServiceModeControls(mode: .external, cardState: upgradeFailed))
+    @Test func bundledStatusSurfaceHidesPassiveStates() {
+        for cardState in Self.passiveCardStateFixtures {
+            #expect(!shouldShowBundledStatusSurface(cardState: cardState))
+        }
     }
 }
 

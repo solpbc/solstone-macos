@@ -604,7 +604,6 @@ struct SettingsView: View {
             probe: appState.installer.probedVersion,
             failureRecord: appState.installer.upgradeFailureRecord
         )
-        let compress = shouldCompressServiceModeControls(mode: serviceMode, cardState: cardState)
 
         VStack(alignment: .leading, spacing: 16) {
             restartRequiredBanner
@@ -616,40 +615,41 @@ struct SettingsView: View {
                 .accessibilityIdentifier(AXID.Settings.Service.prereqPermissions)
             }
 
-            if !compress {
-                if let heading = serviceTabHeadingText(for: appState.config.serviceMode) {
-                    Text(heading)
-                        .font(.headline)
-                }
+            if let heading = serviceTabHeadingText(for: appState.config.serviceMode) {
+                Text(heading)
+                    .font(.headline)
+            }
 
-                Picker("journal mode", selection: $serviceMode) {
-                    Text(UICopy.JOURNAL_MODE_THIS_MAC_LABEL).tag(ServiceMode.bundled)
-                    Text(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL).tag(ServiceMode.external)
-                }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier(AXID.Settings.Service.journalModePicker)
+            Picker("journal mode", selection: $serviceMode) {
+                Text(UICopy.JOURNAL_MODE_THIS_MAC_LABEL).tag(ServiceMode.bundled)
+                Text(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL).tag(ServiceMode.external)
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier(AXID.Settings.Service.journalModePicker)
 
-                AXStateCompanion(
-                    id: AXID.Settings.Service.journalModeState,
-                    value: serviceMode.rawValue
+            AXStateCompanion(
+                id: AXID.Settings.Service.journalModeState,
+                value: serviceMode.rawValue
+            )
+
+            VStack(alignment: .leading, spacing: 6) {
+                tradeoffLine(
+                    label: UICopy.JOURNAL_MODE_THIS_MAC_LABEL,
+                    text: UICopy.JOURNAL_MODE_THIS_MAC_TRADEOFF
                 )
-
-                VStack(alignment: .leading, spacing: 6) {
-                    tradeoffLine(
-                        label: UICopy.JOURNAL_MODE_THIS_MAC_LABEL,
-                        text: UICopy.JOURNAL_MODE_THIS_MAC_TRADEOFF
-                    )
-                    tradeoffLine(
-                        label: UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL,
-                        text: UICopy.JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF
-                    )
-                }
+                tradeoffLine(
+                    label: UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL,
+                    text: UICopy.JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF
+                )
             }
 
             switch serviceMode {
             case .bundled:
                 BundledServiceCard(appState: appState)
             case .external:
+                if shouldShowBundledStatusSurface(cardState: cardState) {
+                    BundledServiceCard(appState: appState)
+                }
                 externalServiceSection
             }
         }

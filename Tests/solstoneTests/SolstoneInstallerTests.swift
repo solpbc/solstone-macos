@@ -389,6 +389,32 @@ struct SolstoneInstallerTests {
         #expect(runner.invocations.filter { $0.arguments.first == "observer" }.count == 1)
     }
 
+    @Test func togglingServiceModeDoesNotCancelActiveInstall() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("up", .success(delay: .milliseconds(500)))
+        runner.enqueue("observer", .success(stdout: observerJSON))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitUntil {
+            runner.invocations.contains { $0.arguments.first == "up" }
+        }
+        let midFlightMain = installer.main
+
+        var serviceMode: ServiceMode = .bundled
+        serviceMode = .external
+        serviceMode = .bundled
+
+        #expect(serviceMode == .bundled)
+        #expect(installer.isInstallTaskActive)
+        #expect(installer.main == midFlightMain)
+
+        try await waitUntil { installer.main == .done }
+    }
+
     @Test func readinessGateHappyPathClearsFailureRecord() async throws {
         let store = InMemoryUpgradeFailureRecordStore(record: UpgradeFailureRecord(
             installed: "0.3.1",

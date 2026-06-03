@@ -72,6 +72,8 @@ public final class SolstoneInstaller {
     private let stagedVerifyTimeout: Duration
     private let readinessGateTimeout: Duration
     private var installTask: Task<Void, Never>?
+    /// Test seam: whether an install/upgrade task is currently running.
+    var isInstallTaskActive: Bool { installTask != nil }
     private var modelsTask: Task<Void, Never>?
     private var upgradeFailureRecordBaseline: UpgradeFailureRecordBaseline = .none
 
