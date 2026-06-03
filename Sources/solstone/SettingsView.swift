@@ -1171,6 +1171,14 @@ struct SettingsView: View {
                             .accessibilityIdentifier(AXID.Settings.Status.uploadJournalState)
                             .accessibilityValue(appState.config.serverURL ?? "")
                     }
+                    if appState.bundledPipelineStatusAvailable {
+                        LabeledContent("pipeline") {
+                            Text(pipelineStatusText)
+                                .foregroundStyle(pipelineStatusColor)
+                                .accessibilityIdentifier(AXID.Settings.Status.pipelineState)
+                                .accessibilityValue(pipelineStatusAXValue)
+                        }
+                    }
                     uploadStatusView
                     Toggle("pause sync", isOn: Binding(
                         get: { appState.config.syncPaused },
@@ -1343,6 +1351,40 @@ struct SettingsView: View {
         case .offline(let error):
             return "offline: \(error)"
         }
+    }
+
+    private var pipelineStatusText: String {
+        if appState.pipelineBinaryMissing {
+            return "setup needed"
+        }
+        if appState.isRestartingPipeline {
+            return "restarting..."
+        }
+        if appState.pipelineDead {
+            return "stopped"
+        }
+        return "running"
+    }
+
+    private var pipelineStatusAXValue: String {
+        if let row = pipelineStatusRowModel(
+            pipelineDead: appState.pipelineDead,
+            isRestartingPipeline: appState.isRestartingPipeline,
+            pipelineBinaryMissing: appState.pipelineBinaryMissing
+        ) {
+            return row.state.axToken
+        }
+        return "running"
+    }
+
+    private var pipelineStatusColor: Color {
+        if appState.pipelineBinaryMissing || appState.pipelineDead {
+            return .red
+        }
+        if appState.isRestartingPipeline {
+            return .orange
+        }
+        return .secondary
     }
 
     // MARK: - Connection Test

@@ -90,6 +90,8 @@ struct PipelineLivenessTests {
 
         #expect(healthy == .reachable)
         #expect(unhealthy == .unreachable)
+        #expect(healthyRunner.invocations.first?.executable.lastPathComponent == "journal")
+        #expect(unhealthyRunner.invocations.first?.executable.lastPathComponent == "journal")
     }
 
     @Test func orphanSweepKillsOnlyPpidOneSolProcesses() async throws {

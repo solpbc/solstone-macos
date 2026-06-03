@@ -7,6 +7,44 @@ import Testing
 
 @Suite("SolHealthCheck")
 struct SolHealthCheckTests {
+    @Test func runUsesJournalHealthBeforeSolHealth() async {
+        let runner = FakeDoctorRunner(responses: [
+            "journal": .init(),
+            "sol": .init(stderr: Data("'health' moved to 'journal health'\n".utf8), exitCode: 2),
+        ])
+
+        let healthy = await SolHealthCheck.run(solPath: "/runtime/bin/sol", runner: runner)
+
+        #expect(healthy)
+        #expect(runner.invocations.map { $0.executable.lastPathComponent } == ["journal"])
+        #expect(runner.invocations.first?.arguments == ["health"])
+    }
+
+    @Test func runFallsBackToSolHealthWhenJournalHealthUnavailable() async {
+        let runner = FakeDoctorRunner(responses: [
+            "journal": .init(stdout: Data("Error: Unknown command: health\n".utf8), exitCode: 2),
+            "sol": .init(),
+        ])
+
+        let healthy = await SolHealthCheck.run(solPath: "/runtime/bin/sol", runner: runner)
+
+        #expect(healthy)
+        #expect(runner.invocations.map { $0.executable.lastPathComponent } == ["journal", "sol"])
+        #expect(runner.invocations.allSatisfy { $0.arguments == ["health"] })
+    }
+
+    @Test func runDoesNotFallbackWhenJournalHealthReportsUnhealthy() async {
+        let runner = FakeDoctorRunner(responses: [
+            "journal": .init(stderr: Data("Heartbeat: failed\n".utf8), exitCode: 1),
+            "sol": .init(),
+        ])
+
+        let healthy = await SolHealthCheck.run(solPath: "/runtime/bin/sol", runner: runner)
+
+        #expect(!healthy)
+        #expect(runner.invocations.map { $0.executable.lastPathComponent } == ["journal"])
+    }
+
     @Test func doctorDecodesFixtureChecks() async throws {
         let runner = FakeDoctorRunner(stdout: fixture("sol_doctor_ok"))
 

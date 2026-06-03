@@ -69,18 +69,16 @@ struct SolBinaryLocatorTests {
         #expect(runner.invocations.map(\.arguments) == [["sol"]])
     }
 
-    @Test func findSolBinary_returnsPreferredPathWhenExists() async {
+    @Test func findSolBinary_returnsPreferredPathWhenExists() async throws {
+        let root = try makeTemporaryDirectory().appendingPathComponent("runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
         let preferred = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".local/bin/sol").path
-        guard FileManager.default.fileExists(atPath: preferred) else {
-            return
-        }
-        let runtimePath = SolstoneRuntimeLayout().solBinary.path
-        guard !FileManager.default.fileExists(atPath: runtimePath) else {
-            return
-        }
 
-        let found = await SolBinaryLocator.findSolBinary()
+        let found = await SolBinaryLocator.findSolBinary(rootURL: root, fileExists: { path in
+            path == preferred
+        })
+
         #expect(found == preferred)
     }
 

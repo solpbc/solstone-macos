@@ -321,6 +321,7 @@ struct AXIDTests {
             AXID.Settings.Status.observingState,
             AXID.Settings.Status.nextSegmentSeconds,
             AXID.Settings.Status.uploadJournalState,
+            AXID.Settings.Status.pipelineState,
             AXID.Settings.Status.uploadState,
             AXID.Settings.Status.uploadChecked,
             AXID.Settings.Status.uploadTotal,

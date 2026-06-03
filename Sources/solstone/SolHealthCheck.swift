@@ -63,29 +63,80 @@ enum DoctorError: Error, LocalizedError, Equatable {
 
 enum SolHealthCheck {
     static func run(solPath: String, runner: SubprocessRunning = SubprocessRunner()) async -> Bool {
+        let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
+        let journalResult = await runHealthCommand(
+            executable: URL(fileURLWithPath: journalPath),
+            runner: runner
+        )
+        switch journalResult {
+        case .healthy:
+            Logger.setup.info("journal health: ok")
+            return true
+        case .unhealthy(let detail):
+            Logger.setup.info("journal health: unhealthy(\(detail, privacy: .public))")
+            return false
+        case .unavailable(let detail):
+            Logger.setup.info("journal health: unavailable(\(detail, privacy: .public)); trying sol health")
+        }
+
+        let solResult = await runHealthCommand(
+            executable: URL(fileURLWithPath: solPath),
+            runner: runner
+        )
+        switch solResult {
+        case .healthy:
+            Logger.setup.info("sol health: ok")
+            return true
+        case .unhealthy(let detail), .unavailable(let detail):
+            Logger.setup.info("sol health: unhealthy(\(detail, privacy: .public))")
+            return false
+        }
+    }
+
+    private enum HealthCommandResult: Sendable, Equatable {
+        case healthy
+        case unhealthy(String)
+        case unavailable(String)
+    }
+
+    private static func runHealthCommand(
+        executable: URL,
+        runner: SubprocessRunning
+    ) async -> HealthCommandResult {
+        let outputAccumulator = DataAccumulator()
         do {
             let result = try await withTimeout(seconds: 5.0) {
                 try await runner.run(
-                    executable: URL(fileURLWithPath: solPath),
+                    executable: executable,
                     arguments: ["health"],
                     environment: nil,
-                    stdoutHandler: { _ in },
-                    stderrHandler: { _ in }
+                    stdoutHandler: { data in
+                        append(data, to: outputAccumulator)
+                    },
+                    stderrHandler: { data in
+                        append(data, to: outputAccumulator)
+                    }
                 )
             }
             if result.exitCode == 0 {
-                Logger.setup.info("sol health: ok")
-                return true
+                return .healthy
             }
-            Logger.setup.info("sol health: unhealthy(exitCode=\(result.exitCode, privacy: .public))")
-            return false
+            let outputString = await outputAccumulator.string
+            let detail = "exitCode=\(result.exitCode)"
+            if healthCommandUnavailable(exitCode: result.exitCode, output: outputString) {
+                return .unavailable(detail)
+            }
+            return .unhealthy(detail)
         } catch is TimeoutError {
-            Logger.setup.info("sol health: unhealthy(timeout)")
-            return false
+            return .unhealthy("timeout")
         } catch {
-            Logger.setup.info("sol health: unhealthy(error=\(String(describing: error), privacy: .public))")
-            return false
+            return .unavailable("error=\(String(describing: error))")
         }
+    }
+
+    private static func healthCommandUnavailable(exitCode: Int32, output: String) -> Bool {
+        guard exitCode == 2 else { return false }
+        return output.contains("Unknown command") || output.contains("moved to")
     }
 
     static func version(solPath: String, runner: SubprocessRunning = SubprocessRunner()) async -> String? {

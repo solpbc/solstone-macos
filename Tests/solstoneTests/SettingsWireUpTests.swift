@@ -59,6 +59,7 @@ struct SettingsWireUpTests {
             "AXID.Settings.Status.observingState",
             "AXID.Settings.Status.nextSegmentSeconds",
             "AXID.Settings.Status.uploadJournalState",
+            "AXID.Settings.Status.pipelineState",
             "AXID.Settings.Status.pauseSync",
             "AXID.Settings.Status.lastSyncedState",
             "AXID.Settings.Status.lastErrorState",
