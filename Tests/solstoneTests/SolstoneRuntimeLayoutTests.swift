@@ -62,6 +62,7 @@ struct SolstoneRuntimeLayoutTests {
         #expect(layout.toolsDir.path == root.appendingPathComponent("versions/0.4.8/tools").path)
         #expect(layout.binDir.path == root.appendingPathComponent("versions/0.4.8/bin").path)
         #expect(layout.solBinary.path == root.appendingPathComponent("versions/0.4.8/bin/sol").path)
+        #expect(layout.journalBinary.path == root.appendingPathComponent("versions/0.4.8/bin/journal").path)
     }
 
     @Test func ensureCreatedForVersionedDoesNotCreatePerVersionSharedDirs() throws {
@@ -162,6 +163,7 @@ struct SolstoneRuntimeLayoutTests {
         #expect(layout.toolsDir.path.hasSuffix("/tools"))
         #expect(layout.binDir.path.hasSuffix("/bin"))
         #expect(layout.solBinary.path.hasSuffix("/bin/sol"))
+        #expect(layout.journalBinary.path.hasSuffix("/bin/journal"))
     }
 
     @Test func versionedPathConstantsHaveStableSuffixes() {
@@ -175,6 +177,7 @@ struct SolstoneRuntimeLayoutTests {
         #expect(layout.toolsDir.path.hasSuffix("/versions/0.4.8/tools"))
         #expect(layout.binDir.path.hasSuffix("/versions/0.4.8/bin"))
         #expect(layout.solBinary.path.hasSuffix("/versions/0.4.8/bin/sol"))
+        #expect(layout.journalBinary.path.hasSuffix("/versions/0.4.8/bin/journal"))
     }
 
     @Test func bundledPythonURLResolvesInsideAppResources() {

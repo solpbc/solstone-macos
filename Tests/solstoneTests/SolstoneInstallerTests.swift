@@ -103,7 +103,7 @@ struct SolstoneInstallerTests {
             let observer = try #require(runner.invocations.first { $0.arguments.first == "observer" })
             let expectedJournalPath = choice == .createFresh
                 ? setup.executable.path
-                : SolBinaryLocator.journalPath(siblingOf: "/usr/bin/sol")
+                : journalPath(siblingOf: "/usr/bin/sol")
             #expect(observer.executable.path == expectedJournalPath)
             #expect(observer.arguments == [
                 "observer",
@@ -523,7 +523,7 @@ struct SolstoneInstallerTests {
         #expect(uninstall.executable.lastPathComponent == "journal")
     }
 
-    @Test func precleanFallsBackToSolWhenJournalSiblingMissing() async throws {
+    @Test func precleanFailsSetupNeededWhenJournalSiblingMissing() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -531,15 +531,19 @@ struct SolstoneInstallerTests {
         let installer = makeInstaller(
             runner: runner,
             wheelhouseURL: fixtureURLs.wheelhouse,
-            runtimeRootURL: fixtureURLs.runtimeRoot
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            fileExists: { _ in false }
         )
         defer { installer.cancel() }
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
-        try await waitUntil { installer.main == .done }
+        try await waitForTerminal(installer)
 
-        let uninstall = try #require(runner.invocations.first { $0.arguments == ["service", "uninstall"] })
-        #expect(uninstall.executable.lastPathComponent == "sol")
+        #expect(installer.main == .failed(.cleanup(
+            step: .resolveJournal,
+            message: cleanupMessage(step: .resolveJournal, why: UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE)
+        )))
+        #expect(!runner.invocations.contains { $0.arguments == ["service", "uninstall"] })
     }
 
     @Test func precleanConfigShowInvokesJournalWhenSiblingExists() async throws {
@@ -562,7 +566,7 @@ struct SolstoneInstallerTests {
         #expect(config.executable.lastPathComponent == "journal")
     }
 
-    @Test func precleanConfigShowFallsBackToSolWhenJournalSiblingMissing() async throws {
+    @Test func precleanConfigShowDoesNotRunWhenJournalSiblingMissing() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -570,15 +574,40 @@ struct SolstoneInstallerTests {
         let installer = makeInstaller(
             runner: runner,
             wheelhouseURL: fixtureURLs.wheelhouse,
-            runtimeRootURL: fixtureURLs.runtimeRoot
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            fileExists: { _ in false }
         )
         defer { installer.cancel() }
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
-        try await waitUntil { installer.main == .done }
+        try await waitForTerminal(installer)
 
-        let config = try #require(runner.invocations.first { $0.arguments == ["config", "show"] })
-        #expect(config.executable.lastPathComponent == "sol")
+        #expect(installer.main == .failed(.cleanup(
+            step: .resolveJournal,
+            message: cleanupMessage(step: .resolveJournal, why: UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE)
+        )))
+        #expect(!runner.invocations.contains { $0.arguments == ["config", "show"] })
+    }
+
+    @Test func precleanConfigFailureSanitizesDiagnosticExcerpt() async throws {
+        let runner = FakeSubprocessRunner()
+        let home = NSHomeDirectory()
+        let oldSolPath = "\(home)/Library/Application Support/sol/runtime/current/bin/sol"
+        runner.enqueue(
+            "config",
+            .success(stderr: Data("config failed\n\(home)/journal/private detail\n".utf8), exitCode: 2)
+        )
+        let installer = makeInstaller(
+            runner: runner,
+            solBinaryFinder: { oldSolPath },
+            fileExists: { $0.hasSuffix("/journal") }
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitForTerminal(installer)
+
+        #expect(installer.lastFailureLog == "config failed ~/journal/private detail")
     }
 
     @Test func createFreshSkipsPrecleanWhenNoExistingBinary() async throws {
@@ -822,13 +851,13 @@ struct SolstoneInstallerTests {
         }
     }
 
-    @Test func precleanOrphanSweepKillsOnlyPPIDOneSolPrefix() async throws {
+    @Test func precleanOrphanSweepKillsOnlyPPIDOneJournalPrefix() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
         enqueueSuccessfulUpgrade(runner, resolvedJournal: "/tmp/journal", psOutput: """
-          111     1 sol:foo
-          222     2 sol:bar
+          111     1 journal:foo
+          222     2 journal:bar
           333     1 other-process
         """)
         let signals = LockedSignalRecorder()
@@ -851,7 +880,7 @@ struct SolstoneInstallerTests {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
-        enqueueSuccessfulUpgrade(runner, resolvedJournal: "/tmp/journal", psOutput: "111 1 sol:foo\n")
+        enqueueSuccessfulUpgrade(runner, resolvedJournal: "/tmp/journal", psOutput: "111 1 journal:foo\n")
         let signals = LockedSignalRecorder()
         let installer = makeInstaller(
             runner: runner,
@@ -1404,7 +1433,7 @@ struct SolstoneInstallerTests {
         }
         #expect(runner.invocations.filter { $0.executable.lastPathComponent == "ps" }.allSatisfy { $0.environment == nil })
         #expect(runner.invocations.filter { $0.executable.lastPathComponent == "lsof" }.allSatisfy { $0.environment == nil })
-        #expect(runner.invocations.first { $0.arguments.first == "setup" }?.executable.path == SolBinaryLocator.journalPath(siblingOf: stagedLayout.solBinary.path))
+        #expect(runner.invocations.first { $0.arguments.first == "setup" }?.executable.path == journalPath(siblingOf: stagedLayout.solBinary.path))
     }
 
     @Test func appManagedUpgradeStageFailureDoesNotStopOldService() async throws {
@@ -1786,14 +1815,18 @@ struct SolstoneInstallerTests {
         runner.enqueue("config", .success(stderr: Data("config failed\n".utf8), exitCode: 2))
         let installer = makeInstaller(
             runner: runner,
-            solOwnershipResolver: { _ in .appManaged(solPath: "/usr/bin/sol") }
+            solOwnershipResolver: { _ in .appManaged(solPath: "/usr/bin/sol") },
+            fileExists: { _ in false }
         )
         defer { installer.cancel() }
 
         _ = await installer.detect()
         try await waitForTerminal(installer)
 
-        #expect(installer.main == .failed(.cleanup(step: .resolveJournal, message: cleanupMessage(step: .resolveJournal, why: "config failed"))))
+        #expect(installer.main == .failed(.cleanup(
+            step: .resolveJournal,
+            message: cleanupMessage(step: .resolveJournal, why: UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE)
+        )))
         assertNoDestructiveInstallerInvocations(runner)
     }
 
@@ -2470,7 +2503,7 @@ struct SolstoneInstallerTests {
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
         solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
-        fileExists: @escaping @Sendable (String) -> Bool = { _ in false },
+        fileExists: @escaping @Sendable (String) -> Bool = defaultTestFileExists,
         stagedInstallTimeout: Duration = .seconds(120),
         stagedInstallMaxAttempts: Int = 1,
         stagedInstallRetryBackoff: Duration = .zero,
@@ -2512,7 +2545,7 @@ struct SolstoneInstallerTests {
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
         solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
-        fileExists: @escaping @Sendable (String) -> Bool = { _ in false },
+        fileExists: @escaping @Sendable (String) -> Bool = defaultTestFileExists,
         pidExists: @escaping @Sendable (pid_t) -> Bool,
         terminate: @escaping @Sendable (pid_t, Int32) -> Int32 = { _, _ in 0 },
         pidWaitTimeout: Duration = .seconds(1),
@@ -2878,6 +2911,17 @@ private final class LockedProbeCounter: @unchecked Sendable {
 private struct SignalRecord: Equatable {
     let pid: pid_t
     let signal: Int32
+}
+
+private func journalPath(siblingOf solPath: String) -> String {
+    URL(fileURLWithPath: solPath)
+        .deletingLastPathComponent()
+        .appendingPathComponent("journal")
+        .path
+}
+
+private func defaultTestFileExists(_ path: String) -> Bool {
+    path.hasSuffix("/journal")
 }
 
 private final class LockedSignalRecorder: @unchecked Sendable {

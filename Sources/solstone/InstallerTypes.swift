@@ -27,9 +27,9 @@ public enum CleanupStep: String, Sendable, Equatable, CaseIterable {
         case .resolveJournal:
             return "resolve journal"
         case .serviceUninstall:
-            return "stop pipeline"
+            return "stop journal"
         case .waitForDeath:
-            return "wait for pipeline to stop"
+            return "wait for journal to stop"
         case .orphanSweep:
             return "clear leftover processes"
         case .ports:

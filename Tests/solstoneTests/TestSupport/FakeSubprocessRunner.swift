@@ -1,4 +1,5 @@
 import Foundation
+import Testing
 @testable import solstone
 
 struct SubprocessInvocation: Sendable, Equatable {
@@ -63,6 +64,10 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         stdoutHandler: @escaping @Sendable (Data) -> Void,
         stderrHandler: @escaping @Sendable (Data) -> Void
     ) async throws -> SubprocessResult {
+        if executable.lastPathComponent == "sol" {
+            Issue.record("unexpected sol subprocess invocation: \(executable.path) \(arguments.joined(separator: " "))")
+            throw FakeRunError(message: "unexpected sol subprocess invocation")
+        }
         let response = nextResponse(executable: executable, arguments: arguments, environment: environment, timeout: timeout)
         if let timeout, response.delay >= timeout {
             try? await Task.sleep(for: timeout)

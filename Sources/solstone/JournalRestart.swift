@@ -6,7 +6,7 @@ import Foundation
 import os
 import SolstoneCore
 
-internal enum RestartFailureStep: CaseIterable, Sendable {
+internal enum JournalRestartStep: CaseIterable, Sendable {
     case resolveJournal
     case orphanSweep
     case staleStateMoveAside
@@ -22,30 +22,31 @@ internal enum RestartFailureStep: CaseIterable, Sendable {
         case .staleStateMoveAside:
             return "stale-state-move-aside"
         case .serviceRestart:
-            return "serv" + "ice-restart"
+            return "journal-restart"
         case .reProbe:
             return "re-probe"
         }
     }
 }
 
-internal struct PipelineRestartFailure: Error, Equatable, Sendable {
-    let step: RestartFailureStep
+internal struct JournalRestartFailure: Error, Equatable, Sendable {
+    let step: JournalRestartStep
     let ownerMessage: String
+    let diagnostic: JournalDiagnostic
 }
 
-internal enum PipelineRestartOutcome: Equatable, Sendable {
+internal enum JournalRestartOutcome: Equatable, Sendable {
     case success
-    case failure(PipelineRestartFailure)
+    case failure(JournalRestartFailure)
 }
 
-internal struct PipelineRestartLogEvent: Equatable, Sendable {
-    let step: RestartFailureStep
+internal struct JournalRestartLogEvent: Equatable, Sendable {
+    let step: JournalRestartStep
     let outcome: String
     let detail: String?
 }
 
-internal struct PipelineDebounceState: Sendable {
+internal struct JournalRuntimeDebounceState: Sendable {
     private(set) var consecutiveFailures = 0
     private(set) var firstFailureAt: Date?
 
@@ -55,28 +56,49 @@ internal struct PipelineDebounceState: Sendable {
     }
 
     mutating func apply(
-        outcome: PipelineLivenessProbeOutcome,
+        outcome: JournalRuntimeProbeOutcome,
         now: Date,
-        currentlyDead: Bool
-    ) -> (pipelineDead: Bool, pipelineBinaryMissing: Bool) {
+        currentStatus: JournalRuntimeStatus
+    ) -> JournalRuntimeStatus {
         switch outcome {
         case .reachable:
             reset()
-            return (false, false)
+            return .running
         case .binaryMissing:
             reset()
-            return (false, true)
-        case .unreachable:
-            if currentlyDead {
-                return (true, false)
-            }
-            if firstFailureAt == nil {
-                firstFailureAt = now
-            }
-            consecutiveFailures += 1
-            let span = now.timeIntervalSince(firstFailureAt ?? now)
-            return (consecutiveFailures >= 3 && span >= 10.0, false)
+            return .setupNeeded
+        case .unreachable(let diagnostic):
+            return debouncedFailure(
+                now: now,
+                currentStatus: currentStatus,
+                attentionStatus: .stopped(diagnostic)
+            )
+        case .unknown(let diagnostic):
+            return debouncedFailure(
+                now: now,
+                currentStatus: currentStatus,
+                attentionStatus: .unknown(diagnostic)
+            )
         }
+    }
+
+    private mutating func debouncedFailure(
+        now: Date,
+        currentStatus: JournalRuntimeStatus,
+        attentionStatus: JournalRuntimeStatus
+    ) -> JournalRuntimeStatus {
+        switch currentStatus {
+        case .stopped, .unknown:
+            return attentionStatus
+        case .running, .restarting, .setupNeeded:
+            break
+        }
+        if firstFailureAt == nil {
+            firstFailureAt = now
+        }
+        consecutiveFailures += 1
+        let span = now.timeIntervalSince(firstFailureAt ?? now)
+        return consecutiveFailures >= 3 && span >= 10.0 ? attentionStatus : currentStatus
     }
 }
 
@@ -109,7 +131,8 @@ internal func parsePsOrphanRows(_ output: String) -> [pid_t] {
             return nil
         }
         let command = String(parts[2])
-        guard pid > 0, ppid == 1, command.hasPrefix("sol:") else {
+        // Runtime journal child process titles use this prefix; asserted per task and verified live by the calling session.
+        guard pid > 0, ppid == 1, command.hasPrefix("journal:") else {
             return nil
         }
         return pid_t(pid)
@@ -119,13 +142,13 @@ internal func parsePsOrphanRows(_ output: String) -> [pid_t] {
 internal func moveAsideStaleStateFiles(
     journalRoot: URL,
     fileManager: FileManager = .default
-) -> [PipelineRestartLogEvent] {
+) -> [JournalRestartLogEvent] {
     staleStateRelativePaths.map { relativePath in
         let fileURL = journalRoot.appendingPathComponent(relativePath)
         let backupURL = URL(fileURLWithPath: fileURL.path + ".bak")
 
         guard fileManager.fileExists(atPath: fileURL.path) else {
-            return PipelineRestartLogEvent(
+            return JournalRestartLogEvent(
                 step: .staleStateMoveAside,
                 outcome: "noop",
                 detail: "\(relativePath):missing"
@@ -137,13 +160,13 @@ internal func moveAsideStaleStateFiles(
                 try fileManager.removeItem(at: backupURL)
             }
             try fileManager.moveItem(at: fileURL, to: backupURL)
-            return PipelineRestartLogEvent(
+            return JournalRestartLogEvent(
                 step: .staleStateMoveAside,
                 outcome: "success",
                 detail: "\(relativePath):moved"
             )
         } catch {
-            return PipelineRestartLogEvent(
+            return JournalRestartLogEvent(
                 step: .staleStateMoveAside,
                 outcome: "error",
                 detail: "\(relativePath):\(error.localizedDescription)"
@@ -152,42 +175,47 @@ internal func moveAsideStaleStateFiles(
     }
 }
 
-internal struct PipelineRestartRunner: @unchecked Sendable {
+internal struct JournalRestartRunner: @unchecked Sendable {
     private let runner: SubprocessRunning
-    private let journalPathProvider: @Sendable (String) async -> String?
+    private let journalPathProvider: @Sendable (URL) async -> String?
     private let terminate: @Sendable (pid_t) -> Void
     private let fileManager: FileManager
-    private let reprobe: @Sendable () async -> PipelineLivenessProbeOutcome
-    private let logSink: (@Sendable (PipelineRestartLogEvent) -> Void)?
-    private let solPath: String
+    private let reprobe: @Sendable () async -> JournalRuntimeProbeOutcome
+    private let logSink: (@Sendable (JournalRestartLogEvent) -> Void)?
+    private let journalBinary: URL
 
     internal init(
         runner: SubprocessRunning = SubprocessRunner(),
-        journalPathProvider: (@Sendable (String) async -> String?)? = nil,
+        journalPathProvider: (@Sendable (URL) async -> String?)? = nil,
         terminate: @escaping @Sendable (pid_t) -> Void = { pid in
             _ = Darwin.kill(pid, SIGTERM)
         },
         fileManager: FileManager = .default,
-        reprobe: @escaping @Sendable () async -> PipelineLivenessProbeOutcome,
-        logSink: (@Sendable (PipelineRestartLogEvent) -> Void)? = nil,
-        solPath: String
+        reprobe: @escaping @Sendable () async -> JournalRuntimeProbeOutcome,
+        logSink: (@Sendable (JournalRestartLogEvent) -> Void)? = nil,
+        journalBinary: URL
     ) {
         self.runner = runner
-        self.journalPathProvider = journalPathProvider ?? { solPath in
-            await Self.defaultJournalPathProvider(solPath: solPath, runner: runner)
+        self.journalPathProvider = journalPathProvider ?? { journalBinary in
+            await Self.defaultJournalPathProvider(journalBinary: journalBinary, runner: runner)
         }
         self.terminate = terminate
         self.fileManager = fileManager
         self.reprobe = reprobe
         self.logSink = logSink
-        self.solPath = solPath
+        self.journalBinary = journalBinary
     }
 
-    internal func run() async -> PipelineRestartOutcome {
-        guard let journalPath = await journalPathProvider(solPath) else {
-            let failure = PipelineRestartFailure(
+    internal func run() async -> JournalRestartOutcome {
+        guard let journalPath = await journalPathProvider(journalBinary) else {
+            let diagnostic = JournalDiagnostic(
+                commandLabel: "journal config show",
+                outputExcerpt: "no journal path"
+            )
+            let failure = JournalRestartFailure(
                 step: .resolveJournal,
-                ownerMessage: "restart failed at journal path — could not find the journal"
+                ownerMessage: "restart failed — journal path could not be read",
+                diagnostic: diagnostic
             )
             emit(step: .resolveJournal, outcome: "error", detail: "no-journal-path")
             return .failure(failure)
@@ -202,27 +230,37 @@ internal struct PipelineRestartRunner: @unchecked Sendable {
         )
         emitMoveAsideSummary(moveEvents)
 
+        let output = LockedJournalOutput()
         let restartResult: SubprocessResult
         do {
             restartResult = try await runner.run(
-                executable: URL(fileURLWithPath: solPath),
+                executable: journalBinary,
                 arguments: ["service", "restart"],
                 environment: nil,
-                stdoutHandler: { _ in },
-                stderrHandler: { _ in }
+                stdoutHandler: { data in output.append(data) },
+                stderrHandler: { data in output.append(data) }
             )
         } catch {
-            let failure = PipelineRestartFailure(
+            let failure = JournalRestartFailure(
                 step: .serviceRestart,
-                ownerMessage: "restart failed at pipeline restart — command did not complete"
+                ownerMessage: "restart failed — journal did not restart",
+                diagnostic: JournalDiagnostic(
+                    commandLabel: "journal service restart",
+                    outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
+                )
             )
             emit(step: .serviceRestart, outcome: "error", detail: error.localizedDescription)
             return .failure(failure)
         }
         guard restartResult.exitCode == 0 else {
-            let failure = PipelineRestartFailure(
+            let failure = JournalRestartFailure(
                 step: .serviceRestart,
-                ownerMessage: "restart failed at pipeline restart — command did not complete"
+                ownerMessage: "restart failed — journal did not restart",
+                diagnostic: JournalDiagnostic(
+                    commandLabel: "journal service restart",
+                    exitCode: restartResult.exitCode,
+                    outputExcerpt: sanitizeJournalDiagnosticOutput(output.string)
+                )
             )
             emit(step: .serviceRestart, outcome: "error", detail: "exit=\(restartResult.exitCode)")
             return .failure(failure)
@@ -235,9 +273,11 @@ internal struct PipelineRestartRunner: @unchecked Sendable {
                 await reprobe()
             }
             guard outcome == .reachable else {
-                let failure = PipelineRestartFailure(
+                let diagnostic = Self.postRestartDiagnostic(outcome: outcome)
+                let failure = JournalRestartFailure(
                     step: .reProbe,
-                    ownerMessage: "restart failed at pipeline check — pipeline did not come back"
+                    ownerMessage: "restart failed — journal did not come back",
+                    diagnostic: diagnostic
                 )
                 emit(step: .reProbe, outcome: "error", detail: "\(outcome)")
                 return .failure(failure)
@@ -245,23 +285,44 @@ internal struct PipelineRestartRunner: @unchecked Sendable {
             emit(step: .reProbe, outcome: "success", detail: nil)
             return .success
         } catch {
-            let failure = PipelineRestartFailure(
+            let failure = JournalRestartFailure(
                 step: .reProbe,
-                ownerMessage: "restart failed at pipeline check — pipeline did not come back"
+                ownerMessage: "restart failed — journal did not come back",
+                diagnostic: JournalDiagnostic(
+                    commandLabel: "journal health",
+                    timedOut: error is TimeoutError,
+                    outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
+                )
             )
             emit(step: .reProbe, outcome: "error", detail: error.localizedDescription)
             return .failure(failure)
         }
     }
 
+    private static func postRestartDiagnostic(outcome: JournalRuntimeProbeOutcome) -> JournalDiagnostic {
+        switch outcome {
+        case .unreachable(let diagnostic), .unknown(let diagnostic):
+            return JournalDiagnostic(
+                commandLabel: diagnostic.commandLabel,
+                timedOut: diagnostic.timedOut,
+                exitCode: diagnostic.exitCode,
+                outputExcerpt: diagnostic.outputExcerpt ?? "post-restart check failed"
+            )
+        case .binaryMissing:
+            return JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "journal binary missing after restart")
+        case .reachable:
+            return JournalDiagnostic(commandLabel: "journal health")
+        }
+    }
+
     private static func defaultJournalPathProvider(
-        solPath: String,
+        journalBinary: URL,
         runner: SubprocessRunning
     ) async -> String? {
-        let output = LockedPipelineOutput()
+        let output = LockedJournalOutput()
         do {
             let result = try await runner.run(
-                executable: URL(fileURLWithPath: solPath),
+                executable: journalBinary,
                 arguments: ["config", "show"],
                 environment: nil,
                 stdoutHandler: { data in output.append(data) },
@@ -275,7 +336,7 @@ internal struct PipelineRestartRunner: @unchecked Sendable {
     }
 
     private func runOrphanSweep() async {
-        let output = LockedPipelineOutput()
+        let output = LockedJournalOutput()
         do {
             let result = try await runner.run(
                 executable: URL(fileURLWithPath: "/bin/ps"),
@@ -302,7 +363,7 @@ internal struct PipelineRestartRunner: @unchecked Sendable {
         }
     }
 
-    private func emitMoveAsideSummary(_ events: [PipelineRestartLogEvent]) {
+    private func emitMoveAsideSummary(_ events: [JournalRestartLogEvent]) {
         let moved = events.filter { $0.outcome == "success" }.count
         let errors = events.filter { $0.outcome == "error" }.count
         if errors > 0 {
@@ -314,19 +375,19 @@ internal struct PipelineRestartRunner: @unchecked Sendable {
         }
     }
 
-    private func emit(step: RestartFailureStep, outcome: String, detail: String?) {
-        let event = PipelineRestartLogEvent(step: step, outcome: outcome, detail: detail)
+    private func emit(step: JournalRestartStep, outcome: String, detail: String?) {
+        let event = JournalRestartLogEvent(step: step, outcome: outcome, detail: detail)
         let detailSuffix = detail.map { " detail=\($0)" } ?? ""
         if outcome == "error" {
-            Logger.setup.warning("pipeline-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
+            Logger.setup.warning("journal-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
         } else {
-            Logger.setup.info("pipeline-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
+            Logger.setup.info("journal-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
         }
         logSink?(event)
     }
 }
 
-private final class LockedPipelineOutput: @unchecked Sendable {
+private final class LockedJournalOutput: @unchecked Sendable {
     private let lock = NSLock()
     private var data = Data()
 

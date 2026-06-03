@@ -125,9 +125,10 @@ struct AXIDTests {
 
         expectToken(MenubarStatusRowState.permissions.axToken, "permissions")
         expectToken(MenubarStatusRowState.error.axToken, "error")
-        expectToken(MenubarStatusRowState.pipelineDead.axToken, "pipeline_dead")
-        expectToken(MenubarStatusRowState.pipelineRestarting.axToken, "pipeline_restarting")
-        expectToken(MenubarStatusRowState.pipelineMissing.axToken, "pipeline_missing")
+        expectToken(MenubarStatusRowState.journalStopped.axToken, "journal_stopped")
+        expectToken(MenubarStatusRowState.journalRestarting.axToken, "journal_restarting")
+        expectToken(MenubarStatusRowState.journalSetupNeeded.axToken, "journal_setup_needed")
+        expectToken(MenubarStatusRowState.journalUnknown.axToken, "journal_unknown")
         expectToken(MenubarStatusRowState.localOnly.axToken, "local_only")
         expectToken(MenubarStatusRowState.offline.axToken, "offline")
         expectToken(MenubarStatusRowState.paused.axToken, "paused")
@@ -265,7 +266,7 @@ struct AXIDTests {
             AXID.Menubar.statusRowState,
             AXID.Menubar.permissionsButton,
             AXID.Menubar.errorButton,
-            AXID.Menubar.pipelineState,
+            AXID.Menubar.journalState,
             AXID.Menubar.localOnlyButton,
             AXID.Menubar.offlineButton,
             AXID.Menubar.pauseMenu,
@@ -275,7 +276,6 @@ struct AXIDTests {
             AXID.Menubar.pauseIndefinite,
             AXID.Menubar.resumeButton,
             AXID.Menubar.startObservingButton,
-            AXID.Menubar.restartPipelineButton,
             AXID.Menubar.openJournalButton,
             AXID.Menubar.settingsButton,
             AXID.Menubar.aboutButton,
@@ -296,6 +296,7 @@ struct AXIDTests {
             AXID.Settings.Observer.cacheRetentionState,
             AXID.Settings.Observer.cacheFolderOpen,
             AXID.Settings.Service.restartRequiredBanner,
+            AXID.Settings.Service.restartJournalButton,
             AXID.Settings.Service.prereqPermissions,
             AXID.Settings.Service.journalModePicker,
             AXID.Settings.Service.journalModeState,
@@ -321,7 +322,7 @@ struct AXIDTests {
             AXID.Settings.Status.observingState,
             AXID.Settings.Status.nextSegmentSeconds,
             AXID.Settings.Status.uploadJournalState,
-            AXID.Settings.Status.pipelineState,
+            AXID.Settings.Status.journalRuntimeState,
             AXID.Settings.Status.uploadState,
             AXID.Settings.Status.uploadChecked,
             AXID.Settings.Status.uploadTotal,

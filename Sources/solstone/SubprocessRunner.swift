@@ -81,7 +81,7 @@ internal final class SubprocessRunner: SubprocessRunning {
             // is delivered to the subprocess instead. Pass the calling process's env
             // explicitly to guarantee PATH and friends survive into the subprocess.
             // (Verified 2026-05-12 during solstone-macos installer cold smoke —
-            // sol doctor checks for npx/ioreg/lsof failed because PATH arrived
+            // journal doctor checks for npx/ioreg/lsof failed because PATH arrived
             // empty in the subprocess despite the parent .app having a rich PATH.)
             process.environment = environment ?? ProcessInfo.processInfo.environment
 

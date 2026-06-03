@@ -79,11 +79,11 @@ struct SettingsRestartContractTests {
         #expect(permissions.lowerBound < heading.lowerBound)
     }
 
-    @Test func bannerButtonActionCallsRequestPipelineRestart() throws {
+    @Test func bannerButtonActionCallsRequestJournalRestart() throws {
         let body = try restartRequiredBannerBody()
 
-        #expect(body.contains("appState.requestPipelineRestart()"))
-        #expect(!body.contains("PipelineRestartRunner"))
+        #expect(body.contains("appState.requestJournalRestart()"))
+        #expect(!body.contains("JournalRestartRunner"))
         #expect(!body.contains("SubprocessRunner"))
         #expect(!body.contains("launchctl"))
         #expect(!body.contains("\"service\", \"restart\""))
@@ -93,7 +93,7 @@ struct SettingsRestartContractTests {
     @Test func bannerButtonDisablesWhileRestarting() throws {
         let body = try restartRequiredBannerBody()
 
-        #expect(body.contains(".disabled(appState.isRestartingPipeline)"))
+        #expect(body.contains(".disabled(appState.journalRuntimeStatus.isRestarting)"))
     }
 
     @Test func bannerStateLivesOnAppStateNotSettingsView() throws {
@@ -111,9 +111,9 @@ struct SettingsRestartContractTests {
         state.notifyRestartRequiredSettingSaved()
         configureRestart(state: state, journalRoot: temp, reprobe: { .reachable })
 
-        state.requestPipelineRestart()
+        state.requestJournalRestart()
         try await waitUntil {
-            !state.isRestartingPipeline && !state.restartRequiredBannerVisible
+            !state.journalRuntimeStatus.isRestarting && !state.restartRequiredBannerVisible
         }
 
         #expect(!state.restartRequiredBannerVisible)
@@ -124,11 +124,12 @@ struct SettingsRestartContractTests {
         defer { try? FileManager.default.removeItem(at: temp) }
         let state = makeRestartableState()
         state.notifyRestartRequiredSettingSaved()
-        configureRestart(state: state, journalRoot: temp, reprobe: { .unreachable })
+        let postRestart = diag("post restart")
+        configureRestart(state: state, journalRoot: temp, reprobe: { .unreachable(postRestart) })
 
-        state.requestPipelineRestart()
+        state.requestJournalRestart()
         try await waitUntil {
-            !state.isRestartingPipeline && state.errorMessage == "restart failed at pipeline check — pipeline did not come back"
+            !state.journalRuntimeStatus.isRestarting && state.errorMessage == "restart failed — journal did not come back"
         }
 
         #expect(state.restartRequiredBannerVisible)
@@ -145,11 +146,11 @@ struct SettingsRestartContractTests {
             return .reachable
         })
 
-        state.requestPipelineRestart()
+        state.requestJournalRestart()
         try await waitUntil { gate.isWaiting }
         state.notifyRestartRequiredSettingSaved()
         gate.release()
-        try await waitUntil { !state.isRestartingPipeline }
+        try await waitUntil { !state.journalRuntimeStatus.isRestarting }
 
         #expect(state.restartRequiredBannerVisible)
     }
@@ -161,21 +162,21 @@ struct SettingsRestartContractTests {
         state.notifyRestartRequiredSettingSaved()
         configureRestart(state: state, journalRoot: temp, reprobe: { .reachable })
 
-        state.requestPipelineRestart()
+        state.requestJournalRestart()
         try await waitUntil {
-            !state.isRestartingPipeline && !state.restartRequiredBannerVisible
+            !state.journalRuntimeStatus.isRestarting && !state.restartRequiredBannerVisible
         }
 
         #expect(!state.restartRequiredBannerVisible)
     }
 
-    @Test func bannerClearedOnlyInsideRunPipelineRestart() throws {
+    @Test func bannerClearedOnlyInsideRunJournalRestart() throws {
         let source = try readSource("Sources/solstone/AppState.swift")
         let matches = ranges(of: "restartRequiredBannerVisible = false", in: source)
         let function = try extract(
             from: source,
-            start: "private func runPipelineRestart() async",
-            end: "private func emitPipelineRestartLog"
+            start: "private func runJournalRestart() async",
+            end: "private func emitJournalRestartLog"
         )
 
         #expect(matches.count == 1)
@@ -224,7 +225,7 @@ struct SettingsRestartContractTests {
         let hook = try extract(
             from: source,
             start: "TODO(v1.1)",
-            end: "private func runPipelineRestart() async"
+            end: "private func runJournalRestart() async"
         )
 
         #expect(hook.contains("notifyRestartRequiredSettingSaved"))
@@ -239,22 +240,28 @@ struct SettingsRestartContractTests {
     private func configureRestart(
         state: AppState,
         journalRoot: URL,
-        reprobe: @escaping @Sendable () async -> PipelineLivenessProbeOutcome
+        reprobe: @escaping @Sendable () async -> JournalRuntimeProbeOutcome
     ) {
-        state.pipelineSolBinaryFinder = { "/usr/bin/sol" }
-        state.pipelineRestartRunnerFactory = { solPath, logSink in
+        let journalBinary = URL(fileURLWithPath: "/usr/bin/journal")
+        state.journalBinaryProvider = { journalBinary }
+        state.journalRuntimeFileExists = { _ in true }
+        state.journalRestartRunnerFactory = { journalBinary, logSink in
             let runner = FakeSubprocessRunner()
             runner.enqueue("ps", .success(stdout: Data()))
             runner.enqueue("service", .success())
-            return PipelineRestartRunner(
+            return JournalRestartRunner(
                 runner: runner,
                 journalPathProvider: { _ in journalRoot.path },
                 terminate: { _ in },
                 reprobe: reprobe,
                 logSink: logSink,
-                solPath: solPath
+                journalBinary: journalBinary
             )
         }
+    }
+
+    private func diag(_ text: String) -> JournalDiagnostic {
+        JournalDiagnostic(commandLabel: "journal health", outputExcerpt: text)
     }
 
     private func restartRequiredBannerBody() throws -> String {

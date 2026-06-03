@@ -32,9 +32,10 @@ internal enum MenubarIconState: CaseIterable {
 internal enum MenubarStatusRowState: CaseIterable {
     case permissions
     case error
-    case pipelineDead
-    case pipelineRestarting
-    case pipelineMissing
+    case journalStopped
+    case journalRestarting
+    case journalSetupNeeded
+    case journalUnknown
     case localOnly
     case offline
     case paused
@@ -229,12 +230,14 @@ extension MenubarStatusRowState {
             return "permissions"
         case .error:
             return "error"
-        case .pipelineDead:
-            return "pipeline_dead"
-        case .pipelineRestarting:
-            return "pipeline_restarting"
-        case .pipelineMissing:
-            return "pipeline_missing"
+        case .journalStopped:
+            return "journal_stopped"
+        case .journalRestarting:
+            return "journal_restarting"
+        case .journalSetupNeeded:
+            return "journal_setup_needed"
+        case .journalUnknown:
+            return "journal_unknown"
         case .localOnly:
             return "local_only"
         case .offline:

@@ -110,6 +110,24 @@ struct MenuContent: View {
             }
             .foregroundStyle(.red)
             .accessibilityIdentifier(AXID.Menubar.permissionsButton)
+        } else if appState.bundledJournalStatusAvailable,
+                  let journalRow = appState.journalRuntimeStatus.menuRowPresentation {
+            if journalRow.isEnabled {
+                Button(journalRow.text) {
+                    appState.pendingSettingsTab = "journal"
+                    openWindow(id: "settings")
+                    appState.didOpenWindow(.settings)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                .foregroundStyle(.red)
+                .accessibilityIdentifier(AXID.Menubar.journalState)
+                .accessibilityValue(journalRow.state.axToken)
+            } else {
+                Text(journalRow.text)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier(AXID.Menubar.journalState)
+                    .accessibilityValue(rowState.axToken)
+            }
         } else if let error = appState.errorMessage {
             Button("error: \(error)") {
                 appState.pendingSettingsTab = "status"
@@ -119,24 +137,6 @@ struct MenuContent: View {
             }
             .foregroundStyle(.red)
             .accessibilityIdentifier(AXID.Menubar.errorButton)
-        } else if appState.bundledPipelineStatusAvailable,
-                  let pipelineRow = pipelineStatusRowModel(
-                    pipelineDead: appState.pipelineDead,
-                    isRestartingPipeline: appState.isRestartingPipeline,
-                    pipelineBinaryMissing: appState.pipelineBinaryMissing
-                  ) {
-            if pipelineRow.isEnabled {
-                Button(pipelineRow.text) {
-                    appState.requestPipelineRestart()
-                }
-                .foregroundStyle(.red)
-                .accessibilityIdentifier(AXID.Menubar.pipelineState)
-            } else {
-                Text(pipelineRow.text)
-                    .foregroundStyle(.red)
-                    .accessibilityIdentifier(AXID.Menubar.pipelineState)
-                    .accessibilityValue(rowState.axToken)
-            }
         } else if appState.isRecording && !appState.config.isUploadConfigured && !appState.isPaused && !appState.pauseManager.isPaused {
             Button("observing - local only →") {
                 appState.pendingSettingsTab = "journal"
@@ -181,16 +181,12 @@ struct MenuContent: View {
         if appState.permissionsNeedAttention {
             return .permissions
         }
+        if appState.bundledJournalStatusAvailable,
+           let journalRow = appState.journalRuntimeStatus.menuRowPresentation {
+            return journalRow.state
+        }
         if appState.errorMessage != nil {
             return .error
-        }
-        if appState.bundledPipelineStatusAvailable,
-           let pipelineRow = pipelineStatusRowModel(
-            pipelineDead: appState.pipelineDead,
-            isRestartingPipeline: appState.isRestartingPipeline,
-            pipelineBinaryMissing: appState.pipelineBinaryMissing
-           ) {
-            return pipelineRow.state
         }
         if appState.isRecording && !appState.config.isUploadConfigured && !appState.isPaused && !appState.pauseManager.isPaused {
             return .localOnly
@@ -270,14 +266,6 @@ struct MenuContent: View {
             }
             .accessibilityIdentifier(AXID.Menubar.startObservingButton)
         }
-
-        if appState.bundledPipelineRestartAvailable {
-            Button("restart pipeline") {
-                appState.requestPipelineRestart()
-            }
-            .disabled(appState.isRestartingPipeline)
-            .accessibilityIdentifier(AXID.Menubar.restartPipelineButton)
-        }
     }
 
     // MARK: - Upload Status Row
@@ -286,23 +274,6 @@ struct MenuContent: View {
 
 func journalURLToOpen(from serverURL: String?) -> URL? {
     URL(string: serverURL ?? "")
-}
-
-func pipelineStatusRowModel(
-    pipelineDead: Bool,
-    isRestartingPipeline: Bool,
-    pipelineBinaryMissing: Bool
-) -> (text: String, isEnabled: Bool, state: MenubarStatusRowState)? {
-    if pipelineBinaryMissing {
-        return ("solstone is not fully installed", false, .pipelineMissing)
-    }
-    if isRestartingPipeline {
-        return ("restarting…", false, .pipelineRestarting)
-    }
-    if pipelineDead {
-        return ("pipeline stopped — click to restart", true, .pipelineDead)
-    }
-    return nil
 }
 
 func pausedHeaderText(timeRemaining: String?) -> String {

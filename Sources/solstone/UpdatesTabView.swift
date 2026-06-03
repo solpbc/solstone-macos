@@ -452,7 +452,7 @@ private extension UpdatesTabView {
         private static let _debugReleaseNotes_1_3_0 = """
 ### Added
 - you can now run sol's on-screen analysis entirely on your own Apple Silicon Mac. choose the on-device option in settings, and the part of sol that makes sense of what's on your screen runs locally, with nothing about those frames going to a cloud provider. it's opt-in, vision-only for now, and needs a Mac with at least 16 GB of memory. a one-time model download happens the first time you turn it on.
-- the menu bar now tells you when sol's background pipeline has stopped and lets you restart it in place. if the pipeline goes quiet, you'll see "pipeline stopped" with a click-to-restart action, so you can recover without leaving the app.
+- the menu bar now tells you when your journal needs attention and opens settings for restart or setup.
 - you can now power sol with your Anthropic or OpenAI account without installing anything separately. enable the provider in settings and paste your key, and solstone installs what it needs on its own.
 
 ### Changed

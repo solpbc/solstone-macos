@@ -43,7 +43,7 @@ public final class SolstoneInstaller {
         }
     }
 
-    /// Narrow app-managed journal upgrade signal used only to suppress pipeline
+    /// Narrow app-managed journal upgrade signal used only to suppress journal
     /// liveness probing while an existing bundled runtime is being replaced.
     public internal(set) var upgradeInProgress: Bool = false
 
@@ -158,7 +158,7 @@ public final class SolstoneInstaller {
         self.runtimeVersionTokenProvider = runtimeVersionTokenProvider
         self.wrapperDirURL = wrapperDirURL
         self.solBinaryFinder = solBinaryFinder ?? {
-            await SolBinaryLocator.findSolBinary(rootURL: resolvedRuntimeRootURL)
+            Self.findAppManagedSolBinary(rootURL: resolvedRuntimeRootURL, fileExists: fileExists)
         }
         self.fileExists = fileExists
         self.solOwnershipResolver = solOwnershipResolver ?? SolOwnership.defaultResolver(
@@ -307,13 +307,14 @@ public final class SolstoneInstaller {
             return
         }
 
-        guard await runSolSetup(
-            solPath: solPath,
+        let journalBinary = URL(fileURLWithPath: Self.journalPath(siblingOf: solPath))
+        guard await runJournalSetup(
+            journalBinary: journalBinary,
             journalURL: setupJournalURL,
             layout: .active(rootURL: runtimeRootURL),
             skipService: false
         ) else { return }
-        await enterRegistering(solPath: solPath)
+        await enterRegistering(journalBinary: journalBinary)
     }
 
     private func resolvedUVBinaryURL() -> URL {
@@ -472,7 +473,7 @@ public final class SolstoneInstaller {
             attempt += 1
         }
 
-        let installedVersion = await stagedSolVersion(solPath: layout.solBinary.path, environment: environment)
+        let installedVersion = await stagedJournalVersion(journalBinary: layout.journalBinary, environment: environment)
         guard installedVersion == pin else {
             failMain(
                 .installSolstone(message: "staged solstone version mismatch"),
@@ -485,22 +486,13 @@ public final class SolstoneInstaller {
         return layout
     }
 
-    private func stagedSolVersion(solPath: String, environment: [String: String]) async -> String? {
-        let output = InstallerOutput()
-        do {
-            let result = try await subprocessRunner.run(
-                executable: URL(fileURLWithPath: solPath),
-                arguments: ["--version"],
-                environment: environment,
-                timeout: stagedVerifyTimeout,
-                stdoutHandler: { data in Self.append(data, to: output, stream: .stdout) },
-                stderrHandler: { _ in }
-            )
-            guard result.exitCode == 0 else { return nil }
-            return SolVersionParser.parse(output.stdoutString())
-        } catch {
-            return nil
-        }
+    private func stagedJournalVersion(journalBinary: URL, environment: [String: String]) async -> String? {
+        await JournalHealthCheck.version(
+            journalBinary: journalBinary,
+            runner: subprocessRunner,
+            environment: environment,
+            timeout: stagedVerifyTimeout
+        )
     }
 
     private func preflightBundledPython(at url: URL) async -> Bool {
@@ -594,23 +586,35 @@ public final class SolstoneInstaller {
         setMain(.cleaningUp(SubprocessProgress(phase: phase)))
         Logger.setup.info("resolving existing journal before upgrade")
 
-        let configJournalBinaryPath = SolBinaryLocator.journalPath(siblingOf: oldSolPath)
-        let configUseJournal = fileExists(configJournalBinaryPath)
-        let configExecPath = configUseJournal ? configJournalBinaryPath : oldSolPath
-        let configLabel = "\(configUseJournal ? "journal" : "sol") config show"
+        let configJournalBinaryPath = Self.journalPath(siblingOf: oldSolPath)
+        guard fileExists(configJournalBinaryPath) else {
+            failCleanup(
+                step: .resolveJournal,
+                why: UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE,
+                category: .unknown,
+                logExcerpt: sanitizeJournalDiagnosticOutput("journal binary missing at \(configJournalBinaryPath)")
+            )
+            return nil
+        }
+        let configLabel = "journal config show"
 
         let configOutput = InstallerOutput()
         let configResult: SubprocessResult
         do {
             configResult = try await subprocessRunner.run(
-                executable: URL(fileURLWithPath: configExecPath),
+                executable: URL(fileURLWithPath: configJournalBinaryPath),
                 arguments: ["config", "show"],
                 environment: nil,
                 stdoutHandler: { data in Self.append(data, to: configOutput, stream: .stdout) },
                 stderrHandler: { data in Self.append(data, to: configOutput, stream: .stderr) }
             )
         } catch {
-            failCleanup(step: .resolveJournal, why: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "\(configLabel) subprocess could not launch: \(error.localizedDescription)")
+            failCleanup(
+                step: .resolveJournal,
+                why: error.localizedDescription,
+                category: .subprocessLaunch,
+                logExcerpt: sanitizeJournalDiagnosticOutput("\(configLabel) subprocess could not launch: \(error.localizedDescription)")
+            )
             return nil
         }
 
@@ -621,12 +625,17 @@ public final class SolstoneInstaller {
                 step: .resolveJournal,
                 why: lastUsefulLine(configStderr) ?? "\(configLabel) exited \(configResult.exitCode)",
                 category: Self.categorize(stderr: configStderr),
-                logExcerpt: Self.lastUsefulLog(stdout: configStdout, stderr: configStderr)
+                logExcerpt: sanitizeJournalDiagnosticOutput(Self.lastUsefulLog(stdout: configStdout, stderr: configStderr))
             )
             return nil
         }
         guard let resolvedJournalPath = parseJournalPath(from: configStdout) else {
-            failCleanup(step: .resolveJournal, why: "could not find the journal", category: .unknown, logExcerpt: configStdout)
+            failCleanup(
+                step: .resolveJournal,
+                why: "could not find the journal",
+                category: .unknown,
+                logExcerpt: sanitizeJournalDiagnosticOutput(configStdout)
+            )
             return nil
         }
 
@@ -643,17 +652,22 @@ public final class SolstoneInstaller {
         setMain(.cleaningUp(SubprocessProgress(phase: phase)))
         Logger.setup.info("stopping old service for upgrade journal \(journalURL.path, privacy: .public)")
 
-        let journalPath = SolBinaryLocator.journalPath(siblingOf: oldSolPath)
-        let useJournal = fileExists(journalPath)
-        let uninstallExecPath = useJournal ? journalPath : oldSolPath
+        let journalPath = Self.journalPath(siblingOf: oldSolPath)
+        guard fileExists(journalPath) else {
+            return StopOldServiceFailure(
+                step: .serviceUninstall,
+                message: UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE,
+                logExcerpt: sanitizeJournalDiagnosticOutput("journal binary missing at \(journalPath)")
+            )
+        }
         let uninstallArguments = ["service", "uninstall"]
-        let uninstallLabel = "\(useJournal ? "journal" : "sol") \(uninstallArguments.joined(separator: " "))"
+        let uninstallLabel = "journal \(uninstallArguments.joined(separator: " "))"
 
         let uninstallOutput = InstallerOutput()
         let uninstallResult: SubprocessResult
         do {
             uninstallResult = try await subprocessRunner.run(
-                executable: URL(fileURLWithPath: uninstallExecPath),
+                executable: URL(fileURLWithPath: journalPath),
                 arguments: uninstallArguments,
                 environment: nil,
                 stdoutHandler: { data in Self.append(data, to: uninstallOutput, stream: .stdout) },
@@ -663,7 +677,7 @@ public final class SolstoneInstaller {
             return StopOldServiceFailure(
                 step: .serviceUninstall,
                 message: error.localizedDescription,
-                logExcerpt: "\(uninstallLabel) subprocess could not launch: \(error.localizedDescription)"
+                logExcerpt: sanitizeJournalDiagnosticOutput("\(uninstallLabel) subprocess could not launch: \(error.localizedDescription)")
             )
         }
         let uninstallStdout = uninstallOutput.stdoutString()
@@ -672,7 +686,7 @@ public final class SolstoneInstaller {
             return StopOldServiceFailure(
                 step: .serviceUninstall,
                 message: lastUsefulLine(uninstallStderr) ?? "\(uninstallLabel) exited \(uninstallResult.exitCode)",
-                logExcerpt: Self.lastUsefulLog(stdout: uninstallStdout, stderr: uninstallStderr)
+                logExcerpt: sanitizeJournalDiagnosticOutput(Self.lastUsefulLog(stdout: uninstallStdout, stderr: uninstallStderr))
             )
         }
 
@@ -708,7 +722,11 @@ public final class SolstoneInstaller {
                     stderrHandler: { _ in }
                 )
             } catch {
-                return StopOldServiceFailure(step: .ports, message: "lsof failed to launch probing port \(port)", logExcerpt: error.localizedDescription)
+                return StopOldServiceFailure(
+                    step: .ports,
+                    message: "lsof failed to launch probing port \(port)",
+                    logExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
+                )
             }
 
             switch result.exitCode {
@@ -780,7 +798,7 @@ public final class SolstoneInstaller {
             stagedLayout: stagedLayout,
             phase: .settingUp
         )
-        guard await runSolSetup(solPath: stagedLayout.solBinary.path, journalURL: resolved.journalURL, layout: stagedLayout, skipService: true) else {
+        guard await runJournalSetup(journalBinary: stagedLayout.journalBinary, journalURL: resolved.journalURL, layout: stagedLayout, skipService: true) else {
             await recover(
                 resolvedJournal: resolved.journalURL,
                 oldSolPath: oldSolPath,
@@ -824,7 +842,7 @@ public final class SolstoneInstaller {
             stagedLayout: stagedLayout,
             phase: .startingService
         )
-        let stagedJournalPath = stagedLayout.binDir.appendingPathComponent("journal").path
+        let stagedJournalPath = stagedLayout.journalBinary.path
         if let serviceFailure = await installAndStartService(journalPath: stagedJournalPath, environment: stagedLayout.uvEnvironment()) {
             await recover(
                 resolvedJournal: resolved.journalURL,
@@ -845,7 +863,7 @@ public final class SolstoneInstaller {
             stagedLayout: stagedLayout,
             phase: .registering
         )
-        await enterRegistering(solPath: stagedLayout.solBinary.path)
+        await enterRegistering(journalBinary: stagedLayout.journalBinary)
     }
 
     private func saveInProgressMarker(
@@ -966,7 +984,7 @@ public final class SolstoneInstaller {
     }
 
     private func restartOldService(oldSolPath: String) async -> String {
-        let oldJournalPath = SolBinaryLocator.journalPath(siblingOf: oldSolPath)
+        let oldJournalPath = Self.journalPath(siblingOf: oldSolPath)
         let install = await runServiceCommand(journalPath: oldJournalPath, arguments: ["service", "install"], environment: nil)
         let start = await runServiceCommand(journalPath: oldJournalPath, arguments: ["service", "start"], environment: nil)
         if install == nil && start == nil {
@@ -1001,13 +1019,12 @@ public final class SolstoneInstaller {
         failMain(.cleanup(step: step, message: Self.cleanupFailureMessage(step: step, why: why)), category: category, logExcerpt: logExcerpt)
     }
 
-    private func runSolSetup(
-        solPath: String,
+    private func runJournalSetup(
+        journalBinary: URL,
         journalURL: URL,
         layout: SolstoneRuntimeLayout,
         skipService: Bool
     ) async -> Bool {
-        let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
         let phase = "journal setup"
         setMain(.runningSolSetup(SubprocessProgress(phase: phase)))
         do {
@@ -1026,7 +1043,7 @@ public final class SolstoneInstaller {
         }
         do {
             result = try await subprocessRunner.run(
-                executable: URL(fileURLWithPath: journalPath),
+                executable: journalBinary,
                 arguments: arguments,
                 environment: environment,
                 stdoutHandler: { [weak self, output] data in
@@ -1077,17 +1094,17 @@ public final class SolstoneInstaller {
         return true
     }
 
-    private func enterRegistering(solPath: String) async {
+    private func enterRegistering(journalBinary: URL) async {
         let phase = "journal observer create"
         setMain(.registering(SubprocessProgress(phase: phase)))
 
         modelsTask = Task { [weak self] in
-            await self?.runInstallModels(solPath: solPath)
+            await self?.runInstallModels(journalBinary: journalBinary)
         }
 
-        guard await runReadinessGate(solPath: solPath, phase: phase) else { return }
+        guard await runReadinessGate(journalBinary: journalBinary, phase: phase) else { return }
 
-        if await runObserverCreate(solPath: solPath, phase: phase) {
+        if await runObserverCreate(journalBinary: journalBinary, phase: phase) {
             setMain(.done)
             clearUpgradeFailureRecord()
             inProgressMarkerStore.clear()
@@ -1098,13 +1115,12 @@ public final class SolstoneInstaller {
         }
     }
 
-    private func runReadinessGate(solPath: String, phase: String) async -> Bool {
-        let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
+    private func runReadinessGate(journalBinary: URL, phase: String) async -> Bool {
         let environment = SolstoneRuntimeLayout.active(rootURL: runtimeRootURL).uvEnvironment()
         let output = InstallerOutput()
         do {
             let result = try await subprocessRunner.run(
-                executable: URL(fileURLWithPath: journalPath),
+                executable: journalBinary,
                 arguments: ["up"],
                 environment: environment,
                 timeout: readinessGateTimeout,
@@ -1129,7 +1145,7 @@ public final class SolstoneInstaller {
                     result.exitCode == 137 ||
                     stderr.contains(Self.readinessTimeoutSubstring) {
                     await failRegistering(
-                        solPath: solPath,
+                        journalBinary: journalBinary,
                         message: UICopy.INSTALLER_READINESS_TIMEOUT,
                         category: .unknown,
                         logExcerpt: logExcerpt ?? "journal up timed out after \(readinessGateTimeout)"
@@ -1137,7 +1153,7 @@ public final class SolstoneInstaller {
                     return false
                 }
                 await failRegistering(
-                    solPath: solPath,
+                    journalBinary: journalBinary,
                     message: UICopy.INSTALLER_READINESS_GATE_FAILED,
                     category: Self.categorize(stderr: stderr),
                     logExcerpt: logExcerpt ?? lastUsefulLine(stderr) ?? "journal up failed"
@@ -1147,7 +1163,7 @@ public final class SolstoneInstaller {
             return true
         } catch is TimeoutError {
             await failRegistering(
-                solPath: solPath,
+                journalBinary: journalBinary,
                 message: UICopy.INSTALLER_READINESS_TIMEOUT,
                 category: .unknown,
                 logExcerpt: "journal up timed out after \(readinessGateTimeout)"
@@ -1155,7 +1171,7 @@ public final class SolstoneInstaller {
             return false
         } catch {
             await failRegistering(
-                solPath: solPath,
+                journalBinary: journalBinary,
                 message: UICopy.INSTALLER_READINESS_GATE_FAILED,
                 category: .subprocessLaunch,
                 logExcerpt: "journal up subprocess could not launch: \(error.localizedDescription)"
@@ -1164,14 +1180,13 @@ public final class SolstoneInstaller {
         }
     }
 
-    private func runObserverCreate(solPath: String, phase: String) async -> Bool {
-        let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
+    private func runObserverCreate(journalBinary: URL, phase: String) async -> Bool {
         let environment = SolstoneRuntimeLayout.active(rootURL: runtimeRootURL).uvEnvironment()
         let output = InstallerOutput()
         let result: SubprocessResult
         do {
             result = try await subprocessRunner.run(
-                executable: URL(fileURLWithPath: journalPath),
+                executable: journalBinary,
                 arguments: ["observer", "--json", "create", "solstone-macos", "--reuse-existing"],
                 environment: environment,
                 stdoutHandler: { [weak self, output] data in
@@ -1188,14 +1203,14 @@ public final class SolstoneInstaller {
                 }
             )
         } catch {
-            await failRegistering(solPath: solPath, message: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "journal observer create subprocess could not launch: \(error.localizedDescription)")
+            await failRegistering(journalBinary: journalBinary, message: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "journal observer create subprocess could not launch: \(error.localizedDescription)")
             return false
         }
 
         let stdout = output.stdoutData()
         let stderr = output.stderrString()
         guard result.exitCode == 0 else {
-            await failRegistering(solPath: solPath, message: lastUsefulLine(stderr) ?? "observer create failed", category: Self.categorize(stderr: stderr), logExcerpt: Self.lastUsefulLog(stdout: String(decoding: stdout, as: UTF8.self), stderr: stderr))
+            await failRegistering(journalBinary: journalBinary, message: lastUsefulLine(stderr) ?? "observer create failed", category: Self.categorize(stderr: stderr), logExcerpt: Self.lastUsefulLog(stdout: String(decoding: stdout, as: UTF8.self), stderr: stderr))
             return false
         }
 
@@ -1204,15 +1219,15 @@ public final class SolstoneInstaller {
             persistObserverKey(response.key)
             return true
         } catch {
-            await failRegistering(solPath: solPath, message: "could not parse JSON response", category: .unknown, logExcerpt: String(decoding: stdout, as: UTF8.self))
+            await failRegistering(journalBinary: journalBinary, message: "could not parse JSON response", category: .unknown, logExcerpt: String(decoding: stdout, as: UTF8.self))
             return false
         }
     }
 
-    private func failRegistering(solPath: String, message: String, category: ErrorCategory, logExcerpt: String?) async {
+    private func failRegistering(journalBinary: URL, message: String, category: ErrorCategory, logExcerpt: String?) async {
         let baseline: UpgradeFailureRecordBaseline?
         if upgradeFailureRecordBaseline != .none {
-            let installed = await SolHealthCheck.version(solPath: solPath, runner: subprocessRunner)
+            let installed = await JournalHealthCheck.version(journalBinary: journalBinary, runner: subprocessRunner)
             baseline = .installed(installed)
         } else {
             baseline = nil
@@ -1225,8 +1240,7 @@ public final class SolstoneInstaller {
         )
     }
 
-    private func runInstallModels(solPath: String) async {
-        let journalPath = SolBinaryLocator.journalPath(siblingOf: solPath)
+    private func runInstallModels(journalBinary: URL) async {
         let phase = "journal install-models"
         modelsProgress = .running(SubprocessProgress(phase: phase))
         let environment = SolstoneRuntimeLayout.active(rootURL: runtimeRootURL).uvEnvironment()
@@ -1235,7 +1249,7 @@ public final class SolstoneInstaller {
         let result: SubprocessResult
         do {
             result = try await subprocessRunner.run(
-                executable: URL(fileURLWithPath: journalPath),
+                executable: journalBinary,
                 arguments: ["install-models"],
                 environment: environment,
                 stdoutHandler: { [weak self, output] data in
@@ -1357,9 +1371,10 @@ public final class SolstoneInstaller {
     @discardableResult
     private func probeVersion(at solPath: String) async -> VersionProbeResult? {
         let pinned = BundleConfig.solstonePinVersion
-        guard let installed = await SolHealthCheck.version(solPath: solPath, runner: subprocessRunner) else {
+        let journalBinary = URL(fileURLWithPath: Self.journalPath(siblingOf: solPath))
+        guard let installed = await JournalHealthCheck.version(journalBinary: journalBinary, runner: subprocessRunner) else {
             probedVersion = .unknown
-            Logger.setup.notice("sol version probe: solPath=\(solPath, privacy: .public) unknown pinned=\(pinned, privacy: .public)")
+            Logger.setup.notice("journal version probe: journalPath=\(journalBinary.path, privacy: .public) unknown pinned=\(pinned, privacy: .public)")
             return probedVersion
         }
         let comparison = installed.compare(pinned, options: .numeric)
@@ -1380,7 +1395,7 @@ public final class SolstoneInstaller {
                 return "none"
             }
         }()
-        Logger.setup.notice("sol version probe: solPath=\(solPath, privacy: .public) \(resultText, privacy: .public) pinned=\(BundleConfig.solstonePinVersion, privacy: .public)")
+        Logger.setup.notice("journal version probe: journalPath=\(journalBinary.path, privacy: .public) \(resultText, privacy: .public) pinned=\(BundleConfig.solstonePinVersion, privacy: .public)")
         return probedVersion
     }
 
@@ -1516,6 +1531,20 @@ public final class SolstoneInstaller {
 
     private static func defaultJournalURL() -> URL {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("journal")
+    }
+
+    private nonisolated static func findAppManagedSolBinary(
+        rootURL: URL,
+        fileExists: @Sendable (String) -> Bool
+    ) -> String? {
+        SolstoneRuntimeLayout.solCandidatePaths(rootURL: rootURL).first(where: fileExists)
+    }
+
+    private nonisolated static func journalPath(siblingOf solPath: String) -> String {
+        URL(fileURLWithPath: solPath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("journal")
+            .path
     }
 
     private func persistUpgradeFailure(installed: String?, details: String?) {

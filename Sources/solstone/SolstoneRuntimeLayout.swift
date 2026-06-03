@@ -53,6 +53,7 @@ struct SolstoneRuntimeLayout: Sendable {
     }
 
     var solBinary: URL { binDir.appendingPathComponent("sol") }
+    var journalBinary: URL { binDir.appendingPathComponent("journal") }
 
     func ensureCreated() throws {
         let fileManager = FileManager.default

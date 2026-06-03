@@ -96,38 +96,65 @@ struct MenuContentTests {
         ) == .updateAvailable)
     }
 
-    @Test func pipelineStatusRowHelperTruthTable() {
-        let binaryMissing = pipelineStatusRowModel(
-            pipelineDead: true,
-            isRestartingPipeline: false,
-            pipelineBinaryMissing: true
-        )
-        #expect(binaryMissing?.text == "solstone is not fully installed")
-        #expect(binaryMissing?.isEnabled == false)
-        #expect(binaryMissing?.state == .pipelineMissing)
+    @Test func journalRuntimeStatusPresentationTruthTable() {
+        let setupNeeded = JournalRuntimeStatus.setupNeeded.menuRowPresentation
+        #expect(setupNeeded?.text == UICopy.JOURNAL_SETUP_NEEDED_OPEN_SETTINGS)
+        #expect(setupNeeded?.isEnabled == true)
+        #expect(setupNeeded?.state == .journalSetupNeeded)
+        #expect(JournalRuntimeStatus.setupNeeded.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_SETUP_NEEDED)
+        #expect(JournalRuntimeStatus.setupNeeded.settingsPresentation.axValue == MenubarStatusRowState.journalSetupNeeded.axToken)
+        #expect(JournalRuntimeStatus.setupNeeded.settingsPresentation.severity == .attention)
+        #expect(!JournalRuntimeStatus.setupNeeded.canOfferRestart)
 
-        let restarting = pipelineStatusRowModel(
-            pipelineDead: true,
-            isRestartingPipeline: true,
-            pipelineBinaryMissing: false
-        )
-        #expect(restarting?.text == "restarting…")
+        let restarting = JournalRuntimeStatus.restarting.menuRowPresentation
+        #expect(restarting?.text == UICopy.JOURNAL_RESTARTING)
         #expect(restarting?.isEnabled == false)
-        #expect(restarting?.state == .pipelineRestarting)
+        #expect(restarting?.state == .journalRestarting)
+        #expect(JournalRuntimeStatus.restarting.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_RESTARTING)
+        #expect(JournalRuntimeStatus.restarting.settingsPresentation.axValue == MenubarStatusRowState.journalRestarting.axToken)
+        #expect(JournalRuntimeStatus.restarting.settingsPresentation.severity == .warning)
+        #expect(!JournalRuntimeStatus.restarting.canOfferRestart)
 
-        let dead = pipelineStatusRowModel(
-            pipelineDead: true,
-            isRestartingPipeline: false,
-            pipelineBinaryMissing: false
-        )
-        #expect(dead?.text == "pipeline stopped — click to restart")
-        #expect(dead?.isEnabled == true)
-        #expect(dead?.state == .pipelineDead)
+        let stoppedStatus = JournalRuntimeStatus.stopped(JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "down"))
+        let stopped = stoppedStatus.menuRowPresentation
+        #expect(stopped?.text == UICopy.JOURNAL_NEEDS_ATTENTION_OPEN_SETTINGS)
+        #expect(stopped?.isEnabled == true)
+        #expect(stopped?.state == .journalStopped)
+        #expect(stoppedStatus.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_NEEDS_ATTENTION)
+        #expect(stoppedStatus.settingsPresentation.axValue == MenubarStatusRowState.journalStopped.axToken)
+        #expect(stoppedStatus.settingsPresentation.severity == .attention)
+        #expect(stoppedStatus.settingsPresentation.reason == "down")
+        #expect(stoppedStatus.canOfferRestart)
 
-        #expect(pipelineStatusRowModel(
-            pipelineDead: false,
-            isRestartingPipeline: false,
-            pipelineBinaryMissing: false
-        ) == nil)
+        let unknownStatus = JournalRuntimeStatus.unknown(JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "unclear"))
+        let unknown = unknownStatus.menuRowPresentation
+        #expect(unknown?.text == UICopy.JOURNAL_NEEDS_ATTENTION_OPEN_SETTINGS)
+        #expect(unknown?.isEnabled == true)
+        #expect(unknown?.state == .journalUnknown)
+        #expect(unknownStatus.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_NEEDS_ATTENTION)
+        #expect(unknownStatus.settingsPresentation.axValue == MenubarStatusRowState.journalUnknown.axToken)
+        #expect(unknownStatus.settingsPresentation.severity == .attention)
+        #expect(unknownStatus.settingsPresentation.reason == "unclear")
+        #expect(unknownStatus.canOfferRestart)
+
+        #expect(JournalRuntimeStatus.running.menuRowPresentation == nil)
+        #expect(JournalRuntimeStatus.running.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_RUNNING)
+        #expect(JournalRuntimeStatus.running.settingsPresentation.axValue == "running")
+        #expect(JournalRuntimeStatus.running.settingsPresentation.severity == .neutral)
+        #expect(!JournalRuntimeStatus.running.canOfferRestart)
+    }
+
+    @Test func journalRuntimeStatusMenuAndSettingsShareAXState() throws {
+        let statuses: [JournalRuntimeStatus] = [
+            .setupNeeded,
+            .restarting,
+            .stopped(JournalDiagnostic(commandLabel: "journal health")),
+            .unknown(JournalDiagnostic(commandLabel: "journal health")),
+        ]
+
+        for status in statuses {
+            let menu = try #require(status.menuRowPresentation)
+            #expect(menu.state.axToken == status.settingsPresentation.axValue)
+        }
     }
 }

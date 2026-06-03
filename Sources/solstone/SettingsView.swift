@@ -645,10 +645,11 @@ struct SettingsView: View {
 
             switch serviceMode {
             case .bundled:
-                BundledServiceCard(appState: appState)
+                BundledServiceCard(appState: appState, allowsLocalJournalActions: true)
+                journalRestartControl
             case .external:
                 if shouldShowBundledStatusSurface(cardState: cardState) {
-                    BundledServiceCard(appState: appState)
+                    BundledServiceCard(appState: appState, allowsLocalJournalActions: false)
                 }
                 externalServiceSection
             }
@@ -659,9 +660,9 @@ struct SettingsView: View {
     private var restartRequiredBanner: some View {
         if appState.restartRequiredBannerVisible
             && appState.config.serviceMode == .bundled
-            && appState.bundledPipelineRestartAvailable {
+            && appState.bundledJournalRestartAvailable {
             Button {
-                appState.requestPipelineRestart()
+                appState.requestJournalRestart()
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.clockwise.circle.fill")
@@ -684,10 +685,30 @@ struct SettingsView: View {
                 )
             }
             .buttonStyle(.plain)
-            .disabled(appState.isRestartingPipeline)
+            .disabled(appState.journalRuntimeStatus.isRestarting)
             .accessibilityIdentifier(AXID.Settings.Service.restartRequiredBanner)
             .accessibilityHint(Text("restart the bundled journal supervisor so the saved change takes effect"))
         }
+    }
+
+    @ViewBuilder
+    private var journalRestartControl: some View {
+        if appState.config.serviceMode == .bundled
+            && appState.bundledJournalRestartAvailable
+            && !appState.restartRequiredBannerVisible
+            && journalRestartControlVisible {
+            Button {
+                appState.requestJournalRestart()
+            } label: {
+                Label(UICopy.RESTART_JOURNAL, systemImage: "arrow.clockwise")
+            }
+            .disabled(appState.journalRuntimeStatus.isRestarting)
+            .accessibilityIdentifier(AXID.Settings.Service.restartJournalButton)
+        }
+    }
+
+    private var journalRestartControlVisible: Bool {
+        appState.journalRuntimeStatus.canOfferRestart
     }
 
     private func tradeoffLine(label: String, text: String) -> some View {
@@ -1171,12 +1192,22 @@ struct SettingsView: View {
                             .accessibilityIdentifier(AXID.Settings.Status.uploadJournalState)
                             .accessibilityValue(appState.config.serverURL ?? "")
                     }
-                    if appState.bundledPipelineStatusAvailable {
-                        LabeledContent("pipeline") {
-                            Text(pipelineStatusText)
-                                .foregroundStyle(pipelineStatusColor)
-                                .accessibilityIdentifier(AXID.Settings.Status.pipelineState)
-                                .accessibilityValue(pipelineStatusAXValue)
+                    if appState.bundledJournalStatusAvailable {
+                        LabeledContent("journal") {
+                            let presentation = appState.journalRuntimeStatus.settingsPresentation
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text(presentation.shortText)
+                                    .foregroundStyle(presentation.severity.color)
+                                    .accessibilityIdentifier(AXID.Settings.Status.journalRuntimeState)
+                                    .accessibilityValue(presentation.axValue)
+                                if let reason = presentation.reason {
+                                    Text(reason)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                        .multilineTextAlignment(.trailing)
+                                }
+                            }
                         }
                     }
                     uploadStatusView
@@ -1351,40 +1382,6 @@ struct SettingsView: View {
         case .offline(let error):
             return "offline: \(error)"
         }
-    }
-
-    private var pipelineStatusText: String {
-        if appState.pipelineBinaryMissing {
-            return "setup needed"
-        }
-        if appState.isRestartingPipeline {
-            return "restarting..."
-        }
-        if appState.pipelineDead {
-            return "stopped"
-        }
-        return "running"
-    }
-
-    private var pipelineStatusAXValue: String {
-        if let row = pipelineStatusRowModel(
-            pipelineDead: appState.pipelineDead,
-            isRestartingPipeline: appState.isRestartingPipeline,
-            pipelineBinaryMissing: appState.pipelineBinaryMissing
-        ) {
-            return row.state.axToken
-        }
-        return "running"
-    }
-
-    private var pipelineStatusColor: Color {
-        if appState.pipelineBinaryMissing || appState.pipelineDead {
-            return .red
-        }
-        if appState.isRestartingPipeline {
-            return .orange
-        }
-        return .secondary
     }
 
     // MARK: - Connection Test

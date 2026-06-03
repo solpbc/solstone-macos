@@ -168,12 +168,17 @@ struct SolstoneCaptureApp: App {
 
     private var statusAccessibilityLabel: String {
         let baseLabel: String
-        if appState.bundledPipelineStatusAvailable && appState.pipelineBinaryMissing {
-            baseLabel = "solstone observer — setup needed"
-        } else if appState.bundledPipelineStatusAvailable && appState.isRestartingPipeline {
-            baseLabel = "solstone observer — restarting pipeline"
-        } else if appState.bundledPipelineStatusAvailable && appState.pipelineDead {
-            baseLabel = "solstone observer — pipeline stopped"
+        if appState.bundledJournalStatusAvailable && appState.journalRuntimeStatus != .running {
+            baseLabel = switch appState.journalRuntimeStatus {
+            case .setupNeeded:
+                "solstone observer — journal setup needed"
+            case .restarting:
+                "solstone observer — journal restarting"
+            case .stopped, .unknown:
+                "solstone observer — journal needs attention"
+            case .running:
+                "solstone observer"
+            }
         } else if appState.errorMessage != nil {
             baseLabel = "solstone observer — error"
         } else if appState.pauseManager.isPaused || appState.isPaused {
@@ -257,11 +262,14 @@ enum FirstLaunchRouting {
         permissionsMissing: @escaping @MainActor () -> Bool,
         openPermissions: @escaping @MainActor () -> Void,
         openService: @escaping @MainActor () -> Void,
-        findSolBinary: @escaping @Sendable () async -> String? = { await SolBinaryLocator.findSolBinary() },
-        healthCheck: @escaping @Sendable (String) async -> Bool = { await SolHealthCheck.run(solPath: $0) },
+        journalBinary: @escaping @Sendable () -> URL = { SolstoneRuntimeLayout.active().journalBinary },
+        healthCheck: @escaping @Sendable (URL) async -> Bool = {
+            await JournalRuntimeProbe.run(journalBinary: $0) == .reachable
+        },
         bundledOutdated: @escaping @Sendable () async -> Bool = {
-            guard let path = await SolBinaryLocator.findSolBinary(),
-                  let installed = await SolHealthCheck.version(solPath: path) else {
+            guard let installed = await JournalHealthCheck.version(
+                journalBinary: SolstoneRuntimeLayout.active().journalBinary
+            ) else {
                 return false
             }
             return installed.compare(BundleConfig.solstonePinVersion, options: .numeric) == .orderedAscending
@@ -284,7 +292,7 @@ enum FirstLaunchRouting {
             return
         }
         guard LoopbackHost.isLocalhost(config.serverURL) else { return }
-        guard let path = await findSolBinary(), await healthCheck(path) else {
+        guard await healthCheck(journalBinary()) else {
             openService()
             return
         }
@@ -299,8 +307,7 @@ private struct StatusIcon: View {
     @State private var hasCheckedSetup = false
 
     private var iconState: MenubarIconState {
-        if appState.bundledPipelineStatusAvailable &&
-            (appState.pipelineDead || appState.pipelineBinaryMissing || appState.isRestartingPipeline) {
+        if appState.bundledJournalStatusAvailable && appState.journalRuntimeStatus != .running {
             return .error
         }
         if appState.errorMessage != nil {

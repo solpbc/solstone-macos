@@ -10,7 +10,7 @@ enum AXID {
         static let statusRowState = "menubar.status.row.state"
         static let permissionsButton = "menubar.status.permissions"
         static let errorButton = "menubar.status.error"
-        static let pipelineState = "menubar.status.pipeline.state"
+        static let journalState = "menubar.status.journal.state"
         static let localOnlyButton = "menubar.status.localOnly"
         static let offlineButton = "menubar.status.offline"
         static let pauseMenu = "menubar.pause.menu"
@@ -20,7 +20,6 @@ enum AXID {
         static let pauseIndefinite = "menubar.pause.indefinite"
         static let resumeButton = "menubar.pause.resume"
         static let startObservingButton = "menubar.observing.start"
-        static let restartPipelineButton = "menubar.pipeline.restart"
         static let openJournalButton = "menubar.navigation.openJournal"
         static let settingsButton = "menubar.navigation.settings"
         static let aboutButton = "menubar.navigation.about"
@@ -61,6 +60,7 @@ enum AXID {
 
         enum Service {
             static let restartRequiredBanner = "settings.service.restartRequired.banner"
+            static let restartJournalButton = "settings.service.journal.restart"
             static let prereqPermissions = "settings.service.prereq.permissions"
             static let journalModePicker = "settings.service.journalMode.picker"
             static let journalModeState = "settings.service.journalMode.state"
@@ -123,7 +123,7 @@ enum AXID {
             static let observingState = "settings.status.observing.state"
             static let nextSegmentSeconds = "settings.status.observing.nextSegment.state"
             static let uploadJournalState = "settings.status.upload.journal.state"
-            static let pipelineState = "settings.status.upload.pipeline.state"
+            static let journalRuntimeState = "settings.status.journal.runtime.state"
             static let uploadState = "settings.status.upload.state"
             static let uploadChecked = "settings.status.upload.checked.state"
             static let uploadTotal = "settings.status.upload.total.state"

@@ -33,7 +33,7 @@ private final class AppStateBridgeTarget: @unchecked Sendable {
 @MainActor
 @Observable
 public final class AppState {
-    private enum PipelineRestartOutcome {
+    private enum JournalRestartRequestOutcome {
         case success
         case failure
         case modeChanged
@@ -73,10 +73,8 @@ public final class AppState {
     public internal(set) var isPaused = false
     public internal(set) var errorMessage: String?
     public internal(set) var audioReconciledCount: Int = 0
-    public internal(set) var pipelineDead = false
+    public internal(set) var journalRuntimeStatus: JournalRuntimeStatus = .running
     public internal(set) var ipcServiceRunning = false
-    public internal(set) var pipelineBinaryMissing = false
-    public internal(set) var isRestartingPipeline = false
     public internal(set) var restartRequiredBannerVisible: Bool = false
     private var restartRequiredGeneration: UInt64 = 0
     public internal(set) var solChatPending: SolChatRequestSummary?
@@ -99,18 +97,22 @@ public final class AppState {
     private var permissionPollTimer: Timer?
     /// Prevents concurrent permission check calls (poll interval < check duration)
     private var isCheckingPermissions = false
-    private var pipelineDebounceState = PipelineDebounceState()
-    private var pipelineProbeTimer: Timer?
-    private var pipelineRestartTask: Task<Void, Never>?
+    private var journalRuntimeDebounceState = JournalRuntimeDebounceState()
+    private var journalProbeTimer: Timer?
+    private var journalRestartTask: Task<Void, Never>?
     private var preRestartErrorMessage: String?
-    internal var pipelineRestartLogSink: (@Sendable (PipelineRestartLogEvent) -> Void)?
-    internal var pipelineSolBinaryFinder: @Sendable () async -> String? = {
-        await SolBinaryLocator.findSolBinary()
+    internal var journalRestartLogSink: (@Sendable (JournalRestartLogEvent) -> Void)?
+    internal var journalBinaryProvider: @Sendable () -> URL = {
+        SolstoneRuntimeLayout.active().journalBinary
     }
-    internal var pipelineRestartRunnerFactory: ((
-        String,
-        (@Sendable (PipelineRestartLogEvent) -> Void)?
-    ) -> PipelineRestartRunner)?
+    internal var journalRuntimeFileExists: @Sendable (String) -> Bool = {
+        FileManager.default.isExecutableFile(atPath: $0)
+    }
+    internal var journalRuntimeProbeRunner: SubprocessRunning = SubprocessRunner()
+    internal var journalRestartRunnerFactory: ((
+        URL,
+        (@Sendable (JournalRestartLogEvent) -> Void)?
+    ) -> JournalRestartRunner)?
 
     // MARK: - Activation Policy
 
@@ -181,7 +183,7 @@ public final class AppState {
         !serviceNeedsAttention && config.serviceMode != nil
     }
 
-    private func isInstalledPipelineCardState(_ state: InstallerCardState) -> Bool {
+    private func isInstalledJournalCardState(_ state: InstallerCardState) -> Bool {
         switch state {
         case .installedPlaceholder,
              .done,
@@ -205,19 +207,19 @@ public final class AppState {
         UserDefaults.standard.set(Array(visitedSettingsTabs).sorted(), forKey: visitedSettingsTabsDefaultsKey)
     }
 
-    internal var bundledPipelineStatusAvailable: Bool {
+    internal var bundledJournalStatusAvailable: Bool {
         guard config.serviceMode == .bundled else {
             return false
         }
-        return isInstalledPipelineCardState(terminalCardState(
+        return isInstalledJournalCardState(terminalCardState(
             main: installer.main,
             probe: installer.probedVersion,
             failureRecord: installer.upgradeFailureRecord
         ))
     }
 
-    internal var bundledPipelineRestartAvailable: Bool {
-        bundledPipelineStatusAvailable && !pipelineBinaryMissing
+    internal var bundledJournalRestartAvailable: Bool {
+        bundledJournalStatusAvailable && !journalRuntimeStatus.isSetupNeeded
     }
 
     // MARK: - Login Item
@@ -248,7 +250,7 @@ public final class AppState {
     public func updateConfig(_ newConfig: AppConfig) {
         let oldConfig = config
         config = newConfig
-        handlePipelineModeTransition(from: oldConfig.serviceMode, to: newConfig.serviceMode)
+        handleJournalModeTransition(from: oldConfig.serviceMode, to: newConfig.serviceMode)
         uploadCoordinator.updateConfig(newConfig)
         if newConfig.isUploadConfigured,
            let serverURL = newConfig.serverURL,
@@ -495,7 +497,7 @@ public final class AppState {
         // Start polling permissions — auto-starts recording when ready
         startPermissionPolling()
         if config.serviceMode == .bundled {
-            startPipelineProbeTimer()
+            startJournalProbeTimer()
         }
 
         // Listen for external defaults changes (e.g. `defaults write` from terminal)
@@ -518,8 +520,8 @@ public final class AppState {
     deinit {
         MainActor.assumeIsolated {
             permissionPollTimer?.invalidate()
-            pipelineProbeTimer?.invalidate()
-            pipelineRestartTask?.cancel()
+            journalProbeTimer?.invalidate()
+            journalRestartTask?.cancel()
         }
     }
 
@@ -667,77 +669,78 @@ public final class AppState {
         initialPermissionCheckComplete = true
     }
 
-    // MARK: - Pipeline Probing
+    // MARK: - Journal Runtime Probing
 
-    private func startPipelineProbeTimer() {
+    private func startJournalProbeTimer() {
         guard !isSnapshot, config.serviceMode == .bundled else { return }
 
         Task { @MainActor in
-            await self.pipelineProbeTick()
+            await self.journalProbeTick()
         }
 
-        pipelineProbeTimer?.invalidate()
-        pipelineProbeTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        journalProbeTimer?.invalidate()
+        journalProbeTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                await self?.pipelineProbeTick()
+                await self?.journalProbeTick()
             }
         }
-        pipelineProbeTimer?.tolerance = 2.0
+        journalProbeTimer?.tolerance = 2.0
     }
 
-    private func stopPipelineProbeTimer() {
-        pipelineProbeTimer?.invalidate()
-        pipelineProbeTimer = nil
+    private func stopJournalProbeTimer() {
+        journalProbeTimer?.invalidate()
+        journalProbeTimer = nil
     }
 
-    internal func pipelineProbeTick() async {
+    internal func journalProbeTick() async {
         guard config.serviceMode == .bundled else {
-            clearPipelineProbeState()
-            stopPipelineProbeTimer()
+            clearJournalProbeState()
+            stopJournalProbeTimer()
             return
         }
         guard !installer.upgradeInProgress else { return }
-        guard !isRestartingPipeline else { return }
+        guard !journalRuntimeStatus.isRestarting else { return }
 
-        let outcome = await PipelineLivenessProbe.run()
-        let next = pipelineDebounceState.apply(
+        let outcome = await JournalRuntimeProbe.run(
+            journalBinary: journalBinaryProvider(),
+            runner: journalRuntimeProbeRunner,
+            fileExists: journalRuntimeFileExists
+        )
+        journalRuntimeStatus = journalRuntimeDebounceState.apply(
             outcome: outcome,
             now: Date(),
-            currentlyDead: pipelineDead
+            currentStatus: journalRuntimeStatus
         )
-        pipelineDead = next.pipelineDead
-        pipelineBinaryMissing = next.pipelineBinaryMissing
     }
 
-    private func clearPipelineProbeState() {
-        pipelineDead = false
-        pipelineBinaryMissing = false
-        pipelineDebounceState.reset()
+    private func clearJournalProbeState() {
+        journalRuntimeStatus = .running
+        journalRuntimeDebounceState.reset()
     }
 
     internal func notifyUpgradeStarted() {
-        clearPipelineProbeState()
+        clearJournalProbeState()
     }
 
-    private func handlePipelineModeTransition(from oldMode: ServiceMode?, to newMode: ServiceMode?) {
+    private func handleJournalModeTransition(from oldMode: ServiceMode?, to newMode: ServiceMode?) {
         if newMode != .bundled {
-            clearPipelineProbeState()
-            stopPipelineProbeTimer()
+            clearJournalProbeState()
+            stopJournalProbeTimer()
             return
         }
         if oldMode != .bundled {
-            startPipelineProbeTimer()
+            startJournalProbeTimer()
         }
     }
 
-    public func requestPipelineRestart() {
-        guard bundledPipelineRestartAvailable else { return }
-        guard pipelineRestartTask == nil else {
-            emitPipelineRestartLog(step: .serviceRestart, outcome: "noop", detail: "already-running")
+    public func requestJournalRestart() {
+        guard bundledJournalRestartAvailable else { return }
+        guard journalRestartTask == nil else {
+            emitJournalRestartLog(step: .serviceRestart, outcome: "noop", detail: "already-running")
             return
         }
-        pipelineRestartTask = Task { @MainActor [weak self] in
-            await self?.runPipelineRestart()
+        journalRestartTask = Task { @MainActor [weak self] in
+            await self?.runJournalRestart()
         }
     }
 
@@ -747,55 +750,64 @@ public final class AppState {
             Logger.setup.info("restart-required banner suppressed: serviceMode is not bundled")
             return
         }
-        guard bundledPipelineRestartAvailable else {
-            Logger.setup.info("restart-required banner suppressed: bundled pipeline restart not available")
+        guard bundledJournalRestartAvailable else {
+            Logger.setup.info("restart-required banner suppressed: bundled journal restart not available")
             return
         }
         restartRequiredGeneration &+= 1
         restartRequiredBannerVisible = true
     }
 
-    private func runPipelineRestart() async {
+    private func runJournalRestart() async {
         preRestartErrorMessage = errorMessage
-        isRestartingPipeline = true
+        journalRuntimeStatus = .restarting
         let restartStartGeneration = restartRequiredGeneration
-        var restartOutcome: PipelineRestartOutcome = .modeChanged
+        var restartOutcome: JournalRestartRequestOutcome = .modeChanged
         defer {
-            isRestartingPipeline = false
-            pipelineRestartTask = nil
+            if case .restarting = journalRuntimeStatus {
+                journalRuntimeStatus = .running
+            }
+            journalRestartTask = nil
             preRestartErrorMessage = nil
         }
 
         guard config.serviceMode == .bundled else {
             restartOutcome = .modeChanged
-            emitPipelineRestartLog(step: .serviceRestart, outcome: "noop", detail: "not-bundled")
+            emitJournalRestartLog(step: .serviceRestart, outcome: "noop", detail: "not-bundled")
             return
         }
 
-        guard let solPath = await pipelineSolBinaryFinder() else {
-            clearPipelineProbeState()
-            pipelineBinaryMissing = true
+        let journalBinary = journalBinaryProvider()
+        guard journalRuntimeFileExists(journalBinary.path) else {
+            clearJournalProbeState()
+            journalRuntimeStatus = .setupNeeded
             restartOutcome = .binaryMissing
-            let message = "restart failed at journal path — solstone is not fully installed"
-            emitPipelineRestartLog(step: .resolveJournal, outcome: "error", detail: "binary-missing")
+            let message = "restart failed — journal setup needed"
+            emitJournalRestartLog(step: .resolveJournal, outcome: "error", detail: "binary-missing")
             if config.serviceMode == .bundled {
                 errorMessage = message
             }
             return
         }
 
-        let logSink = pipelineRestartLogSink
-        let runner = pipelineRestartRunnerFactory?(solPath, logSink) ?? PipelineRestartRunner(
+        let logSink = journalRestartLogSink
+        let probeRunner = journalRuntimeProbeRunner
+        let fileExists = journalRuntimeFileExists
+        let runner = journalRestartRunnerFactory?(journalBinary, logSink) ?? JournalRestartRunner(
             reprobe: {
-                await PipelineLivenessProbe.run()
+                await JournalRuntimeProbe.run(
+                    journalBinary: journalBinary,
+                    runner: probeRunner,
+                    fileExists: fileExists
+                )
             },
             logSink: logSink,
-            solPath: solPath
+            journalBinary: journalBinary
         )
 
         switch await runner.run() {
         case .success:
-            clearPipelineProbeState()
+            clearJournalProbeState()
             if config.serviceMode == .bundled {
                 restartOutcome = .success
                 errorMessage = preRestartErrorMessage
@@ -806,9 +818,10 @@ public final class AppState {
             if config.serviceMode == .bundled {
                 restartOutcome = .failure
                 errorMessage = failure.ownerMessage
+                journalRuntimeStatus = .stopped(failure.diagnostic)
             } else {
                 restartOutcome = .modeChanged
-                emitPipelineRestartLog(step: failure.step, outcome: "noop", detail: "mode-changed")
+                emitJournalRestartLog(step: failure.step, outcome: "noop", detail: "mode-changed")
             }
         }
         if restartOutcome == .success && restartStartGeneration == restartRequiredGeneration {
@@ -816,15 +829,15 @@ public final class AppState {
         }
     }
 
-    private func emitPipelineRestartLog(step: RestartFailureStep, outcome: String, detail: String?) {
-        let event = PipelineRestartLogEvent(step: step, outcome: outcome, detail: detail)
+    private func emitJournalRestartLog(step: JournalRestartStep, outcome: String, detail: String?) {
+        let event = JournalRestartLogEvent(step: step, outcome: outcome, detail: detail)
         let detailSuffix = detail.map { " detail=\($0)" } ?? ""
         if outcome == "error" {
-            Logger.setup.warning("pipeline-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
+            Logger.setup.warning("journal-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
         } else {
-            Logger.setup.info("pipeline-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
+            Logger.setup.info("journal-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
         }
-        pipelineRestartLogSink?(event)
+        journalRestartLogSink?(event)
     }
 
     // MARK: - Private Methods

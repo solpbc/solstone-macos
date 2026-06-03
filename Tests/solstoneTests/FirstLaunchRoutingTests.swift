@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 import SolstoneCore
 @testable import solstone
@@ -16,7 +17,7 @@ struct FirstLaunchRoutingTests {
             permissionsMissing: { true },
             openPermissions: { openedPermissions = true },
             openService: { openedService = true },
-            findSolBinary: { nil },
+            journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in true },
             bundledOutdated: { false }
         )
@@ -36,7 +37,7 @@ struct FirstLaunchRoutingTests {
             permissionsMissing: { false },
             openPermissions: { openedPermissions = true },
             openService: { openedService = true },
-            findSolBinary: { nil },
+            journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in true },
             bundledOutdated: { false }
         )
@@ -55,8 +56,8 @@ struct FirstLaunchRoutingTests {
             permissionsMissing: { false },
             openPermissions: { openedPermissions = true },
             openService: { openedService = true },
-            findSolBinary: { nil },
-            healthCheck: { _ in false },
+            journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
+            healthCheck: { _ in true },
             bundledOutdated: { false }
         )
 
@@ -73,7 +74,7 @@ struct FirstLaunchRoutingTests {
             permissionsMissing: { false },
             openPermissions: {},
             openService: { openedService = true },
-            findSolBinary: { "/usr/bin/sol" },
+            journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in true },
             bundledOutdated: { false }
         )
@@ -81,7 +82,7 @@ struct FirstLaunchRoutingTests {
         #expect(!openedService)
     }
 
-    @Test func firstLaunch_localhostMissingSol_opensService() async {
+    @Test func firstLaunch_localhostJournalUnavailable_opensService() async {
         var openedService = false
 
         await FirstLaunchRouting.route(
@@ -90,8 +91,8 @@ struct FirstLaunchRoutingTests {
             permissionsMissing: { false },
             openPermissions: {},
             openService: { openedService = true },
-            findSolBinary: { nil },
-            healthCheck: { _ in true },
+            journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
+            healthCheck: { _ in false },
             bundledOutdated: { false }
         )
 
@@ -107,7 +108,7 @@ struct FirstLaunchRoutingTests {
             permissionsMissing: { false },
             openPermissions: {},
             openService: { openedService = true },
-            findSolBinary: { "/usr/bin/sol" },
+            journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in false },
             bundledOutdated: { false }
         )
@@ -124,7 +125,7 @@ struct FirstLaunchRoutingTests {
             permissionsMissing: { false },
             openPermissions: {},
             openService: { openedService = true },
-            findSolBinary: { nil },
+            journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in false },
             bundledOutdated: { false }
         )
@@ -132,7 +133,7 @@ struct FirstLaunchRoutingTests {
         #expect(!openedService)
     }
 
-    @Test func firstLaunch_localhostMissingSol_isIdempotent() async {
+    @Test func firstLaunch_localhostJournalUnavailable_isIdempotent() async {
         var permissionOpenCount = 0
         var serviceOpenCount = 0
 
@@ -143,8 +144,8 @@ struct FirstLaunchRoutingTests {
                 permissionsMissing: { false },
                 openPermissions: { permissionOpenCount += 1 },
                 openService: { serviceOpenCount += 1 },
-                findSolBinary: { nil },
-                healthCheck: { _ in true },
+                journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
+                healthCheck: { _ in false },
                 bundledOutdated: { false }
             )
         }
@@ -162,7 +163,7 @@ struct FirstLaunchRoutingTests {
             permissionsMissing: { false },
             openPermissions: {},
             openService: { openedService = true },
-            findSolBinary: { "/usr/bin/sol" },
+            journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in true },
             bundledOutdated: { true }
         )
@@ -179,7 +180,7 @@ struct FirstLaunchRoutingTests {
             permissionsMissing: { false },
             openPermissions: {},
             openService: { openedService = true },
-            findSolBinary: { "/usr/bin/sol" },
+            journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in false },
             bundledOutdated: { true }
         )

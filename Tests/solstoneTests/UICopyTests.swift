@@ -63,6 +63,24 @@ struct UICopyTests {
         #expect(UICopy.SETTINGS_RESTART_REQUIRED_BANNER == "restart needed for this to take effect \u{2014} restart now \u{2192}")
     }
 
+    @Test func journalRuntimeMenuStateStrings() {
+        #expect(UICopy.JOURNAL_SETUP_NEEDED_OPEN_SETTINGS == "journal setup needed \u{2014} open settings")
+        #expect(UICopy.JOURNAL_NEEDS_ATTENTION_OPEN_SETTINGS == "journal needs attention \u{2014} open settings")
+        #expect(UICopy.JOURNAL_RESTARTING == "journal restarting\u{2026}")
+    }
+
+    @Test func journalRuntimeStatusPaneStrings() {
+        #expect(UICopy.JOURNAL_STATUS_RUNNING == "running")
+        #expect(UICopy.JOURNAL_STATUS_RESTARTING == "restarting\u{2026}")
+        #expect(UICopy.JOURNAL_STATUS_SETUP_NEEDED == "setup needed")
+        #expect(UICopy.JOURNAL_STATUS_NEEDS_ATTENTION == "needs attention")
+    }
+
+    @Test func journalRestartAndSetupStrings() {
+        #expect(UICopy.RESTART_JOURNAL == "restart journal")
+        #expect(UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE == "journal setup needed before upgrade can continue")
+    }
+
     @Test func installerInlineFailureGenericString() {
         #expect(UICopy.INSTALLER_INLINE_FAILURE_GENERIC == "setup hit a snag \u{2014} retry below, or open details to share with support.")
     }

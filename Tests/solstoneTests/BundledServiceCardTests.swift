@@ -161,6 +161,28 @@ struct BundledServiceCardTests {
         #expect(installedStateShowsDashboardAndDoctor(.installedCurrent(version: "0.3.2")))
     }
 
+    @Test func externalUpgradeFailedCardDisablesLocalJournalActions() {
+        let appState = AppState.forSnapshot(config: AppConfig(serviceMode: .external))
+        let record = UpgradeFailureRecord(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion, errorDetails: "details")
+        appState.installer.main = .done
+        appState.installer.probedVersion = .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion)
+        appState.installer.upgradeFailureRecord = record
+        let runner = FakeSubprocessRunner()
+
+        let cardState = terminalCardState(
+            main: appState.installer.main,
+            probe: appState.installer.probedVersion,
+            failureRecord: appState.installer.upgradeFailureRecord
+        )
+        _ = BundledServiceCard(appState: appState, allowsLocalJournalActions: false, doctorRunner: runner)
+
+        #expect(cardState == .upgradeFailed(installed: record.installed, pinned: record.pinned, errorDetails: record.errorDetails))
+        #expect(shouldShowBundledStatusSurface(cardState: cardState))
+        #expect(!bundledServiceCardShowsDoctor(cardState: cardState, allowsLocalJournalActions: false))
+        #expect(!bundledServiceCardAllowsRetry(cardState: cardState, allowsLocalJournalActions: false))
+        #expect(runner.invocations.isEmpty)
+    }
+
     @Test func doctorDisclosureCollapseCancelsRunnerWithin100Milliseconds() async throws {
         var task: Task<Void, Never>? = Task {
             try? await Task.sleep(for: .seconds(5))
@@ -236,7 +258,7 @@ doctor checks:
 
 dig deeper:
 - runtime: ~/Library/Application Support/sol/runtime
-- sol: ~/Library/Application Support/sol/runtime/current/bin/sol (or runtime/bin/sol for legacy installs)
+- journal: ~/Library/Application Support/sol/runtime/current/bin/journal (or runtime/bin/journal for legacy installs)
 - repo: https://github.com/solpbc/solstone-macos
 - log show: /usr/bin/log show --predicate 'subsystem == "app.solstone.observer" AND category == "setup"' --last 30m --info --debug --style compact
 
@@ -359,7 +381,7 @@ error: network is unreachable
 
     @Test func failureDiagnosticAvoidsForbiddenPublicHygieneTokens() {
         let markdown = buildFailureDiagnosticMarkdown(
-            diagnosticInput(logExcerpt: "target: ~/Library/Application Support/sol/runtime\nsol: ~/Library/Application Support/sol/runtime/current/bin/sol"),
+            diagnosticInput(logExcerpt: "target: ~/Library/Application Support/sol/runtime\njournal: ~/Library/Application Support/sol/runtime/current/bin/journal"),
             doctorReport: DoctorReport(checks: [
                 DoctorCheck(name: "journal command", status: .warn, severity: nil, detail: "setup state needs attention", fix: nil),
             ], summary: nil)
@@ -370,7 +392,7 @@ error: network is unreachable
         }
         #expect(markdown.contains("https://github.com/solpbc/solstone-macos"))
         #expect(markdown.contains("~/Library/Application Support/sol/runtime"))
-        #expect(markdown.contains("~/Library/Application Support/sol/runtime/current/bin/sol"))
+        #expect(markdown.contains("~/Library/Application Support/sol/runtime/current/bin/journal"))
         #expect(markdown.contains("https://support.solstone.app"))
     }
 

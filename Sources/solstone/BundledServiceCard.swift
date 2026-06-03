@@ -4,27 +4,30 @@ import SolstoneCore
 
 struct BundledServiceCard: View {
     @Bindable var appState: AppState
+    let allowsLocalJournalActions: Bool
     var openURL: (URL) -> Void
     var copyToClipboard: (String) -> Void
     @State private var journalURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("journal")
     @State private var showLogPerRow: [String: Bool] = [:]
     @State private var failureDetailsExpanded = false
     @State private var failureDiagnosticCopied = false
-    @State private var doctorRunner: SubprocessRunner
+    @State private var doctorRunner: any SubprocessRunning
     @State private var doctorTask: Task<Void, Never>?
-    @State private var doctorResult: Result<DoctorReport, Error>?
+    @State private var doctorResult: JournalDoctorResult?
     @State private var doctorExpanded = false
 
     init(
         appState: AppState,
+        allowsLocalJournalActions: Bool = true,
         openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
         copyToClipboard: @escaping (String) -> Void = {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString($0, forType: .string)
         },
-        doctorRunner: SubprocessRunner = SubprocessRunner()
+        doctorRunner: any SubprocessRunning = SubprocessRunner()
     ) {
         self.appState = appState
+        self.allowsLocalJournalActions = allowsLocalJournalActions
         self.openURL = openURL
         self.copyToClipboard = copyToClipboard
         self._doctorRunner = State(initialValue: doctorRunner)
@@ -91,7 +94,7 @@ struct BundledServiceCard: View {
             Task { await installer.detect() }
         }
         .onChange(of: doctorExpanded) { _, isExpanded in
-            if isExpanded {
+            if isExpanded && allowsLocalJournalActions {
                 restartDoctor()
             } else {
                 cancelDoctor()
@@ -122,7 +125,9 @@ struct BundledServiceCard: View {
             }
             .accessibilityIdentifier(AXID.Installer.openDashboard)
 
-            doctorAffordance
+            if allowsLocalJournalActions {
+                doctorAffordance
+            }
         }
     }
 
@@ -194,12 +199,14 @@ struct BundledServiceCard: View {
                     switch doctorResult {
                     case nil:
                         EmptyView()
-                    case .success(let report):
+                    case .report(let report):
                         ForEach(report.checks, id: \.name) { check in
                             doctorCheckRow(check)
                         }
-                    case .failure(let error):
-                        doctorErrorRow(error)
+                    case .setupNeeded:
+                        doctorErrorRow(UICopy.JOURNAL_STATUS_SETUP_NEEDED)
+                    case .stopped(let diagnostic), .unknown(let diagnostic):
+                        doctorErrorRow(diagnostic.outputExcerpt ?? diagnostic.commandLabel)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -249,18 +256,18 @@ struct BundledServiceCard: View {
         .accessibilityValue(check.status.axToken)
     }
 
-    private func doctorErrorRow(_ error: Error) -> some View {
+    private func doctorErrorRow(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.octagon.fill")
                     .foregroundStyle(.red)
-                Text(doctorErrorPreview(error))
+                Text(message)
                     .foregroundStyle(.red)
                     .lineLimit(3)
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier(AXID.Installer.doctorErrorState)
-            .accessibilityValue(doctorErrorPreview(error))
+            .accessibilityValue(message)
 
             Button("try again") {
                 restartDoctor()
@@ -270,18 +277,14 @@ struct BundledServiceCard: View {
     }
 
     private func restartDoctor() {
+        guard allowsLocalJournalActions else { return }
         cancelDoctor()
         doctorResult = nil
         let runner = doctorRunner
         doctorTask = Task { @MainActor in
-            do {
-                let report = try await SolHealthCheck.journalDoctorWithFallback(runner: runner)
-                guard !Task.isCancelled else { return }
-                doctorResult = .success(report)
-            } catch {
-                guard !Task.isCancelled else { return }
-                doctorResult = .failure(error)
-            }
+            let result = await JournalHealthCheck.doctor(runner: runner)
+            guard !Task.isCancelled else { return }
+            doctorResult = result
             doctorTask = nil
         }
     }
@@ -348,7 +351,11 @@ struct BundledServiceCard: View {
                 failureDiagnosticInput(failedState),
                 doctorReport: successfulDoctorReport
             ),
-            showDoctor: false
+            showDoctor: false,
+            allowsRetry: bundledServiceCardAllowsRetry(
+                cardState: .failed(failedState),
+                allowsLocalJournalActions: allowsLocalJournalActions
+            )
         )
         .overlay(alignment: .topLeading) {
             if case .cleanup(let step, _) = failedState {
@@ -380,7 +387,14 @@ struct BundledServiceCard: View {
                 ),
                 doctorReport: nil
             ),
-            showDoctor: true
+            showDoctor: bundledServiceCardShowsDoctor(
+                cardState: .upgradeFailed(installed: installedVersion, pinned: pinnedVersion, errorDetails: errorDetails),
+                allowsLocalJournalActions: allowsLocalJournalActions
+            ),
+            allowsRetry: bundledServiceCardAllowsRetry(
+                cardState: .upgradeFailed(installed: installedVersion, pinned: pinnedVersion, errorDetails: errorDetails),
+                allowsLocalJournalActions: allowsLocalJournalActions
+            )
         )
     }
 
@@ -390,7 +404,8 @@ struct BundledServiceCard: View {
         retryAction: @escaping () -> Void,
         rawDetails: String?,
         diagnosticMarkdown: String,
-        showDoctor: Bool
+        showDoctor: Bool,
+        allowsRetry: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
@@ -404,8 +419,10 @@ struct BundledServiceCard: View {
                 .accessibilityIdentifier(AXID.Installer.failureSummaryState)
                 .accessibilityValue(sanitizedInlineFailureMessage(summary))
 
-                Button(retryTitle, action: retryAction)
-                    .accessibilityIdentifier(AXID.Installer.failureRetry)
+                if allowsRetry {
+                    Button(retryTitle, action: retryAction)
+                        .accessibilityIdentifier(AXID.Installer.failureRetry)
+                }
             }
 
             rowsContent(showModelsWhenActive: false)
@@ -544,7 +561,7 @@ struct BundledServiceCard: View {
     }
 
     private var successfulDoctorReport: DoctorReport? {
-        if case .success(let report) = doctorResult {
+        if case .report(let report) = doctorResult {
             return report
         }
         return nil
@@ -762,6 +779,26 @@ func installedStateShowsDashboardAndDoctor(_ state: InstallerCardState) -> Bool 
     }
 }
 
+func bundledServiceCardShowsDoctor(cardState: InstallerCardState, allowsLocalJournalActions: Bool) -> Bool {
+    guard allowsLocalJournalActions else { return false }
+    switch cardState {
+    case .installedCurrent, .upgradeFailed:
+        return true
+    case .detecting, .absent, .installing, .failed, .installedPlaceholder, .done, .installedUnknown, .externallyManaged:
+        return false
+    }
+}
+
+func bundledServiceCardAllowsRetry(cardState: InstallerCardState, allowsLocalJournalActions: Bool) -> Bool {
+    guard allowsLocalJournalActions else { return false }
+    switch cardState {
+    case .failed, .upgradeFailed:
+        return true
+    case .detecting, .absent, .installing, .installedPlaceholder, .done, .installedCurrent, .installedUnknown, .externallyManaged:
+        return false
+    }
+}
+
 func bundledDashboardURL(activeServerURL: URL?) -> URL {
     if let activeServerURL, !activeServerURL.absoluteString.isEmpty {
         return activeServerURL
@@ -795,10 +832,6 @@ func doctorStatusColor(for status: DoctorStatus) -> Color {
     case .skip, .unknown:
         return .secondary
     }
-}
-
-func doctorErrorPreview(_ error: Error) -> String {
-    String(error.localizedDescription.prefix(200))
 }
 
 func cancelDoctorTask(_ task: inout Task<Void, Never>?, cancelRunner: () -> Void) {
@@ -886,7 +919,7 @@ func buildFailureDiagnosticMarkdown(_ input: FailureDiagnosticInput, doctorRepor
         "",
         "dig deeper:",
         "- runtime: ~/Library/Application Support/sol/runtime",
-        "- sol: ~/Library/Application Support/sol/runtime/current/bin/sol (or runtime/bin/sol for legacy installs)",
+        "- journal: ~/Library/Application Support/sol/runtime/current/bin/journal (or runtime/bin/journal for legacy installs)",
         "- repo: https://github.com/solpbc/solstone-macos",
         "- log show: /usr/bin/log show --predicate 'subsystem == \"app.solstone.observer\" AND category == \"setup\"' --last 30m --info --debug --style compact",
         "",
