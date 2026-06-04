@@ -8,6 +8,7 @@ import os
 final class UpdateController {
     typealias UpdaterFactory = @MainActor (SparkleUserDriver, any SPUUpdaterDelegate) -> SPUUpdater?
     typealias ExclusivityProvider = @MainActor () -> Bool
+    typealias PreInstallFinalizer = @MainActor () async -> Void
     typealias RunningVersionProvider = @MainActor () -> String
 
     private static let statusKey = "solstone.updates.status"
@@ -26,6 +27,7 @@ final class UpdateController {
     private let userDriver: SparkleUserDriver
     private let updaterDelegate: SparkleUpdaterDelegateAdapter
     private let exclusivityProvider: ExclusivityProvider?
+    private let preInstallFinalizer: PreInstallFinalizer?
 
     private var updater: SPUUpdater?
     private var updaterStarted = false
@@ -33,6 +35,7 @@ final class UpdateController {
     private var pendingCancellation: (() -> Void)?
     private var expectedContentLength: UInt64?
     private var blockedAutomaticCheckDuringExclusive = false
+    private var installFinalizationInFlight = false
     private var _automaticChecksEnabled: Bool = true
     private var _updateCheckInterval: TimeInterval = 86_400
     private var _automaticDownloadsEnabled: Bool = false
@@ -107,6 +110,7 @@ final class UpdateController {
             Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
         },
         exclusivity: ExclusivityProvider? = nil,
+        preInstallFinalizer: PreInstallFinalizer? = nil,
         updaterFactory: @escaping UpdaterFactory
     ) {
         let info = Bundle.main.infoDictionary
@@ -114,6 +118,7 @@ final class UpdateController {
         self.userDriver = SparkleUserDriver()
         self.updaterDelegate = SparkleUpdaterDelegateAdapter()
         self.exclusivityProvider = exclusivity
+        self.preInstallFinalizer = preInstallFinalizer
         self.canCheckForUpdates = Self.validateSparkleConfig(
             feedURL: feedURL ?? info?["SUFeedURL"] as? String,
             publicKey: publicKey ?? info?["SUPublicEDKey"] as? String
@@ -144,8 +149,14 @@ final class UpdateController {
         observeExclusivity()
     }
 
-    convenience init(exclusivity: ExclusivityProvider? = nil) {
-        self.init(exclusivity: exclusivity) { userDriver, delegate in
+    convenience init(
+        exclusivity: ExclusivityProvider? = nil,
+        preInstallFinalizer: PreInstallFinalizer? = nil
+    ) {
+        self.init(
+            exclusivity: exclusivity,
+            preInstallFinalizer: preInstallFinalizer
+        ) { userDriver, delegate in
             SPUUpdater(
                 hostBundle: .main,
                 applicationBundle: .main,
@@ -191,6 +202,8 @@ final class UpdateController {
     }
 
     func cancel() {
+        guard !installFinalizationInFlight else { return }
+
         pendingCancellation?()
         clearPendingInteractions()
         activity = .idle
@@ -198,6 +211,8 @@ final class UpdateController {
     }
 
     func install() {
+        guard !installFinalizationInFlight else { return }
+
         if exclusiveOperationInProgress {
             let version = currentUpdateVersionForIntent()
             deferredInstallIntent = DeferredInstallIntent(version: version, requestedAt: Date())
@@ -205,11 +220,14 @@ final class UpdateController {
             return
         }
 
-        pendingChoiceReply?(.install)
+        guard let reply = pendingChoiceReply else { return }
         pendingChoiceReply = nil
+        fireInstallReply(reply)
     }
 
     func dismiss() {
+        guard !installFinalizationInFlight else { return }
+
         pendingChoiceReply?(.dismiss)
         clearPendingInteractions()
         deferredInstallIntent = nil
@@ -451,7 +469,7 @@ final class UpdateController {
             deferredInstallIntent = nil
             if let reply = pendingChoiceReply {
                 pendingChoiceReply = nil
-                reply(.install)
+                fireInstallReply(reply)
             } else {
                 checkForUpdates()
             }
@@ -469,7 +487,19 @@ final class UpdateController {
     }
 
     private var hasLiveSparkleSessionOrReply: Bool {
-        activity != .idle || pendingChoiceReply != nil || pendingCancellation != nil
+        activity != .idle || pendingChoiceReply != nil || pendingCancellation != nil || installFinalizationInFlight
+    }
+
+    private func fireInstallReply(_ reply: @escaping (SPUUserUpdateChoice) -> Void) {
+        installFinalizationInFlight = true
+
+        // Once finalization starts, the user's explicit install intent is committed;
+        // exclusivity is not re-checked before handing control back to Sparkle.
+        Task { @MainActor in
+            await preInstallFinalizer?()
+            reply(.install)
+            installFinalizationInFlight = false
+        }
     }
 
     private func currentUpdateVersionForIntent() -> String {

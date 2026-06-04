@@ -45,10 +45,164 @@ struct SparkleDeferralTests {
         #expect(controller.activity == .idle)
 
         await setExclusive(signal, to: false, controller: controller)
+        await yieldUntil { installed }
 
         #expect(installed)
         #expect(controller.deferredInstallIntent == nil)
         #expect(!controller.hasLiveUpdateReply)
+    }
+
+    @Test func directInstallAwaitsPreInstallFinalizerBeforeReply() async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        let controller = makeController(exclusivity: signal, preInstallFinalizer: gate.run)
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: "notes"),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: "notes"),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { choice in
+                if choice == .install {
+                    gate.events.append("sparkle-install")
+                }
+            }
+        )
+
+        controller.install()
+        await yieldUntil { gate.started }
+
+        #expect(gate.events == ["finalizer-start"])
+
+        gate.release()
+        await yieldUntil { gate.events.contains("sparkle-install") }
+
+        #expect(gate.events == ["finalizer-start", "finalizer-end", "sparkle-install"])
+    }
+
+    @Test func deferredInstallAwaitsPreInstallFinalizerBeforeReply() async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        let controller = makeController(exclusivity: signal, preInstallFinalizer: gate.run)
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: "notes"),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: "notes"),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { choice in
+                if choice == .install {
+                    gate.events.append("sparkle-install")
+                }
+            }
+        )
+
+        await setExclusive(signal, to: true, controller: controller)
+        controller.install()
+        await Task.yield()
+
+        #expect(gate.events.isEmpty)
+
+        await setExclusive(signal, to: false, controller: controller)
+        await yieldUntil { gate.started }
+
+        #expect(gate.events == ["finalizer-start"])
+
+        gate.release()
+        await yieldUntil { gate.events.contains("sparkle-install") }
+
+        #expect(gate.events == ["finalizer-start", "finalizer-end", "sparkle-install"])
+    }
+
+    @Test func nonInstallActionsDoNotRunPreInstallFinalizer() {
+        let signal = ExclusiveSignal()
+        var finalizerInvocations = 0
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: {
+                finalizerInvocations += 1
+            }
+        )
+        var dismissed = false
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { choice in
+                dismissed = choice == .dismiss
+            }
+        )
+
+        controller.dismiss()
+
+        #expect(dismissed)
+        #expect(finalizerInvocations == 0)
+
+        var cancelReplied = false
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { _ in
+                cancelReplied = true
+            }
+        )
+
+        controller.cancel()
+
+        #expect(!cancelReplied)
+        #expect(finalizerInvocations == 0)
+
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            hasLiveChoiceReply: true
+        )
+
+        controller.presentNoUpdateFound()
+
+        #expect(finalizerInvocations == 0)
+
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            hasLiveChoiceReply: true
+        )
+
+        controller.presentUpdaterError(NSError(domain: "test", code: 1))
+
+        #expect(finalizerInvocations == 0)
+    }
+
+    @Test func installDuringPreInstallFinalizerRepliesOnce() async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        let controller = makeController(exclusivity: signal, preInstallFinalizer: gate.run)
+        var installReplyCount = 0
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { choice in
+                if choice == .install {
+                    installReplyCount += 1
+                }
+            }
+        )
+
+        controller.install()
+        await yieldUntil { gate.started }
+
+        controller.install()
+        controller.dismiss()
+        controller.cancel()
+
+        #expect(installReplyCount == 0)
+        #expect(controller.availableUpdate?.version == "1.3.9")
+        #expect(controller.activity == .readyToInstall(version: "1.3.9", releaseNotes: nil))
+
+        gate.release()
+        await yieldUntil { installReplyCount == 1 }
+
+        #expect(installReplyCount == 1)
     }
 
     @Test func deferredIntentWithMissingReplyFallsBackToCheckWhenSignalClears() async {
@@ -166,12 +320,16 @@ struct SparkleDeferralTests {
         #expect(controller.statusAXToken == "deferred_install")
     }
 
-    private func makeController(exclusivity signal: ExclusiveSignal) -> UpdateController {
+    private func makeController(
+        exclusivity signal: ExclusiveSignal,
+        preInstallFinalizer: UpdateController.PreInstallFinalizer? = nil
+    ) -> UpdateController {
         clearDefaults()
         return UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
-            exclusivity: { signal.value }
+            exclusivity: { signal.value },
+            preInstallFinalizer: preInstallFinalizer
         ) { _, _ in
             nil
         }
@@ -203,6 +361,15 @@ struct SparkleDeferralTests {
         #expect(controller.exclusiveOperationInProgress == value)
     }
 
+    private func yieldUntil(_ condition: () -> Bool) async {
+        for _ in 0..<20 {
+            await Task.yield()
+            if condition() {
+                break
+            }
+        }
+    }
+
     private func clearDefaults() {
         UserDefaults.standard.removeObject(forKey: statusKey)
         UserDefaults.standard.removeObject(forKey: legacyLastCheckedAtKey)
@@ -214,4 +381,27 @@ struct SparkleDeferralTests {
 @Observable
 private final class ExclusiveSignal {
     var value = false
+}
+
+@MainActor
+private final class PreInstallFinalizerGate {
+    var events: [String] = []
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    var started: Bool {
+        events.contains("finalizer-start")
+    }
+
+    func run() async {
+        events.append("finalizer-start")
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+        events.append("finalizer-end")
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
 }

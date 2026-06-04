@@ -162,7 +162,12 @@ struct SolstoneCaptureApp: App {
         let appState = AppState()
         _appState = State(initialValue: appState)
         _updateController = State(initialValue: UpdateController(
-            exclusivity: { appState.installer.exclusiveOperationInProgress }
+            exclusivity: { appState.installer.exclusiveOperationInProgress },
+            preInstallFinalizer: { @MainActor in
+                if appState.isRecording {
+                    await appState.stopRecording()
+                }
+            }
         ))
     }
 
