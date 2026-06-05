@@ -62,10 +62,13 @@ struct AXStateCompanion: View {
     let value: String
 
     var body: some View {
-        Color.clear
-            .frame(width: 0, height: 0)
-            .accessibilityElement()
+        Text(value)
+            .font(.system(size: 1))
+            .frame(width: 1, height: 1)
+            .opacity(0.001)
+            .clipped()
             .accessibilityIdentifier(id)
+            .accessibilityLabel(id)
             .accessibilityValue(value)
     }
 }

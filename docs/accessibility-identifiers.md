@@ -62,15 +62,20 @@ Runtime uniqueness assumptions:
 
 ## Companion Elements
 
-When a state or number has no always-rendered host, add a zero-size AX companion inside a stable enclosing view:
+When a state or number has no always-rendered host, add a value-bearing, labeled, visually-inert AX companion inside a stable enclosing view:
 
 ```swift
-Color.clear
-    .frame(width: 0, height: 0)
-    .accessibilityElement()
+Text(value)
+    .font(.system(size: 1))
+    .frame(width: 1, height: 1)
+    .opacity(0.001)
+    .clipped()
     .accessibilityIdentifier(...)
+    .accessibilityLabel(...)
     .accessibilityValue(value)
 ```
+
+A label-less zero-size `AXGroup` does not vend `AXValue` to XCUITest; the companion must be a value-bearing, labeled, non-zero element. The non-empty label keeps the element serializable even when the value is empty (e.g. storage not loaded yet).
 
 Use an existing always-rendered `Text`, `LabeledContent`, or composite row instead when that host is cleaner. For composites, apply grouping first, then identifier and value on the grouped container.
 
@@ -82,7 +87,7 @@ Static test coverage:
 
 - `swift test --filter AXID` checks grammar, uniqueness, tokens, runtime-key behavior, and the literal-grep guard.
 - `swift test --filter WireUp` checks source references to `AXID` in each surface. These tests prove source wire-up presence only; they do not prove live AX-tree attachment.
-- `swift test --filter SnapshotTests` checks that grouping and zero-size companions do not collapse rendered content.
+- `swift test --filter SnapshotTests` checks that grouping and value-bearing companions do not collapse rendered content.
 
 Device-phase validation should dump the live accessibility tree for the settings window, installer card, updates tab, about window, and menu bar extra after launch. Confirm identifiers and values are present for the current visible state and after driving state transitions such as permission waiting, connection testing, upload syncing, update progress, and menu icon status.
 
