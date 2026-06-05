@@ -5,6 +5,14 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.12] - 2026-06-05
+
+### Changed
+- updated the bundled solstone journal to 0.5.1 →
+
+### Fixed
+- if an app update starts while solstone is active, the current segment is finished before the installer takes over, so the update does not leave it midstream.
+
 ## [1.3.11] - 2026-06-03
 
 ### Fixed
