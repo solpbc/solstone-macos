@@ -251,7 +251,7 @@ enum AXID {
     }
 }
 
-private extension InstallerRow {
+extension InstallerRow {
     var axKey: String {
         rawValue.replacingOccurrences(of: "row.", with: "")
     }

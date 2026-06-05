@@ -45,6 +45,27 @@ struct InstallerWireUpTests {
         }
     }
 
+    @Test func doctorProgressStateCompanionIsUnconditional() throws {
+        let source = try readWireUpSource("Sources/solstone/BundledServiceCard.swift")
+        let nilBranchRange = try #require(source.range(of: "if doctorResult == nil {"))
+        let nilBranchEnd = try #require(
+            matchingClosingBrace(in: source, openingBrace: source.index(before: nilBranchRange.upperBound))
+        )
+        let nilBranch = String(source[nilBranchRange.lowerBound...nilBranchEnd])
+        let companionRange = try #require(source.range(of: "id: AXID.Installer.doctorProgressState"))
+
+        #expect(wireUpContains(source, """
+            }
+            AXStateCompanion(
+                id: AXID.Installer.doctorProgressState,
+                value: doctorProgressAXToken(for: doctorResult)
+            )
+            """))
+        #expect(!nilBranch.contains("AXID.Installer.doctorProgressState"))
+        #expect(companionRange.lowerBound > nilBranchEnd)
+        #expect(!wireUpContains(source, ".accessibilityValue(String(doctorResult == nil))"))
+    }
+
     // Proves registry wire-up presence, not live AX-tree attachment; device-phase AX dumps cover that.
     @Test func installerProgressRowReferencesExpectedAXIDs() throws {
         let source = try readWireUpSource("Sources/solstone/InstallerProgressRowView.swift")
@@ -60,5 +81,27 @@ struct InstallerWireUpTests {
         for reference in references {
             #expect(wireUpContains(source, reference))
         }
+    }
+
+    private func matchingClosingBrace(in source: String, openingBrace: String.Index) -> String.Index? {
+        guard source[openingBrace] == "{" else { return nil }
+
+        var depth = 0
+        var index = openingBrace
+        while index < source.endIndex {
+            switch source[index] {
+            case "{":
+                depth += 1
+            case "}":
+                depth -= 1
+                if depth == 0 {
+                    return index
+                }
+            default:
+                break
+            }
+            index = source.index(after: index)
+        }
+        return nil
     }
 }

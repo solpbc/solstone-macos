@@ -4,7 +4,7 @@
 import Foundation
 import os
 
-public enum ServiceMode: String, Codable, Equatable, Sendable {
+public enum ServiceMode: String, Codable, Equatable, Sendable, CaseIterable {
     case bundled
     case external
 

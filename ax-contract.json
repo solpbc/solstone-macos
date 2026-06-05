@@ -1,0 +1,569 @@
+{
+  "_generated" : "DO NOT EDIT. Generated from AXID.swift + AXToken.swift. Run `make ax-contract` to regenerate; `make ci` fails on drift.",
+  "grammar" : {
+    "identifier" : "^(menubar|settings|installer|updates|about)(\\.[a-z][a-zA-Z0-9-]*)+$",
+    "token" : "^[a-z][a-z_]*$"
+  },
+  "identifiers" : {
+    "parameterized" : [
+      {
+        "expansions" : [
+          "resolve-journal",
+          "service-uninstall",
+          "wait-for-death",
+          "orphan-sweep",
+          "ports"
+        ],
+        "key" : "CleanupStep.rawValue",
+        "template" : "installer.cleanup.{cleanupStep}.state"
+      },
+      {
+        "key" : "DoctorCheck.name (slugged)",
+        "runtime" : true,
+        "template" : "installer.doctor.check.{slug}"
+      },
+      {
+        "expansions" : [
+          "checkingSystem",
+          "cleaningUp",
+          "installSolstone",
+          "solSetup",
+          "registering",
+          "models"
+        ],
+        "key" : "InstallerRow.axKey",
+        "template" : "installer.step.{row}"
+      },
+      {
+        "expansions" : [
+          "checkingSystem",
+          "cleaningUp",
+          "installSolstone",
+          "solSetup",
+          "registering",
+          "models"
+        ],
+        "key" : "InstallerRow.axKey",
+        "template" : "installer.step.{row}.currentStep.state"
+      },
+      {
+        "expansions" : [
+          "checkingSystem",
+          "cleaningUp",
+          "installSolstone",
+          "solSetup",
+          "registering",
+          "models"
+        ],
+        "key" : "InstallerRow.axKey",
+        "template" : "installer.step.{row}.details"
+      },
+      {
+        "expansions" : [
+          "checkingSystem",
+          "cleaningUp",
+          "installSolstone",
+          "solSetup",
+          "registering",
+          "models"
+        ],
+        "key" : "InstallerRow.axKey",
+        "template" : "installer.step.{row}.log"
+      },
+      {
+        "expansions" : [
+          "checkingSystem",
+          "cleaningUp",
+          "installSolstone",
+          "solSetup",
+          "registering",
+          "models"
+        ],
+        "key" : "InstallerRow.axKey",
+        "template" : "installer.step.{row}.state"
+      },
+      {
+        "key" : "CoreAudio device UID",
+        "runtime" : true,
+        "template" : "settings.microphones.priority.device.{uid}"
+      },
+      {
+        "key" : "CoreAudio device UID",
+        "runtime" : true,
+        "template" : "settings.microphones.priority.remove.{uid}"
+      },
+      {
+        "key" : "CoreAudio device UID",
+        "runtime" : true,
+        "template" : "settings.microphones.priority.toggle.{uid}"
+      },
+      {
+        "key" : "AppEntry.name",
+        "runtime" : true,
+        "template" : "settings.privacy.excludedApps.app.{value}"
+      },
+      {
+        "key" : "AppEntry.name",
+        "runtime" : true,
+        "template" : "settings.privacy.excludedApps.remove.{value}"
+      },
+      {
+        "key" : "title pattern",
+        "runtime" : true,
+        "template" : "settings.privacy.titlePatterns.pattern.{value}"
+      },
+      {
+        "key" : "title pattern",
+        "runtime" : true,
+        "template" : "settings.privacy.titlePatterns.remove.{value}"
+      },
+      {
+        "expansions" : [
+          "permissions",
+          "observer",
+          "service",
+          "microphones",
+          "privacy",
+          "status",
+          "updates",
+          "help"
+        ],
+        "key" : "SettingsView.Tab.rawValue",
+        "template" : "settings.sidebar.tab.{tab}"
+      },
+      {
+        "expansions" : [
+          "permissions",
+          "observer",
+          "service",
+          "microphones",
+          "privacy",
+          "status",
+          "updates",
+          "help"
+        ],
+        "key" : "SettingsView.Tab.rawValue",
+        "template" : "settings.sidebar.tab.{tab}.state"
+      }
+    ],
+    "static" : [
+      "about.identity.logo",
+      "about.identity.title",
+      "about.identity.version.state",
+      "about.link.sourceCode",
+      "about.link.website",
+      "installer.absent.install",
+      "installer.autoTest.retry",
+      "installer.autoTest.state",
+      "installer.doctor.checklist",
+      "installer.doctor.disclosure",
+      "installer.doctor.error.state",
+      "installer.doctor.progress.state",
+      "installer.doctor.refresh",
+      "installer.doctor.retry",
+      "installer.externalManaged.path.state",
+      "installer.externalManaged.state",
+      "installer.failure.details",
+      "installer.failure.diagnostic.copied.state",
+      "installer.failure.diagnostic.copy",
+      "installer.failure.diagnostic.help",
+      "installer.failure.log",
+      "installer.failure.retry",
+      "installer.failure.summary.state",
+      "installer.installed.message.state",
+      "installer.installed.openDashboard",
+      "installer.journal.change",
+      "installer.journal.path.state",
+      "installer.journal.tccRestricted.state",
+      "installer.modelDownload.state",
+      "installer.terminalState.state",
+      "menubar.app.quit",
+      "menubar.chat.pending",
+      "menubar.navigation.about",
+      "menubar.navigation.openJournal",
+      "menubar.navigation.settings",
+      "menubar.observing.start",
+      "menubar.pause.fifteenMinutes",
+      "menubar.pause.indefinite",
+      "menubar.pause.menu",
+      "menubar.pause.oneHour",
+      "menubar.pause.resume",
+      "menubar.pause.thirtyMinutes",
+      "menubar.status.error",
+      "menubar.status.icon.state",
+      "menubar.status.journal.state",
+      "menubar.status.localOnly",
+      "menubar.status.offline",
+      "menubar.status.permissions",
+      "menubar.status.row.state",
+      "settings.help.agentInstructions",
+      "settings.help.agentInstructions.copy",
+      "settings.help.iconState.error",
+      "settings.help.iconState.offline",
+      "settings.help.iconState.paused",
+      "settings.help.iconState.recording",
+      "settings.microphones.audioProcessing.silenceMusic",
+      "settings.microphones.gain.picker",
+      "settings.microphones.gain.state",
+      "settings.microphones.priority.list",
+      "settings.observer.general.startAtLogin",
+      "settings.observer.notifications.denied.state",
+      "settings.observer.notifications.solChat",
+      "settings.observer.storage.cacheFolder.open",
+      "settings.observer.storage.cacheRetention",
+      "settings.observer.storage.cacheRetention.state",
+      "settings.observer.storage.used.state",
+      "settings.permissions.microphone.grantAccess",
+      "settings.permissions.microphone.state",
+      "settings.permissions.next.connectJournal",
+      "settings.permissions.screenRecording.enable",
+      "settings.permissions.screenRecording.restartCountdown.state",
+      "settings.permissions.screenRecording.restartNow",
+      "settings.permissions.screenRecording.state",
+      "settings.permissions.systemSettings.open",
+      "settings.privacy.excludedApps.add",
+      "settings.privacy.excludedApps.field",
+      "settings.privacy.excludedApps.list",
+      "settings.privacy.privateBrowsing.exclude",
+      "settings.privacy.titlePatterns.add",
+      "settings.privacy.titlePatterns.field",
+      "settings.privacy.titlePatterns.list",
+      "settings.service.external.address",
+      "settings.service.external.connect",
+      "settings.service.external.connectionTest.state",
+      "settings.service.external.key",
+      "settings.service.external.setupGuide",
+      "settings.service.external.testConnection",
+      "settings.service.external.viewStatus",
+      "settings.service.journal.restart",
+      "settings.service.journalMode.picker",
+      "settings.service.journalMode.state",
+      "settings.service.next.checkStatus",
+      "settings.service.prereq.permissions",
+      "settings.service.restartRequired.banner",
+      "settings.status.debug.keepRejectedAudio",
+      "settings.status.debug.oneMinuteSegments",
+      "settings.status.journal.runtime.state",
+      "settings.status.observing.nextSegment.state",
+      "settings.status.observing.state",
+      "settings.status.upload.checked.state",
+      "settings.status.upload.configureJournal",
+      "settings.status.upload.journal.state",
+      "settings.status.upload.lastError.state",
+      "settings.status.upload.lastSynced.state",
+      "settings.status.upload.pauseSync",
+      "settings.status.upload.pending.state",
+      "settings.status.upload.resyncAll",
+      "settings.status.upload.state",
+      "settings.status.upload.total.state",
+      "updates.action.cancel",
+      "updates.action.check",
+      "updates.action.dismiss",
+      "updates.action.download",
+      "updates.action.install",
+      "updates.action.retry",
+      "updates.debug.state",
+      "updates.deferredInstall.state",
+      "updates.downloadProgress.state",
+      "updates.extractProgress.state",
+      "updates.preferences.automaticChecks",
+      "updates.preferences.automaticDownloads",
+      "updates.preferences.frequency",
+      "updates.preferences.frequency.state",
+      "updates.releaseNotes.content",
+      "updates.releaseNotes.online",
+      "updates.status.state",
+      "updates.status.unavailable"
+    ]
+  },
+  "states" : {
+    "about.identity.version.state" : {
+      "kind" : "freeform"
+    },
+    "installer.autoTest.state" : {
+      "kind" : "enum",
+      "vocabulary" : "AutoTestState"
+    },
+    "installer.cleanup.{cleanupStep}.state" : {
+      "kind" : "enum",
+      "vocabulary" : "RowStatus"
+    },
+    "installer.doctor.check.{slug}" : {
+      "kind" : "enum",
+      "vocabulary" : "DoctorStatus"
+    },
+    "installer.doctor.error.state" : {
+      "kind" : "freeform"
+    },
+    "installer.doctor.progress.state" : {
+      "kind" : "enum",
+      "vocabulary" : "DoctorProgress"
+    },
+    "installer.externalManaged.path.state" : {
+      "kind" : "freeform"
+    },
+    "installer.externalManaged.state" : {
+      "kind" : "enum",
+      "vocabulary" : "InstallerCardState"
+    },
+    "installer.failure.diagnostic.copied.state" : {
+      "kind" : "freeform"
+    },
+    "installer.failure.summary.state" : {
+      "kind" : "freeform"
+    },
+    "installer.installed.message.state" : {
+      "kind" : "enum",
+      "vocabulary" : "InstallerCardState"
+    },
+    "installer.journal.path.state" : {
+      "kind" : "freeform"
+    },
+    "installer.journal.tccRestricted.state" : {
+      "kind" : "freeform"
+    },
+    "installer.modelDownload.state" : {
+      "kind" : "numeric"
+    },
+    "installer.step.{row}.currentStep.state" : {
+      "kind" : "freeform"
+    },
+    "installer.step.{row}.state" : {
+      "kind" : "enum",
+      "vocabulary" : "RowStatus"
+    },
+    "installer.terminalState.state" : {
+      "kind" : "enum",
+      "vocabulary" : "InstallerCardState"
+    },
+    "menubar.status.icon.state" : {
+      "kind" : "enum",
+      "vocabulary" : "MenubarIconState"
+    },
+    "menubar.status.journal.state" : {
+      "kind" : "enum",
+      "vocabulary" : "MenubarStatusRowState"
+    },
+    "menubar.status.row.state" : {
+      "kind" : "enum",
+      "vocabulary" : "MenubarStatusRowState"
+    },
+    "settings.microphones.gain.state" : {
+      "kind" : "numeric"
+    },
+    "settings.observer.notifications.denied.state" : {
+      "kind" : "freeform"
+    },
+    "settings.observer.storage.cacheRetention.state" : {
+      "kind" : "numeric"
+    },
+    "settings.observer.storage.used.state" : {
+      "kind" : "numeric"
+    },
+    "settings.permissions.microphone.state" : {
+      "kind" : "enum",
+      "vocabulary" : "AXPermissionState"
+    },
+    "settings.permissions.screenRecording.restartCountdown.state" : {
+      "kind" : "numeric"
+    },
+    "settings.permissions.screenRecording.state" : {
+      "kind" : "enum",
+      "vocabulary" : "AXPermissionState"
+    },
+    "settings.service.external.connectionTest.state" : {
+      "kind" : "enum",
+      "vocabulary" : "ConnectionTestState"
+    },
+    "settings.service.journalMode.state" : {
+      "kind" : "enum",
+      "vocabulary" : "ServiceMode"
+    },
+    "settings.sidebar.tab.{tab}.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SidebarBadgeState"
+    },
+    "settings.status.journal.runtime.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalRuntimeStatus"
+    },
+    "settings.status.observing.nextSegment.state" : {
+      "kind" : "numeric"
+    },
+    "settings.status.observing.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SettingsObservationAXState"
+    },
+    "settings.status.upload.checked.state" : {
+      "kind" : "numeric"
+    },
+    "settings.status.upload.journal.state" : {
+      "kind" : "freeform"
+    },
+    "settings.status.upload.lastError.state" : {
+      "kind" : "freeform"
+    },
+    "settings.status.upload.lastSynced.state" : {
+      "kind" : "numeric"
+    },
+    "settings.status.upload.pending.state" : {
+      "kind" : "numeric"
+    },
+    "settings.status.upload.state" : {
+      "kind" : "enum",
+      "vocabulary" : "UploadCoordinator.Status"
+    },
+    "settings.status.upload.total.state" : {
+      "kind" : "numeric"
+    },
+    "updates.debug.state" : {
+      "kind" : "freeform"
+    },
+    "updates.deferredInstall.state" : {
+      "kind" : "freeform"
+    },
+    "updates.downloadProgress.state" : {
+      "kind" : "numeric"
+    },
+    "updates.extractProgress.state" : {
+      "kind" : "numeric"
+    },
+    "updates.preferences.frequency.state" : {
+      "kind" : "enum",
+      "vocabulary" : "FrequencyOption"
+    },
+    "updates.status.state" : {
+      "kind" : "enum",
+      "vocabulary" : "UpdateStatus"
+    }
+  },
+  "surfaces" : [
+    "about",
+    "installer",
+    "menubar",
+    "settings",
+    "updates"
+  ],
+  "version" : 1,
+  "vocabularies" : {
+    "AXPermissionState" : [
+      "granted",
+      "denied",
+      "waiting"
+    ],
+    "AutoTestState" : [
+      "verifying",
+      "success",
+      "failure"
+    ],
+    "ConnectionTestState" : [
+      "idle",
+      "testing",
+      "success",
+      "failure"
+    ],
+    "DoctorProgress" : [
+      "running",
+      "done",
+      "error"
+    ],
+    "DoctorStatus" : [
+      "ok",
+      "warn",
+      "fail",
+      "skip",
+      "unknown"
+    ],
+    "FrequencyOption" : [
+      "day",
+      "week",
+      "month"
+    ],
+    "InstallerCardState" : [
+      "detecting",
+      "absent",
+      "installing",
+      "installed_placeholder",
+      "done",
+      "installed_current",
+      "installed_unknown",
+      "externally_managed",
+      "upgrade_failed",
+      "failed"
+    ],
+    "JournalRuntimeStatus" : [
+      "running",
+      "journal_restarting",
+      "journal_setup_needed",
+      "journal_stopped",
+      "journal_unknown"
+    ],
+    "MenubarIconState" : [
+      "recording",
+      "offline",
+      "paused",
+      "error"
+    ],
+    "MenubarStatusRowState" : [
+      "permissions",
+      "error",
+      "journal_stopped",
+      "journal_restarting",
+      "journal_setup_needed",
+      "journal_unknown",
+      "local_only",
+      "offline",
+      "paused",
+      "observing",
+      "stopped"
+    ],
+    "RowStatus" : [
+      "pending",
+      "running",
+      "ok",
+      "failed"
+    ],
+    "ServiceMode" : [
+      "bundled",
+      "external"
+    ],
+    "SettingsObservationAXState" : [
+      "observing",
+      "paused",
+      "stopped"
+    ],
+    "SidebarBadgeState" : [
+      "done",
+      "attention",
+      "none"
+    ],
+    "UpdateActivity" : [
+      "idle",
+      "checking",
+      "downloading",
+      "extracting",
+      "ready_to_install",
+      "installing"
+    ],
+    "UpdateStatus" : [
+      "idle",
+      "checking",
+      "downloading",
+      "extracting",
+      "ready_to_install",
+      "installing",
+      "deferred_install",
+      "update_available",
+      "up_to_date",
+      "error"
+    ],
+    "UploadCoordinator.Status" : [
+      "not_synced",
+      "syncing",
+      "synced",
+      "uploading",
+      "retrying",
+      "offline"
+    ]
+  }
+}

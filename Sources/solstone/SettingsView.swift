@@ -53,7 +53,7 @@ private struct SettingsPaneScrollEdgeModifier: ViewModifier {
 
 /// Settings window for configuring server upload
 struct SettingsView: View {
-    enum Tab: String, Hashable {
+    enum Tab: String, Hashable, CaseIterable {
         case permissions = "permissions"
         case observer = "observer"
         case service = "service"

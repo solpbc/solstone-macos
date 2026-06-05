@@ -1,4 +1,4 @@
-.PHONY: build release release-universal run clean test integration-test snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
+.PHONY: build release release-universal run clean test ax-contract integration-test snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg \
         vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke brand-sync \
         release-preflight bump-release
@@ -229,6 +229,9 @@ clean:
 # Run tests
 test:
 	swift test
+
+ax-contract:
+	AX_CONTRACT_REGEN=1 swift test --filter AXContract
 
 ci:
 	@./scripts/run-ci.sh

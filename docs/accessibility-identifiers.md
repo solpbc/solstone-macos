@@ -22,25 +22,13 @@ View code must reference `AXID` constants or functions. It must not pass inline 
 
 `.accessibilityValue(...)` is the polling channel for state. Values are always `String` values. Closed state enums use `.axToken`, numeric/progress states use raw integer strings, and stable text or boolean state uses `String` variables. Do not use `accessibilityCustomContent`.
 
+The canonical identifier list, state map, and closed token vocabularies live in the generated `ax-contract.json` at the repo root. Regenerate it with `make ax-contract`; `make ci` fails if the committed contract drifts from the Swift source of truth.
+
 State tokens match:
 
 ```text
 ^[a-z][a-z_]*$
 ```
-
-| State source | Tokens |
-| --- | --- |
-| `RowStatus` | `pending`, `running`, `ok`, `failed` |
-| `InstallerCardState` | `detecting`, `absent`, `installing`, `installed_placeholder`, `done`, `installed_current`, `installed_unknown`, `failed`, `upgrade_failed`, `externally_managed` |
-| `AutoTestState` | `verifying`, `success`, `failure` |
-| `DoctorStatus` | `ok`, `warn`, `fail`, `skip`, `unknown` |
-| `UploadCoordinator.Status` | `not_synced`, `syncing`, `synced`, `uploading`, `retrying`, `offline` |
-| `ConnectionTestState` | `idle`, `testing`, `success`, `failure` |
-| `UpdateState` | `idle`, `checking`, `update_available`, `downloading`, `extracting`, `ready_to_install`, `installing`, `up_to_date`, `error` |
-| `SettingsView.SidebarBadgeState` | `attention`, `done`, `none` |
-| Permission state | `granted`, `denied`, `waiting` |
-| Menubar icon state | `recording`, `offline`, `paused`, `error` |
-| Menubar status row state | `permissions`, `error`, `pipeline_dead`, `pipeline_restarting`, `pipeline_missing`, `local_only`, `offline`, `paused`, `observing`, `stopped` |
 
 Numeric values publish raw integer strings. Examples include upload checked/total/pending counts, next-segment seconds, update download/extract percentages, and model download percentage. The harness owns formatting.
 

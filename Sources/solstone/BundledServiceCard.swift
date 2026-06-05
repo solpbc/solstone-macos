@@ -180,10 +180,12 @@ struct BundledServiceCard: View {
                             .foregroundStyle(.secondary)
                     }
                     .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier(AXID.Installer.doctorProgressState)
-                    .accessibilityValue(String(doctorResult == nil))
                 }
             }
+            AXStateCompanion(
+                id: AXID.Installer.doctorProgressState,
+                value: doctorProgressAXToken(for: doctorResult)
+            )
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {

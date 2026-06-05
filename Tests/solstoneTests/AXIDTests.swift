@@ -7,11 +7,8 @@ import Testing
 
 @Suite("AXID registry")
 struct AXIDTests {
-    private let idPattern = #"^(menubar|settings|installer|updates|about)(\.[a-z][a-zA-Z0-9-]*)+$"#
-    private let tokenPattern = #"^[a-z][a-z_]*$"#
-
     @Test func enumerableIDsMatchGrammar() {
-        for id in enumerableIDs {
+        for id in AXContract.enumerableIDs {
             #expect(matchesIDGrammar(id))
         }
     }
@@ -24,7 +21,7 @@ struct AXIDTests {
     }
 
     @Test func enumerableIDsAreGloballyUnique() {
-        #expect(Set(enumerableIDs).count == enumerableIDs.count)
+        #expect(Set(AXContract.enumerableIDs).count == AXContract.enumerableIDs.count)
     }
 
     @Test func runtimeKeysArePrefixStableAndInjective() {
@@ -53,91 +50,51 @@ struct AXIDTests {
     }
 
     @Test func doctorSluggingIsStableForRepresentativeNames() {
-        #expect(AXID.Installer.doctorCheck("Python Version") == "installer.doctor.check.python-version")
-        #expect(AXID.Installer.doctorCheck("journal: path / exists") == "installer.doctor.check.journal-path-exists")
-        #expect(AXID.Installer.doctorCheck("Sol Doctor -- GPU/Metal?") == "installer.doctor.check.sol-doctor-gpu-metal")
+        let expected = [
+            "installer.doctor.check.python-version",
+            "installer.doctor.check.journal-path-exists",
+            "installer.doctor.check.sol-doctor-gpu-metal"
+        ]
+
+        for (name, expectedID) in zip(AXContract.doctorCheckSampleNames, expected) {
+            #expect(AXID.Installer.doctorCheck(name) == expectedID)
+        }
     }
 
     @Test func enumTokensAreExactAndMatchTokenGrammar() {
-        expectToken(RowStatus.pending.axToken, "pending")
-        expectToken(RowStatus.running.axToken, "running")
-        expectToken(RowStatus.ok.axToken, "ok")
-        expectToken(RowStatus.failed(message: "boom").axToken, "failed")
+        expectTokens(rowStatusRepresentatives.map(\.axToken), RowStatus.axTokens)
+        expectTokens(installerCardStateRepresentatives.map(\.axToken), InstallerCardState.axTokens)
+        expectTokens(autoTestStateRepresentatives.map(\.axToken), AutoTestState.axTokens)
+        expectTokens(doctorStatusRepresentatives.map(\.axToken), DoctorStatus.axTokens)
+        expectTokens(uploadStatusRepresentatives.map(\.axToken), UploadCoordinator.Status.axTokens)
+        expectTokens(connectionTestStateRepresentatives.map(\.axToken), ConnectionTestState.axTokens)
+        expectTokens(updateActivityRepresentatives.map(\.axToken), UpdateActivity.axTokens)
+        expectTokens(journalRuntimeStatusRepresentatives.map(\.settingsPresentation.axValue), JournalRuntimeStatus.axTokens)
 
-        expectToken(InstallerCardState.detecting.axToken, "detecting")
-        expectToken(InstallerCardState.absent.axToken, "absent")
-        expectToken(InstallerCardState.installing.axToken, "installing")
-        expectToken(InstallerCardState.installedPlaceholder.axToken, "installed_placeholder")
-        expectToken(InstallerCardState.done.axToken, "done")
-        expectToken(InstallerCardState.installedCurrent(version: "1.2.3").axToken, "installed_current")
-        expectToken(InstallerCardState.installedUnknown.axToken, "installed_unknown")
-        expectToken(InstallerCardState.failed(.installSolstone(message: "boom")).axToken, "failed")
-        expectToken(
-            InstallerCardState.upgradeFailed(installed: "1.0.0", pinned: "2.0.0", errorDetails: "boom").axToken,
-            "upgrade_failed"
+        expectTokensMatchGrammar(SettingsView.SidebarBadgeState.allCases.map(\.axToken))
+        expectTokensMatchGrammar(AXPermissionState.allCases.map(\.axToken))
+        expectTokensMatchGrammar(MenubarIconState.allCases.map(\.axToken))
+        expectTokensMatchGrammar(MenubarStatusRowState.allCases.map(\.axToken))
+        expectTokensMatchGrammar(SettingsObservationAXState.allCases.map(\.axToken))
+        expectTokensMatchGrammar(DoctorProgress.allCases.map(\.axToken))
+    }
+
+    @Test func doctorProgressAXTokenMapsDoctorResult() {
+        #expect(doctorProgressAXToken(for: nil) == DoctorProgress.running.axToken)
+        #expect(doctorProgressAXToken(for: .report(DoctorReport(checks: [], summary: nil))) == DoctorProgress.done.axToken)
+        #expect(
+            doctorProgressAXToken(for: .setupNeeded) == DoctorProgress.error.axToken
         )
-        expectToken(
-            InstallerCardState.externallyManaged(solPath: "/usr/local/bin/sol", probe: nil).axToken,
-            "externally_managed"
+        #expect(
+            doctorProgressAXToken(
+                for: .stopped(JournalDiagnostic(commandLabel: "journal health"))
+            ) == DoctorProgress.error.axToken
         )
-
-        expectToken(AutoTestState.verifying.axToken, "verifying")
-        expectToken(AutoTestState.success.axToken, "success")
-        expectToken(AutoTestState.failure("boom").axToken, "failure")
-
-        expectToken(DoctorStatus.ok.axToken, "ok")
-        expectToken(DoctorStatus.warn.axToken, "warn")
-        expectToken(DoctorStatus.fail.axToken, "fail")
-        expectToken(DoctorStatus.skip.axToken, "skip")
-        expectToken(DoctorStatus.unknown("unexpected").axToken, "unknown")
-
-        expectToken(UploadCoordinator.Status.notSynced.axToken, "not_synced")
-        expectToken(UploadCoordinator.Status.syncing(checked: 1, total: 2).axToken, "syncing")
-        expectToken(UploadCoordinator.Status.synced.axToken, "synced")
-        expectToken(UploadCoordinator.Status.uploading(segment: "segment").axToken, "uploading")
-        expectToken(UploadCoordinator.Status.retrying(segment: "segment", attempts: 2).axToken, "retrying")
-        expectToken(UploadCoordinator.Status.offline("offline").axToken, "offline")
-
-        expectToken(ConnectionTestState.idle.axToken, "idle")
-        expectToken(ConnectionTestState.testing.axToken, "testing")
-        expectToken(ConnectionTestState.success.axToken, "success")
-        expectToken(ConnectionTestState.failure("boom").axToken, "failure")
-
-        expectToken(UpdateActivity.idle.axToken, "idle")
-        expectToken(UpdateActivity.checking.axToken, "checking")
-        expectToken(UpdateActivity.downloading(version: "1.0.0", receivedBytes: 1, totalBytes: 2).axToken, "downloading")
-        expectToken(UpdateActivity.extracting(version: "1.0.0", progress: 0.5).axToken, "extracting")
-        expectToken(UpdateActivity.readyToInstall(version: "1.0.0", releaseNotes: nil).axToken, "ready_to_install")
-        expectToken(UpdateActivity.installing(version: "1.0.0").axToken, "installing")
-
-        expectToken(SettingsView.SidebarBadgeState.attention.axToken, "attention")
-        expectToken(SettingsView.SidebarBadgeState.done.axToken, "done")
-        expectToken(SettingsView.SidebarBadgeState.blank.axToken, "none")
-
-        expectToken(AXPermissionState.granted.axToken, "granted")
-        expectToken(AXPermissionState.denied.axToken, "denied")
-        expectToken(AXPermissionState.waiting.axToken, "waiting")
-
-        expectToken(MenubarIconState.recording.axToken, "recording")
-        expectToken(MenubarIconState.offline.axToken, "offline")
-        expectToken(MenubarIconState.paused.axToken, "paused")
-        expectToken(MenubarIconState.error.axToken, "error")
-
-        expectToken(MenubarStatusRowState.permissions.axToken, "permissions")
-        expectToken(MenubarStatusRowState.error.axToken, "error")
-        expectToken(MenubarStatusRowState.journalStopped.axToken, "journal_stopped")
-        expectToken(MenubarStatusRowState.journalRestarting.axToken, "journal_restarting")
-        expectToken(MenubarStatusRowState.journalSetupNeeded.axToken, "journal_setup_needed")
-        expectToken(MenubarStatusRowState.journalUnknown.axToken, "journal_unknown")
-        expectToken(MenubarStatusRowState.localOnly.axToken, "local_only")
-        expectToken(MenubarStatusRowState.offline.axToken, "offline")
-        expectToken(MenubarStatusRowState.paused.axToken, "paused")
-        expectToken(MenubarStatusRowState.observing.axToken, "observing")
-        expectToken(MenubarStatusRowState.stopped.axToken, "stopped")
-
-        expectToken(SettingsObservationAXState.observing.axToken, "observing")
-        expectToken(SettingsObservationAXState.paused.axToken, "paused")
-        expectToken(SettingsObservationAXState.stopped.axToken, "stopped")
+        #expect(
+            doctorProgressAXToken(
+                for: .unknown(JournalDiagnostic(commandLabel: "journal health"))
+            ) == DoctorProgress.error.axToken
+        )
     }
 
     @Test func menubarIconStateOwnsIconNames() {
@@ -194,13 +151,19 @@ struct AXIDTests {
         #expect(!containsForbiddenAccessibilityLiteral(in: ".accessibilityValue(status.axToken)"))
     }
 
-    private func expectToken(_ token: String, _ expected: String) {
-        #expect(token == expected)
-        #expect(token.range(of: tokenPattern, options: .regularExpression) != nil)
+    private func expectTokens(_ tokens: [String], _ expected: [String]) {
+        #expect(tokens == expected)
+        expectTokensMatchGrammar(tokens)
+    }
+
+    private func expectTokensMatchGrammar(_ tokens: [String]) {
+        for token in tokens {
+            #expect(token.range(of: AXContract.tokenPattern, options: .regularExpression) != nil)
+        }
     }
 
     private func matchesIDGrammar(_ id: String) -> Bool {
-        id.range(of: idPattern, options: .regularExpression) != nil
+        id.range(of: AXContract.idPattern, options: .regularExpression) != nil
     }
 
     private var forbiddenLiteralPatterns: [String] {
@@ -219,175 +182,87 @@ struct AXIDTests {
         source.range(of: pattern, options: .regularExpression) != nil
     }
 
-    private var settingsTabs: [SettingsView.Tab] {
+    // Associated-value representatives are the one hand-maintained AX token surface.
+    private var rowStatusRepresentatives: [RowStatus] {
         [
-            .permissions,
-            .observer,
-            .service,
-            .microphones,
-            .privacy,
-            .status,
-            .updates,
-            .help
+            .pending,
+            .running,
+            .ok,
+            .failed(message: "boom")
         ]
     }
 
-    private var enumerableIDs: [String] {
-        var ids = staticIDs
-
-        for tab in settingsTabs {
-            ids.append(AXID.Settings.Sidebar.tab(tab))
-            ids.append(AXID.Settings.Sidebar.tabState(tab))
-        }
-
-        for row in InstallerRow.allCases {
-            ids.append(AXID.Installer.step(row))
-            ids.append(AXID.Installer.stepState(row))
-            ids.append(AXID.Installer.stepCurrentStep(row))
-            ids.append(AXID.Installer.stepDetails(row))
-            ids.append(AXID.Installer.stepLog(row))
-        }
-
-        for step in CleanupStep.allCases {
-            ids.append(AXID.Installer.cleanupStep(step))
-        }
-
-        for name in ["Python Version", "journal: path / exists", "Sol Doctor -- GPU/Metal?"] {
-            ids.append(AXID.Installer.doctorCheck(name))
-        }
-
-        return ids
+    private var installerCardStateRepresentatives: [InstallerCardState] {
+        [
+            .detecting,
+            .absent,
+            .installing,
+            .installedPlaceholder,
+            .done,
+            .installedCurrent(version: "1.2.3"),
+            .installedUnknown,
+            .externallyManaged(solPath: "/usr/local/bin/sol", probe: nil),
+            .upgradeFailed(installed: "1.0.0", pinned: "2.0.0", errorDetails: "boom"),
+            .failed(.installSolstone(message: "boom"))
+        ]
     }
 
-    private var staticIDs: [String] {
+    private var autoTestStateRepresentatives: [AutoTestState] {
         [
-            AXID.Menubar.pendingChatButton,
-            AXID.Menubar.statusIconState,
-            AXID.Menubar.statusRowState,
-            AXID.Menubar.permissionsButton,
-            AXID.Menubar.errorButton,
-            AXID.Menubar.journalState,
-            AXID.Menubar.localOnlyButton,
-            AXID.Menubar.offlineButton,
-            AXID.Menubar.pauseMenu,
-            AXID.Menubar.pauseFifteenMinutes,
-            AXID.Menubar.pauseThirtyMinutes,
-            AXID.Menubar.pauseOneHour,
-            AXID.Menubar.pauseIndefinite,
-            AXID.Menubar.resumeButton,
-            AXID.Menubar.startObservingButton,
-            AXID.Menubar.openJournalButton,
-            AXID.Menubar.settingsButton,
-            AXID.Menubar.aboutButton,
-            AXID.Menubar.quitButton,
-            AXID.Settings.Permissions.screenRecordingState,
-            AXID.Settings.Permissions.screenRecordingEnable,
-            AXID.Settings.Permissions.screenRecordingRestartNow,
-            AXID.Settings.Permissions.screenRecordingRestartCountdown,
-            AXID.Settings.Permissions.microphoneState,
-            AXID.Settings.Permissions.microphoneGrantAccess,
-            AXID.Settings.Permissions.systemSettingsOpen,
-            AXID.Settings.Permissions.nextConnectJournal,
-            AXID.Settings.Observer.startAtLogin,
-            AXID.Settings.Observer.solChatNotifications,
-            AXID.Settings.Observer.notificationDeniedState,
-            AXID.Settings.Observer.storageUsedState,
-            AXID.Settings.Observer.cacheRetentionPicker,
-            AXID.Settings.Observer.cacheRetentionState,
-            AXID.Settings.Observer.cacheFolderOpen,
-            AXID.Settings.Service.restartRequiredBanner,
-            AXID.Settings.Service.restartJournalButton,
-            AXID.Settings.Service.prereqPermissions,
-            AXID.Settings.Service.journalModePicker,
-            AXID.Settings.Service.journalModeState,
-            AXID.Settings.Service.externalSetupGuide,
-            AXID.Settings.Service.externalAddress,
-            AXID.Settings.Service.externalKey,
-            AXID.Settings.Service.externalTestConnection,
-            AXID.Settings.Service.externalConnect,
-            AXID.Settings.Service.externalConnectionTestState,
-            AXID.Settings.Service.externalViewStatus,
-            AXID.Settings.Service.nextCheckStatus,
-            AXID.Settings.Microphones.priorityList,
-            AXID.Settings.Microphones.gainPicker,
-            AXID.Settings.Microphones.gainState,
-            AXID.Settings.Microphones.silenceMusic,
-            AXID.Settings.Privacy.excludedAppsList,
-            AXID.Settings.Privacy.excludedAppField,
-            AXID.Settings.Privacy.excludedAppAdd,
-            AXID.Settings.Privacy.titlePatternsList,
-            AXID.Settings.Privacy.titlePatternField,
-            AXID.Settings.Privacy.titlePatternAdd,
-            AXID.Settings.Privacy.privateBrowsing,
-            AXID.Settings.Status.observingState,
-            AXID.Settings.Status.nextSegmentSeconds,
-            AXID.Settings.Status.uploadJournalState,
-            AXID.Settings.Status.journalRuntimeState,
-            AXID.Settings.Status.uploadState,
-            AXID.Settings.Status.uploadChecked,
-            AXID.Settings.Status.uploadTotal,
-            AXID.Settings.Status.uploadPending,
-            AXID.Settings.Status.pauseSync,
-            AXID.Settings.Status.lastSyncedState,
-            AXID.Settings.Status.lastErrorState,
-            AXID.Settings.Status.resyncAll,
-            AXID.Settings.Status.configureJournal,
-            AXID.Settings.Status.debugOneMinuteSegments,
-            AXID.Settings.Status.debugKeepRejectedAudio,
-            AXID.Settings.Help.agentInstructions,
-            AXID.Settings.Help.copyAgentInstructions,
-            AXID.Settings.Help.iconStateRecording,
-            AXID.Settings.Help.iconStateOffline,
-            AXID.Settings.Help.iconStatePaused,
-            AXID.Settings.Help.iconStateError,
-            AXID.Installer.terminalState,
-            AXID.Installer.journalPathState,
-            AXID.Installer.journalTCCRestrictedState,
-            AXID.Installer.journalChange,
-            AXID.Installer.install,
-            AXID.Installer.installedMessageState,
-            AXID.Installer.openDashboard,
-            AXID.Installer.externalManagedState,
-            AXID.Installer.externalManagedPathState,
-            AXID.Installer.autoTestState,
-            AXID.Installer.autoTestRetry,
-            AXID.Installer.doctorDisclosure,
-            AXID.Installer.doctorRefresh,
-            AXID.Installer.doctorProgressState,
-            AXID.Installer.doctorChecklist,
-            AXID.Installer.doctorErrorState,
-            AXID.Installer.doctorRetry,
-            AXID.Installer.modelDownloadProgress,
-            AXID.Installer.failureSummaryState,
-            AXID.Installer.failureRetry,
-            AXID.Installer.failureDetails,
-            AXID.Installer.failureLog,
-            AXID.Installer.diagnosticCopy,
-            AXID.Installer.diagnosticCopiedState,
-            AXID.Installer.diagnosticHelp,
-            AXID.Updates.statusState,
-            AXID.Updates.unavailable,
-            AXID.Updates.check,
-            AXID.Updates.cancel,
-            AXID.Updates.download,
-            AXID.Updates.install,
-            AXID.Updates.dismiss,
-            AXID.Updates.retry,
-            AXID.Updates.releaseNotes,
-            AXID.Updates.releaseNotesOnline,
-            AXID.Updates.downloadProgress,
-            AXID.Updates.extractProgress,
-            AXID.Updates.deferredInstallState,
-            AXID.Updates.automaticChecks,
-            AXID.Updates.frequencyPicker,
-            AXID.Updates.frequencyState,
-            AXID.Updates.automaticDownloads,
-            AXID.Updates.debugStatePicker,
-            AXID.About.logo,
-            AXID.About.title,
-            AXID.About.versionState,
-            AXID.About.sourceCode,
-            AXID.About.website
+            .verifying,
+            .success,
+            .failure("boom")
+        ]
+    }
+
+    private var doctorStatusRepresentatives: [DoctorStatus] {
+        [
+            .ok,
+            .warn,
+            .fail,
+            .skip,
+            .unknown("unexpected")
+        ]
+    }
+
+    private var uploadStatusRepresentatives: [UploadCoordinator.Status] {
+        [
+            .notSynced,
+            .syncing(checked: 1, total: 2),
+            .synced,
+            .uploading(segment: "segment"),
+            .retrying(segment: "segment", attempts: 2),
+            .offline("offline")
+        ]
+    }
+
+    private var connectionTestStateRepresentatives: [ConnectionTestState] {
+        [
+            .idle,
+            .testing,
+            .success,
+            .failure("boom")
+        ]
+    }
+
+    private var updateActivityRepresentatives: [UpdateActivity] {
+        [
+            .idle,
+            .checking,
+            .downloading(version: "1.0.0", receivedBytes: 1, totalBytes: 2),
+            .extracting(version: "1.0.0", progress: 0.5),
+            .readyToInstall(version: "1.0.0", releaseNotes: nil),
+            .installing(version: "1.0.0")
+        ]
+    }
+
+    private var journalRuntimeStatusRepresentatives: [JournalRuntimeStatus] {
+        [
+            .running,
+            .restarting,
+            .setupNeeded,
+            .stopped(JournalDiagnostic(commandLabel: "journal health")),
+            .unknown(JournalDiagnostic(commandLabel: "journal health"))
         ]
     }
 }

@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
+//
+// Accessibility identifiers and tokens are sourced from AXID.swift and this file.
+// ax-contract.json is generated from those Swift sources with `make ax-contract`,
+// and `make ci` gates drift. Consumers must import the generated contract instead
+// of hardcoding identifiers or token lists.
 
 import SwiftUI
 
@@ -57,6 +62,12 @@ internal enum SettingsObservationAXState: CaseIterable {
     }
 }
 
+internal enum DoctorProgress: CaseIterable {
+    case running
+    case done
+    case error
+}
+
 struct AXStateCompanion: View {
     let id: String
     let value: String
@@ -74,6 +85,13 @@ struct AXStateCompanion: View {
 }
 
 extension RowStatus {
+    static let axTokens = [
+        "pending",
+        "running",
+        "ok",
+        "failed"
+    ]
+
     var axToken: String {
         switch self {
         case .pending:
@@ -89,6 +107,19 @@ extension RowStatus {
 }
 
 extension InstallerCardState {
+    static let axTokens = [
+        "detecting",
+        "absent",
+        "installing",
+        "installed_placeholder",
+        "done",
+        "installed_current",
+        "installed_unknown",
+        "externally_managed",
+        "upgrade_failed",
+        "failed"
+    ]
+
     var axToken: String {
         switch self {
         case .detecting:
@@ -116,6 +147,12 @@ extension InstallerCardState {
 }
 
 extension AutoTestState {
+    public static let axTokens = [
+        "verifying",
+        "success",
+        "failure"
+    ]
+
     var axToken: String {
         switch self {
         case .verifying:
@@ -129,6 +166,14 @@ extension AutoTestState {
 }
 
 extension DoctorStatus {
+    static let axTokens = [
+        "ok",
+        "warn",
+        "fail",
+        "skip",
+        "unknown"
+    ]
+
     var axToken: String {
         switch self {
         case .ok:
@@ -146,6 +191,15 @@ extension DoctorStatus {
 }
 
 extension UploadCoordinator.Status {
+    public static let axTokens = [
+        "not_synced",
+        "syncing",
+        "synced",
+        "uploading",
+        "retrying",
+        "offline"
+    ]
+
     var axToken: String {
         switch self {
         case .notSynced:
@@ -165,6 +219,13 @@ extension UploadCoordinator.Status {
 }
 
 extension ConnectionTestState {
+    public static let axTokens = [
+        "idle",
+        "testing",
+        "success",
+        "failure"
+    ]
+
     var axToken: String {
         switch self {
         case .idle:
@@ -180,6 +241,15 @@ extension ConnectionTestState {
 }
 
 extension UpdateActivity {
+    static let axTokens = [
+        "idle",
+        "checking",
+        "downloading",
+        "extracting",
+        "ready_to_install",
+        "installing"
+    ]
+
     var axToken: String {
         switch self {
         case .idle:
@@ -196,6 +266,25 @@ extension UpdateActivity {
             return "installing"
         }
     }
+}
+
+extension JournalRuntimeStatus {
+    static let axTokens = [
+        "running",
+        "journal_restarting",
+        "journal_setup_needed",
+        "journal_stopped",
+        "journal_unknown"
+    ]
+}
+
+enum UpdateStatus {
+    static let axTokens = UpdateActivity.axTokens + [
+        "deferred_install",
+        "update_available",
+        "up_to_date",
+        "error"
+    ]
 }
 
 extension AXPermissionState {
@@ -278,6 +367,30 @@ extension SettingsView.SidebarBadgeState {
         case .blank:
             return "none"
         }
+    }
+}
+
+extension DoctorProgress {
+    var axToken: String {
+        switch self {
+        case .running:
+            return "running"
+        case .done:
+            return "done"
+        case .error:
+            return "error"
+        }
+    }
+}
+
+func doctorProgressAXToken(for result: JournalDoctorResult?) -> String {
+    switch result {
+    case nil:
+        return DoctorProgress.running.axToken
+    case .report:
+        return DoctorProgress.done.axToken
+    case .setupNeeded, .stopped, .unknown:
+        return DoctorProgress.error.axToken
     }
 }
 

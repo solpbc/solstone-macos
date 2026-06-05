@@ -399,7 +399,7 @@ struct UpdatesTabView: View {
     }
 }
 
-private enum FrequencyOption: String, CaseIterable, Identifiable {
+enum FrequencyOption: String, CaseIterable, Identifiable {
     case day
     case week
     case month
