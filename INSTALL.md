@@ -2,15 +2,15 @@
 
 these instructions are for a coding agent and human working together. solstone-macos is a native swift menu bar app — one of the owner's observers, experiencing screen and audio along with them on macOS, with observations sent to your solstone journal.
 
-solstone must already be installed and running. if it isn't, start there: https://solstone.app/install
-
 ## default install path — signed DMG
 
-the easiest install is the signed + notarized DMG from <https://updates.solstone.app/>. download, open, drag to `/Applications`. no Xcode, no certificates, no source build. skip ahead to step 6 (register the observer) below.
+the easiest install is the signed + notarized DMG from <https://solstone.app/download/macos>. download, open, drag to `/Applications`, and launch. the app installs your observer and journal, opens the first-run wizard, and updates over a signed channel. no Xcode, no certificates, no source build.
 
 ## source-build path — Apple Developer Program required
 
-build from source only if you need to modify the app or are a sol pbc maintainer. `make bundle-dist` signs under `Developer ID Application: sol pbc (7QCG8V4M6H)` and requires those identities in the local keychain (per `cto/playbooks/apple-remote-dev.md`). a fresh machine without those identities should use the DMG.
+build from source only if you need to modify the app or are a sol pbc maintainer. `make bundle-dist` signs under `Developer ID Application: sol pbc (7QCG8V4M6H)` and requires those identities in the local keychain. a fresh machine without those identities should use the DMG.
+
+source builds assume solstone is already installed and running. if it isn't, start there: https://solstone.app/install
 
 ## before you begin
 
@@ -29,7 +29,7 @@ if the app exists and shows as connected, you're done.
 
 - **Xcode** (full IDE, not just command line tools). this is a large download from the Mac App Store — your human needs to install it if they haven't already.
 - macOS 15.0+
-- sol pbc Developer ID Application + Developer ID Installer identities in the local keychain (sol-signing keychain — see `cto/playbooks/apple-remote-dev.md`)
+- sol pbc Developer ID Application + Developer ID Installer identities in the local keychain (sol-signing keychain)
 
 ## what to sort out together
 

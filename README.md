@@ -27,7 +27,7 @@ solstone observer is a macOS status bar app — one of your observers, experienc
 
 ## Install
 
-End users: install the signed + notarized DMG from <https://updates.solstone.app/>.
+end users: install the signed + notarized DMG from <https://solstone.app/download/macos/>. it installs the native observer and journal, opens the first-run wizard, and updates over a signed channel.
 
 Source build (requires sol pbc Apple Developer Program identities in the local keychain):
 
