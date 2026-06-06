@@ -5,6 +5,14 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.13] - 2026-06-05
+
+### Changed
+- updated the bundled solstone journal to 0.5.2 →
+
+### Fixed
+- when an update is available, the Updates tab now reliably offers the download, even if the latest check hasn't come back yet. choosing it re-checks and starts the install for you.
+
 ## [1.3.12] - 2026-06-05
 
 ### Changed
