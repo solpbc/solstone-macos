@@ -12,13 +12,6 @@ struct UpdatesCopyTests {
         #expect(UpdatesCopy.updateAvailableSubtitle(version: "1.1.0") == "solstone observer 1.1.0 is ready to download.")
     }
 
-    @Test func updateAvailableCheckSubtitleString() {
-        #expect(
-            UpdatesCopy.updateAvailableCheckSubtitle(version: "1.1.0")
-                == "version 1.1.0 was found earlier. check again to continue."
-        )
-    }
-
     @Test func downloadingTitleString() {
         #expect(UpdatesCopy.downloadingTitle(version: "1.1.0") == "downloading 1.1.0")
     }

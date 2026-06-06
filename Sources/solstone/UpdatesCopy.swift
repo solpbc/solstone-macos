@@ -69,10 +69,6 @@ enum UpdatesCopy {
         "solstone observer \(version) is ready to download."
     }
 
-    static func updateAvailableCheckSubtitle(version: String) -> String {
-        "version \(version) was found earlier. check again to continue."
-    }
-
     static func deferredTitle(version: String) -> String {
         version.isEmpty ? "deferred update" : "deferred update \(version)"
     }

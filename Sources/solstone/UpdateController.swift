@@ -36,6 +36,7 @@ final class UpdateController {
     private var expectedContentLength: UInt64?
     private var blockedAutomaticCheckDuringExclusive = false
     private var installFinalizationInFlight = false
+    private var pendingDownloadIntent = false
     private var _automaticChecksEnabled: Bool = true
     private var _updateCheckInterval: TimeInterval = 86_400
     private var _automaticDownloadsEnabled: Bool = false
@@ -204,10 +205,21 @@ final class UpdateController {
     func cancel() {
         guard !installFinalizationInFlight else { return }
 
+        pendingDownloadIntent = false
         pendingCancellation?()
         clearPendingInteractions()
         activity = .idle
         deferredInstallIntent = nil
+    }
+
+    func download() {
+        if canActOnAvailableUpdateDirectly {
+            install()
+            return
+        }
+
+        pendingDownloadIntent = true
+        checkForUpdates()
     }
 
     func install() {
@@ -228,6 +240,7 @@ final class UpdateController {
     func dismiss() {
         guard !installFinalizationInFlight else { return }
 
+        pendingDownloadIntent = false
         pendingChoiceReply?(.dismiss)
         clearPendingInteractions()
         deferredInstallIntent = nil
@@ -271,6 +284,11 @@ final class UpdateController {
         @unknown default:
             activity = .readyToInstall(version: version, releaseNotes: releaseNotes)
         }
+
+        if pendingDownloadIntent {
+            pendingDownloadIntent = false
+            install()
+        }
     }
 
     func updateReleaseNotes(_ releaseNotes: String?) {
@@ -288,6 +306,7 @@ final class UpdateController {
     }
 
     func presentNoUpdateFound() {
+        pendingDownloadIntent = false
         clearPendingInteractions()
         activity = .idle
         deferredInstallIntent = nil
@@ -529,6 +548,7 @@ final class UpdateController {
     }
 
     private func recordFailedCheck(now: Date = Date()) {
+        pendingDownloadIntent = false
         reconciledStatus.lastCheck = ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .failed)
         if availableUpdate == nil, let version = reconciledStatus.availableVersion {
             availableUpdate = AvailableUpdate(version: version, releaseNotes: nil)

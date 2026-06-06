@@ -203,15 +203,13 @@ struct UpdatesTabView: View {
     private func availableBlock(_ update: AvailableUpdate) -> some View {
         titleBlock(
             title: UpdatesCopy.updateAvailableTitle(version: update.version),
-            subtitle: controller.canActOnAvailableUpdateDirectly
-                ? UpdatesCopy.updateAvailableSubtitle(version: update.version)
-                : UpdatesCopy.updateAvailableCheckSubtitle(version: update.version)
+            subtitle: UpdatesCopy.updateAvailableSubtitle(version: update.version)
         )
         releaseNotesSection(update.releaseNotes)
-        if controller.canActOnAvailableUpdateDirectly {
+        if controller.hasLiveUpdateReply {
             actionRow(
                 primaryTitle: UpdatesCopy.actionDownload,
-                primaryAction: controller.install,
+                primaryAction: controller.download,
                 primaryID: AXID.Updates.download,
                 secondaryTitle: UpdatesCopy.actionDismiss,
                 secondaryAction: controller.dismiss,
@@ -219,9 +217,9 @@ struct UpdatesTabView: View {
             )
         } else {
             actionRow(
-                primaryTitle: UpdatesCopy.actionCheckAgain,
-                primaryAction: controller.checkForUpdates,
-                primaryID: AXID.Updates.check
+                primaryTitle: UpdatesCopy.actionDownload,
+                primaryAction: controller.download,
+                primaryID: AXID.Updates.download
             )
         }
     }

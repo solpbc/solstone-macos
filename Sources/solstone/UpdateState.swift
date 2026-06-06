@@ -12,7 +12,9 @@ import Foundation
 ///
 /// On launch, a persisted available version equal to the running bundle display
 /// version is reconciled to up-to-date and cleared. Any other persisted version
-/// remains available and is surfaced as a check-again affordance.
+/// remains available and is surfaced with a download affordance; if no live
+/// Sparkle reply exists, the download starts a user-initiated check to rehydrate
+/// the callback and then auto-continues with the install.
 struct AvailableUpdate: Equatable, Sendable {
     var version: String
     var releaseNotes: String?

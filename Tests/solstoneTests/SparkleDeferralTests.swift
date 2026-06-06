@@ -205,6 +205,102 @@ struct SparkleDeferralTests {
         #expect(installReplyCount == 1)
     }
 
+    @Test func durableAvailableWithoutLiveReplyDownloadStartsCheck() {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+        var checks = 0
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            hasLiveChoiceReply: false
+        )
+
+        controller.download()
+
+        #expect(checks == 1)
+        #expect(controller.activity == .checking)
+    }
+
+    @Test func rehydratedUpdateFoundWithDownloadIntentRepliesInstallOnce() async throws {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+        var checks = 0
+        var replies: [SPUUserUpdateChoice] = []
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            hasLiveChoiceReply: false
+        )
+
+        controller.download()
+        controller.presentUpdateFound(
+            version: "1.3.9",
+            releaseNotes: nil,
+            state: try userUpdateState(stage: .notDownloaded),
+            reply: { choice in
+                replies.append(choice)
+            }
+        )
+        await yieldUntil { replies.count == 1 }
+
+        #expect(checks == 1)
+        #expect(replies == [.install])
+    }
+
+    @Test func terminalOutcomesClearDownloadIntentBeforeLaterUpdateFound() async throws {
+        enum TerminalOutcome: CaseIterable {
+            case error
+            case noUpdate
+            case cancel
+            case dismiss
+        }
+
+        for outcome in TerminalOutcome.allCases {
+            let signal = ExclusiveSignal()
+            let controller = makeController(exclusivity: signal)
+            var checks = 0
+            var replies: [SPUUserUpdateChoice] = []
+            controller.checkForUpdatesInterceptor = { checks += 1 }
+            controller.applyDebugFixture(
+                activity: .idle,
+                availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+                lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+                hasLiveChoiceReply: false
+            )
+
+            controller.download()
+
+            switch outcome {
+            case .error:
+                controller.presentUpdaterError(NSError(domain: "test", code: 1))
+            case .noUpdate:
+                controller.presentNoUpdateFound()
+            case .cancel:
+                controller.cancel()
+            case .dismiss:
+                controller.dismiss()
+            }
+
+            controller.presentUpdateFound(
+                version: "1.3.9",
+                releaseNotes: nil,
+                state: try userUpdateState(stage: .notDownloaded),
+                reply: { choice in
+                    replies.append(choice)
+                    Issue.record("unexpected \(choice) reply after \(outcome)")
+                }
+            )
+            await Task.yield()
+
+            #expect(checks == 1)
+            #expect(replies.isEmpty)
+        }
+    }
+
     @Test func deferredIntentWithMissingReplyFallsBackToCheckWhenSignalClears() async {
         let signal = ExclusiveSignal()
         let controller = makeController(exclusivity: signal)
@@ -368,6 +464,19 @@ struct SparkleDeferralTests {
                 break
             }
         }
+    }
+
+    private func userUpdateState(stage: SPUUserUpdateStage) throws -> SPUUserUpdateState {
+        let archiver = NSKeyedArchiver(requiringSecureCoding: true)
+        archiver.encode(stage.rawValue, forKey: "SPUUserUpdateStateStage")
+        archiver.encode(true, forKey: "SPUUserUpdateStateUserInitiated")
+        archiver.finishEncoding()
+
+        let unarchiver = try NSKeyedUnarchiver(forReadingFrom: archiver.encodedData)
+        unarchiver.requiresSecureCoding = true
+        defer { unarchiver.finishDecoding() }
+
+        return try #require(SPUUserUpdateState(coder: unarchiver) as SPUUserUpdateState?)
     }
 
     private func clearDefaults() {
