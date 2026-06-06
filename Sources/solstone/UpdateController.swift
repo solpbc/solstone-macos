@@ -12,6 +12,7 @@ final class UpdateController {
     typealias RunningVersionProvider = @MainActor () -> String
 
     private static let statusKey = "solstone.updates.status"
+    private static let feedURLOverrideKey = "solstone.updates.feedURLOverride"
     private static let legacyLastCheckedAtKey = "solstone.updates.lastCheckedAt"
     private static let legacyLastCheckResultKey = "solstone.updates.lastCheckResult"
 
@@ -102,6 +103,19 @@ final class UpdateController {
         }
 
         return true
+    }
+
+    static func feedURLOverride(from defaults: UserDefaults) -> String? {
+        guard let raw = defaults.string(forKey: feedURLOverrideKey) else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            !trimmed.isEmpty,
+            let url = URL(string: trimmed),
+            url.scheme == "https"
+        else {
+            return nil
+        }
+        return trimmed
     }
 
     init(
@@ -260,6 +274,10 @@ final class UpdateController {
             blockedAutomaticCheckDuringExclusive = true
             return false
         }
+    }
+
+    func sparkleFeedURLOverride() -> String? {
+        Self.feedURLOverride(from: .standard)
     }
 
     func beginUserInitiatedCheck(cancellation: @escaping () -> Void) {
@@ -581,6 +599,16 @@ final class UpdateController {
             try updater.start()
             updaterStarted = true
             refreshUpdaterSettings(from: updater)
+
+            let defaults = UserDefaults.standard
+            if defaults.string(forKey: Self.feedURLOverrideKey) == nil {
+                Logger.setup.info("Sparkle feed URL: using bundled Info.plist feed (no override set)")
+            } else if let override = Self.feedURLOverride(from: defaults) {
+                Logger.setup.info("Sparkle feed URL override applied from \(Self.feedURLOverrideKey, privacy: .public): \(override, privacy: .public)")
+            } else {
+                Logger.setup.info("Sparkle feed URL override in \(Self.feedURLOverrideKey, privacy: .public) was rejected (not a valid https URL); falling back to bundled Info.plist feed")
+            }
+
             return true
         } catch {
             Logger.setup.error("Sparkle updater start failed: \(String(describing: error), privacy: .public)")
@@ -677,5 +705,9 @@ private final class SparkleUpdaterDelegateAdapter: NSObject, SPUUpdaterDelegate 
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "update check deferred during journal setup"]
         )
+    }
+
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        controller?.sparkleFeedURLOverride()
     }
 }

@@ -8,6 +8,7 @@ struct UpdateControllerTests {
     private let validFeedURL = "https://updates.solstone.app/solstone-macos/appcast.xml"
     private let validPublicKey = "11qYAYKxCrfVS/7TyWQHOg7hcvPa9jIlrwIaaPcHUho="
     private let statusKey = "solstone.updates.status"
+    private let feedURLOverrideKey = "solstone.updates.feedURLOverride"
     private let legacyLastCheckedAtKey = "solstone.updates.lastCheckedAt"
     private let legacyLastCheckResultKey = "solstone.updates.lastCheckResult"
 
@@ -30,6 +31,85 @@ struct UpdateControllerTests {
     @Test func invalidWhenPublicKeyHasWrongLength() {
         let shortKey = Data(repeating: 0, count: 31).base64EncodedString()
         #expect(UpdateController.validateSparkleConfig(feedURL: validFeedURL, publicKey: shortKey) == false)
+    }
+
+    @Test func feedURLOverrideReturnsNilWhenUnset() {
+        clearDefaults()
+        defer { clearDefaults() }
+
+        #expect(UpdateController.feedURLOverride(from: .standard) == nil)
+    }
+
+    @Test func feedURLOverrideReturnsNilWhenEmpty() {
+        clearDefaults()
+        defer { clearDefaults() }
+        UserDefaults.standard.set("", forKey: feedURLOverrideKey)
+
+        #expect(UpdateController.feedURLOverride(from: .standard) == nil)
+    }
+
+    @Test func feedURLOverrideReturnsNilWhenWhitespaceOnly() {
+        clearDefaults()
+        defer { clearDefaults() }
+        UserDefaults.standard.set("   ", forKey: feedURLOverrideKey)
+
+        #expect(UpdateController.feedURLOverride(from: .standard) == nil)
+    }
+
+    @Test func feedURLOverrideReturnsNilWhenMalformedWithInternalSpace() {
+        clearDefaults()
+        defer { clearDefaults() }
+        UserDefaults.standard.set("https:// updates.solstone.app", forKey: feedURLOverrideKey)
+
+        #expect(UpdateController.feedURLOverride(from: .standard) == nil)
+    }
+
+    @Test func feedURLOverrideReturnsNilWhenNonHTTPS() {
+        clearDefaults()
+        defer { clearDefaults() }
+        UserDefaults.standard.set("http://updates.solstone.app/appcast.xml", forKey: feedURLOverrideKey)
+
+        #expect(UpdateController.feedURLOverride(from: .standard) == nil)
+    }
+
+    @Test func feedURLOverrideReturnsNilWhenFileScheme() {
+        clearDefaults()
+        defer { clearDefaults() }
+        UserDefaults.standard.set("file:///tmp/appcast.xml", forKey: feedURLOverrideKey)
+
+        #expect(UpdateController.feedURLOverride(from: .standard) == nil)
+    }
+
+    @Test func feedURLOverrideReturnsValidHTTPSStagingURL() {
+        clearDefaults()
+        defer { clearDefaults() }
+        let stagingFeedURL = "https://staging.updates.solstone.app/solstone-macos/appcast.xml"
+        UserDefaults.standard.set(stagingFeedURL, forKey: feedURLOverrideKey)
+
+        #expect(UpdateController.feedURLOverride(from: .standard) == stagingFeedURL)
+    }
+
+    @Test func canCheckForUpdatesUsesBundledConfigWhenOverrideUnset() {
+        clearDefaults()
+        defer { clearDefaults() }
+
+        let controller = makeController()
+
+        #expect(controller.canCheckForUpdates)
+    }
+
+    @Test func canCheckForUpdatesIgnoresFeedURLOverride() {
+        clearDefaults()
+        defer { clearDefaults() }
+        let baseline = makeController().canCheckForUpdates
+        #expect(baseline)
+
+        let stagingFeedURL = "https://staging.updates.solstone.app/solstone-macos/appcast.xml"
+        UserDefaults.standard.set(stagingFeedURL, forKey: feedURLOverrideKey)
+
+        let controller = UpdateController(feedURL: validFeedURL, publicKey: validPublicKey) { _, _ in nil }
+
+        #expect(controller.canCheckForUpdates == baseline)
     }
 
     @Test func validConfigAttemptsUpdaterConstruction() {
@@ -246,6 +326,7 @@ struct UpdateControllerTests {
 
     private func clearDefaults() {
         UserDefaults.standard.removeObject(forKey: statusKey)
+        UserDefaults.standard.removeObject(forKey: feedURLOverrideKey)
         UserDefaults.standard.removeObject(forKey: legacyLastCheckedAtKey)
         UserDefaults.standard.removeObject(forKey: legacyLastCheckResultKey)
     }
