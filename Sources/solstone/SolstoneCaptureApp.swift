@@ -76,6 +76,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let delegate = SolChatNotificationDelegate()
             solChatNotificationDelegate = delegate
             UNUserNotificationCenter.current().delegate = delegate
+            state.startObservingActivation()
+            Task { await state.bootstrapNotificationAuthorization() }
 
             state.reevaluateActivationPolicy(debounced: false)
             SolMacSymlinkInstaller.ensureInstalled()

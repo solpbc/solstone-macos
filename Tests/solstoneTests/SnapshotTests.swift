@@ -5,6 +5,7 @@ import AppKit
 import CoreAudio
 import SwiftUI
 import Testing
+import UserNotifications
 import SolstoneCore
 @testable import solstone
 
@@ -200,15 +201,39 @@ struct SnapshotTests {
         )
     }
 
-    @Test func settingsObserverWithSolToggle() throws {
+    @Test func settingsObserverAuthorizedNotifications() throws {
         var config = AppConfig()
         config.solInitiatedChatNotificationsEnabled = true
-        let state = AppState.forSnapshot(config: config)
+        let state = AppState.forSnapshot(config: config, notificationStatus: .authorized)
         let updateController = makeSnapshotUpdateController()
         try render(
             SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),
             size: settingsSize,
-            to: "settings-observer-with-sol-toggle.png"
+            to: "settings-observer-notifications-authorized.png"
+        )
+    }
+
+    @Test func settingsObserverDeniedNotifications() throws {
+        var config = AppConfig()
+        config.solInitiatedChatNotificationsEnabled = true
+        let state = AppState.forSnapshot(config: config, notificationStatus: .denied)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "settings-observer-notifications-denied.png"
+        )
+    }
+
+    @Test func settingsObserverProvisionalNotifications() throws {
+        var config = AppConfig()
+        config.solInitiatedChatNotificationsEnabled = true
+        let state = AppState.forSnapshot(config: config, notificationStatus: .provisional)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "settings-observer-notifications-provisional.png"
         )
     }
 

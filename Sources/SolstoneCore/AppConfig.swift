@@ -54,7 +54,7 @@ public struct AppConfig: Sendable {
 
     public enum Defaults {
         public static let cacheRetentionDays = 7
-        public static let solInitiatedChatNotificationsEnabled = false
+        public static let solInitiatedChatNotificationsEnabled = true
     }
 
     public static let knownKeys: [String] = [
@@ -85,6 +85,7 @@ public struct AppConfig: Sendable {
         static let solInitiatedChatNotificationsEnabled = "solInitiatedChatNotificationsEnabled"
         static let serviceMode = "serviceMode"
         static let didMigrateFromJSON = "didMigrateFromJSON"
+        static let didReseedNotificationPreference = "didReseedNotificationPreference"
     }
 
     private enum LegacyKeys {
@@ -132,7 +133,7 @@ public struct AppConfig: Sendable {
     /// When true, silence music-only portions of system audio during remix. Default: true
     public var silenceMusic: Bool
 
-    /// When true, show system notifications for sol-initiated chat requests. Default: false
+    /// When true, show system notifications for sol-initiated chat requests. Default: true
     public var solInitiatedChatNotificationsEnabled: Bool
 
     /// Configured service mode. Nil means no mode has been explicitly selected yet.
@@ -238,30 +239,36 @@ public struct AppConfig: Sendable {
 
     /// Loads config or creates with defaults if missing
     /// Also migrates from config.json if present
-    public static func loadOrCreateDefault() -> AppConfig {
+    public static func loadOrCreateDefault(legacyConfigPaths: [URL]? = nil) -> AppConfig {
         let defaults = UserDefaults.standard
+        let legacyConfigPaths = legacyConfigPaths ?? productionLegacyConfigPaths
+        var config: AppConfig?
 
         // Check for migration from JSON config
         if !defaults.bool(forKey: Keys.didMigrateFromJSON) {
-            if let migrated = migrateFromJSON() {
-                return migrated
+            if let migrated = migrateFromJSON(legacyConfigPaths: legacyConfigPaths) {
+                config = migrated
+            } else {
+                // Mark migration as complete even if no file existed
+                defaults.set(true, forKey: Keys.didMigrateFromJSON)
             }
-            // Mark migration as complete even if no file existed
-            defaults.set(true, forKey: Keys.didMigrateFromJSON)
+        }
+
+        if let config {
+            return reseedNotificationPreferenceIfNeeded(config)
         }
 
         // Check if we have any config stored
         if defaults.object(forKey: Keys.excludePrivateBrowsing) != nil {
-            return load()
+            return reseedNotificationPreferenceIfNeeded(load())
         }
 
         // Create default config
-        var config = AppConfig()
-        config.excludedApps = defaultExclusions
-        try? config.save()
+        var defaultConfig = AppConfig()
+        defaultConfig.excludedApps = defaultExclusions
+        try? defaultConfig.save()
         Logger.general.info("Created default config in UserDefaults")
-
-        return config
+        return reseedNotificationPreferenceIfNeeded(defaultConfig)
     }
 
     /// Saves config to UserDefaults
@@ -307,12 +314,31 @@ public struct AppConfig: Sendable {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".sck-cli.json")
     }
 
-    /// Migrates from legacy JSON config if present
-    private static func migrateFromJSON() -> AppConfig? {
-        let defaults = UserDefaults.standard
+    private static var productionLegacyConfigPaths: [URL] {
+        [legacyConfigPath, legacySckCliPath]
+    }
 
-        // Try main config path first, then legacy sck-cli path
-        let pathsToTry = [legacyConfigPath, legacySckCliPath]
+    private static func reseedNotificationPreferenceIfNeeded(_ config: AppConfig) -> AppConfig {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Keys.didReseedNotificationPreference) else {
+            return config
+        }
+
+        var reseeded = config
+        reseeded.solInitiatedChatNotificationsEnabled = true
+        do {
+            try reseeded.save()
+            defaults.set(true, forKey: Keys.didReseedNotificationPreference)
+            return reseeded
+        } catch {
+            Logger.general.warning("Failed to re-seed notification preference: \(error.localizedDescription, privacy: .public)")
+            return config
+        }
+    }
+
+    /// Migrates from legacy JSON config if present
+    private static func migrateFromJSON(legacyConfigPaths pathsToTry: [URL]) -> AppConfig? {
+        let defaults = UserDefaults.standard
 
         for path in pathsToTry {
             guard FileManager.default.fileExists(atPath: path.path) else {

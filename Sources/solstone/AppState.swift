@@ -62,6 +62,7 @@ public final class AppState {
     public let heartbeatService: HeartbeatService
     public let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
     internal let solChatBridge: SolChatBridge
+    private let notifier: any SolChatNotifying
     private let isSnapshot: Bool
     public private(set) var config: AppConfig
     private var debugAudioHolder: DebugSettingHolder!
@@ -80,6 +81,7 @@ public final class AppState {
     public internal(set) var solChatPending: SolChatRequestSummary?
     public internal(set) var solChatStale = false
     public internal(set) var connectionTestState: ConnectionTestState = .idle
+    public private(set) var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
 
     /// Screen recording permission — polled periodically via SCShareableContent.
     public internal(set) var screenRecordingGranted = false
@@ -100,6 +102,8 @@ public final class AppState {
     private var journalRuntimeDebounceState = JournalRuntimeDebounceState()
     private var journalProbeTimer: Timer?
     private var journalRestartTask: Task<Void, Never>?
+    private var notificationRequestTask: Task<Void, Never>?
+    private var activationObserver: NSObjectProtocol?
     private var preRestartErrorMessage: String?
     internal var journalRestartLogSink: (@Sendable (JournalRestartLogEvent) -> Void)?
     internal var journalBinaryProvider: @Sendable () -> URL = {
@@ -306,27 +310,68 @@ public final class AppState {
         updateConfig(reloaded)
     }
 
-    public func requestNotificationOptIn(enabled: Bool) async -> Bool {
-        guard enabled else {
-            var newConfig = config
-            newConfig.solInitiatedChatNotificationsEnabled = false
-            updateConfig(newConfig)
-            return false
-        }
+    public func setSolChatNotificationPreference(_ enabled: Bool) {
+        var newConfig = config
+        newConfig.solInitiatedChatNotificationsEnabled = enabled
+        updateConfig(newConfig)
 
-        do {
-            let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
-            var newConfig = config
-            newConfig.solInitiatedChatNotificationsEnabled = granted
-            updateConfig(newConfig)
-            return granted
-        } catch {
-            Logger.callosum.info("Notification authorization failed: \(String(describing: type(of: error)), privacy: .public)")
-            var newConfig = config
-            newConfig.solInitiatedChatNotificationsEnabled = false
-            updateConfig(newConfig)
-            return false
+        notificationRequestTask?.cancel()
+        notificationRequestTask = Task { [weak self] in
+            guard let self else { return }
+            if enabled {
+                await self.requestProvisionalNotificationAuthorizationIfNeeded()
+            } else {
+                await self.refreshNotificationAuthorizationStatus()
+            }
         }
+    }
+
+    public func refreshNotificationAuthorizationStatus() async {
+        notificationAuthorizationStatus = await notifier.currentAuthorizationStatus()
+    }
+
+    public func refreshNotificationAuthorizationStatusSoon() {
+        Task { [weak self] in
+            await self?.refreshNotificationAuthorizationStatus()
+        }
+    }
+
+    public func bootstrapNotificationAuthorization() async {
+        await requestProvisionalNotificationAuthorizationIfNeeded()
+    }
+
+    public func elevateNotifications() {
+        NSApp.activate(ignoringOtherApps: true)
+        notificationRequestTask?.cancel()
+        notificationRequestTask = Task { [weak self] in
+            guard let self else { return }
+            _ = await self.notifier.requestAuthorization(options: [.alert, .sound])
+            guard !Task.isCancelled else { return }
+            await self.refreshNotificationAuthorizationStatus()
+        }
+    }
+
+    public func startObservingActivation() {
+        guard activationObserver == nil else { return }
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.refreshNotificationAuthorizationStatus()
+            }
+        }
+    }
+
+    private func requestProvisionalNotificationAuthorizationIfNeeded() async {
+        await refreshNotificationAuthorizationStatus()
+        guard !Task.isCancelled else { return }
+        if notificationAuthorizationStatus == .notDetermined {
+            _ = await notifier.requestAuthorization(options: [.alert, .sound, .provisional])
+        }
+        guard !Task.isCancelled else { return }
+        await refreshNotificationAuthorizationStatus()
     }
 
     /// Auto-adds any newly detected microphones to the priority list
@@ -351,7 +396,7 @@ public final class AppState {
 
     // MARK: - Initialization
 
-    public init() {
+    public init(notifier: any SolChatNotifying = UNUserNotificationSolChatNotifier()) {
         // Load configuration
         let config = AppConfig.loadOrCreateDefault()
         let pauseManager = PauseManager()
@@ -365,6 +410,7 @@ public final class AppState {
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isSnapshot = false
         self.config = config
+        self.notifier = notifier
         self.installer = SolstoneInstaller()
         self.recoveryCoordinator = .shared
         self.heartbeatService = HeartbeatService(
@@ -391,7 +437,8 @@ public final class AppState {
                 await MainActor.run {
                     _ = NSWorkspace.shared.open(url)
                 }
-            }
+            },
+            notifier: notifier
         )
 
         // Apply debug segments setting if enabled
@@ -519,6 +566,10 @@ public final class AppState {
 
     deinit {
         MainActor.assumeIsolated {
+            notificationRequestTask?.cancel()
+            if let activationObserver {
+                NotificationCenter.default.removeObserver(activationObserver)
+            }
             permissionPollTimer?.invalidate()
             journalProbeTimer?.invalidate()
             journalRestartTask?.cancel()
@@ -530,14 +581,26 @@ public final class AppState {
     /// Creates an AppState suitable for snapshot previews and testing.
     /// All managers are initialized but no hardware, network, or keychain activity is triggered.
     /// `AppState.shared` is NOT set.
-    public static func forSnapshot(config: AppConfig = AppConfig()) -> AppState {
+    public static func forSnapshot(
+        config: AppConfig = AppConfig(),
+        notificationStatus: UNAuthorizationStatus = .authorized,
+        notifier: (any SolChatNotifying)? = nil
+    ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
-        return AppState(snapshotConfig: config)
+        return AppState(
+            snapshotConfig: config,
+            notificationStatus: notificationStatus,
+            notifier: notifier ?? NoopSolChatNotifier()
+        )
     }
 
     /// Private designated init that creates all managers without activating hardware or side effects.
-    private init(snapshotConfig config: AppConfig) {
+    private init(
+        snapshotConfig config: AppConfig,
+        notificationStatus: UNAuthorizationStatus,
+        notifier: any SolChatNotifying
+    ) {
         let pauseManager = PauseManager()
         let storageManager = StorageManager()
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
@@ -547,6 +610,8 @@ public final class AppState {
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isSnapshot = true
         self.config = config
+        self.notifier = notifier
+        self.notificationAuthorizationStatus = notificationStatus
         self.installer = SolstoneInstaller(
             subprocessRunner: SubprocessRunner(),
             failureRecordStore: InMemoryUpgradeFailureRecordStore()
@@ -561,7 +626,7 @@ public final class AppState {
             setPending: { _ in },
             setStale: { _ in },
             postOpenChat: { _ in },
-            notifier: NoopSolChatNotifier()
+            notifier: notifier
         )
 
         let debugAudioHolder = DebugSettingHolder(value: false)

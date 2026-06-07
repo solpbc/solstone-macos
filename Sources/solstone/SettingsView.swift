@@ -4,6 +4,7 @@
 import AppKit
 @preconcurrency import ScreenCaptureKit
 import SwiftUI
+import UserNotifications
 import os
 import SolstoneCore
 
@@ -78,7 +79,6 @@ struct SettingsView: View {
     // Permissions tab state
     @State private var screenRecordingPrompted = false
     @State private var restartCountdown: Int? = nil
-    @State private var showsNotificationDeniedExplainer = false
 
     // Privacy tab state
     @State private var newTitlePattern = ""
@@ -490,13 +490,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("notify me on sol-initiated chats", isOn: solChatNotificationsBinding)
                         .accessibilityIdentifier(AXID.Settings.Observer.solChatNotifications)
-                    if showsNotificationDeniedExplainer {
-                        Text("system notifications are off — enable in System Settings → Notifications → solstone observer")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier(AXID.Settings.Observer.notificationDeniedState)
-                            .accessibilityValue(String(showsNotificationDeniedExplainer))
-                    }
+                    notificationAuthorizationDetails
                 }
                 .padding(.vertical, 4)
             }
@@ -559,22 +553,53 @@ struct SettingsView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear {
+            appState.refreshNotificationAuthorizationStatusSoon()
+        }
     }
 
     private var solChatNotificationsBinding: Binding<Bool> {
         Binding(
             get: { appState.config.solInitiatedChatNotificationsEnabled },
-            set: { newValue in
-                Task { @MainActor in
-                    let granted = await appState.requestNotificationOptIn(enabled: newValue)
-                    if newValue && !granted {
-                        showsNotificationDeniedExplainer = true
-                    } else if granted || !newValue {
-                        showsNotificationDeniedExplainer = false
+            set: { newValue in appState.setSolChatNotificationPreference(newValue) }
+        )
+    }
+
+    @ViewBuilder
+    private var notificationAuthorizationDetails: some View {
+        if appState.notificationAuthorizationStatus == .provisional {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("want sol's notes to show up with a banner and sound?")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("turn on banners") {
+                    appState.elevateNotifications()
+                }
+                .font(.caption)
+                .buttonStyle(.link)
+            }
+        } else if appState.notificationAuthorizationStatus == .denied {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("notifications are turned off for solstone")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("macOS is blocking these. you can turn them back on anytime.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("open notification settings") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=app.solstone.observer") {
+                        NSWorkspace.shared.open(url)
                     }
                 }
+                .font(.caption)
+                .buttonStyle(.link)
+                Text("System Settings → Notifications → solstone observer")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-        )
+            .accessibilityIdentifier(AXID.Settings.Observer.notificationDeniedState)
+            .accessibilityValue(String(appState.notificationAuthorizationStatus == .denied))
+        }
     }
 
     // MARK: - Service Tab

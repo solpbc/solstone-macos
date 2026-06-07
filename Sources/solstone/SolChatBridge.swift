@@ -71,7 +71,8 @@ public struct SolChatRequestSummary: Sendable, Equatable, Codable {
 }
 
 public protocol SolChatNotifying: Sendable {
-    func requestAuthorization() async -> Bool
+    func currentAuthorizationStatus() async -> UNAuthorizationStatus
+    func requestAuthorization(options: UNAuthorizationOptions) async -> Bool
     func post(identifier: String, title: String, body: String) async
     func removeDelivered(identifier: String) async
 }
@@ -79,9 +80,13 @@ public protocol SolChatNotifying: Sendable {
 public final class UNUserNotificationSolChatNotifier: SolChatNotifying, @unchecked Sendable {
     public init() {}
 
-    public func requestAuthorization() async -> Bool {
+    public func currentAuthorizationStatus() async -> UNAuthorizationStatus {
+        await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
+
+    public func requestAuthorization(options: UNAuthorizationOptions) async -> Bool {
         do {
-            return try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
+            return try await UNUserNotificationCenter.current().requestAuthorization(options: options)
         } catch {
             Logger.callosum.info("Notification authorization failed: \(String(describing: type(of: error)), privacy: .public)")
             return false
@@ -110,7 +115,8 @@ public final class UNUserNotificationSolChatNotifier: SolChatNotifying, @uncheck
 }
 
 struct NoopSolChatNotifier: SolChatNotifying {
-    func requestAuthorization() async -> Bool { true }
+    func currentAuthorizationStatus() async -> UNAuthorizationStatus { .authorized }
+    func requestAuthorization(options: UNAuthorizationOptions) async -> Bool { true }
     func post(identifier: String, title: String, body: String) async {}
     func removeDelivered(identifier: String) async {}
 }

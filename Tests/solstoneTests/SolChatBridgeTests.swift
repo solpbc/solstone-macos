@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import UserNotifications
 @testable import solstone
 
 private final class SolChatURLProtocolStore: @unchecked Sendable {
@@ -95,11 +96,18 @@ private final class SolChatURLProtocol: URLProtocol {
 
 private actor SolChatTestNotifier: SolChatNotifying {
     var authorizationResult = true
+    var status: UNAuthorizationStatus = .authorized
+    private(set) var requestedOptions: [UNAuthorizationOptions] = []
     private(set) var posts: [(identifier: String, title: String, body: String)] = []
     private(set) var removed: [String] = []
 
-    func requestAuthorization() async -> Bool {
-        authorizationResult
+    func currentAuthorizationStatus() async -> UNAuthorizationStatus {
+        status
+    }
+
+    func requestAuthorization(options: UNAuthorizationOptions) async -> Bool {
+        requestedOptions.append(options)
+        return authorizationResult
     }
 
     func post(identifier: String, title: String, body: String) async {
