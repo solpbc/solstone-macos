@@ -109,6 +109,7 @@ vendor-python:
 	fi
 
 vendor-wheelhouse: check-versions vendor-uv vendor-python
+	@# wheel-macos signs+notarizes the helper inside the wheel; requires the sol-signing keychain unlocked and the sol-pbc-notary profile (bundle-dist orders unlock-signing/signing-check first).
 	@set -e; \
 	    if [ "$$(uname -s)" != "Darwin" ] || [ "$$(uname -m)" != "arm64" ]; then \
 	        echo "error: vendor-wheelhouse must run on a macOS arm64 host (pip evaluates dependency markers against the running host; mlx requires darwin+arm64)"; \
@@ -119,17 +120,9 @@ vendor-wheelhouse: check-versions vendor-uv vendor-python
 	        exit 1; \
 	    fi; \
 	    git -C "$(SOLSTONE_SRC_DIR)" rev-parse --verify "$(SOLSTONE_REF)" >/dev/null 2>&1 || { echo "error: SOLSTONE_REF '$(SOLSTONE_REF)' not found in $(SOLSTONE_SRC_DIR)"; exit 1; }; \
-	    if [ -d "$(WHEELHOUSE_DIR)" ] && [ -f "$(WHEELHOUSE_MANIFEST)" ] && \
-	        (cd "$(WHEELHOUSE_DIR)" && shasum -a 256 -c "$(notdir $(WHEELHOUSE_MANIFEST))" >/dev/null 2>&1); then \
-	        COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone-*.whl' | wc -l | tr -d ' ')"; \
-	        if [ "$$COUNT" = "1" ]; then \
-	            CACHED_WHEEL="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone-*.whl' | head -n 1)"; \
-	            CACHED_VERSION="$$(python3 scripts/wheelhouse_helper.py wheel-version "$$CACHED_WHEEL" 2>/dev/null || true)"; \
-	            if [ "$$CACHED_VERSION" = "$(SOLSTONE_PIN_VERSION)" ]; then \
-	                echo "vendor: solstone wheelhouse $(SOLSTONE_PIN_VERSION) already present and verified"; \
-	                exit 0; \
-	            fi; \
-	        fi; \
+	    if python3 scripts/wheelhouse_helper.py verify-wheelhouse "$(WHEELHOUSE_DIR)" "$(SOLSTONE_PIN_VERSION)" >/dev/null 2>&1; then \
+	        echo "vendor: solstone wheelhouse $(SOLSTONE_PIN_VERSION) already present and verified"; \
+	        exit 0; \
 	    fi; \
 	    EXPORT_DIR="$$(mktemp -d -t solstone-export)"; \
 	    BUILD_DIR="$$(mktemp -d -t solstone-wheelhouse)"; \
@@ -138,10 +131,10 @@ vendor-wheelhouse: check-versions vendor-uv vendor-python
 	    ARCHIVE_TAR="$$BUILD_DIR/solstone-src.tar"; \
 	    git -C "$(SOLSTONE_SRC_DIR)" archive "$(SOLSTONE_REF)" > "$$ARCHIVE_TAR" || { echo "error: failed to archive $(SOLSTONE_SRC_DIR) at $(SOLSTONE_REF)"; exit 1; }; \
 	    tar -x -f "$$ARCHIVE_TAR" -C "$$EXPORT_DIR" || { echo "error: failed to extract solstone archive"; exit 1; }; \
-	    "$(UV_VENDOR_BINARY)" build --wheel --out-dir "$$BUILD_DIR" "$$EXPORT_DIR" || { echo "error: uv build failed for $(SOLSTONE_SRC_DIR) at $(SOLSTONE_REF)"; exit 1; }; \
-	    BUILT_COUNT="$$(find "$$BUILD_DIR" -maxdepth 1 -type f -name 'solstone-*.whl' | wc -l | tr -d ' ')"; \
-	    [ "$$BUILT_COUNT" = "1" ] || { echo "error: uv build did not produce exactly one solstone wheel"; exit 1; }; \
-	    BUILT_WHEEL="$$(find "$$BUILD_DIR" -maxdepth 1 -type f -name 'solstone-*.whl' | head -n 1)"; \
+	    $(MAKE) -C "$$EXPORT_DIR" UV="$(abspath $(UV_VENDOR_BINARY))" wheel-macos || { echo "error: wheel-macos build failed for $(SOLSTONE_SRC_DIR) at $(SOLSTONE_REF)"; exit 1; }; \
+	    BUILT_COUNT="$$(find "$$EXPORT_DIR/dist" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
+	    [ "$$BUILT_COUNT" = "1" ] || { echo "error: expected exactly one built solstone wheel in $$EXPORT_DIR/dist, found $$BUILT_COUNT"; exit 1; }; \
+	    BUILT_WHEEL="$$(find "$$EXPORT_DIR/dist" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | head -n 1)"; \
 	    BUILT_VERSION="$$(python3 scripts/wheelhouse_helper.py wheel-version "$$BUILT_WHEEL")"; \
 	    [ "$$BUILT_VERSION" = "$(SOLSTONE_PIN_VERSION)" ] || { echo "error: sibling backend version $$BUILT_VERSION != pinned $(SOLSTONE_PIN_VERSION) — re-pin or update sibling"; exit 1; }; \
 	    rm -rf "$(WHEELHOUSE_DIR)"; \
@@ -159,7 +152,7 @@ vendor-wheelhouse: check-versions vendor-uv vendor-python
 	    RUNTIME_DIRS="$$(find "$(WHEELHOUSE_DIR)" -mindepth 1 -type d \( -name '__pycache__' -o -name '.venv' -o -name 'venv' -o -name 'cache' -o -name 'model' -o -name 'models' \) -print)"; \
 	    [ -z "$$RUNTIME_DIRS" ] || { echo "error: wheelhouse contains runtime/cache/model dirs"; echo "$$RUNTIME_DIRS"; exit 1; }; \
 	    (cd "$(WHEELHOUSE_DIR)" && shasum -a 256 *.whl > "$(notdir $(WHEELHOUSE_MANIFEST))"); \
-	    (cd "$(WHEELHOUSE_DIR)" && shasum -a 256 -c "$(notdir $(WHEELHOUSE_MANIFEST))") || { echo "error: wheelhouse sha256 manifest verification failed"; exit 1; }; \
+	    python3 scripts/wheelhouse_helper.py verify-wheelhouse "$(WHEELHOUSE_DIR)" "$(SOLSTONE_PIN_VERSION)" || { echo "error: wheelhouse verification failed"; exit 1; }; \
 	    echo "vendor: solstone wheelhouse $(SOLSTONE_PIN_VERSION) built at $(WHEELHOUSE_DIR)"
 
 generate-bundle-config: check-versions

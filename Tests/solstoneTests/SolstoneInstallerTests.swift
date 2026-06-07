@@ -1068,7 +1068,7 @@ struct SolstoneInstallerTests {
 
         let install = try #require(runner.invocations.first { $0.arguments.starts(with: ["tool", "install"]) })
         #expect(Array(install.arguments.prefix(2)) == ["tool", "install"])
-        #expect(URL(fileURLWithPath: install.arguments[2]).lastPathComponent == "solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl")
+        #expect(URL(fileURLWithPath: install.arguments[2]).lastPathComponent == "solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl")
         #expect(Array(install.arguments.dropFirst(3)) == [
             "--find-links",
             fixtureURLs.wheelhouse.path,
@@ -1109,8 +1109,8 @@ struct SolstoneInstallerTests {
 
     @Test func stagedInstallWheelhouseCardinalityFailuresDoNotActivate() async throws {
         for wheelNames in [[], [
-            "solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl",
-            "solstone-\(BundleConfig.solstonePinVersion)-2-py3-none-any.whl"
+            "solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl",
+            "solstone-\(BundleConfig.solstonePinVersion)-2-py3-none-macosx_14_0_arm64.whl"
         ]] {
             let runner = FakeSubprocessRunner()
             let fixtureURLs = try makeStagedInstallFixture(wheelNames: wheelNames)
@@ -2682,7 +2682,7 @@ struct SolstoneInstallerTests {
     }
 
     private func makeStagedInstallFixture(
-        wheelNames: [String] = ["solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl"]
+        wheelNames: [String] = ["solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl"]
     ) throws -> (workspace: URL, runtimeRoot: URL, wheelhouse: URL) {
         let workspace = try makeTemporaryDirectory(prefix: "solstone-staged-install")
         let runtimeRoot = workspace.appendingPathComponent("runtime", isDirectory: true)

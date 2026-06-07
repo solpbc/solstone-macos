@@ -5,6 +5,9 @@ import sys
 import zipfile
 
 
+PARAKEET_HELPER_PATH = "solstone/observe/transcribe/parakeet_helper/_bin/parakeet-helper"
+
+
 def wheel_version(path):
     wheel_path = pathlib.Path(path)
     if not wheel_path.is_file():
@@ -67,9 +70,17 @@ def verify_wheelhouse(dir_path, pin):
     if len(pinned_wheels) != 1:
         raise ValueError(f"expected exactly one solstone-{pin}-*.whl in {dir_path}")
 
-    version = wheel_version(pinned_wheels[0])
+    pinned_wheel = pinned_wheels[0]
+    version = wheel_version(pinned_wheel)
     if version != pin:
         raise ValueError(f"sibling backend version {version} != pinned {pin} — re-pin or update sibling")
+
+    if pinned_wheel.name.endswith("-py3-none-any.whl"):
+        raise ValueError(f"pinned solstone wheel is the pure py3-none-any fallback (missing platform build): {pinned_wheel.name}")
+
+    with zipfile.ZipFile(pinned_wheel) as wheel:
+        if PARAKEET_HELPER_PATH not in wheel.namelist():
+            raise ValueError(f"pinned solstone wheel missing parakeet-helper binary: {pinned_wheel.name} lacks {PARAKEET_HELPER_PATH}")
 
     runtime_dir_names = {"__pycache__", ".venv", "venv", "cache", "model", "models"}
     offending_paths = sorted(

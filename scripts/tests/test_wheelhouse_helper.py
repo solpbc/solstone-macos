@@ -16,7 +16,10 @@ def load_wheelhouse_helper():
     return module
 
 
-def make_wheel(root, name="sample-1.2.3-py3-none-any.whl", metadata=None):
+PARAKEET_HELPER_PATH = load_wheelhouse_helper().PARAKEET_HELPER_PATH
+
+
+def make_wheel(root, name="sample-1.2.3-py3-none-any.whl", metadata=None, extra_members=None):
     wheel = pathlib.Path(root) / name
     with zipfile.ZipFile(wheel, "w") as archive:
         if metadata is not None:
@@ -27,6 +30,8 @@ def make_wheel(root, name="sample-1.2.3-py3-none-any.whl", metadata=None):
                 "sample-1.2.3.dist-info/METADATA",
                 "Metadata-Version: 2.4\nName: sample\nVersion: 1.2.3\n",
             )
+        for path, content in (extra_members or {}).items():
+            archive.writestr(path, content)
     return wheel
 
 
@@ -43,13 +48,14 @@ def make_wheelhouse(root, pin="0.4.8", solstone_version=None):
     solstone_version = solstone_version or pin
     make_wheel(
         root,
-        name=f"solstone-{pin}-py3-none-any.whl",
+        name=f"solstone-{pin}-py3-none-macosx_14_0_arm64.whl",
         metadata=[
             (
                 f"solstone-{solstone_version}.dist-info/METADATA",
                 f"Metadata-Version: 2.4\nName: solstone\nVersion: {solstone_version}\n",
             ),
         ],
+        extra_members={PARAKEET_HELPER_PATH: b"#!/bin/sh\n"},
     )
     make_wheel(
         root,
@@ -145,7 +151,7 @@ class VerifyWheelhouseTest(unittest.TestCase):
         module = load_wheelhouse_helper()
         with tempfile.TemporaryDirectory() as tmp:
             make_wheelhouse(tmp)
-            (pathlib.Path(tmp) / "solstone-0.4.8-py3-none-any.whl").unlink()
+            (pathlib.Path(tmp) / "solstone-0.4.8-py3-none-macosx_14_0_arm64.whl").unlink()
             write_wheelhouse_manifest(tmp)
 
             with self.assertRaisesRegex(ValueError, "expected exactly one"):
@@ -157,7 +163,7 @@ class VerifyWheelhouseTest(unittest.TestCase):
             make_wheelhouse(tmp)
             make_wheel(
                 tmp,
-                name="solstone-0.4.8-2-py3-none-any.whl",
+                name="solstone-0.4.8-2-py3-none-macosx_14_0_arm64.whl",
                 metadata=[
                     (
                         "solstone-0.4.8.dist-info/METADATA",
@@ -176,6 +182,63 @@ class VerifyWheelhouseTest(unittest.TestCase):
             make_wheelhouse(tmp, pin="0.4.8", solstone_version="0.4.9")
 
             with self.assertRaisesRegex(ValueError, "!= pinned"):
+                module.verify_wheelhouse(tmp, "0.4.8")
+
+    def test_verify_wheelhouse_raises_when_pinned_wheel_missing_helper(self):
+        module = load_wheelhouse_helper()
+        with tempfile.TemporaryDirectory() as tmp:
+            make_wheel(
+                tmp,
+                name="solstone-0.4.8-py3-none-macosx_14_0_arm64.whl",
+                metadata=[
+                    (
+                        "solstone-0.4.8.dist-info/METADATA",
+                        "Metadata-Version: 2.4\nName: solstone\nVersion: 0.4.8\n",
+                    ),
+                ],
+            )
+            make_wheel(
+                tmp,
+                name="dep-1.0.0-py3-none-any.whl",
+                metadata=[
+                    (
+                        "dep-1.0.0.dist-info/METADATA",
+                        "Metadata-Version: 2.4\nName: dep\nVersion: 1.0.0\n",
+                    ),
+                ],
+            )
+            write_wheelhouse_manifest(tmp)
+
+            with self.assertRaisesRegex(ValueError, "missing parakeet-helper binary"):
+                module.verify_wheelhouse(tmp, "0.4.8")
+
+    def test_verify_wheelhouse_raises_when_pinned_wheel_is_pure_fallback(self):
+        module = load_wheelhouse_helper()
+        with tempfile.TemporaryDirectory() as tmp:
+            make_wheel(
+                tmp,
+                name="solstone-0.4.8-py3-none-any.whl",
+                metadata=[
+                    (
+                        "solstone-0.4.8.dist-info/METADATA",
+                        "Metadata-Version: 2.4\nName: solstone\nVersion: 0.4.8\n",
+                    ),
+                ],
+                extra_members={PARAKEET_HELPER_PATH: b"#!/bin/sh\n"},
+            )
+            make_wheel(
+                tmp,
+                name="dep-1.0.0-py3-none-any.whl",
+                metadata=[
+                    (
+                        "dep-1.0.0.dist-info/METADATA",
+                        "Metadata-Version: 2.4\nName: dep\nVersion: 1.0.0\n",
+                    ),
+                ],
+            )
+            write_wheelhouse_manifest(tmp)
+
+            with self.assertRaisesRegex(ValueError, "pure py3-none-any fallback"):
                 module.verify_wheelhouse(tmp, "0.4.8")
 
     def test_verify_wheelhouse_raises_when_manifest_hash_is_tampered(self):
