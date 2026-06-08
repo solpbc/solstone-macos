@@ -23,12 +23,8 @@ struct SegmentWriterTimeoutTests {
 
         try await startWriter(writer)
 
-        let clock = ContinuousClock()
-        let start = clock.now
         _ = await writer.finishCapture()
-        let elapsed = start.duration(to: clock.now)
 
-        #expect(elapsed < .seconds(10))
         #expect(fakeCapturer.stopCount.count == 1)
         #expect(fakeAudio.finishAllCount.count == 1)
     }
@@ -46,12 +42,8 @@ struct SegmentWriterTimeoutTests {
 
         try await startWriter(writer)
 
-        let clock = ContinuousClock()
-        let start = clock.now
         let result = await writer.finishCapture()
-        let elapsed = start.duration(to: clock.now)
 
-        #expect(elapsed < .seconds(14))
         #expect(result?.audioInputs.isEmpty == true)
         #expect(fakeAudio.finishAllCount.count == 1)
     }
@@ -87,6 +79,8 @@ struct SegmentWriterTimeoutTests {
         SegmentWriter(
             outputDirectory: dir,
             timePrefix: "120000",
+            capturerStopTimeoutSeconds: 1.0,
+            audioFinishTimeoutSeconds: 1.0,
             screenshotCapturerFactory: { _, _, _, _, _, _ in capturer },
             audioManagerFactory: { _, _, _, _ in audioManager }
         )

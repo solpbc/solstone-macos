@@ -93,6 +93,8 @@ public final class CaptureManager {
     private let segmentFactory: SegmentFactory
     private let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
     private let finalizer: any SegmentFinalizing
+    private let rotationTimeoutSeconds: TimeInterval
+    private let now: @Sendable () -> Date
     // Test-only bypass for fake segment factories without ScreenCaptureKit display state; defaults false.
     private let allowsEmptyDisplayConfigurationForTesting: Bool
 
@@ -154,6 +156,8 @@ public final class CaptureManager {
         },
         recoveryCoordinator: IncompleteSegmentRecoveryCoordinator = .shared,
         finalizer: any SegmentFinalizing = RemixQueue.shared,
+        rotationTimeoutSeconds: TimeInterval = 30,
+        now: @escaping @Sendable () -> Date = Date.init,
         allowsEmptyDisplayConfigurationForTesting: Bool = false
     ) {
         self.storageManager = storageManager
@@ -163,6 +167,8 @@ public final class CaptureManager {
         self.segmentFactory = segmentFactory
         self.recoveryCoordinator = recoveryCoordinator
         self.finalizer = finalizer
+        self.rotationTimeoutSeconds = rotationTimeoutSeconds
+        self.now = now
         self.allowsEmptyDisplayConfigurationForTesting = allowsEmptyDisplayConfigurationForTesting
         self.micCaptureManager = MicrophoneCaptureManager(gain: microphoneGain, verbose: verbose)
         self.windowExclusionManager = WindowExclusionManager(
@@ -432,7 +438,7 @@ public final class CaptureManager {
 
         // Create segment directory with current time (named HHMMSS.incomplete)
         let (segmentDir, timePrefix) = try storageManager.createSegmentDirectory(
-            segmentStartTime: Date()
+            segmentStartTime: now()
         )
 
         // Collect available mics
@@ -590,7 +596,7 @@ public final class CaptureManager {
         let newSegmentDir: URL
         let newTimePrefix: String
         do {
-            (newSegmentDir, newTimePrefix) = try storageManager.createSegmentDirectory(segmentStartTime: Date())
+            (newSegmentDir, newTimePrefix) = try storageManager.createSegmentDirectory(segmentStartTime: now())
         } catch {
             transitionToError("Failed to create segment directory: \(error.localizedDescription)", error: error, trigger: "rotation_failed")
             Logger.capture.error("Failed to rotate segment: \(error, privacy: .public)")
@@ -599,7 +605,7 @@ public final class CaptureManager {
 
         let captureResult: SegmentCaptureResult?
         do {
-            captureResult = try await withTimeout(seconds: 30) { @MainActor in
+            captureResult = try await withTimeout(seconds: rotationTimeoutSeconds) { @MainActor in
                 // Finish capture on old segment (non-blocking - doesn't wait for remix)
                 var result: SegmentCaptureResult?
                 if let segment = self.currentSegment {
@@ -783,6 +789,14 @@ public final class CaptureManager {
 
     internal var isRotatingSegmentForTesting: Bool {
         isRotatingSegment
+    }
+
+    internal var rotationTimeoutSecondsForTesting: TimeInterval {
+        rotationTimeoutSeconds
+    }
+
+    internal func nowForTesting() -> Date {
+        now()
     }
 
     internal var currentSegmentForTesting: (any CaptureSegmentWriting)? {

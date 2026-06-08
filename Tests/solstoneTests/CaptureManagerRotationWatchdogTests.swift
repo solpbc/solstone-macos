@@ -20,6 +20,9 @@ struct CaptureManagerRotationWatchdogTests {
         let recovery = CountingRecovery()
         let coordinator = IncompleteSegmentRecoveryCoordinator(recoveryFactory: { recovery })
         let newStartCount = LockedCounter()
+        let now = LockedValue<Date>()
+        let firstNow = fixedDate(second: 0)
+        now.set(firstNow)
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
@@ -30,6 +33,8 @@ struct CaptureManagerRotationWatchdogTests {
                 return segment
             },
             recoveryCoordinator: coordinator,
+            rotationTimeoutSeconds: 1.0,
+            now: { now.current ?? firstNow },
             allowsEmptyDisplayConfigurationForTesting: true
         )
         manager.seedRecordingForTesting(currentSegment: current)
@@ -38,10 +43,9 @@ struct CaptureManagerRotationWatchdogTests {
 
         #expect(manager.isRotatingSegmentForTesting == false)
         #expect(current.finishCaptureCount.count == 1)
-        try await waitUntil(timeout: .seconds(3)) {
-            recovery.count.count == 1
-        }
+        await recovery.waitForRecoverAll(1)
 
+        now.set(fixedDate(second: 1))
         await manager.rotateSegmentForTesting()
 
         #expect(manager.isRotatingSegmentForTesting == false)
@@ -63,9 +67,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         manager.handleHeartbeatTick()
 
-        try await waitUntil(timeout: .seconds(3)) {
-            recovery.count.count == 1
-        }
+        await recovery.waitForRecoverAll(1)
     }
 
     @Test func startRecordingSchedulesRecovery() async throws {
@@ -85,9 +87,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         try await manager.startRecording()
 
-        try await waitUntil(timeout: .seconds(3)) {
-            recovery.count.count == 1
-        }
+        await recovery.waitForRecoverAll(1)
         await manager.stopRecording()
     }
 
@@ -108,9 +108,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         try await manager.lifecycleResumeCapture(trigger: "test")
 
-        try await waitUntil(timeout: .seconds(3)) {
-            recovery.count.count == 1
-        }
+        await recovery.waitForRecoverAll(1)
         await manager.stopRecording()
     }
 
@@ -155,6 +153,9 @@ struct CaptureManagerRotationWatchdogTests {
         let coordinator = IncompleteSegmentRecoveryCoordinator(recoveryFactory: { recovery })
         let factoryCalls = LockedCounter()
         let cycle2Segment = LockedValue<FakeCaptureSegment>()
+        let now = LockedValue<Date>()
+        let firstNow = fixedDate(second: 0)
+        now.set(firstNow)
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
@@ -168,6 +169,8 @@ struct CaptureManagerRotationWatchdogTests {
                 return FakeCaptureSegment(outputDirectory: outputDirectory, finishBehaviors: [.normal(outputDirectory)])
             },
             recoveryCoordinator: coordinator,
+            rotationTimeoutSeconds: 1.0,
+            now: { now.current ?? firstNow },
             allowsEmptyDisplayConfigurationForTesting: true
         )
         manager.seedRecordingForTesting(currentSegment: first)
@@ -180,19 +183,16 @@ struct CaptureManagerRotationWatchdogTests {
         let currentAfterCycle1 = try #require(manager.currentSegmentForTesting)
         #expect(ObjectIdentifier(currentAfterCycle1) == ObjectIdentifier(cycle2))
         let cycle2TimePrefix = String(cycle2.outputDirectory.lastPathComponent.prefix(6))
-        try await waitUntil(timeout: .seconds(2), poll: .milliseconds(20)) {
-            Self.currentTimePrefix() != cycle2TimePrefix
-        }
 
+        now.set(fixedDate(second: 1))
         await manager.rotateSegmentForTesting()
         #expect(manager.isRotatingSegmentForTesting == false)
         let currentAfterCycle2 = try #require(manager.currentSegmentForTesting)
         #expect(ObjectIdentifier(currentAfterCycle2) == ObjectIdentifier(cycle2))
         #expect(cycle2.finishCaptureCount.count == 1)
-        try await waitUntil(timeout: .seconds(3)) {
-            recovery.count.count == 1
-        }
+        await recovery.waitForRecoverAll(1)
 
+        now.set(fixedDate(second: 2))
         await manager.rotateSegmentForTesting()
         #expect(manager.isRotatingSegmentForTesting == false)
         #expect(cycle2.finishCaptureCount.count == 2)
@@ -228,9 +228,18 @@ struct CaptureManagerRotationWatchdogTests {
         }
     }
 
-    nonisolated private static func currentTimePrefix() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HHmmss"
-        return formatter.string(from: Date())
+    private func fixedDate(second: Int) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        var components = DateComponents()
+        components.calendar = calendar
+        components.timeZone = calendar.timeZone
+        components.year = 2026
+        components.month = 5
+        components.day = 26
+        components.hour = 12
+        components.minute = 0
+        components.second = second
+        return calendar.date(from: components)!
     }
 }

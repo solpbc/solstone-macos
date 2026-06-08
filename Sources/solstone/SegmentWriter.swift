@@ -94,6 +94,8 @@ public final class SegmentWriter {
     private var audioManager: (any SegmentAudioManaging)?
     private var systemAudioCaptureManager: SystemAudioCaptureManager?
     private let verbose: Bool
+    private let capturerStopTimeoutSeconds: TimeInterval
+    private let audioFinishTimeoutSeconds: TimeInterval
     private let screenshotCapturerFactory: ScreenshotCapturerFactory
     private let audioManagerFactory: AudioManagerFactory
 
@@ -125,6 +127,8 @@ public final class SegmentWriter {
         debugKeepRejectedAudio: Bool = false,
         silenceMusic: Bool = true,
         verbose: Bool = false,
+        capturerStopTimeoutSeconds: TimeInterval = 5,
+        audioFinishTimeoutSeconds: TimeInterval = 10,
         screenshotCapturerFactory: @escaping ScreenshotCapturerFactory = SegmentWriter.defaultScreenshotCapturerFactory,
         audioManagerFactory: @escaping AudioManagerFactory = SegmentWriter.defaultAudioManagerFactory
     ) {
@@ -133,9 +137,15 @@ public final class SegmentWriter {
         self.debugKeepRejectedAudio = debugKeepRejectedAudio
         self.silenceMusic = silenceMusic
         self.verbose = verbose
+        self.capturerStopTimeoutSeconds = capturerStopTimeoutSeconds
+        self.audioFinishTimeoutSeconds = audioFinishTimeoutSeconds
         self.screenshotCapturerFactory = screenshotCapturerFactory
         self.audioManagerFactory = audioManagerFactory
     }
+
+    internal var capturerStopTimeoutSecondsForTesting: TimeInterval { capturerStopTimeoutSeconds }
+
+    internal var audioFinishTimeoutSecondsForTesting: TimeInterval { audioFinishTimeoutSeconds }
 
     public static let defaultScreenshotCapturerFactory: ScreenshotCapturerFactory = { info, videoURL, frameRate, duration, contentFilter, verbose in
         guard let contentFilter else {
@@ -303,7 +313,7 @@ public final class SegmentWriter {
         for (displayID, capturer) in screenshotCapturers {
             if verbose { Logger.capture.debug("Stopping capturer for display \(displayID, privacy: .public)...") }
             do {
-                try await withTimeout(seconds: 5) {
+                try await withTimeout(seconds: capturerStopTimeoutSeconds) {
                     await capturer.stop()
                 }
             } catch is TimeoutError {
@@ -335,7 +345,7 @@ public final class SegmentWriter {
         var audioInputs: [AudioRemixerInput] = []
         if let manager = audioManager {
             do {
-                audioInputs = try await withTimeout(seconds: 10) {
+                audioInputs = try await withTimeout(seconds: audioFinishTimeoutSeconds) {
                     await manager.finishAll()
                 }
             } catch is TimeoutError {

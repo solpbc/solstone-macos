@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 sol pbc
+
 import CoreMedia
 import Foundation
 @preconcurrency import ScreenCaptureKit
@@ -22,13 +25,46 @@ final class RemixGate: @unchecked Sendable {
 final class LockedCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
+    private var waiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     func increment() {
-        lock.withLock { value += 1 }
+        let continuations = lock.withLock {
+            value += 1
+            var ready: [CheckedContinuation<Void, Never>] = []
+            var pending: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
+            for waiter in waiters {
+                if value >= waiter.target {
+                    ready.append(waiter.continuation)
+                } else {
+                    pending.append(waiter)
+                }
+            }
+            waiters = pending
+            return ready
+        }
+        for continuation in continuations {
+            continuation.resume()
+        }
     }
 
     var count: Int {
         lock.withLock { value }
+    }
+
+    func waitUntilCount(_ target: Int) async {
+        await withCheckedContinuation { continuation in
+            var shouldResume = false
+            lock.withLock {
+                if value >= target {
+                    shouldResume = true
+                } else {
+                    waiters.append((target: target, continuation: continuation))
+                }
+            }
+            if shouldResume {
+                continuation.resume()
+            }
+        }
     }
 }
 
@@ -209,6 +245,10 @@ final class FakeRemixer: AudioRemixing, @unchecked Sendable {
         self.behavior = behavior
     }
 
+    func waitForRemixStart(_ target: Int = 1) async {
+        await remixCount.waitUntilCount(target)
+    }
+
     func remix(
         inputs: [AudioRemixerInput],
         to outputURL: URL,
@@ -250,6 +290,10 @@ final class CountingRecovery: IncompleteSegmentRecovering, @unchecked Sendable {
 
     init(_ behavior: Behavior = .normal) {
         self.behavior = behavior
+    }
+
+    func waitForRecoverAll(_ target: Int) async {
+        await count.waitUntilCount(target)
     }
 
     func recoverAll(excludingActiveSegment activeSegmentPath: String?) async -> Int {

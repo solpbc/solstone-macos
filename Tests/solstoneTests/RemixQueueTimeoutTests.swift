@@ -26,9 +26,7 @@ struct RemixQueueTimeoutTests {
         }
 
         await queue.enqueue(makeJob(dir: dir, timePrefix: "120000", inputURL: audio))
-        try await waitUntil(timeout: .seconds(5)) {
-            fakeRemixer.remixCount.count == 1
-        }
+        await fakeRemixer.waitForRemixStart()
 
         #expect(await queue.inFlightPaths().contains(dir.standardizedFileURL.path))
 
@@ -58,7 +56,7 @@ struct RemixQueueTimeoutTests {
 
         let behaviors = LockedArray<FakeRemixer.Behavior>([.hang, .success])
         let completionCount = LockedCounter()
-        let queue = RemixQueue { _, _ in
+        let queue = RemixQueue(remixTimeoutSeconds: 0.25) { _, _ in
             FakeRemixer(behaviors.removeFirst(default: .success))
         }
         await queue.setOnSegmentComplete { _, _ in
@@ -68,14 +66,9 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeJob(dir: firstDir, timePrefix: "120000", inputURL: firstAudio))
         await queue.enqueue(makeJob(dir: secondDir, timePrefix: "120100", inputURL: secondAudio))
 
-        try await waitUntil(timeout: .seconds(65)) {
-            FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed").path)
-        }
-        try await waitUntil(timeout: .seconds(5)) {
-            completionCount.count == 1
-        }
         await queue.waitForCompletion()
 
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed").path))
         #expect(await queue.isProcessingForTesting == false)
         #expect(completionCount.count == 1)
         #expect(await queue.inFlightPaths().isEmpty)
@@ -100,9 +93,6 @@ struct RemixQueueTimeoutTests {
 
         await queue.enqueue(makeJob(dir: dir, timePrefix: "120000", inputURL: audio))
 
-        try await waitUntil(timeout: .seconds(5)) {
-            FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed").path)
-        }
         await queue.waitForCompletion()
 
         let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
@@ -135,9 +125,6 @@ struct RemixQueueTimeoutTests {
 
         await queue.enqueue(makeJob(dir: dir, timePrefix: "120000", inputURL: audio))
 
-        try await waitUntil(timeout: .seconds(5)) {
-            completionCount.count == 1
-        }
         await queue.waitForCompletion()
 
         let finalURL = try #require(completedURL.current)
@@ -167,8 +154,9 @@ struct RemixQueueTimeoutTests {
 
         await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000"))
 
-        let finalDir = try await waitForFinalizedSegmentDirectory(in: root, timePrefix: "120000")
         await queue.waitForCompletion()
+        let maybeFinalDir = try finalizedSegmentDirectory(in: root, timePrefix: "120000")
+        let finalDir = try #require(maybeFinalDir)
 
         #expect(completionCount.count == 1)
         let outcome = try #require(completedOutcome.current)
@@ -197,8 +185,9 @@ struct RemixQueueTimeoutTests {
 
         await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000"))
 
-        let finalDir = try await waitForFinalizedSegmentDirectory(in: root, timePrefix: "120000")
         await queue.waitForCompletion()
+        let maybeFinalDir = try finalizedSegmentDirectory(in: root, timePrefix: "120000")
+        let finalDir = try #require(maybeFinalDir)
 
         #expect(completionCount.count == 1)
         #expect(fakeRemixer.remixCount.count == 0)
@@ -223,8 +212,9 @@ struct RemixQueueTimeoutTests {
 
         await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000"))
 
-        let finalDir = try await waitForFinalizedSegmentDirectory(in: root, timePrefix: "120000")
         await queue.waitForCompletion()
+        let maybeFinalDir = try finalizedSegmentDirectory(in: root, timePrefix: "120000")
+        let finalDir = try #require(maybeFinalDir)
 
         #expect(completionCount.count == 1)
         #expect(FileManager.default.fileExists(atPath: finalDir.path))
@@ -256,9 +246,6 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000"))
 
         let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
-        try await waitUntil(timeout: .seconds(5)) {
-            FileManager.default.fileExists(atPath: failedDir.path)
-        }
         await queue.waitForCompletion()
 
         #expect(completionCount.count == 1)
@@ -296,9 +283,6 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000"))
 
         let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
-        try await waitUntil(timeout: .seconds(5)) {
-            FileManager.default.fileExists(atPath: failedDir.path)
-        }
         await queue.waitForCompletion()
 
         #expect(completionCount.count == 1)
@@ -358,11 +342,9 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
 
         let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
-        try await waitUntil(timeout: .seconds(5)) {
-            FileManager.default.fileExists(atPath: failedDir.path)
-        }
         await queue.waitForCompletion()
 
+        #expect(FileManager.default.fileExists(atPath: failedDir.path))
         #expect(completionCount.count == 0)
         #expect(await queue.inFlightPaths().isEmpty)
     }
@@ -393,11 +375,9 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
 
         let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
-        try await waitUntil(timeout: .seconds(5)) {
-            FileManager.default.fileExists(atPath: failedDir.path)
-        }
         await queue.waitForCompletion()
 
+        #expect(FileManager.default.fileExists(atPath: failedDir.path))
         #expect(completionCount.count == 0)
     }
 
@@ -422,9 +402,6 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
 
         let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
-        try await waitUntil(timeout: .seconds(5)) {
-            FileManager.default.fileExists(atPath: failedDir.path)
-        }
         await queue.waitForCompletion()
 
         #expect(completionCount.count == 1)
@@ -459,8 +436,9 @@ struct RemixQueueTimeoutTests {
 
         await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000", captureStartTime: captureStartTime))
 
-        let finalDir = try await waitForFinalizedSegmentDirectory(in: root, timePrefix: "120000")
         await queue.waitForCompletion()
+        let maybeFinalDir = try finalizedSegmentDirectory(in: root, timePrefix: "120000")
+        let finalDir = try #require(maybeFinalDir)
 
         let consolidatedAudio = finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_audio.m4a")
         #expect(completionCount.count == 1)
@@ -630,14 +608,6 @@ struct RemixQueueTimeoutTests {
 
     private func segmentDirectories(in root: URL) throws -> [String] {
         try FileManager.default.contentsOfDirectory(atPath: root.path)
-    }
-
-    private func waitForFinalizedSegmentDirectory(in root: URL, timePrefix: String) async throws -> URL {
-        try await waitUntil(timeout: .seconds(5)) {
-            (try? finalizedSegmentDirectory(in: root, timePrefix: timePrefix)) != nil
-        }
-        let finalDir = try finalizedSegmentDirectory(in: root, timePrefix: timePrefix)
-        return try #require(finalDir)
     }
 
     private func finalizedSegmentDirectory(in root: URL, timePrefix: String) throws -> URL? {

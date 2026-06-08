@@ -60,14 +60,19 @@ public actor RemixQueue {
     /// Callback invoked when a segment completes (for triggering upload)
     private var onSegmentComplete: (@Sendable (URL, SegmentReconciliation) async -> Void)?
 
+    private let remixTimeoutSeconds: TimeInterval
     private let remixerFactory: RemixerFactory
 
     /// Shared instance
     public static let shared = RemixQueue()
 
-    init(remixerFactory: @escaping RemixerFactory = { verbose, debugKeepRejected in
-        AudioRemixer(verbose: verbose, debugKeepRejected: debugKeepRejected)
-    }) {
+    init(
+        remixTimeoutSeconds: TimeInterval = 60,
+        remixerFactory: @escaping RemixerFactory = { verbose, debugKeepRejected in
+            AudioRemixer(verbose: verbose, debugKeepRejected: debugKeepRejected)
+        }
+    ) {
+        self.remixTimeoutSeconds = remixTimeoutSeconds
         self.remixerFactory = remixerFactory
     }
 
@@ -94,6 +99,8 @@ public actor RemixQueue {
     }
 
     internal var isProcessingForTesting: Bool { isProcessing }
+
+    internal var remixTimeoutSecondsForTesting: TimeInterval { remixTimeoutSeconds }
 
     public func inFlightPaths() -> Set<String> { inFlightDirectoryPaths }
 
@@ -158,7 +165,7 @@ public actor RemixQueue {
         if !job.audioInputs.isEmpty {
             do {
                 let remixer = remixerFactory(false, job.debugKeepRejected)
-                let result = try await withTimeout(seconds: 60) {
+                let result = try await withTimeout(seconds: remixTimeoutSeconds) {
                     try await remixer.remix(
                         inputs: job.audioInputs,
                         to: audioOutputURL,
@@ -191,7 +198,7 @@ public actor RemixQueue {
                     Logger.storage.warning("audioInputs empty but \(inputs.count, privacy: .public) readable audio source(s) on disk for \(job.timePrefix, privacy: .public); reconstructing")
                     do {
                         let remixer = remixerFactory(false, job.debugKeepRejected)
-                        let result = try await withTimeout(seconds: 60) {
+                        let result = try await withTimeout(seconds: remixTimeoutSeconds) {
                             try await remixer.remix(
                                 inputs: inputs,
                                 to: audioOutputURL,
