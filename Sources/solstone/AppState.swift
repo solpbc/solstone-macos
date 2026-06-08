@@ -101,6 +101,7 @@ public final class AppState {
     private var isCheckingPermissions = false
     private var journalRuntimeDebounceState = JournalRuntimeDebounceState()
     private var journalProbeTimer: Timer?
+    private var hasStartedBundledJournalDetection = false
     private var journalRestartTask: Task<Void, Never>?
     private var notificationRequestTask: Task<Void, Never>?
     private var activationObserver: NSObjectProtocol?
@@ -113,6 +114,7 @@ public final class AppState {
         FileManager.default.isExecutableFile(atPath: $0)
     }
     internal var journalRuntimeProbeRunner: SubprocessRunning = SubprocessRunner()
+    internal var bundledJournalDetectionRunner: (() async -> Bool)?
     internal var journalRestartRunnerFactory: ((
         URL,
         (@Sendable (JournalRestartLogEvent) -> Void)?
@@ -184,7 +186,28 @@ public final class AppState {
     }
 
     public var serviceIsDone: Bool {
-        !serviceNeedsAttention && config.serviceMode != nil
+        guard let serviceMode = config.serviceMode else { return false }
+        switch serviceMode {
+        case .external:
+            return !serviceNeedsAttention
+        case .bundled:
+            switch terminalCardState(
+                main: installer.main,
+                probe: installer.probedVersion,
+                failureRecord: installer.upgradeFailureRecord
+            ) {
+            case .installedCurrent, .done, .externallyManaged:
+                return true
+            case .detecting,
+                 .absent,
+                 .installing,
+                 .installedPlaceholder,
+                 .installedUnknown,
+                 .upgradeFailed,
+                 .failed:
+                return false
+            }
+        }
     }
 
     private func isInstalledJournalCardState(_ state: InstallerCardState) -> Bool {
@@ -591,14 +614,34 @@ public final class AppState {
         return AppState(
             snapshotConfig: config,
             notificationStatus: notificationStatus,
+            isSnapshot: true,
             notifier: notifier ?? NoopSolChatNotifier()
         )
+    }
+
+    /// Creates a side-effect-free AppState that is not snapshot-gated for
+    /// testing explicit launch detection behavior.
+    internal static func forLaunchDetectionTest(
+        config: AppConfig = AppConfig(),
+        detectionRunner: @escaping () async -> Bool
+    ) -> AppState {
+        snapshotAudioMonitorMode = true
+        defer { snapshotAudioMonitorMode = false }
+        let state = AppState(
+            snapshotConfig: config,
+            notificationStatus: .authorized,
+            isSnapshot: false,
+            notifier: NoopSolChatNotifier()
+        )
+        state.bundledJournalDetectionRunner = detectionRunner
+        return state
     }
 
     /// Private designated init that creates all managers without activating hardware or side effects.
     private init(
         snapshotConfig config: AppConfig,
         notificationStatus: UNAuthorizationStatus,
+        isSnapshot: Bool,
         notifier: any SolChatNotifying
     ) {
         let pauseManager = PauseManager()
@@ -608,7 +651,7 @@ public final class AppState {
         self.pauseManager = pauseManager
         self.storageManager = storageManager
         self.audioDeviceMonitor = audioDeviceMonitor
-        self.isSnapshot = true
+        self.isSnapshot = isSnapshot
         self.config = config
         self.notifier = notifier
         self.notificationAuthorizationStatus = notificationStatus
@@ -735,6 +778,18 @@ public final class AppState {
     }
 
     // MARK: - Journal Runtime Probing
+
+    internal func startBundledJournalDetectionIfNeeded() async {
+        guard !isSnapshot,
+              config.serviceMode == .bundled,
+              !hasStartedBundledJournalDetection else { return }
+        hasStartedBundledJournalDetection = true
+        if let bundledJournalDetectionRunner {
+            _ = await bundledJournalDetectionRunner()
+        } else {
+            _ = await installer.detect()
+        }
+    }
 
     private func startJournalProbeTimer() {
         guard !isSnapshot, config.serviceMode == .bundled else { return }

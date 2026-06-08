@@ -68,7 +68,7 @@ struct JournalHealthCheckTests {
         #expect(runner.invocations.first?.executable == journalBinary)
     }
 
-    @Test func doctorNonzeroReturnsStoppedWithoutParsingJSON() async {
+    @Test func doctorNonzeroValidJSONReturnsReport() async {
         let json = #"{"checks":[{"name":"port_available","status":"fail","severity":"blocker","detail":"port busy","fix":"free the port"}],"summary":null}"#
         let runner = FakeDoctorRunner(stdout: Data(json.utf8), exitCode: 1)
 
@@ -78,13 +78,33 @@ struct JournalHealthCheckTests {
             fileExists: { _ in true }
         )
 
-        guard case .stopped(let diagnostic) = result else {
-            Issue.record("expected stopped, got \(result)")
+        guard case .report(let report) = result else {
+            Issue.record("expected report, got \(result)")
             return
         }
-        #expect(diagnostic.commandLabel == "journal doctor")
-        #expect(diagnostic.exitCode == 1)
-        #expect(diagnostic.outputExcerpt?.contains("port_available") == true)
+        #expect(report.checks.count == 1)
+        #expect(report.checks[0].name == "port_available")
+        #expect(report.checks[0].status == .fail)
+        #expect(report.checks[0].fix == "free the port")
+    }
+
+    @Test func doctorNonzeroAllOKJSONReturnsReport() async {
+        let json = #"{"checks":[{"name":"service","status":"ok","severity":null,"detail":"running","fix":null}],"summary":{"total":1,"failed":0,"warnings":0,"skipped":0}}"#
+        let runner = FakeDoctorRunner(stdout: Data(json.utf8), exitCode: 1)
+
+        let result = await JournalHealthCheck.doctor(
+            journalBinary: journalBinary,
+            runner: runner,
+            fileExists: { _ in true }
+        )
+
+        guard case .report(let report) = result else {
+            Issue.record("expected report, got \(result)")
+            return
+        }
+        #expect(report.checks.count == 1)
+        #expect(report.checks[0].status == .ok)
+        #expect(report.summary == DoctorSummary(total: 1, failed: 0, warnings: 0, skipped: 0))
     }
 
     @Test func doctorMalformedJSONReturnsUnknown() async {
@@ -102,6 +122,57 @@ struct JournalHealthCheckTests {
         }
         #expect(diagnostic.commandLabel == "journal doctor")
         #expect(diagnostic.outputExcerpt?.isEmpty == false)
+    }
+
+    @Test func doctorNonzeroMalformedJSONReturnsStopped() async {
+        let runner = FakeDoctorRunner(stdout: Data("{".utf8), exitCode: 1)
+
+        let result = await JournalHealthCheck.doctor(
+            journalBinary: journalBinary,
+            runner: runner,
+            fileExists: { _ in true }
+        )
+
+        guard case .stopped(let diagnostic) = result else {
+            Issue.record("expected stopped, got \(result)")
+            return
+        }
+        #expect(diagnostic.commandLabel == "journal doctor")
+        #expect(diagnostic.exitCode == 1)
+    }
+
+    @Test func doctorEmptyOutputExitZeroReturnsUnknownNoOutput() async {
+        let runner = FakeDoctorRunner()
+
+        let result = await JournalHealthCheck.doctor(
+            journalBinary: journalBinary,
+            runner: runner,
+            fileExists: { _ in true }
+        )
+
+        guard case .unknown(let diagnostic) = result else {
+            Issue.record("expected unknown, got \(result)")
+            return
+        }
+        #expect(diagnostic.commandLabel == "journal doctor")
+        #expect(diagnostic.outputExcerpt == "no output")
+    }
+
+    @Test func doctorEmptyOutputNonzeroReturnsStopped() async {
+        let runner = FakeDoctorRunner(exitCode: 1)
+
+        let result = await JournalHealthCheck.doctor(
+            journalBinary: journalBinary,
+            runner: runner,
+            fileExists: { _ in true }
+        )
+
+        guard case .stopped(let diagnostic) = result else {
+            Issue.record("expected stopped, got \(result)")
+            return
+        }
+        #expect(diagnostic.commandLabel == "journal doctor")
+        #expect(diagnostic.exitCode == 1)
     }
 
     @Test func doctorMissingBinaryReturnsSetupNeededWithoutRunning() async {

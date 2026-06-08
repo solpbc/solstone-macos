@@ -33,11 +33,13 @@ struct MenuContent: View {
             )
         }
 
-        Divider()
+        if hasPauseResumeStartControl {
+            Divider()
 
-        // Pause / Resume / Start recording controls
-        Section {
-            pauseResumeSection
+            // Pause / Resume / Start observing controls
+            Section {
+                pauseResumeSection
+            }
         }
 
         Divider()
@@ -233,9 +235,25 @@ struct MenuContent: View {
 
     // MARK: - Pause Controls
 
+    private var hasPauseControl: Bool {
+        appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused
+    }
+
+    private var hasResumeControl: Bool {
+        appState.pauseManager.isPaused
+    }
+
+    private var hasStartControl: Bool {
+        !appState.isRecording && appState.errorMessage == nil && !appState.permissionsNeedAttention
+    }
+
+    var hasPauseResumeStartControl: Bool {
+        hasPauseControl || hasResumeControl || hasStartControl
+    }
+
     @ViewBuilder
     private var pauseResumeSection: some View {
-        if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused {
+        if hasPauseControl {
             Menu("pause") {
                 Button("15 minutes") {
                     appState.pauseManager.pause(for: .minutes(15))
@@ -255,10 +273,10 @@ struct MenuContent: View {
                 .accessibilityIdentifier(AXID.Menubar.pauseIndefinite)
             }
             .accessibilityIdentifier(AXID.Menubar.pauseMenu)
-        } else if appState.pauseManager.isPaused {
+        } else if hasResumeControl {
             Button("resume") { appState.pauseManager.resume() }
                 .accessibilityIdentifier(AXID.Menubar.resumeButton)
-        } else if !appState.isRecording && appState.errorMessage == nil && !appState.permissionsNeedAttention {
+        } else if hasStartControl {
             Button("start observing") {
                 Task {
                     await appState.startRecording()

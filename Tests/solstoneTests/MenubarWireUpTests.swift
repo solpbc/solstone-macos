@@ -38,6 +38,21 @@ struct MenubarWireUpTests {
         }
     }
 
+    @Test func pauseResumeSectionDividerIsConditional() throws {
+        let source = try readWireUpSource("Sources/solstone/MenuContent.swift")
+
+        #expect(wireUpContains(source, """
+            if hasPauseResumeStartControl {
+                Divider()
+                // Pause / Resume / Start observing controls
+                Section {
+                    pauseResumeSection
+                }
+            }
+            Divider()
+            """))
+    }
+
     // Proves registry wire-up presence, not live AX-tree attachment; device-phase AX dumps cover that.
     @Test func statusIconReferencesExpectedAXIDsAndState() throws {
         let source = try readWireUpSource("Sources/solstone/SolstoneCaptureApp.swift")

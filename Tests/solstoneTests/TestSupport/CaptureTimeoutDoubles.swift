@@ -22,6 +22,35 @@ final class RemixGate: @unchecked Sendable {
     }
 }
 
+/// One-shot gate that blocks `wait()` until `release()` is called. Used to
+/// hold a faked async operation in flight without wall-clock sleeps.
+final class OneShotContinuationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let resumeNow = lock.withLock { () -> Bool in
+                if released { return true }
+                self.continuation = continuation
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+    }
+
+    func release() {
+        let pending = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            released = true
+            let saved = continuation
+            continuation = nil
+            return saved
+        }
+        pending?.resume()
+    }
+}
+
 final class LockedCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0

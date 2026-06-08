@@ -71,6 +71,7 @@ public final class SolstoneInstaller {
     private let stagedInstallRetryBackoff: Duration
     private let stagedVerifyTimeout: Duration
     private let readinessGateTimeout: Duration
+    private var detectionInFlight = false
     private var installTask: Task<Void, Never>?
     /// Test seam: whether an install/upgrade task is currently running.
     var isInstallTaskActive: Bool { installTask != nil }
@@ -185,6 +186,10 @@ public final class SolstoneInstaller {
     }
 
     public func detect() async -> Bool {
+        guard !detectionInFlight else { return true }
+        detectionInFlight = true
+        defer { detectionInFlight = false }
+
         setMain(.detecting)
         let ownership = await solOwnershipResolver(hasLocalJournalCreds())
         switch ownership {

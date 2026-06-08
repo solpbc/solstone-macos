@@ -1844,6 +1844,34 @@ struct SolstoneInstallerTests {
         #expect(runner.invocations.isEmpty)
     }
 
+    @Test func concurrentDetectCoalescesOwnershipResolution() async {
+        let runner = FakeSubprocessRunner()
+        let resolverCalls = LockedCounter()
+        let gate = OneShotContinuationGate()
+        let installer = makeInstaller(
+            runner: runner,
+            solOwnershipResolver: { _ in
+                resolverCalls.increment()
+                await gate.wait()
+                return .absent
+            }
+        )
+
+        let first = Task { await installer.detect() }
+        await resolverCalls.waitUntilCount(1)
+        let second = Task { await installer.detect() }
+
+        let secondResult = await second.value
+        gate.release()
+        let firstResult = await first.value
+
+        #expect(secondResult)
+        #expect(!firstResult)
+        #expect(resolverCalls.count == 1)
+        #expect(installer.main == .awaitingChoice(existingInstall: false))
+        #expect(runner.invocations.isEmpty)
+    }
+
     @Test func probeVersionMapsCurrentVersion() async {
         let runner = FakeSubprocessRunner()
         runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))

@@ -6,6 +6,32 @@ import Testing
 
 @Suite("MenuContent")
 struct MenuContentTests {
+    @Test @MainActor func hasPauseResumeStartControlTruthTable() {
+        let updateController = UpdateController()
+
+        let observing = AppState.forSnapshot()
+        observing.isRecording = true
+        #expect(MenuContent(appState: observing, updateController: updateController).hasPauseResumeStartControl)
+
+        let paused = AppState.forSnapshot()
+        paused.isRecording = true
+        paused.pauseManager.pause(for: .indefinite)
+        #expect(MenuContent(appState: paused, updateController: updateController).hasPauseResumeStartControl)
+
+        let stopped = AppState.forSnapshot()
+        #expect(MenuContent(appState: stopped, updateController: updateController).hasPauseResumeStartControl)
+
+        let stoppedWithError = AppState.forSnapshot()
+        stoppedWithError.errorMessage = "offline"
+        #expect(!MenuContent(appState: stoppedWithError, updateController: updateController).hasPauseResumeStartControl)
+
+        let permissionsNeeded = AppState.forSnapshot()
+        permissionsNeeded.initialPermissionCheckComplete = true
+        permissionsNeeded.screenRecordingGranted = false
+        permissionsNeeded.microphoneGranted = false
+        #expect(!MenuContent(appState: permissionsNeeded, updateController: updateController).hasPauseResumeStartControl)
+    }
+
     @Test func pausedHeaderShowsAutoResumeCountdown() {
         #expect(pausedHeaderText(timeRemaining: "8 mins") == "paused - 8 min left")
         #expect(pausedHeaderText(timeRemaining: "1 min") == "paused - 1 min left")

@@ -46,7 +46,7 @@ enum UpdatesCopy {
     }
 
     static func lastCheckedUpToDate(relative: String) -> String {
-        "last checked \(relative) — up to date"
+        "last checked \(relative) — observer app up to date"
     }
 
     static func lastCheckedUpdateFound(relative: String, version: String) -> String {

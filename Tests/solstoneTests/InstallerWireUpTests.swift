@@ -66,6 +66,18 @@ struct InstallerWireUpTests {
         #expect(!wireUpContains(source, ".accessibilityValue(String(doctorResult == nil))"))
     }
 
+    @Test func doctorRowsUseSelectableUntruncatedText() throws {
+        let source = try readWireUpSource("Sources/solstone/BundledServiceCard.swift")
+        let checkRow = try functionSource(named: "doctorCheckRow", in: source)
+        let errorRow = try functionSource(named: "doctorErrorRow", in: source)
+
+        #expect(checkRow.components(separatedBy: ".textSelection(.enabled)").count >= 3)
+        #expect(!checkRow.contains(".lineLimit(1)"))
+        #expect(!checkRow.contains(".truncationMode(.tail)"))
+        #expect(errorRow.contains(".textSelection(.enabled)"))
+        #expect(!errorRow.contains(".lineLimit(3)"))
+    }
+
     // Proves registry wire-up presence, not live AX-tree attachment; device-phase AX dumps cover that.
     @Test func installerProgressRowReferencesExpectedAXIDs() throws {
         let source = try readWireUpSource("Sources/solstone/InstallerProgressRowView.swift")
@@ -81,6 +93,13 @@ struct InstallerWireUpTests {
         for reference in references {
             #expect(wireUpContains(source, reference))
         }
+    }
+
+    private func functionSource(named name: String, in source: String) throws -> String {
+        let range = try #require(source.range(of: "private func \(name)"))
+        let openingBrace = try #require(source[range.upperBound...].firstIndex(of: "{"))
+        let closingBrace = try #require(matchingClosingBrace(in: source, openingBrace: openingBrace))
+        return String(source[range.lowerBound...closingBrace])
     }
 
     private func matchingClosingBrace(in source: String, openingBrace: String.Index) -> String.Index? {

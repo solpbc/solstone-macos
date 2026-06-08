@@ -55,6 +55,10 @@ struct UpdatesCopyTests {
         )
     }
 
+    @Test func lastCheckedUpToDateString() {
+        #expect(UpdatesCopy.lastCheckedUpToDate(relative: "just now") == "last checked just now — observer app up to date")
+    }
+
     @Test func deferredStrings() {
         #expect(UpdatesCopy.deferredTitle(version: "1.1.0") == "deferred update 1.1.0")
         #expect(UpdatesCopy.deferredSubtitle == "deferred — will continue after journal setup.")

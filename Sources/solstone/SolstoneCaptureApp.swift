@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             service.start()
             state.ipcServiceRunning = service.isRunning
             ipcService = service
+            Task { await state.startBundledJournalDetectionIfNeeded() }
         } else {
             Logger.general.error("AppState.shared nil in applicationDidFinishLaunching")
         }

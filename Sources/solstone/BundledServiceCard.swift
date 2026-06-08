@@ -240,16 +240,14 @@ struct BundledServiceCard: View {
                     Text(detail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .textSelection(.enabled)
                 }
 
                 if let fix = check.fix, !fix.isEmpty {
                     Text(fix)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .textSelection(.enabled)
                 }
             }
         }
@@ -265,7 +263,7 @@ struct BundledServiceCard: View {
                     .foregroundStyle(.red)
                 Text(message)
                     .foregroundStyle(.red)
-                    .lineLimit(3)
+                    .textSelection(.enabled)
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier(AXID.Installer.doctorErrorState)

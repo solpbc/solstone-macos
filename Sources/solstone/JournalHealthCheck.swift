@@ -197,6 +197,24 @@ enum JournalHealthCheck {
         }
 
         let stdout = output.stdoutString
+        let trimmedStdout = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedStdout.isEmpty {
+            do {
+                return .report(try JSONDecoder().decode(DoctorReport.self, from: Data(stdout.utf8)))
+            } catch {
+                if result.exitCode != 0 {
+                    return .stopped(JournalDiagnostic(
+                        commandLabel: "journal doctor",
+                        exitCode: result.exitCode,
+                        outputExcerpt: sanitizeJournalDiagnosticOutput(output.combinedString)
+                    ))
+                }
+                return .unknown(JournalDiagnostic(
+                    commandLabel: "journal doctor",
+                    outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
+                ))
+            }
+        }
         if result.exitCode != 0 {
             return .stopped(JournalDiagnostic(
                 commandLabel: "journal doctor",
@@ -204,20 +222,10 @@ enum JournalHealthCheck {
                 outputExcerpt: sanitizeJournalDiagnosticOutput(output.combinedString)
             ))
         }
-        guard !stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return .unknown(JournalDiagnostic(
-                commandLabel: "journal doctor",
-                outputExcerpt: "no output"
-            ))
-        }
-        do {
-            return .report(try JSONDecoder().decode(DoctorReport.self, from: Data(stdout.utf8)))
-        } catch {
-            return .unknown(JournalDiagnostic(
-                commandLabel: "journal doctor",
-                outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
-            ))
-        }
+        return .unknown(JournalDiagnostic(
+            commandLabel: "journal doctor",
+            outputExcerpt: "no output"
+        ))
     }
 }
 
