@@ -40,7 +40,7 @@ struct UICopyTests {
     }
 
     @Test func settingsTabUpdatesDoneA11yString() {
-        #expect(UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y == "up to date")
+        #expect(UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y == "observer app up to date")
     }
 
     @Test func settingsAttentionPermissionsString() {

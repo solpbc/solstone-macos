@@ -8,7 +8,7 @@ public enum UICopy {
     public static let SETTINGS_NEXT_CHECK_STATUS = "next: check status →"
     public static let SETTINGS_TAB_DONE_A11Y = "configured"
     public static let SETTINGS_TAB_ATTENTION_A11Y = "needs attention"
-    public static let SETTINGS_TAB_UPDATES_DONE_A11Y = "up to date"
+    public static let SETTINGS_TAB_UPDATES_DONE_A11Y = "observer app up to date"
     public static let SETTINGS_ATTENTION_PERMISSIONS = "permissions needed"
     public static let SETTINGS_ATTENTION_JOURNAL = "journal setup needed"
     public static let SETTINGS_ATTENTION_UPDATE_AVAILABLE = "update available"
