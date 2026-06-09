@@ -33,4 +33,17 @@ struct UpdatesWireUpTests {
             #expect(wireUpContains(source, reference))
         }
     }
+
+    @Test func appUpdateControllerFinalizerStopsRecordingBeforeJournalAndWiresRecovery() throws {
+        let source = try readWireUpSource("Sources/solstone/SolstoneCaptureApp.swift")
+        let stopRecording = try #require(source.range(of: "await appState.stopRecording()"))
+        let stopJournal = try #require(source.range(of: "await appState.stopSupervisedJournalForUpdate()"))
+
+        #expect(stopRecording.lowerBound < stopJournal.lowerBound)
+        #expect(wireUpContains(source, """
+            installFailureRecovery: { @MainActor in
+                await appState.reestablishSupervisedJournalAfterFailedUpdate()
+            }
+        """))
+    }
 }

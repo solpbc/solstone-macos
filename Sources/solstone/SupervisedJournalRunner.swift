@@ -63,6 +63,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
     private var backoffIndex = 0
     private var unexpectedExitTimes: [Duration] = []
     private var stabilityTask: Task<Void, Never>?
+    private var relaunchTask: Task<Void, Never>?
 
     internal init(
         clock: any MonotonicClock = SystemMonotonicClock(),
@@ -82,6 +83,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
     }
 
     internal func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+        await cancelPendingRelaunch()
         launchRequest = LaunchRequest(runtime: runtime, journalRoot: journalRoot, port: port)
         currentKey = runtime.key
         breakerTripped = false
@@ -95,6 +97,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
         }
         statusSink(.restarting)
         stopping = true
+        await cancelPendingRelaunch()
         await stopCurrentProcess()
         stopping = false
         breakerTripped = false
@@ -103,6 +106,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
 
     internal func stop() async {
         stopping = true
+        await cancelPendingRelaunch()
         await stopCurrentProcess()
         launchRequest = nil
         currentKey = nil
@@ -112,6 +116,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
 
     internal func stopForTermination() async {
         stopping = true
+        await cancelPendingRelaunch()
         await stopCurrentProcess()
     }
 
@@ -176,12 +181,13 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
     }
 
     private func childExited(status: Int32) async {
-        let expectedStop = stopping
         process = nil
         parentWriteHandle = nil
         stabilityTask?.cancel()
         stabilityTask = nil
+        await cancelPendingRelaunch()
 
+        let expectedStop = stopping
         guard !expectedStop, !breakerTripped else { return }
         recordUnexpectedExit()
         if unexpectedExitTimes.count >= restartLimit {
@@ -194,11 +200,23 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
             return
         }
 
-        guard let launchRequest else { return }
+        guard launchRequest != nil else { return }
         let delay = backoffSchedule[min(backoffIndex, backoffSchedule.count - 1)]
         backoffIndex = min(backoffIndex + 1, backoffSchedule.count - 1)
+        relaunchTask = Task { [weak self] in
+            await self?.performBackoffRelaunch(delay: delay)
+        }
+    }
+
+    private func cancelPendingRelaunch() async {
+        relaunchTask?.cancel()
+        await relaunchTask?.value
+        relaunchTask = nil
+    }
+
+    private func performBackoffRelaunch(delay: Duration) async {
         await clock.sleep(for: delay)
-        guard !stopping, !breakerTripped else { return }
+        guard !Task.isCancelled, !stopping, !breakerTripped, let launchRequest else { return }
         do {
             try await launch(runtime: launchRequest.runtime, journalRoot: launchRequest.journalRoot, port: launchRequest.port)
         } catch {

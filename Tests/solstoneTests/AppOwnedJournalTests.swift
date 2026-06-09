@@ -154,6 +154,65 @@ struct AppOwnedJournalTests {
         #expect(runner.markReadyCalls == 1)
     }
 
+    @Test func reestablishAfterFailedUpdateRespawnsChild() async throws {
+        let journalRoot = try makeTemporaryDirectory()
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled, journalPath: journalRoot.path))
+        let runner = MockSupervisedChildRunner()
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.singleSupervisorGate = MockSingleSupervisorGate()
+        state.supervisedJournalRunner = runner
+        state.journalReadinessGate = MockJournalReadinessGate(result: .ready)
+
+        await state.reestablishSupervisedJournalAfterFailedUpdate()
+
+        #expect(runner.startCalls == 1)
+        #expect(runner.markReadyCalls == 1)
+    }
+
+    @Test func reestablishExternallyManagedIsNoOpStart() async throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        let runner = MockSupervisedChildRunner()
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in
+            .externallyManaged(solPath: "/opt/sol/bin/sol")
+        }
+        state.supervisedJournalRunner = runner
+
+        await state.reestablishSupervisedJournalAfterFailedUpdate()
+
+        #expect(runner.startCalls == 0)
+    }
+
+    @Test func stopForUpdateStopsChildBundled() async {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        let runner = MockSupervisedChildRunner()
+        state.supervisedJournalRunner = runner
+
+        await state.stopSupervisedJournalForUpdate()
+
+        #expect(runner.stopCalls == 1)
+    }
+
+    @Test func stopForUpdateNonBundledIsNoOp() async {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .external))
+        let runner = MockSupervisedChildRunner()
+        state.supervisedJournalRunner = runner
+
+        await state.stopSupervisedJournalForUpdate()
+
+        #expect(runner.stopCalls == 0)
+    }
+
+    @Test func reestablishNonBundledIsNoOp() async {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .external))
+        let runner = MockSupervisedChildRunner()
+        state.supervisedJournalRunner = runner
+
+        await state.reestablishSupervisedJournalAfterFailedUpdate()
+
+        #expect(runner.startCalls == 0)
+    }
+
     @Test func runtimeMaterializerDoesNotDeleteLiveChildKey() async throws {
         let workspace = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: workspace) }
@@ -413,6 +472,65 @@ struct AppOwnedJournalTests {
         #expect(await runner.currentRuntimeKey() == runtime.key)
     }
 
+    @Test func stopCancelsArmedBackoffRelaunchBeforeSecondSpawn() async throws {
+        let marker = try makeTemporaryDirectory().appendingPathComponent("launches.txt")
+        let runtime = try makeMarkerExitingRuntime(markerURL: marker)
+        let clock = ControllableMonotonicClock()
+        let recorder = StatusRecorder()
+        let runner = SupervisedJournalRunner(clock: clock, statusSink: { status in
+            recorder.append(status)
+        })
+
+        try await runner.start(runtime: runtime, journalRoot: try makeTemporaryDirectory(), port: 5015)
+        try await waitUntil {
+            launchCount(at: marker) == 1 && clock.sleepingCount >= 1
+        }
+
+        await runner.stop()
+
+        #expect(launchCount(at: marker) == 1)
+        #expect(await runner.currentRuntimeKey() == nil)
+    }
+
+    @Test func stopForTerminationCancelsArmedBackoffRelaunchAndRetainsKey() async throws {
+        let marker = try makeTemporaryDirectory().appendingPathComponent("launches.txt")
+        let runtime = try makeMarkerExitingRuntime(markerURL: marker)
+        let clock = ControllableMonotonicClock()
+        let recorder = StatusRecorder()
+        let runner = SupervisedJournalRunner(clock: clock, statusSink: { status in
+            recorder.append(status)
+        })
+
+        try await runner.start(runtime: runtime, journalRoot: try makeTemporaryDirectory(), port: 5015)
+        try await waitUntil {
+            launchCount(at: marker) == 1 && clock.sleepingCount >= 1
+        }
+
+        await runner.stopForTermination()
+
+        #expect(launchCount(at: marker) == 1)
+        #expect(await runner.currentRuntimeKey() == runtime.key)
+    }
+
+    @Test func stopReturnsAndKillsWedgedChild() async throws {
+        let runtime = try makeSleepingRuntime()
+        let signals = SignalRecorder()
+        let runner = SupervisedJournalRunner(
+            clock: FakeMonotonicClock(),
+            statusSink: { _ in },
+            terminate: { pid, signal in
+                signals.append(pid: pid, signal: signal)
+                return Darwin.kill(pid, signal)
+            }
+        )
+
+        try await runner.start(runtime: runtime, journalRoot: try makeTemporaryDirectory(), port: 5015)
+        await runner.stop()
+
+        #expect(signals.values.map(\.signal) == [SIGTERM, SIGKILL])
+        #expect(await runner.currentRuntimeKey() == nil)
+    }
+
     @Test func terminationHandshakeRepliesWhenChildIsWedged() async throws {
         let runtime = try makeSleepingRuntime()
         let runner = SupervisedJournalRunner(
@@ -542,6 +660,68 @@ private final class FakeMonotonicClock: MonotonicClock, @unchecked Sendable {
     }
 }
 
+private final class ControllableMonotonicClock: MonotonicClock, @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Duration = .zero
+    private var sleepers: [ControllableSleepWaiter] = []
+
+    var sleepingCount: Int {
+        lock.withLock { sleepers.count }
+    }
+
+    func now() -> Duration {
+        lock.withLock { value }
+    }
+
+    func sleep(for duration: Duration) async {
+        let waiter = ControllableSleepWaiter()
+        lock.withLock {
+            value += duration
+            sleepers.append(waiter)
+        }
+
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                waiter.setContinuation(continuation)
+            }
+        } onCancel: {
+            waiter.resume()
+        }
+    }
+
+}
+
+private final class ControllableSleepWaiter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var resumed = false
+
+    func setContinuation(_ continuation: CheckedContinuation<Void, Never>) {
+        var shouldResume = false
+        lock.withLock {
+            if resumed {
+                shouldResume = true
+            } else {
+                self.continuation = continuation
+            }
+        }
+        if shouldResume {
+            continuation.resume()
+        }
+    }
+
+    func resume() {
+        let continuation = lock.withLock {
+            guard !resumed else { return nil as CheckedContinuation<Void, Never>? }
+            resumed = true
+            let continuation = self.continuation
+            self.continuation = nil
+            return continuation
+        }
+        continuation?.resume()
+    }
+}
+
 private final class SequencedPIDProbe: @unchecked Sendable {
     private let lock = NSLock()
     private var aliveResponses: [Bool]
@@ -626,6 +806,14 @@ private func makeSleepingRuntime() throws -> MaterializedRuntime {
     try makeScriptRuntime(script: "#!/bin/sh\ntrap '' TERM\nsleep 30\n")
 }
 
+private func makeMarkerExitingRuntime(markerURL: URL) throws -> MaterializedRuntime {
+    try makeScriptRuntime(script: """
+    #!/bin/sh
+    printf 'launch\\n' >> \(shellSingleQuoted(markerURL.path))
+    exit 1
+    """)
+}
+
 private func makeScriptRuntime(script: String) throws -> MaterializedRuntime {
     let root = try makeTemporaryDirectory()
     let layout = SolstoneRuntimeLayout(rootURL: root)
@@ -633,6 +821,18 @@ private func makeScriptRuntime(script: String) throws -> MaterializedRuntime {
     try Data(script.utf8).write(to: layout.journalBinary)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: layout.journalBinary.path)
     return MaterializedRuntime(key: UUID().uuidString, layout: layout)
+}
+
+private func launchCount(at url: URL) -> Int {
+    guard let data = try? Data(contentsOf: url),
+          let text = String(data: data, encoding: .utf8) else {
+        return 0
+    }
+    return text.split(separator: "\n").count
+}
+
+private func shellSingleQuoted(_ value: String) -> String {
+    "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
 }
 
 private func makeTemporaryDirectory() throws -> URL {

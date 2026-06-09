@@ -1209,6 +1209,16 @@ public final class AppState {
         await supervisedJournalRunner.stopForTermination()
     }
 
+    public func stopSupervisedJournalForUpdate() async {
+        guard config.serviceMode == .bundled else { return }
+        await supervisedJournalRunner.stop()
+    }
+
+    public func reestablishSupervisedJournalAfterFailedUpdate() async {
+        guard config.serviceMode == .bundled else { return }
+        _ = await runBundledJournalStartup()
+    }
+
     private func emitJournalRestartLog(step: JournalRestartStep, outcome: String, detail: String?) {
         let event = JournalRestartLogEvent(step: step, outcome: outcome, detail: detail)
         let detailSuffix = detail.map { " detail=\($0)" } ?? ""

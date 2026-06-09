@@ -201,6 +201,10 @@ struct SolstoneCaptureApp: App {
                 if appState.isRecording {
                     await appState.stopRecording()
                 }
+                await appState.stopSupervisedJournalForUpdate()
+            },
+            installFailureRecovery: { @MainActor in
+                await appState.reestablishSupervisedJournalAfterFailedUpdate()
             }
         ))
     }

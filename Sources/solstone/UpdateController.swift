@@ -9,6 +9,7 @@ final class UpdateController {
     typealias UpdaterFactory = @MainActor (SparkleUserDriver, any SPUUpdaterDelegate) -> SPUUpdater?
     typealias ExclusivityProvider = @MainActor () -> Bool
     typealias PreInstallFinalizer = @MainActor () async -> Void
+    typealias InstallFailureRecovery = @MainActor () async -> Void
     typealias RunningVersionProvider = @MainActor () -> String
 
     private static let statusKey = "solstone.updates.status"
@@ -29,6 +30,7 @@ final class UpdateController {
     private let updaterDelegate: SparkleUpdaterDelegateAdapter
     private let exclusivityProvider: ExclusivityProvider?
     private let preInstallFinalizer: PreInstallFinalizer?
+    private let installFailureRecovery: InstallFailureRecovery?
 
     private var updater: SPUUpdater?
     private var updaterStarted = false
@@ -37,6 +39,7 @@ final class UpdateController {
     private var expectedContentLength: UInt64?
     private var blockedAutomaticCheckDuringExclusive = false
     private var installFinalizationInFlight = false
+    private var installFinalizationCommitted = false
     private var pendingDownloadIntent = false
     private var _automaticChecksEnabled: Bool = true
     private var _updateCheckInterval: TimeInterval = 86_400
@@ -126,6 +129,7 @@ final class UpdateController {
         },
         exclusivity: ExclusivityProvider? = nil,
         preInstallFinalizer: PreInstallFinalizer? = nil,
+        installFailureRecovery: InstallFailureRecovery? = nil,
         updaterFactory: @escaping UpdaterFactory
     ) {
         let info = Bundle.main.infoDictionary
@@ -134,6 +138,7 @@ final class UpdateController {
         self.updaterDelegate = SparkleUpdaterDelegateAdapter()
         self.exclusivityProvider = exclusivity
         self.preInstallFinalizer = preInstallFinalizer
+        self.installFailureRecovery = installFailureRecovery
         self.canCheckForUpdates = Self.validateSparkleConfig(
             feedURL: feedURL ?? info?["SUFeedURL"] as? String,
             publicKey: publicKey ?? info?["SUPublicEDKey"] as? String
@@ -166,11 +171,13 @@ final class UpdateController {
 
     convenience init(
         exclusivity: ExclusivityProvider? = nil,
-        preInstallFinalizer: PreInstallFinalizer? = nil
+        preInstallFinalizer: PreInstallFinalizer? = nil,
+        installFailureRecovery: InstallFailureRecovery? = nil
     ) {
         self.init(
             exclusivity: exclusivity,
-            preInstallFinalizer: preInstallFinalizer
+            preInstallFinalizer: preInstallFinalizer,
+            installFailureRecovery: installFailureRecovery
         ) { userDriver, delegate in
             SPUUpdater(
                 hostBundle: .main,
@@ -332,6 +339,10 @@ final class UpdateController {
     }
 
     func presentUpdaterError(_ error: Error) {
+        if installFinalizationCommitted {
+            installFinalizationCommitted = false
+            Task { @MainActor in await installFailureRecovery?() }
+        }
         Logger.setup.error("Sparkle error: \(String(describing: error), privacy: .public)")
         clearPendingInteractions()
         activity = .idle
@@ -381,6 +392,7 @@ final class UpdateController {
     }
 
     func installingUpdate() {
+        installFinalizationCommitted = false
         clearPendingCancellation()
         activity = .installing(version: availableUpdate?.version ?? "")
     }
@@ -534,6 +546,7 @@ final class UpdateController {
         // exclusivity is not re-checked before handing control back to Sparkle.
         Task { @MainActor in
             await preInstallFinalizer?()
+            installFinalizationCommitted = true
             reply(.install)
             installFinalizationInFlight = false
         }

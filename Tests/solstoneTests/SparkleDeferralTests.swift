@@ -205,6 +205,91 @@ struct SparkleDeferralTests {
         #expect(installReplyCount == 1)
     }
 
+    @Test func recoveryFiresOnErrorAfterCommittedInstall() async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: gate.run,
+            installFailureRecovery: {
+                gate.events.append("recovery")
+            }
+        )
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { choice in
+                if choice == .install {
+                    gate.events.append("sparkle-install")
+                }
+            }
+        )
+
+        controller.install()
+        await yieldUntil { gate.started }
+        gate.release()
+        await yieldUntil { gate.events.contains("sparkle-install") }
+
+        controller.presentUpdaterError(NSError(domain: "test", code: 1))
+        await yieldUntil { gate.events.contains("recovery") }
+
+        #expect(gate.events == ["finalizer-start", "finalizer-end", "sparkle-install", "recovery"])
+    }
+
+    @Test func recoveryDoesNotFireOnSuccessPath() async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: gate.run,
+            installFailureRecovery: {
+                gate.events.append("recovery")
+            }
+        )
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { choice in
+                if choice == .install {
+                    gate.events.append("sparkle-install")
+                }
+            }
+        )
+
+        controller.install()
+        await yieldUntil { gate.started }
+        gate.release()
+        await yieldUntil { gate.events.contains("sparkle-install") }
+
+        controller.installingUpdate()
+        controller.presentUpdaterError(NSError(domain: "test", code: 1))
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+
+        #expect(!gate.events.contains("recovery"))
+    }
+
+    @Test func recoveryDoesNotFireOnPreInstallError() async {
+        let signal = ExclusiveSignal()
+        var recoveryCalls = 0
+        let controller = makeController(
+            exclusivity: signal,
+            installFailureRecovery: {
+                recoveryCalls += 1
+            }
+        )
+
+        controller.presentUpdaterError(NSError(domain: "test", code: 1))
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+
+        #expect(recoveryCalls == 0)
+    }
+
     @Test func durableAvailableWithoutLiveReplyDownloadStartsCheck() {
         let signal = ExclusiveSignal()
         let controller = makeController(exclusivity: signal)
@@ -418,14 +503,16 @@ struct SparkleDeferralTests {
 
     private func makeController(
         exclusivity signal: ExclusiveSignal,
-        preInstallFinalizer: UpdateController.PreInstallFinalizer? = nil
+        preInstallFinalizer: UpdateController.PreInstallFinalizer? = nil,
+        installFailureRecovery: UpdateController.InstallFailureRecovery? = nil
     ) -> UpdateController {
         clearDefaults()
         return UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
             exclusivity: { signal.value },
-            preInstallFinalizer: preInstallFinalizer
+            preInstallFinalizer: preInstallFinalizer,
+            installFailureRecovery: installFailureRecovery
         ) { _, _ in
             nil
         }
