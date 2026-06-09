@@ -94,7 +94,7 @@ struct SolOwnershipTests {
         let layout = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.8"))
         try layout.ensureCreated()
         try Data("sol\n".utf8).write(to: layout.solBinary)
-        try layout.activate()
+        try FileManager.default.createSymbolicLink(atPath: layout.currentLink.path, withDestinationPath: "versions/0.4.8")
         let runner = FakeSubprocessRunner()
         runner.enqueue("sol", .success(stdout: Data("/opt/which/sol\n".utf8)))
         let resolver = SolOwnership.defaultResolver(

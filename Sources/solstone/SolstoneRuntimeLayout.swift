@@ -2,7 +2,6 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
-import Darwin
 
 struct SolstoneRuntimeLayout: Sendable {
     enum Mode: Sendable, Equatable {
@@ -101,10 +100,6 @@ struct SolstoneRuntimeLayout: Sendable {
         return SolstoneRuntimeLayout(rootURL: rootURL)
     }
 
-    static func staging(rootURL: URL = defaultRootURL, version: String) -> SolstoneRuntimeLayout {
-        SolstoneRuntimeLayout(rootURL: rootURL, mode: .versioned(version))
-    }
-
     static func solCandidatePaths(rootURL: URL = defaultRootURL) -> [String] {
         var paths: [String] = []
         if let version = readActiveVersion(rootURL: rootURL) {
@@ -112,32 +107,6 @@ struct SolstoneRuntimeLayout: Sendable {
         }
         paths.append(SolstoneRuntimeLayout(rootURL: rootURL).solBinary.path)
         return paths
-    }
-
-    func activate() throws {
-        guard case .versioned(let id) = mode else {
-            throw ActivationError.cannotActivateFlatLayout
-        }
-
-        let fileManager = FileManager.default
-        let target = versionRoot(id)
-        var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: target.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw ActivationError.versionDirectoryMissing(target.path)
-        }
-
-        try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let tempLink = rootURL.appendingPathComponent(".current.new-\(UUID().uuidString)")
-        let relativeTarget = "versions/\(id)"
-        do {
-            try fileManager.createSymbolicLink(atPath: tempLink.path, withDestinationPath: relativeTarget)
-            if Darwin.rename(tempLink.path, currentLink.path) != 0 {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            }
-        } catch {
-            try? fileManager.removeItem(at: tempLink)
-            throw error
-        }
     }
 
     func uvEnvironment() -> [String: String] {
@@ -152,19 +121,5 @@ struct SolstoneRuntimeLayout: Sendable {
 
     private func versionRoot(_ id: String) -> URL {
         versionsDir.appendingPathComponent(id, isDirectory: true)
-    }
-
-    enum ActivationError: LocalizedError, Equatable {
-        case cannotActivateFlatLayout
-        case versionDirectoryMissing(String)
-
-        var errorDescription: String? {
-            switch self {
-            case .cannotActivateFlatLayout:
-                return "cannot activate a flat runtime layout"
-            case .versionDirectoryMissing(let path):
-                return "version directory missing at \(path)"
-            }
-        }
     }
 }

@@ -374,8 +374,7 @@ struct AppOwnedJournalTests {
             wheelhouseURL: wheelhouse,
             runtimeRootURL: runtimeRoot,
             subprocessRunner: runner,
-            failureRecordStore: InMemoryUpgradeFailureRecordStore(),
-            inProgressMarkerStore: InMemoryInProgressUpgradeMarkerStore()
+            failureRecordStore: InMemoryUpgradeFailureRecordStore()
         )
         defer { installer.cancel() }
 

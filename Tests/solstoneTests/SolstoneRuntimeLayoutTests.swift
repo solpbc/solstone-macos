@@ -119,35 +119,12 @@ struct SolstoneRuntimeLayoutTests {
         #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: root) == nil)
     }
 
-    @Test func activateWritesRelativeCurrentSymlinkAndReplacesExisting() throws {
-        let root = try makeTemporaryDirectory().appendingPathComponent("runtime", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
-        let first = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.8"))
-        let second = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.9"))
-        try first.ensureCreated()
-        try second.ensureCreated()
-
-        try first.activate()
-        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: first.currentLink.path) == "versions/0.4.8")
-        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: root) == "0.4.8")
-
-        try second.activate()
-        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: first.currentLink.path) == "versions/0.4.9")
-        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: root) == "0.4.9")
-    }
-
-    @Test func flatActivateThrows() throws {
-        #expect(throws: SolstoneRuntimeLayout.ActivationError.self) {
-            try SolstoneRuntimeLayout(rootURL: try makeTemporaryDirectory()).activate()
-        }
-    }
-
     @Test func solCandidatePathsPreferActiveVersionThenFlat() throws {
         let root = try makeTemporaryDirectory().appendingPathComponent("runtime", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
         let layout = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.8"))
         try layout.ensureCreated()
-        try layout.activate()
+        try FileManager.default.createSymbolicLink(atPath: layout.currentLink.path, withDestinationPath: "versions/0.4.8")
 
         #expect(SolstoneRuntimeLayout.solCandidatePaths(rootURL: root) == [
             root.appendingPathComponent("versions/0.4.8/bin/sol").path,
