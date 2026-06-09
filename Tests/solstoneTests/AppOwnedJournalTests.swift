@@ -203,6 +203,114 @@ struct AppOwnedJournalTests {
         #expect(runner.stopCalls == 0)
     }
 
+    @Test func requestJournalStopStopsBundledChildAndMarksStoppedByUser() async throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        let runner = MockSupervisedChildRunner()
+        state.supervisedJournalRunner = runner
+
+        state.requestJournalStop()
+        try await waitUntilMain { state.journalRuntimeStatus.isStoppedByUser }
+
+        #expect(runner.stopCalls == 1)
+        #expect(state.journalRuntimeStatus == .stoppedByUser)
+    }
+
+    @Test func requestJournalStopExternalModeIsNoOp() {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .external))
+        let runner = MockSupervisedChildRunner()
+        state.supervisedJournalRunner = runner
+
+        state.requestJournalStop()
+
+        #expect(runner.stopCalls == 0)
+        #expect(state.journalRuntimeStatus == .running)
+    }
+
+    @Test func requestJournalStartExternalModeIsNoOp() async throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .external))
+        let runner = MockSupervisedChildRunner()
+        state.journalRuntimeStatus = .stoppedByUser
+        state.supervisedJournalRunner = runner
+
+        state.requestJournalStart()
+        try await Task.sleep(for: .milliseconds(10))
+
+        #expect(runner.startCalls == 0)
+        #expect(state.journalRuntimeStatus == .stoppedByUser)
+    }
+
+    @Test func requestJournalStartRunsBundledStartupAndMarksRunning() async throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        let runner = MockSupervisedChildRunner()
+        state.journalRuntimeStatus = .stoppedByUser
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.supervisedJournalRunner = runner
+        state.singleSupervisorGate = MockSingleSupervisorGate()
+        state.journalReadinessGate = MockJournalReadinessGate(result: .ready)
+
+        state.requestJournalStart()
+        try await waitUntilMain { state.journalRuntimeStatus == .running && runner.startCalls == 1 }
+
+        #expect(state.journalRuntimeStatus == .running)
+        #expect(runner.startCalls == 1)
+    }
+
+    @Test func requestJournalStartFailureLeavesAttentionStatusAndErrorMessage() async throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        let runner = MockSupervisedChildRunner()
+        state.journalRuntimeStatus = .stoppedByUser
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .failure(FakeError("materialize failed")))
+        state.supervisedJournalRunner = runner
+
+        state.requestJournalStart()
+        try await waitUntilMain { state.errorMessage != nil }
+
+        #expect(state.journalRuntimeStatus != .stoppedByUser)
+        #expect(state.journalRuntimeStatus != .running)
+        if case .unknown = state.journalRuntimeStatus {
+        } else {
+            Issue.record("expected unknown attention status")
+        }
+        #expect(state.errorMessage != nil)
+    }
+
+    @Test func requestJournalStartAfterCleanStopDoesNotTeardownLegacyJob() async throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        let runner = MockSupervisedChildRunner()
+        let migrator = MockLegacyMigrator()
+        state.supervisedJournalRunner = runner
+
+        state.requestJournalStop()
+        try await waitUntilMain { state.journalRuntimeStatus.isStoppedByUser }
+
+        state.legacyJournalMigrator = migrator
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.singleSupervisorGate = MockSingleSupervisorGate()
+        state.journalReadinessGate = MockJournalReadinessGate(result: .ready)
+
+        state.requestJournalStart()
+        try await waitUntilMain { state.journalRuntimeStatus == .running && runner.startCalls == 1 }
+
+        #expect(state.journalRuntimeStatus == .running)
+        #expect(runner.startCalls == 1)
+        #expect(migrator.teardownCalls == 0)
+    }
+
+    @Test func requestJournalStopIsReentrantNoOpWhileInFlight() async throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        let runner = MockSupervisedChildRunner()
+        state.supervisedJournalRunner = runner
+
+        state.requestJournalStop()
+        state.requestJournalStop()
+        try await waitUntilMain { state.journalRuntimeStatus.isStoppedByUser }
+
+        #expect(runner.stopCalls == 1)
+    }
+
     @Test func reestablishNonBundledIsNoOp() async {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .external))
         let runner = MockSupervisedChildRunner()

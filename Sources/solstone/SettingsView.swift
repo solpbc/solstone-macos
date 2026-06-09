@@ -672,6 +672,8 @@ struct SettingsView: View {
             case .bundled:
                 BundledServiceCard(appState: appState, allowsLocalJournalActions: true)
                 journalRestartControl
+                journalStopControl
+                journalStartControl
             case .external:
                 if shouldShowBundledStatusSurface(cardState: cardState) {
                     BundledServiceCard(appState: appState, allowsLocalJournalActions: false)
@@ -734,6 +736,45 @@ struct SettingsView: View {
 
     private var journalRestartControlVisible: Bool {
         appState.journalRuntimeStatus.canOfferRestart
+    }
+
+    @ViewBuilder
+    private var journalStopControl: some View {
+        if appState.config.serviceMode == .bundled
+            && appState.bundledJournalRestartAvailable
+            && !appState.restartRequiredBannerVisible
+            && journalStopControlVisible {
+            Button {
+                appState.requestJournalStop()
+            } label: {
+                Label(UICopy.STOP_JOURNAL, systemImage: "stop.circle")
+            }
+            .accessibilityIdentifier(AXID.Settings.Service.stopJournalButton)
+        }
+    }
+
+    @ViewBuilder
+    private var journalStartControl: some View {
+        if appState.config.serviceMode == .bundled
+            && appState.bundledJournalRestartAvailable
+            && !appState.restartRequiredBannerVisible
+            && journalStartControlVisible {
+            Button {
+                appState.requestJournalStart()
+            } label: {
+                Label(UICopy.START_JOURNAL, systemImage: "play.circle")
+            }
+            .accessibilityIdentifier(AXID.Settings.Service.startJournalButton)
+        }
+    }
+
+    private var journalStopControlVisible: Bool {
+        if case .running = appState.journalRuntimeStatus { return true }
+        return false
+    }
+
+    private var journalStartControlVisible: Bool {
+        appState.journalRuntimeStatus.isStoppedByUser
     }
 
     private func tradeoffLine(label: String, text: String) -> some View {

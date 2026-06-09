@@ -61,6 +61,8 @@ enum AXID {
         enum Service {
             static let restartRequiredBanner = "settings.service.restartRequired.banner"
             static let restartJournalButton = "settings.service.journal.restart"
+            static let stopJournalButton = "settings.service.journal.stop"
+            static let startJournalButton = "settings.service.journal.start"
             static let prereqPermissions = "settings.service.prereq.permissions"
             static let journalModePicker = "settings.service.journalMode.picker"
             static let journalModeState = "settings.service.journalMode.state"

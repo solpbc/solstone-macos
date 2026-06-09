@@ -275,7 +275,8 @@ extension JournalRuntimeStatus {
         "journal_restarting",
         "journal_setup_needed",
         "journal_stopped",
-        "journal_unknown"
+        "journal_unknown",
+        "journal_stopped_by_user"
     ]
 }
 

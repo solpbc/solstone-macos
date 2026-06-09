@@ -258,6 +258,31 @@ struct JournalRuntimeProbeTests {
         #expect(runner.invocations.isEmpty)
     }
 
+    @Test func journalProbeTickDoesNotClobberStoppedByUser() async {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        state.installer.main = .done
+        state.journalRuntimeStatus = .stoppedByUser
+        state.journalRuntimeFileExists = { _ in true }
+        let stoppedRunner = FakeSubprocessRunner()
+        stoppedRunner.enqueue("health", .success(stderr: Data("down\n".utf8), exitCode: 1))
+        state.journalRuntimeProbeRunner = stoppedRunner
+
+        await state.journalProbeTick()
+
+        #expect(state.journalRuntimeStatus == .stoppedByUser)
+        #expect(stoppedRunner.invocations.isEmpty)
+
+        let runningRunner = FakeSubprocessRunner()
+        runningRunner.enqueue("health", .success(stderr: Data("down\n".utf8), exitCode: 1))
+        state.journalRuntimeStatus = .running
+        state.journalRuntimeProbeRunner = runningRunner
+
+        await state.journalProbeTick()
+
+        #expect(state.journalRuntimeStatus == .running)
+        #expect(runningRunner.invocations.count == 1)
+    }
+
     @Test func externalModeSkipsProbeButRunsJournalRestartRunner() async throws {
         let journalRoot = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: journalRoot) }

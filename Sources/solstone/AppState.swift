@@ -104,6 +104,8 @@ public final class AppState {
     private var journalProbeTimer: Timer?
     private var hasStartedBundledJournalDetection = false
     private var journalRestartTask: Task<Void, Never>?
+    private var journalStopTask: Task<Void, Never>?
+    private var journalStartTask: Task<Void, Never>?
     private var bundledJournalStartupTask: Task<Void, Never>?
     internal private(set) var journalDependentServicesReady = false
     private var currentMaterializedRuntime: MaterializedRuntime?
@@ -257,6 +259,10 @@ public final class AppState {
 
     internal var bundledJournalRestartAvailable: Bool {
         bundledJournalStatusAvailable && !journalRuntimeStatus.isSetupNeeded
+    }
+
+    private var journalLifecycleBusy: Bool {
+        journalRestartTask != nil || journalStopTask != nil || journalStartTask != nil
     }
 
     // MARK: - Login Item
@@ -611,6 +617,8 @@ public final class AppState {
             permissionPollTimer?.invalidate()
             journalProbeTimer?.invalidate()
             journalRestartTask?.cancel()
+            journalStopTask?.cancel()
+            journalStartTask?.cancel()
             bundledJournalStartupTask?.cancel()
         }
     }
@@ -1016,6 +1024,7 @@ public final class AppState {
         }
         guard !installer.upgradeInProgress else { return }
         guard !journalRuntimeStatus.isRestarting else { return }
+        guard !journalRuntimeStatus.isStoppedByUser else { return }
 
         let outcome = await JournalRuntimeProbe.run(
             journalBinary: journalBinaryProvider(),
@@ -1053,7 +1062,7 @@ public final class AppState {
     public func requestJournalRestart() {
         if config.serviceMode == .bundled {
             guard !journalRuntimeStatus.isSetupNeeded else { return }
-            guard journalRestartTask == nil else {
+            guard !journalLifecycleBusy else {
                 emitJournalRestartLog(step: .serviceRestart, outcome: "noop", detail: "already-running")
                 return
             }
@@ -1062,12 +1071,57 @@ public final class AppState {
             }
             return
         }
-        guard journalRestartTask == nil else {
+        guard !journalLifecycleBusy else {
             emitJournalRestartLog(step: .serviceRestart, outcome: "noop", detail: "already-running")
             return
         }
         journalRestartTask = Task { @MainActor [weak self] in
             await self?.runJournalRestart()
+        }
+    }
+
+    public func requestJournalStop() {
+        guard config.serviceMode == .bundled else { return }
+        guard case .running = journalRuntimeStatus else { return }
+        guard !journalLifecycleBusy else {
+            emitJournalRestartLog(step: .serviceRestart, outcome: "noop", detail: "already-running")
+            return
+        }
+        journalStopTask = Task { @MainActor [weak self] in
+            await self?.runJournalStop()
+        }
+    }
+
+    private func runJournalStop() async {
+        defer { journalStopTask = nil }
+        guard config.serviceMode == .bundled else { return }
+        await supervisedJournalRunner.stop()
+        journalRuntimeDebounceState.reset()
+        journalRuntimeStatus = .stoppedByUser
+    }
+
+    public func requestJournalStart() {
+        guard config.serviceMode == .bundled else { return }
+        guard journalRuntimeStatus.isStoppedByUser else { return }
+        guard !journalLifecycleBusy else {
+            emitJournalRestartLog(step: .serviceRestart, outcome: "noop", detail: "already-running")
+            return
+        }
+        journalStartTask = Task { @MainActor [weak self] in
+            await self?.runJournalStart()
+        }
+    }
+
+    private func runJournalStart() async {
+        defer { journalStartTask = nil }
+        guard config.serviceMode == .bundled else { return }
+        let preStartError = errorMessage
+        let ready = await runBundledJournalStartup()
+        if ready {
+            journalRuntimeStatus = .running
+            errorMessage = preStartError
+        } else if errorMessage == nil {
+            errorMessage = "start failed — journal didn't come back"
         }
     }
 

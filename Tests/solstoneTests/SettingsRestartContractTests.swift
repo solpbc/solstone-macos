@@ -158,6 +158,59 @@ struct SettingsRestartContractTests {
         #expect(!restartRunner.invocations.contains { $0.arguments == ["service", "restart"] })
     }
 
+    @Test func runJournalStartRoutesThroughBundledStartupOnly() throws {
+        let source = try readSource("Sources/solstone/AppState.swift")
+        let body = try extract(
+            from: source,
+            start: "private func runJournalStart() async",
+            end: "    // TODO(v1.1)"
+        )
+
+        #expect(body.contains("runBundledJournalStartup()"))
+        #expect(!body.contains(".start(runtime:"))
+    }
+
+    @Test func journalLifecycleRequestsUseTaskHandleMutualExclusion() throws {
+        let source = try readSource("Sources/solstone/AppState.swift")
+        let restartBody = try extract(
+            from: source,
+            start: "public func requestJournalRestart()",
+            end: "public func requestJournalStop()"
+        )
+        let stopBody = try extract(
+            from: source,
+            start: "public func requestJournalStop()",
+            end: "public func requestJournalStart()"
+        )
+        let startBody = try extract(
+            from: source,
+            start: "public func requestJournalStart()",
+            end: "    // TODO(v1.1)"
+        )
+
+        #expect(restartBody.contains("journalLifecycleBusy"))
+        #expect(stopBody.contains("journalLifecycleBusy"))
+        #expect(startBody.contains("journalLifecycleBusy"))
+    }
+
+    @Test func bundledServiceSectionReferencesJournalStopStartControls() throws {
+        let source = try readSource("Sources/solstone/SettingsView.swift")
+        let body = try extract(
+            from: source,
+            start: "private var serviceSection: some View",
+            end: "private func tradeoffLine"
+        )
+
+        #expect(body.contains("journalStopControl"))
+        #expect(body.contains("journalStartControl"))
+        #expect(body.contains("AXID.Settings.Service.stopJournalButton"))
+        #expect(body.contains("AXID.Settings.Service.startJournalButton"))
+        #expect(body.contains("UICopy.STOP_JOURNAL"))
+        #expect(body.contains("UICopy.START_JOURNAL"))
+        #expect(body.contains("appState.requestJournalStop()"))
+        #expect(body.contains("appState.requestJournalStart()"))
+    }
+
     @Test func failedRestartLeavesBannerVisible() async throws {
         let temp = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: temp) }

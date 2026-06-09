@@ -74,6 +74,7 @@ struct UICopyTests {
         #expect(UICopy.JOURNAL_STATUS_RESTARTING == "restarting\u{2026}")
         #expect(UICopy.JOURNAL_STATUS_SETUP_NEEDED == "setup needed")
         #expect(UICopy.JOURNAL_STATUS_NEEDS_ATTENTION == "needs attention")
+        #expect(UICopy.JOURNAL_STATUS_STOPPED == "stopped")
     }
 
     @Test func journalWaitingMenuStrings() {
@@ -83,6 +84,8 @@ struct UICopyTests {
 
     @Test func journalRestartAndSetupStrings() {
         #expect(UICopy.RESTART_JOURNAL == "restart journal")
+        #expect(UICopy.STOP_JOURNAL == "stop journal")
+        #expect(UICopy.START_JOURNAL == "start journal")
         #expect(UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE == "journal setup needed before upgrade can continue")
     }
 

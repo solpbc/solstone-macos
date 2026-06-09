@@ -211,7 +211,9 @@ struct SolstoneCaptureApp: App {
 
     private var statusAccessibilityLabel: String {
         let baseLabel: String
-        if appState.bundledJournalStatusAvailable && appState.journalRuntimeStatus != .running {
+        if appState.bundledJournalStatusAvailable
+            && appState.journalRuntimeStatus != .running
+            && !appState.journalRuntimeStatus.isStoppedByUser {
             baseLabel = switch appState.journalRuntimeStatus {
             case .setupNeeded:
                 "solstone observer — journal setup needed"
@@ -219,7 +221,7 @@ struct SolstoneCaptureApp: App {
                 "solstone observer — journal restarting"
             case .stopped, .unknown:
                 "solstone observer — journal needs attention"
-            case .running:
+            case .running, .stoppedByUser:
                 "solstone observer"
             }
         } else if appState.errorMessage != nil {
@@ -350,7 +352,9 @@ private struct StatusIcon: View {
     @State private var hasCheckedSetup = false
 
     private var iconState: MenubarIconState {
-        if appState.bundledJournalStatusAvailable && appState.journalRuntimeStatus != .running {
+        if appState.bundledJournalStatusAvailable
+            && appState.journalRuntimeStatus != .running
+            && !appState.journalRuntimeStatus.isStoppedByUser {
             return .error
         }
         if appState.errorMessage != nil {

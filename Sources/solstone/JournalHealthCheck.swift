@@ -23,6 +23,7 @@ public struct JournalDiagnostic: Equatable, Sendable {
 public enum JournalRuntimeStatus: Equatable, Sendable {
     case running
     case stopped(JournalDiagnostic)
+    case stoppedByUser
     case restarting
     case setupNeeded
     case unknown(JournalDiagnostic)
@@ -31,7 +32,7 @@ public enum JournalRuntimeStatus: Equatable, Sendable {
         switch self {
         case .stopped(let diagnostic), .unknown(let diagnostic):
             return diagnostic
-        case .running, .restarting, .setupNeeded:
+        case .running, .stoppedByUser, .restarting, .setupNeeded:
             return nil
         }
     }
@@ -43,6 +44,11 @@ public enum JournalRuntimeStatus: Equatable, Sendable {
 
     var isSetupNeeded: Bool {
         if case .setupNeeded = self { return true }
+        return false
+    }
+
+    var isStoppedByUser: Bool {
+        if case .stoppedByUser = self { return true }
         return false
     }
 

@@ -236,6 +236,8 @@
       "settings.service.external.testConnection",
       "settings.service.external.viewStatus",
       "settings.service.journal.restart",
+      "settings.service.journal.start",
+      "settings.service.journal.stop",
       "settings.service.journalMode.picker",
       "settings.service.journalMode.state",
       "settings.service.next.checkStatus",
@@ -496,7 +498,8 @@
       "journal_restarting",
       "journal_setup_needed",
       "journal_stopped",
-      "journal_unknown"
+      "journal_unknown",
+      "journal_stopped_by_user"
     ],
     "MenubarIconState" : [
       "recording",

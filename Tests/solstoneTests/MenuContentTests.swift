@@ -152,6 +152,16 @@ struct MenuContentTests {
         #expect(stoppedStatus.settingsPresentation.reason == "down")
         #expect(stoppedStatus.canOfferRestart)
 
+        let stoppedByUserStatus = JournalRuntimeStatus.stoppedByUser
+        #expect(stoppedByUserStatus.menuRowPresentation == nil)
+        #expect(stoppedByUserStatus.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_STOPPED)
+        #expect(stoppedByUserStatus.settingsPresentation.axValue == "journal_stopped_by_user")
+        #expect(stoppedByUserStatus.settingsPresentation.severity == .neutral)
+        #expect(stoppedByUserStatus.settingsPresentation.reason == nil)
+        #expect(!stoppedByUserStatus.canOfferRestart)
+        #expect(stoppedByUserStatus.settingsPresentation.severity != .attention)
+        #expect(stoppedByUserStatus.settingsPresentation.shortText != UICopy.JOURNAL_STATUS_NEEDS_ATTENTION)
+
         let unknownStatus = JournalRuntimeStatus.unknown(JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "unclear"))
         let unknown = unknownStatus.menuRowPresentation
         #expect(unknown?.text == UICopy.JOURNAL_NEEDS_ATTENTION_OPEN_SETTINGS)

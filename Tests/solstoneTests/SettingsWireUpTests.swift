@@ -32,6 +32,8 @@ struct SettingsWireUpTests {
             "AXID.Settings.Service.journalModeState",
             "AXID.Settings.Service.restartRequiredBanner",
             "AXID.Settings.Service.restartJournalButton",
+            "AXID.Settings.Service.stopJournalButton",
+            "AXID.Settings.Service.startJournalButton",
             "AXID.Settings.Service.externalSetupGuide",
             "AXID.Settings.Service.externalAddress",
             "AXID.Settings.Service.externalKey",

@@ -262,7 +262,8 @@ struct AXIDTests {
             .restarting,
             .setupNeeded,
             .stopped(JournalDiagnostic(commandLabel: "journal health")),
-            .unknown(JournalDiagnostic(commandLabel: "journal health"))
+            .unknown(JournalDiagnostic(commandLabel: "journal health")),
+            .stoppedByUser
         ]
     }
 }

@@ -90,7 +90,8 @@ internal struct JournalRuntimeDebounceState: Sendable {
         switch currentStatus {
         case .stopped, .unknown:
             return attentionStatus
-        case .running, .restarting, .setupNeeded:
+        case .running, .stoppedByUser, .restarting, .setupNeeded:
+            // Compiler-completeness only; AppState's probe guard skips stopped-by-user.
             break
         }
         if firstFailureAt == nil {

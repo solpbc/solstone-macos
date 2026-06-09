@@ -50,6 +50,8 @@ enum AXContract {
         AXID.Settings.Observer.cacheFolderOpen,
         AXID.Settings.Service.restartRequiredBanner,
         AXID.Settings.Service.restartJournalButton,
+        AXID.Settings.Service.stopJournalButton,
+        AXID.Settings.Service.startJournalButton,
         AXID.Settings.Service.prereqPermissions,
         AXID.Settings.Service.journalModePicker,
         AXID.Settings.Service.journalModeState,
