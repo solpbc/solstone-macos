@@ -511,6 +511,7 @@
       "journal_restarting",
       "journal_setup_needed",
       "journal_unknown",
+      "journal_waiting",
       "local_only",
       "offline",
       "paused",

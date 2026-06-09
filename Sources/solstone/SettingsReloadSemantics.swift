@@ -12,6 +12,7 @@ public enum SettingsReloadSemantics {
         "serverURL": .restartRequired,
         "serverKey": .restartRequired,
         "serviceMode": .restartRequired,
+        "journalPath": .restartRequired,
         // live: applied to running captureManager via AppState.updateConfig
         "cacheRetentionDays": .live,
         "microphoneGain": .live,

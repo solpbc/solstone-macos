@@ -124,6 +124,7 @@ enum AXID {
             static let nextSegmentSeconds = "settings.status.observing.nextSegment.state"
             static let uploadJournalState = "settings.status.upload.journal.state"
             static let journalRuntimeState = "settings.status.journal.runtime.state"
+            static let journalReadinessQueueState = "settings.status.journal.readinessQueue.state"
             static let uploadState = "settings.status.upload.state"
             static let uploadChecked = "settings.status.upload.checked.state"
             static let uploadTotal = "settings.status.upload.total.state"

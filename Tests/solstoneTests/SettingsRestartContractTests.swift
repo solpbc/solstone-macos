@@ -13,7 +13,7 @@ struct SettingsRestartContractTests {
     }
 
     @Test func registryPinsRestartRequiredKeys() {
-        for key in ["serverURL", "serverKey", "serviceMode"] {
+        for key in ["serverURL", "serverKey", "serviceMode", "journalPath"] {
             #expect(SettingsReloadSemantics.semantic[key] == .restartRequired)
         }
     }
@@ -55,6 +55,18 @@ struct SettingsRestartContractTests {
         let source = try readSource("Sources/solstone/SettingsView.swift")
 
         #expect(!source.contains("notifyRestartRequiredSettingSaved"))
+    }
+
+    @Test func saveServiceImmediateSyncRespectsBundledReadinessGate() throws {
+        let source = try readSource("Sources/solstone/SettingsView.swift")
+        let body = try extract(
+            from: source,
+            start: "private func saveService(url: String, key: String, mode: ServiceMode)",
+            end: "    // MARK: - Microphone Tab"
+        )
+
+        #expect(body.contains("if mode != .bundled || appState.journalDependentServicesReady"))
+        #expect(body.contains("syncOnStartup()"))
     }
 
     @Test func bannerRendersExactUICopyLiteral() throws {
@@ -119,6 +131,33 @@ struct SettingsRestartContractTests {
         #expect(!state.restartRequiredBannerVisible)
     }
 
+    @Test func bundledRestartUsesSupervisedRunnerNotJournalRestartRunner() async throws {
+        let temp = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let state = makeRestartableState()
+        let factoryCalls = LockedCounter()
+        let restartRunner = FakeSubprocessRunner()
+        configureRestart(state: state, journalRoot: temp, reprobe: { .reachable })
+        state.journalRestartRunnerFactory = { journalBinary, logSink in
+            factoryCalls.increment()
+            return JournalRestartRunner(
+                runner: restartRunner,
+                journalPathProvider: { _ in temp.path },
+                reprobe: { .reachable },
+                logSink: logSink,
+                journalBinary: journalBinary
+            )
+        }
+
+        state.requestJournalRestart()
+        try await waitUntil {
+            !state.journalRuntimeStatus.isRestarting
+        }
+
+        #expect(factoryCalls.count == 0)
+        #expect(!restartRunner.invocations.contains { $0.arguments == ["service", "restart"] })
+    }
+
     @Test func failedRestartLeavesBannerVisible() async throws {
         let temp = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: temp) }
@@ -170,17 +209,23 @@ struct SettingsRestartContractTests {
         #expect(!state.restartRequiredBannerVisible)
     }
 
-    @Test func bannerClearedOnlyInsideRunJournalRestart() throws {
+    @Test func bannerClearedOnlyInsideRestartRunners() throws {
         let source = try readSource("Sources/solstone/AppState.swift")
         let matches = ranges(of: "restartRequiredBannerVisible = false", in: source)
-        let function = try extract(
+        let launchdFunction = try extract(
             from: source,
             start: "private func runJournalRestart() async",
+            end: "private func runSupervisedJournalRestart() async"
+        )
+        let supervisedFunction = try extract(
+            from: source,
+            start: "private func runSupervisedJournalRestart() async",
             end: "private func emitJournalRestartLog"
         )
 
-        #expect(matches.count == 1)
-        #expect(function.contains("restartRequiredBannerVisible = false"))
+        #expect(matches.count == 3)
+        #expect(launchdFunction.contains("restartRequiredBannerVisible = false"))
+        #expect(supervisedFunction.contains("restartRequiredBannerVisible = false"))
     }
 
     @Test func liveOnlyRegistryEntriesAreLiveSemantic() {
@@ -242,22 +287,12 @@ struct SettingsRestartContractTests {
         journalRoot: URL,
         reprobe: @escaping @Sendable () async -> JournalRuntimeProbeOutcome
     ) {
-        let journalBinary = URL(fileURLWithPath: "/usr/bin/journal")
-        state.journalBinaryProvider = { journalBinary }
-        state.journalRuntimeFileExists = { _ in true }
-        state.journalRestartRunnerFactory = { journalBinary, logSink in
-            let runner = FakeSubprocessRunner()
-            runner.enqueue("ps", .success(stdout: Data()))
-            runner.enqueue("service", .success())
-            return JournalRestartRunner(
-                runner: runner,
-                journalPathProvider: { _ in journalRoot.path },
-                terminate: { _ in },
-                reprobe: reprobe,
-                logSink: logSink,
-                journalBinary: journalBinary
-            )
-        }
+        let runtime = MaterializedRuntime(key: "restart-test", layout: SolstoneRuntimeLayout(rootURL: journalRoot))
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = RestartRuntimeMaterializer(runtime: runtime)
+        state.singleSupervisorGate = RestartSingleSupervisorGate()
+        state.supervisedJournalRunner = RestartChildRunner()
+        state.journalReadinessGate = RestartReadinessGate(reprobe: reprobe)
     }
 
     private func diag(_ text: String) -> JournalDiagnostic {
@@ -307,6 +342,60 @@ struct SettingsRestartContractTests {
             try await Task.sleep(for: .milliseconds(50))
         }
         #expect(predicate())
+    }
+}
+
+private final class RestartRuntimeMaterializer: RuntimeMaterializing, @unchecked Sendable {
+    let runtime: MaterializedRuntime
+
+    init(runtime: MaterializedRuntime) {
+        self.runtime = runtime
+    }
+
+    func materialize(excludingLiveKey liveKey: String?) async throws -> MaterializedRuntime {
+        runtime
+    }
+}
+
+private struct RestartSingleSupervisorGate: SingleSupervisorGating {
+    func prepareForSpawn(journalRoot: URL) async -> SingleSupervisorGateResult {
+        .success
+    }
+}
+
+private final class RestartChildRunner: SupervisedChildRunning, @unchecked Sendable {
+    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+    }
+
+    func restart() async throws {
+    }
+
+    func stop() async {
+    }
+
+    func stopForTermination() async {
+    }
+
+    func currentRuntimeKey() async -> String? {
+        nil
+    }
+
+    func markReady() async {
+    }
+}
+
+private struct RestartReadinessGate: JournalReadinessChecking {
+    let reprobe: @Sendable () async -> JournalRuntimeProbeOutcome
+
+    func waitUntilReady(journalRoot: URL, runtime: MaterializedRuntime, timeout: Duration) async -> JournalReadinessResult {
+        switch await reprobe() {
+        case .reachable:
+            return .ready
+        case .binaryMissing:
+            return .failed(JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "binary missing"))
+        case .unreachable(let diagnostic), .unknown(let diagnostic):
+            return .failed(diagnostic)
+        }
     }
 }
 

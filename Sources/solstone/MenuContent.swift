@@ -148,6 +148,16 @@ struct MenuContent: View {
             }
             .accessibilityIdentifier(AXID.Menubar.localOnlyButton)
         } else if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused {
+            if appState.captureQueuedForJournalReadiness {
+                Button(UICopy.JOURNAL_WAITING_FOR_READINESS_MENU_BUTTON) {
+                    appState.pendingSettingsTab = "status"
+                    openWindow(id: "settings")
+                    appState.didOpenWindow(.settings)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                .accessibilityIdentifier(AXID.Menubar.journalState)
+                .accessibilityValue(MenubarStatusRowState.journalWaiting.axToken)
+            } else
             if appState.config.syncPaused {
                 Text(recordingStatusText)
             } else {
@@ -202,6 +212,9 @@ struct MenuContent: View {
         if appState.config.syncPaused {
             return .observing
         }
+        if appState.captureQueuedForJournalReadiness {
+            return .journalWaiting
+        }
         switch appState.uploadCoordinator.status {
         case .synced, .syncing, .uploading:
             return .observing
@@ -222,6 +235,9 @@ struct MenuContent: View {
         }
         if appState.config.syncPaused {
             return "observing - sync paused"
+        }
+        if appState.captureQueuedForJournalReadiness {
+            return UICopy.JOURNAL_WAITING_FOR_READINESS_MENU
         }
         switch appState.uploadCoordinator.status {
         case .synced, .syncing, .uploading:

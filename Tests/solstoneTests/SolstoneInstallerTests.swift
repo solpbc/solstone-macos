@@ -98,7 +98,8 @@ struct SolstoneInstallerTests {
                 "--skip-models",
                 "--accept-existing-journal",
                 "--journal",
-                "/tmp/solstone-test-journal"
+                "/tmp/solstone-test-journal",
+                "--skip-service"
             ])
             let observer = try #require(runner.invocations.first { $0.arguments.first == "observer" })
             let expectedJournalPath = choice == .createFresh
@@ -126,7 +127,7 @@ struct SolstoneInstallerTests {
         #expect(installer.main == .awaitingChoice(existingInstall: true))
     }
 
-    @Test func failureMessage_isVerbatim_perSubprocessClass() async throws {
+    @Test func failureMessage_isVerbatimForSetupAndNormalizedForMaterialization() async throws {
         try await jsonlStepFailedMessageIsVerbatim()
         try await rawSubprocessFailureUsesLastStderrLine()
         try await launchFailureUsesLocalizedDescription()
@@ -137,7 +138,8 @@ struct SolstoneInstallerTests {
         try await assertState4(observerSucceeds: false, expectsDone: false)
     }
 
-    @Test func upgradeReadinessGateDefersObserverCreateUntilUpCompletes() async throws {
+    @Test(.disabled("journal up readiness gate removed for app-owned child"))
+    func upgradeReadinessGateDefersObserverCreateUntilUpCompletes() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -167,7 +169,8 @@ struct SolstoneInstallerTests {
         #expect(runner.invocations.filter { $0.arguments.first == "observer" }.count == 1)
     }
 
-    @Test func freshInstallReadinessGateDefersObserverCreateUntilUpCompletes() async throws {
+    @Test(.disabled("journal up readiness gate removed for app-owned child"))
+    func freshInstallReadinessGateDefersObserverCreateUntilUpCompletes() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -204,7 +207,8 @@ struct SolstoneInstallerTests {
         #expect(runner.invocations.filter { $0.arguments.first == "observer" }.count == 1)
     }
 
-    @Test func readinessGateTimeoutStderrFailsRegisteringWithoutStillRunningCopy() async throws {
+    @Test(.disabled("journal up readiness gate removed for app-owned child"))
+    func readinessGateTimeoutStderrFailsRegisteringWithoutStillRunningCopy() async throws {
         let installer = try await installerAfterUpgradeReadinessFailure(
             readinessGate: .success(
                 stderr: Data("Service did not become ready within 60s — run 'journal service status' or 'journal doctor' for diagnostics\n".utf8),
@@ -222,10 +226,10 @@ struct SolstoneInstallerTests {
         #expect(!details.contains("still running"))
     }
 
-    @Test func readinessGateOuterTimeoutFailsAsReadinessTimeout() async throws {
+    @Test(.disabled("journal up readiness gate removed for app-owned child"))
+    func readinessGateOuterTimeoutFailsAsReadinessTimeout() async throws {
         let installer = try await installerAfterUpgradeReadinessFailure(
-            readinessGate: .success(delay: .milliseconds(10)),
-            readinessGateTimeout: .milliseconds(10)
+            readinessGate: .success(delay: .milliseconds(10))
         )
 
         if case .failed(.registering(let message)) = installer.main {
@@ -236,7 +240,8 @@ struct SolstoneInstallerTests {
         #expect(installer.upgradeFailureRecord?.installed == BundleConfig.solstonePinVersion)
     }
 
-    @Test func readinessGateLaunchFailureUsesGateFailureCopy() async throws {
+    @Test(.disabled("journal up readiness gate removed for app-owned child"))
+    func readinessGateLaunchFailureUsesGateFailureCopy() async throws {
         let installer = try await installerAfterUpgradeReadinessFailure(
             readinessGate: .failure("launch boom")
         )
@@ -249,7 +254,8 @@ struct SolstoneInstallerTests {
         }
     }
 
-    @Test func readinessGateOtherNonzeroUsesGateFailureCopyAndLogDetail() async throws {
+    @Test(.disabled("journal up readiness gate removed for app-owned child"))
+    func readinessGateOtherNonzeroUsesGateFailureCopyAndLogDetail() async throws {
         let installer = try await installerAfterUpgradeReadinessFailure(
             readinessGate: .success(stderr: Data("launchctl failed\n".utf8), exitCode: 1)
         )
@@ -324,7 +330,8 @@ struct SolstoneInstallerTests {
         #expect(upgradeFailedStatusMessage(installedVersion: record.installed, pinnedVersion: record.pinned) == "upgrade may be incomplete — couldn't confirm the running version")
     }
 
-    @Test func upgradeFailureRetryConfirmedNewAcceptsExistingAndRegisters() async throws {
+    @Test(.disabled("journal up readiness gate removed for app-owned child"))
+    func upgradeFailureRetryConfirmedNewAcceptsExistingAndRegisters() async throws {
         let runner = FakeSubprocessRunner()
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue("up", .success())
@@ -346,7 +353,8 @@ struct SolstoneInstallerTests {
         #expect(upIndex < observerIndex)
     }
 
-    @Test func upgradeFailureRetryUnknownAcceptsExistingAndRegisters() async throws {
+    @Test(.disabled("journal up readiness gate removed for app-owned child"))
+    func upgradeFailureRetryUnknownAcceptsExistingAndRegisters() async throws {
         let runner = FakeSubprocessRunner()
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue("up", .success())
@@ -368,7 +376,8 @@ struct SolstoneInstallerTests {
         #expect(upIndex < observerIndex)
     }
 
-    @Test func singleInFlightStartRejectedDuringReadinessGate() async throws {
+    @Test(.disabled("journal up readiness gate removed for app-owned child"))
+    func singleInFlightStartRejectedDuringReadinessGate() async throws {
         let runner = FakeSubprocessRunner()
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue("up", .success(delay: .milliseconds(50)))
@@ -389,7 +398,8 @@ struct SolstoneInstallerTests {
         #expect(runner.invocations.filter { $0.arguments.first == "observer" }.count == 1)
     }
 
-    @Test func togglingServiceModeDoesNotCancelActiveInstall() async throws {
+    @Test(.disabled("journal up readiness gate removed for app-owned child"))
+    func togglingServiceModeDoesNotCancelActiveInstall() async throws {
         let runner = FakeSubprocessRunner()
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue("up", .success(delay: .milliseconds(500)))
@@ -471,7 +481,7 @@ struct SolstoneInstallerTests {
         let stageIndex = try #require(calls.firstIndex { $0.starts(with: ["tool", "install"]) })
         let serviceIndex = try #require(calls.firstIndex { $0 == ["service", "uninstall"] })
         #expect(configIndex < stageIndex)
-        #expect(stageIndex < serviceIndex)
+        #expect(serviceIndex < stageIndex)
     }
 
     @Test func upgradePathTargetsResolvedJournalNotCallerDefault() async throws {
@@ -640,8 +650,22 @@ struct SolstoneInstallerTests {
         #expect(!runner.invocations.contains { $0.arguments.first == "service" })
         #expect(runner.invocations.contains { $0.arguments.starts(with: ["tool", "install"]) })
         let setup = try #require(runner.invocations.first { $0.arguments.first == "setup" })
-        #expect(Array(setup.arguments.suffix(2)) == ["--journal", "/tmp/journal"])
-        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == BundleConfig.solstonePinVersion)
+        #expect(setup.arguments == [
+            "setup",
+            "--jsonl",
+            "--yes",
+            "--skip-models",
+            "--accept-existing-journal",
+            "--journal",
+            "/tmp/journal",
+            "--skip-service"
+        ])
+        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == nil)
+        let runtimeChildren = try FileManager.default.contentsOfDirectory(
+            at: fixtureURLs.runtimeRoot,
+            includingPropertiesForKeys: nil
+        )
+        #expect(runtimeChildren.contains { $0.lastPathComponent.hasPrefix("\(BundleConfig.solstonePinVersion)_py\(BundleConfig.bundledPythonBuild)_") })
     }
 
     @Test func acceptExistingSkipsPreclean() async throws {
@@ -738,10 +762,10 @@ struct SolstoneInstallerTests {
         try await waitForTerminal(installer)
 
         if case .failed(.upgradeCutoverFailed(let message)) = installer.main {
-            #expect(message.contains("/tmp/journal"))
             #expect(message.contains("unload failed"))
-            #expect(runner.invocations.filter { $0.arguments == ["service", "install"] }.count == 1)
-            #expect(runner.invocations.filter { $0.arguments == ["service", "start"] }.count == 1)
+            #expect(runner.invocations.filter { $0.arguments == ["service", "uninstall"] }.count == 1)
+            #expect(runner.invocations.filter { $0.arguments == ["service", "install"] }.isEmpty)
+            #expect(runner.invocations.filter { $0.arguments == ["service", "start"] }.isEmpty)
         } else {
             Issue.record("expected upgradeCutoverFailed")
         }
@@ -844,7 +868,6 @@ struct SolstoneInstallerTests {
         try await waitForTerminal(installer)
 
         if case .failed(.upgradeCutoverFailed(let message)) = installer.main {
-            #expect(message.contains(journal.path))
             #expect(message.contains("supervisor pid 4321 still alive"))
         } else {
             Issue.record("expected upgradeCutoverFailed")
@@ -924,7 +947,6 @@ struct SolstoneInstallerTests {
         try await waitForTerminal(installer)
 
         if case .failed(.upgradeCutoverFailed(let message)) = installer.main {
-            #expect(message.contains("/tmp/journal"))
             #expect(message.contains("port 7657 still bound"))
         } else {
             Issue.record("expected upgradeCutoverFailed")
@@ -956,7 +978,6 @@ struct SolstoneInstallerTests {
         try await waitForTerminal(installer)
 
         if case .failed(.upgradeCutoverFailed(let message)) = installer.main {
-            #expect(message.contains("/tmp/journal"))
             #expect(message.contains("port 5015 still bound"))
         } else {
             Issue.record("expected upgradeCutoverFailed")
@@ -1005,7 +1026,6 @@ struct SolstoneInstallerTests {
         try await waitForTerminal(installer)
 
         if case .failed(.upgradeCutoverFailed(let message)) = installer.main {
-            #expect(message.contains("/tmp/journal"))
             #expect(message.contains("lsof exited 2"))
         } else {
             Issue.record("expected upgradeCutoverFailed")
@@ -1044,11 +1064,7 @@ struct SolstoneInstallerTests {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
-        let stagedLayout = SolstoneRuntimeLayout.staging(
-            rootURL: fixtureURLs.runtimeRoot,
-            version: BundleConfig.solstonePinVersion
-        )
-        let finder = SequencedSolBinaryFinder([nil, stagedLayout.solBinary.path])
+        let finder = SequencedSolBinaryFinder([nil])
         enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success())
         runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
@@ -1079,12 +1095,16 @@ struct SolstoneInstallerTests {
             "--no-python-downloads",
             "--force"
         ])
-        #expect(install.timeout == .seconds(120))
+        #expect(install.timeout == nil)
         #expect(!install.arguments.contains("--reinstall"))
-        assertRuntimeEnvironment(try #require(install.environment), layout: stagedLayout)
+        let environment = try #require(install.environment)
+        #expect(environment["UV_TOOL_DIR"]?.contains("\(fixtureURLs.runtimeRoot.path)/.tmp-") == true)
+        #expect(environment["UV_TOOL_BIN_DIR"]?.contains("\(fixtureURLs.runtimeRoot.path)/.tmp-") == true)
+        #expect(environment["UV_PYTHON_INSTALL_DIR"]?.contains("\(fixtureURLs.runtimeRoot.path)/.tmp-") == true)
     }
 
-    @Test func stagedInstallVersionMismatchDoesNotActivate() async throws {
+    @Test(.disabled("runtime/versions/current staging removed by R3 materializer"))
+    func stagedInstallVersionMismatchDoesNotActivate() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1107,7 +1127,8 @@ struct SolstoneInstallerTests {
         #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == nil)
     }
 
-    @Test func stagedInstallWheelhouseCardinalityFailuresDoNotActivate() async throws {
+    @Test(.disabled("runtime/versions/current staging removed by R3 materializer"))
+    func stagedInstallWheelhouseCardinalityFailuresDoNotActivate() async throws {
         for wheelNames in [[], [
             "solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl",
             "solstone-\(BundleConfig.solstonePinVersion)-2-py3-none-macosx_14_0_arm64.whl"
@@ -1137,7 +1158,8 @@ struct SolstoneInstallerTests {
         }
     }
 
-    @Test func stagedInstallTimeoutDoesNotActivate() async throws {
+    @Test(.disabled("runtime/versions/current staging removed by R3 materializer"))
+    func stagedInstallTimeoutDoesNotActivate() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1160,7 +1182,8 @@ struct SolstoneInstallerTests {
         #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == nil)
     }
 
-    @Test func stagedInstallRetriesThenSucceeds() async throws {
+    @Test(.disabled("runtime/versions/current staging retry flow removed by R3 materializer"))
+    func stagedInstallRetriesThenSucceeds() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1193,7 +1216,8 @@ struct SolstoneInstallerTests {
         #expect(runner.invocations.filter { $0.arguments.first == "tool" }.count == 2)
     }
 
-    @Test func stagedInstallAllAttemptsFailDoNotActivate() async throws {
+    @Test(.disabled("runtime/versions/current staging retry flow removed by R3 materializer"))
+    func stagedInstallAllAttemptsFailDoNotActivate() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1222,7 +1246,8 @@ struct SolstoneInstallerTests {
         #expect(runner.invocations.filter { $0.arguments.first == "tool" }.count == 3)
     }
 
-    @Test func stagedInstallSucceedsFirstTryRunsOnce() async throws {
+    @Test(.disabled("runtime/versions/current staging retry flow removed by R3 materializer"))
+    func stagedInstallSucceedsFirstTryRunsOnce() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1253,7 +1278,8 @@ struct SolstoneInstallerTests {
         #expect(runner.invocations.filter { $0.arguments.first == "tool" }.count == 1)
     }
 
-    @Test func stagedInstallTimeoutAttemptCountsAsOneFailure() async throws {
+    @Test(.disabled("runtime/versions/current staging retry flow removed by R3 materializer"))
+    func stagedInstallTimeoutAttemptCountsAsOneFailure() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1287,7 +1313,8 @@ struct SolstoneInstallerTests {
         #expect(runner.invocations.filter { $0.arguments.first == "tool" }.count == 2)
     }
 
-    @Test func stagedInstallRetryReusesOfflineArgsAndEnv() async throws {
+    @Test(.disabled("runtime/versions/current staging retry flow removed by R3 materializer"))
+    func stagedInstallRetryReusesOfflineArgsAndEnv() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1330,7 +1357,8 @@ struct SolstoneInstallerTests {
         #expect(environment["UV_TOOL_BIN_DIR"] == stagedLayout.binDir.path)
     }
 
-    @Test func stagedInstallRemovesStaleSameVersionBeforeStaging() async throws {
+    @Test(.disabled("runtime/versions/current staging removed by R3 materializer"))
+    func stagedInstallRemovesStaleSameVersionBeforeStaging() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1363,7 +1391,8 @@ struct SolstoneInstallerTests {
         #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == BundleConfig.solstonePinVersion)
     }
 
-    @Test func stagedInstallRefusesActiveSameVersion() async throws {
+    @Test(.disabled("runtime/versions/current staging removed by R3 materializer"))
+    func stagedInstallRefusesActiveSameVersion() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1390,7 +1419,8 @@ struct SolstoneInstallerTests {
         #expect(runner.invocations.isEmpty)
     }
 
-    @Test func uvAndPostInstallSubprocessesReceiveRuntimeEnvironment() async throws {
+    @Test(.disabled("runtime/versions/current staging and launchd service start removed by app-owned child"))
+    func uvAndPostInstallSubprocessesReceiveRuntimeEnvironment() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1436,7 +1466,8 @@ struct SolstoneInstallerTests {
         #expect(runner.invocations.first { $0.arguments.first == "setup" }?.executable.path == journalPath(siblingOf: stagedLayout.solBinary.path))
     }
 
-    @Test func appManagedUpgradeStageFailureDoesNotStopOldService() async throws {
+    @Test(.disabled("migration now tears down legacy service before R3 materialization"))
+    func appManagedUpgradeStageFailureDoesNotStopOldService() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1465,7 +1496,8 @@ struct SolstoneInstallerTests {
         }
     }
 
-    @Test func appManagedUpgradeVersionMismatchDoesNotStopOldService() async throws {
+    @Test(.disabled("migration now tears down legacy service before R3 materialization"))
+    func appManagedUpgradeVersionMismatchDoesNotStopOldService() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1495,7 +1527,8 @@ struct SolstoneInstallerTests {
         }
     }
 
-    @Test func appManagedUpgradeSetupUsesResolvedJournalAndStagedBinary() async throws {
+    @Test(.disabled("runtime/versions/current staging removed by R3 materializer"))
+    func appManagedUpgradeSetupUsesResolvedJournalAndStagedBinary() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1520,7 +1553,8 @@ struct SolstoneInstallerTests {
         assertRuntimeEnvironment(try #require(setup.environment), layout: stagedLayout)
     }
 
-    @Test func appManagedUpgradeDoesNotInstallServiceBeforeStagedSetup() async throws {
+    @Test(.disabled("launchd service install/start removed for app-owned child"))
+    func appManagedUpgradeDoesNotInstallServiceBeforeStagedSetup() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1547,7 +1581,8 @@ struct SolstoneInstallerTests {
         #expect(setupIndex < newInstallIndex)
     }
 
-    @Test func appManagedUpgradeRestoresWrappersAndCurrentAfterPostStopFailure() async throws {
+    @Test(.disabled("launchd post-stop service restart recovery removed for app-owned child"))
+    func appManagedUpgradeRestoresWrappersAndCurrentAfterPostStopFailure() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1598,7 +1633,8 @@ struct SolstoneInstallerTests {
         }
     }
 
-    @Test func appManagedUpgradeInstallsAndStartsServiceAgainstStagedRuntime() async throws {
+    @Test(.disabled("launchd service install/start removed for app-owned child"))
+    func appManagedUpgradeInstallsAndStartsServiceAgainstStagedRuntime() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -1639,7 +1675,8 @@ struct SolstoneInstallerTests {
         #expect(activeAtStart.value == "\(BundleConfig.solstonePinVersion)+test-token")
     }
 
-    @Test func appManagedUpgradeRecoveryRestartsOldServiceAndReportsJournalPath() async throws {
+    @Test(.disabled("launchd service restart recovery removed for app-owned child"))
+    func appManagedUpgradeRecoveryRestartsOldServiceAndReportsJournalPath() async throws {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
@@ -2102,6 +2139,10 @@ struct SolstoneInstallerTests {
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
         runner.enqueue("config", .success(stdout: Data("path: /tmp/journal\n".utf8)))
+        runner.enqueue("service", .success(stdout: Data("Service was not installed\n".utf8)))
+        runner.enqueue("ps", .success(stdout: Data()))
+        runner.enqueue("lsof", .success(exitCode: 1))
+        runner.enqueue("lsof", .success(exitCode: 1))
         enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success(stderr: Data("error: failed to download solstone\n".utf8), exitCode: 1))
         let installer = makeInstaller(
@@ -2151,6 +2192,10 @@ struct SolstoneInstallerTests {
         let fixtureURLs = try makeStagedInstallFixture()
         defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
         runner.enqueue("config", .success(stdout: Data("path: /tmp/journal\n".utf8)))
+        runner.enqueue("service", .success(stdout: Data("Service was not installed\n".utf8)))
+        runner.enqueue("ps", .success(stdout: Data()))
+        runner.enqueue("lsof", .success(exitCode: 1))
+        runner.enqueue("lsof", .success(exitCode: 1))
         enqueueSuccessfulBundledPythonPreflight(runner)
         runner.enqueue("tool", .success(stderr: Data("error: failed to download solstone\n".utf8), exitCode: 1))
         let installer = makeInstaller(
@@ -2287,7 +2332,7 @@ struct SolstoneInstallerTests {
             main: installer.main,
             probe: installer.probedVersion,
             failureRecord: installer.upgradeFailureRecord
-        ) == .failed(.installSolstone(message: "error: failed to download solstone")))
+        ) == .failed(.installSolstone(message: UICopy.JOURNAL_MATERIALIZE_FAILED)))
         #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == nil)
     }
 
@@ -2422,7 +2467,7 @@ struct SolstoneInstallerTests {
         try await waitForTerminal(installer)
 
         if case .failed(.installSolstone(let message)) = installer.main {
-            #expect(message == "last error")
+            #expect(message == UICopy.JOURNAL_MATERIALIZE_FAILED)
         } else {
             Issue.record("expected installSolstone failure")
         }
@@ -2449,7 +2494,7 @@ struct SolstoneInstallerTests {
         try await waitForTerminal(installer)
 
         if case .failed(.installSolstone(let message)) = installer.main {
-            #expect(message == "launch boom")
+            #expect(message == UICopy.JOURNAL_MATERIALIZE_FAILED)
         } else {
             Issue.record("expected installSolstone launch failure")
         }
@@ -2535,8 +2580,7 @@ struct SolstoneInstallerTests {
         stagedInstallTimeout: Duration = .seconds(120),
         stagedInstallMaxAttempts: Int = 1,
         stagedInstallRetryBackoff: Duration = .zero,
-        stagedVerifyTimeout: Duration = .seconds(10),
-        readinessGateTimeout: Duration = .seconds(120)
+        stagedVerifyTimeout: Duration = .seconds(10)
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
@@ -2555,8 +2599,7 @@ struct SolstoneInstallerTests {
             stagedInstallTimeout: stagedInstallTimeout,
             stagedInstallMaxAttempts: stagedInstallMaxAttempts,
             stagedInstallRetryBackoff: stagedInstallRetryBackoff,
-            stagedVerifyTimeout: stagedVerifyTimeout,
-            readinessGateTimeout: readinessGateTimeout
+            stagedVerifyTimeout: stagedVerifyTimeout
         )
     }
 
@@ -2582,8 +2625,7 @@ struct SolstoneInstallerTests {
         stagedInstallTimeout: Duration = .seconds(120),
         stagedInstallMaxAttempts: Int = 1,
         stagedInstallRetryBackoff: Duration = .zero,
-        stagedVerifyTimeout: Duration = .seconds(10),
-        readinessGateTimeout: Duration = .seconds(120)
+        stagedVerifyTimeout: Duration = .seconds(10)
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
@@ -2607,8 +2649,7 @@ struct SolstoneInstallerTests {
             stagedInstallTimeout: stagedInstallTimeout,
             stagedInstallMaxAttempts: stagedInstallMaxAttempts,
             stagedInstallRetryBackoff: stagedInstallRetryBackoff,
-            stagedVerifyTimeout: stagedVerifyTimeout,
-            readinessGateTimeout: readinessGateTimeout
+            stagedVerifyTimeout: stagedVerifyTimeout
         )
     }
 
@@ -2621,8 +2662,7 @@ struct SolstoneInstallerTests {
     }
 
     private func installerAfterUpgradeReadinessFailure(
-        readinessGate: FakeSubprocessRunner.Response,
-        readinessGateTimeout: Duration = .seconds(120)
+        readinessGate: FakeSubprocessRunner.Response
     ) async throws -> SolstoneInstaller {
         let runner = FakeSubprocessRunner()
         let fixtureURLs = try makeStagedInstallFixture()
@@ -2636,8 +2676,7 @@ struct SolstoneInstallerTests {
         let installer = makeInstaller(
             runner: runner,
             wheelhouseURL: fixtureURLs.wheelhouse,
-            runtimeRootURL: fixtureURLs.runtimeRoot,
-            readinessGateTimeout: readinessGateTimeout
+            runtimeRootURL: fixtureURLs.runtimeRoot
         )
         defer { installer.cancel() }
 

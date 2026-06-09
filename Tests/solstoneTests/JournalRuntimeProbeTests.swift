@@ -166,32 +166,15 @@ struct JournalRuntimeProbeTests {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         state.installer.main = .done
         state.errorMessage = "existing"
-        state.journalBinaryProvider = { journalBinary }
-        state.journalRuntimeFileExists = { _ in true }
-        let events = LockedEventRecorder()
-        state.journalRestartLogSink = { event in events.append(event) }
-        state.journalRestartRunnerFactory = { journalBinary, logSink in
-            let runner = FakeSubprocessRunner()
-            runner.enqueue("ps", .success(stdout: Data()))
-            runner.enqueue("service", .success())
-            return JournalRestartRunner(
-                runner: runner,
-                journalPathProvider: { _ in temp.path },
-                terminate: { _ in },
-                reprobe: { .reachable },
-                logSink: logSink,
-                journalBinary: journalBinary
-            )
-        }
+        configureSupervisedRestart(state: state, journalRoot: temp, readiness: .ready)
 
         state.requestJournalRestart()
         try await waitUntil {
-            events.values.contains { $0.step == .reProbe } && !state.journalRuntimeStatus.isRestarting
+            state.journalRuntimeStatus == .running
         }
 
         #expect(state.errorMessage == "existing")
         #expect(state.journalRuntimeStatus == .running)
-        #expect(stepCounts(events.values) == Dictionary(uniqueKeysWithValues: JournalRestartStep.allCases.map { ($0, 1) }))
     }
 
     @Test func restartReprobeFailureAfterCommandSuccessFailsImmediately() async throws {
@@ -199,29 +182,19 @@ struct JournalRuntimeProbeTests {
         defer { try? FileManager.default.removeItem(at: temp) }
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         state.installer.main = .done
-        state.journalBinaryProvider = { journalBinary }
-        state.journalRuntimeFileExists = { _ in true }
         let postRestart = diag("post restart")
-        state.journalRestartRunnerFactory = { journalBinary, logSink in
-            let runner = FakeSubprocessRunner()
-            runner.enqueue("ps", .success(stdout: Data()))
-            runner.enqueue("service", .success())
-            return JournalRestartRunner(
-                runner: runner,
-                journalPathProvider: { _ in temp.path },
-                terminate: { _ in },
-                reprobe: { .unreachable(postRestart) },
-                logSink: logSink,
-                journalBinary: journalBinary
-            )
-        }
+        configureSupervisedRestart(state: state, journalRoot: temp, readiness: .failed(postRestart))
 
         state.requestJournalRestart()
         try await waitUntil {
             state.errorMessage == "restart failed — journal did not come back"
         }
 
-        #expect(state.journalRuntimeStatus == .stopped(diag("post restart")))
+        if case .unknown(let diagnostic) = state.journalRuntimeStatus {
+            #expect(diagnostic.outputExcerpt?.contains("post restart") == true)
+        } else {
+            Issue.record("expected unknown restart failure")
+        }
     }
 
     @Test func restartResolveJournalFailureHaltsBeforeSideEffects() async {
@@ -285,16 +258,32 @@ struct JournalRuntimeProbeTests {
         #expect(runner.invocations.isEmpty)
     }
 
-    @Test func externalModeRunsNoLocalJournalActionsForProbeOrRestart() async {
+    @Test func externalModeSkipsProbeButRunsJournalRestartRunner() async throws {
+        let journalRoot = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: journalRoot) }
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .external))
-        let runner = FakeSubprocessRunner()
-        state.journalRuntimeProbeRunner = runner
+        let probeRunner = FakeSubprocessRunner()
+        let restartRunner = FakeSubprocessRunner()
+        state.journalRuntimeProbeRunner = probeRunner
         state.journalRuntimeFileExists = { _ in true }
+        state.journalRestartRunnerFactory = { journalBinary, logSink in
+            JournalRestartRunner(
+                runner: restartRunner,
+                journalPathProvider: { _ in journalRoot.path },
+                reprobe: { .reachable },
+                logSink: logSink,
+                journalBinary: journalBinary
+            )
+        }
 
         await state.journalProbeTick()
         state.requestJournalRestart()
+        try await waitUntil {
+            restartRunner.invocations.contains { $0.arguments == ["service", "restart"] }
+        }
 
-        #expect(runner.invocations.isEmpty)
+        #expect(probeRunner.invocations.isEmpty)
+        #expect(restartRunner.invocations.contains { $0.arguments == ["service", "restart"] })
     }
 
     @Test func journalSurfaceAvailabilityRequiresInstalledBundledState() {
@@ -341,6 +330,66 @@ struct JournalRuntimeProbeTests {
             try await Task.sleep(for: .milliseconds(50))
         }
         #expect(predicate())
+    }
+
+    private func configureSupervisedRestart(
+        state: AppState,
+        journalRoot: URL,
+        readiness: JournalReadinessResult
+    ) {
+        let runtime = MaterializedRuntime(key: "journal-runtime-probe", layout: SolstoneRuntimeLayout(rootURL: journalRoot))
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = ProbeRuntimeMaterializer(runtime: runtime)
+        state.singleSupervisorGate = ProbeSingleSupervisorGate()
+        state.supervisedJournalRunner = ProbeChildRunner()
+        state.journalReadinessGate = ProbeReadinessGate(result: readiness)
+    }
+}
+
+private final class ProbeRuntimeMaterializer: RuntimeMaterializing, @unchecked Sendable {
+    let runtime: MaterializedRuntime
+
+    init(runtime: MaterializedRuntime) {
+        self.runtime = runtime
+    }
+
+    func materialize(excludingLiveKey liveKey: String?) async throws -> MaterializedRuntime {
+        runtime
+    }
+}
+
+private struct ProbeSingleSupervisorGate: SingleSupervisorGating {
+    func prepareForSpawn(journalRoot: URL) async -> SingleSupervisorGateResult {
+        .success
+    }
+}
+
+private final class ProbeChildRunner: SupervisedChildRunning, @unchecked Sendable {
+    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+    }
+
+    func restart() async throws {
+    }
+
+    func stop() async {
+    }
+
+    func stopForTermination() async {
+    }
+
+    func currentRuntimeKey() async -> String? {
+        nil
+    }
+
+    func markReady() async {
+    }
+}
+
+private struct ProbeReadinessGate: JournalReadinessChecking {
+    let result: JournalReadinessResult
+
+    func waitUntilReady(journalRoot: URL, runtime: MaterializedRuntime, timeout: Duration) async -> JournalReadinessResult {
+        result
     }
 }
 

@@ -75,6 +75,7 @@ public final class AppState {
     public internal(set) var errorMessage: String?
     public internal(set) var audioReconciledCount: Int = 0
     public internal(set) var journalRuntimeStatus: JournalRuntimeStatus = .running
+    public internal(set) var captureQueuedForJournalReadiness: Bool = false
     public internal(set) var ipcServiceRunning = false
     public internal(set) var restartRequiredBannerVisible: Bool = false
     private var restartRequiredGeneration: UInt64 = 0
@@ -103,6 +104,9 @@ public final class AppState {
     private var journalProbeTimer: Timer?
     private var hasStartedBundledJournalDetection = false
     private var journalRestartTask: Task<Void, Never>?
+    private var bundledJournalStartupTask: Task<Void, Never>?
+    internal private(set) var journalDependentServicesReady = false
+    private var currentMaterializedRuntime: MaterializedRuntime?
     private var notificationRequestTask: Task<Void, Never>?
     private var activationObserver: NSObjectProtocol?
     private var preRestartErrorMessage: String?
@@ -119,6 +123,12 @@ public final class AppState {
         URL,
         (@Sendable (JournalRestartLogEvent) -> Void)?
     ) -> JournalRestartRunner)?
+    internal var journalOwnershipResolver: @Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership = SolOwnership.defaultResolver()
+    internal var runtimeMaterializer: any RuntimeMaterializing
+    internal var supervisedJournalRunner: any SupervisedChildRunning
+    internal var legacyJournalMigrator: any LegacyJournalMigrating
+    internal var singleSupervisorGate: any SingleSupervisorGating
+    internal var journalReadinessGate: any JournalReadinessChecking
 
     // MARK: - Activation Policy
 
@@ -279,7 +289,9 @@ public final class AppState {
         config = newConfig
         handleJournalModeTransition(from: oldConfig.serviceMode, to: newConfig.serviceMode)
         uploadCoordinator.updateConfig(newConfig)
-        if newConfig.isUploadConfigured,
+        let canConfigureJournalServices = newConfig.serviceMode != .bundled || journalDependentServicesReady
+        if canConfigureJournalServices,
+           newConfig.isUploadConfigured,
            let serverURL = newConfig.serverURL,
            let serverKey = newConfig.serverKey {
             Task { [heartbeatService] in
@@ -427,6 +439,7 @@ public final class AppState {
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
         let uploadClient = UploadClient()
         let solChatTarget = AppStateBridgeTarget()
+        let journalStatusTarget = AppStateBridgeTarget()
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager
@@ -435,6 +448,17 @@ public final class AppState {
         self.config = config
         self.notifier = notifier
         self.installer = SolstoneInstaller()
+        self.runtimeMaterializer = RuntimeMaterializer()
+        self.supervisedJournalRunner = SupervisedJournalRunner(
+            statusSink: { status in
+                Task { @MainActor [journalStatusTarget] in
+                    journalStatusTarget.state?.journalRuntimeStatus = status
+                }
+            }
+        )
+        self.legacyJournalMigrator = LegacyJournalMigrator()
+        self.singleSupervisorGate = SingleSupervisorGate()
+        self.journalReadinessGate = JournalReadinessGate()
         self.recoveryCoordinator = .shared
         self.heartbeatService = HeartbeatService(
             isPaused: { [pauseManager] in
@@ -514,9 +538,11 @@ public final class AppState {
                     guard let self else { return }
                     switch reconciliation {
                     case .normal:
+                        self.markCaptureQueuedIfJournalNotReady()
                         self.uploadCoordinator.triggerSync()
                     case .recovered:
                         self.audioReconciledCount += 1
+                        self.markCaptureQueuedIfJournalNotReady()
                         self.uploadCoordinator.triggerSync()
                     case .failed(let message):
                         self.errorMessage = message
@@ -549,26 +575,14 @@ public final class AppState {
         // Recover any incomplete segments from previous sessions
         recoveryCoordinator.scheduleDetached()
 
-        // Sync any pending uploads on startup
-        if config.serverURL != nil {
-            Task.detached { [uploadCoordinator] in
-                await uploadCoordinator?.syncOnStartup()
-            }
-        }
-        if config.isUploadConfigured, let serverURL = config.serverURL, let serverKey = config.serverKey {
-            Task { [heartbeatService] in
-                await heartbeatService.configure(serverURL: serverURL, serverKey: serverKey)
-            }
-            Task { [solChatBridge] in
-                await solChatBridge.configure(serverURL: serverURL, serverKey: serverKey)
-            }
+        if config.serviceMode == .bundled {
+            startBundledJournalStartup()
+        } else {
+            configureJournalDependentServices()
         }
 
         // Start polling permissions — auto-starts recording when ready
         startPermissionPolling()
-        if config.serviceMode == .bundled {
-            startJournalProbeTimer()
-        }
 
         // Listen for external defaults changes (e.g. `defaults write` from terminal)
         visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
@@ -584,6 +598,7 @@ public final class AppState {
         // Set shared instance for app-wide access (e.g., termination handler)
         installer.attach(appState: self)
         solChatTarget.state = self
+        journalStatusTarget.state = self
         AppState.shared = self
     }
 
@@ -596,6 +611,7 @@ public final class AppState {
             permissionPollTimer?.invalidate()
             journalProbeTimer?.invalidate()
             journalRestartTask?.cancel()
+            bundledJournalStartupTask?.cancel()
         }
     }
 
@@ -659,6 +675,11 @@ public final class AppState {
             subprocessRunner: SubprocessRunner(),
             failureRecordStore: InMemoryUpgradeFailureRecordStore()
         )
+        self.runtimeMaterializer = RuntimeMaterializer()
+        self.supervisedJournalRunner = SupervisedJournalRunner(statusSink: { _ in })
+        self.legacyJournalMigrator = LegacyJournalMigrator()
+        self.singleSupervisorGate = SingleSupervisorGate()
+        self.journalReadinessGate = JournalReadinessGate()
         self.recoveryCoordinator = .shared
         self.heartbeatService = HeartbeatService(
             isPaused: { false },
@@ -777,6 +798,181 @@ public final class AppState {
         initialPermissionCheckComplete = true
     }
 
+    // MARK: - Bundled Journal Startup
+
+    private func startBundledJournalStartup() {
+        guard !isSnapshot, config.serviceMode == .bundled else { return }
+        stopJournalProbeTimer()
+        bundledJournalStartupTask?.cancel()
+        bundledJournalStartupTask = Task { @MainActor [weak self] in
+            _ = await self?.runBundledJournalStartup()
+        }
+    }
+
+    internal func ensureBundledJournalRuntime(journalRoot: URL) async -> Bool {
+        if config.journalPath != journalRoot.path {
+            var next = config
+            next.journalPath = journalRoot.path
+            config = next
+            try? next.save()
+        }
+        return await runBundledJournalStartup()
+    }
+
+    private func runBundledJournalStartup() async -> Bool {
+        let journalRoot = configuredJournalRoot()
+        let ownership = await journalOwnershipResolver(hasLocalJournalCreds())
+        switch ownership {
+        case .externallyManaged:
+            configureJournalDependentServices()
+            return true
+        case .appManaged(let oldSolPath):
+            switch await legacyJournalMigrator.teardownLegacyAppManagedJournal(
+                oldSolPath: oldSolPath,
+                journalRoot: journalRoot
+            ) {
+            case .success:
+                break
+            case .failed(let diagnostic):
+                journalRuntimeStatus = .stopped(attentionDiagnostic(
+                    commandLabel: diagnostic.commandLabel,
+                    ownerMessage: UICopy.JOURNAL_MIGRATION_BLOCKED,
+                    diagnostic: diagnostic
+                ))
+                return false
+            }
+        case .absent:
+            break
+        }
+
+        let runtime: MaterializedRuntime
+        do {
+            let liveKey = await supervisedJournalRunner.currentRuntimeKey()
+            runtime = try await runtimeMaterializer.materialize(excludingLiveKey: liveKey)
+            currentMaterializedRuntime = runtime
+            journalBinaryProvider = { runtime.layout.journalBinary }
+        } catch {
+            journalRuntimeStatus = .unknown(JournalDiagnostic(
+                commandLabel: "journal runtime materialize",
+                outputExcerpt: diagnosticMessage(
+                    ownerMessage: UICopy.JOURNAL_MATERIALIZE_FAILED,
+                    detail: error.localizedDescription
+                )
+            ))
+            return false
+        }
+
+        switch await singleSupervisorGate.prepareForSpawn(journalRoot: journalRoot) {
+        case .success:
+            break
+        case .blocked(let diagnostic):
+            journalRuntimeStatus = .stopped(attentionDiagnostic(
+                commandLabel: diagnostic.commandLabel,
+                ownerMessage: UICopy.JOURNAL_SPAWN_BLOCKED_PORTS,
+                diagnostic: diagnostic
+            ))
+            return false
+        }
+
+        do {
+            try await supervisedJournalRunner.start(
+                runtime: runtime,
+                journalRoot: journalRoot,
+                port: 5015
+            )
+        } catch {
+            journalRuntimeStatus = .stopped(JournalDiagnostic(
+                commandLabel: "journal start --app-supervised",
+                outputExcerpt: diagnosticMessage(
+                    ownerMessage: UICopy.JOURNAL_SPAWN_FAILED,
+                    detail: error.localizedDescription
+                )
+            ))
+            return false
+        }
+
+        switch await journalReadinessGate.waitUntilReady(
+            journalRoot: journalRoot,
+            runtime: runtime,
+            timeout: .seconds(120)
+        ) {
+        case .ready:
+            await supervisedJournalRunner.markReady()
+            journalRuntimeStatus = .running
+            configureJournalDependentServices()
+            return true
+        case .failed(let diagnostic):
+            await supervisedJournalRunner.stop()
+            journalRuntimeStatus = .unknown(attentionDiagnostic(
+                commandLabel: diagnostic.commandLabel,
+                ownerMessage: UICopy.JOURNAL_READINESS_TIMEOUT,
+                diagnostic: diagnostic
+            ))
+            return false
+        }
+    }
+
+    private func configuredJournalRoot() -> URL {
+        if let journalPath = config.journalPath, !journalPath.isEmpty {
+            return URL(fileURLWithPath: journalPath, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("journal", isDirectory: true)
+    }
+
+    private func hasLocalJournalCreds() -> Bool {
+        guard LoopbackHost.isLocalhost(config.serverURL),
+              let key = config.serverKey,
+              !key.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    private func markCaptureQueuedIfJournalNotReady() {
+        guard config.serviceMode == .bundled, !journalDependentServicesReady else { return }
+        captureQueuedForJournalReadiness = true
+    }
+
+    private func configureJournalDependentServices() {
+        journalDependentServicesReady = true
+        captureQueuedForJournalReadiness = false
+        if config.serverURL != nil {
+            Task.detached { [uploadCoordinator] in
+                await uploadCoordinator?.syncOnStartup()
+            }
+        }
+        if config.isUploadConfigured, let serverURL = config.serverURL, let serverKey = config.serverKey {
+            Task { [heartbeatService] in
+                await heartbeatService.configure(serverURL: serverURL, serverKey: serverKey)
+            }
+            Task { [solChatBridge] in
+                await solChatBridge.configure(serverURL: serverURL, serverKey: serverKey)
+            }
+        }
+    }
+
+    private func attentionDiagnostic(
+        commandLabel: String,
+        ownerMessage: String,
+        diagnostic: JournalDiagnostic
+    ) -> JournalDiagnostic {
+        JournalDiagnostic(
+            commandLabel: commandLabel,
+            timedOut: diagnostic.timedOut,
+            exitCode: diagnostic.exitCode,
+            outputExcerpt: diagnosticMessage(
+                ownerMessage: ownerMessage,
+                detail: diagnostic.outputExcerpt
+            )
+        )
+    }
+
+    private func diagnosticMessage(ownerMessage: String, detail: String?) -> String {
+        guard let detail, !detail.isEmpty else { return ownerMessage }
+        return "\(ownerMessage)\n\(detail)"
+    }
+
     // MARK: - Journal Runtime Probing
 
     internal func startBundledJournalDetectionIfNeeded() async {
@@ -849,12 +1045,23 @@ public final class AppState {
             return
         }
         if oldMode != .bundled {
-            startJournalProbeTimer()
+            journalDependentServicesReady = false
+            startBundledJournalStartup()
         }
     }
 
     public func requestJournalRestart() {
-        guard bundledJournalRestartAvailable else { return }
+        if config.serviceMode == .bundled {
+            guard !journalRuntimeStatus.isSetupNeeded else { return }
+            guard journalRestartTask == nil else {
+                emitJournalRestartLog(step: .serviceRestart, outcome: "noop", detail: "already-running")
+                return
+            }
+            journalRestartTask = Task { @MainActor [weak self] in
+                await self?.runSupervisedJournalRestart()
+            }
+            return
+        }
         guard journalRestartTask == nil else {
             emitJournalRestartLog(step: .serviceRestart, outcome: "noop", detail: "already-running")
             return
@@ -891,12 +1098,6 @@ public final class AppState {
             preRestartErrorMessage = nil
         }
 
-        guard config.serviceMode == .bundled else {
-            restartOutcome = .modeChanged
-            emitJournalRestartLog(step: .serviceRestart, outcome: "noop", detail: "not-bundled")
-            return
-        }
-
         let journalBinary = journalBinaryProvider()
         guard journalRuntimeFileExists(journalBinary.path) else {
             clearJournalProbeState()
@@ -928,25 +1129,84 @@ public final class AppState {
         switch await runner.run() {
         case .success:
             clearJournalProbeState()
-            if config.serviceMode == .bundled {
-                restartOutcome = .success
-                errorMessage = preRestartErrorMessage
-            } else {
-                restartOutcome = .modeChanged
-            }
+            restartOutcome = .success
+            errorMessage = preRestartErrorMessage
         case .failure(let failure):
-            if config.serviceMode == .bundled {
-                restartOutcome = .failure
-                errorMessage = failure.ownerMessage
-                journalRuntimeStatus = .stopped(failure.diagnostic)
-            } else {
-                restartOutcome = .modeChanged
-                emitJournalRestartLog(step: failure.step, outcome: "noop", detail: "mode-changed")
-            }
+            restartOutcome = .failure
+            errorMessage = failure.ownerMessage
+            journalRuntimeStatus = .stopped(failure.diagnostic)
         }
         if restartOutcome == .success && restartStartGeneration == restartRequiredGeneration {
             restartRequiredBannerVisible = false
         }
+    }
+
+    private func runSupervisedJournalRestart() async {
+        preRestartErrorMessage = errorMessage
+        journalRuntimeStatus = .restarting
+        let restartStartGeneration = restartRequiredGeneration
+        defer {
+            journalRestartTask = nil
+            preRestartErrorMessage = nil
+        }
+
+        guard config.serviceMode == .bundled else {
+            emitJournalRestartLog(step: .serviceRestart, outcome: "noop", detail: "not-bundled")
+            journalRuntimeStatus = .running
+            return
+        }
+        guard let runtime = currentMaterializedRuntime else {
+            let ready = await runBundledJournalStartup()
+            if ready {
+                errorMessage = preRestartErrorMessage
+                if restartStartGeneration == restartRequiredGeneration {
+                    restartRequiredBannerVisible = false
+                }
+            } else if errorMessage == nil {
+                errorMessage = "restart failed — journal did not come back"
+            }
+            return
+        }
+
+        do {
+            try await supervisedJournalRunner.restart()
+        } catch {
+            journalRuntimeStatus = .stopped(JournalDiagnostic(
+                commandLabel: "journal start --app-supervised",
+                outputExcerpt: diagnosticMessage(
+                    ownerMessage: UICopy.JOURNAL_SPAWN_FAILED,
+                    detail: error.localizedDescription
+                )
+            ))
+            errorMessage = UICopy.JOURNAL_SPAWN_FAILED
+            return
+        }
+
+        switch await journalReadinessGate.waitUntilReady(
+            journalRoot: configuredJournalRoot(),
+            runtime: runtime,
+            timeout: .seconds(120)
+        ) {
+        case .ready:
+            await supervisedJournalRunner.markReady()
+            configureJournalDependentServices()
+            errorMessage = preRestartErrorMessage
+            if restartStartGeneration == restartRequiredGeneration {
+                restartRequiredBannerVisible = false
+            }
+        case .failed(let diagnostic):
+            journalRuntimeStatus = .unknown(attentionDiagnostic(
+                commandLabel: diagnostic.commandLabel,
+                ownerMessage: UICopy.JOURNAL_READINESS_TIMEOUT,
+                diagnostic: diagnostic
+            ))
+            errorMessage = UICopy.JOURNAL_READINESS_TIMEOUT
+        }
+    }
+
+    public func stopSupervisedJournalForTermination() async {
+        guard config.serviceMode == .bundled else { return }
+        await supervisedJournalRunner.stopForTermination()
     }
 
     private func emitJournalRestartLog(step: JournalRestartStep, outcome: String, detail: String?) {
@@ -1078,7 +1338,8 @@ public final class AppState {
         Logger.general.info("External defaults change detected — reloading server config")
         updateConfig(fresh)
 
-        if fresh.isUploadConfigured {
+        if fresh.isUploadConfigured,
+           (fresh.serviceMode != .bundled || journalDependentServicesReady) {
             Task.detached { [uploadCoordinator] in
                 await uploadCoordinator?.syncOnStartup()
             }

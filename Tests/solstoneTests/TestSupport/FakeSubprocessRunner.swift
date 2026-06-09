@@ -77,6 +77,9 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
             try? await Task.sleep(for: response.delay)
         }
         response.sideEffect?()
+        if response.exitCode == 0, arguments.starts(with: ["tool", "install"]) {
+            createMaterializedToolBinaries(environment: environment)
+        }
         if let message = response.throwMessage {
             throw FakeRunError(message: message)
         }
@@ -99,6 +102,9 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         recordedInvocations.append(SubprocessInvocation(executable: executable, arguments: arguments, environment: environment, timeout: timeout))
         let key = responseKey(for: executable, arguments: arguments)
         guard var values = responses[key], !values.isEmpty else {
+            if arguments == ["-c", "print(1)"] {
+                return .success(stdout: Data("1\n".utf8))
+            }
             return .success()
         }
         let response = values.removeFirst()
@@ -122,6 +128,21 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         if first == "health" { return "health" }
         if first == "--version" { return "--version" }
         return first
+    }
+
+    private func createMaterializedToolBinaries(environment: [String: String]?) {
+        guard let binPath = environment?["UV_TOOL_BIN_DIR"] else { return }
+        let binURL = URL(fileURLWithPath: binPath, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: binURL, withIntermediateDirectories: true)
+            for name in ["sol", "journal"] {
+                let url = binURL.appendingPathComponent(name)
+                try Data("#!/bin/sh\n".utf8).write(to: url)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+            }
+        } catch {
+            Issue.record("failed to create fake materialized binaries: \(error.localizedDescription)")
+        }
     }
 }
 

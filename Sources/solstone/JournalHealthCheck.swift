@@ -101,7 +101,8 @@ struct DoctorReport: Decodable, Equatable, Sendable {
 enum JournalHealthCheck {
     static func run(
         journalBinary: URL,
-        runner: SubprocessRunning = SubprocessRunner()
+        runner: SubprocessRunning = SubprocessRunner(),
+        environment: [String: String]? = nil
     ) async -> JournalHealthCheckResult {
         let output = LockedHealthOutput()
         do {
@@ -109,7 +110,7 @@ enum JournalHealthCheck {
                 try await runner.run(
                     executable: journalBinary,
                     arguments: ["health"],
-                    environment: nil,
+                    environment: environment,
                     stdoutHandler: { data in output.append(data) },
                     stderrHandler: { data in output.append(data) }
                 )

@@ -62,7 +62,7 @@ public struct AppConfig: Sendable {
         "excludePrivateBrowsing", "serverURL", "serverKey",
         "cacheRetentionDays", "syncPaused", "debugSegments",
         "debugKeepRejectedAudio", "microphoneGain", "silenceMusic",
-        "solInitiatedChatNotificationsEnabled", "serviceMode"
+        "solInitiatedChatNotificationsEnabled", "serviceMode", "journalPath"
     ]
 
     public static func isKnownKey(_ key: String) -> Bool {
@@ -84,6 +84,7 @@ public struct AppConfig: Sendable {
         static let silenceMusic = "silenceMusic"
         static let solInitiatedChatNotificationsEnabled = "solInitiatedChatNotificationsEnabled"
         static let serviceMode = "serviceMode"
+        static let journalPath = "journalPath"
         static let didMigrateFromJSON = "didMigrateFromJSON"
         static let didReseedNotificationPreference = "didReseedNotificationPreference"
     }
@@ -139,6 +140,9 @@ public struct AppConfig: Sendable {
     /// Configured service mode. Nil means no mode has been explicitly selected yet.
     public var serviceMode: ServiceMode?
 
+    /// Local journal data directory for bundled mode.
+    public var journalPath: String?
+
     /// Default exclusions written on first run
     public static let defaultExclusions: [AppEntry] = [
         AppEntry(bundleID: "com.1password.1password", name: "1Password"),
@@ -160,7 +164,8 @@ public struct AppConfig: Sendable {
         microphoneGain: Float = 2.0,
         silenceMusic: Bool = true,
         solInitiatedChatNotificationsEnabled: Bool = Defaults.solInitiatedChatNotificationsEnabled,
-        serviceMode: ServiceMode? = nil
+        serviceMode: ServiceMode? = nil,
+        journalPath: String? = nil
     ) {
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
@@ -176,6 +181,7 @@ public struct AppConfig: Sendable {
         self.silenceMusic = silenceMusic
         self.solInitiatedChatNotificationsEnabled = solInitiatedChatNotificationsEnabled
         self.serviceMode = serviceMode
+        self.journalPath = journalPath
     }
 
     // MARK: - Load/Save
@@ -232,7 +238,8 @@ public struct AppConfig: Sendable {
             silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true,
             solInitiatedChatNotificationsEnabled: defaults.object(forKey: Keys.solInitiatedChatNotificationsEnabled) as? Bool
                 ?? Defaults.solInitiatedChatNotificationsEnabled,
-            serviceMode: serviceMode
+            serviceMode: serviceMode,
+            journalPath: defaults.string(forKey: Keys.journalPath)
         )
         return config
     }
@@ -291,6 +298,11 @@ public struct AppConfig: Sendable {
             defaults.set(serviceMode.rawValue, forKey: Keys.serviceMode)
         } else {
             defaults.removeObject(forKey: Keys.serviceMode)
+        }
+        if let journalPath {
+            defaults.set(journalPath, forKey: Keys.journalPath)
+        } else {
+            defaults.removeObject(forKey: Keys.journalPath)
         }
         defaults.set(cacheRetentionDays, forKey: Keys.cacheRetentionDays)
         defaults.set(syncPaused, forKey: Keys.syncPaused)

@@ -41,6 +41,7 @@ internal enum MenubarStatusRowState: CaseIterable {
     case journalRestarting
     case journalSetupNeeded
     case journalUnknown
+    case journalWaiting
     case localOnly
     case offline
     case paused
@@ -330,6 +331,8 @@ extension MenubarStatusRowState {
             return "journal_setup_needed"
         case .journalUnknown:
             return "journal_unknown"
+        case .journalWaiting:
+            return "journal_waiting"
         case .localOnly:
             return "local_only"
         case .offline:

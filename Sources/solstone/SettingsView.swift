@@ -889,7 +889,9 @@ struct SettingsView: View {
         if appState.microphoneGranted {
             Task {
                 await appState.startRecording()
-                Task.detached { await appState.uploadCoordinator?.syncOnStartup() }
+                if mode != .bundled || appState.journalDependentServicesReady {
+                    Task.detached { await appState.uploadCoordinator?.syncOnStartup() }
+                }
             }
         }
     }
@@ -1232,6 +1234,14 @@ struct SettingsView: View {
                                         .lineLimit(2)
                                         .multilineTextAlignment(.trailing)
                                 }
+                            }
+                        }
+                        if appState.captureQueuedForJournalReadiness {
+                            LabeledContent("sync") {
+                                Text(UICopy.JOURNAL_WAITING_FOR_READINESS)
+                                    .foregroundStyle(.orange)
+                                    .accessibilityIdentifier(AXID.Settings.Status.journalReadinessQueueState)
+                                    .accessibilityValue(MenubarStatusRowState.journalWaiting.axToken)
                             }
                         }
                     }

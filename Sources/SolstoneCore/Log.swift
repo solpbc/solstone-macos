@@ -24,6 +24,7 @@ extension Logger {
     public static let audio = Logger(subsystem: subsystem, category: "audio")
     public static let upload = Logger(subsystem: subsystem, category: "upload")
     public static let callosum = Logger(subsystem: subsystem, category: "callosum")
+    public static let journal = Logger(subsystem: subsystem, category: "journal")
     public static let setup = Logger(subsystem: subsystem, category: "setup")
     public static let storage = Logger(subsystem: subsystem, category: "storage")
 }
