@@ -621,7 +621,8 @@ struct AppOwnedJournalTests {
     }
 
     @Test func stopReturnsAndKillsWedgedChild() async throws {
-        let runtime = try makeSleepingRuntime()
+        let marker = try makeTemporaryDirectory().appendingPathComponent("ready.txt")
+        let runtime = try makeWedgedRuntime(markerURL: marker)
         let signals = SignalRecorder()
         let runner = SupervisedJournalRunner(
             clock: FakeMonotonicClock(),
@@ -633,6 +634,10 @@ struct AppOwnedJournalTests {
         )
 
         try await runner.start(runtime: runtime, journalRoot: try makeTemporaryDirectory(), port: 5015)
+        // Wait until the child has installed its TERM trap (and is wedged in
+        // sleep) before stopping; otherwise SIGTERM can land pre-trap and the
+        // child dies without ever needing the SIGKILL escalation under test.
+        try await waitUntil { launchCount(at: marker) == 1 }
         await runner.stop()
 
         #expect(signals.values.map(\.signal) == [SIGTERM, SIGKILL])
@@ -912,6 +917,15 @@ private func makeExitingRuntime() throws -> MaterializedRuntime {
 
 private func makeSleepingRuntime() throws -> MaterializedRuntime {
     try makeScriptRuntime(script: "#!/bin/sh\ntrap '' TERM\nsleep 30\n")
+}
+
+private func makeWedgedRuntime(markerURL: URL) throws -> MaterializedRuntime {
+    try makeScriptRuntime(script: """
+    #!/bin/sh
+    trap '' TERM
+    printf 'ready\\n' >> \(shellSingleQuoted(markerURL.path))
+    sleep 30
+    """)
 }
 
 private func makeMarkerExitingRuntime(markerURL: URL) throws -> MaterializedRuntime {
