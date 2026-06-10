@@ -56,6 +56,7 @@ internal struct SingleSupervisorGate: SingleSupervisorGating {
                liveStartTime == recordedStartTime {
                 let title = await processTitle(pid: pid) ?? ""
                 Logger.setup.warning("single-supervisor gate found existing supervisor pid=\(pid, privacy: .public) title=\(title, privacy: .public)")
+                Logger.setup.warning("journal-lifecycle: gate-terminate signal=SIGTERM pid=\(pid, privacy: .public)")
                 _ = terminate(pid, SIGTERM)
                 let exited = await waitForPIDExit(
                     pid: pid,
@@ -65,11 +66,12 @@ internal struct SingleSupervisorGate: SingleSupervisorGating {
                     clock: clock
                 )
                 if !exited {
+                    Logger.setup.warning("journal-lifecycle: gate-terminate signal=SIGKILL pid=\(pid, privacy: .public)")
                     _ = terminate(pid, SIGKILL)
                 }
             } else {
                 let title = await processTitle(pid: pid) ?? ""
-                Logger.setup.info("single-supervisor gate ignored stale supervisor marker pid=\(pid, privacy: .public) title=\(title, privacy: .public)")
+                Logger.setup.notice("journal-lifecycle: gate-ignored-stale-marker pid=\(pid, privacy: .public) title=\(title, privacy: .public)")
             }
         }
 
@@ -80,6 +82,7 @@ internal struct SingleSupervisorGate: SingleSupervisorGating {
             gracePeriod: orphanGracePeriod,
             clock: clock
         ) {
+            Logger.setup.warning("journal-lifecycle: gate-blocked reason=orphan-sweep detail=\(failure.message, privacy: .public)")
             return .blocked(JournalDiagnostic(
                 commandLabel: "journal supervisor gate",
                 outputExcerpt: failure.message
@@ -87,6 +90,7 @@ internal struct SingleSupervisorGate: SingleSupervisorGating {
         }
 
         if let failure = await assertPortsReleased(ports: [7657, 5015], runner: runner) {
+            Logger.setup.warning("journal-lifecycle: gate-blocked reason=ports-not-released ports=7657,5015 detail=\(failure.message, privacy: .public)")
             return .blocked(JournalDiagnostic(
                 commandLabel: "journal supervisor gate",
                 outputExcerpt: failure.message

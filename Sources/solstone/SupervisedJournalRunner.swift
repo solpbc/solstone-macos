@@ -83,6 +83,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
     }
 
     internal func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+        Logger.journal.notice("journal-lifecycle: runner-start port=\(port, privacy: .public)")
         await cancelPendingRelaunch()
         launchRequest = LaunchRequest(runtime: runtime, journalRoot: journalRoot, port: port)
         currentKey = runtime.key
@@ -95,6 +96,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
         guard let launchRequest else {
             throw SupervisedJournalRunnerError.alreadyStopped
         }
+        Logger.journal.notice("journal-lifecycle: runner-restart transition=restarting")
         statusSink(.restarting)
         stopping = true
         await cancelPendingRelaunch()
@@ -105,6 +107,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
     }
 
     internal func stop() async {
+        Logger.journal.notice("journal-lifecycle: runner-stop")
         stopping = true
         await cancelPendingRelaunch()
         await stopCurrentProcess()
@@ -115,6 +118,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
     }
 
     internal func stopForTermination() async {
+        Logger.journal.notice("journal-lifecycle: runner-stop-for-termination")
         stopping = true
         await cancelPendingRelaunch()
         await stopCurrentProcess()
@@ -172,7 +176,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
         do {
             process = proc
             try proc.run()
-            Logger.journal.info("journal child launched pid=\(proc.processIdentifier, privacy: .public) port=\(port, privacy: .public)")
+            Logger.journal.notice("journal-lifecycle: runner-child-launched pid=\(proc.processIdentifier, privacy: .public) port=\(port, privacy: .public)")
         } catch {
             process = nil
             parentWriteHandle = nil
@@ -188,10 +192,15 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
         await cancelPendingRelaunch()
 
         let expectedStop = stopping
+        if expectedStop {
+            Logger.journal.notice("journal-lifecycle: child-exit status=\(status, privacy: .public) expected=true")
+        }
         guard !expectedStop, !breakerTripped else { return }
         recordUnexpectedExit()
+        Logger.journal.warning("journal-lifecycle: child-exit status=\(status, privacy: .public) expected=false unexpectedCount=\(self.unexpectedExitTimes.count, privacy: .public)")
         if unexpectedExitTimes.count >= restartLimit {
             breakerTripped = true
+            Logger.journal.error("journal-lifecycle: runner-breaker-tripped status=\(status, privacy: .public) unexpectedCount=\(self.unexpectedExitTimes.count, privacy: .public)")
             statusSink(.stopped(JournalDiagnostic(
                 commandLabel: "journal start --app-supervised",
                 exitCode: status,
@@ -217,9 +226,11 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
     private func performBackoffRelaunch(delay: Duration) async {
         await clock.sleep(for: delay)
         guard !Task.isCancelled, !stopping, !breakerTripped, let launchRequest else { return }
+        Logger.journal.notice("journal-lifecycle: runner-backoff-relaunch delaySeconds=\(delay.components.seconds, privacy: .public)")
         do {
             try await launch(runtime: launchRequest.runtime, journalRoot: launchRequest.journalRoot, port: launchRequest.port)
         } catch {
+            Logger.journal.error("journal-lifecycle: runner-backoff-relaunch-failed")
             statusSink(.stopped(JournalDiagnostic(
                 commandLabel: "journal start --app-supervised",
                 outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)

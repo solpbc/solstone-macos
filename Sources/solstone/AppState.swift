@@ -829,6 +829,8 @@ public final class AppState {
         guard !isSnapshot, config.serviceMode == .bundled else { return }
         let root = configuredJournalRoot()
         stopJournalProbeTimer()
+        let hadPriorStartupTask = bundledJournalStartupTask != nil
+        Logger.setup.notice("journal-lifecycle: startup-task-scheduled cancelledPrior=\(hadPriorStartupTask, privacy: .public) journalRoot=\(root.path, privacy: .public)")
         bundledJournalStartupTask?.cancel()
         bundledJournalStartupTask = Task { @MainActor [weak self] in
             _ = await self?.coordinateBundledJournalStart(journalRoot: root).value
@@ -848,15 +850,18 @@ public final class AppState {
     private func coordinateBundledJournalStart(journalRoot rawJournalRoot: URL) -> Task<Bool, Never> {
         let journalRoot = rawJournalRoot.standardizedFileURL
         if bundledJournalAlreadyReady(for: journalRoot) {
+            Logger.setup.notice("journal-lifecycle: coordinate-start branch=already-ready journalRoot=\(journalRoot.path, privacy: .public)")
             return Task { true }
         }
         if let inFlightBundledStart,
            journalRootsMatch(inFlightBundledStart.journalRoot, journalRoot) {
+            Logger.setup.notice("journal-lifecycle: coordinate-start branch=coalesced generation=\(inFlightBundledStart.generation, privacy: .public) journalRoot=\(journalRoot.path, privacy: .public)")
             return inFlightBundledStart.task
         }
 
         bundledStartGeneration &+= 1
         let generation = bundledStartGeneration
+        Logger.setup.notice("journal-lifecycle: coordinate-start branch=new generation=\(generation, privacy: .public) journalRoot=\(journalRoot.path, privacy: .public)")
         let task = Task { @MainActor [weak self] in
             guard let self else { return false }
             let ready = await self.runBundledJournalStartup(journalRoot: journalRoot, generation: generation)
@@ -893,6 +898,7 @@ public final class AppState {
         switch ownership {
         case .externallyManaged:
             configureJournalDependentServices()
+            Logger.setup.notice("journal-lifecycle: bundled-start outcome=external-managed generation=\(generation, privacy: .public)")
             return true
         case .appManaged(let oldSolPath):
             switch await legacyJournalMigrator.teardownLegacyAppManagedJournal(
@@ -907,6 +913,7 @@ public final class AppState {
                     ownerMessage: UICopy.JOURNAL_MIGRATION_BLOCKED,
                     diagnostic: diagnostic
                 ))
+                Logger.setup.error("journal-lifecycle: legacy-teardown branch=failed generation=\(generation, privacy: .public) commandLabel=\(diagnostic.commandLabel, privacy: .public)")
                 return false
             }
         case .absent:
@@ -919,6 +926,7 @@ public final class AppState {
             runtime = try await runtimeMaterializer.materialize(excludingLiveKey: liveKey)
             currentMaterializedRuntime = runtime
             journalBinaryProvider = { runtime.layout.journalBinary }
+            Logger.setup.notice("journal-lifecycle: runtime-materialized generation=\(generation, privacy: .public) key=\(runtime.key, privacy: .public)")
         } catch {
             journalRuntimeStatus = .unknown(JournalDiagnostic(
                 commandLabel: "journal runtime materialize",
@@ -927,11 +935,13 @@ public final class AppState {
                     detail: error.localizedDescription
                 )
             ))
+            Logger.setup.error("journal-lifecycle: runtime-materialize branch=failed generation=\(generation, privacy: .public)")
             return false
         }
 
         switch await singleSupervisorGate.prepareForSpawn(journalRoot: journalRoot) {
         case .success:
+            Logger.setup.notice("journal-lifecycle: prepare-for-spawn result=success generation=\(generation, privacy: .public)")
             break
         case .blocked(let diagnostic):
             journalRuntimeStatus = .stopped(attentionDiagnostic(
@@ -939,6 +949,7 @@ public final class AppState {
                 ownerMessage: UICopy.JOURNAL_SPAWN_BLOCKED_PORTS,
                 diagnostic: diagnostic
             ))
+            Logger.setup.warning("journal-lifecycle: prepare-for-spawn result=blocked generation=\(generation, privacy: .public)")
             return false
         }
 
@@ -956,6 +967,7 @@ public final class AppState {
                     detail: error.localizedDescription
                 )
             ))
+            Logger.setup.error("journal-lifecycle: spawn branch=failed generation=\(generation, privacy: .public)")
             return false
         }
 
@@ -965,14 +977,21 @@ public final class AppState {
             timeout: .seconds(120)
         ) {
         case .ready:
-            guard generation == bundledStartGeneration else { return true }
+            guard generation == bundledStartGeneration else {
+                Logger.setup.notice("journal-lifecycle: start-superseded phase=ready-check generation=\(generation, privacy: .public) current=\(self.bundledStartGeneration, privacy: .public)")
+                return true
+            }
             await supervisedJournalRunner.markReady()
             journalRuntimeStatus = .running
             activeJournalRoot = journalRoot
             configureJournalDependentServices()
+            Logger.setup.notice("journal-lifecycle: bundled-start outcome=ready generation=\(generation, privacy: .public)")
             return true
         case .failed(let diagnostic):
-            guard generation == bundledStartGeneration else { return false }
+            guard generation == bundledStartGeneration else {
+                Logger.setup.notice("journal-lifecycle: start-superseded phase=ready-failed generation=\(generation, privacy: .public) current=\(self.bundledStartGeneration, privacy: .public)")
+                return false
+            }
             await supervisedJournalRunner.stop()
             activeJournalRoot = nil
             journalRuntimeStatus = .unknown(attentionDiagnostic(
@@ -980,6 +999,7 @@ public final class AppState {
                 ownerMessage: UICopy.JOURNAL_READINESS_TIMEOUT,
                 diagnostic: diagnostic
             ))
+            Logger.setup.warning("journal-lifecycle: bundled-start outcome=readiness-failed generation=\(generation, privacy: .public)")
             return false
         }
     }
@@ -1121,17 +1141,21 @@ public final class AppState {
         if newMode != .bundled {
             clearJournalProbeState()
             stopJournalProbeTimer()
+            Logger.setup.notice("journal-lifecycle: mode-transition outcome=none reason=not-bundled from=\(String(describing: oldMode), privacy: .public) to=\(String(describing: newMode), privacy: .public)")
             return .none
         }
         if oldMode != .bundled {
             let root = configuredJournalRoot()
             if bundledJournalAlreadyReady(for: root) {
+                Logger.setup.notice("journal-lifecycle: mode-transition outcome=already-ready from=\(String(describing: oldMode), privacy: .public) to=\(String(describing: newMode), privacy: .public)")
                 return .alreadyReadyNoStart
             }
             journalDependentServicesReady = false
             startBundledJournalStartup()
+            Logger.setup.notice("journal-lifecycle: mode-transition outcome=started from=\(String(describing: oldMode), privacy: .public) to=\(String(describing: newMode), privacy: .public)")
             return .started
         }
+        Logger.setup.notice("journal-lifecycle: mode-transition outcome=none reason=stable from=\(String(describing: oldMode), privacy: .public) to=\(String(describing: newMode), privacy: .public)")
         return .none
     }
 
@@ -1171,10 +1195,12 @@ public final class AppState {
     private func runJournalStop() async {
         defer { journalStopTask = nil }
         guard config.serviceMode == .bundled else { return }
+        Logger.setup.notice("journal-lifecycle: user-stop begin")
         await supervisedJournalRunner.stop()
         activeJournalRoot = nil
         journalRuntimeDebounceState.reset()
         journalRuntimeStatus = .stoppedByUser
+        Logger.setup.notice("journal-lifecycle: user-stop complete")
     }
 
     public func requestJournalStart() {
@@ -1192,13 +1218,18 @@ public final class AppState {
     private func runJournalStart() async {
         defer { journalStartTask = nil }
         guard config.serviceMode == .bundled else { return }
+        Logger.setup.notice("journal-lifecycle: user-start begin")
         let preStartError = errorMessage
         let ready = await coordinateBundledJournalStart(journalRoot: configuredJournalRoot()).value
         if ready {
             journalRuntimeStatus = .running
             errorMessage = preStartError
-        } else if errorMessage == nil {
-            errorMessage = "start failed — journal didn't come back"
+            Logger.setup.notice("journal-lifecycle: user-start outcome=ready")
+        } else {
+            Logger.setup.warning("journal-lifecycle: user-start outcome=failed")
+            if errorMessage == nil {
+                errorMessage = "start failed — journal didn't come back"
+            }
         }
     }
 
@@ -1273,6 +1304,7 @@ public final class AppState {
     }
 
     private func runSupervisedJournalRestart() async {
+        Logger.setup.notice("journal-lifecycle: supervised-restart begin")
         preRestartErrorMessage = errorMessage
         journalRuntimeStatus = .restarting
         let restartStartGeneration = restartRequiredGeneration
@@ -1287,6 +1319,7 @@ public final class AppState {
             return
         }
         guard let runtime = currentMaterializedRuntime else {
+            Logger.setup.notice("journal-lifecycle: supervised-restart branch=cold-start")
             let ready = await coordinateBundledJournalStart(journalRoot: configuredJournalRoot()).value
             if ready {
                 errorMessage = preRestartErrorMessage
@@ -1309,6 +1342,7 @@ public final class AppState {
                     detail: error.localizedDescription
                 )
             ))
+            Logger.setup.error("journal-lifecycle: supervised-restart branch=spawn-failed")
             errorMessage = UICopy.JOURNAL_SPAWN_FAILED
             return
         }
@@ -1321,6 +1355,7 @@ public final class AppState {
         case .ready:
             await supervisedJournalRunner.markReady()
             configureJournalDependentServices()
+            Logger.setup.notice("journal-lifecycle: supervised-restart outcome=ready")
             errorMessage = preRestartErrorMessage
             if restartStartGeneration == restartRequiredGeneration {
                 restartRequiredBannerVisible = false
@@ -1331,6 +1366,7 @@ public final class AppState {
                 ownerMessage: UICopy.JOURNAL_READINESS_TIMEOUT,
                 diagnostic: diagnostic
             ))
+            Logger.setup.warning("journal-lifecycle: supervised-restart outcome=readiness-failed")
             errorMessage = UICopy.JOURNAL_READINESS_TIMEOUT
         }
     }
