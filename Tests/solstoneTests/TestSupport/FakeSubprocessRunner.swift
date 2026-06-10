@@ -64,7 +64,8 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         stdoutHandler: @escaping @Sendable (Data) -> Void,
         stderrHandler: @escaping @Sendable (Data) -> Void
     ) async throws -> SubprocessResult {
-        if executable.lastPathComponent == "sol" {
+        // sol --version is the materializer's post-rename completeness probe; any other sol call is still a bug.
+        if executable.lastPathComponent == "sol", arguments != ["--version"] {
             Issue.record("unexpected sol subprocess invocation: \(executable.path) \(arguments.joined(separator: " "))")
             throw FakeRunError(message: "unexpected sol subprocess invocation")
         }
@@ -100,6 +101,11 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         defer { lock.unlock() }
 
         recordedInvocations.append(SubprocessInvocation(executable: executable, arguments: arguments, environment: environment, timeout: timeout))
+        if arguments == ["--version"],
+           let toolDir = environment?["UV_TOOL_DIR"],
+           executable.path.hasPrefix(toolDir + "/") {
+            return .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8))
+        }
         let key = responseKey(for: executable, arguments: arguments)
         guard var values = responses[key], !values.isEmpty else {
             if arguments == ["-c", "print(1)"] {
@@ -139,10 +145,24 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         do {
             try FileManager.default.createDirectory(at: binURL, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: toolBinURL, withIntermediateDirectories: true)
+            let python = toolBinURL.appendingPathComponent("python")
+            let pythonBody = """
+            #!/bin/sh
+            echo "solstone \(BundleConfig.solstonePinVersion)"
+            """
+            try Data((pythonBody + "\n").utf8).write(to: python)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: python.path)
+
             for name in ["sol", "journal"] {
                 let consoleScript = toolBinURL.appendingPathComponent(name)
-                let body = "#!\(toolBinURL.appendingPathComponent("python").path)\n# console script\n"
-                try Data(body.utf8).write(to: consoleScript)
+                let body = """
+                #!/bin/sh
+                '''exec' \(shellSingleQuoted(python.path)) "$0" "$@"
+                ' '''
+                # -*- coding: utf-8 -*-
+                # fake console script
+                """
+                try Data((body + "\n").utf8).write(to: consoleScript)
                 try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: consoleScript.path)
 
                 let entrypoint = binURL.appendingPathComponent(name)
@@ -157,6 +177,10 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         } catch {
             Issue.record("failed to create fake materialized binaries: \(error.localizedDescription)")
         }
+    }
+
+    private func shellSingleQuoted(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }
 

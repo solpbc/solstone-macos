@@ -357,7 +357,7 @@ struct AppOwnedJournalTests {
     @Test func runtimeMaterializeProducesRelocatableEntrypoints() async throws {
         let workspace = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: workspace) }
-        let runtimeRoot = workspace.appendingPathComponent("runtime", isDirectory: true)
+        let runtimeRoot = workspace.appendingPathComponent("runtime dir with space", isDirectory: true)
         let wheelhouse = workspace.appendingPathComponent("wheelhouse", isDirectory: true)
         let wrapperDir = workspace.appendingPathComponent("wrappers", isDirectory: true)
         try FileManager.default.createDirectory(at: wheelhouse, withIntermediateDirectories: true)
@@ -381,17 +381,34 @@ struct AppOwnedJournalTests {
         let runtimeChildren = try FileManager.default.contentsOfDirectory(atPath: runtimeRoot.path)
         #expect(!runtimeChildren.contains { $0.hasPrefix(".tmp-") })
         let runtimeRootPath = runtimeRoot.resolvingSymlinksInPath().standardizedFileURL.path
+        let realRunner = SubprocessRunner()
         for bin in [runtime.layout.journalBinary, runtime.layout.solBinary] {
             #expect(FileManager.default.isExecutableFile(atPath: bin.path))
             let resolvedPath = bin.resolvingSymlinksInPath().standardizedFileURL.path
             #expect(!pathContainsStagingSegment(resolvedPath))
             #expect(pathIsUnderRoot(resolvedPath, rootPath: runtimeRootPath))
 
-            let shebang = try firstLine(of: URL(fileURLWithPath: resolvedPath))
-            #expect(shebang.hasPrefix("#!"))
-            let interpreter = String(shebang.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-            #expect(!pathContainsStagingSegment(interpreter))
-            #expect(pathIsUnderRoot(interpreter, rootPath: runtimeRootPath))
+            let script = try String(contentsOf: URL(fileURLWithPath: resolvedPath), encoding: .utf8)
+            let lines = script.components(separatedBy: "\n")
+            #expect(lines.first == "#!/bin/sh")
+            #expect(!lines.contains { pathContainsStagingSegment($0) })
+
+            let stdout = LockedArray<Data>([])
+            let result = try await realRunner.run(
+                executable: bin,
+                arguments: ["--version"],
+                environment: runtime.layout.uvEnvironment(),
+                timeout: .seconds(30),
+                stdoutHandler: { data in stdout.append(data) },
+                stderrHandler: { _ in }
+            )
+            var stdoutData = Data()
+            for chunk in stdout.all {
+                stdoutData.append(chunk)
+            }
+            let stdoutText = String(decoding: stdoutData, as: UTF8.self)
+            #expect(result.exitCode == 0)
+            #expect(SolVersionParser.parse(stdoutText) == BundleConfig.solstonePinVersion)
         }
     }
 
@@ -1003,11 +1020,6 @@ private func pathContainsStagingSegment(_ path: String) -> Bool {
 
 private func pathIsUnderRoot(_ path: String, rootPath: String) -> Bool {
     path == rootPath || path.hasPrefix(rootPath + "/")
-}
-
-private func firstLine(of url: URL) throws -> String {
-    let text = try String(contentsOf: url, encoding: .utf8)
-    return String(text.split(separator: "\n", omittingEmptySubsequences: false).first ?? "")
 }
 
 private func makeTemporaryDirectory() throws -> URL {
