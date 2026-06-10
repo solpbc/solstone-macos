@@ -354,6 +354,47 @@ struct AppOwnedJournalTests {
         #expect(!FileManager.default.fileExists(atPath: staleURL.path))
     }
 
+    @Test func runtimeMaterializeProducesRelocatableEntrypoints() async throws {
+        let workspace = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let runtimeRoot = workspace.appendingPathComponent("runtime", isDirectory: true)
+        let wheelhouse = workspace.appendingPathComponent("wheelhouse", isDirectory: true)
+        let wrapperDir = workspace.appendingPathComponent("wrappers", isDirectory: true)
+        try FileManager.default.createDirectory(at: wheelhouse, withIntermediateDirectories: true)
+        try Data("manifest\n".utf8).write(to: wheelhouse.appendingPathComponent("MANIFEST.sha256"))
+        try Data("wheel\n".utf8).write(to: wheelhouse.appendingPathComponent("solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl"))
+
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("tool", .success())
+        runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let materializer = RuntimeMaterializer(
+            runtimeRootURL: runtimeRoot,
+            uvBinaryURL: URL(fileURLWithPath: "/usr/bin/uv"),
+            bundledPythonURL: URL(fileURLWithPath: "/bin/echo"),
+            wheelhouseURL: wheelhouse,
+            wrapperDirURL: wrapperDir,
+            runner: runner
+        )
+
+        let runtime = try await materializer.materialize(excludingLiveKey: nil)
+
+        let runtimeChildren = try FileManager.default.contentsOfDirectory(atPath: runtimeRoot.path)
+        #expect(!runtimeChildren.contains { $0.hasPrefix(".tmp-") })
+        let runtimeRootPath = runtimeRoot.resolvingSymlinksInPath().standardizedFileURL.path
+        for bin in [runtime.layout.journalBinary, runtime.layout.solBinary] {
+            #expect(FileManager.default.isExecutableFile(atPath: bin.path))
+            let resolvedPath = bin.resolvingSymlinksInPath().standardizedFileURL.path
+            #expect(!pathContainsStagingSegment(resolvedPath))
+            #expect(pathIsUnderRoot(resolvedPath, rootPath: runtimeRootPath))
+
+            let shebang = try firstLine(of: URL(fileURLWithPath: resolvedPath))
+            #expect(shebang.hasPrefix("#!"))
+            let interpreter = String(shebang.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+            #expect(!pathContainsStagingSegment(interpreter))
+            #expect(pathIsUnderRoot(interpreter, rootPath: runtimeRootPath))
+        }
+    }
+
     @Test func bundledInstallerDoesNotCallServiceStartInstallRestartOrUp() async throws {
         let workspace = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: workspace) }
@@ -954,6 +995,19 @@ private func launchCount(at url: URL) -> Int {
 
 private func shellSingleQuoted(_ value: String) -> String {
     "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+}
+
+private func pathContainsStagingSegment(_ path: String) -> Bool {
+    path.split(separator: "/").contains { $0.hasPrefix(".tmp-") }
+}
+
+private func pathIsUnderRoot(_ path: String, rootPath: String) -> Bool {
+    path == rootPath || path.hasPrefix(rootPath + "/")
+}
+
+private func firstLine(of url: URL) throws -> String {
+    let text = try String(contentsOf: url, encoding: .utf8)
+    return String(text.split(separator: "\n", omittingEmptySubsequences: false).first ?? "")
 }
 
 private func makeTemporaryDirectory() throws -> URL {

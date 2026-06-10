@@ -54,6 +54,7 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
 
         let tempURL = runtimeRootURL.appendingPathComponent(".tmp-\(UUID().uuidString)", isDirectory: true)
         let tempLayout = SolstoneRuntimeLayout(rootURL: tempURL)
+        var didRenameToFinal = false
         do {
             try tempLayout.ensureCreated()
             try createBundledPythonLink(layout: tempLayout)
@@ -61,17 +62,23 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
             guard try await verify(layout: tempLayout) else {
                 throw RuntimeMaterializerError.verificationFailed("staged runtime verification failed")
             }
+            try makeRelocationSafe(layout: tempLayout, finalURL: finalURL)
             try? fileManager.removeItem(at: finalURL)
             try fileManager.createDirectory(at: runtimeRootURL, withIntermediateDirectories: true)
-            // Atomicity (temp -> verify -> rename), not `journal --version`, is the completeness guarantee.
+            // Make staging references relocation-safe before rename; assert post-rename reality before shipping it.
             if Darwin.rename(tempURL.path, finalURL.path) != 0 {
                 throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
             }
+            didRenameToFinal = true
+            try assertRelocationSafe(layout: finalLayout)
             try rewriteAliases(layout: finalLayout)
             try garbageCollect(keeping: key, liveKey: liveKey)
             return MaterializedRuntime(key: key, layout: finalLayout)
         } catch {
             try? fileManager.removeItem(at: tempURL)
+            if didRenameToFinal {
+                try? fileManager.removeItem(at: finalURL)
+            }
             throw error
         }
     }
@@ -196,6 +203,87 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
             try fileManager.removeItem(at: link)
         }
         try fileManager.createSymbolicLink(at: link, withDestinationURL: bundledPythonURL)
+    }
+
+    /// Rewrites uv's staging-absolute entrypoint references so they survive the temp -> final rename.
+    /// uv writes `<bin>/{journal,sol}` as absolute symlinks into `<tools>/.../bin/` and the console
+    /// scripts there carry an absolute shebang into the staging venv python. Both reference the
+    /// `.tmp-*` staging dir, which vanishes after the rename. Rewrite the entrypoint symlinks to
+    /// relative targets (move-proof) and the console-script shebangs to the final venv python.
+    private func makeRelocationSafe(layout: SolstoneRuntimeLayout, finalURL: URL) throws {
+        let tempRoot = layout.rootURL.standardizedFileURL.path
+        for entry in [layout.journalBinary, layout.solBinary] {
+            let name = entry.lastPathComponent
+            // Read uv's absolute symlink target into the staging tools tree.
+            let targetPath = try fileManager.destinationOfSymbolicLink(atPath: entry.path)
+            guard targetPath.hasPrefix(tempRoot + "/") else {
+                throw RuntimeMaterializerError.verificationFailed(
+                    "entrypoint \(name) symlink target escapes staging root: \(targetPath)"
+                )
+            }
+            let targetRelToRoot = String(targetPath.dropFirst(tempRoot.count + 1))
+            // Rewrite the console-script shebang from the staging venv python to the final venv python.
+            let consoleScript = URL(fileURLWithPath: targetPath)
+            let finalVenvPython = consoleScript.deletingLastPathComponent().appendingPathComponent("python").path
+                .replacingOccurrences(of: tempRoot, with: finalURL.standardizedFileURL.path)
+            try rewriteShebang(of: consoleScript, to: finalVenvPython)
+            // Replace the absolute entrypoint symlink with a relative one.
+            try fileManager.removeItem(at: entry)
+            try fileManager.createSymbolicLink(atPath: entry.path, withDestinationPath: "../" + targetRelToRoot)
+        }
+    }
+
+    private func rewriteShebang(of script: URL, to interpreter: String) throws {
+        let original = try String(contentsOf: script, encoding: .utf8)
+        guard original.hasPrefix("#!") else {
+            throw RuntimeMaterializerError.verificationFailed(
+                "console script \(script.lastPathComponent) has no shebang to rewrite"
+            )
+        }
+        let body = original.drop(while: { $0 != "\n" })
+        let rewritten = "#!" + interpreter + body
+        let attrs = try fileManager.attributesOfItem(atPath: script.path)
+        try Data(rewritten.utf8).write(to: script, options: .atomic)
+        if let perms = attrs[.posixPermissions] {
+            try fileManager.setAttributes([.posixPermissions: perms], ofItemAtPath: script.path)
+        }
+    }
+
+    /// Fails loudly if any entrypoint would dangle post-rename: resolves the real path of
+    /// `bin/{journal,sol}` and the rewritten console-script shebang and asserts neither references a
+    /// `.tmp-*` staging segment and both stay within the runtime root. This is the completeness
+    /// guarantee against post-rename reality; `isExecutableFile` follows symlinks and false-passes
+    /// against the still-present temp tree, so the check must run after the temp dir is gone.
+    private func assertRelocationSafe(layout: SolstoneRuntimeLayout) throws {
+        let rootPath = layout.rootURL.resolvingSymlinksInPath().standardizedFileURL.path
+        for entry in [layout.journalBinary, layout.solBinary] {
+            let name = entry.lastPathComponent
+            let resolved = entry.resolvingSymlinksInPath().standardizedFileURL
+            guard fileManager.isExecutableFile(atPath: resolved.path) else {
+                throw RuntimeMaterializerError.verificationFailed(
+                    "entrypoint \(name) does not resolve to an executable: \(resolved.path)"
+                )
+            }
+            try assertWithinRoot(resolved.path, rootPath: rootPath, what: "entrypoint \(name)")
+
+            let shebang = try String(contentsOf: resolved, encoding: .utf8)
+            guard shebang.hasPrefix("#!") else {
+                throw RuntimeMaterializerError.verificationFailed("console script \(name) lost its shebang")
+            }
+            let interpreter = String(shebang.dropFirst(2).prefix(while: { $0 != "\n" }))
+                .trimmingCharacters(in: .whitespaces)
+            try assertWithinRoot(interpreter, rootPath: rootPath, what: "console script \(name) interpreter")
+        }
+    }
+
+    private func assertWithinRoot(_ path: String, rootPath: String, what: String) throws {
+        let segments = path.split(separator: "/")
+        if segments.contains(where: { $0.hasPrefix(".tmp-") }) {
+            throw RuntimeMaterializerError.verificationFailed("\(what) references staging dir: \(path)")
+        }
+        guard path == rootPath || path.hasPrefix(rootPath + "/") else {
+            throw RuntimeMaterializerError.verificationFailed("\(what) escapes runtime root: \(path)")
+        }
     }
 
     private func rewriteAliases(layout: SolstoneRuntimeLayout) throws {

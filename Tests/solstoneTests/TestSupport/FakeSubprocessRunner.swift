@@ -131,14 +131,28 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
     }
 
     private func createMaterializedToolBinaries(environment: [String: String]?) {
-        guard let binPath = environment?["UV_TOOL_BIN_DIR"] else { return }
+        guard let binPath = environment?["UV_TOOL_BIN_DIR"],
+              let toolsPath = environment?["UV_TOOL_DIR"] else { return }
         let binURL = URL(fileURLWithPath: binPath, isDirectory: true)
+        let toolBinURL = URL(fileURLWithPath: toolsPath, isDirectory: true)
+            .appendingPathComponent("solstone/bin", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: binURL, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: toolBinURL, withIntermediateDirectories: true)
             for name in ["sol", "journal"] {
-                let url = binURL.appendingPathComponent(name)
-                try Data("#!/bin/sh\n".utf8).write(to: url)
-                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+                let consoleScript = toolBinURL.appendingPathComponent(name)
+                let body = "#!\(toolBinURL.appendingPathComponent("python").path)\n# console script\n"
+                try Data(body.utf8).write(to: consoleScript)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: consoleScript.path)
+
+                let entrypoint = binURL.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: entrypoint.path) {
+                    try FileManager.default.removeItem(at: entrypoint)
+                }
+                try FileManager.default.createSymbolicLink(
+                    atPath: entrypoint.path,
+                    withDestinationPath: consoleScript.path
+                )
             }
         } catch {
             Issue.record("failed to create fake materialized binaries: \(error.localizedDescription)")
