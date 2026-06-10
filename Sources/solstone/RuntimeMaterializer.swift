@@ -346,11 +346,7 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
 
     private func writeWrapper(named name: String, target: URL) throws {
         let wrapper = wrapperDirURL.appendingPathComponent(name)
-        let script = """
-        #!/bin/sh
-        # managed-version: app-owned-child
-        exec '\(target.path)' "$@"
-        """
+        let script = ManagedWrapper.script(forTarget: target.path)
         try Data((script + "\n").utf8).write(to: wrapper, options: .atomic)
         try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
     }

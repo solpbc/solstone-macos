@@ -10,12 +10,36 @@ internal enum SolOwnership: Equatable {
     case appManaged(solPath: String)
     case externallyManaged(solPath: String)
 
+    enum Provenance: Equatable, CustomStringConvertible {
+        case bare
+        case legacyManaged
+        case appOwnedChild
+
+        var description: String {
+            switch self {
+            case .bare:
+                return "bare"
+            case .legacyManaged:
+                return "legacyManaged"
+            case .appOwnedChild:
+                return "appOwnedChild"
+            }
+        }
+    }
+
     static func classify(
-        candidates: [(path: String, resolved: String)],
+        candidates: [(path: String, resolved: String, provenance: Provenance)],
         runtimeRoot: String,
         hasLocalJournalCreds: Bool
     ) -> SolOwnership {
         guard !candidates.isEmpty else { return .absent }
+
+        // The app-owned-child wrapper is the authoritative pointer to the active content-addressed runtime.
+        if let appOwned = candidates.first(where: {
+            $0.provenance == .appOwnedChild && isUnderRoot($0.resolved, root: runtimeRoot)
+        }) {
+            return .appManaged(solPath: appOwned.path)
+        }
 
         let runtime = candidates.first { isUnderRoot($0.resolved, root: runtimeRoot) }
         let external = candidates.first { !isUnderRoot($0.resolved, root: runtimeRoot) }
@@ -75,8 +99,10 @@ internal enum SolOwnership: Equatable {
             paths.append(whichPath)
         }
 
-        let candidates = paths.map { path in
-            (path: path, resolved: managedWrapperTarget(forFileAt: path) ?? canonicalPath(path))
+        let candidates = paths.map { path -> (path: String, resolved: String, provenance: Provenance) in
+            let parsed = parseManagedWrapper(forFileAt: path)
+            let resolved = parsed.target.map(canonicalPath) ?? canonicalPath(path)
+            return (path: path, resolved: resolved, provenance: parsed.provenance)
         }
         let verdict = classify(
             candidates: candidates,
@@ -101,7 +127,7 @@ internal enum SolOwnership: Equatable {
                 return p
             }
         }()
-        let candidateTrace = candidates.map { "\($0.path) -> \($0.resolved)" }.joined(separator: "; ")
+        let candidateTrace = candidates.map { "\($0.path) -> \($0.resolved) [\($0.provenance)]" }.joined(separator: "; ")
         Logger.setup.notice("sol ownership resolved: verdict=\(verdictName, privacy: .public) chosen=\(chosenSolPath, privacy: .public) hasLocalJournalCreds=\(hasLocalJournalCreds, privacy: .public) candidates=\(candidateTrace, privacy: .public)")
         return verdict
     }
@@ -124,31 +150,51 @@ internal enum SolOwnership: Equatable {
         }
     }
 
-    private static func managedWrapperTarget(forFileAt path: String) -> String? {
-        guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+    private static func parseManagedWrapper(forFileAt path: String) -> (provenance: Provenance, target: String?) {
+        guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else { return (.bare, nil) }
         let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
-        let hasMarker = lines.contains { line in
+
+        let provenance: Provenance
+        if lines.contains(where: { line in
+            let trimmedLeading = line.drop(while: { $0.isWhitespace })
+            return trimmedLeading == ManagedWrapper.appOwnedChildMarker
+        }) {
+            provenance = .appOwnedChild
+        } else if lines.contains(where: { line in
             if line.contains("managed by 'journal config'") {
                 return true
             }
             let trimmedLeading = line.drop(while: { $0.isWhitespace })
             return trimmedLeading.hasPrefix("# managed-version:")
+        }) {
+            provenance = .legacyManaged
+        } else {
+            provenance = .bare
         }
-        guard hasMarker else { return nil }
 
-        let prefix = "SOL_BIN='"
-        guard let solBinLine = lines.first(where: { line in
-            let trimmedLeading = line.drop(while: { $0.isWhitespace })
-            return trimmedLeading.hasPrefix(prefix)
-        }) else {
-            return nil
+        switch provenance {
+        case .appOwnedChild:
+            let target = lines.lazy.compactMap { line in
+                ManagedWrapper.execTarget(fromLine: String(line))
+            }.first
+            return (provenance, target)
+        case .legacyManaged:
+            let prefix = "SOL_BIN='"
+            guard let solBinLine = lines.first(where: { line in
+                let trimmedLeading = line.drop(while: { $0.isWhitespace })
+                return trimmedLeading.hasPrefix(prefix)
+            }) else {
+                return (provenance, nil)
+            }
+            let trimmedLeading = solBinLine.drop(while: { $0.isWhitespace })
+            let remainder = trimmedLeading.dropFirst(prefix.count)
+            guard let closingQuote = remainder.firstIndex(of: "'") else { return (provenance, nil) }
+            let value = String(remainder[..<closingQuote])
+            guard !value.isEmpty else { return (provenance, nil) }
+            return (provenance, value)
+        case .bare:
+            return (provenance, nil)
         }
-        let trimmedLeading = solBinLine.drop(while: { $0.isWhitespace })
-        let remainder = trimmedLeading.dropFirst(prefix.count)
-        guard let closingQuote = remainder.firstIndex(of: "'") else { return nil }
-        let value = String(remainder[..<closingQuote])
-        guard !value.isEmpty else { return nil }
-        return canonicalPath(value)
     }
 
     private static func canonicalPath(_ path: String) -> String {

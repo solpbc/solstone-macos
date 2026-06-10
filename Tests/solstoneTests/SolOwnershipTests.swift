@@ -12,45 +12,45 @@ struct SolOwnershipTests {
     }
 
     @Test func classifyRuntimeOnlyWithoutCredsIsAppManaged() {
-        let candidate = (path: "/tmp/runtime/bin/sol", resolved: "/tmp/runtime/bin/sol")
+        let candidate = (path: "/tmp/runtime/bin/sol", resolved: "/tmp/runtime/bin/sol", provenance: SolOwnership.Provenance.bare)
 
         #expect(SolOwnership.classify(candidates: [candidate], runtimeRoot: "/tmp/runtime", hasLocalJournalCreds: false) == .appManaged(solPath: candidate.path))
     }
 
     @Test func classifyRuntimeOnlyWithCredsIsAppManaged() {
-        let candidate = (path: "/tmp/runtime/bin/sol", resolved: "/tmp/runtime/bin/sol")
+        let candidate = (path: "/tmp/runtime/bin/sol", resolved: "/tmp/runtime/bin/sol", provenance: SolOwnership.Provenance.bare)
 
         #expect(SolOwnership.classify(candidates: [candidate], runtimeRoot: "/tmp/runtime", hasLocalJournalCreds: true) == .appManaged(solPath: candidate.path))
     }
 
     @Test func classifyVersionedRuntimePathIsAppManaged() {
-        let candidate = (path: "/tmp/runtime/versions/0.4.8/bin/sol", resolved: "/tmp/runtime/versions/0.4.8/bin/sol")
+        let candidate = (path: "/tmp/runtime/versions/0.4.8/bin/sol", resolved: "/tmp/runtime/versions/0.4.8/bin/sol", provenance: SolOwnership.Provenance.bare)
 
         #expect(SolOwnership.classify(candidates: [candidate], runtimeRoot: "/tmp/runtime", hasLocalJournalCreds: false) == .appManaged(solPath: candidate.path))
     }
 
     @Test func classifyExternalOnlyWithoutCredsIsExternal() {
-        let candidate = (path: "/opt/homebrew/bin/sol", resolved: "/opt/homebrew/bin/sol")
+        let candidate = (path: "/opt/homebrew/bin/sol", resolved: "/opt/homebrew/bin/sol", provenance: SolOwnership.Provenance.bare)
 
         #expect(SolOwnership.classify(candidates: [candidate], runtimeRoot: "/tmp/runtime", hasLocalJournalCreds: false) == .externallyManaged(solPath: candidate.path))
     }
 
     @Test func classifyExternalOnlyWithCredsIsExternal() {
-        let candidate = (path: "/opt/homebrew/bin/sol", resolved: "/opt/homebrew/bin/sol")
+        let candidate = (path: "/opt/homebrew/bin/sol", resolved: "/opt/homebrew/bin/sol", provenance: SolOwnership.Provenance.bare)
 
         #expect(SolOwnership.classify(candidates: [candidate], runtimeRoot: "/tmp/runtime", hasLocalJournalCreds: true) == .externallyManaged(solPath: candidate.path))
     }
 
     @Test func classifyRuntimeAndExternalWithCredsPrefersExternal() {
-        let runtime = (path: "/tmp/runtime/bin/sol", resolved: "/tmp/runtime/bin/sol")
-        let external = (path: "/opt/homebrew/bin/sol", resolved: "/opt/homebrew/bin/sol")
+        let runtime = (path: "/tmp/runtime/bin/sol", resolved: "/tmp/runtime/bin/sol", provenance: SolOwnership.Provenance.bare)
+        let external = (path: "/opt/homebrew/bin/sol", resolved: "/opt/homebrew/bin/sol", provenance: SolOwnership.Provenance.bare)
 
         #expect(SolOwnership.classify(candidates: [runtime, external], runtimeRoot: "/tmp/runtime", hasLocalJournalCreds: true) == .externallyManaged(solPath: external.path))
     }
 
     @Test func classifyRuntimeAndExternalWithoutCredsPrefersRuntime() {
-        let runtime = (path: "/tmp/runtime/bin/sol", resolved: "/tmp/runtime/bin/sol")
-        let external = (path: "/opt/homebrew/bin/sol", resolved: "/opt/homebrew/bin/sol")
+        let runtime = (path: "/tmp/runtime/bin/sol", resolved: "/tmp/runtime/bin/sol", provenance: SolOwnership.Provenance.bare)
+        let external = (path: "/opt/homebrew/bin/sol", resolved: "/opt/homebrew/bin/sol", provenance: SolOwnership.Provenance.bare)
 
         #expect(SolOwnership.classify(candidates: [runtime, external], runtimeRoot: "/tmp/runtime", hasLocalJournalCreds: false) == .appManaged(solPath: runtime.path))
     }
@@ -58,10 +58,43 @@ struct SolOwnershipTests {
     @Test func prefixRuleRejectsSubstringRuntimeRoot() {
         #expect(!SolOwnership.isUnderRoot("/tmp/runtime-x/bin/sol", root: "/tmp/runtime"))
         #expect(SolOwnership.classify(
-            candidates: [(path: "/tmp/runtime-x/bin/sol", resolved: "/tmp/runtime-x/bin/sol")],
+            candidates: [(path: "/tmp/runtime-x/bin/sol", resolved: "/tmp/runtime-x/bin/sol", provenance: SolOwnership.Provenance.bare)],
             runtimeRoot: "/tmp/runtime",
             hasLocalJournalCreds: false
         ) == .externallyManaged(solPath: "/tmp/runtime-x/bin/sol"))
+    }
+
+    @Test func classifyAppOwnedChildUnderRootWithCredsAndExternalPrefersAppManaged() {
+        let wrapper = (
+            path: "/home/.local/bin/sol",
+            resolved: "/tmp/runtime/1.0.0_py_abc/bin/sol",
+            provenance: SolOwnership.Provenance.appOwnedChild
+        )
+        let external = (
+            path: "/opt/homebrew/bin/sol",
+            resolved: "/opt/homebrew/bin/sol",
+            provenance: SolOwnership.Provenance.bare
+        )
+
+        #expect(SolOwnership.classify(
+            candidates: [wrapper, external],
+            runtimeRoot: "/tmp/runtime",
+            hasLocalJournalCreds: true
+        ) == .appManaged(solPath: wrapper.path))
+    }
+
+    @Test func classifyAppOwnedChildOutsideRootDoesNotForceAppManaged() {
+        let wrapper = (
+            path: "/home/.local/bin/sol",
+            resolved: "/opt/homebrew/bin/sol",
+            provenance: SolOwnership.Provenance.appOwnedChild
+        )
+
+        #expect(SolOwnership.classify(
+            candidates: [wrapper],
+            runtimeRoot: "/tmp/runtime",
+            hasLocalJournalCreds: false
+        ) == .externallyManaged(solPath: wrapper.path))
     }
 
     @Test func resolverIncludesRuntimeLocalAndWhichCandidates() async throws {
@@ -155,6 +188,102 @@ struct SolOwnershipTests {
         #expect(layout.rootURL.path.contains("Application Support"))
         #expect(layout.solBinary.path.contains("Application Support"))
         #expect(ownership == .appManaged(solPath: layout.solBinary.path))
+    }
+
+    @Test func resolverClassifiesAppOwnedChildWrapperAsAppManaged() async throws {
+        let workspace = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let layout = try makeRuntimeWithSpace(in: workspace)
+        try FileManager.default.removeItem(at: layout.solBinary)
+        let keySol = layout.rootURL
+            .appendingPathComponent("1.0.0_py_abc/bin", isDirectory: true)
+            .appendingPathComponent("sol")
+        try writeText("runtime sol\n", to: keySol)
+        let home = workspace.appendingPathComponent("home", isDirectory: true)
+        let wrapper = home.appendingPathComponent(".local/bin/sol")
+        try writeAppOwnedChildWrapper(at: wrapper, target: keySol.path)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("sol", .success(stdout: Data("/opt/homebrew/bin/sol\n".utf8)))
+        let resolver = SolOwnership.defaultResolver(
+            runner: runner,
+            fileExists: { FileManager.default.fileExists(atPath: $0) },
+            homeDirectory: home,
+            rootURL: layout.rootURL
+        )
+
+        let ownership = await resolver(true)
+
+        #expect(layout.rootURL.path.contains("Application Support"))
+        #expect(keySol.path.contains("Application Support"))
+        #expect(ownership == .appManaged(solPath: wrapper.path))
+    }
+
+    @Test func resolverAppOwnedChildWrapperWinsOverLeftoverVersionedRuntime() async throws {
+        let workspace = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let layout = try makeRuntimeWithSpace(in: workspace)
+        try FileManager.default.removeItem(at: layout.solBinary)
+        let keySol = layout.rootURL
+            .appendingPathComponent("1.0.0_py_abc/bin", isDirectory: true)
+            .appendingPathComponent("sol")
+        try writeText("runtime sol\n", to: keySol)
+        let legacyLayout = SolstoneRuntimeLayout(rootURL: layout.rootURL, mode: .versioned("0.4.8"))
+        try legacyLayout.ensureCreated()
+        try writeText("legacy runtime sol\n", to: legacyLayout.solBinary)
+        try FileManager.default.createSymbolicLink(atPath: layout.currentLink.path, withDestinationPath: "versions/0.4.8")
+        let home = workspace.appendingPathComponent("home", isDirectory: true)
+        let wrapper = home.appendingPathComponent(".local/bin/sol")
+        try writeAppOwnedChildWrapper(at: wrapper, target: keySol.path)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("sol", .success(stdout: Data("/opt/homebrew/bin/sol\n".utf8)))
+        let resolver = SolOwnership.defaultResolver(
+            runner: runner,
+            fileExists: { FileManager.default.fileExists(atPath: $0) },
+            homeDirectory: home,
+            rootURL: layout.rootURL
+        )
+
+        let ownership = await resolver(true)
+
+        #expect(ownership == .appManaged(solPath: wrapper.path))
+    }
+
+    @Test func appOwnedChildWrapperRoundTripsApostropheTarget() async throws {
+        let target = "/Users/o'brien/Library/Application Support/sol/runtime/k/bin/sol"
+
+        for roundTripTarget in [
+            "",
+            "/Users/sol/Library/Application Support/sol/runtime/k/bin/sol",
+            target,
+            "/Users/o''brien/Library/Application Support/sol/runtime/k/bin/sol",
+        ] {
+            #expect(ManagedWrapper.shellSingleUnquoted(ManagedWrapper.shellSingleQuoted(roundTripTarget)) == roundTripTarget)
+        }
+
+        let script = ManagedWrapper.script(forTarget: target)
+        let execLine = script
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .first { $0.trimmingCharacters(in: .whitespaces).hasPrefix("exec ") }
+        #expect(execLine.flatMap { ManagedWrapper.execTarget(fromLine: String($0)) } == target)
+
+        let workspace = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let home = workspace.appendingPathComponent("home", isDirectory: true)
+        let wrapper = home.appendingPathComponent(".local/bin/sol")
+        try writeAppOwnedChildWrapper(at: wrapper, target: target)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("sol", .success(exitCode: 1))
+        let runtimeRoot = URL(fileURLWithPath: "/Users/o'brien/Library/Application Support/sol/runtime", isDirectory: true)
+        let resolver = SolOwnership.defaultResolver(
+            runner: runner,
+            fileExists: { FileManager.default.fileExists(atPath: $0) },
+            homeDirectory: home,
+            rootURL: runtimeRoot
+        )
+
+        let ownership = await resolver(false)
+
+        #expect(ownership == .appManaged(solPath: wrapper.path))
     }
 
     @Test func resolverClassifiesNonMarkerLocalBinAsExternal() async throws {
@@ -273,6 +402,10 @@ struct SolOwnershipTests {
     ) throws {
         let body = "#!/bin/bash\n\(marker)\nSOL_BIN='\(solBin)'\nexec \"$SOL_BIN\" \"$@\"\n"
         try writeText(body, to: url)
+    }
+
+    private func writeAppOwnedChildWrapper(at url: URL, target: String) throws {
+        try writeText(ManagedWrapper.script(forTarget: target) + "\n", to: url)
     }
 
     private func writeText(_ text: String, to url: URL) throws {
