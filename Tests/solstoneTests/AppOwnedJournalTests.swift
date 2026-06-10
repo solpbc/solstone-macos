@@ -154,6 +154,118 @@ struct AppOwnedJournalTests {
         #expect(runner.markReadyCalls == 1)
     }
 
+    @Test func installTransitionDoesNotRestartHealthyChild() async throws {
+        let journalRoot = try makeTemporaryDirectory()
+        let state = AppState.forLaunchDetectionTest(config: AppConfig(), detectionRunner: { false })
+        let runner = MockSupervisedChildRunner()
+        let gate = MockSingleSupervisorGate()
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.supervisedJournalRunner = runner
+        state.singleSupervisorGate = gate
+        state.journalReadinessGate = MockJournalReadinessGate(result: .ready)
+
+        let ready = await state.ensureBundledJournalRuntime(journalRoot: journalRoot)
+
+        #expect(ready)
+        var persistedConfig = state.config
+        persistedConfig.journalPath = journalRoot.path
+        persistedConfig.serverURL = ServiceMode.bundledServiceURL
+        persistedConfig.serverKey = "k"
+        persistedConfig.serviceMode = .bundled
+        state.updateConfig(persistedConfig)
+        for _ in 0..<5 {
+            await Task.yield()
+        }
+
+        #expect(runner.startCalls == 1)
+        #expect(runner.markReadyCalls == 1)
+        #expect(runner.stopCalls == 0)
+        #expect(gate.prepareCalls == 1)
+        #expect(state.journalDependentServicesReady)
+        #expect(state.journalRuntimeStatus == .running)
+    }
+
+    @Test func overlappingStartsSpawnOnce() async throws {
+        let journalRoot = try makeTemporaryDirectory()
+        let state = AppState.forLaunchDetectionTest(
+            config: AppConfig(serviceMode: .bundled, journalPath: journalRoot.path),
+            detectionRunner: { false }
+        )
+        let runner = MockSupervisedChildRunner()
+        let readiness = ControllableJournalReadinessGate()
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.supervisedJournalRunner = runner
+        state.singleSupervisorGate = MockSingleSupervisorGate()
+        state.journalReadinessGate = readiness
+
+        let startup = Task { @MainActor in
+            await state.ensureBundledJournalRuntime(journalRoot: journalRoot)
+        }
+        await readiness.awaitWaiterRegistered(journalRoot: journalRoot)
+        #expect(runner.startCalls == 1)
+
+        state.requestJournalStop()
+        state.requestJournalRestart()
+        await Task.yield()
+
+        #expect(runner.stopCalls == 0)
+        #expect(runner.restartCalls == 0)
+
+        readiness.resume(journalRoot: journalRoot, with: .ready)
+        let ready = await startup.value
+
+        #expect(ready)
+        #expect(state.journalRuntimeStatus == .running)
+        #expect(runner.startCalls == 1)
+    }
+
+    @Test func staleStartDoesNotStopNewerChild() async throws {
+        let rootA = try makeTemporaryDirectory()
+        let rootB = try makeTemporaryDirectory()
+        let state = AppState.forLaunchDetectionTest(
+            config: AppConfig(serviceMode: .bundled, journalPath: rootA.path),
+            detectionRunner: { false }
+        )
+        let runner = MockSupervisedChildRunner()
+        let readiness = ControllableJournalReadinessGate()
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.supervisedJournalRunner = runner
+        state.singleSupervisorGate = MockSingleSupervisorGate()
+        state.journalReadinessGate = readiness
+
+        let startA = Task { @MainActor in
+            await state.ensureBundledJournalRuntime(journalRoot: rootA)
+        }
+        await readiness.awaitWaiterRegistered(journalRoot: rootA)
+        #expect(runner.startCalls == 1)
+
+        let startB = Task { @MainActor in
+            await state.ensureBundledJournalRuntime(journalRoot: rootB)
+        }
+        await readiness.awaitWaiterRegistered(journalRoot: rootB)
+        #expect(runner.startCalls == 2)
+        readiness.resume(journalRoot: rootB, with: .ready)
+        let readyB = await startB.value
+
+        #expect(readyB)
+        #expect(runner.runningJournalRoot?.standardizedFileURL.path == rootB.standardizedFileURL.path)
+
+        readiness.resume(journalRoot: rootA, with: .failed(JournalDiagnostic(
+            commandLabel: "journal readiness",
+            timedOut: true,
+            outputExcerpt: "timeout"
+        )))
+        let readyA = await startA.value
+
+        #expect(!readyA)
+        #expect(runner.stopCalls == 0)
+        #expect(state.journalRuntimeStatus == .running)
+        #expect(runner.runningJournalRoot?.standardizedFileURL.path == rootB.standardizedFileURL.path)
+    }
+
     @Test func reestablishAfterFailedUpdateRespawnsChild() async throws {
         let journalRoot = try makeTemporaryDirectory()
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled, journalPath: journalRoot.path))
@@ -748,10 +860,15 @@ private final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecke
     private var starts = 0
     private var readyMarks = 0
     private var stops = 0
+    private var restarts = 0
+    private var runtimeKey: String?
+    private var journalRoot: URL?
 
     var startCalls: Int { lock.withLock { starts } }
     var markReadyCalls: Int { lock.withLock { readyMarks } }
     var stopCalls: Int { lock.withLock { stops } }
+    var restartCalls: Int { lock.withLock { restarts } }
+    var runningJournalRoot: URL? { lock.withLock { journalRoot } }
 
     init(startError: Error? = nil) {
         self.startError = startError
@@ -762,20 +879,33 @@ private final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecke
         if let startError {
             throw startError
         }
+        lock.withLock {
+            runtimeKey = runtime.key
+            self.journalRoot = journalRoot.standardizedFileURL
+        }
     }
 
     func restart() async throws {
+        lock.withLock { restarts += 1 }
     }
 
     func stop() async {
-        lock.withLock { stops += 1 }
+        lock.withLock {
+            stops += 1
+            runtimeKey = nil
+            journalRoot = nil
+        }
     }
 
     func stopForTermination() async {
+        lock.withLock {
+            runtimeKey = nil
+            journalRoot = nil
+        }
     }
 
     func currentRuntimeKey() async -> String? {
-        nil
+        lock.withLock { runtimeKey }
     }
 
     func markReady() async {
@@ -800,11 +930,20 @@ private final class MockLegacyMigrator: LegacyJournalMigrating, @unchecked Senda
     }
 }
 
-private struct MockSingleSupervisorGate: SingleSupervisorGating {
-    var result: SingleSupervisorGateResult = .success
+private final class MockSingleSupervisorGate: SingleSupervisorGating, @unchecked Sendable {
+    private let lock = NSLock()
+    private let result: SingleSupervisorGateResult
+    private var calls = 0
+
+    var prepareCalls: Int { lock.withLock { calls } }
+
+    init(result: SingleSupervisorGateResult = .success) {
+        self.result = result
+    }
 
     func prepareForSpawn(journalRoot: URL) async -> SingleSupervisorGateResult {
-        result
+        lock.withLock { calls += 1 }
+        return result
     }
 }
 
@@ -813,6 +952,88 @@ private struct MockJournalReadinessGate: JournalReadinessChecking {
 
     func waitUntilReady(journalRoot: URL, runtime: MaterializedRuntime, timeout: Duration) async -> JournalReadinessResult {
         result
+    }
+}
+
+private final class ControllableJournalReadinessGate: JournalReadinessChecking, @unchecked Sendable {
+    private struct Waiter {
+        let rootPath: String
+        let continuation: CheckedContinuation<JournalReadinessResult, Never>
+    }
+
+    private let lock = NSLock()
+    private var waiters: [Waiter] = []
+    private var waiterRegistrationContinuations: [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var queuedResults: [String: [JournalReadinessResult]] = [:]
+
+    func awaitWaiterRegistered(journalRoot: URL) async {
+        let rootPath = journalRoot.standardizedFileURL.path
+        if lock.withLock({ hasWaiter(for: rootPath) }) {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            let continuationToResume: CheckedContinuation<Void, Never>? = lock.withLock {
+                if hasWaiter(for: rootPath) {
+                    return continuation
+                }
+                waiterRegistrationContinuations[rootPath, default: []].append(continuation)
+                return nil
+            }
+            continuationToResume?.resume()
+        }
+    }
+
+    func waitUntilReady(
+        journalRoot: URL,
+        runtime: MaterializedRuntime,
+        timeout: Duration
+    ) async -> JournalReadinessResult {
+        let rootPath = journalRoot.standardizedFileURL.path
+        if let result = lock.withLock({ takeQueuedResult(for: rootPath) }) {
+            resumeWaiterRegistrationContinuations(for: rootPath)
+            return result
+        }
+        return await withCheckedContinuation { continuation in
+            let registrationContinuations = lock.withLock {
+                waiters.append(Waiter(rootPath: rootPath, continuation: continuation))
+                return waiterRegistrationContinuations.removeValue(forKey: rootPath) ?? []
+            }
+            for registrationContinuation in registrationContinuations {
+                registrationContinuation.resume()
+            }
+        }
+    }
+
+    func resume(journalRoot: URL, with result: JournalReadinessResult) {
+        let rootPath = journalRoot.standardizedFileURL.path
+        let continuation: CheckedContinuation<JournalReadinessResult, Never>? = lock.withLock {
+            if let index = waiters.firstIndex(where: { $0.rootPath == rootPath }) {
+                return waiters.remove(at: index).continuation
+            }
+            queuedResults[rootPath, default: []].append(result)
+            return nil
+        }
+        continuation?.resume(returning: result)
+    }
+
+    private func takeQueuedResult(for rootPath: String) -> JournalReadinessResult? {
+        guard var results = queuedResults[rootPath], !results.isEmpty else { return nil }
+        let result = results.removeFirst()
+        queuedResults[rootPath] = results.isEmpty ? nil : results
+        return result
+    }
+
+    private func hasWaiter(for rootPath: String) -> Bool {
+        waiters.contains { $0.rootPath == rootPath }
+    }
+
+    private func resumeWaiterRegistrationContinuations(for rootPath: String) {
+        let continuations = lock.withLock {
+            waiterRegistrationContinuations.removeValue(forKey: rootPath) ?? []
+        }
+        for continuation in continuations {
+            continuation.resume()
+        }
     }
 }
 

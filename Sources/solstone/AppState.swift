@@ -107,6 +107,19 @@ public final class AppState {
     private var journalStopTask: Task<Void, Never>?
     private var journalStartTask: Task<Void, Never>?
     private var bundledJournalStartupTask: Task<Void, Never>?
+    private struct InFlightBundledStart {
+        let journalRoot: URL
+        let generation: UInt64
+        let task: Task<Bool, Never>
+    }
+    private enum JournalModeTransitionOutcome: Equatable {
+        case none
+        case started
+        case alreadyReadyNoStart
+    }
+    private var activeJournalRoot: URL?
+    private var bundledStartGeneration: UInt64 = 0
+    private var inFlightBundledStart: InFlightBundledStart?
     internal private(set) var journalDependentServicesReady = false
     private var currentMaterializedRuntime: MaterializedRuntime?
     private var notificationRequestTask: Task<Void, Never>?
@@ -262,7 +275,7 @@ public final class AppState {
     }
 
     private var journalLifecycleBusy: Bool {
-        journalRestartTask != nil || journalStopTask != nil || journalStartTask != nil
+        journalRestartTask != nil || journalStopTask != nil || journalStartTask != nil || inFlightBundledStart != nil
     }
 
     // MARK: - Login Item
@@ -293,8 +306,11 @@ public final class AppState {
     public func updateConfig(_ newConfig: AppConfig) {
         let oldConfig = config
         config = newConfig
-        handleJournalModeTransition(from: oldConfig.serviceMode, to: newConfig.serviceMode)
+        let transition = handleJournalModeTransition(from: oldConfig.serviceMode, to: newConfig.serviceMode)
         uploadCoordinator.updateConfig(newConfig)
+        if transition == .alreadyReadyNoStart, newConfig.isUploadConfigured {
+            scheduleStartupUploadSyncIfNeeded()
+        }
         let canConfigureJournalServices = newConfig.serviceMode != .bundled || journalDependentServicesReady
         if canConfigureJournalServices,
            newConfig.isUploadConfigured,
@@ -620,6 +636,7 @@ public final class AppState {
             journalStopTask?.cancel()
             journalStartTask?.cancel()
             bundledJournalStartupTask?.cancel()
+            inFlightBundledStart?.task.cancel()
         }
     }
 
@@ -810,10 +827,11 @@ public final class AppState {
 
     private func startBundledJournalStartup() {
         guard !isSnapshot, config.serviceMode == .bundled else { return }
+        let root = configuredJournalRoot()
         stopJournalProbeTimer()
         bundledJournalStartupTask?.cancel()
         bundledJournalStartupTask = Task { @MainActor [weak self] in
-            _ = await self?.runBundledJournalStartup()
+            _ = await self?.coordinateBundledJournalStart(journalRoot: root).value
         }
     }
 
@@ -824,11 +842,53 @@ public final class AppState {
             config = next
             try? next.save()
         }
-        return await runBundledJournalStartup()
+        return await coordinateBundledJournalStart(journalRoot: journalRoot).value
     }
 
-    private func runBundledJournalStartup() async -> Bool {
-        let journalRoot = configuredJournalRoot()
+    private func coordinateBundledJournalStart(journalRoot rawJournalRoot: URL) -> Task<Bool, Never> {
+        let journalRoot = rawJournalRoot.standardizedFileURL
+        if bundledJournalAlreadyReady(for: journalRoot) {
+            return Task { true }
+        }
+        if let inFlightBundledStart,
+           journalRootsMatch(inFlightBundledStart.journalRoot, journalRoot) {
+            return inFlightBundledStart.task
+        }
+
+        bundledStartGeneration &+= 1
+        let generation = bundledStartGeneration
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return false }
+            let ready = await self.runBundledJournalStartup(journalRoot: journalRoot, generation: generation)
+            if self.inFlightBundledStart?.generation == generation {
+                self.inFlightBundledStart = nil
+            }
+            return ready
+        }
+        inFlightBundledStart = InFlightBundledStart(
+            journalRoot: journalRoot,
+            generation: generation,
+            task: task
+        )
+        return task
+    }
+
+    private func bundledJournalAlreadyReady(for journalRoot: URL) -> Bool {
+        guard journalDependentServicesReady,
+              let activeJournalRoot,
+              journalRootsMatch(activeJournalRoot, journalRoot),
+              case .running = journalRuntimeStatus else {
+            return false
+        }
+        return true
+    }
+
+    private func journalRootsMatch(_ lhs: URL, _ rhs: URL) -> Bool {
+        lhs.standardizedFileURL.path == rhs.standardizedFileURL.path
+    }
+
+    private func runBundledJournalStartup(journalRoot: URL, generation: UInt64) async -> Bool {
+        let journalRoot = journalRoot.standardizedFileURL
         let ownership = await journalOwnershipResolver(hasLocalJournalCreds())
         switch ownership {
         case .externallyManaged:
@@ -905,12 +965,16 @@ public final class AppState {
             timeout: .seconds(120)
         ) {
         case .ready:
+            guard generation == bundledStartGeneration else { return true }
             await supervisedJournalRunner.markReady()
             journalRuntimeStatus = .running
+            activeJournalRoot = journalRoot
             configureJournalDependentServices()
             return true
         case .failed(let diagnostic):
+            guard generation == bundledStartGeneration else { return false }
             await supervisedJournalRunner.stop()
+            activeJournalRoot = nil
             journalRuntimeStatus = .unknown(attentionDiagnostic(
                 commandLabel: diagnostic.commandLabel,
                 ownerMessage: UICopy.JOURNAL_READINESS_TIMEOUT,
@@ -945,11 +1009,7 @@ public final class AppState {
     private func configureJournalDependentServices() {
         journalDependentServicesReady = true
         captureQueuedForJournalReadiness = false
-        if config.serverURL != nil {
-            Task.detached { [uploadCoordinator] in
-                await uploadCoordinator?.syncOnStartup()
-            }
-        }
+        scheduleStartupUploadSyncIfNeeded()
         if config.isUploadConfigured, let serverURL = config.serverURL, let serverKey = config.serverKey {
             Task { [heartbeatService] in
                 await heartbeatService.configure(serverURL: serverURL, serverKey: serverKey)
@@ -957,6 +1017,13 @@ public final class AppState {
             Task { [solChatBridge] in
                 await solChatBridge.configure(serverURL: serverURL, serverKey: serverKey)
             }
+        }
+    }
+
+    private func scheduleStartupUploadSyncIfNeeded() {
+        guard config.serverURL != nil else { return }
+        Task.detached { [uploadCoordinator] in
+            await uploadCoordinator?.syncOnStartup()
         }
     }
 
@@ -1047,16 +1114,25 @@ public final class AppState {
         clearJournalProbeState()
     }
 
-    private func handleJournalModeTransition(from oldMode: ServiceMode?, to newMode: ServiceMode?) {
+    private func handleJournalModeTransition(
+        from oldMode: ServiceMode?,
+        to newMode: ServiceMode?
+    ) -> JournalModeTransitionOutcome {
         if newMode != .bundled {
             clearJournalProbeState()
             stopJournalProbeTimer()
-            return
+            return .none
         }
         if oldMode != .bundled {
+            let root = configuredJournalRoot()
+            if bundledJournalAlreadyReady(for: root) {
+                return .alreadyReadyNoStart
+            }
             journalDependentServicesReady = false
             startBundledJournalStartup()
+            return .started
         }
+        return .none
     }
 
     public func requestJournalRestart() {
@@ -1096,6 +1172,7 @@ public final class AppState {
         defer { journalStopTask = nil }
         guard config.serviceMode == .bundled else { return }
         await supervisedJournalRunner.stop()
+        activeJournalRoot = nil
         journalRuntimeDebounceState.reset()
         journalRuntimeStatus = .stoppedByUser
     }
@@ -1116,7 +1193,7 @@ public final class AppState {
         defer { journalStartTask = nil }
         guard config.serviceMode == .bundled else { return }
         let preStartError = errorMessage
-        let ready = await runBundledJournalStartup()
+        let ready = await coordinateBundledJournalStart(journalRoot: configuredJournalRoot()).value
         if ready {
             journalRuntimeStatus = .running
             errorMessage = preStartError
@@ -1210,7 +1287,7 @@ public final class AppState {
             return
         }
         guard let runtime = currentMaterializedRuntime else {
-            let ready = await runBundledJournalStartup()
+            let ready = await coordinateBundledJournalStart(journalRoot: configuredJournalRoot()).value
             if ready {
                 errorMessage = preRestartErrorMessage
                 if restartStartGeneration == restartRequiredGeneration {
@@ -1261,16 +1338,18 @@ public final class AppState {
     public func stopSupervisedJournalForTermination() async {
         guard config.serviceMode == .bundled else { return }
         await supervisedJournalRunner.stopForTermination()
+        activeJournalRoot = nil
     }
 
     public func stopSupervisedJournalForUpdate() async {
         guard config.serviceMode == .bundled else { return }
         await supervisedJournalRunner.stop()
+        activeJournalRoot = nil
     }
 
     public func reestablishSupervisedJournalAfterFailedUpdate() async {
         guard config.serviceMode == .bundled else { return }
-        _ = await runBundledJournalStartup()
+        _ = await coordinateBundledJournalStart(journalRoot: configuredJournalRoot()).value
     }
 
     private func emitJournalRestartLog(step: JournalRestartStep, outcome: String, detail: String?) {

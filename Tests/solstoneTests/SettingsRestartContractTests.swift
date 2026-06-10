@@ -166,7 +166,7 @@ struct SettingsRestartContractTests {
             end: "    // TODO(v1.1)"
         )
 
-        #expect(body.contains("runBundledJournalStartup()"))
+        #expect(body.contains("coordinateBundledJournalStart(journalRoot: configuredJournalRoot()).value"))
         #expect(!body.contains(".start(runtime:"))
     }
 
