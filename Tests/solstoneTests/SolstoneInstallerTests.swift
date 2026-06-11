@@ -914,7 +914,7 @@ struct SolstoneInstallerTests {
     }
 
     @Test func observerCreateSuccessWritesBundledServiceConfig() async throws {
-        let appState = AppState.forSnapshot()
+        let appState = try makeSnapshotAppStateWithJournalSeams()
         let runner = FakeSubprocessRunner()
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue("install-models", .success())
@@ -941,7 +941,7 @@ struct SolstoneInstallerTests {
     }
 
     @Test func registerOnceGuardSkipsRegistrationWhenHandleSaved() async throws {
-        let appState = AppState.forSnapshot(config: AppConfig(
+        let appState = try makeSnapshotAppStateWithJournalSeams(config: AppConfig(
             serverURL: ServiceMode.bundledServiceURL,
             serverKey: "saved-key",
             serviceMode: .bundled
@@ -989,7 +989,7 @@ struct SolstoneInstallerTests {
     }
 
     @Test func postInstallAutoTestSucceedsAfterDone() async throws {
-        let appState = AppState.forSnapshot()
+        let appState = try makeSnapshotAppStateWithJournalSeams()
         let runner = FakeSubprocessRunner()
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue("install-models", .success())
@@ -1011,7 +1011,7 @@ struct SolstoneInstallerTests {
     }
 
     @Test func postInstallAutoTestFailsOnConnectionError() async throws {
-        let appState = AppState.forSnapshot()
+        let appState = try makeSnapshotAppStateWithJournalSeams()
         let runner = FakeSubprocessRunner()
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue("install-models", .success())
@@ -1676,6 +1676,16 @@ struct SolstoneInstallerTests {
             guard let first = invocation.arguments.first else { return false }
             return destructiveFirstArguments.contains(first)
         })
+    }
+
+    private func makeSnapshotAppStateWithJournalSeams(config: AppConfig = AppConfig()) throws -> AppState {
+        let state = AppState.forSnapshot(config: config)
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.supervisedJournalRunner = MockSupervisedChildRunner()
+        state.singleSupervisorGate = MockSingleSupervisorGate(result: .success)
+        state.journalReadinessGate = MockJournalReadinessGate(result: .ready)
+        return state
     }
 
     private func makeInstaller(
