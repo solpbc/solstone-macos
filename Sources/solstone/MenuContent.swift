@@ -58,12 +58,7 @@ struct MenuContent: View {
                 appState.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
             } label: {
-                if let reason = firstSettingsAttention(
-                    permissionsNeedAttention: appState.permissionsNeedAttention,
-                    journalNeedsAttention: appState.serviceNeedsAttention,
-                    updateIsAvailable: updateController.updateIsAvailable,
-                    updateCheckFailed: updateController.updateCheckFailed
-                ), reason == .updateAvailable || reason == .updateCheckFailed {
+                if let reason = settingsAttentionToShow {
                     Label {
                         Text("settings… — \(settingsAttentionSuffix(reason))")
                     } icon: {
@@ -99,6 +94,19 @@ struct MenuContent: View {
     }
 
     // MARK: - Status Row
+
+    private var settingsAttentionToShow: SettingsAttentionReason? {
+        settingsAttentionSuffixToShow(
+            reason: firstSettingsAttention(
+                permissionsNeedAttention: appState.permissionsNeedAttention,
+                journalNeedsAttention: appState.serviceNeedsAttention,
+                updateIsAvailable: updateController.updateIsAvailable,
+                updateCheckFailed: updateController.updateCheckFailed
+            ),
+            statusRowCarriesPermissions: appState.permissionsNeedAttention,
+            statusRowCarriesJournal: appState.bundledJournalStatusAvailable && appState.journalRuntimeStatus.menuRowPresentation != nil
+        )
+    }
 
     @ViewBuilder
     private var statusRow: some View {
@@ -356,6 +364,19 @@ func firstSettingsAttention(
     if updateIsAvailable { return .updateAvailable }
     if updateCheckFailed { return .updateCheckFailed }
     return nil
+}
+
+func settingsAttentionSuffixToShow(
+    reason: SettingsAttentionReason?,
+    statusRowCarriesPermissions: Bool,
+    statusRowCarriesJournal: Bool
+) -> SettingsAttentionReason? {
+    guard let reason else { return nil }
+    switch reason {
+    case .permissions: return statusRowCarriesPermissions ? nil : reason
+    case .journal: return statusRowCarriesJournal ? nil : reason
+    case .updateAvailable, .updateCheckFailed: return reason
+    }
 }
 
 func settingsAttentionSuffix(_ reason: SettingsAttentionReason) -> String {

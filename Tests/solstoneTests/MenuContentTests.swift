@@ -156,6 +156,47 @@ struct MenuContentTests {
         ) == .updateAvailable)
     }
 
+    @Test func settingsAttentionSuffixToShowTruthTable() {
+        #expect(settingsAttentionSuffixToShow(
+            reason: .journal,
+            statusRowCarriesPermissions: false,
+            statusRowCarriesJournal: false
+        ) == .journal)
+        #expect(settingsAttentionSuffixToShow(
+            reason: .journal,
+            statusRowCarriesPermissions: false,
+            statusRowCarriesJournal: true
+        ) == nil)
+
+        #expect(settingsAttentionSuffixToShow(
+            reason: .permissions,
+            statusRowCarriesPermissions: true,
+            statusRowCarriesJournal: false
+        ) == nil)
+        #expect(settingsAttentionSuffixToShow(
+            reason: .permissions,
+            statusRowCarriesPermissions: false,
+            statusRowCarriesJournal: false
+        ) == .permissions)
+
+        #expect(settingsAttentionSuffixToShow(
+            reason: .updateAvailable,
+            statusRowCarriesPermissions: false,
+            statusRowCarriesJournal: false
+        ) == .updateAvailable)
+        #expect(settingsAttentionSuffixToShow(
+            reason: .updateCheckFailed,
+            statusRowCarriesPermissions: false,
+            statusRowCarriesJournal: false
+        ) == .updateCheckFailed)
+
+        #expect(settingsAttentionSuffixToShow(
+            reason: nil,
+            statusRowCarriesPermissions: false,
+            statusRowCarriesJournal: false
+        ) == nil)
+    }
+
     @Test func journalRuntimeStatusPresentationTruthTable() {
         let setupNeeded = JournalRuntimeStatus.setupNeeded.menuRowPresentation
         #expect(setupNeeded?.text == UICopy.JOURNAL_SETUP_NEEDED_OPEN_SETTINGS)
