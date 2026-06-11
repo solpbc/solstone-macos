@@ -544,6 +544,12 @@ struct AppOwnedJournalTests {
             runtimeRootURL: runtimeRoot,
             subprocessRunner: runner,
             failureRecordStore: InMemoryUpgradeFailureRecordStore(),
+            // MUST be workspace-scoped: omitting this defaults to the REAL ~/.local/bin,
+            // and this test drives a real materialize whose rewriteAliases step then
+            // clobbers the operator's sol/journal wrappers with exec targets into this
+            // test's temp workspace (dangling after teardown). Every `make ci` on the
+            // build Mac was silently rewriting the user's wrappers (found 2026-06-10).
+            wrapperDirURL: workspace.appendingPathComponent("wrappers", isDirectory: true),
             observerRegistrar: { _ in .success("observer-key") }
         )
         defer { installer.cancel() }
