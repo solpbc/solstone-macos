@@ -268,6 +268,11 @@ public final class AppState {
         ))
     }
 
+    /// In bundled mode the localhost serverURL isn't owner-meaningful — the bundled
+    /// journal IS the journal — so the address row is suppressed in favor of the
+    /// runtime-status row. External and unconfigured modes keep showing the address.
+    var showsExternalJournalAddressRow: Bool { !bundledJournalStatusAvailable }
+
     internal var bundledJournalRestartAvailable: Bool {
         bundledJournalStatusAvailable && !journalRuntimeStatus.isSetupNeeded
     }
@@ -293,7 +298,8 @@ public final class AppState {
             }
             refreshLoginItemStatus()
         } catch {
-            errorMessage = "Failed to update login item: \(error.localizedDescription)"
+            Logger.general.error("Failed to update login item: \(error.localizedDescription, privacy: .public)")
+            errorMessage = UICopy.ERROR_LOGIN_ITEM
             refreshLoginItemStatus()
         }
     }
@@ -355,7 +361,8 @@ public final class AppState {
         do {
             try newConfig.save()
         } catch {
-            errorMessage = "Failed to save config: \(error.localizedDescription)"
+            Logger.general.error("Failed to save config: \(error.localizedDescription, privacy: .public)")
+            errorMessage = UICopy.ERROR_SAVE_CONFIG
         }
     }
 
@@ -444,7 +451,8 @@ public final class AppState {
             do {
                 try config.save()
             } catch {
-                errorMessage = "Failed to save config: \(error.localizedDescription)"
+                Logger.general.error("Failed to save config: \(error.localizedDescription, privacy: .public)")
+                errorMessage = UICopy.ERROR_SAVE_CONFIG
             }
         }
     }
@@ -738,7 +746,8 @@ public final class AppState {
             Logger.general.info("[Permissions] Recording denied — screen recording permission not granted")
             screenRecordingGranted = false
         } catch {
-            errorMessage = error.localizedDescription
+            Logger.general.error("Recording failed to start: \(error.localizedDescription, privacy: .public)")
+            errorMessage = UICopy.ERROR_START_OBSERVING
         }
     }
 

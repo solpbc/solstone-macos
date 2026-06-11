@@ -354,7 +354,9 @@ struct SnapshotTests {
     }
 
     @Test func settingsStatusIdle() throws {
-        let state = AppState.forSnapshot()
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        state.installer.main = .done
+        state.installer.probedVersion = .current(version: "0.3.2")
         let updateController = makeSnapshotUpdateController()
         state.uploadCoordinator.status = .synced
         try render(
@@ -365,7 +367,9 @@ struct SnapshotTests {
     }
 
     @Test func settingsStatusRecording() throws {
-        let state = AppState.forSnapshot()
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        state.installer.main = .done
+        state.installer.probedVersion = .current(version: "0.3.2")
         let updateController = makeSnapshotUpdateController()
         state.isRecording = true
         state.uploadCoordinator.status = .syncing(checked: 3, total: 10)

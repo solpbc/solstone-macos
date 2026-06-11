@@ -147,6 +147,8 @@ enum AXID {
             static let iconStateOffline = "settings.help.iconState.offline"
             static let iconStatePaused = "settings.help.iconState.paused"
             static let iconStateError = "settings.help.iconState.error"
+            static let supportSite = "settings.help.support.site"
+            static let supportEmail = "settings.help.support.email"
         }
     }
 

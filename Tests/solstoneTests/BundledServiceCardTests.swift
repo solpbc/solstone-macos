@@ -24,6 +24,21 @@ struct BundledServiceCardTests {
         #expect(bundledDashboardURL(activeServerURL: nil).absoluteString == ServiceMode.bundledServiceURL)
     }
 
+    @Test func journalAddressRowSuppressedOnlyForAvailableBundledJournalStatus() {
+        let bundledState = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        bundledState.installer.main = .done
+        bundledState.installer.probedVersion = .current(version: "0.3.2")
+
+        #expect(bundledState.bundledJournalStatusAvailable)
+        #expect(!bundledState.showsExternalJournalAddressRow)
+
+        let defaultState = AppState.forSnapshot()
+        #expect(defaultState.showsExternalJournalAddressRow)
+
+        let externalState = AppState.forSnapshot(config: AppConfig(serviceMode: .external))
+        #expect(externalState.showsExternalJournalAddressRow)
+    }
+
     @Test func installedCurrentUsesReadyCopy() {
         #expect(installedServiceMessage(for: .installedCurrent(version: "0.3.2")) == "solstone 0.3.2 is ready")
     }

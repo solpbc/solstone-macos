@@ -1254,11 +1254,13 @@ struct SettingsView: View {
 
             GroupBox("upload") {
                 VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("journal") {
-                        Text(appState.config.serverURL ?? "not configured")
-                            .foregroundStyle(appState.config.serverURL == nil ? .secondary : .primary)
-                            .accessibilityIdentifier(AXID.Settings.Status.uploadJournalState)
-                            .accessibilityValue(appState.config.serverURL ?? "")
+                    if appState.showsExternalJournalAddressRow {
+                        LabeledContent("journal") {
+                            Text(appState.config.serverURL ?? "not configured")
+                                .foregroundStyle(appState.config.serverURL == nil ? .secondary : .primary)
+                                .accessibilityIdentifier(AXID.Settings.Status.uploadJournalState)
+                                .accessibilityValue(appState.config.serverURL ?? "")
+                        }
                     }
                     if appState.bundledJournalStatusAvailable {
                         LabeledContent("journal") {
@@ -1499,26 +1501,17 @@ struct SettingsView: View {
 
     private var helpTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("use your favorite coding agent with this block to give it context about solstone observer.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            GroupBox("agent instructions") {
-                VStack(alignment: .trailing, spacing: 8) {
-                    ScrollView {
-                        Text(agentInstructions)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(height: 160)
-                    .accessibilityIdentifier(AXID.Settings.Help.agentInstructions)
-
-                    Button("copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(agentInstructions, forType: .string)
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Help.copyAgentInstructions)
+            GroupBox("get help") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("need a hand? reach a human — we're happy to help.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Link("support.solstone.app", destination: failureDiagnosticSupportURL)
+                        .accessibilityIdentifier(AXID.Settings.Help.supportSite)
+                    Link("support@solstone.app", destination: URL(string: "mailto:support@solstone.app?subject=solstone%20observer")!)
+                        .accessibilityIdentifier(AXID.Settings.Help.supportEmail)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
             }
 
@@ -1554,6 +1547,30 @@ struct SettingsView: View {
                     .accessibilityIdentifier(AXID.Settings.Help.iconStateError)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+
+            GroupBox("agent instructions") {
+                VStack(alignment: .trailing, spacing: 8) {
+                    Text("working with a coding agent? hand it this context.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ScrollView {
+                        Text(agentInstructions)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(height: 160)
+                    .accessibilityIdentifier(AXID.Settings.Help.agentInstructions)
+
+                    Button("copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(agentInstructions, forType: .string)
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Help.copyAgentInstructions)
+                }
                 .padding(.vertical, 4)
             }
 
