@@ -12,63 +12,6 @@ import SolstoneCore
 struct JournalRuntimeProbeTests {
     private let journalBinary = URL(fileURLWithPath: "/runtime/bin/journal")
 
-    @Test func debounceThreeFailuresUnderTenSecondsDoesNotTrip() {
-        var state = JournalRuntimeDebounceState()
-        let start = Date(timeIntervalSince1970: 100)
-
-        #expect(state.apply(outcome: .unreachable(diag("one")), now: start, currentStatus: .running) == .running)
-        #expect(state.apply(outcome: .unreachable(diag("two")), now: start.addingTimeInterval(4), currentStatus: .running) == .running)
-        #expect(state.apply(outcome: .unreachable(diag("three")), now: start.addingTimeInterval(9), currentStatus: .running) == .running)
-    }
-
-    @Test func debounceUnreachableTripsStoppedAfterThreeFailuresSpanningTenSeconds() {
-        var state = JournalRuntimeDebounceState()
-        let start = Date(timeIntervalSince1970: 100)
-        let latest = diag("latest")
-
-        _ = state.apply(outcome: .unreachable(diag("one")), now: start, currentStatus: .running)
-        _ = state.apply(outcome: .unreachable(diag("two")), now: start.addingTimeInterval(5), currentStatus: .running)
-        let result = state.apply(outcome: .unreachable(latest), now: start.addingTimeInterval(10), currentStatus: .running)
-
-        #expect(result == .stopped(latest))
-    }
-
-    @Test func debounceUnknownTripsUnknownAfterThreeFailuresSpanningTenSeconds() {
-        var state = JournalRuntimeDebounceState()
-        let start = Date(timeIntervalSince1970: 100)
-        let latest = diag("timeout", timedOut: true)
-
-        _ = state.apply(outcome: .unknown(diag("one")), now: start, currentStatus: .running)
-        _ = state.apply(outcome: .unknown(diag("two")), now: start.addingTimeInterval(5), currentStatus: .running)
-        let result = state.apply(outcome: .unknown(latest), now: start.addingTimeInterval(10), currentStatus: .running)
-
-        #expect(result == .unknown(latest))
-    }
-
-    @Test func reachableClearsAttentionImmediately() {
-        var state = JournalRuntimeDebounceState()
-
-        let result = state.apply(
-            outcome: .reachable,
-            now: Date(timeIntervalSince1970: 100),
-            currentStatus: .stopped(diag("down"))
-        )
-
-        #expect(result == .running)
-    }
-
-    @Test func binaryMissingSetsSetupNeededImmediately() {
-        var state = JournalRuntimeDebounceState()
-
-        let result = state.apply(
-            outcome: .binaryMissing,
-            now: Date(timeIntervalSince1970: 100),
-            currentStatus: .stopped(diag("down"))
-        )
-
-        #expect(result == .setupNeeded)
-    }
-
     @Test func probeReturnsBinaryMissingWithoutRunningWhenJournalMissing() async {
         let runner = FakeSubprocessRunner()
 
@@ -225,7 +168,7 @@ struct JournalRuntimeProbeTests {
         ])
     }
 
-    @Test func externalModeTransitionClearsJournalStatusAndStopsTimer() {
+    @Test func externalModeTransitionClearsJournalStatus() {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         state.journalRuntimeStatus = .stopped(diag("down"))
 
@@ -243,53 +186,11 @@ struct JournalRuntimeProbeTests {
         #expect(state.journalRuntimeStatus == .running)
     }
 
-    @Test func journalProbeTickReturnsEarlyDuringUpgrade() async {
-        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .done
-        state.installer.upgradeInProgress = true
-        state.journalRuntimeStatus = .stopped(diag("down"))
-        let runner = FakeSubprocessRunner()
-        state.journalRuntimeProbeRunner = runner
-        state.journalRuntimeFileExists = { _ in true }
-
-        await state.journalProbeTick()
-
-        #expect(state.journalRuntimeStatus == .stopped(diag("down")))
-        #expect(runner.invocations.isEmpty)
-    }
-
-    @Test func journalProbeTickDoesNotClobberStoppedByUser() async {
-        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .done
-        state.journalRuntimeStatus = .stoppedByUser
-        state.journalRuntimeFileExists = { _ in true }
-        let stoppedRunner = FakeSubprocessRunner()
-        stoppedRunner.enqueue("health", .success(stderr: Data("down\n".utf8), exitCode: 1))
-        state.journalRuntimeProbeRunner = stoppedRunner
-
-        await state.journalProbeTick()
-
-        #expect(state.journalRuntimeStatus == .stoppedByUser)
-        #expect(stoppedRunner.invocations.isEmpty)
-
-        let runningRunner = FakeSubprocessRunner()
-        runningRunner.enqueue("health", .success(stderr: Data("down\n".utf8), exitCode: 1))
-        state.journalRuntimeStatus = .running
-        state.journalRuntimeProbeRunner = runningRunner
-
-        await state.journalProbeTick()
-
-        #expect(state.journalRuntimeStatus == .running)
-        #expect(runningRunner.invocations.count == 1)
-    }
-
-    @Test func externalModeSkipsProbeButRunsJournalRestartRunner() async throws {
+    @Test func externalModeRunsJournalRestartRunner() async throws {
         let journalRoot = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: journalRoot) }
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .external))
-        let probeRunner = FakeSubprocessRunner()
         let restartRunner = FakeSubprocessRunner()
-        state.journalRuntimeProbeRunner = probeRunner
         state.journalRuntimeFileExists = { _ in true }
         state.journalRestartRunnerFactory = { journalBinary, logSink in
             JournalRestartRunner(
@@ -301,13 +202,11 @@ struct JournalRuntimeProbeTests {
             )
         }
 
-        await state.journalProbeTick()
         state.requestJournalRestart()
         try await waitUntil {
             restartRunner.invocations.contains { $0.arguments == ["service", "restart"] }
         }
 
-        #expect(probeRunner.invocations.isEmpty)
         #expect(restartRunner.invocations.contains { $0.arguments == ["service", "restart"] })
     }
 

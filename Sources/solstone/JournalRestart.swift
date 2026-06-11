@@ -46,63 +46,6 @@ internal struct JournalRestartLogEvent: Equatable, Sendable {
     let detail: String?
 }
 
-internal struct JournalRuntimeDebounceState: Sendable {
-    private(set) var consecutiveFailures = 0
-    private(set) var firstFailureAt: Date?
-
-    mutating func reset() {
-        consecutiveFailures = 0
-        firstFailureAt = nil
-    }
-
-    mutating func apply(
-        outcome: JournalRuntimeProbeOutcome,
-        now: Date,
-        currentStatus: JournalRuntimeStatus
-    ) -> JournalRuntimeStatus {
-        switch outcome {
-        case .reachable:
-            reset()
-            return .running
-        case .binaryMissing:
-            reset()
-            return .setupNeeded
-        case .unreachable(let diagnostic):
-            return debouncedFailure(
-                now: now,
-                currentStatus: currentStatus,
-                attentionStatus: .stopped(diagnostic)
-            )
-        case .unknown(let diagnostic):
-            return debouncedFailure(
-                now: now,
-                currentStatus: currentStatus,
-                attentionStatus: .unknown(diagnostic)
-            )
-        }
-    }
-
-    private mutating func debouncedFailure(
-        now: Date,
-        currentStatus: JournalRuntimeStatus,
-        attentionStatus: JournalRuntimeStatus
-    ) -> JournalRuntimeStatus {
-        switch currentStatus {
-        case .stopped, .unknown:
-            return attentionStatus
-        case .running, .stoppedByUser, .restarting, .setupNeeded:
-            // Compiler-completeness only; AppState's probe guard skips stopped-by-user.
-            break
-        }
-        if firstFailureAt == nil {
-            firstFailureAt = now
-        }
-        consecutiveFailures += 1
-        let span = now.timeIntervalSince(firstFailureAt ?? now)
-        return consecutiveFailures >= 3 && span >= 10.0 ? attentionStatus : currentStatus
-    }
-}
-
 internal let staleStateRelativePaths: [String] = [
     "health/supervisor.ready",
     "health/supervisor.pid",

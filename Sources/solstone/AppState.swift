@@ -100,8 +100,6 @@ public final class AppState {
     private var permissionPollTimer: Timer?
     /// Prevents concurrent permission check calls (poll interval < check duration)
     private var isCheckingPermissions = false
-    private var journalRuntimeDebounceState = JournalRuntimeDebounceState()
-    private var journalProbeTimer: Timer?
     private var hasStartedBundledJournalDetection = false
     private var journalRestartTask: Task<Void, Never>?
     private var journalStopTask: Task<Void, Never>?
@@ -631,7 +629,6 @@ public final class AppState {
                 NotificationCenter.default.removeObserver(activationObserver)
             }
             permissionPollTimer?.invalidate()
-            journalProbeTimer?.invalidate()
             journalRestartTask?.cancel()
             journalStopTask?.cancel()
             journalStartTask?.cancel()
@@ -828,7 +825,6 @@ public final class AppState {
     private func startBundledJournalStartup() {
         guard !isSnapshot, config.serviceMode == .bundled else { return }
         let root = configuredJournalRoot()
-        stopJournalProbeTimer()
         let hadPriorStartupTask = bundledJournalStartupTask != nil
         Logger.setup.notice("journal-lifecycle: startup-task-scheduled cancelledPrior=\(hadPriorStartupTask, privacy: .public) journalRoot=\(root.path, privacy: .public)")
         bundledJournalStartupTask?.cancel()
@@ -1082,52 +1078,8 @@ public final class AppState {
         }
     }
 
-    private func startJournalProbeTimer() {
-        guard !isSnapshot, config.serviceMode == .bundled else { return }
-
-        Task { @MainActor in
-            await self.journalProbeTick()
-        }
-
-        journalProbeTimer?.invalidate()
-        journalProbeTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.journalProbeTick()
-            }
-        }
-        journalProbeTimer?.tolerance = 2.0
-    }
-
-    private func stopJournalProbeTimer() {
-        journalProbeTimer?.invalidate()
-        journalProbeTimer = nil
-    }
-
-    internal func journalProbeTick() async {
-        guard config.serviceMode == .bundled else {
-            clearJournalProbeState()
-            stopJournalProbeTimer()
-            return
-        }
-        guard !installer.upgradeInProgress else { return }
-        guard !journalRuntimeStatus.isRestarting else { return }
-        guard !journalRuntimeStatus.isStoppedByUser else { return }
-
-        let outcome = await JournalRuntimeProbe.run(
-            journalBinary: journalBinaryProvider(),
-            runner: journalRuntimeProbeRunner,
-            fileExists: journalRuntimeFileExists
-        )
-        journalRuntimeStatus = journalRuntimeDebounceState.apply(
-            outcome: outcome,
-            now: Date(),
-            currentStatus: journalRuntimeStatus
-        )
-    }
-
     private func clearJournalProbeState() {
         journalRuntimeStatus = .running
-        journalRuntimeDebounceState.reset()
     }
 
     internal func notifyUpgradeStarted() {
@@ -1140,7 +1092,6 @@ public final class AppState {
     ) -> JournalModeTransitionOutcome {
         if newMode != .bundled {
             clearJournalProbeState()
-            stopJournalProbeTimer()
             Logger.setup.notice("journal-lifecycle: mode-transition outcome=none reason=not-bundled from=\(String(describing: oldMode), privacy: .public) to=\(String(describing: newMode), privacy: .public)")
             return .none
         }
@@ -1198,7 +1149,6 @@ public final class AppState {
         Logger.setup.notice("journal-lifecycle: user-stop begin")
         await supervisedJournalRunner.stop()
         activeJournalRoot = nil
-        journalRuntimeDebounceState.reset()
         journalRuntimeStatus = .stoppedByUser
         Logger.setup.notice("journal-lifecycle: user-stop complete")
     }
