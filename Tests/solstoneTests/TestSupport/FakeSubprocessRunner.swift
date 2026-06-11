@@ -128,7 +128,6 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         if first == "setup" { return "setup" }
         if first == "service" { return "service" }
         if first == "config" { return "config" }
-        if first == "observer" { return "observer" }
         if first == "up" { return "up" }
         if first == "install-models" { return "install-models" }
         if first == "health" { return "health" }

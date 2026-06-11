@@ -53,6 +53,7 @@ public final class SolstoneInstaller {
     private let solBinaryFinder: @Sendable () async -> String?
     private let solOwnershipResolver: @Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership
     private let connectionTester: @Sendable (String, String) async -> String?
+    private let observerRegistrar: ObserverRegistrar
     private let fileExists: @Sendable (String) -> Bool
     private let pidExists: @Sendable (pid_t) -> Bool
     private let terminate: @Sendable (pid_t, Int32) -> Int32
@@ -101,6 +102,9 @@ public final class SolstoneInstaller {
         connectionTester: @escaping @Sendable (String, String) async -> String? = { url, key in
             await UploadCoordinator.testConnection(serverURL: url, serverKey: key)
         },
+        observerRegistrar: @escaping ObserverRegistrar = { descriptor in
+            await SolstoneInstaller.defaultObserverRegister(descriptor: descriptor)
+        },
         fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
         pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
             if Darwin.kill(pid, 0) == 0 { return true }
@@ -132,6 +136,7 @@ public final class SolstoneInstaller {
             rootURL: resolvedRuntimeRootURL
         )
         self.connectionTester = connectionTester
+        self.observerRegistrar = observerRegistrar
         self.pidExists = pidExists
         self.terminate = terminate
         self.pidWaitTimeout = pidWaitTimeout
@@ -615,46 +620,121 @@ public final class SolstoneInstaller {
         return true
     }
 
-    private func runObserverCreate(journalBinary: URL, phase: String) async -> Bool {
-        let environment = SolstoneRuntimeLayout.active(rootURL: runtimeRootURL).uvEnvironment()
-        let output = InstallerOutput()
-        let result: SubprocessResult
+    private nonisolated static func defaultObserverRegister(descriptor: ObserverRegistrationDescriptor) async -> Result<String, ObserverRegistrationFailure> {
+        let endpoint = ServiceMode.bundledServiceURL + "/app/observer/register"
+        guard let url = URL(string: endpoint) else {
+            return .failure(ObserverRegistrationFailure(
+                category: .unknown,
+                message: "couldn't build the observer registration request",
+                logExcerpt: "invalid observer registration URL: \(endpoint)"
+            ))
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 5
+
         do {
-            result = try await subprocessRunner.run(
-                executable: journalBinary,
-                arguments: ["observer", "--json", "create", "solstone-macos", "--reuse-existing"],
-                environment: environment,
-                stdoutHandler: { [weak self, output] data in
-                    Self.append(data, to: output, stream: .stdout)
-                    Task { @MainActor in
-                        self?.appendRawProgress(data, phase: phase, target: .main, includeInTail: true)
-                    }
-                },
-                stderrHandler: { [weak self, output] data in
-                    Self.append(data, to: output, stream: .stderr)
-                    Task { @MainActor in
-                        self?.appendRawProgress(data, phase: phase, target: .main, includeInTail: false)
-                    }
-                }
-            )
+            request.httpBody = try JSONEncoder().encode(descriptor)
         } catch {
-            await failRegistering(journalBinary: journalBinary, message: error.localizedDescription, category: .subprocessLaunch, logExcerpt: "journal observer create subprocess could not launch: \(error.localizedDescription)")
-            return false
+            return .failure(ObserverRegistrationFailure(
+                category: .unknown,
+                message: "couldn't build the observer registration request",
+                logExcerpt: "observer registration request encode failed: \(error)"
+            ))
         }
 
-        let stdout = output.stdoutData()
-        let stderr = output.stderrString()
-        guard result.exitCode == 0 else {
-            await failRegistering(journalBinary: journalBinary, message: lastUsefulLine(stderr) ?? "observer create failed", category: Self.categorize(stderr: stderr), logExcerpt: Self.lastUsefulLog(stdout: String(decoding: stdout, as: UTF8.self), stderr: stderr))
-            return false
-        }
-
+        let data: Data
+        let response: URLResponse
         do {
-            let response = try JSONDecoder().decode(ObserverCreateResponse.self, from: stdout)
-            persistObserverKey(response.key)
+            let session = URLSession(configuration: .ephemeral)
+            defer { session.invalidateAndCancel() }
+            (data, response) = try await session.data(for: request)
+        } catch let error as URLError {
+            return .failure(ObserverRegistrationFailure(
+                category: .network,
+                message: "couldn't reach the journal to register this observer",
+                logExcerpt: "observer registration request failed: \(error)"
+            ))
+        } catch {
+            return .failure(ObserverRegistrationFailure(
+                category: .network,
+                message: "couldn't reach the journal to register this observer",
+                logExcerpt: "observer registration request failed: \(error)"
+            ))
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            return .failure(ObserverRegistrationFailure(
+                category: .unknown,
+                message: "journal returned an invalid observer registration",
+                logExcerpt: "observer registration response was not HTTP"
+            ))
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            return .failure(ObserverRegistrationFailure(
+                category: .unknown,
+                message: "journal couldn't register this observer",
+                logExcerpt: "status \(httpResponse.statusCode): \(Self.shortBodyPreview(data))"
+            ))
+        }
+
+        let decoded: ObserverRegistrationResponse
+        do {
+            decoded = try JSONDecoder().decode(ObserverRegistrationResponse.self, from: data)
+        } catch {
+            return .failure(ObserverRegistrationFailure(
+                category: .unknown,
+                message: "journal returned an invalid observer registration",
+                logExcerpt: "observer registration response decode failed: \(error)"
+            ))
+        }
+
+        let key = decoded.key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else {
+            return .failure(ObserverRegistrationFailure(
+                category: .unknown,
+                message: "journal returned an empty observer key",
+                logExcerpt: "observer registration response key was empty"
+            ))
+        }
+        return .success(key)
+    }
+
+    private nonisolated static func shortBodyPreview(_ data: Data) -> String {
+        let body = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return truncate(body, limit: 512)
+    }
+
+    private func runObserverCreate(journalBinary: URL, phase _: String) async -> Bool {
+        if appState?.config.isUploadConfigured == true {
             return true
-        } catch {
-            await failRegistering(journalBinary: journalBinary, message: "could not parse JSON response", category: .unknown, logExcerpt: String(decoding: stdout, as: UTF8.self))
+        }
+
+        let hostname = ProcessInfo.processInfo.hostName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let descriptor = ObserverRegistrationDescriptor(
+            platform: "darwin",
+            hostname: hostname.isEmpty ? "unknown" : hostname,
+            streamType: "desktop",
+            version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        )
+
+        switch await observerRegistrar(descriptor) {
+        case .success(let key):
+            persistObserverKey(key)
+            return true
+        case .failure(let failure):
+            await failRegistering(
+                journalBinary: journalBinary,
+                message: failure.message,
+                category: failure.category,
+                logExcerpt: failure.logExcerpt
+            )
             return false
         }
     }
@@ -1186,11 +1266,31 @@ private struct StepFailure {
     let message: String
 }
 
-private struct ObserverCreateResponse: Decodable {
-    let name: String
-    let key: String
-    let prefix: String
+struct ObserverRegistrationDescriptor: Encodable, Sendable, Equatable {
+    let platform: String
+    let hostname: String
+    let streamType: String
+    let version: String
+
+    private enum CodingKeys: String, CodingKey {
+        case platform
+        case hostname
+        case streamType = "stream_type"
+        case version
+    }
 }
+
+struct ObserverRegistrationFailure: Error, Sendable, Equatable {
+    let category: ErrorCategory
+    let message: String
+    let logExcerpt: String?
+}
+
+private struct ObserverRegistrationResponse: Decodable {
+    let key: String
+}
+
+typealias ObserverRegistrar = @Sendable (ObserverRegistrationDescriptor) async -> Result<String, ObserverRegistrationFailure>
 
 private func truncate(_ value: String, limit: Int) -> String {
     guard value.count > limit else { return value }

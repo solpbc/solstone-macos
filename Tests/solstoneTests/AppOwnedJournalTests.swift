@@ -536,7 +536,6 @@ struct AppOwnedJournalTests {
         runner.enqueue("tool", .success())
         runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
         runner.enqueue("setup", .success(stdout: installerFixture("golden_ok")))
-        runner.enqueue("observer", .success(stdout: Data(#"{"name":"solstone-macos","key":"observer-key","prefix":"observer"}"#.utf8)))
         runner.enqueue("install-models", .success())
         let installer = SolstoneInstaller(
             uvBinaryURL: URL(fileURLWithPath: "/usr/bin/uv"),
@@ -544,7 +543,8 @@ struct AppOwnedJournalTests {
             wheelhouseURL: wheelhouse,
             runtimeRootURL: runtimeRoot,
             subprocessRunner: runner,
-            failureRecordStore: InMemoryUpgradeFailureRecordStore()
+            failureRecordStore: InMemoryUpgradeFailureRecordStore(),
+            observerRegistrar: { _ in .success("observer-key") }
         )
         defer { installer.cancel() }
 
