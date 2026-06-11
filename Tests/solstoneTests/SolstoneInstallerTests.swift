@@ -427,6 +427,39 @@ struct SolstoneInstallerTests {
         #expect(runtimeChildren.contains { $0.lastPathComponent.hasPrefix("\(BundleConfig.solstonePinVersion)_py\(BundleConfig.bundledPythonBuild)_") })
     }
 
+    @Test func createFreshContentAddressedInstallProbesMaterializedJournalBinary() async throws {
+        let runner = FakeSubprocessRunner()
+        let fixtureURLs = try makeStagedInstallFixture()
+        defer { try? FileManager.default.removeItem(at: fixtureURLs.workspace) }
+        runner.enqueue("tool", .success())
+        runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
+        runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("install-models", .success())
+        let finder = SequencedSolBinaryFinder([nil])
+        let installer = makeInstaller(
+            runner: runner,
+            wheelhouseURL: fixtureURLs.wheelhouse,
+            runtimeRootURL: fixtureURLs.runtimeRoot,
+            solBinaryFinder: { finder.next() }
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
+        try await waitUntil { installer.probedVersion == .current(version: BundleConfig.solstonePinVersion) }
+
+        #expect(installer.main == .done)
+        let state = terminalCardState(
+            main: installer.main,
+            probe: installer.probedVersion,
+            failureRecord: installer.upgradeFailureRecord
+        )
+        #expect(state == .installedCurrent(version: BundleConfig.solstonePinVersion))
+        #expect(state.axToken == "installed_current")
+        // One --version is consumed by RuntimeMaterializer verification, and one by the post-install probe.
+        #expect(runner.invocations.filter { $0.arguments == ["--version"] }.count >= 2)
+    }
+
     @Test func acceptExistingSkipsPreclean() async throws {
         let runner = FakeSubprocessRunner()
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
@@ -1142,6 +1175,18 @@ struct SolstoneInstallerTests {
         let runner = FakeSubprocessRunner()
         runner.enqueue("--version", .success(stdout: Data("unparseable\n".utf8)))
         let installer = makeInstaller(runner: runner)
+
+        await installer.probeVersion()
+
+        #expect(installer.probedVersion == .unknown)
+    }
+
+    @Test func probeVersionWithoutSolBinaryReportsUnknown() async {
+        let runner = FakeSubprocessRunner()
+        let installer = makeInstaller(
+            runner: runner,
+            solBinaryFinder: { nil }
+        )
 
         await installer.probeVersion()
 

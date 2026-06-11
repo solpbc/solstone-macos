@@ -589,7 +589,7 @@ public final class SolstoneInstaller {
             clearUpgradeFailureRecord()
             UserDefaults.standard.removeObject(forKey: "SolstoneInProgressUpgradeMarker")
             Task {
-                await probeVersion()
+                await probeVersion(journalBinary: journalBinary)
                 await runPostInstallAutoTest()
             }
         }
@@ -885,7 +885,8 @@ public final class SolstoneInstaller {
 
     public func probeVersion() async {
         guard let solPath = await solBinaryFinder() else {
-            probedVersion = nil
+            probedVersion = .unknown
+            Logger.setup.notice("journal version probe: no sol binary located by finder pinned=\(BundleConfig.solstonePinVersion, privacy: .public)")
             return
         }
         _ = await probeVersion(at: solPath)
@@ -893,8 +894,13 @@ public final class SolstoneInstaller {
 
     @discardableResult
     private func probeVersion(at solPath: String) async -> VersionProbeResult? {
-        let pinned = BundleConfig.solstonePinVersion
         let journalBinary = URL(fileURLWithPath: Self.journalPath(siblingOf: solPath))
+        return await probeVersion(journalBinary: journalBinary)
+    }
+
+    @discardableResult
+    private func probeVersion(journalBinary: URL) async -> VersionProbeResult? {
+        let pinned = BundleConfig.solstonePinVersion
         guard let installed = await JournalHealthCheck.version(journalBinary: journalBinary, runner: subprocessRunner) else {
             probedVersion = .unknown
             Logger.setup.notice("journal version probe: journalPath=\(journalBinary.path, privacy: .public) unknown pinned=\(pinned, privacy: .public)")
