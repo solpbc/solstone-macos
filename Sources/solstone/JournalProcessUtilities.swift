@@ -112,12 +112,6 @@ internal func readSupervisorPID(from url: URL) -> pid_t? {
     return pid_t(value)
 }
 
-internal func readSupervisorStartTime(from url: URL) -> String? {
-    guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? nil : trimmed
-}
-
 private final class LockedProcessUtilityOutput: @unchecked Sendable {
     private let lock = NSLock()
     private var data = Data()

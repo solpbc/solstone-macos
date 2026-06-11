@@ -619,49 +619,21 @@ struct AppOwnedJournalTests {
         #expect(!runner.invocations.contains { $0.arguments.first == "up" })
     }
 
-    @Test func singleSupervisorGateIgnoresStaleStartTimeMarker() async throws {
+    @Test func singleSupervisorGateBlocksWhenPortsRemainBound() async throws {
         let journalRoot = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: journalRoot) }
-        try writeSupervisorMarkers(pid: 4242, startTime: "recorded-start", journalRoot: journalRoot)
         let runner = FakeSubprocessRunner()
-        runner.enqueue("ps", .success(stdout: Data("live-start\n".utf8)))
-        runner.enqueue("ps", .success(stdout: Data("journal start --app-supervised\n".utf8)))
-        runner.enqueue("ps", .success(stdout: Data()))
-        runner.enqueue("lsof", .success(exitCode: 1))
-        runner.enqueue("lsof", .success(exitCode: 1))
-        let signals = SignalRecorder()
-        let gate = SingleSupervisorGate(
-            runner: runner,
-            pidExists: { _ in true },
-            terminate: { pid, signal in signals.append(pid: pid, signal: signal); return 0 },
-            clock: FakeMonotonicClock(),
-            orphanGracePeriod: .milliseconds(1),
-            pidWaitPollInterval: .milliseconds(1)
-        )
-
-        let result = await gate.prepareForSpawn(journalRoot: journalRoot)
-
-        #expect(result == .success)
-        #expect(signals.values.isEmpty)
-    }
-
-    @Test func singleSupervisorGateStopsMatchingSupervisorAndBlocksWhenPortsRemainBound() async throws {
-        let journalRoot = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: journalRoot) }
-        try writeSupervisorMarkers(pid: 4242, startTime: "live-start", journalRoot: journalRoot)
-        let runner = FakeSubprocessRunner()
-        runner.enqueue("ps", .success(stdout: Data("live-start\n".utf8)))
-        runner.enqueue("ps", .success(stdout: Data("journal start --app-supervised\n".utf8)))
-        runner.enqueue("ps", .success(stdout: Data()))
+        runner.enqueue("ps", .success(stdout: Data("""
+        111 2 journal:supervisor
+        222 1 bash
+        """.utf8)))
         runner.enqueue("lsof", .success(exitCode: 0))
-        let signals = SignalRecorder()
         let gate = SingleSupervisorGate(
             runner: runner,
             pidExists: { _ in true },
-            terminate: { pid, signal in signals.append(pid: pid, signal: signal); return 0 },
+            terminate: { _, _ in 0 },
             clock: FakeMonotonicClock(),
-            orphanGracePeriod: .milliseconds(1),
-            pidWaitPollInterval: .milliseconds(1)
+            orphanGracePeriod: .milliseconds(1)
         )
 
         let result = await gate.prepareForSpawn(journalRoot: journalRoot)
@@ -671,9 +643,9 @@ struct AppOwnedJournalTests {
         } else {
             Issue.record("expected blocked gate")
         }
-        #expect(signals.values == [
-            SignalRecord(pid: 4242, signal: SIGTERM),
-            SignalRecord(pid: 4242, signal: SIGKILL)
+        #expect(runner.invocations.map(\.arguments) == [
+            ["-axo", "pid=,ppid=,comm="],
+            ["-nP", "-iTCP:7657", "-sTCP:LISTEN"]
         ])
     }
 
@@ -1144,13 +1116,6 @@ private func makeTemporaryDirectory() throws -> URL {
         .appendingPathComponent("app-owned-journal-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
-}
-
-private func writeSupervisorMarkers(pid: pid_t, startTime: String, journalRoot: URL) throws {
-    let health = journalRoot.appendingPathComponent("health", isDirectory: true)
-    try FileManager.default.createDirectory(at: health, withIntermediateDirectories: true)
-    try Data("\(pid)\n".utf8).write(to: health.appendingPathComponent("supervisor.pid"))
-    try Data("\(startTime)\n".utf8).write(to: health.appendingPathComponent("supervisor.start_time"))
 }
 
 private func installerFixture(_ name: String) -> Data {
