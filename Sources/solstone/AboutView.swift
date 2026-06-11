@@ -22,7 +22,7 @@ struct AboutView: View {
                     .frame(width: 64, height: 64)
                     .accessibilityIdentifier(AXID.About.logo)
 
-                Text("solstone observer")
+                Text("solstone")
                     .font(.title)
                     .fontWeight(.bold)
                     .accessibilityIdentifier(AXID.About.title)
@@ -49,7 +49,7 @@ struct AboutView: View {
 
             Spacer().frame(height: 12)
 
-            Text("your second memory. always on, always yours.")
+            Text("a memory your agents can work from. always private, only yours.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

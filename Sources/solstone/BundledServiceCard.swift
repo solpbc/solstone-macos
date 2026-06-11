@@ -539,7 +539,7 @@ struct BundledServiceCard: View {
             )
 
             if isRestricted {
-                Text("macos may ask permission to write here.")
+                Text("macOS may ask permission to write here.")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }

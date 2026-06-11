@@ -40,7 +40,7 @@ struct UICopyTests {
     }
 
     @Test func settingsTabUpdatesDoneA11yString() {
-        #expect(UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y == "observer app up to date")
+        #expect(UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y == "solstone is up to date")
     }
 
     @Test func settingsAttentionPermissionsString() {
@@ -78,8 +78,8 @@ struct UICopyTests {
     }
 
     @Test func journalWaitingMenuStrings() {
-        #expect(UICopy.JOURNAL_WAITING_FOR_READINESS_MENU == "observing - waiting for journal")
-        #expect(UICopy.JOURNAL_WAITING_FOR_READINESS_MENU_BUTTON == "observing - waiting for journal \u{2192}")
+        #expect(UICopy.JOURNAL_WAITING_FOR_READINESS_MENU == "observing, waiting for journal")
+        #expect(UICopy.JOURNAL_WAITING_FOR_READINESS_MENU_BUTTON == "observing, waiting for journal \u{2192}")
     }
 
     @Test func journalRestartAndSetupStrings() {

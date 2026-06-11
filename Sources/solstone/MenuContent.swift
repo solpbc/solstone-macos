@@ -63,7 +63,7 @@ struct MenuContent: View {
                     journalNeedsAttention: appState.serviceNeedsAttention,
                     updateIsAvailable: updateController.updateIsAvailable,
                     updateCheckFailed: updateController.updateCheckFailed
-                ) {
+                ), reason == .updateAvailable || reason == .updateCheckFailed {
                     Label {
                         Text("settings… — \(settingsAttentionSuffix(reason))")
                     } icon: {
@@ -75,7 +75,7 @@ struct MenuContent: View {
                 }
             }
             .accessibilityIdentifier(AXID.Menubar.settingsButton)
-            Button("about solstone observer") {
+            Button("about solstone") {
                 openWindow(id: "about")
                 appState.didOpenWindow(.about)
                 NSApp.activate(ignoringOtherApps: true)
@@ -85,7 +85,7 @@ struct MenuContent: View {
 
         Divider()
 
-        Button("quit solstone observer") {
+        Button("quit solstone") {
             Task { @MainActor in
                 await performMenuQuit(
                     isRecording: appState.isRecording,
@@ -141,7 +141,7 @@ struct MenuContent: View {
             .foregroundStyle(.red)
             .accessibilityIdentifier(AXID.Menubar.errorButton)
         } else if appState.isRecording && !appState.config.isUploadConfigured && !appState.isPaused && !appState.pauseManager.isPaused {
-            Button("observing - local only →") {
+            Button("observing, local only →") {
                 appState.pendingSettingsTab = "journal"
                 openWindow(id: "settings")
                 appState.didOpenWindow(.settings)
@@ -164,7 +164,7 @@ struct MenuContent: View {
             } else {
                 switch appState.uploadCoordinator.status {
                 case .offline, .retrying:
-                    Button("observing - offline (saved locally) →") {
+                    Button("observing, offline (saved locally) →") {
                         appState.pendingSettingsTab = "status"
                         openWindow(id: "settings")
                         appState.didOpenWindow(.settings)
@@ -235,18 +235,18 @@ struct MenuContent: View {
             return "stopped"
         }
         if appState.config.syncPaused {
-            return "observing - sync paused"
+            return "observing, sync paused"
         }
         if appState.captureQueuedForJournalReadiness {
             return UICopy.JOURNAL_WAITING_FOR_READINESS_MENU
         }
         switch appState.uploadCoordinator.status {
         case .synced, .syncing, .uploading:
-            return "observing - connected"
+            return "observing, connected"
         case .notSynced:
-            return "observing - offline"
+            return "observing, offline"
         case .retrying, .offline:
-            return "observing - offline (saved locally)"
+            return "observing, offline (saved locally)"
         }
     }
 
@@ -316,7 +316,7 @@ func pausedHeaderText(timeRemaining: String?) -> String {
     let compact = t.replacingOccurrences(of: " mins", with: " min")
                    .replacingOccurrences(of: " secs", with: " sec")
                    .replacingOccurrences(of: " hrs", with: " hr")
-    return "paused - \(compact) left"
+    return "paused, \(compact) left"
 }
 
 /// Drives the status-bar quit. `escapeActorJob` MUST schedule `terminate` to run

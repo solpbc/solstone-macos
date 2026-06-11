@@ -302,7 +302,7 @@ struct SettingsView: View {
 
     private var permissionsTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("solstone observer needs screen recording and microphone access to build your memory.")
+            Text("solstone needs screen recording and microphone access to build your memory.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -322,7 +322,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("this is how you get searchable memory of every meeting, document, and idea. solstone observes your screen alongside you and keeps everything on your mac, sent only to your journal.")
+                        Text("this is how you get searchable memory of every meeting, document, and idea. solstone observes your screen alongside you and keeps everything on your Mac, sent only to your journal.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
@@ -382,12 +382,12 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("to take in conversations and meetings, solstone observer needs mic access. same rules: stored locally, sent only to your journal. no third parties, no exceptions.")
+                        Text("to take in conversations and meetings, solstone needs mic access. same rules: stored locally, sent only to your journal. no third parties, no exceptions.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
                             Spacer()
-                            Button("grant access") {
+                            Button("enable microphone") {
                                 Task {
                                     await PermissionChecker().requestMicrophone()
                                     appState.microphoneGranted = PermissionChecker().microphoneGranted
@@ -545,7 +545,7 @@ struct SettingsView: View {
                 }
             }
 
-            Text("synced segments older than the retention period are removed from your mac. unsynced segments are never deleted.")
+            Text("synced segments older than the retention period are removed from your Mac. unsynced segments are never deleted.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)
@@ -593,7 +593,7 @@ struct SettingsView: View {
                 }
                 .font(.caption)
                 .buttonStyle(.link)
-                Text("System Settings → Notifications → solstone observer")
+                Text("System Settings → Notifications → solstone")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1508,7 +1508,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                     Link("support.solstone.app", destination: failureDiagnosticSupportURL)
                         .accessibilityIdentifier(AXID.Settings.Help.supportSite)
-                    Link("support@solstone.app", destination: URL(string: "mailto:support@solstone.app?subject=solstone%20observer")!)
+                    Link("support@solstone.app", destination: URL(string: "mailto:support@solstone.app?subject=solstone%20(macOS)")!)
                         .accessibilityIdentifier(AXID.Settings.Help.supportEmail)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

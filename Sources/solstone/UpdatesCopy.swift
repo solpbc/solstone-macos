@@ -42,11 +42,11 @@ enum UpdatesCopy {
     static let privacyFootnote = "solstone never sends usage data. update checks only fetch the version manifest."
 
     static func appHeader(version: String) -> String {
-        "solstone observer \(version)"
+        "solstone \(version)"
     }
 
     static func lastCheckedUpToDate(relative: String) -> String {
-        "last checked \(relative) — observer app up to date"
+        "last checked \(relative) — solstone is up to date"
     }
 
     static func lastCheckedUpdateFound(relative: String, version: String) -> String {
@@ -66,7 +66,7 @@ enum UpdatesCopy {
     }
 
     static func updateAvailableSubtitle(version: String) -> String {
-        "solstone observer \(version) is ready to download."
+        "solstone \(version) is ready to download."
     }
 
     static func deferredTitle(version: String) -> String {
@@ -99,7 +99,7 @@ enum UpdatesCopy {
         "installing \(version)"
     }
 
-    static let installingSubtitle = "solstone observer is handing off to the installer."
+    static let installingSubtitle = "solstone is handing off to the installer."
 
     static func byteProgress(receivedBytes: UInt64, totalBytes: UInt64?) -> String {
         let formatter = ByteCountFormatter()

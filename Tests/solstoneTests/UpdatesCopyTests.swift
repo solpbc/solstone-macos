@@ -9,7 +9,7 @@ struct UpdatesCopyTests {
     }
 
     @Test func updateAvailableSubtitleString() {
-        #expect(UpdatesCopy.updateAvailableSubtitle(version: "1.1.0") == "solstone observer 1.1.0 is ready to download.")
+        #expect(UpdatesCopy.updateAvailableSubtitle(version: "1.1.0") == "solstone 1.1.0 is ready to download.")
     }
 
     @Test func downloadingTitleString() {
@@ -29,7 +29,7 @@ struct UpdatesCopyTests {
     }
 
     @Test func installingSubtitleString() {
-        #expect(UpdatesCopy.installingSubtitle == "solstone observer is handing off to the installer.")
+        #expect(UpdatesCopy.installingSubtitle == "solstone is handing off to the installer.")
     }
 
     @Test func extractingSubtitleString() {
@@ -56,7 +56,7 @@ struct UpdatesCopyTests {
     }
 
     @Test func lastCheckedUpToDateString() {
-        #expect(UpdatesCopy.lastCheckedUpToDate(relative: "just now") == "last checked just now — observer app up to date")
+        #expect(UpdatesCopy.lastCheckedUpToDate(relative: "just now") == "last checked just now — solstone is up to date")
     }
 
     @Test func deferredStrings() {

@@ -33,11 +33,11 @@ struct MenuContentTests {
     }
 
     @Test func pausedHeaderShowsAutoResumeCountdown() {
-        #expect(pausedHeaderText(timeRemaining: "8 mins") == "paused - 8 min left")
-        #expect(pausedHeaderText(timeRemaining: "1 min") == "paused - 1 min left")
-        #expect(pausedHeaderText(timeRemaining: "2 hrs 5 mins") == "paused - 2 hr 5 min left")
-        #expect(pausedHeaderText(timeRemaining: "45 secs") == "paused - 45 sec left")
-        #expect(pausedHeaderText(timeRemaining: "1 hr") == "paused - 1 hr left")
+        #expect(pausedHeaderText(timeRemaining: "8 mins") == "paused, 8 min left")
+        #expect(pausedHeaderText(timeRemaining: "1 min") == "paused, 1 min left")
+        #expect(pausedHeaderText(timeRemaining: "2 hrs 5 mins") == "paused, 2 hr 5 min left")
+        #expect(pausedHeaderText(timeRemaining: "45 secs") == "paused, 45 sec left")
+        #expect(pausedHeaderText(timeRemaining: "1 hr") == "paused, 1 hr left")
         #expect(pausedHeaderText(timeRemaining: nil) == "paused")
     }
 
