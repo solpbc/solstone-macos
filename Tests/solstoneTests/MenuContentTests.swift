@@ -46,6 +46,40 @@ struct MenuContentTests {
         #expect(pausedHeaderText(timeRemaining: "1 min") != pausedHeaderText(timeRemaining: nil))
     }
 
+    @Test @MainActor func quitEscapesActorJobBeforeTerminating() async {
+        var captured: (@MainActor () -> Void)?
+        var terminated = false
+
+        await performMenuQuit(
+            isRecording: false,
+            stopRecording: {},
+            escapeActorJob: { captured = $0 },
+            terminate: { terminated = true }
+        )
+
+        // The regression: terminate must be deferred to the escaped callout, never called
+        // inline within the actor job (inline is what deadlocks NSApp.terminate).
+        #expect(terminated == false)
+        #expect(captured != nil)
+
+        // Draining the escaped callout performs the terminate.
+        captured?()
+        #expect(terminated == true)
+    }
+
+    @Test @MainActor func quitStopsRecordingBeforeEscaping() async {
+        var order: [String] = []
+
+        await performMenuQuit(
+            isRecording: true,
+            stopRecording: { order.append("stop") },
+            escapeActorJob: { _ in order.append("escape") },
+            terminate: {}
+        )
+
+        #expect(order == ["stop", "escape"])
+    }
+
     @Test func openJournalIgnoresInvalidConfiguredURL() {
         #expect(journalURLToOpen(from: nil) == nil)
         #expect(journalURLToOpen(from: "") == nil)
