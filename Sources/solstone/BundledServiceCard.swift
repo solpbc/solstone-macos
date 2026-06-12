@@ -156,7 +156,7 @@ struct BundledServiceCard: View {
         DisclosureGroup(isExpanded: $doctorExpanded) {
             doctorDisclosureContent
         } label: {
-            Text("doctor")
+            Text("run a health check")
                 .font(.caption)
         }
         .accessibilityIdentifier(AXID.Installer.doctorDisclosure)
@@ -429,6 +429,9 @@ struct BundledServiceCard: View {
 
             if installer.modelsProgress != .idle {
                 Divider()
+                Text("runs in the background")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 rowView(.models)
             }
 
@@ -479,6 +482,9 @@ struct BundledServiceCard: View {
 
             if showModelsWhenActive && installer.modelsProgress != .idle {
                 Divider()
+                Text("runs in the background")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 rowView(.models)
             }
         }

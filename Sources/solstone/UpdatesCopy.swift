@@ -15,7 +15,7 @@ enum UpdatesCopy {
     }
 
     static let unavailableTitle = "updates unavailable"
-    static let unavailableSubtitle = "this build is missing a valid update feed or signing key."
+    static let unavailableSubtitle = "this build can't check for updates on its own. download the latest from solstone.app."
 
     static let releaseNotesTitle = "what's new"
     static let releaseNotesOnlineLinkLabel = "read the full notes online"

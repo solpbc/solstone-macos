@@ -364,8 +364,6 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
             }
-            .opacity(appState.screenRecordingGranted ? 0.7 : 1.0)
-
             GroupBox {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("microphone")
@@ -400,8 +398,6 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
             }
-            .opacity(appState.microphoneGranted ? 0.7 : 1.0)
-
             HStack(spacing: 4) {
                 Text("you can review or revoke these anytime in")
                     .font(.caption)
@@ -488,7 +484,7 @@ struct SettingsView: View {
 
             GroupBox("notifications") {
                 VStack(alignment: .leading, spacing: 6) {
-                    Toggle("notify me on sol-initiated chats", isOn: solChatNotificationsBinding)
+                    Toggle("notify me when sol reaches out", isOn: solChatNotificationsBinding)
                         .accessibilityIdentifier(AXID.Settings.Observer.solChatNotifications)
                     notificationAuthorizationDetails
                 }
@@ -990,7 +986,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
 
                     Picker("gain", selection: microphoneGainBinding) {
-                        ForEach(1...8, id: \.self) { value in
+                        ForEach([1, 2, 4, 8], id: \.self) { value in
                             Text("\(value)x").tag(Float(value))
                         }
                     }
@@ -998,8 +994,11 @@ struct SettingsView: View {
                     .accessibilityIdentifier(AXID.Settings.Microphones.gainPicker)
                     AXStateCompanion(
                         id: AXID.Settings.Microphones.gainState,
-                        value: axIntegerString(Int(appState.config.microphoneGain.rounded()))
+                        value: axIntegerString(Int(snapGain(appState.config.microphoneGain).rounded()))
                     )
+                    Text("stronger boost can pick up more background noise in quiet rooms.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 4)
             }
@@ -1021,12 +1020,28 @@ struct SettingsView: View {
         }
     }
 
+    private func snapGain(_ value: Float) -> Float {
+        let stops: [Float] = [1, 2, 4, 8]
+        var best = stops[0]
+        var bestDistance = abs(value - best)
+
+        for stop in stops.dropFirst() {
+            let distance = abs(value - stop)
+            if distance < bestDistance || (distance == bestDistance && stop > best) {
+                best = stop
+                bestDistance = distance
+            }
+        }
+
+        return best
+    }
+
     private var microphoneGainBinding: Binding<Float> {
         Binding(
-            get: { appState.config.microphoneGain },
+            get: { snapGain(appState.config.microphoneGain) },
             set: { newValue in
                 var config = appState.config
-                config.microphoneGain = newValue
+                config.microphoneGain = snapGain(newValue)
                 appState.updateConfig(config)
             }
         )

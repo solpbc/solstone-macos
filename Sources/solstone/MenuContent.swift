@@ -13,9 +13,17 @@ struct MenuContent: View {
     var body: some View {
         if let pending = appState.solChatPending {
             Section {
-                Button("· \(pending.summary)") {
+                Button {
                     Task {
                         await AppState.shared?.solChatBridge.handleClick(requestID: pending.id)
+                    }
+                } label: {
+                    Label {
+                        Text(pending.summary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    } icon: {
+                        bundleImage("sol-ring-template", isTemplate: true)
                     }
                 }
                 .accessibilityIdentifier(AXID.Menubar.pendingChatButton)
