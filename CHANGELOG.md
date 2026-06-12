@@ -5,13 +5,13 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.14] - 2026-06-10
+## [1.3.14] - 2026-06-12
 
 ### Added
 - you can now stop and start the journal yourself from Settings, so observing pauses and resumes when you choose.
 
 ### Changed
-- updated the bundled solstone journal to 0.5.3 →
+- updated the bundled solstone journal to 0.5.4 →
 - the journal now runs as part of solstone itself instead of a separate background process. quitting solstone now stops the journal too, and the menu, doctor, and Settings show its real status as it changes.
 - when an app update is ready, the journal stops cleanly before the new version takes over, so an update never leaves it half-applied.
 
