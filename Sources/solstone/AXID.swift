@@ -135,7 +135,8 @@ enum AXID {
             static let lastSyncedState = "settings.status.upload.lastSynced.state"
             static let lastErrorState = "settings.status.upload.lastError.state"
             static let resyncAll = "settings.status.upload.resyncAll"
-            static let configureJournal = "settings.status.upload.configureJournal"
+            static let manageJournal = "settings.status.journal.manageJournal"
+            static let storageSettings = "settings.status.storage.settings"
             static let debugOneMinuteSegments = "settings.status.debug.oneMinuteSegments"
             static let debugKeepRejectedAudio = "settings.status.debug.keepRejectedAudio"
         }

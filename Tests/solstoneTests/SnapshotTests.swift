@@ -241,7 +241,7 @@ struct SnapshotTests {
         let state = AppState.forSnapshot()
         let updateController = makeSnapshotUpdateController()
         try render(
-            SettingsView(appState: state, updateController: updateController, selectedTab: .service),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .service, initialStorageUsedMB: 42),
             size: settingsSize,
             to: "settings-service-empty.png"
         )
@@ -253,7 +253,7 @@ struct SnapshotTests {
         let state = AppState.forSnapshot(config: config)
         let updateController = makeSnapshotUpdateController()
         try render(
-            SettingsView(appState: state, updateController: updateController, selectedTab: .service),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .service, initialStorageUsedMB: 42),
             size: settingsSize,
             to: "settings-service-configured.png"
         )
@@ -276,7 +276,7 @@ struct SnapshotTests {
         )
         let updateController = makeSnapshotUpdateController()
         try render(
-            SettingsView(appState: state, updateController: updateController, selectedTab: .service),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .service, initialStorageUsedMB: 42),
             size: settingsSize,
             to: "settings-service-upgrade-failed.png"
         )
@@ -360,7 +360,7 @@ struct SnapshotTests {
         let updateController = makeSnapshotUpdateController()
         state.uploadCoordinator.status = .synced
         try render(
-            SettingsView(appState: state, updateController: updateController, selectedTab: .status),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .status, initialStorageUsedMB: 42),
             size: settingsSize,
             to: "settings-status-idle.png"
         )
@@ -374,7 +374,7 @@ struct SnapshotTests {
         state.isRecording = true
         state.uploadCoordinator.status = .syncing(checked: 3, total: 10)
         try render(
-            SettingsView(appState: state, updateController: updateController, selectedTab: .status),
+            SettingsView(appState: state, updateController: updateController, selectedTab: .status, initialStorageUsedMB: 42),
             size: settingsSize,
             to: "settings-status-recording.png"
         )
