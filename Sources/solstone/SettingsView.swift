@@ -619,6 +619,7 @@ struct SettingsView: View {
             switch serviceMode {
             case .bundled:
                 BundledServiceCard(appState: appState, allowsLocalJournalActions: true)
+                bundledJournalStatusSection
                 journalRestartControl
                 journalStopControl
                 journalStartControl
@@ -627,127 +628,145 @@ struct SettingsView: View {
                     BundledServiceCard(appState: appState, allowsLocalJournalActions: false)
                 }
                 externalServiceSection
+                externalJournalSyncSection
+                externalJournalStorageSection
             }
+        }
+    }
 
-            GroupBox("sync") {
+    @ViewBuilder
+    private var bundledJournalStatusSection: some View {
+        if appState.bundledJournalStatusAvailable {
+            GroupBox("journal status") {
                 VStack(alignment: .leading, spacing: 8) {
-                    if appState.showsExternalJournalAddressRow {
-                        LabeledContent("journal") {
-                            Text(appState.config.serverURL ?? "not configured")
-                                .foregroundStyle(appState.config.serverURL == nil ? .secondary : .primary)
-                                .accessibilityIdentifier(AXID.Settings.Status.uploadJournalState)
-                                .accessibilityValue(appState.config.serverURL ?? "")
-                        }
-                    }
-                    if appState.bundledJournalStatusAvailable {
-                        LabeledContent("journal") {
-                            let presentation = appState.journalRuntimeStatus.settingsPresentation
-                            VStack(alignment: .trailing, spacing: 2) {
-                                Text(presentation.shortText)
-                                    .foregroundStyle(presentation.severity.color)
-                                    .accessibilityIdentifier(AXID.Settings.Status.journalRuntimeState)
-                                    .accessibilityValue(presentation.axValue)
-                                if let reason = presentation.reason {
-                                    Text(reason)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                        .multilineTextAlignment(.trailing)
-                                }
-                            }
-                        }
-                        if appState.captureQueuedForJournalReadiness {
-                            LabeledContent("sync") {
-                                Text(UICopy.JOURNAL_WAITING_FOR_READINESS)
-                                    .foregroundStyle(.orange)
-                                    .accessibilityIdentifier(AXID.Settings.Status.journalReadinessQueueState)
-                                    .accessibilityValue(MenubarStatusRowState.journalWaiting.axToken)
-                            }
-                        }
-                    }
-                    uploadStatusView
-                    Toggle("pause sync", isOn: Binding(
-                        get: { appState.config.syncPaused },
-                        set: { newValue in
-                            var config = appState.config
-                            config.syncPaused = newValue
-                            appState.updateConfig(config)
-                        }
-                    ))
-                    .disabled(!appState.config.isUploadConfigured)
-                    .help("keeps observing locally but stops sending to your journal")
-                    .accessibilityIdentifier(AXID.Settings.Status.pauseSync)
-                    if let lastSynced = appState.uploadCoordinator.lastSyncedAt {
-                        LabeledContent("last synced") {
-                            Text(lastSynced, style: .relative)
-                                .foregroundStyle(.secondary)
-                                .accessibilityIdentifier(AXID.Settings.Status.lastSyncedState)
-                                .accessibilityValue(axIntegerString(Int(lastSynced.timeIntervalSince1970)))
-                        }
-                    }
-                    if let error = appState.uploadCoordinator.lastError {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier(AXID.Settings.Status.lastErrorState)
-                            .accessibilityValue(error)
-                    }
-                    Button("resync all") {
-                        appState.uploadCoordinator.forceFullSync()
-                    }
-                    .help("re-check all days, including previously synced ones")
-                    .accessibilityIdentifier(AXID.Settings.Status.resyncAll)
+                    bundledJournalStatusRows
                 }
                 .padding(.vertical, 4)
             }
+        }
+    }
 
-            GroupBox("storage") {
-                VStack(alignment: .leading) {
-                    LabeledContent("currently using") {
-                        if let used = storageUsedMB {
-                            Text("\(used) MB")
-                        } else {
-                            ProgressView()
-                                .scaleEffect(0.5)
-                        }
-                        AXStateCompanion(
-                            id: AXID.Settings.Observer.storageUsedState,
-                            value: storageUsedMB.map(axIntegerString) ?? ""
-                        )
-                    }
-                    .padding(.vertical, 4)
-
-                    LabeledContent("keep on this Mac for") {
-                        Picker("", selection: cacheRetentionBinding) {
-                            Text("don't keep").tag(0)
-                            Text("7 days").tag(7)
-                            Text("14 days").tag(14)
-                            Text("30 days").tag(30)
-                            Text("60 days").tag(60)
-                            Text("forever").tag(-1)
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Observer.cacheRetentionPicker)
-                        .frame(width: 120)
-                        AXStateCompanion(
-                            id: AXID.Settings.Observer.cacheRetentionState,
-                            value: axIntegerString(appState.config.cacheRetentionDays)
-                        )
-                    }
-                    .padding(.vertical, 4)
-
-                    LabeledContent("storage folder") {
-                        Button("open in Finder") {
-                            NSWorkspace.shared.open(appState.storageManager.baseDirectory)
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Observer.cacheFolderOpen)
-                    }
-                    .padding(.vertical, 4)
-
-                    Text("synced segments older than the retention period are removed from your Mac. unsynced segments are never deleted.")
+    @ViewBuilder
+    private var bundledJournalStatusRows: some View {
+        LabeledContent("journal") {
+            let presentation = appState.journalRuntimeStatus.settingsPresentation
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(presentation.shortText)
+                    .foregroundStyle(presentation.severity.color)
+                    .accessibilityIdentifier(AXID.Settings.Status.journalRuntimeState)
+                    .accessibilityValue(presentation.axValue)
+                if let reason = presentation.reason {
+                    Text(reason)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .padding(.top, 4)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
                 }
+            }
+        }
+        if appState.captureQueuedForJournalReadiness {
+            LabeledContent("journal") {
+                Text(UICopy.JOURNAL_WAITING_FOR_READINESS)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier(AXID.Settings.Status.journalReadinessQueueState)
+                    .accessibilityValue(MenubarStatusRowState.journalWaiting.axToken)
+            }
+        }
+    }
+
+    private var externalJournalSyncSection: some View {
+        GroupBox("sync") {
+            VStack(alignment: .leading, spacing: 8) {
+                LabeledContent("journal") {
+                    Text(appState.config.serverURL ?? "not configured")
+                        .foregroundStyle(appState.config.serverURL == nil ? .secondary : .primary)
+                        .accessibilityIdentifier(AXID.Settings.Status.uploadJournalState)
+                        .accessibilityValue(appState.config.serverURL ?? "")
+                }
+                uploadStatusView
+                Toggle("pause sync", isOn: Binding(
+                    get: { appState.config.syncPaused },
+                    set: { newValue in
+                        var config = appState.config
+                        config.syncPaused = newValue
+                        appState.updateConfig(config)
+                    }
+                ))
+                .disabled(!appState.config.isUploadConfigured)
+                .help("keeps observing locally but stops sending to your journal")
+                .accessibilityIdentifier(AXID.Settings.Status.pauseSync)
+                if let lastSynced = appState.uploadCoordinator.lastSyncedAt {
+                    LabeledContent("last synced") {
+                        Text(lastSynced, style: .relative)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier(AXID.Settings.Status.lastSyncedState)
+                            .accessibilityValue(axIntegerString(Int(lastSynced.timeIntervalSince1970)))
+                    }
+                }
+                if let error = appState.uploadCoordinator.lastError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier(AXID.Settings.Status.lastErrorState)
+                        .accessibilityValue(error)
+                }
+                Button("resync all") {
+                    appState.uploadCoordinator.forceFullSync()
+                }
+                .help("re-check all days, including previously synced ones")
+                .accessibilityIdentifier(AXID.Settings.Status.resyncAll)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var externalJournalStorageSection: some View {
+        GroupBox("storage") {
+            VStack(alignment: .leading) {
+                LabeledContent("currently using") {
+                    if let used = storageUsedMB {
+                        Text("\(used) MB")
+                    } else {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                    }
+                    AXStateCompanion(
+                        id: AXID.Settings.Observer.storageUsedState,
+                        value: storageUsedMB.map(axIntegerString) ?? ""
+                    )
+                }
+                .padding(.vertical, 4)
+
+                LabeledContent("keep on this Mac for") {
+                    Picker("", selection: cacheRetentionBinding) {
+                        Text("don't keep").tag(0)
+                        Text("7 days").tag(7)
+                        Text("14 days").tag(14)
+                        Text("30 days").tag(30)
+                        Text("60 days").tag(60)
+                        Text("forever").tag(-1)
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Observer.cacheRetentionPicker)
+                    .frame(width: 120)
+                    AXStateCompanion(
+                        id: AXID.Settings.Observer.cacheRetentionState,
+                        value: axIntegerString(appState.config.cacheRetentionDays)
+                    )
+                }
+                .padding(.vertical, 4)
+
+                LabeledContent("storage folder") {
+                    Button("open in Finder") {
+                        NSWorkspace.shared.open(appState.storageManager.baseDirectory)
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Observer.cacheFolderOpen)
+                }
+                .padding(.vertical, 4)
+
+                Text("synced segments older than the retention period are removed from your Mac. unsynced segments are never deleted.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
             }
         }
     }
@@ -1339,11 +1358,11 @@ struct SettingsView: View {
 
     private var syncTargetText: String {
         if appState.config.serviceMode == .bundled {
-            return "syncing to this Mac"
+            return "journal on this Mac"
         }
 
         guard let serverURL = appState.config.serverURL, !serverURL.isEmpty else {
-            return "sync not configured"
+            return "journal not configured"
         }
 
         let parseableURL = serverURL.contains("://") ? serverURL : "http://\(serverURL)"
@@ -1382,9 +1401,13 @@ struct SettingsView: View {
 
             GroupBox("journal") {
                 VStack(alignment: .leading, spacing: 8) {
-                    let presentation = appState.journalRuntimeStatus.settingsPresentation
-                    Text("\(presentation.shortText) · \(statusText(for: appState.uploadCoordinator.status))")
-                        .foregroundStyle(presentation.severity.color)
+                    if appState.config.serviceMode == .bundled {
+                        bundledJournalStatusRows
+                    } else {
+                        Text(syncTargetText)
+                            .foregroundStyle(.secondary)
+                        uploadStatusView
+                    }
                     Button("manage journal →") {
                         selectedTab = .service
                     }
@@ -1395,17 +1418,19 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox("storage") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(storageGlanceText)
-                    Button("storage settings →") {
-                        selectedTab = .service
+            if appState.config.serviceMode == .external {
+                GroupBox("storage") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(storageGlanceText)
+                        Button("storage settings →") {
+                            selectedTab = .service
+                        }
+                        .font(.caption)
+                        .buttonStyle(.link)
+                        .accessibilityIdentifier(AXID.Settings.Status.storageSettings)
                     }
-                    .font(.caption)
-                    .buttonStyle(.link)
-                    .accessibilityIdentifier(AXID.Settings.Status.storageSettings)
+                    .padding(.vertical, 4)
                 }
-                .padding(.vertical, 4)
             }
 
             Text(statusFooterText)
