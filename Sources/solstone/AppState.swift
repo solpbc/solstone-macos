@@ -268,6 +268,12 @@ public final class AppState {
         ))
     }
 
+    /// Time the app last handled a successful segment upload into the active bundled journal,
+    /// or nil when the bundled status surface is unavailable. Forwarded from UploadCoordinator.
+    public var bundledJournalLastIngestAt: Date? {
+        uploadCoordinator.bundledJournalLastIngestAt
+    }
+
     /// In bundled mode the localhost serverURL isn't owner-meaningful — the bundled
     /// journal IS the journal — so the address row is suppressed in favor of the
     /// runtime-status row. External and unconfigured modes keep showing the address.
@@ -551,6 +557,9 @@ public final class AppState {
         self.silenceMusicHolder = silenceMusicHolder
 
         uploadCoordinator = UploadCoordinator(storageManager: storageManager, config: config)
+        uploadCoordinator.bundledAvailabilityProvider = { [weak self] in
+            self?.bundledJournalStatusAvailable ?? false
+        }
 
         // Wire up callbacks
         captureManager.onStateChanged = { [weak self] state in

@@ -26,6 +26,16 @@ public final class UploadCoordinator {
     public internal(set) var pendingCount: Int = 0
     public internal(set) var lastError: String?
     public internal(set) var lastSyncedAt: Date?
+    private var bundledLastIngestAt: Date?
+
+    internal var nowProvider: @MainActor () -> Date = { Date() }
+    internal var bundledAvailabilityProvider: @MainActor () -> Bool = { false }
+
+    /// Time the app last handled a successful segment upload into the active bundled journal.
+    /// nil whenever the bundled status surface is unavailable (external mode, or bundled before installed).
+    public var bundledJournalLastIngestAt: Date? {
+        bundledAvailabilityProvider() ? bundledLastIngestAt : nil
+    }
 
     // MARK: - Retry State
 
@@ -160,7 +170,7 @@ public final class UploadCoordinator {
         }
     }
 
-    private func handleProgressEvent(_ event: SyncService.ProgressEvent) {
+    internal func handleProgressEvent(_ event: SyncService.ProgressEvent) {
         switch event {
         case .syncStarted:
             retryTask?.cancel()
@@ -178,8 +188,9 @@ public final class UploadCoordinator {
             status = .retrying(segment: segment, attempts: attempt)
 
         case .uploadSucceeded:
-            // Will get syncProgress or syncComplete next
-            break
+            if bundledAvailabilityProvider() {
+                bundledLastIngestAt = nowProvider()
+            }
 
         case .uploadFailed(let segment, let error):
             Logger.upload.info("Upload failed for \(segment, privacy: .public): \(error, privacy: .public)")
