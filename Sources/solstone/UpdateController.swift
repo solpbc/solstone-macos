@@ -8,6 +8,7 @@ import os
 final class UpdateController {
     typealias UpdaterFactory = @MainActor (SparkleUserDriver, any SPUUpdaterDelegate) -> SPUUpdater?
     typealias ExclusivityProvider = @MainActor () -> Bool
+    typealias SessionLivenessProvider = @MainActor () -> Bool
     typealias PreInstallFinalizer = @MainActor () async -> Void
     typealias InstallFailureRecovery = @MainActor () async -> Void
     typealias RunningVersionProvider = @MainActor () -> String
@@ -29,6 +30,7 @@ final class UpdateController {
     private let userDriver: SparkleUserDriver
     private let updaterDelegate: SparkleUpdaterDelegateAdapter
     private let exclusivityProvider: ExclusivityProvider?
+    private let sessionLivenessProvider: SessionLivenessProvider?
     private let preInstallFinalizer: PreInstallFinalizer?
     private let installFailureRecovery: InstallFailureRecovery?
 
@@ -128,6 +130,7 @@ final class UpdateController {
             Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
         },
         exclusivity: ExclusivityProvider? = nil,
+        sessionInProgress: SessionLivenessProvider? = nil,
         preInstallFinalizer: PreInstallFinalizer? = nil,
         installFailureRecovery: InstallFailureRecovery? = nil,
         updaterFactory: @escaping UpdaterFactory
@@ -137,6 +140,7 @@ final class UpdateController {
         self.userDriver = SparkleUserDriver()
         self.updaterDelegate = SparkleUpdaterDelegateAdapter()
         self.exclusivityProvider = exclusivity
+        self.sessionLivenessProvider = sessionInProgress
         self.preInstallFinalizer = preInstallFinalizer
         self.installFailureRecovery = installFailureRecovery
         self.canCheckForUpdates = Self.validateSparkleConfig(
@@ -201,10 +205,8 @@ final class UpdateController {
 
         #if DEBUG
         if let checkForUpdatesInterceptor {
-            if activity != .checking {
-                activity = .checking
-            }
             checkForUpdatesInterceptor()
+            beginUserInitiatedCheck(cancellation: {})
             return
         }
         #endif
@@ -214,10 +216,6 @@ final class UpdateController {
             activity = .idle
             recordFailedCheck()
             return
-        }
-
-        if activity != .checking {
-            activity = .checking
         }
 
         updater.checkForUpdates()
@@ -236,6 +234,11 @@ final class UpdateController {
     func download() {
         if canActOnAvailableUpdateDirectly {
             install()
+            return
+        }
+
+        guard !hasLiveSparkleSessionOrReply else {
+            Logger.setup.info("download() ignored because a Sparkle update session is already active")
             return
         }
 
@@ -536,7 +539,16 @@ final class UpdateController {
     }
 
     private var hasLiveSparkleSessionOrReply: Bool {
-        activity != .idle || pendingChoiceReply != nil || pendingCancellation != nil || installFinalizationInFlight
+        sparkleSessionInProgress
+            || activity != .idle
+            || pendingChoiceReply != nil
+            || pendingCancellation != nil
+            || installFinalizationInFlight
+    }
+
+    private var sparkleSessionInProgress: Bool {
+        if let sessionLivenessProvider { return sessionLivenessProvider() }
+        return updater?.sessionInProgress ?? false
     }
 
     private func fireInstallReply(_ reply: @escaping (SPUUserUpdateChoice) -> Void) {

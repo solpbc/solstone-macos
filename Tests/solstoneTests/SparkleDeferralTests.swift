@@ -308,6 +308,77 @@ struct SparkleDeferralTests {
         #expect(controller.activity == .checking)
     }
 
+    @Test func incidentShapeCheckForUpdatesIsNoOpWhenSessionInProgress() {
+        let signal = ExclusiveSignal()
+        let sessionLive = true
+        let controller = makeController(exclusivity: signal, sessionInProgress: { sessionLive })
+        var checks = 0
+        controller.applyDebugFixture(activity: .idle)
+        #expect(!controller.hasLiveUpdateReply)
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+
+        controller.checkForUpdates()
+
+        #expect(checks == 0)
+        #expect(controller.activity == .idle)
+        #expect(!controller.hasLiveUpdateReply)
+    }
+
+    @Test func absorbedCheckLeavesNoSpinnerThenInFlightSessionDrivesUI() async throws {
+        let signal = ExclusiveSignal()
+        let sessionLive = true
+        let controller = makeController(exclusivity: signal, sessionInProgress: { sessionLive })
+        var checks = 0
+        controller.applyDebugFixture(activity: .idle)
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+
+        controller.checkForUpdates()
+
+        #expect(checks == 0)
+        #expect(controller.activity == .idle)
+
+        controller.presentUpdateFound(
+            version: "1.3.9",
+            releaseNotes: nil,
+            state: try userUpdateState(stage: .downloaded),
+            reply: { _ in }
+        )
+
+        #expect(controller.activity == .readyToInstall(version: "1.3.9", releaseNotes: nil))
+    }
+
+    @Test func downloadDuringLiveSessionLeavesNoStrandedIntent() async throws {
+        let signal = ExclusiveSignal()
+        let sessionLive = true
+        let controller = makeController(exclusivity: signal, sessionInProgress: { sessionLive })
+        var checks = 0
+        var replies: [SPUUserUpdateChoice] = []
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            hasLiveChoiceReply: false
+        )
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+
+        controller.download()
+
+        #expect(checks == 0)
+
+        controller.presentUpdateFound(
+            version: "1.3.9",
+            releaseNotes: nil,
+            state: try userUpdateState(stage: .notDownloaded),
+            reply: { choice in
+                replies.append(choice)
+                Issue.record("unexpected \(choice) reply after live session download")
+            }
+        )
+        await Task.yield()
+
+        #expect(replies.isEmpty)
+    }
+
     @Test func rehydratedUpdateFoundWithDownloadIntentRepliesInstallOnce() async throws {
         let signal = ExclusiveSignal()
         let controller = makeController(exclusivity: signal)
@@ -424,6 +495,25 @@ struct SparkleDeferralTests {
         #expect(controller.activity == .checking)
     }
 
+    @Test func exclusiveClearDuringLiveSessionDoesNotRecheck() async {
+        let signal = ExclusiveSignal()
+        let sessionLive = true
+        let controller = makeController(exclusivity: signal, sessionInProgress: { sessionLive })
+        var checks = 0
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found)
+        )
+
+        await setExclusive(signal, to: true, controller: controller)
+        await setExclusive(signal, to: false, controller: controller)
+
+        #expect(checks == 0)
+        #expect(controller.activity == .idle)
+    }
+
     @Test func signalClearWithLiveReplyDoesNotStartRedundantCheck() async {
         let signal = ExclusiveSignal()
         let controller = makeController(exclusivity: signal)
@@ -501,8 +591,18 @@ struct SparkleDeferralTests {
         #expect(controller.statusAXToken == "deferred_install")
     }
 
+    @Test func userInitiatedCheckEntersCheckingWhenNoSession() {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+
+        controller.beginUserInitiatedCheck(cancellation: {})
+
+        #expect(controller.activity == .checking)
+    }
+
     private func makeController(
         exclusivity signal: ExclusiveSignal,
+        sessionInProgress: UpdateController.SessionLivenessProvider? = nil,
         preInstallFinalizer: UpdateController.PreInstallFinalizer? = nil,
         installFailureRecovery: UpdateController.InstallFailureRecovery? = nil
     ) -> UpdateController {
@@ -511,6 +611,7 @@ struct SparkleDeferralTests {
             feedURL: validFeedURL,
             publicKey: validPublicKey,
             exclusivity: { signal.value },
+            sessionInProgress: sessionInProgress,
             preInstallFinalizer: preInstallFinalizer,
             installFailureRecovery: installFailureRecovery
         ) { _, _ in
