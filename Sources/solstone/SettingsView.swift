@@ -1466,6 +1466,14 @@ struct SettingsView: View {
                         Text(bundledVersionCaption)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        if let lastIngestAt = appState.bundledJournalLastIngestAt {
+                            let relative = coarseRelativeTime(lastIngestAt, now: Date())
+                            Text("last activity \(relative)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier(AXID.Settings.Status.bundledLastActivity)
+                                .accessibilityValue(relative)
+                        }
                     } else {
                         Text(syncTargetText)
                             .foregroundStyle(.secondary)

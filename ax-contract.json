@@ -246,6 +246,7 @@
       "settings.status.debug.keepRejectedAudio",
       "settings.status.debug.oneMinuteSegments",
       "settings.status.health.summary.state",
+      "settings.status.journal.lastActivity.state",
       "settings.status.journal.manageJournal",
       "settings.status.journal.runtime.state",
       "settings.status.observing.nextSegment.state",
@@ -388,6 +389,9 @@
       "vocabulary" : "SidebarBadgeState"
     },
     "settings.status.health.summary.state" : {
+      "kind" : "freeform"
+    },
+    "settings.status.journal.lastActivity.state" : {
       "kind" : "freeform"
     },
     "settings.status.journal.runtime.state" : {
