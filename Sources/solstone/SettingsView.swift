@@ -1337,23 +1337,26 @@ struct SettingsView: View {
     }
 
     private var storageGlanceText: String {
-        let retention = retentionGlanceLabel(appState.config.cacheRetentionDays)
+        let retentionDays = appState.config.cacheRetentionDays
+        let retention = retentionGlanceLabel(retentionDays)
+        let retentionClause = retentionDays > 0 ? "\(retention), then removed" : retention
         if let storageUsedMB {
-            return "\(storageUsedMB) MB on this Mac · \(retention)"
+            return "\(storageUsedMB) MB · \(retentionClause)"
         }
-        return "calculating storage on this Mac · \(retention)"
+        return "calculating · \(retentionClause)"
     }
 
     private var statusFooterText: String {
-        [
-            appState.permissionsAreDone ? "permissions granted" : "permissions need attention",
-            microphoneCountText(appState.config.microphonePriority.count),
-            syncTargetText
-        ].joined(separator: " · ")
-    }
-
-    private func microphoneCountText(_ count: Int) -> String {
-        count == 1 ? "1 microphone" : "\(count) microphones"
+        if appState.config.serviceMode == .bundled {
+            return bundledStatusFooterText(
+                permissionsGranted: appState.permissionsAreDone,
+                microphoneCount: appState.config.microphonePriority.count
+            )
+        }
+        return externalStatusFooterText(
+            serverURL: appState.config.serverURL,
+            permissionsGranted: appState.permissionsAreDone
+        )
     }
 
     private var syncTargetText: String {
@@ -1365,15 +1368,72 @@ struct SettingsView: View {
             return "journal not configured"
         }
 
-        let parseableURL = serverURL.contains("://") ? serverURL : "http://\(serverURL)"
-        if let host = URL(string: parseableURL)?.host, !host.isEmpty {
-            return "syncing to \(host)"
+        return "syncing to \(journalHost(serverURL))"
+    }
+
+    private var statusHealthSummary: StatusHealthSummary {
+        StatusHealthSummary.make(
+            serviceMode: appState.config.serviceMode,
+            isRecording: appState.isRecording,
+            isPaused: appState.isPaused,
+            journalRuntimeStatus: appState.journalRuntimeStatus,
+            uploadStatus: appState.uploadCoordinator.status,
+            pendingCount: appState.uploadCoordinator.pendingCount,
+            lastSyncedAt: appState.uploadCoordinator.lastSyncedAt,
+            serverURL: appState.config.serverURL,
+            now: Date()
+        )
+    }
+
+    private var bundledVersionCaption: String {
+        let state = terminalCardState(
+            main: appState.installer.main,
+            probe: appState.installer.probedVersion,
+            failureRecord: appState.installer.upgradeFailureRecord
+        )
+        if case .installedCurrent(let version) = state {
+            return "solstone \(version) · on this Mac"
         }
-        return "syncing to \(serverURL)"
+        return "on this Mac"
+    }
+
+    @ViewBuilder
+    private var healthSummaryCard: some View {
+        let summary = statusHealthSummary
+        HStack(alignment: .top, spacing: 8) {
+            Circle()
+                .fill(summary.severity.color)
+                .frame(width: 8, height: 8)
+                .padding(.top, 5)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(summary.title)
+                    .font(.callout)
+                if let subtitle = summary.subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.secondary.opacity(0.20), lineWidth: 1)
+        )
+        .accessibilityIdentifier(AXID.Settings.Status.healthSummary)
+        .accessibilityValue(summary.axValue)
     }
 
     private var statusTab: some View {
         VStack(alignment: .leading, spacing: 20) {
+            healthSummaryCard
+
             GroupBox("observing") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(appState.isRecording ? (appState.isPaused ? "paused" : "observing") : "stopped")
@@ -1403,12 +1463,20 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     if appState.config.serviceMode == .bundled {
                         bundledJournalStatusRows
+                        Text(bundledVersionCaption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     } else {
                         Text(syncTargetText)
                             .foregroundStyle(.secondary)
                         uploadStatusView
+                        if let lastSyncedAt = appState.uploadCoordinator.lastSyncedAt {
+                            Text("last synced \(coarseRelativeTime(lastSyncedAt, now: Date()))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    Button("manage journal →") {
+                    Button(appState.config.serviceMode == .bundled ? "manage journal →" : "manage connection →") {
                         selectedTab = .service
                     }
                     .font(.caption)
@@ -1419,9 +1487,12 @@ struct SettingsView: View {
             }
 
             if appState.config.serviceMode == .external {
-                GroupBox("storage") {
+                GroupBox("kept on this Mac") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(storageGlanceText)
+                        Text("unsynced segments are never deleted.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         Button("storage settings →") {
                             selectedTab = .service
                         }

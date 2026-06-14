@@ -245,6 +245,7 @@
       "settings.service.restartRequired.banner",
       "settings.status.debug.keepRejectedAudio",
       "settings.status.debug.oneMinuteSegments",
+      "settings.status.health.summary.state",
       "settings.status.journal.manageJournal",
       "settings.status.journal.runtime.state",
       "settings.status.observing.nextSegment.state",
@@ -385,6 +386,9 @@
     "settings.sidebar.tab.{tab}.state" : {
       "kind" : "enum",
       "vocabulary" : "SidebarBadgeState"
+    },
+    "settings.status.health.summary.state" : {
+      "kind" : "freeform"
     },
     "settings.status.journal.runtime.state" : {
       "kind" : "enum",

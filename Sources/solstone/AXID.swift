@@ -122,6 +122,7 @@ enum AXID {
         }
 
         enum Status {
+            static let healthSummary = "settings.status.health.summary.state"
             static let observingState = "settings.status.observing.state"
             static let nextSegmentSeconds = "settings.status.observing.nextSegment.state"
             static let uploadJournalState = "settings.status.upload.journal.state"
