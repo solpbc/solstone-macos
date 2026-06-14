@@ -620,9 +620,15 @@ struct SettingsView: View {
             case .bundled:
                 BundledServiceCard(appState: appState, allowsLocalJournalActions: true)
                 bundledJournalStatusSection
-                journalRestartControl
-                journalStopControl
-                journalStartControl
+                if bundledTroubleshootingVisible {
+                    DisclosureGroup("troubleshooting") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            journalRestartControl
+                            journalStopControl
+                            journalStartControl
+                        }
+                    }
+                }
             case .external:
                 if shouldShowBundledStatusSurface(cardState: cardState) {
                     BundledServiceCard(appState: appState, allowsLocalJournalActions: false)
@@ -721,7 +727,7 @@ struct SettingsView: View {
     }
 
     private var externalJournalStorageSection: some View {
-        GroupBox("storage") {
+        GroupBox("kept on this Mac") {
             VStack(alignment: .leading) {
                 LabeledContent("currently using") {
                     if let used = storageUsedMB {
@@ -865,6 +871,12 @@ struct SettingsView: View {
         appState.journalRuntimeStatus.isStoppedByUser
     }
 
+    private var bundledTroubleshootingVisible: Bool {
+        appState.bundledJournalRestartAvailable
+            && !appState.restartRequiredBannerVisible
+            && (journalRestartControlVisible || journalStopControlVisible || journalStartControlVisible)
+    }
+
     private func tradeoffLine(label: String, text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text("\(label):")
@@ -889,7 +901,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var externalServiceSection: some View {
-        GroupBox("journal") {
+        GroupBox("connection") {
             VStack(alignment: .leading, spacing: 12) {
                 Link("setup guide: solstone.app/install", destination: URL(string: "https://solstone.app/install")!)
                     .font(.callout)
