@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.3.15] - 2026-06-15
 
 ### Changed
-- updated the bundled solstone journal to 0.6.1 →
+- updated the bundled solstone journal to 0.6.4 →
 - Settings now reads more clearly for bundled and self-managed journals,
   with lifecycle controls tucked under troubleshooting and a last-activity
   line for the bundled journal.
