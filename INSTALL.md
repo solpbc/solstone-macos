@@ -20,7 +20,7 @@ check if the app is already installed:
 
 ```
 ls /Applications/solstone.app
-sol observer list
+journal observer list
 ```
 
 if the app exists and shows as connected, you're done.
@@ -76,16 +76,18 @@ Apple may revise the exact wording, so follow the permission intent rather than 
    open /Applications/solstone.app    # if you copied it
    ```
 
-6. register the observer and push config into the app. this creates the journal-side registration and writes the credentials directly into the app's UserDefaults — the app detects the change automatically and starts syncing:
+6. connect the app to your journal. launch the app and click **"connect your journal →"** in its settings — the app registers itself against the local journal at `http://localhost:5015` and starts syncing, with no key to copy or paste. this is the primary path.
+
+   **maintainer escape hatch (scripted installs only):** to wire the app without the wizard, mint a key on the journal host and write it into the app's UserDefaults directly — the app detects the change automatically and starts syncing:
    ```
-   key=$(sol observer --json create solstone-macos | jq -r .key)
+   key=$(journal observer --json create solstone-macos | jq -r .key)
    defaults write app.solstone.observer serverURL "http://localhost:5015"
    defaults write app.solstone.observer serverKey "$key"
    ```
-   if `sol observer create` fails with "already exists", the observer was registered by a previous install. revoke and recreate:
+   if `journal observer create` fails with "already exists", the observer was registered by a previous install. revoke and recreate:
    ```
-   sol observer revoke solstone-macos
-   key=$(sol observer --json create solstone-macos | jq -r .key)
+   journal observer revoke solstone-macos
+   key=$(journal observer --json create solstone-macos | jq -r .key)
    defaults write app.solstone.observer serverURL "http://localhost:5015"
    defaults write app.solstone.observer serverKey "$key"
    ```
@@ -94,7 +96,7 @@ Apple may revise the exact wording, so follow the permission intent rather than 
 
 8. verify the menu bar icon appears and the observer is connected:
    ```
-   sol observer list
+   journal observer list
    ```
 
 ## if your journal is not on localhost
@@ -106,5 +108,5 @@ solstone ships with an App Transport Security exception (`NSAllowsArbitraryLoads
 ## notes
 
 - the app detects `defaults write` changes automatically — no need to restart it after writing config.
-- if the agent flow above doesn't work, the human can click "connect your journal →" in the app's settings as a fallback.
+- the in-app "connect your journal →" wizard (step 6) is the primary way to connect; the `defaults write` flow is a maintainer escape hatch for scripted installs only.
 - the app starts automatically at login once installed.
