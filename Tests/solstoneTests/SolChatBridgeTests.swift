@@ -213,6 +213,9 @@ struct SolChatBridgeTests {
 
         #expect(pending?.id == "req-1")
         #expect(pending?.summary == "open the journal")
+        let request = SolChatURLProtocol.store.requests.first
+        #expect(request?.url?.absoluteString == "https://example.com/app/observer/callosum")
+        #expect(request?.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
     }
 
     @Test func parserMultiLineDataIsNewlineJoined() async {
