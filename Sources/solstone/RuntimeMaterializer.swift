@@ -120,6 +120,10 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
         return wheel
     }
 
+    private func projectWheelJournalSpec() throws -> String {
+        try projectWheel().path + "[journal]"
+    }
+
     private func install(into layout: SolstoneRuntimeLayout) async throws {
         let output = LockedRuntimeMaterializerOutput()
         let result = try await runner.run(
@@ -127,7 +131,7 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
             arguments: [
                 "tool",
                 "install",
-                try projectWheel().path,
+                try projectWheelJournalSpec(),
                 "--find-links",
                 wheelhouseURL.path,
                 "--no-index",
@@ -151,6 +155,9 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
             return false
         }
         guard try await verifyJournalVersion(layout: layout) else {
+            return false
+        }
+        guard try await verifyJournalHostImports(layout: layout) else {
             return false
         }
         guard try await verifyPython(at: bundledPythonURL) else {
@@ -182,6 +189,23 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
             return false
         }
         return version == BundleConfig.solstonePinVersion
+    }
+
+    private func verifyJournalHostImports(layout: SolstoneRuntimeLayout) async throws -> Bool {
+        let consoleScript = layout.journalBinary.resolvingSymlinksInPath()
+        let venvPython = consoleScript.deletingLastPathComponent().appendingPathComponent("python")
+        let output = LockedRuntimeMaterializerOutput()
+        let result = try await runner.run(
+            executable: venvPython,
+            arguments: ["-c", "import frontmatter"],
+            environment: layout.uvEnvironment(),
+            stdoutHandler: { _ in },
+            stderrHandler: { data in output.append(data) }
+        )
+        if result.exitCode != 0 {
+            Logger.setup.warning("runtime materializer: journal host import check failed: \(output.string(), privacy: .public)")
+        }
+        return result.exitCode == 0
     }
 
     private func verifyPython(at url: URL) async throws -> Bool {

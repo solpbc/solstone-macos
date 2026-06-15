@@ -866,7 +866,9 @@ struct SolstoneInstallerTests {
 
         let install = try #require(runner.invocations.first { $0.arguments.starts(with: ["tool", "install"]) })
         #expect(Array(install.arguments.prefix(2)) == ["tool", "install"])
-        #expect(URL(fileURLWithPath: install.arguments[2]).lastPathComponent == "solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl")
+        #expect(install.arguments[2].hasSuffix("[journal]"))
+        let wheelPath = String(install.arguments[2].dropLast("[journal]".count))
+        #expect(URL(fileURLWithPath: wheelPath).lastPathComponent == "solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl")
         #expect(Array(install.arguments.dropFirst(3)) == [
             "--find-links",
             fixtureURLs.wheelhouse.path,
