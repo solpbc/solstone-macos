@@ -67,7 +67,7 @@ struct Crockford32Tests {
             bytes[0] = 0x04
             bytes[1] = 0x01
 
-            let pairURL = try PairURL.parse(URL(string: "https://link.solpbc.org/p#\(Self.encode(bytes))")!)
+            let pairURL = try PairURL.parse(URL(string: "https://go.solstone.app/p#\(Self.encode(bytes))")!)
             #expect(pairURL.version == bytes[0])
             #expect(pairURL.addressBytes == Array(bytes[2..<6]))
             #expect(pairURL.addressString == Array(bytes[2..<6]).map(String.init).joined(separator: "."))

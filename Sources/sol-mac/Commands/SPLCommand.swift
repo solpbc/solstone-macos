@@ -176,9 +176,9 @@ private func pairURLMessage(_ error: PairURLError) -> String {
     case .wrongScheme(let scheme?):
         return "pair url scheme must be https, got \(scheme)"
     case .wrongHost(nil):
-        return "pair url must use link.solpbc.org"
+        return "pair url must use go.solstone.app"
     case .wrongHost(let host?):
-        return "pair url host must be link.solpbc.org, got \(host)"
+        return "pair url host must be go.solstone.app, got \(host)"
     case .wrongPath(let path):
         return "pair url path must be /p, got \(path)"
     case .missingFragment:

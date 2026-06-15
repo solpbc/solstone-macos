@@ -23,7 +23,7 @@ struct PairURLTests {
 
     @Test func rejectsWrongScheme() {
         expectThrows(.wrongScheme("http")) {
-            _ = try PairURL.parse(URL(string: "http://link.solpbc.org/p#\(Self.canonicalBlob)")!)
+            _ = try PairURL.parse(URL(string: "http://go.solstone.app/p#\(Self.canonicalBlob)")!)
         }
     }
 
@@ -35,13 +35,13 @@ struct PairURLTests {
 
     @Test func rejectsWrongPath() {
         expectThrows(.wrongPath("/wrong")) {
-            _ = try PairURL.parse(URL(string: "https://link.solpbc.org/wrong#\(Self.canonicalBlob)")!)
+            _ = try PairURL.parse(URL(string: "https://go.solstone.app/wrong#\(Self.canonicalBlob)")!)
         }
     }
 
     @Test func rejectsMissingFragment() {
         expectThrows(.missingFragment) {
-            _ = try PairURL.parse(URL(string: "https://link.solpbc.org/p")!)
+            _ = try PairURL.parse(URL(string: "https://go.solstone.app/p")!)
         }
     }
 
@@ -112,7 +112,7 @@ struct PairURLTests {
     ]
 
     private static func url(fragment: String) -> URL {
-        URL(string: "https://link.solpbc.org/p#\(fragment)")!
+        URL(string: "https://go.solstone.app/p#\(fragment)")!
     }
 
     private static func encode(_ bytes: [UInt8]) -> String {

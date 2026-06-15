@@ -29,7 +29,7 @@ public struct PairURL: Sendable, Equatable, Hashable {
         guard url.scheme?.lowercased() == "https" else {
             throw PairURLError.wrongScheme(url.scheme)
         }
-        guard url.host?.lowercased() == "link.solpbc.org" else {
+        guard url.host?.lowercased() == "go.solstone.app" else {
             throw PairURLError.wrongHost(url.host)
         }
         guard url.path == "/p" else {

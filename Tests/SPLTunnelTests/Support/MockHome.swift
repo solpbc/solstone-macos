@@ -121,7 +121,7 @@ actor MockHome {
         blob.append(UInt8(port & 0xff))
         blob.append(contentsOf: nonceBytes)
         blob.append(contentsOf: fingerprintBytes.prefix(16))
-        let pairURLString = "https://link.solpbc.org/p#\(Self.encode(blob))"
+        let pairURLString = "https://go.solstone.app/p#\(Self.encode(blob))"
         let pairURL = try PairURL.parse(URL(string: pairURLString)!)
         return (pairURL, pairURLString)
     }

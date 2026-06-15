@@ -246,7 +246,7 @@ struct PairClientTests {
     }
 
     private func makePairURL() throws -> PairURL {
-        try PairURL.parse(URL(string: "https://link.solpbc.org/p#0G0W000258DSX8DJRFAEBXG7308J4CT4ANK7F26YNPZEZJQYQAZ028T5CY4TQKFF")!)
+        try PairURL.parse(URL(string: "https://go.solstone.app/p#0G0W000258DSX8DJRFAEBXG7308J4CT4ANK7F26YNPZEZJQYQAZ028T5CY4TQKFF")!)
     }
 
     private func lanResponseJSON(localEndpoints: [[String: Any]]? = nil) -> String {
