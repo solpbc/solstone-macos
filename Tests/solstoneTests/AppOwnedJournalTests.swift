@@ -442,10 +442,10 @@ struct AppOwnedJournalTests {
         try FileManager.default.createDirectory(at: wheelhouse, withIntermediateDirectories: true)
         try Data("manifest\n".utf8).write(to: wheelhouse.appendingPathComponent("MANIFEST.sha256"))
         try Data("wheel\n".utf8).write(to: wheelhouse.appendingPathComponent("solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl"))
-        let liveKey = "\(BundleConfig.solstonePinVersion)_py\(BundleConfig.bundledPythonBuild)_livechild"
+        let liveKey = "\(BundleConfig.solstonePinVersion)_py\(BundleConfig.bundledPythonBuild)_bbbbbbbbbbbbbbbb"
         let liveURL = runtimeRoot.appendingPathComponent(liveKey, isDirectory: true)
         try FileManager.default.createDirectory(at: liveURL, withIntermediateDirectories: true)
-        let staleURL = runtimeRoot.appendingPathComponent("\(BundleConfig.solstonePinVersion)_py\(BundleConfig.bundledPythonBuild)_stale", isDirectory: true)
+        let staleURL = runtimeRoot.appendingPathComponent("\(BundleConfig.solstonePinVersion)_py\(BundleConfig.bundledPythonBuild)_cccccccccccccccc", isDirectory: true)
         try FileManager.default.createDirectory(at: staleURL, withIntermediateDirectories: true)
 
         let runner = FakeSubprocessRunner()

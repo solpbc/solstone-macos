@@ -48,7 +48,7 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
         let finalLayout = SolstoneRuntimeLayout(rootURL: finalURL)
         if try await verify(layout: finalLayout) {
             try rewriteAliases(layout: finalLayout)
-            try garbageCollect(keeping: key, liveKey: liveKey)
+            garbageCollect(keeping: key, liveKey: liveKey)
             return MaterializedRuntime(key: key, layout: finalLayout)
         }
 
@@ -72,7 +72,7 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
             didRenameToFinal = true
             try await assertRelocationSafe(layout: finalLayout)
             try rewriteAliases(layout: finalLayout)
-            try garbageCollect(keeping: key, liveKey: liveKey)
+            garbageCollect(keeping: key, liveKey: liveKey)
             return MaterializedRuntime(key: key, layout: finalLayout)
         } catch {
             try? fileManager.removeItem(at: tempURL)
@@ -375,24 +375,43 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
         try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
     }
 
-    private func garbageCollect(keeping key: String, liveKey: String?) throws {
-        guard fileManager.fileExists(atPath: runtimeRootURL.path) else { return }
-        let children = try fileManager.contentsOfDirectory(
-            at: runtimeRootURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        )
-        for child in children where isMaterializedRuntimeDirectory(child) {
+    private func garbageCollect(keeping key: String, liveKey: String?) {
+        Self.sweepRuntimeGenerations(in: runtimeRootURL, currentKey: key, liveKey: liveKey, fileManager: fileManager)
+    }
+
+    /// Remove every directory in `root` whose name is a valid runtime-generation key
+    /// other than `currentKey` and `liveKey`, regardless of version. Never throws:
+    /// enumeration and per-entry delete failures are logged and skipped so a GC failure
+    /// can never abort an otherwise-successful materialize.
+    internal static func sweepRuntimeGenerations(in root: URL, currentKey: String, liveKey: String?, fileManager: FileManager) {
+        guard fileManager.fileExists(atPath: root.path) else { return }
+        let children: [URL]
+        do {
+            children = try fileManager.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+        } catch {
+            Logger.setup.warning("runtime GC: could not enumerate runtime root: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        for child in children {
             let name = child.lastPathComponent
-            guard name != key, name != liveKey else { continue }
-            try fileManager.removeItem(at: child)
+            guard isRuntimeGenerationDirectory(name: name) else { continue }
+            guard name != currentKey, name != liveKey else { continue }
+            do {
+                try fileManager.removeItem(at: child)
+            } catch {
+                Logger.setup.warning("runtime GC: could not remove orphaned generation \(name, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 
-    private func isMaterializedRuntimeDirectory(_ url: URL) -> Bool {
-        let name = url.lastPathComponent
-        return name.hasPrefix("\(BundleConfig.solstonePinVersion)_py")
-            && !name.hasPrefix(".tmp-")
+    /// True when `name` is a complete runtime-generation key: `<version>_py<build>_<hash>`
+    /// with `<hash>` exactly 16 lowercase hex chars. Whole-name (anchored) match.
+    internal static func isRuntimeGenerationDirectory(name: String) -> Bool {
+        name.wholeMatch(of: /[0-9][0-9A-Za-z.+-]*_py[0-9]+_[0-9a-f]{16}/) != nil
     }
 
     private func sha256Hex(_ data: Data) -> String {
