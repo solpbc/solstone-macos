@@ -112,6 +112,52 @@ struct AppConfigMigrationTests {
         #expect(FileManager.default.fileExists(atPath: configURL.appendingPathExtension("migrated").path))
     }
 
+    @Test func optInMicrophoneReseedDoesNotRunWhenFlagIsSet() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        UserDefaults.standard.set(true, forKey: "didReseedOptInMicrophones")
+        var config = AppConfig(microphonePriority: [
+            MicrophoneEntry(uid: "continuity", name: "Continuity", isDisabled: false)
+        ])
+
+        config.reseedOptInOnlyMicrophonesIfNeeded(connectedOptInOnlyUIDs: ["continuity"])
+
+        #expect(config.microphonePriority[0].isDisabled == false)
+    }
+
+    @Test func optInMicrophoneReseedDemotesOnlyConnectedEnabledOptInEntries() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        var config = AppConfig(microphonePriority: [
+            MicrophoneEntry(uid: "continuity", name: "Continuity", isDisabled: false),
+            MicrophoneEntry(uid: "usb", name: "USB", isDisabled: false),
+            MicrophoneEntry(uid: "disabled-continuity", name: "Disabled Continuity", isDisabled: true)
+        ])
+
+        config.reseedOptInOnlyMicrophonesIfNeeded(connectedOptInOnlyUIDs: ["continuity", "disabled-continuity"])
+
+        #expect(config.microphonePriority[0].isDisabled)
+        #expect(config.microphonePriority[1].isDisabled == false)
+        #expect(config.microphonePriority[2].isDisabled)
+        #expect(UserDefaults.standard.bool(forKey: "didReseedOptInMicrophones"))
+    }
+
+    @Test func optInMicrophoneReseedIsNoopOnSecondRun() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        var config = AppConfig(microphonePriority: [
+            MicrophoneEntry(uid: "continuity", name: "Continuity", isDisabled: false)
+        ])
+
+        config.reseedOptInOnlyMicrophonesIfNeeded(connectedOptInOnlyUIDs: ["continuity"])
+        #expect(config.microphonePriority[0].isDisabled)
+
+        config.microphonePriority[0] = MicrophoneEntry(uid: "continuity", name: "Continuity", isDisabled: false)
+        config.reseedOptInOnlyMicrophonesIfNeeded(connectedOptInOnlyUIDs: ["continuity"])
+
+        #expect(config.microphonePriority[0].isDisabled == false)
+    }
+
     private func clearServiceDefaults() {
         for key in ["serverURL", "serverKey", "serviceMode"] {
             UserDefaults.standard.removeObject(forKey: key)
@@ -122,6 +168,7 @@ struct AppConfigMigrationTests {
         for key in AppConfig.knownKeys + [
             "didMigrateFromJSON",
             "didReseedNotificationPreference",
+            "didReseedOptInMicrophones",
             "localRetentionMB"
         ] {
             UserDefaults.standard.removeObject(forKey: key)

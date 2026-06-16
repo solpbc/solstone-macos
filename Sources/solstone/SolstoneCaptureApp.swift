@@ -135,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         if let state = AppState.shared {
+            state.audioDeviceMonitor.stopListening()
             state.installer.cancel()
             state.isTerminating = true
             Task { await state.heartbeatService.stop() }

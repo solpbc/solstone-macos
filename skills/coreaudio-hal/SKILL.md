@@ -11,7 +11,7 @@ description: >
 
 CoreAudio HAL is a C-level property-query API. You never "open" a device — you query properties on object IDs. These patterns are from solstone-macos production code.
 
-**Source files:** `MicrophoneMonitor.swift` (enumeration, properties, lifecycle), `AudioDeviceMonitor.swift` (device list observation), `CaptureManager.swift` (default mic listener), `ExternalMicCapture.swift` (device pinning), `ObjCExceptionCatcher.m` (exception bridge).
+**Source files:** `MicrophoneMonitor.swift` (enumeration, properties), `AudioDeviceMonitor.swift` (device list observation), `CaptureManager.swift` (default mic listener), `ExternalMicCapture.swift` (device pinning), `ObjCExceptionCatcher.m` (exception bridge).
 
 ## 1. HAL API Fundamentals
 
@@ -43,26 +43,21 @@ Query `kAudioHardwarePropertyDevices` on `AudioObjectID(kAudioObjectSystemObject
 
 ## 3. Property Listeners
 
-```swift
-let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-    self?.handleChange()
-}
-AudioObjectAddPropertyListenerBlock(objectID, &address, DispatchQueue.main, block)
-```
+Use `HALPropertyListener` as the single wrapper for `AudioObjectAddPropertyListenerBlock` and `AudioObjectRemovePropertyListenerBlock`. Do not add direct call sites elsewhere.
 
 **Critical rules:**
 
-1. **Store the block reference** — needed for removal. In `@MainActor` classes, use `nonisolated(unsafe)` storage so deinit can access it.
-2. **Remove in deinit** with a **fresh** `AudioObjectPropertyAddress` struct (don't reuse the one from add):
-   ```swift
-   AudioObjectRemovePropertyListenerBlock(objectID, &address, DispatchQueue.main, block)
-   ```
-3. **Always `[weak self]`** — the block can fire after deinit begins.
+1. **Use a private serial off-main queue** — never `DispatchQueue.main`, never a concurrent/global queue.
+2. **Remove with the same queue and same block reference used for add** — HAL matches on object ID, address, queue identity, and block identity.
+3. **Invalidate at deterministic stop** — call `invalidate()` when the owning service stops; `deinit` is a fallback only.
+4. **Hop to `@MainActor` inside the handler** — owner callbacks are `@MainActor`, and owners should capture `[weak self]`.
+5. **Rebuild the address for removal** — store selector/scope/element and construct a fresh `AudioObjectPropertyAddress`.
+
+**Deadlock avoided:** `AudioObjectRemovePropertyListenerBlock` synchronously drains in-flight listener blocks under the HAL's CAGuard; if those blocks are dispatched to the main queue and removal also runs on main, the drain waits on main while main waits on the drain -> deadlock (observed beachball when an iPhone Continuity mic is connected).
 
 **Common targets:**
 - `kAudioHardwarePropertyDevices` on system object — device added/removed (`AudioDeviceMonitor`)
 - `kAudioHardwarePropertyDefaultInputDevice` on system object — default mic changed (`CaptureManager`)
-- `kAudioDevicePropertyDeviceIsAlive` on a device ID — specific device disconnected (`MicrophoneMonitor`)
 
 ## 4. Device Properties
 
@@ -106,5 +101,5 @@ AudioObjectAddPropertyListenerBlock(objectID, &address, DispatchQueue.main, bloc
 - **Aggregate device pollution** — voice processing creates `CADefaultDeviceAggregate-*` in device list. Filter by prefix.
 - **`hasInputChannels` guard** — check `dataSize > 0` before dereferencing `AudioBufferList`. Zero means no streams.
 - **`kAudioOutputUnitProperty_CurrentDevice`** — the name says "Output" but works for input. Only way to pin `AVAudioEngine` to a device.
-- **Listener block in deinit** — block can fire after deinit starts. `[weak self]` is required. `nonisolated(unsafe)` storage for the block makes it accessible from nonisolated deinit.
-- **Fresh address for removal** — `AudioObjectRemovePropertyListenerBlock` needs a new `AudioObjectPropertyAddress`, not the one from add.
+- **Listener fallback cleanup** — `deinit` may call `invalidate()`, but primary cleanup belongs at deterministic stop.
+- **Fresh address for removal** — `HALPropertyListener` rebuilds `AudioObjectPropertyAddress` for removal from stored selector/scope/element.

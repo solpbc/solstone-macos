@@ -117,11 +117,12 @@ public final class CaptureManager {
     /// Current default microphone device ID (for change detection)
     private var currentDefaultMicID: AudioDeviceID?
 
-    /// CoreAudio listener block for default mic changes (nonisolated for deinit)
-    nonisolated(unsafe) private var defaultMicListenerBlock: AudioObjectPropertyListenerBlock?
+    /// CoreAudio listener for default mic changes
+    private var defaultMicListener: HALPropertyListener?
 
     /// UIDs of microphones to exclude from recording (disabled mics)
     private var disabledMicUIDs: Set<String> = []
+    private var enabledMicUIDs: Set<String> = []
 
     public private(set) var state: State = .idle
 
@@ -208,31 +209,19 @@ public final class CaptureManager {
     }
 
     deinit {
+        defaultMicListener?.invalidate()
         NotificationCenter.default.removeObserver(self)
-
-        // Inline cleanup for default mic monitoring (can't call actor-isolated method from deinit)
-        if let block = defaultMicListenerBlock {
-            var propertyAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultInputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            AudioObjectRemovePropertyListenerBlock(
-                AudioObjectID(kAudioObjectSystemObject),
-                &propertyAddress,
-                DispatchQueue.main,
-                block
-            )
-            defaultMicListenerBlock = nil
-        }
     }
 
     // MARK: - Public Methods
 
     /// Starts recording
-    /// - Parameter disabledMicUIDs: Set of microphone UIDs to exclude from recording
-    public func startRecording(disabledMicUIDs: Set<String> = []) async throws {
+    /// - Parameters:
+    ///   - disabledMicUIDs: Set of microphone UIDs to exclude from recording
+    ///   - enabledMicUIDs: Set of microphone UIDs explicitly enabled for opt-in-only capture
+    public func startRecording(disabledMicUIDs: Set<String> = [], enabledMicUIDs: Set<String> = []) async throws {
         self.disabledMicUIDs = disabledMicUIDs
+        self.enabledMicUIDs = enabledMicUIDs
         guard state.isIdle || state.isPaused else { return }
         recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
 
@@ -268,7 +257,11 @@ public final class CaptureManager {
 
         // Add new enabled mics to current segment
         if let segment = currentSegment {
-            for device in added where !disabledMicUIDs.contains(device.uid) {
+            for device in added where MicrophoneSelection.shouldCapture(
+                device,
+                disabledMicUIDs: disabledMicUIDs,
+                enabledMicUIDs: enabledMicUIDs
+            ) {
                 do {
                     try segment.addMicrophone(device)
                     Logger.capture.info("Added mic mid-segment: \(device.name, privacy: .public)")
@@ -443,7 +436,9 @@ public final class CaptureManager {
 
         // Collect available mics
         let availableMics = MicrophoneMonitor.listInputDevices()
-            .filter { !disabledMicUIDs.contains($0.uid) }
+            .filter {
+                MicrophoneSelection.shouldCapture($0, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)
+            }
             .prefix(4)
 
         // Start video/audio capture
@@ -621,7 +616,13 @@ public final class CaptureManager {
 
                 // Collect available mics for new segment
                 let availableMics = MicrophoneMonitor.listInputDevices()
-                    .filter { !self.disabledMicUIDs.contains($0.uid) }
+                    .filter {
+                        MicrophoneSelection.shouldCapture(
+                            $0,
+                            disabledMicUIDs: self.disabledMicUIDs,
+                            enabledMicUIDs: self.enabledMicUIDs
+                        )
+                    }
                     .prefix(4)
 
                 // Start recording to new segment IMMEDIATELY (no waiting for remix)
@@ -718,49 +719,19 @@ public final class CaptureManager {
     private func startDefaultMicMonitoring() {
         currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
 
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            Task { @MainActor in
-                await self?.handleDefaultMicChange()
+        defaultMicListener = HALPropertyListener(
+            objectID: AudioObjectID(kAudioObjectSystemObject),
+            selector: kAudioHardwarePropertyDefaultInputDevice,
+            onChange: { [weak self] in
+                Task { await self?.handleDefaultMicChange() }
             }
-        }
-        defaultMicListenerBlock = block
-
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
         )
-
-        let status = AudioObjectAddPropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            DispatchQueue.main,
-            block
-        )
-
-        if status != noErr {
-            Logger.capture.warning("Failed to add default mic listener: \(status, privacy: .public)")
-        } else {
-            if verbose { Logger.capture.debug("Started monitoring default microphone changes") }
-        }
+        if verbose { Logger.capture.debug("Started monitoring default microphone changes") }
     }
 
     private func stopDefaultMicMonitoring() {
-        guard let block = defaultMicListenerBlock else { return }
-
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        AudioObjectRemovePropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            DispatchQueue.main,
-            block
-        )
-        defaultMicListenerBlock = nil
+        defaultMicListener?.invalidate()
+        defaultMicListener = nil
     }
 
     private func handleDefaultMicChange() async {

@@ -10,9 +10,8 @@ import Foundation
 public final class AudioDeviceMonitor {
     public internal(set) var availableDevices: [AudioInputDevice] = []
 
-    /// Storage for the listener block - nonisolated for deinit access
     @ObservationIgnored
-    private nonisolated(unsafe) var listenerBlock: AudioObjectPropertyListenerBlock?
+    private var deviceListener: HALPropertyListener?
 
     /// Previous device UIDs for change detection
     @ObservationIgnored
@@ -39,21 +38,7 @@ public final class AudioDeviceMonitor {
     }
 
     deinit {
-        // Clean up the listener synchronously since deinit is nonisolated
-        guard let block = listenerBlock else { return }
-
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        AudioObjectRemovePropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            DispatchQueue.main,
-            block
-        )
+        deviceListener?.invalidate()
     }
 
     public func refreshDevices() {
@@ -78,24 +63,15 @@ public final class AudioDeviceMonitor {
     }
 
     private func startListening() {
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            Task { @MainActor in
-                self?.refreshDevices()
-            }
-        }
-        listenerBlock = block
-
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
+        deviceListener = HALPropertyListener(
+            objectID: AudioObjectID(kAudioObjectSystemObject),
+            selector: kAudioHardwarePropertyDevices,
+            onChange: { [weak self] in self?.refreshDevices() }
         )
+    }
 
-        AudioObjectAddPropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            DispatchQueue.main,
-            block
-        )
+    public func stopListening() {
+        deviceListener?.invalidate()
+        deviceListener = nil
     }
 }

@@ -17,7 +17,11 @@ public extension AppConfig {
         guard !microphonePriority.contains(where: { $0.uid == device.uid }) else {
             return false
         }
-        microphonePriority.append(MicrophoneEntry(uid: device.uid, name: device.name))
+        microphonePriority.append(MicrophoneEntry(
+            uid: device.uid,
+            name: device.name,
+            isDisabled: device.transportType.isOptInOnly
+        ))
         return true
     }
 }

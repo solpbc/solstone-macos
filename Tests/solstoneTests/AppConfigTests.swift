@@ -11,7 +11,8 @@ struct AppConfigTests {
     private func makeDevice(
         id: AudioDeviceID = 1,
         name: String = "Test Mic",
-        uid: String = "test-uid"
+        uid: String = "test-uid",
+        transportType: AudioTransportType = .usb
     ) -> AudioInputDevice {
         AudioInputDevice(
             id: id,
@@ -19,7 +20,7 @@ struct AppConfigTests {
             uid: uid,
             manufacturer: nil,
             sampleRate: 48000,
-            transportType: .usb
+            transportType: transportType
         )
     }
 
@@ -70,6 +71,15 @@ struct AppConfigTests {
         #expect(config.disabledMicrophoneUIDs.isEmpty)
     }
 
+    @Test func enabledMicrophoneUIDsFiltersCorrectly() {
+        let config = AppConfig(microphonePriority: [
+            MicrophoneEntry(uid: "uid-a", name: "Mic A", isDisabled: false),
+            MicrophoneEntry(uid: "uid-b", name: "Mic B", isDisabled: true),
+            MicrophoneEntry(uid: "uid-c", name: "Mic C", isDisabled: false)
+        ])
+        #expect(config.enabledMicrophoneUIDs == Set(["uid-a", "uid-c"]))
+    }
+
     // MARK: - addMicrophone
 
     @Test func addMicrophoneReturnsTrueForNew() {
@@ -87,6 +97,22 @@ struct AppConfigTests {
         let added = config.addMicrophone(makeDevice(uid: "uid-a"))
         #expect(added == false)
         #expect(config.microphonePriority.count == 1)
+    }
+
+    @Test func addMicrophoneDefaultsOptInOnlyDevicesDisabled() {
+        var config = AppConfig()
+        let added = config.addMicrophone(makeDevice(uid: "uid-continuity", transportType: .continuityWireless))
+
+        #expect(added)
+        #expect(config.microphonePriority[0].isDisabled)
+    }
+
+    @Test func addMicrophoneDefaultsNonOptInDevicesEnabled() {
+        var config = AppConfig()
+        let added = config.addMicrophone(makeDevice(uid: "uid-usb", transportType: .usb))
+
+        #expect(added)
+        #expect(!config.microphonePriority[0].isDisabled)
     }
 
     // MARK: - removeMicrophone

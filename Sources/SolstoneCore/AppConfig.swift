@@ -87,6 +87,7 @@ public struct AppConfig: Sendable {
         static let journalPath = "journalPath"
         static let didMigrateFromJSON = "didMigrateFromJSON"
         static let didReseedNotificationPreference = "didReseedNotificationPreference"
+        static let didReseedOptInMicrophones = "didReseedOptInMicrophones"
     }
 
     private enum LegacyKeys {
@@ -399,6 +400,35 @@ public struct AppConfig: Sendable {
     /// Returns UIDs of disabled microphones
     public var disabledMicrophoneUIDs: Set<String> {
         Set(microphonePriority.filter { $0.isDisabled }.map { $0.uid })
+    }
+
+    /// Returns UIDs of enabled microphones
+    public var enabledMicrophoneUIDs: Set<String> {
+        Set(microphonePriority.filter { !$0.isDisabled }.map { $0.uid })
+    }
+
+    /// One-shot migration that disables connected opt-in-only microphones previously saved as enabled.
+    public mutating func reseedOptInOnlyMicrophonesIfNeeded(connectedOptInOnlyUIDs: Set<String>) {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Keys.didReseedOptInMicrophones) else {
+            return
+        }
+
+        var reseeded = self
+        reseeded.microphonePriority = reseeded.microphonePriority.map { entry in
+            guard connectedOptInOnlyUIDs.contains(entry.uid), !entry.isDisabled else {
+                return entry
+            }
+            return MicrophoneEntry(uid: entry.uid, name: entry.name, isDisabled: true)
+        }
+
+        do {
+            try reseeded.save()
+            self = reseeded
+            defaults.set(true, forKey: Keys.didReseedOptInMicrophones)
+        } catch {
+            Logger.general.warning("Failed to re-seed opt-in microphone defaults: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Toggles the disabled state of a microphone

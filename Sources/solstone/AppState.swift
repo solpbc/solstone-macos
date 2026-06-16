@@ -622,6 +622,11 @@ public final class AppState {
         // Clear any persisted pause state from previous sessions
         pauseManager.restorePauseState()
 
+        let connectedOptInOnlyUIDs = Set(audioDeviceMonitor.availableDevices
+            .filter { $0.transportType.isOptInOnly }
+            .map { $0.uid })
+        self.config.reseedOptInOnlyMicrophonesIfNeeded(connectedOptInOnlyUIDs: connectedOptInOnlyUIDs)
+
         // Sync microphone priority list with available devices
         syncMicrophonePriorityList()
 
@@ -765,7 +770,10 @@ public final class AppState {
 
     public func startRecording() async {
         do {
-            try await captureManager.startRecording(disabledMicUIDs: config.disabledMicrophoneUIDs)
+            try await captureManager.startRecording(
+                disabledMicUIDs: config.disabledMicrophoneUIDs,
+                enabledMicUIDs: config.enabledMicrophoneUIDs
+            )
             screenRecordingGranted = true
         } catch let error as CaptureManager.CaptureError where error == .permissionDenied {
             Logger.general.info("[Permissions] Recording denied — screen recording permission not granted")

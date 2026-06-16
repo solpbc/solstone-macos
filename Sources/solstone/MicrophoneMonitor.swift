@@ -21,6 +21,12 @@ public enum AudioTransportType: String, Sendable {
     case continuityWired = "continuity-wired"
     case continuityWireless = "continuity-wireless"
     case unknown = "unknown"
+
+    public static let optInOnly: Set<AudioTransportType> = [.continuityWired, .continuityWireless, .aggregate]
+
+    public var isOptInOnly: Bool {
+        Self.optInOnly.contains(self)
+    }
 }
 
 /// Represents an available audio input device
@@ -63,23 +69,8 @@ public struct AudioInputDevice: Sendable {
     }
 }
 
-/// Monitors microphone device status using CoreAudio
-/// Detects device disconnection and notifies via callback
-public final class MicrophoneMonitor: @unchecked Sendable {
-    private let onDisconnect: () -> Void
-    private let lock = NSLock()
-    private var monitoredDeviceID: AudioDeviceID?
-    private var isMonitoring = false
-    private var listenerBlock: AudioObjectPropertyListenerBlock?
-
-    public init(onDisconnect: @escaping () -> Void) {
-        self.onDisconnect = onDisconnect
-    }
-
-    deinit {
-        stopMonitoring()
-    }
-
+/// Namespace for CoreAudio microphone enumeration and lookup helpers.
+public enum MicrophoneMonitor {
     /// Lists all available audio input devices
     public static func listInputDevices() -> [AudioInputDevice] {
         var propertyAddress = AudioObjectPropertyAddress(
@@ -168,93 +159,6 @@ public final class MicrophoneMonitor: @unchecked Sendable {
     public static func deviceIDForUID(_ uid: String) -> AudioDeviceID? {
         let devices = listInputDevices()
         return devices.first(where: { $0.uid == uid })?.id
-    }
-
-    /// Starts monitoring the specified device for disconnection
-    public func startMonitoring(deviceID: AudioDeviceID) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard !isMonitoring else { return }
-
-        monitoredDeviceID = deviceID
-        isMonitoring = true
-
-        // Create listener block for device alive status
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            self?.checkDeviceStatus()
-        }
-        listenerBlock = block
-
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceIsAlive,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        let status = AudioObjectAddPropertyListenerBlock(
-            deviceID,
-            &propertyAddress,
-            DispatchQueue.main,
-            block
-        )
-
-        if status != noErr {
-            fputs("[WARN] Failed to add device listener: \(status)\n", stderr)
-        }
-    }
-
-    /// Stops monitoring
-    public func stopMonitoring() {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard isMonitoring, let deviceID = monitoredDeviceID, let block = listenerBlock else {
-            return
-        }
-
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceIsAlive,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        AudioObjectRemovePropertyListenerBlock(deviceID, &propertyAddress, DispatchQueue.main, block)
-
-        isMonitoring = false
-        monitoredDeviceID = nil
-        listenerBlock = nil
-    }
-
-    /// Checks if the monitored device is still alive
-    private func checkDeviceStatus() {
-        lock.lock()
-        let deviceID = monitoredDeviceID
-        lock.unlock()
-
-        guard let deviceID = deviceID else { return }
-
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceIsAlive,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        var isAlive: UInt32 = 1
-        var dataSize = UInt32(MemoryLayout<UInt32>.size)
-
-        let status = AudioObjectGetPropertyData(
-            deviceID,
-            &propertyAddress,
-            0, nil,
-            &dataSize,
-            &isAlive
-        )
-
-        if status != noErr || isAlive == 0 {
-            // Device is disconnected
-            onDisconnect()
-        }
     }
 
     // MARK: - Private Helpers
