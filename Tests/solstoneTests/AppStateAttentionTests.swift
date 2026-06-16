@@ -352,16 +352,16 @@ struct AppStateAttentionTests {
     }
 
     @Test func serviceIsDoneBundledReadyStatesAreDone() {
-        let cases: [(String, MainState, VersionProbeResult?)] = [
-            ("done", .done, nil),
-            ("installedCurrent", .done, .current(version: BundleConfig.solstonePinVersion)),
-            ("externallyManaged", .externallyManaged(solPath: "/opt/sol"), nil),
+        let cases: [(String, MainState, VersionProbeResult?, JournalRuntimeStatus)] = [
+            ("externallyManaged", .externallyManaged(solPath: "/opt/sol"), nil, .running),
+            ("runtimeStoppedByUser", .done, nil, .stoppedByUser),
         ]
 
-        for (name, main, probe) in cases {
+        for (name, main, probe, runtimeStatus) in cases {
             let state = makeState(config: AppConfig(serviceMode: .bundled))
             state.installer.main = main
             state.installer.probedVersion = probe
+            state.journalRuntimeStatus = runtimeStatus
 
             #expect(!state.serviceNeedsAttention, "attention failed case: \(name)")
             #expect(state.serviceIsDone, "done failed case: \(name)")
@@ -374,20 +374,53 @@ struct AppStateAttentionTests {
             pinned: BundleConfig.solstonePinVersion,
             errorDetails: "details"
         )
-        let cases: [(String, MainState, VersionProbeResult?, UpgradeFailureRecord?)] = [
-            ("absent", .awaitingChoice(existingInstall: false), nil, nil),
-            ("failed", .failed(.installSolstone(message: "failed")), nil, nil),
-            ("upgradeFailed", .failed(.installSolstone(message: "failed")), nil, matchingRecord),
+        let cases: [(String, MainState, VersionProbeResult?, UpgradeFailureRecord?, JournalRuntimeStatus)] = [
+            ("absent", .awaitingChoice(existingInstall: false), nil, nil, .running),
+            ("failed", .failed(.installSolstone(message: "failed")), nil, nil, .running),
+            ("upgradeFailed", .failed(.installSolstone(message: "failed")), nil, matchingRecord, .running),
+            (
+                "runtimeFailed",
+                .done,
+                nil,
+                nil,
+                .stopped(JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "down"))
+            ),
         ]
 
-        for (name, main, probe, record) in cases {
+        for (name, main, probe, record, runtimeStatus) in cases {
             let state = makeState(config: AppConfig(serviceMode: .bundled))
             state.installer.main = main
             state.installer.probedVersion = probe
             state.installer.upgradeFailureRecord = record
+            state.journalRuntimeStatus = runtimeStatus
 
             #expect(state.serviceNeedsAttention, "attention failed case: \(name)")
             #expect(!state.serviceIsDone, "done failed case: \(name)")
+        }
+    }
+
+    @Test func bundledLifecycleCardStatesDriveAttentionDoneAndAvailability() {
+        let cases: [(String, JournalRuntimeStatus, Bool, Bool, Bool)] = [
+            ("runtimeUnconfirmed", .running, false, false, true),
+            ("runtimeStarting", .restarting, false, false, true),
+            (
+                "runtimeFailed",
+                .unknown(JournalDiagnostic(commandLabel: "journal readiness", outputExcerpt: "timeout")),
+                true,
+                false,
+                true
+            ),
+            ("runtimeStoppedByUser", .stoppedByUser, false, true, true),
+        ]
+
+        for (name, runtimeStatus, expectedAttention, expectedDone, expectedAvailable) in cases {
+            let state = makeState(config: AppConfig(serviceMode: .bundled))
+            state.installer.main = .done
+            state.journalRuntimeStatus = runtimeStatus
+
+            #expect(state.serviceNeedsAttention == expectedAttention, "attention failed case: \(name)")
+            #expect(state.serviceIsDone == expectedDone, "done failed case: \(name)")
+            #expect(state.bundledJournalStatusAvailable == expectedAvailable, "availability failed case: \(name)")
         }
     }
 
@@ -497,15 +530,16 @@ struct AppStateAttentionTests {
             return !state.serviceNeedsAttention
         case .bundled:
             guard let main = testCase.main else { return false }
-            switch terminalCardState(main: main, probe: testCase.probe, failureRecord: testCase.record) {
-            case .installedCurrent, .done, .externallyManaged:
+            switch main {
+            case .externallyManaged:
                 return true
             case .detecting,
-                 .absent,
-                 .installing,
-                 .installedPlaceholder,
-                 .installedUnknown,
-                 .upgradeFailed,
+                 .awaitingChoice,
+                 .cleaningUp,
+                 .installingSolstone,
+                 .runningSolSetup,
+                 .registering,
+                 .done,
                  .failed:
                 return false
             }

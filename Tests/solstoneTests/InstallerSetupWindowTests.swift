@@ -96,6 +96,10 @@ struct ServiceModeControlCompressionTests {
         .installedCurrent(version: "1.0.0"),
         .installedUnknown,
         .externallyManaged(solPath: "/usr/local/bin/sol", probe: nil),
+        .runtimeStarting,
+        .runtimeFailed(.stopped(JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "down"))),
+        .runtimeUnconfirmed,
+        .runtimeStoppedByUser,
         upgradeFailedCardState,
         failedCardState
     ]

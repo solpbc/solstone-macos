@@ -39,10 +39,9 @@ struct BundledServiceCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            let state = terminalCardState(
-                main: installer.main,
-                probe: installer.probedVersion,
-                failureRecord: installer.upgradeFailureRecord
+            let state = bundledServiceCardState(
+                appState: appState,
+                allowsLocalJournalActions: allowsLocalJournalActions
             )
             AXStateCompanion(
                 id: AXID.Installer.terminalState,
@@ -84,6 +83,14 @@ struct BundledServiceCard: View {
                     .accessibilityValue(InstallerCardState.installedUnknown.axToken)
             case .externallyManaged(let solPath, let probe):
                 externalManagedContent(solPath: solPath, probe: probe)
+            case .runtimeStarting:
+                runtimeStartingContent
+            case .runtimeFailed(let status):
+                runtimeFailureContent(status)
+            case .runtimeUnconfirmed:
+                runtimeUnconfirmedContent
+            case .runtimeStoppedByUser:
+                runtimeStoppedByUserContent
             case .upgradeFailed(let installed, let pinned, let errorDetails):
                 upgradeFailureContent(installedVersion: installed, pinnedVersion: pinned, errorDetails: errorDetails)
             }
@@ -149,6 +156,72 @@ struct BundledServiceCard: View {
                 .truncationMode(.middle)
                 .accessibilityIdentifier(AXID.Installer.externalManagedPathState)
                 .accessibilityValue(solPath)
+        }
+    }
+
+    private var runtimeStartingContent: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .scaleEffect(0.6)
+            Text("getting your journal ready...")
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(AXID.Installer.installedMessageState)
+        .accessibilityValue(InstallerCardState.runtimeStarting.axToken)
+    }
+
+    private func runtimeFailureContent(_ status: JournalRuntimeStatus) -> some View {
+        let presentation = status.settingsPresentation
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.red)
+                Text(presentation.shortText)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier(AXID.Installer.failureSummaryState)
+            .accessibilityValue(presentation.shortText)
+
+            if let reason = presentation.reason, !reason.isEmpty {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
+            if bundledServiceCardAllowsRetry(
+                cardState: .runtimeFailed(status),
+                allowsLocalJournalActions: allowsLocalJournalActions
+            ) {
+                Button("try starting again") {
+                    appState.requestBundledJournalRuntimeStart()
+                }
+                .accessibilityIdentifier(AXID.Installer.failureRetry)
+            }
+        }
+    }
+
+    private var runtimeUnconfirmedContent: some View {
+        Text("solstone is running on this Mac")
+            .accessibilityIdentifier(AXID.Installer.installedMessageState)
+            .accessibilityValue(InstallerCardState.runtimeUnconfirmed.axToken)
+    }
+
+    private var runtimeStoppedByUserContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("journal is stopped")
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier(AXID.Installer.installedMessageState)
+                .accessibilityValue(InstallerCardState.runtimeStoppedByUser.axToken)
+
+            if allowsLocalJournalActions {
+                Button(UICopy.START_JOURNAL) {
+                    appState.requestBundledJournalRuntimeStart()
+                }
+                .accessibilityIdentifier(AXID.Settings.Service.startJournalButton)
+            }
         }
     }
 
@@ -744,6 +817,18 @@ func sanitizedInlineFailureMessage(_ message: String) -> String {
     return trimmed
 }
 
+@MainActor
+func bundledServiceCardState(appState: AppState, allowsLocalJournalActions: Bool) -> InstallerCardState {
+    if appState.config.serviceMode == .bundled && allowsLocalJournalActions {
+        return appState.bundledJournalCardState
+    }
+    return terminalCardState(
+        main: appState.installer.main,
+        probe: appState.installer.probedVersion,
+        failureRecord: appState.installer.upgradeFailureRecord
+    )
+}
+
 func installedServiceMessage(for state: InstallerCardState) -> String {
     switch state {
     case .installedCurrent(let version):
@@ -780,7 +865,19 @@ func installedStateShowsDashboardAndDoctor(_ state: InstallerCardState) -> Bool 
     switch state {
     case .installedCurrent:
         return true
-    default:
+    case .detecting,
+         .absent,
+         .installing,
+         .installedPlaceholder,
+         .done,
+         .installedUnknown,
+         .externallyManaged,
+         .runtimeStarting,
+         .runtimeFailed,
+         .runtimeUnconfirmed,
+         .runtimeStoppedByUser,
+         .upgradeFailed,
+         .failed:
         return false
     }
 }
@@ -790,7 +887,18 @@ func bundledServiceCardShowsDoctor(cardState: InstallerCardState, allowsLocalJou
     switch cardState {
     case .installedCurrent, .upgradeFailed:
         return true
-    case .detecting, .absent, .installing, .failed, .installedPlaceholder, .done, .installedUnknown, .externallyManaged:
+    case .detecting,
+         .absent,
+         .installing,
+         .failed,
+         .installedPlaceholder,
+         .done,
+         .installedUnknown,
+         .externallyManaged,
+         .runtimeStarting,
+         .runtimeFailed,
+         .runtimeUnconfirmed,
+         .runtimeStoppedByUser:
         return false
     }
 }
@@ -798,9 +906,19 @@ func bundledServiceCardShowsDoctor(cardState: InstallerCardState, allowsLocalJou
 func bundledServiceCardAllowsRetry(cardState: InstallerCardState, allowsLocalJournalActions: Bool) -> Bool {
     guard allowsLocalJournalActions else { return false }
     switch cardState {
-    case .failed, .upgradeFailed:
+    case .failed, .upgradeFailed, .runtimeFailed:
         return true
-    case .detecting, .absent, .installing, .installedPlaceholder, .done, .installedCurrent, .installedUnknown, .externallyManaged:
+    case .detecting,
+         .absent,
+         .installing,
+         .installedPlaceholder,
+         .done,
+         .installedCurrent,
+         .installedUnknown,
+         .externallyManaged,
+         .runtimeStarting,
+         .runtimeUnconfirmed,
+         .runtimeStoppedByUser:
         return false
     }
 }

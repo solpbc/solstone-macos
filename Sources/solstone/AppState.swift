@@ -185,12 +185,8 @@ public final class AppState {
             if case .failure = installer.postInstallAutoTest {
                 return true
             }
-            switch terminalCardState(
-                main: installer.main,
-                probe: installer.probedVersion,
-                failureRecord: installer.upgradeFailureRecord
-            ) {
-            case .absent, .upgradeFailed, .failed:
+            switch bundledJournalCardState {
+            case .absent, .upgradeFailed, .failed, .runtimeFailed:
                 return true
             case .installedCurrent,
                  .installedUnknown,
@@ -198,7 +194,10 @@ public final class AppState {
                  .done,
                  .installedPlaceholder,
                  .detecting,
-                 .installing:
+                 .installing,
+                 .runtimeStarting,
+                 .runtimeUnconfirmed,
+                 .runtimeStoppedByUser:
                 return false
             }
         }
@@ -214,12 +213,8 @@ public final class AppState {
         case .external:
             return !serviceNeedsAttention
         case .bundled:
-            switch terminalCardState(
-                main: installer.main,
-                probe: installer.probedVersion,
-                failureRecord: installer.upgradeFailureRecord
-            ) {
-            case .installedCurrent, .done, .externallyManaged:
+            switch bundledJournalCardState {
+            case .installedCurrent, .done, .externallyManaged, .runtimeStoppedByUser:
                 return true
             case .detecting,
                  .absent,
@@ -227,7 +222,10 @@ public final class AppState {
                  .installedPlaceholder,
                  .installedUnknown,
                  .upgradeFailed,
-                 .failed:
+                 .failed,
+                 .runtimeStarting,
+                 .runtimeFailed,
+                 .runtimeUnconfirmed:
                 return false
             }
         }
@@ -238,7 +236,11 @@ public final class AppState {
         case .installedPlaceholder,
              .done,
              .installedCurrent,
-             .installedUnknown:
+             .installedUnknown,
+             .runtimeStarting,
+             .runtimeFailed,
+             .runtimeUnconfirmed,
+             .runtimeStoppedByUser:
             return true
         case .detecting,
              .absent,
@@ -257,15 +259,29 @@ public final class AppState {
         UserDefaults.standard.set(Array(visitedSettingsTabs).sorted(), forKey: visitedSettingsTabsDefaultsKey)
     }
 
+    internal var bundledRuntimeStartInFlight: Bool {
+        inFlightBundledStart != nil
+    }
+
+    internal var bundledRuntimeConfirmedAtPin: Bool {
+        currentMaterializedRuntime != nil && journalRuntimeStatus == .running
+    }
+
+    internal var bundledJournalCardState: InstallerCardState {
+        solstone.bundledJournalCardState(
+            main: installer.main,
+            failureRecord: installer.upgradeFailureRecord,
+            runtimeStatus: journalRuntimeStatus,
+            startInFlight: bundledRuntimeStartInFlight,
+            confirmedAtPin: bundledRuntimeConfirmedAtPin
+        )
+    }
+
     internal var bundledJournalStatusAvailable: Bool {
         guard config.serviceMode == .bundled else {
             return false
         }
-        return isInstalledJournalCardState(terminalCardState(
-            main: installer.main,
-            probe: installer.probedVersion,
-            failureRecord: installer.upgradeFailureRecord
-        ))
+        return isInstalledJournalCardState(bundledJournalCardState)
     }
 
     /// Time the app last handled a successful segment upload into the active bundled journal,
@@ -280,7 +296,7 @@ public final class AppState {
     var showsExternalJournalAddressRow: Bool { !bundledJournalStatusAvailable }
 
     internal var bundledJournalRestartAvailable: Bool {
-        bundledJournalStatusAvailable && !journalRuntimeStatus.isSetupNeeded
+        bundledJournalStatusAvailable && !journalRuntimeStatus.isSetupNeeded && !bundledRuntimeStartInFlight
     }
 
     private var journalLifecycleBusy: Bool {
@@ -1183,6 +1199,12 @@ public final class AppState {
         }
     }
 
+    internal func requestBundledJournalRuntimeStart() {
+        guard config.serviceMode == .bundled else { return }
+        guard !bundledRuntimeStartInFlight else { return }
+        _ = coordinateBundledJournalStart(journalRoot: configuredJournalRoot())
+    }
+
     private func runJournalStart() async {
         defer { journalStartTask = nil }
         guard config.serviceMode == .bundled else { return }
@@ -1207,7 +1229,7 @@ public final class AppState {
             Logger.setup.info("restart-required banner suppressed: serviceMode is not bundled")
             return
         }
-        guard bundledJournalRestartAvailable else {
+        guard bundledJournalRestartAvailable || journalRestartTask != nil else {
             Logger.setup.info("restart-required banner suppressed: bundled journal restart not available")
             return
         }

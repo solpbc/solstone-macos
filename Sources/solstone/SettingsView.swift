@@ -572,12 +572,6 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var serviceSection: some View {
-        let cardState = terminalCardState(
-            main: appState.installer.main,
-            probe: appState.installer.probedVersion,
-            failureRecord: appState.installer.upgradeFailureRecord
-        )
-
         VStack(alignment: .leading, spacing: 16) {
             restartRequiredBanner
 
@@ -630,6 +624,11 @@ struct SettingsView: View {
                     }
                 }
             case .external:
+                let cardState = terminalCardState(
+                    main: appState.installer.main,
+                    probe: appState.installer.probedVersion,
+                    failureRecord: appState.installer.upgradeFailureRecord
+                )
                 if shouldShowBundledStatusSurface(cardState: cardState) {
                     BundledServiceCard(appState: appState, allowsLocalJournalActions: false)
                 }
@@ -1398,11 +1397,7 @@ struct SettingsView: View {
     }
 
     private var bundledVersionCaption: String {
-        let state = terminalCardState(
-            main: appState.installer.main,
-            probe: appState.installer.probedVersion,
-            failureRecord: appState.installer.upgradeFailureRecord
-        )
+        let state = appState.bundledJournalCardState
         if case .installedCurrent(let version) = state {
             return "solstone \(version) · on this Mac"
         }

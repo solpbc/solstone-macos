@@ -202,6 +202,10 @@ struct AXIDTests {
             .installedCurrent(version: "1.2.3"),
             .installedUnknown,
             .externallyManaged(solPath: "/usr/local/bin/sol", probe: nil),
+            .runtimeStarting,
+            .runtimeFailed(.stopped(JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "down"))),
+            .runtimeUnconfirmed,
+            .runtimeStoppedByUser,
             .upgradeFailed(installed: "1.0.0", pinned: "2.0.0", errorDetails: "boom"),
             .failed(.installSolstone(message: "boom"))
         ]

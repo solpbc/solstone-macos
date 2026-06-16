@@ -117,6 +117,10 @@ extension InstallerCardState {
         "installed_current",
         "installed_unknown",
         "externally_managed",
+        "runtime_starting",
+        "runtime_failed",
+        "runtime_unconfirmed",
+        "runtime_stopped_by_user",
         "upgrade_failed",
         "failed"
     ]
@@ -139,6 +143,14 @@ extension InstallerCardState {
             return "installed_unknown"
         case .externallyManaged:
             return "externally_managed"
+        case .runtimeStarting:
+            return "runtime_starting"
+        case .runtimeFailed:
+            return "runtime_failed"
+        case .runtimeUnconfirmed:
+            return "runtime_unconfirmed"
+        case .runtimeStoppedByUser:
+            return "runtime_stopped_by_user"
         case .upgradeFailed:
             return "upgrade_failed"
         case .failed:

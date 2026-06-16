@@ -221,6 +221,40 @@ struct AppOwnedJournalTests {
         #expect(runner.startCalls == 1)
     }
 
+    @Test func bundledCardIgnoresOutdatedProbeDuringSupervisedPinStartup() async throws {
+        let journalRoot = try makeTemporaryDirectory()
+        let state = AppState.forLaunchDetectionTest(
+            config: AppConfig(serviceMode: .bundled, journalPath: journalRoot.path),
+            detectionRunner: { false }
+        )
+        let runner = MockSupervisedChildRunner()
+        let readiness = ControllableJournalReadinessGate()
+        state.installer.main = .done
+        state.installer.probedVersion = .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion)
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.supervisedJournalRunner = runner
+        state.singleSupervisorGate = MockSingleSupervisorGate()
+        state.journalReadinessGate = readiness
+
+        assertNoPhantomBundledCardState(state.bundledJournalCardState, label: "before start")
+        let startup = Task { @MainActor in
+            await state.ensureBundledJournalRuntime(journalRoot: journalRoot)
+        }
+        await readiness.awaitWaiterRegistered(journalRoot: journalRoot)
+
+        #expect(state.bundledJournalCardState == .runtimeStarting)
+        assertNoPhantomBundledCardState(state.bundledJournalCardState, label: "start in flight")
+        readiness.resume(journalRoot: journalRoot, with: .ready)
+        let ready = await startup.value
+
+        #expect(ready)
+        #expect(state.bundledJournalCardState == .installedCurrent(version: BundleConfig.solstonePinVersion))
+        assertNoPhantomBundledCardState(state.bundledJournalCardState, label: "running at pin")
+        #expect(runner.startCalls == 1)
+        #expect(runner.markReadyCalls == 1)
+    }
+
     @Test func staleStartDoesNotStopNewerChild() async throws {
         let rootA = try makeTemporaryDirectory()
         let rootB = try makeTemporaryDirectory()
@@ -1121,6 +1155,13 @@ private func makeTemporaryDirectory() throws -> URL {
 private func installerFixture(_ name: String) -> Data {
     let url = Bundle.module.url(forResource: name, withExtension: "jsonl", subdirectory: "Fixtures/installer")!
     return try! Data(contentsOf: url)
+}
+
+private func assertNoPhantomBundledCardState(_ state: InstallerCardState, label: String) {
+    #expect(state != .installing, "phantom install checklist appeared: \(label)")
+    #expect(state != .installedPlaceholder, "parked placeholder appeared: \(label)")
+    #expect(state != .done, "parked done state appeared: \(label)")
+    #expect(state != .installedUnknown, "parked unknown-version state appeared: \(label)")
 }
 
 private func waitUntil(_ predicate: @escaping @Sendable () -> Bool) async throws {

@@ -198,6 +198,47 @@ struct BundledServiceCardTests {
         #expect(runner.invocations.isEmpty)
     }
 
+    @Test func externalSurfaceUsesProbeStateEvenWhenPersistedModeIsBundled() {
+        let appState = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        appState.installer.main = .done
+        appState.installer.probedVersion = .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion)
+        appState.journalRuntimeStatus = .running
+
+        #expect(
+            bundledServiceCardState(appState: appState, allowsLocalJournalActions: false)
+            == .installing
+        )
+        #expect(
+            bundledServiceCardState(appState: appState, allowsLocalJournalActions: true)
+            == .runtimeUnconfirmed
+        )
+    }
+
+    @Test func runtimeFailedRetryFollowsLocalActionPermission() {
+        let state = InstallerCardState.runtimeFailed(.stopped(JournalDiagnostic(
+            commandLabel: "journal health",
+            outputExcerpt: "down"
+        )))
+
+        #expect(bundledServiceCardAllowsRetry(cardState: state, allowsLocalJournalActions: true))
+        #expect(!bundledServiceCardAllowsRetry(cardState: state, allowsLocalJournalActions: false))
+        #expect(!bundledServiceCardShowsDoctor(cardState: state, allowsLocalJournalActions: true))
+    }
+
+    @Test func runtimeLifecycleStatesDoNotShowInstalledAffordances() {
+        let states: [InstallerCardState] = [
+            .runtimeStarting,
+            .runtimeFailed(.unknown(JournalDiagnostic(commandLabel: "journal readiness", outputExcerpt: "timeout"))),
+            .runtimeUnconfirmed,
+            .runtimeStoppedByUser,
+        ]
+
+        for state in states {
+            #expect(!installedStateShowsDashboardAndDoctor(state))
+            #expect(!bundledServiceCardShowsDoctor(cardState: state, allowsLocalJournalActions: true))
+        }
+    }
+
     @Test func doctorDisclosureCollapseCancelsRunnerWithin100Milliseconds() async throws {
         var task: Task<Void, Never>? = Task {
             try? await Task.sleep(for: .seconds(5))

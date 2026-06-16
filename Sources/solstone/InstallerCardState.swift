@@ -10,6 +10,10 @@ enum InstallerCardState: Equatable {
     case installedCurrent(version: String)
     case installedUnknown
     case externallyManaged(solPath: String, probe: VersionProbeResult?)
+    case runtimeStarting
+    case runtimeFailed(JournalRuntimeStatus)
+    case runtimeUnconfirmed
+    case runtimeStoppedByUser
     case upgradeFailed(installed: String?, pinned: String, errorDetails: String)
     case failed(FailedState)
 }
@@ -101,6 +105,51 @@ func terminalCardState(
     }
 }
 
+func bundledJournalCardState(
+    main: MainState,
+    failureRecord: UpgradeFailureRecord?,
+    runtimeStatus: JournalRuntimeStatus,
+    startInFlight: Bool,
+    confirmedAtPin: Bool
+) -> InstallerCardState {
+    let intermediate = cardState(from: main)
+    if case .externallyManaged(let solPath, _) = intermediate {
+        return .externallyManaged(solPath: solPath, probe: nil)
+    }
+    if case .failed = intermediate {
+        if let failureRecord, failureRecord.pinned == BundleConfig.solstonePinVersion {
+            return .upgradeFailed(
+                installed: failureRecord.installed,
+                pinned: failureRecord.pinned,
+                errorDetails: failureRecord.errorDetails
+            )
+        }
+        return intermediate
+    }
+
+    switch intermediate {
+    case .installedPlaceholder, .done:
+        if startInFlight {
+            return .runtimeStarting
+        }
+        if confirmedAtPin {
+            return .installedCurrent(version: BundleConfig.solstonePinVersion)
+        }
+        switch runtimeStatus {
+        case .running:
+            return .runtimeUnconfirmed
+        case .restarting:
+            return .runtimeStarting
+        case .stopped, .unknown, .setupNeeded:
+            return .runtimeFailed(runtimeStatus)
+        case .stoppedByUser:
+            return .runtimeStoppedByUser
+        }
+    default:
+        return intermediate
+    }
+}
+
 /// Pinned contract: mode controls render in every installer state.
 /// Retained as the unit-testable seam asserting that behavior.
 func shouldCompressServiceModeControls(mode: ServiceMode, cardState: InstallerCardState) -> Bool {
@@ -114,7 +163,17 @@ func shouldShowBundledStatusSurface(cardState: InstallerCardState) -> Bool {
     switch cardState {
     case .installing, .failed, .upgradeFailed:
         return true
-    case .detecting, .absent, .installedPlaceholder, .done, .installedCurrent, .installedUnknown, .externallyManaged:
+    case .detecting,
+         .absent,
+         .installedPlaceholder,
+         .done,
+         .installedCurrent,
+         .installedUnknown,
+         .externallyManaged,
+         .runtimeStarting,
+         .runtimeFailed,
+         .runtimeUnconfirmed,
+         .runtimeStoppedByUser:
         return false
     }
 }
