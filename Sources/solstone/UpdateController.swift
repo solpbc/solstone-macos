@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SolstoneCore
 import Sparkle
 import os
 
@@ -558,6 +559,7 @@ final class UpdateController {
         // exclusivity is not re-checked before handing control back to Sparkle.
         Task { @MainActor in
             await preInstallFinalizer?()
+            ExpectedExitMarker.markExpectedExit(reason: "sparkle-update")
             installFinalizationCommitted = true
             reply(.install)
             installFinalizationInFlight = false

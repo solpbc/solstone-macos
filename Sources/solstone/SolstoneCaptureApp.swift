@@ -140,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        ExpectedExitMarker.markExpectedExit(reason: "app-will-terminate")
         if let state = AppState.shared {
             state.audioDeviceMonitor.stopListening()
             state.installer.cancel()

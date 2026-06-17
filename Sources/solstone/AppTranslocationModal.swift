@@ -15,6 +15,7 @@ public enum AppTranslocationModal {
         alert.addButton(withTitle: SolMacCopy.TRANSLOCATION_MODAL_BUTTON)
         NSApp.activate(ignoringOtherApps: true)
         _ = alert.runModal()
+        ExpectedExitMarker.markExpectedExit(reason: "translocation")
         NSApp.terminate(nil)
     }
 }

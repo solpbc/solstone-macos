@@ -2,8 +2,9 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
 
-/// L1 ships the marker FORMAT + READER + VALIDATOR only. Writing the marker on the observer's deliberate-quit path is L2 (out of scope here).
+/// Expected-exit marker format, reader, validator, and best-effort writer.
 public struct ExpectedExitMarker: Codable, Sendable, Equatable {
     public let pid: Int32
     public let timestamp: Date
@@ -26,6 +27,29 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
     /// Uses JSONEncoder's default reference-date numeric Date strategy; round-trip safe with `decode(_:)`.
     public func encoded() throws -> Data {
         try JSONEncoder().encode(self)
+    }
+
+    /// Writes a fresh expected-exit marker for the current process before an intentional
+    /// teardown. Best-effort: never throws into the caller, so a failed write can never
+    /// block termination. The marker is consumed by the watchdog (L3); until then it is
+    /// simply overwritten by the next quit.
+    public static func markExpectedExit(
+        reason: String,
+        now: Date = Date(),
+        pid: Int32 = getpid(),
+        at url: URL = markerURL,
+        fileManager: FileManager = .default
+    ) {
+        let marker = ExpectedExitMarker(pid: pid, timestamp: now, reason: reason)
+        do {
+            try fileManager.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try marker.encoded().write(to: url, options: .atomic)
+        } catch {
+            Logger.general.warning("expected-exit marker write failed (reason=\(reason, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     public static func decode(_ data: Data) throws -> ExpectedExitMarker {
