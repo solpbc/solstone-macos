@@ -63,6 +63,7 @@ public final class AppState {
     public let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
     internal let solChatBridge: SolChatBridge
     private let notifier: any SolChatNotifying
+    private let loginService: any LoginItemService
     private let isSnapshot: Bool
     public private(set) var config: AppConfig
     private var debugAudioHolder: DebugSettingHolder!
@@ -308,15 +309,15 @@ public final class AppState {
     public internal(set) var isLoginItemEnabled: Bool = false
 
     private func refreshLoginItemStatus() {
-        isLoginItemEnabled = SMAppService.mainApp.status == .enabled
+        isLoginItemEnabled = loginService.watchdogStatus == .enabled
     }
 
     public func setLoginItemEnabled(_ enabled: Bool) {
         do {
             if enabled {
-                try SMAppService.mainApp.register()
+                try loginService.registerWatchdog()
             } else {
-                try SMAppService.mainApp.unregister()
+                try loginService.unregisterWatchdog()
             }
             refreshLoginItemStatus()
         } catch {
@@ -324,6 +325,80 @@ public final class AppState {
             errorMessage = UICopy.ERROR_LOGIN_ITEM
             refreshLoginItemStatus()
         }
+    }
+
+    func migrateLoginItemToWatchdogIfNeeded(isTranslocated: Bool) {
+        if isTranslocated { return }
+
+        let watchdog = loginService.watchdogStatus
+        let mainApp = loginService.mainAppStatus
+
+        if watchdog == .enabled {
+            if mainApp == .enabled || mainApp == .requiresApproval {
+                Logger.general.info("Login item migration: unregistering legacy main app login item")
+                do {
+                    try loginService.unregisterMainApp()
+                } catch {
+                    try? loginService.unregisterWatchdog()
+                    Logger.general.error("Failed to update login item: \(error.localizedDescription, privacy: .public)")
+                    errorMessage = UICopy.ERROR_LOGIN_ITEM
+                }
+            }
+            refreshLoginItemStatus()
+            return
+        }
+
+        if mainApp == .enabled {
+            do {
+                try loginService.registerWatchdog()
+            } catch {
+                Logger.general.error("Failed to update login item: \(error.localizedDescription, privacy: .public)")
+                errorMessage = UICopy.ERROR_LOGIN_ITEM
+                refreshLoginItemStatus()
+                return
+            }
+
+            guard loginService.watchdogStatus == .enabled else {
+                Logger.general.error("Failed to update login item: watchdog agent did not become enabled")
+                errorMessage = UICopy.ERROR_LOGIN_ITEM
+                refreshLoginItemStatus()
+                return
+            }
+
+            do {
+                try loginService.unregisterMainApp()
+            } catch {
+                try? loginService.unregisterWatchdog()
+                Logger.general.error("Failed to update login item: \(error.localizedDescription, privacy: .public)")
+                errorMessage = UICopy.ERROR_LOGIN_ITEM
+            }
+            refreshLoginItemStatus()
+            return
+        }
+
+        if mainApp == .notRegistered {
+            refreshLoginItemStatus()
+            return
+        }
+
+        if watchdog == .notRegistered {
+            refreshLoginItemStatus()
+            return
+        }
+
+        if watchdog == .notFound && mainApp == .notFound {
+            do {
+                try loginService.registerWatchdog()
+                Logger.general.info("First launch: enabled login item via watchdog agent")
+            } catch {
+                Logger.general.error("Failed to update login item: \(error.localizedDescription, privacy: .public)")
+                errorMessage = UICopy.ERROR_LOGIN_ITEM
+            }
+            refreshLoginItemStatus()
+            return
+        }
+
+        refreshLoginItemStatus()
     }
 
     // MARK: - Configuration
@@ -481,7 +556,10 @@ public final class AppState {
 
     // MARK: - Initialization
 
-    public init(notifier: any SolChatNotifying = UNUserNotificationSolChatNotifier()) {
+    public init(
+        notifier: any SolChatNotifying = UNUserNotificationSolChatNotifier(),
+        loginService: any LoginItemService = LiveLoginItemService()
+    ) {
         // Load configuration
         let config = AppConfig.loadOrCreateDefault()
         let pauseManager = PauseManager()
@@ -497,6 +575,7 @@ public final class AppState {
         self.isSnapshot = false
         self.config = config
         self.notifier = notifier
+        self.loginService = loginService
         self.installer = SolstoneInstaller()
         self.runtimeMaterializer = RuntimeMaterializer()
         self.supervisedJournalRunner = SupervisedJournalRunner(
@@ -543,17 +622,6 @@ public final class AppState {
             SegmentWriter.segmentDuration = 60
             Logger.general.info("Debug segments enabled: using 60s duration")
         }
-
-        // Enable login item on first launch.
-        // Fresh install returns .notFound (never registered); .notRegistered means
-        // user explicitly disabled it. Only auto-register on .notFound to respect opt-out.
-        if SMAppService.mainApp.status == .notFound {
-            try? SMAppService.mainApp.register()
-            Logger.general.info("First launch: enabled login item")
-        }
-
-        // Check current login item status
-        isLoginItemEnabled = SMAppService.mainApp.status == .enabled
 
         // Create thread-safe holders for settings that are read at segment creation time
         let debugAudioHolder = DebugSettingHolder(value: config.debugKeepRejectedAudio)
@@ -713,12 +781,29 @@ public final class AppState {
         return state
     }
 
+    /// Creates a side-effect-free AppState for login item migration tests.
+    internal static func forLoginItemTest(
+        config: AppConfig = AppConfig(),
+        loginService: any LoginItemService
+    ) -> AppState {
+        snapshotAudioMonitorMode = true
+        defer { snapshotAudioMonitorMode = false }
+        return AppState(
+            snapshotConfig: config,
+            notificationStatus: .authorized,
+            isSnapshot: false,
+            notifier: NoopSolChatNotifier(),
+            loginService: loginService
+        )
+    }
+
     /// Private designated init that creates all managers without activating hardware or side effects.
     private init(
         snapshotConfig config: AppConfig,
         notificationStatus: UNAuthorizationStatus,
         isSnapshot: Bool,
-        notifier: any SolChatNotifying
+        notifier: any SolChatNotifying,
+        loginService: any LoginItemService = LiveLoginItemService()
     ) {
         let pauseManager = PauseManager()
         let storageManager = StorageManager()
@@ -730,6 +815,7 @@ public final class AppState {
         self.isSnapshot = isSnapshot
         self.config = config
         self.notifier = notifier
+        self.loginService = loginService
         self.notificationAuthorizationStatus = notificationStatus
         self.installer = SolstoneInstaller(
             subprocessRunner: SubprocessRunner(),

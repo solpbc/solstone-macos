@@ -78,6 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let state = AppState.shared {
+            state.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
+
             let delegate = SolChatNotificationDelegate()
             solChatNotificationDelegate = delegate
             UNUserNotificationCenter.current().delegate = delegate
