@@ -119,10 +119,12 @@ final class WatchdogCoordinator {
 struct SolstoneWatchdog {
     @MainActor
     static func main() {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.prohibited)
         let coordinator = WatchdogCoordinator()
         coordinator.start()
         withExtendedLifetime(coordinator) {
-            RunLoop.main.run()
+            app.run()
         }
     }
 }
