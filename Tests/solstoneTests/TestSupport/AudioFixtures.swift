@@ -158,7 +158,7 @@ func makeTinyValidMP4(at url: URL, seconds: Double = 0.2) async throws {
     }
 }
 
-private func makeSilentAudioSampleBuffer(seconds: Double) throws -> CMSampleBuffer {
+func makeSilentAudioSampleBuffer(seconds: Double) throws -> CMSampleBuffer {
     let sampleRate: Double = 48_000
     let sampleCount = max(1, Int(sampleRate * seconds))
     let byteCount = sampleCount * MemoryLayout<Float>.size

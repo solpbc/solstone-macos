@@ -4,6 +4,7 @@
 import AVFoundation
 import CoreMedia
 import Foundation
+import ObjCHelpers
 import os
 
 /// Track type for audio recording
@@ -351,15 +352,28 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         // extractTimingState also flushes any pending silence
         let (firstTime, lastTime, startTime, wasStarted) = extractTimingState()
 
-        // Only mark input as finished if we actually started writing
-        // Calling markAsFinished() on an input whose writer wasn't started throws an exception
+        // Finalize the input/session only while the writer is still .writing.
+        // On sleep/lock, ScreenCaptureKit tears the stream down and AVFoundation
+        // moves the writer out of .writing; calling markAsFinished()/endSession()
+        // then raises an uncaught ObjC NSException (objc_exception_throw -> SIGABRT)
+        // that bypasses Swift do/catch. The allowlist guard skips finalize once the
+        // writer has left .writing, and the ObjC barrier contains the case where the
+        // writer still reports .writing but its underlying session is already invalid.
         if wasStarted {
-            input.markAsFinished()
+            do {
+                try ObjCExceptionCatcher.`try` {
+                    if writer.status == .writing {
+                        input.markAsFinished()
 
-            // End the session at the adjusted last media time
-            if let firstTime = firstTime, let lastTime = lastTime {
-                let adjustedEndTime = CMTimeSubtract(lastTime, firstTime)
-                writer.endSession(atSourceTime: adjustedEndTime)
+                        // End the session at the adjusted last media time
+                        if let firstTime = firstTime, let lastTime = lastTime {
+                            let adjustedEndTime = CMTimeSubtract(lastTime, firstTime)
+                            writer.endSession(atSourceTime: adjustedEndTime)
+                        }
+                    }
+                }
+            } catch {
+                Logger.audio.error("Audio finalize threw for \(self.trackType.displayName, privacy: .public), dropping segment audio: \(error.localizedDescription, privacy: .public)")
             }
         }
 
@@ -430,6 +444,17 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         lock.unlock()
         return (firstTime, lastTime, startTime, wasStarted)
     }
+
+#if DEBUG
+    /// Test-only: force the recorded last-buffer time so finish() computes an
+    /// invalid endSession source time, reproducing the sleep/lock ObjC throw from
+    /// a writer that still reports .writing. Not compiled into release builds.
+    internal func _forceLastBufferTimeForTesting(_ time: CMTime) {
+        lock.lock()
+        lastBufferTime = time
+        lock.unlock()
+    }
+#endif
 
     private func createRetimedSampleBuffer(_ sampleBuffer: CMSampleBuffer, newTime: CMTime) -> CMSampleBuffer? {
         var newSampleBuffer: CMSampleBuffer?
