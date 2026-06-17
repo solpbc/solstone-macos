@@ -20,6 +20,10 @@ public enum DockMode: String {
     case alwaysRegular = "always-regular"
 }
 
+/// Encodes the open⇒render / closed⇒inert invariant for the settings scene root.
+/// Takes the authoritative window-open Bool (`.settings ∈ openSceneIds`), deliberately not ScenePhase.
+func shouldRenderSettingsContent(settingsWindowOpen: Bool) -> Bool { settingsWindowOpen }
+
 /// Handles app termination to ensure pending remixes complete
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -98,17 +102,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // apps" tile that shows after the app drops back to .accessory). With no
         // visible windows, the click means "bring the main window back" — open Settings.
         if !flag {
-            if let state = AppState.shared,
-               let settingsWindow = NSApp.windows.first(where: {
-                   $0.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
-               }) {
-                state.didOpenWindow(.settings)
-                settingsWindow.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
-            } else if AppState.shared == nil {
-                Logger.general.error("AppState.shared nil in applicationShouldHandleReopen")
+            if let state = AppState.shared {
+                if let settingsWindow = NSApp.windows.first(where: {
+                    $0.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
+                }) {
+                    state.didOpenWindow(.settings)
+                    settingsWindow.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                } else {
+                    Logger.general.info("applicationShouldHandleReopen: no settings NSWindow found; posting open settings notification")
+                    NotificationCenter.default.post(name: .solMacOpenSettings, object: nil)
+                }
             } else {
-                Logger.general.info("applicationShouldHandleReopen: no settings NSWindow found; falling through to default")
+                Logger.general.error("AppState.shared nil in applicationShouldHandleReopen")
             }
         }
         return true
@@ -261,7 +267,7 @@ struct SolstoneCaptureApp: App {
         .menuBarExtraStyle(.menu)
 
         Window("solstone observer settings", id: "settings") {
-            SettingsView(appState: appState, updateController: updateController)
+            SettingsSceneRoot(appState: appState, updateController: updateController)
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
@@ -271,6 +277,19 @@ struct SolstoneCaptureApp: App {
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
+    }
+}
+
+private struct SettingsSceneRoot: View {
+    let appState: AppState
+    let updateController: UpdateController
+
+    var body: some View {
+        if shouldRenderSettingsContent(settingsWindowOpen: appState.openSceneIds.contains(.settings)) {
+            SettingsView(appState: appState, updateController: updateController)
+        } else {
+            Color.clear
+        }
     }
 }
 
