@@ -42,7 +42,8 @@ let package = Package(
             path: "Sources/solstone",
             exclude: [
                 "Info.plist",
-                "entitlements.plist"
+                "entitlements.plist",
+                "app.solstone.observer.watchdog.plist"
             ],
             resources: [
                 .copy("Resources")
@@ -71,6 +72,19 @@ let package = Package(
                 .swiftLanguageMode(.v6)
             ]
         ),
+        .executableTarget(
+            name: "solstone-watchdog",
+            dependencies: [
+                .target(name: "SolstoneCore")
+            ],
+            path: "Sources/solstone-watchdog",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ],
+            linkerSettings: [
+                .linkedFramework("AppKit")
+            ]
+        ),
         .target(
             name: "ObjCHelpers",
             path: "Sources/ObjCHelpers",
@@ -81,7 +95,8 @@ let package = Package(
             dependencies: [
                 .target(name: "solstone"),
                 .target(name: "SolstoneCore"),
-                .target(name: "sol-mac")
+                .target(name: "sol-mac"),
+                .target(name: "solstone-watchdog")
             ],
             path: "Tests/solstoneTests",
             resources: [

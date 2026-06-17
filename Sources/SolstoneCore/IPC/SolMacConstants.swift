@@ -4,11 +4,15 @@
 import Foundation
 
 public enum SolMacIPCConstants {
-    /// If the .app is ever sandboxed, this moves to `Library/Containers/app.solstone.observer/Data/Library/Application Support/Solstone/sol-mac.sock`.
-    public static var socketURL: URL {
+    public static var solstoneApplicationSupportURL: URL {
         FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Solstone/sol-mac.sock")
+            .appendingPathComponent("Solstone")
+    }
+
+    /// If the .app is ever sandboxed, this moves to `Library/Containers/app.solstone.observer/Data/Library/Application Support/Solstone/sol-mac.sock`.
+    public static var socketURL: URL {
+        solstoneApplicationSupportURL.appendingPathComponent("sol-mac.sock")
     }
 
     public static let teamID = "7QCG8V4M6H"
