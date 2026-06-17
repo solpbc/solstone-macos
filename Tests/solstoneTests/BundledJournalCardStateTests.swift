@@ -187,6 +187,7 @@ struct BundledJournalCardStateTests {
         #expect(makeBundledState(main: .cleaningUp(progress)) == .installing)
         #expect(makeBundledState(main: .installingSolstone(progress)) == .installing)
         #expect(makeBundledState(main: .runningSolSetup(progress)) == .installing)
+        #expect(makeBundledState(main: .verifyingIntegrity(progress)) == .installing)
         #expect(makeBundledState(main: .registering(progress)) == .installing)
         #expect(makeBundledState(main: .externallyManaged(solPath: "/opt/sol")) == .externallyManaged(solPath: "/opt/sol", probe: nil))
         #expect(

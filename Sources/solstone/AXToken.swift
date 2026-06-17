@@ -90,6 +90,7 @@ extension RowStatus {
         "pending",
         "running",
         "ok",
+        "warning",
         "failed"
     ]
 
@@ -101,6 +102,8 @@ extension RowStatus {
             return "running"
         case .ok:
             return "ok"
+        case .warning:
+            return "warning"
         case .failed:
             return "failed"
         }

@@ -10,6 +10,14 @@ private let pidWaitTimeoutDefault: Duration = .seconds(10)
 private let pidWaitPollIntervalDefault: Duration = .milliseconds(250)
 private let orphanGracePeriodDefault: Duration = .seconds(3)
 private let subprocessTimeoutGracePeriodDefault: Duration = .seconds(2)
+private let observerRegistrationRetryBudget: Duration = .seconds(90)
+private let observerRegistrationRetryBackoffs: [Duration] = [
+    .milliseconds(500),
+    .seconds(1),
+    .seconds(2),
+    .seconds(4),
+    .seconds(8)
+]
 
 private enum UpgradeFailureRecordBaseline: Equatable {
     case none
@@ -26,12 +34,13 @@ public final class SolstoneInstaller {
     public internal(set) var lastFailureCategory: ErrorCategory?
     public internal(set) var lastFailureLog: String?
     public internal(set) var lastSetupProgress: SubprocessProgress?
+    public internal(set) var integrityWarningMessage: String?
     public internal(set) var upgradeFailureRecord: UpgradeFailureRecord?
     /// True while the bundled-journal installer owns exclusive setup/upgrade work
     /// that should defer automatic Sparkle update checks and install activation.
     public var exclusiveOperationInProgress: Bool {
         switch main {
-        case .cleaningUp, .installingSolstone, .runningSolSetup, .registering:
+        case .cleaningUp, .installingSolstone, .runningSolSetup, .verifyingIntegrity, .registering:
             return true
         case .detecting, .awaitingChoice, .externallyManaged, .done, .failed:
             return false
@@ -61,6 +70,7 @@ public final class SolstoneInstaller {
     private let pidWaitPollInterval: Duration
     private let orphanGracePeriod: Duration
     private let clock: any MonotonicClock
+    private let sleep: @Sendable (Duration) async throws -> Void
     private var detectionInFlight = false
     private var installTask: Task<Void, Never>?
     /// Test seam: whether an install/upgrade task is currently running.
@@ -116,7 +126,10 @@ public final class SolstoneInstaller {
         pidWaitTimeout: Duration = pidWaitTimeoutDefault,
         pidWaitPollInterval: Duration = pidWaitPollIntervalDefault,
         orphanGracePeriod: Duration = orphanGracePeriodDefault,
-        clock: any MonotonicClock = SystemMonotonicClock()
+        clock: any MonotonicClock = SystemMonotonicClock(),
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { duration in
+            try await Task.sleep(for: duration)
+        }
     ) {
         let resolvedRuntimeRootURL = runtimeRootURL ?? SolstoneRuntimeLayout.defaultRootURL
         self.uvBinaryURL = uvBinaryURL
@@ -143,6 +156,7 @@ public final class SolstoneInstaller {
         self.pidWaitPollInterval = pidWaitPollInterval
         self.orphanGracePeriod = orphanGracePeriod
         self.clock = clock
+        self.sleep = sleep
         self.upgradeFailureRecord = failureRecordStore.load()
     }
 
@@ -223,6 +237,7 @@ public final class SolstoneInstaller {
         lastFailureCategory = nil
         lastFailureLog = nil
         lastSetupProgress = nil
+        integrityWarningMessage = nil
         modelsProgress = .idle
         installTask = Task { [weak self] in
             guard let self else { return }
@@ -255,44 +270,36 @@ public final class SolstoneInstaller {
     private func runInstall(journalURL: URL, existingInstallChoice: ExistingInstallChoice) async {
         let existingSolPath = await solBinaryFinder()
         let setupJournalURL = journalURL
-        var materializedRuntime: MaterializedRuntime?
-        if existingInstallChoice == .createFresh {
+        let materializedRuntime: MaterializedRuntime
+        switch existingInstallChoice {
+        case .createFresh:
             if let existingSolPath {
                 await runAppManagedUpgrade(oldSolPath: existingSolPath)
                 return
-            } else {
-                guard let runtime = await materializeBundledRuntimeForInstaller() else { return }
-                materializedRuntime = runtime
             }
-        }
-
-        let solPath: String?
-        if let materializedRuntime {
-            solPath = materializedRuntime.layout.solBinary.path
-        } else if existingInstallChoice == .createFresh {
-            solPath = await solBinaryFinder()
-        } else if let existingSolPath {
-            solPath = existingSolPath
-        } else {
-            solPath = await solBinaryFinder()
-        }
-        guard let solPath else {
-            failMain(
-                .installSolstone(message: existingInstallChoice == .createFresh ? "sol binary not found after install" : "sol binary not found"),
-                category: .subprocessLaunch
-            )
-            return
+            guard let runtime = await materializeBundledRuntimeForInstaller() else { return }
+            materializedRuntime = runtime
+        case .acceptExisting:
+            guard existingSolPath != nil else {
+                failMain(
+                    .installSolstone(message: "sol binary not found"),
+                    category: .subprocessLaunch
+                )
+                return
+            }
+            // Accept-existing adopts the pinned app-managed runtime; materialize reuses a verified on-disk layout.
+            guard let runtime = await materializeBundledRuntimeForInstaller() else { return }
+            materializedRuntime = runtime
         }
 
         persistJournalPath(setupJournalURL)
-        let journalBinary = URL(fileURLWithPath: Self.journalPath(siblingOf: solPath))
         guard await runJournalSetup(
-            journalBinary: journalBinary,
+            journalBinary: materializedRuntime.layout.journalBinary,
             journalURL: setupJournalURL,
-            layout: materializedRuntime?.layout ?? .active(rootURL: runtimeRootURL),
+            layout: materializedRuntime.layout,
             skipService: true
         ) else { return }
-        await enterRegistering(journalBinary: journalBinary, journalURL: setupJournalURL)
+        await enterRegistering(runtime: materializedRuntime, journalURL: setupJournalURL)
     }
 
     private func resolvedUVBinaryURL() -> URL {
@@ -492,7 +499,7 @@ public final class SolstoneInstaller {
             return
         }
 
-        await enterRegistering(journalBinary: materializedRuntime.layout.journalBinary, journalURL: resolved.journalURL)
+        await enterRegistering(runtime: materializedRuntime, journalURL: resolved.journalURL)
     }
 
     private func failCleanup(step: CleanupStep, why: String, category: ErrorCategory, logExcerpt: String? = nil) {
@@ -574,7 +581,10 @@ public final class SolstoneInstaller {
         return true
     }
 
-    private func enterRegistering(journalBinary: URL, journalURL: URL) async {
+    private func enterRegistering(runtime: MaterializedRuntime, journalURL: URL) async {
+        let journalBinary = runtime.layout.journalBinary
+        await runJournalWarm(runtime: runtime)
+
         let phase = "journal observer create"
         setMain(.registering(SubprocessProgress(phase: phase)))
 
@@ -582,7 +592,7 @@ public final class SolstoneInstaller {
             await self?.runInstallModels(journalBinary: journalBinary)
         }
 
-        guard await runReadinessGate(journalBinary: journalBinary, phase: phase, journalURL: journalURL) else { return }
+        guard await runReadinessGate(runtime: runtime, phase: phase, journalURL: journalURL) else { return }
 
         if await runObserverCreate(journalBinary: journalBinary, phase: phase) {
             setMain(.done)
@@ -595,7 +605,83 @@ public final class SolstoneInstaller {
         }
     }
 
-    private func runReadinessGate(journalBinary: URL, phase: String, journalURL: URL) async -> Bool {
+    private func runJournalWarm(runtime: MaterializedRuntime) async {
+        let phase = "journal warm"
+        setMain(.verifyingIntegrity(SubprocessProgress(phase: phase)))
+
+        let output = InstallerOutput()
+        let result: SubprocessResult
+        do {
+            result = try await subprocessRunner.run(
+                executable: runtime.layout.journalBinary,
+                arguments: ["warm"],
+                environment: runtime.layout.uvEnvironment(),
+                stdoutHandler: { [weak self, output] data in
+                    Self.append(data, to: output, stream: .stdout)
+                    Task { @MainActor in
+                        self?.appendRawProgress(data, phase: phase, target: .main, includeInTail: true)
+                    }
+                },
+                stderrHandler: { [weak self, output] data in
+                    Self.append(data, to: output, stream: .stderr)
+                    Task { @MainActor in
+                        self?.appendRawProgress(data, phase: phase, target: .main, includeInTail: true)
+                    }
+                }
+            )
+        } catch {
+            recordWarmWarning(stdout: "", stderr: error.localizedDescription)
+            return
+        }
+
+        guard result.exitCode == 0 else {
+            recordWarmWarning(stdout: output.stdoutString(), stderr: output.stderrString())
+            return
+        }
+    }
+
+    private func recordWarmWarning(stdout: String, stderr: String) {
+        let library = Self.failedWarmLibrary(stdout: stdout, stderr: stderr)
+        let detail = sanitizeJournalDiagnosticOutput(
+            lastUsefulLine([stderr, stdout].joined(separator: "\n")) ?? "journal warm failed"
+        ) ?? "journal warm failed"
+        integrityWarningMessage = UICopy.installerVerifyIntegrityWarning(library: library)
+        Logger.setup.warning("installer: journal warm failed; continuing library=\(library, privacy: .public) detail=\(detail, privacy: .public)")
+    }
+
+    private nonisolated static func failedWarmLibrary(stdout: String, stderr: String) -> String {
+        let output = [stderr, stdout].joined(separator: "\n")
+        for rawLine in output.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
+            if let value = valueAfterPrefix("library=", in: line)
+                ?? valueAfterPrefix("library:", in: line)
+                ?? valueAfterPrefix("library ", in: line) {
+                return sanitizeWarmLibraryName(value)
+            }
+        }
+        return "a required library"
+    }
+
+    private nonisolated static func valueAfterPrefix(_ prefix: String, in line: String) -> String? {
+        guard let range = line.range(of: prefix, options: [.caseInsensitive]) else {
+            return nil
+        }
+        return String(line[range.upperBound...])
+    }
+
+    private nonisolated static func sanitizeWarmLibraryName(_ value: String) -> String {
+        let delimiters = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",;()[]{}\"'"))
+        let firstToken = value
+            .components(separatedBy: delimiters)
+            .first(where: { !$0.isEmpty }) ?? ""
+        let sanitized = firstToken
+            .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "." }
+            .prefix(80)
+        return sanitized.isEmpty ? "a required library" : String(sanitized)
+    }
+
+    private func runReadinessGate(runtime: MaterializedRuntime, phase: String, journalURL: URL) async -> Bool {
+        let journalBinary = runtime.layout.journalBinary
         appendRawProgress(
             Data("starting app-owned journal child\n".utf8),
             phase: phase,
@@ -656,13 +742,15 @@ public final class SolstoneInstaller {
             return .failure(ObserverRegistrationFailure(
                 category: .network,
                 message: "couldn't reach the journal to register this observer",
-                logExcerpt: "observer registration request failed: \(error)"
+                logExcerpt: "observer registration request failed: \(error)",
+                retryableConnection: Self.isRetryableObserverRegistrationError(error)
             ))
         } catch {
             return .failure(ObserverRegistrationFailure(
                 category: .network,
                 message: "couldn't reach the journal to register this observer",
-                logExcerpt: "observer registration request failed: \(error)"
+                logExcerpt: "observer registration request failed: \(error)",
+                retryableConnection: Self.isRetryableObserverRegistrationError(error)
             ))
         }
 
@@ -704,6 +792,36 @@ public final class SolstoneInstaller {
         return .success(key)
     }
 
+    private nonisolated static func isRetryableObserverRegistrationError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cannotConnectToHost, .networkConnectionLost, .timedOut:
+                return true
+            default:
+                break
+            }
+        }
+        return hasStreamErrorCode(error, code: 61)
+    }
+
+    private nonisolated static func hasStreamErrorCode(_ error: Error, code: Int) -> Bool {
+        let nsError = error as NSError
+        if nsError.userInfo.contains(where: { key, value in
+            let keyString = String(describing: key)
+            guard keyString == "_kCFStreamErrorCodeKey" || keyString == "kCFStreamErrorCodeKey" else {
+                return false
+            }
+            return (value as? Int) == code
+        }) {
+            return true
+        }
+
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            return hasStreamErrorCode(underlying, code: code)
+        }
+        return false
+    }
+
     private nonisolated static func shortBodyPreview(_ data: Data) -> String {
         let body = String(decoding: data, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -724,19 +842,68 @@ public final class SolstoneInstaller {
             version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
         )
 
-        switch await observerRegistrar(descriptor) {
-        case .success(let key):
-            persistObserverKey(key)
-            return true
-        case .failure(let failure):
-            await failRegistering(
-                journalBinary: journalBinary,
-                message: failure.message,
-                category: failure.category,
-                logExcerpt: failure.logExcerpt
-            )
-            return false
+        let deadline = clock.now() + observerRegistrationRetryBudget
+        var attempt = 0
+        var lastTransientFailure: ObserverRegistrationFailure?
+        while true {
+            do {
+                try Task.checkCancellation()
+            } catch {
+                return false
+            }
+            if let lastTransientFailure, clock.now() >= deadline {
+                await failRegistering(
+                    journalBinary: journalBinary,
+                    message: lastTransientFailure.message,
+                    category: lastTransientFailure.category,
+                    logExcerpt: lastTransientFailure.logExcerpt
+                )
+                return false
+            }
+
+            switch await observerRegistrar(descriptor) {
+            case .success(let key):
+                persistObserverKey(key)
+                return true
+            case .failure(let failure):
+                guard failure.retryableConnection else {
+                    await failRegistering(
+                        journalBinary: journalBinary,
+                        message: failure.message,
+                        category: failure.category,
+                        logExcerpt: failure.logExcerpt
+                    )
+                    return false
+                }
+                lastTransientFailure = failure
+
+                guard clock.now() < deadline else {
+                    await failRegistering(
+                        journalBinary: journalBinary,
+                        message: failure.message,
+                        category: failure.category,
+                        logExcerpt: failure.logExcerpt
+                    )
+                    return false
+                }
+
+                do {
+                    try Task.checkCancellation()
+                    try await sleep(Self.observerRegistrationBackoff(attempt: attempt))
+                    try Task.checkCancellation()
+                } catch {
+                    return false
+                }
+                attempt += 1
+            }
         }
+    }
+
+    private nonisolated static func observerRegistrationBackoff(attempt: Int) -> Duration {
+        if attempt < observerRegistrationRetryBackoffs.count {
+            return observerRegistrationRetryBackoffs[attempt]
+        }
+        return .seconds(15)
     }
 
     private func failRegistering(journalBinary: URL, message: String, category: ErrorCategory, logExcerpt: String?) async {
@@ -1019,6 +1186,7 @@ public final class SolstoneInstaller {
         case .cleaningUp(let progress),
              .installingSolstone(let progress),
              .runningSolSetup(let progress),
+             .verifyingIntegrity(let progress),
              .registering(let progress):
             return progress
         case .detecting, .awaitingChoice, .externallyManaged, .done, .failed:
@@ -1090,6 +1258,7 @@ public final class SolstoneInstaller {
             case .cleaningUp(let progress),
                  .installingSolstone(let progress),
                  .runningSolSetup(let progress),
+                 .verifyingIntegrity(let progress),
                  .registering(let progress):
                 existing = progress
             default:
@@ -1103,6 +1272,8 @@ public final class SolstoneInstaller {
                 main = .installingSolstone(updated)
             case .runningSolSetup:
                 main = .runningSolSetup(updated)
+            case .verifyingIntegrity:
+                main = .verifyingIntegrity(updated)
             case .registering:
                 main = .registering(updated)
             default:
@@ -1142,6 +1313,8 @@ public final class SolstoneInstaller {
             return "installing solstone"
         case .runningSolSetup:
             return "running journal setup"
+        case .verifyingIntegrity:
+            return "verifying integrity"
         case .registering:
             return "registering"
         case .externallyManaged:
@@ -1290,6 +1463,19 @@ struct ObserverRegistrationFailure: Error, Sendable, Equatable {
     let category: ErrorCategory
     let message: String
     let logExcerpt: String?
+    let retryableConnection: Bool
+
+    init(
+        category: ErrorCategory,
+        message: String,
+        logExcerpt: String?,
+        retryableConnection: Bool = false
+    ) {
+        self.category = category
+        self.message = message
+        self.logExcerpt = logExcerpt
+        self.retryableConnection = retryableConnection
+    }
 }
 
 private struct ObserverRegistrationResponse: Decodable {

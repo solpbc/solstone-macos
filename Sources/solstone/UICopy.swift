@@ -38,7 +38,12 @@ public enum UICopy {
     public static let INSTALLER_INLINE_FAILURE_GENERIC = "setup hit a snag — retry below, or open details to share with support."
     public static let INSTALLER_READINESS_TIMEOUT = "solstone didn't become ready in time"
     public static let INSTALLER_READINESS_GATE_FAILED = "couldn't get solstone ready for this observer"
+    public static let INSTALLER_VERIFY_INTEGRITY_LABEL = "verifying macOS security integrity"
     public static let ERROR_LOGIN_ITEM = "couldn't update your login setting. try again, or toggle it off and on."
     public static let ERROR_SAVE_CONFIG = "couldn't save your settings. try again, or restart solstone."
     public static let ERROR_START_OBSERVING = "couldn't start observing. check permissions in settings, then try again."
+
+    public static func installerVerifyIntegrityWarning(library: String) -> String {
+        "couldn't get \(library) ready; continuing"
+    }
 }

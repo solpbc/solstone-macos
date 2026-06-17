@@ -9,6 +9,7 @@ public enum MainState: Sendable, Equatable {
     case cleaningUp(SubprocessProgress)
     case installingSolstone(SubprocessProgress)
     case runningSolSetup(SubprocessProgress)
+    case verifyingIntegrity(SubprocessProgress)
     case registering(SubprocessProgress)
     case externallyManaged(solPath: String)
     case done

@@ -188,6 +188,7 @@ struct AXIDTests {
             .pending,
             .running,
             .ok,
+            .warning(message: "careful"),
             .failed(message: "boom")
         ]
     }

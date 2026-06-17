@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import SolstoneCore
 
 internal protocol JournalReadinessChecking: Sendable {
     func waitUntilReady(
@@ -19,17 +20,22 @@ internal enum JournalReadinessResult: Equatable, Sendable {
 internal struct JournalReadinessGate: JournalReadinessChecking {
     private let runner: SubprocessRunning
     private let fileExists: @Sendable (String) -> Bool
+    private let acceptProbe: @Sendable () async -> Bool
     private let clock: any MonotonicClock
     private let pollInterval: Duration
 
     internal init(
         runner: SubprocessRunning = SubprocessRunner(),
         fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+        acceptProbe: @escaping @Sendable () async -> Bool = {
+            await JournalReadinessGate.defaultAcceptProbe()
+        },
         clock: any MonotonicClock = SystemMonotonicClock(),
         pollInterval: Duration = .milliseconds(250)
     ) {
         self.runner = runner
         self.fileExists = fileExists
+        self.acceptProbe = acceptProbe
         self.clock = clock
         self.pollInterval = pollInterval
     }
@@ -44,18 +50,23 @@ internal struct JournalReadinessGate: JournalReadinessChecking {
         var lastDiagnostic: JournalDiagnostic?
 
         while clock.now() < deadline {
-            if fileExists(readyPath) {
-                return .ready
+            let probeAccepts = await acceptProbe()
+            let markerReady = fileExists(readyPath)
+            var healthReady = false
+            if !markerReady {
+                switch await JournalHealthCheck.run(
+                    journalBinary: runtime.layout.journalBinary,
+                    runner: runner,
+                    environment: runtime.layout.uvEnvironment()
+                ) {
+                case .healthy:
+                    healthReady = true
+                case .stopped(let diagnostic), .unknown(let diagnostic):
+                    lastDiagnostic = diagnostic
+                }
             }
-            switch await JournalHealthCheck.run(
-                journalBinary: runtime.layout.journalBinary,
-                runner: runner,
-                environment: runtime.layout.uvEnvironment()
-            ) {
-            case .healthy:
+            if probeAccepts && (markerReady || healthReady) {
                 return .ready
-            case .stopped(let diagnostic), .unknown(let diagnostic):
-                lastDiagnostic = diagnostic
             }
             await clock.sleep(for: pollInterval)
         }
@@ -65,5 +76,25 @@ internal struct JournalReadinessGate: JournalReadinessChecking {
             timedOut: true,
             outputExcerpt: UICopy.JOURNAL_READINESS_TIMEOUT
         ))
+    }
+
+    private static func defaultAcceptProbe() async -> Bool {
+        guard let url = URL(string: ServiceMode.bundledServiceURL + "/") else {
+            return false
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 0.5
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 0.5
+        configuration.timeoutIntervalForResource = 0.5
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        do {
+            _ = try await session.data(for: request)
+            return true
+        } catch {
+            return false
+        }
     }
 }

@@ -33,6 +33,12 @@ struct InstallerProgressRowView: View {
                             .font(.caption)
                             .foregroundStyle(.red)
                     }
+
+                    if case .warning(let message) = status {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
 
                 Spacer()
@@ -79,6 +85,10 @@ struct InstallerProgressRowView: View {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
                 .accessibilityLabel("done")
+        case .warning:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityLabel("warning")
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
                 .foregroundStyle(.red)

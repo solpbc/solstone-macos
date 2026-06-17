@@ -28,6 +28,7 @@
           "cleaningUp",
           "installSolstone",
           "solSetup",
+          "verifyingIntegrity",
           "registering",
           "models"
         ],
@@ -40,6 +41,7 @@
           "cleaningUp",
           "installSolstone",
           "solSetup",
+          "verifyingIntegrity",
           "registering",
           "models"
         ],
@@ -52,6 +54,7 @@
           "cleaningUp",
           "installSolstone",
           "solSetup",
+          "verifyingIntegrity",
           "registering",
           "models"
         ],
@@ -64,6 +67,7 @@
           "cleaningUp",
           "installSolstone",
           "solSetup",
+          "verifyingIntegrity",
           "registering",
           "models"
         ],
@@ -76,6 +80,7 @@
           "cleaningUp",
           "installSolstone",
           "solSetup",
+          "verifyingIntegrity",
           "registering",
           "models"
         ],
@@ -538,6 +543,7 @@
       "pending",
       "running",
       "ok",
+      "warning",
       "failed"
     ],
     "ServiceMode" : [

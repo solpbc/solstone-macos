@@ -34,6 +34,7 @@ enum RowStatus: Equatable {
     case pending
     case running
     case ok
+    case warning(message: String)
     case failed(message: String)
 }
 
@@ -42,6 +43,7 @@ enum InstallerRow: String, CaseIterable {
     case cleaningUp = "row.cleaningUp"
     case installSolstone = "row.installSolstone"
     case solSetup = "row.solSetup"
+    case verifyingIntegrity = "row.verifyingIntegrity"
     case registering = "row.registering"
     case models = "row.models"
 }
@@ -52,7 +54,7 @@ func cardState(from main: MainState) -> InstallerCardState {
         return .detecting
     case .awaitingChoice(let existingInstall):
         return existingInstall ? .installedPlaceholder : .absent
-    case .cleaningUp, .installingSolstone, .runningSolSetup, .registering:
+    case .cleaningUp, .installingSolstone, .runningSolSetup, .verifyingIntegrity, .registering:
         return .installing
     case .externallyManaged(let solPath):
         return .externallyManaged(solPath: solPath, probe: nil)
@@ -178,7 +180,12 @@ func shouldShowBundledStatusSurface(cardState: InstallerCardState) -> Bool {
     }
 }
 
-func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsProgress) -> RowStatus {
+func rowStatus(
+    for row: InstallerRow,
+    main: MainState,
+    modelsProgress: ModelsProgress,
+    integrityWarningMessage: String? = nil
+) -> RowStatus {
     switch row {
     case .checkingSystem:
         if case .detecting = main {
@@ -191,7 +198,7 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
             return .pending
         case .cleaningUp:
             return .running
-        case .installingSolstone, .runningSolSetup, .registering, .done:
+        case .installingSolstone, .runningSolSetup, .verifyingIntegrity, .registering, .done:
             return .ok
         case .failed(let failedState):
             if case .cleanup(_, let message) = failedState {
@@ -205,7 +212,7 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
             return .pending
         case .installingSolstone:
             return .running
-        case .runningSolSetup, .registering, .done:
+        case .runningSolSetup, .verifyingIntegrity, .registering, .done:
             return .ok
         case .failed(let failedState):
             switch failedState {
@@ -225,7 +232,7 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
             return .pending
         case .runningSolSetup:
             return .running
-        case .registering, .done:
+        case .verifyingIntegrity, .registering, .done:
             return .ok
         case .failed(let failedState):
             switch failedState {
@@ -237,9 +244,31 @@ func rowStatus(for row: InstallerRow, main: MainState, modelsProgress: ModelsPro
                 return .ok
             }
         }
-    case .registering:
+    case .verifyingIntegrity:
         switch main {
         case .detecting, .awaitingChoice, .cleaningUp, .installingSolstone, .runningSolSetup, .externallyManaged:
+            return .pending
+        case .verifyingIntegrity:
+            return .running
+        case .registering, .done:
+            if let message = integrityWarningMessage {
+                return .warning(message: message)
+            }
+            return .ok
+        case .failed(let failedState):
+            switch failedState {
+            case .cleanup, .installSolstone, .solSetup, .upgradeCutoverFailed:
+                return .pending
+            case .registering, .installModels:
+                if let message = integrityWarningMessage {
+                    return .warning(message: message)
+                }
+                return .ok
+            }
+        }
+    case .registering:
+        switch main {
+        case .detecting, .awaitingChoice, .cleaningUp, .installingSolstone, .runningSolSetup, .verifyingIntegrity, .externallyManaged:
             return .pending
         case .registering:
             return .running
@@ -289,6 +318,11 @@ func currentSubprocessProgress(
         return nil
     case .solSetup:
         if case .runningSolSetup(let progress) = main {
+            return progress
+        }
+        return nil
+    case .verifyingIntegrity:
+        if case .verifyingIntegrity(let progress) = main {
             return progress
         }
         return nil

@@ -212,7 +212,7 @@ struct SolstoneInstallerTests {
         #expect(store.load() == nil)
     }
 
-    @Test func existingInstall_choiceSkipsSubprocess() async throws {
+    @Test func existingInstall_choiceMaterializesAndRunsSetup() async throws {
         let runner = FakeSubprocessRunner()
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue("install-models", .success())
@@ -222,7 +222,7 @@ struct SolstoneInstallerTests {
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
         try await waitUntil { installer.main == .done }
 
-        #expect(!runner.invocations.contains { $0.arguments.first == "tool" })
+        #expect(runner.invocations.contains { $0.arguments.starts(with: ["tool", "install"]) })
         #expect(runner.invocations.contains { $0.arguments.first == "setup" })
     }
 
@@ -990,6 +990,107 @@ struct SolstoneInstallerTests {
         #expect(registrar.invocationCount == 1)
     }
 
+    @Test func observerRegisterRetriesTransientFailuresThenSucceeds() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("install-models", .success())
+        let registrar = FakeObserverRegistrar(results: [
+            .failure(transientObserverRegistrationFailure("transient one")),
+            .failure(transientObserverRegistrationFailure("transient two")),
+            .success("observer-key")
+        ])
+        let sleeps = RecordingRetrySleeps()
+        let installer = makeInstaller(
+            runner: runner,
+            observerRegistrar: registrar.register,
+            sleep: { duration in sleeps.record(duration) }
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitUntil { installer.main == .done }
+
+        #expect(registrar.invocationCount == 3)
+        #expect(sleeps.values == [.milliseconds(500), .seconds(1)])
+    }
+
+    @Test func observerRegisterRetryBudgetExhaustionFailsWithLastTransientMessage() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("install-models", .success())
+        let registrar = CountingRetryableObserverRegistrar()
+        let clock = AdvancingRetryClock()
+        let sleeps = RecordingRetrySleeps()
+        let installer = makeInstaller(
+            runner: runner,
+            observerRegistrar: registrar.register,
+            clock: clock,
+            sleep: { duration in
+                sleeps.record(duration)
+                clock.advance(by: duration)
+            }
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitForTerminal(installer)
+
+        let lastMessage = "transient \(registrar.invocationCount)"
+        if case .failed(.registering(let message)) = installer.main {
+            #expect(message == lastMessage)
+        } else {
+            Issue.record("expected registering failure, got \(installer.main)")
+        }
+        #expect(registrar.invocationCount > 1)
+        #expect(installer.lastFailureCategory == .network)
+        #expect(installer.lastFailureLog == "attempt \(registrar.invocationCount)")
+        #expect(sleeps.values.last == .seconds(15))
+    }
+
+    @Test func observerRegisterCancellationDuringRetryDoesNotFail() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("install-models", .success())
+        let registrar = FakeObserverRegistrar(result: .failure(transientObserverRegistrationFailure("still starting")))
+        let installer = makeInstaller(
+            runner: runner,
+            observerRegistrar: registrar.register,
+            sleep: { _ in try await Task.sleep(for: .seconds(60)) }
+        )
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitUntil { registrar.invocationCount == 1 }
+        installer.cancel()
+        try await waitUntil { !installer.isInstallTaskActive }
+
+        if case .failed = installer.main {
+            Issue.record("expected cancellation to avoid failed state, got \(installer.main)")
+        }
+    }
+
+    @Test func warmFailureIsVisibleAndNonBlocking() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("warm", .success(stderr: Data("library=tokenizers failed to load\n".utf8), exitCode: 1))
+        runner.enqueue("install-models", .success())
+        let installer = makeInstaller(runner: runner)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitUntil { installer.main == .done }
+
+        #expect(installer.integrityWarningMessage == UICopy.installerVerifyIntegrityWarning(library: "tokenizers"))
+        let warm = try #require(runner.invocations.first { $0.arguments == ["warm"] })
+        #expect(warm.executable.lastPathComponent == "journal")
+        let materializedRoot = warm.executable
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        assertRuntimeEnvironment(
+            try #require(warm.environment),
+            layout: SolstoneRuntimeLayout(rootURL: materializedRoot)
+        )
+    }
+
     @Test func postInstallAutoTestSucceedsAfterDone() async throws {
         let appState = try makeSnapshotAppStateWithJournalSeams()
         let runner = FakeSubprocessRunner()
@@ -1207,7 +1308,7 @@ struct SolstoneInstallerTests {
         try await waitUntil { installer.probedVersion == .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion) }
 
         #expect(installer.main == .done)
-        #expect(!runner.invocations.contains { $0.arguments.starts(with: ["tool", "install"]) })
+        #expect(runner.invocations.contains { $0.arguments.starts(with: ["tool", "install"]) })
     }
 
     @Test func appManagedDetectCurrentClearsCurrentPinFailureRecord() async throws {
@@ -1680,6 +1781,15 @@ struct SolstoneInstallerTests {
         })
     }
 
+    private func transientObserverRegistrationFailure(_ detail: String) -> ObserverRegistrationFailure {
+        ObserverRegistrationFailure(
+            category: .network,
+            message: "couldn't reach the journal to register this observer",
+            logExcerpt: detail,
+            retryableConnection: true
+        )
+    }
+
     private func makeSnapshotAppStateWithJournalSeams(config: AppConfig = AppConfig()) throws -> AppState {
         let state = AppState.forSnapshot(config: config)
         state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
@@ -1702,13 +1812,15 @@ struct SolstoneInstallerTests {
         solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
         observerRegistrar: @escaping ObserverRegistrar = { _ in .success("observer-key") },
-        fileExists: @escaping @Sendable (String) -> Bool = defaultTestFileExists
+        fileExists: @escaping @Sendable (String) -> Bool = defaultTestFileExists,
+        clock: any MonotonicClock = SystemMonotonicClock(),
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in }
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
             bundledPythonURL: pythonURL,
-            wheelhouseURL: wheelhouseURL,
-            runtimeRootURL: runtimeRootURL,
+            wheelhouseURL: wheelhouseURL ?? makeDefaultWheelhouseURL(),
+            runtimeRootURL: runtimeRootURL ?? makeDefaultRuntimeRootURL(),
             subprocessRunner: runner,
             failureRecordStore: failureRecordStore,
             wrapperDirURL: wrapperDirURL ?? makeWrapperDirURL(),
@@ -1716,7 +1828,9 @@ struct SolstoneInstallerTests {
             solOwnershipResolver: solOwnershipResolver,
             connectionTester: connectionTester,
             observerRegistrar: observerRegistrar,
-            fileExists: fileExists
+            fileExists: fileExists,
+            clock: clock,
+            sleep: sleep
         )
     }
 
@@ -1737,13 +1851,15 @@ struct SolstoneInstallerTests {
         terminate: @escaping @Sendable (pid_t, Int32) -> Int32 = { _, _ in 0 },
         pidWaitTimeout: Duration = .seconds(1),
         pidWaitPollInterval: Duration = .milliseconds(1),
-        orphanGracePeriod: Duration = .milliseconds(1)
+        orphanGracePeriod: Duration = .milliseconds(1),
+        clock: any MonotonicClock = SystemMonotonicClock(),
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in }
     ) -> SolstoneInstaller {
         SolstoneInstaller(
             uvBinaryURL: uvURL,
             bundledPythonURL: pythonURL,
-            wheelhouseURL: wheelhouseURL,
-            runtimeRootURL: runtimeRootURL,
+            wheelhouseURL: wheelhouseURL ?? makeDefaultWheelhouseURL(),
+            runtimeRootURL: runtimeRootURL ?? makeDefaultRuntimeRootURL(),
             subprocessRunner: runner,
             failureRecordStore: failureRecordStore,
             wrapperDirURL: wrapperDirURL ?? makeWrapperDirURL(),
@@ -1756,7 +1872,9 @@ struct SolstoneInstallerTests {
             terminate: terminate,
             pidWaitTimeout: pidWaitTimeout,
             pidWaitPollInterval: pidWaitPollInterval,
-            orphanGracePeriod: orphanGracePeriod
+            orphanGracePeriod: orphanGracePeriod,
+            clock: clock,
+            sleep: sleep
         )
     }
 
@@ -1779,7 +1897,6 @@ struct SolstoneInstallerTests {
     ) {
         runner.enqueue("config", .success(stdout: Data("path: \(resolvedJournal)\n".utf8)))
         runner.enqueue("tool", .success())
-        runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
         runner.enqueue("service", .success(stdout: Data("Service was not installed\n".utf8)))
         runner.enqueue("ps", .success(stdout: Data(psOutput.utf8)))
         runner.enqueue("lsof", .success(exitCode: 1))
@@ -1794,6 +1911,22 @@ struct SolstoneInstallerTests {
     private func makeWrapperDirURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("solstone-wrapper-dir-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private func makeDefaultRuntimeRootURL() -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("solstone-runtime-root-\(UUID().uuidString)", isDirectory: true)
+        try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func makeDefaultWheelhouseURL() -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("solstone-wheelhouse-\(UUID().uuidString)", isDirectory: true)
+        try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let wheel = url.appendingPathComponent("solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl")
+        try! Data("wheel\n".utf8).write(to: wheel)
+        return url
     }
 
     private func cleanupMessage(step: CleanupStep, why: String) -> String {
@@ -2011,6 +2144,62 @@ private func journalPath(siblingOf solPath: String) -> String {
 
 private func defaultTestFileExists(_ path: String) -> Bool {
     path.hasSuffix("/journal")
+}
+
+private final class RecordingRetrySleeps: @unchecked Sendable {
+    private let lock = NSLock()
+    private var durations: [Duration] = []
+
+    var values: [Duration] {
+        lock.withLock { durations }
+    }
+
+    func record(_ duration: Duration) {
+        lock.withLock {
+            durations.append(duration)
+        }
+    }
+}
+
+private final class AdvancingRetryClock: MonotonicClock, @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: Duration = .zero
+
+    func now() -> Duration {
+        lock.withLock { current }
+    }
+
+    func advance(by duration: Duration) {
+        lock.withLock {
+            current += duration
+        }
+    }
+
+    func sleep(for duration: Duration) async {
+        advance(by: duration)
+    }
+}
+
+private final class CountingRetryableObserverRegistrar: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var invocationCount: Int {
+        lock.withLock { count }
+    }
+
+    func register(_ descriptor: ObserverRegistrationDescriptor) async -> Result<String, ObserverRegistrationFailure> {
+        let attempt = lock.withLock {
+            count += 1
+            return count
+        }
+        return .failure(ObserverRegistrationFailure(
+            category: .network,
+            message: "transient \(attempt)",
+            logExcerpt: "attempt \(attempt)",
+            retryableConnection: true
+        ))
+    }
 }
 
 private final class LockedSignalRecorder: @unchecked Sendable {

@@ -549,7 +549,7 @@ struct BundledServiceCard: View {
     @ViewBuilder
     private func rowsContent(showModelsWhenActive: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach([InstallerRow.checkingSystem, .cleaningUp, .installSolstone, .solSetup, .registering], id: \.rawValue) { row in
+            ForEach([InstallerRow.checkingSystem, .cleaningUp, .installSolstone, .solSetup, .verifyingIntegrity, .registering], id: \.rawValue) { row in
                 rowView(row)
             }
 
@@ -564,7 +564,12 @@ struct BundledServiceCard: View {
     }
 
     private func rowView(_ row: InstallerRow) -> some View {
-        let status = rowStatus(for: row, main: installer.main, modelsProgress: installer.modelsProgress)
+        let status = rowStatus(
+            for: row,
+            main: installer.main,
+            modelsProgress: installer.modelsProgress,
+            integrityWarningMessage: installer.integrityWarningMessage
+        )
         let progress = currentSubprocessProgress(for: row, main: installer.main, modelsProgress: installer.modelsProgress)
         return InstallerProgressRowView(
             row: row,
@@ -730,6 +735,8 @@ struct BundledServiceCard: View {
             return "installing solstone"
         case .solSetup:
             return "setting up your journal"
+        case .verifyingIntegrity:
+            return UICopy.INSTALLER_VERIFY_INTEGRITY_LABEL
         case .registering:
             return "registering this observer"
         case .models:

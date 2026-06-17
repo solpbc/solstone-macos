@@ -102,8 +102,8 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
 
         recordedInvocations.append(SubprocessInvocation(executable: executable, arguments: arguments, environment: environment, timeout: timeout))
         if arguments == ["--version"],
-           let toolDir = environment?["UV_TOOL_DIR"],
-           executable.path.hasPrefix(toolDir + "/") {
+           environment?["UV_TOOL_DIR"] != nil,
+           ["journal", "sol"].contains(executable.lastPathComponent) {
             return .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8))
         }
         let key = responseKey(for: executable, arguments: arguments)

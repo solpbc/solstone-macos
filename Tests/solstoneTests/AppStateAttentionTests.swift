@@ -314,7 +314,7 @@ struct AppStateAttentionTests {
 
     @Test func serviceIsDoneMatchesTruthfulDoneMatrixAcrossServiceStateSurface() {
         let cases = serviceAttentionCases()
-        #expect(cases.count == 113)
+        #expect(cases.count == 125)
 
         for testCase in cases {
             let state = makeState(config: AppConfig(serviceMode: testCase.serviceMode))
@@ -463,6 +463,7 @@ struct AppStateAttentionTests {
             ("cleaningUp", .cleaningUp(progress)),
             ("installingSolstone", .installingSolstone(progress)),
             ("runningSolSetup", .runningSolSetup(progress)),
+            ("verifyingIntegrity", .verifyingIntegrity(progress)),
             ("registering", .registering(progress)),
             ("done", .done),
             ("failed", .failed(.installSolstone(message: "failed")))
@@ -538,6 +539,7 @@ struct AppStateAttentionTests {
                  .cleaningUp,
                  .installingSolstone,
                  .runningSolSetup,
+                 .verifyingIntegrity,
                  .registering,
                  .done,
                  .failed:
