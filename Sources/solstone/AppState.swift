@@ -568,6 +568,7 @@ public final class AppState {
         let uploadClient = UploadClient()
         let solChatTarget = AppStateBridgeTarget()
         let journalStatusTarget = AppStateBridgeTarget()
+        let heartbeatTarget = AppStateBridgeTarget()
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager
@@ -590,8 +591,8 @@ public final class AppState {
         self.journalReadinessGate = JournalReadinessGate()
         self.recoveryCoordinator = .shared
         self.heartbeatService = HeartbeatService(
-            isPaused: { [pauseManager] in
-                pauseManager.isPaused
+            isPaused: { [pauseManager, heartbeatTarget] in
+                pauseManager.isPaused || (heartbeatTarget.state?.isPaused ?? false)
             },
             postHeartbeat: { [uploadClient] url, key, paused in
                 try await uploadClient.postObserverStatus(
@@ -725,6 +726,7 @@ public final class AppState {
         installer.attach(appState: self)
         solChatTarget.state = self
         journalStatusTarget.state = self
+        heartbeatTarget.state = self
         AppState.shared = self
     }
 
@@ -808,6 +810,7 @@ public final class AppState {
         let pauseManager = PauseManager()
         let storageManager = StorageManager()
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
+        let heartbeatTarget = AppStateBridgeTarget()
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager
@@ -828,7 +831,9 @@ public final class AppState {
         self.journalReadinessGate = JournalReadinessGate()
         self.recoveryCoordinator = .shared
         self.heartbeatService = HeartbeatService(
-            isPaused: { false },
+            isPaused: { [pauseManager, heartbeatTarget] in
+                pauseManager.isPaused || (heartbeatTarget.state?.isPaused ?? false)
+            },
             postHeartbeat: { _, _, _ in }
         )
         self.solChatBridge = SolChatBridge(
@@ -847,6 +852,7 @@ public final class AppState {
         captureManager = CaptureManager(storageManager: storageManager)
         uploadCoordinator = UploadCoordinator(forSnapshot: storageManager, config: config)
         visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
+        heartbeatTarget.state = self
 
         // No callback wiring, no pause restore, no segment recovery,
         // no startRecording, no upload sync, no AppState.shared assignment.

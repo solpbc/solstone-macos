@@ -159,4 +159,19 @@ struct HeartbeatServiceTests {
         #expect(calls.contains { $0.paused })
         #expect(calls.contains { !$0.paused })
     }
+
+    @Test @MainActor func appStateHeartbeatProviderIncludesLifecyclePausedState() async {
+        let appState = AppState.forSnapshot()
+
+        #expect(await appState.heartbeatService.pausedForTesting() == false)
+
+        appState.isPaused = true
+        #expect(await appState.heartbeatService.pausedForTesting() == true)
+
+        appState.isPaused = false
+        appState.pauseManager.pause(for: .indefinite)
+        #expect(await appState.heartbeatService.pausedForTesting() == true)
+
+        appState.pauseManager.resume()
+    }
 }

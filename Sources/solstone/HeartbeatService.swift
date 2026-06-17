@@ -84,6 +84,10 @@ public actor HeartbeatService {
         }
     }
 
+    internal func pausedForTesting() async -> Bool {
+        await isPaused()
+    }
+
     private func clearAuthFailureState() {
         lastAuthStatus = nil
     }
