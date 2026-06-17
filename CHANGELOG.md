@@ -5,6 +5,26 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.16] - 2026-06-17
+
+### Changed
+- updated the bundled solstone journal to 0.6.5 →
+- iphone continuity mics (wired and wireless) and aggregate audio devices are
+  no longer observed by default. fewer microphones are on out of the box; any
+  of them can still be turned back on in Settings.
+
+### Fixed
+- solstone should no longer crash when you unplug or replug a display, or when
+  a monitor sleeps and wakes. some Macs hit this on a display change, and this
+  update addresses it.
+- launching with an iphone continuity mic connected no longer hangs solstone on
+  a spinner at startup.
+- the journal settings card no longer gets stuck showing an upgrade in progress
+  after a routine update finishes; it now reflects the journal's real running
+  state.
+- old bundled journal versions are now cleaned up after an update, instead of
+  leaving hundreds of megabytes behind on disk.
+
 ## [1.3.15] - 2026-06-15
 
 ### Changed
