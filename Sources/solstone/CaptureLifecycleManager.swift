@@ -15,23 +15,77 @@ protocol CaptureLifecycleDelegate: AnyObject {
 }
 
 @MainActor
+internal protocol RecoveryTimerToken: AnyObject {
+    func invalidate()
+}
+
+internal typealias RecoveryScheduler = @MainActor (
+    _ delay: TimeInterval,
+    _ fire: @escaping @MainActor @Sendable () async -> Void
+) -> any RecoveryTimerToken
+
+@MainActor
+private final class LiveRecoveryTimerToken: RecoveryTimerToken {
+    private let timer: Timer
+
+    init(_ timer: Timer) {
+        self.timer = timer
+    }
+
+    func invalidate() {
+        timer.invalidate()
+    }
+}
+
+@MainActor
 final class CaptureLifecycleManager {
     weak var delegate: (any CaptureLifecycleDelegate)?
 
-    nonisolated(unsafe) private var retryTimer: Timer?
-    private let retryDelays: [TimeInterval] = [5, 30, 60]
+    private var recoveryTimer: (any RecoveryTimerToken)?
+    private static let retryDelays: [TimeInterval] = [5, 30, 60]
+    private static let fallbackRecoveryDelay: TimeInterval = 300
     private let maxRetryCount = 20
     private var retryCount: Int = 0
     private var isRecovering: Bool = false
     private(set) var suspendedForRecovery: Bool = false
     private var unlockResumeTask: Task<Void, Never>?
+    private let recoveryScheduler: RecoveryScheduler
+    private let isScreenLockedProvider: @MainActor () -> Bool
 
     nonisolated(unsafe) private var willSleepObserver: NSObjectProtocol?
     nonisolated(unsafe) private var didWakeObserver: NSObjectProtocol?
     nonisolated(unsafe) private var screenLockedObserver: NSObjectProtocol?
     nonisolated(unsafe) private var screenUnlockedObserver: NSObjectProtocol?
 
-    init() {}
+    internal init(
+        recoveryScheduler: @escaping RecoveryScheduler = CaptureLifecycleManager.liveRecoveryScheduler,
+        isScreenLocked: @escaping @MainActor () -> Bool = CaptureLifecycleManager.defaultIsScreenLocked
+    ) {
+        self.recoveryScheduler = recoveryScheduler
+        self.isScreenLockedProvider = isScreenLocked
+    }
+
+    private static func liveRecoveryScheduler(
+        delay: TimeInterval,
+        fire: @escaping @MainActor @Sendable () async -> Void
+    ) -> any RecoveryTimerToken {
+        let timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { _ in
+            Task { @MainActor in
+                await fire()
+            }
+        }
+        timer.tolerance = 5.0
+        return LiveRecoveryTimerToken(timer)
+    }
+
+    internal static func recoveryDelay(forRetryCount retryCount: Int) -> TimeInterval {
+        guard retryCount >= 0 else { return retryDelays[0] }
+        return retryCount < retryDelays.count ? retryDelays[retryCount] : fallbackRecoveryDelay
+    }
+
+    internal var retryCountForTesting: Int {
+        retryCount
+    }
 
     func configure(delegate: any CaptureLifecycleDelegate) {
         guard willSleepObserver == nil else { return }
@@ -92,8 +146,10 @@ final class CaptureLifecycleManager {
             DistributedNotificationCenter.default().removeObserver(observer)
         }
 
-        retryTimer?.invalidate()
-        unlockResumeTask?.cancel()
+        MainActor.assumeIsolated {
+            recoveryTimer?.invalidate()
+            unlockResumeTask?.cancel()
+        }
     }
 
     func reset(stopRecovery: Bool) {
@@ -111,6 +167,17 @@ final class CaptureLifecycleManager {
         } else {
             startRecoveryTimer()
         }
+    }
+
+    internal func noteDisplayChange() async {
+        guard delegate?.lifecycleCurrentState.isError == true else { return }
+        guard recoveryTimer != nil || retryCount > 0 || isRecovering else { return }
+
+        recoveryTimer?.invalidate()
+        recoveryTimer = nil
+        retryCount = 0
+
+        await attemptRecovery()
     }
 
     private func handleWillSleep() async {
@@ -239,12 +306,16 @@ final class CaptureLifecycleManager {
         }
     }
 
-    private func isScreenLocked() -> Bool {
+    private static func defaultIsScreenLocked() -> Bool {
         guard let dict = CGSessionCopyCurrentDictionary() as? [String: Any],
               let locked = dict["CGSSessionScreenIsLocked"] as? Bool else {
             return false
         }
         return locked
+    }
+
+    private func isScreenLocked() -> Bool {
+        isScreenLockedProvider()
     }
 
     private func waitForAudioDevices(timeout: TimeInterval) async {
@@ -266,32 +337,30 @@ final class CaptureLifecycleManager {
     }
 
     private func startRecoveryTimer() {
-        retryTimer?.invalidate()
+        recoveryTimer?.invalidate()
+        recoveryTimer = nil
 
         guard retryCount < maxRetryCount else {
             Logger.capture.error("[Recovery] Giving up after \(self.maxRetryCount, privacy: .public) failed attempts")
             return
         }
 
-        let delay = retryCount < retryDelays.count ? retryDelays[retryCount] : 300.0
+        let delay = Self.recoveryDelay(forRetryCount: retryCount)
         Logger.capture.info("[Recovery] Scheduling attempt \(self.retryCount + 1, privacy: .public)/\(self.maxRetryCount, privacy: .public) in \(Int(delay), privacy: .public)s")
 
-        retryTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                await self?.attemptRecovery()
-            }
+        recoveryTimer = recoveryScheduler(delay) { [weak self] in
+            await self?.attemptRecovery()
         }
-        retryTimer?.tolerance = 5.0
     }
 
     private func stopRecoveryTimer() {
-        retryTimer?.invalidate()
-        retryTimer = nil
+        recoveryTimer?.invalidate()
+        recoveryTimer = nil
         retryCount = 0
         isRecovering = false
     }
 
-    private func attemptRecovery() async {
+    internal func attemptRecovery() async {
         guard delegate?.lifecycleCurrentState.isError == true else {
             stopRecoveryTimer()
             return
@@ -326,6 +395,8 @@ final class CaptureLifecycleManager {
                 Logger.capture.info("[Recovery] Permission error detected, stopping auto-recovery")
                 stopRecoveryTimer()
             } else if retryCount >= maxRetryCount {
+                recoveryTimer?.invalidate()
+                recoveryTimer = nil
                 Logger.capture.error("[Recovery] Giving up after \(self.maxRetryCount, privacy: .public) failed attempts")
             } else {
                 startRecoveryTimer()

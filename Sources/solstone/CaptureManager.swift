@@ -545,6 +545,34 @@ public final class CaptureManager {
         pendingRotationRetryTask = nil
     }
 
+    private func finalizeActiveSegmentForTransition(stopAudio: Bool) async -> URL? {
+        segmentTimer?.invalidate()
+        segmentTimer = nil
+        stopHeartbeat()
+        cancelPendingRotationRetry()
+
+        var result: SegmentCaptureResult?
+        if let segment = currentSegment {
+            result = await segment.finishCapture()
+            currentSegment = nil
+            if let result {
+                await enqueueRemix(result)
+            }
+        }
+
+        if stopAudio {
+            micCaptureManager.stopAll()
+            await systemAudioCaptureManager.stop()
+        }
+
+        return result?.segmentDirectory
+    }
+
+    internal func enterNoDisplayRecovery() async {
+        _ = await finalizeActiveSegmentForTransition(stopAudio: true)
+        transitionToError("all displays disconnected", error: CaptureError.noDisplaysAvailable, trigger: "no_displays")
+    }
+
     private func transitionToError(_ message: String, error: Error, trigger: String) {
         let oldState = state.label
         state = .error(message)
@@ -692,7 +720,10 @@ public final class CaptureManager {
     }
 
     private func handleDisplayChange() async {
-        guard state.isRecording else { return }
+        guard state.isRecording else {
+            await lifecycleManager.noteDisplayChange()
+            return
+        }
 
         Logger.capture.info("Display configuration changed")
 
@@ -708,7 +739,7 @@ public final class CaptureManager {
         } catch CaptureError.noDisplaysAvailable {
             let error = CaptureError.noDisplaysAvailable
             Logger.capture.error("No displays available after display change: \(error.localizedDescription, privacy: .public)")
-            await stopRecording()
+            await enterNoDisplayRecovery()
         } catch {
             Logger.capture.warning("Failed to get updated display list: \(error, privacy: .public)")
         }
@@ -766,6 +797,18 @@ public final class CaptureManager {
         rotationTimeoutSeconds
     }
 
+    internal var hasSegmentTimerForTesting: Bool {
+        segmentTimer != nil
+    }
+
+    internal var hasHeartbeatTimerForTesting: Bool {
+        heartbeatTimer != nil
+    }
+
+    internal var hasPendingRotationRetryForTesting: Bool {
+        pendingRotationRetryTask != nil
+    }
+
     internal func nowForTesting() -> Date {
         now()
     }
@@ -800,31 +843,14 @@ extension CaptureManager: CaptureLifecycleDelegate {
     var lifecycleCurrentState: CaptureManager.State { state }
 
     func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL? {
-        segmentTimer?.invalidate()
-        segmentTimer = nil
-        stopHeartbeat()
-        cancelPendingRotationRetry()
-
-        var result: SegmentCaptureResult?
-        if let segment = currentSegment {
-            result = await segment.finishCapture()
-            currentSegment = nil
-            if let result {
-                await enqueueRemix(result)
-            }
-        }
-
-        if stopAudio {
-            micCaptureManager.stopAll()
-            await systemAudioCaptureManager.stop()
-        }
+        let completedURL = await finalizeActiveSegmentForTransition(stopAudio: stopAudio)
 
         let oldState = state.label
         state = .paused
         Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: \(trigger, privacy: .public))")
         onStateChanged?(state)
 
-        return result?.segmentDirectory
+        return completedURL
     }
 
     func lifecycleResumeCapture(trigger: String) async throws {
