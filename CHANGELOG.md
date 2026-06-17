@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - solstone should no longer crash when you unplug or replug a display, or when
   a monitor sleeps and wakes. some Macs hit this on a display change, and this
   update addresses it.
+- observing now recovers on its own after a total display loss. before, if
+  every display disconnected (an external monitor unplugged, or a monitor
+  asleep while your Mac stayed awake), observing stopped and stayed stopped
+  until you reopened solstone, even overnight; it now resumes once a display
+  comes back.
 - launching with an iphone continuity mic connected no longer hangs solstone on
   a spinner at startup.
 - the journal settings card no longer gets stuck showing an upgrade in progress
