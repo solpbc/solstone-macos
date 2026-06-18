@@ -101,6 +101,26 @@ struct WatchdogTests {
         #expect(!shouldAdopt(runningBundleIDs: ["com.other"], target: "app.solstone.observer"))
     }
 
+    @Test func enclosingAppURLFromExecutableInsideBundle() {
+        let start = URL(fileURLWithPath: "/Applications/Foo.app/Contents/MacOS/bin")
+        #expect(enclosingAppURL(from: start)?.path == "/Applications/Foo.app")
+    }
+
+    @Test func enclosingAppURLFromMacOSDir() {
+        let start = URL(fileURLWithPath: "/Applications/Foo.app/Contents/MacOS")
+        #expect(enclosingAppURL(from: start)?.path == "/Applications/Foo.app")
+    }
+
+    @Test func enclosingAppURLFromAppItself() {
+        let start = URL(fileURLWithPath: "/Applications/Foo.app")
+        #expect(enclosingAppURL(from: start)?.path == "/Applications/Foo.app")
+    }
+
+    @Test func enclosingAppURLReturnsNilWithoutAppAncestor() {
+        let start = URL(fileURLWithPath: "/usr/local/bin/tool")
+        #expect(enclosingAppURL(from: start) == nil)
+    }
+
     @Test func transitionPresentToAbsentReportsTermination() {
         let transition = observerPresenceTransition(lastKnownPID: pid, currentObserverPID: nil)
 

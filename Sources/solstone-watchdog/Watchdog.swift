@@ -39,11 +39,8 @@ final class WatchdogCoordinator {
     }
 
     func launch() {
-        let appURL = Bundle.main.bundleURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-
-        guard appURL.pathExtension == "app" else {
+        let start = Bundle.main.executableURL ?? Bundle.main.bundleURL
+        guard let appURL = enclosingAppURL(from: start) else {
             Logger.watchdog.error("could not locate observer app bundle from \(Bundle.main.bundleURL.path, privacy: .public)")
             return
         }
