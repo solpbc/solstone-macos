@@ -5,30 +5,24 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.16] - 2026-06-17
+## [1.3.16] - 2026-06-18
+
+### Added
+- solstone now restarts on its own if it ever stops unexpectedly, so observing keeps going without you having to reopen it. the "start at login" toggle also governs this, so turning it on covers both launching at login and restarting after an unexpected stop.
 
 ### Changed
-- updated the bundled solstone journal to 0.6.5 →
-- iphone continuity mics (wired and wireless) and aggregate audio devices are
-  no longer observed by default. fewer microphones are on out of the box; any
-  of them can still be turned back on in Settings.
+- updated the bundled solstone journal to 0.6.7 →
+- some iphone continuity microphones (wired and wireless) and aggregate audio devices are no longer observed by default, so fewer microphones are on out of the box. you can turn any of them back on in Settings whenever you like.
+- first-time setup now shows a "verifying macOS security integrity" step and is more reliable. it waits for your journal to be fully ready before connecting, and retries a slow first connection instead of failing.
 
 ### Fixed
-- solstone should no longer crash when you unplug or replug a display, or when
-  a monitor sleeps and wakes. some Macs hit this on a display change, and this
-  update addresses it.
-- observing now recovers on its own after a total display loss. before, if
-  every display disconnected (an external monitor unplugged, or a monitor
-  asleep while your Mac stayed awake), observing stopped and stayed stopped
-  until you reopened solstone, even overnight; it now resumes once a display
-  comes back.
-- launching with an iphone continuity mic connected no longer hangs solstone on
-  a spinner at startup.
-- the journal settings card no longer gets stuck showing an upgrade in progress
-  after a routine update finishes; it now reflects the journal's real running
-  state.
-- old bundled journal versions are now cleaned up after an update, instead of
-  leaving hundreds of megabytes behind on disk.
+- solstone no longer hangs on startup when an iphone continuity microphone is connected.
+- solstone no longer quits when your Mac goes to sleep or locks while audio is being taken in. if it ever happened, just that moment's audio is set aside and observing keeps running.
+- solstone no longer quits when you unplug or replug a display, or when a monitor sleeps or wakes. some Macs ran into this on a display change; this resolves it.
+- if every display disconnects, or a monitor sleeps while your Mac stays awake, observing now resumes on its own once a display comes back. before, it could stay stopped until you reopened solstone, even overnight.
+- after your Mac sleeps and wakes or locks and unlocks, observing now reliably resumes. some sessions could get stuck paused and stay that way until a manual restart; this resolves it.
+- the journal card in Settings no longer stays on "upgrade in progress" after a routine update finishes. it now reflects your journal's real running state.
+- old bundled journal versions are now cleaned up after an update, instead of leaving hundreds of megabytes behind on disk.
 
 ## [1.3.15] - 2026-06-15
 
