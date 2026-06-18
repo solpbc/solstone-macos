@@ -9,40 +9,31 @@ import SolstoneCore
 @MainActor
 final class WatchdogCoordinator {
     private var recentRelaunches: [Date] = []
-    private var terminationObserver: NSObjectProtocol?
+    private var pollTimer: Timer?
+    private var lastKnownObserverPID: Int32?
     private let targetBundleID = SolMacIPCConstants.appBundleIdentifier
 
     func start() {
         let runningApplications = NSWorkspace.shared.runningApplications
         let runningBundleIDs = Set(runningApplications.compactMap(\.bundleIdentifier))
+        let currentObserverPID = runningApplications.first { $0.bundleIdentifier == targetBundleID }?.processIdentifier
 
         if shouldAdopt(runningBundleIDs: runningBundleIDs, target: targetBundleID) {
-            let pid = runningApplications.first { $0.bundleIdentifier == targetBundleID }?.processIdentifier
-            if let pid {
-                Logger.watchdog.info("adopting running observer (pid \(pid, privacy: .public))")
+            lastKnownObserverPID = currentObserverPID
+            if let currentObserverPID {
+                Logger.watchdog.info("adopting running observer (pid \(currentObserverPID, privacy: .public))")
             } else {
                 Logger.watchdog.info("adopting running observer")
             }
         } else {
+            lastKnownObserverPID = nil
             Logger.watchdog.info("observer not running; launching")
             launch()
         }
 
-        terminationObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didTerminateApplicationNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
-            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            let bundleIdentifier = app?.bundleIdentifier
-            let processIdentifier = app.map { Int32($0.processIdentifier) }
-
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let bundleIdentifier, let processIdentifier else {
-                    return
-                }
-
-                self?.handleTermination(bundleIdentifier: bundleIdentifier, terminatedPID: processIdentifier)
+                self?.pollObserverPresence()
             }
         }
     }
@@ -107,6 +98,17 @@ final class WatchdogCoordinator {
         }
     }
 
+    private func pollObserverPresence() {
+        let currentObserverPID = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == targetBundleID }?.processIdentifier
+        let transition = observerPresenceTransition(lastKnownPID: lastKnownObserverPID, currentObserverPID: currentObserverPID)
+
+        lastKnownObserverPID = transition.newLastKnownPID
+
+        if let terminatedPID = transition.terminatedPID {
+            handleTermination(bundleIdentifier: targetBundleID, terminatedPID: terminatedPID)
+        }
+    }
+
     private func pruneRelaunches(now: Date) {
         recentRelaunches = recentRelaunches.filter { relaunchDate in
             let age = now.timeIntervalSince(relaunchDate)
@@ -119,12 +121,10 @@ final class WatchdogCoordinator {
 struct SolstoneWatchdog {
     @MainActor
     static func main() {
-        let app = NSApplication.shared
-        app.setActivationPolicy(.prohibited)
         let coordinator = WatchdogCoordinator()
         coordinator.start()
         withExtendedLifetime(coordinator) {
-            app.run()
+            RunLoop.main.run()
         }
     }
 }

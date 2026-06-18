@@ -101,6 +101,50 @@ struct WatchdogTests {
         #expect(!shouldAdopt(runningBundleIDs: ["com.other"], target: "app.solstone.observer"))
     }
 
+    @Test func transitionPresentToAbsentReportsTermination() {
+        let transition = observerPresenceTransition(lastKnownPID: pid, currentObserverPID: nil)
+
+        #expect(transition.newLastKnownPID == nil)
+        #expect(transition.terminatedPID == pid)
+    }
+
+    @Test func transitionAbsentToAbsentReportsNothing() {
+        let transition = observerPresenceTransition(lastKnownPID: nil, currentObserverPID: nil)
+
+        #expect(transition.newLastKnownPID == nil)
+        #expect(transition.terminatedPID == nil)
+    }
+
+    @Test func transitionAbsentToPresentTracksWithoutEvent() {
+        let transition = observerPresenceTransition(lastKnownPID: nil, currentObserverPID: pid)
+
+        #expect(transition.newLastKnownPID == pid)
+        #expect(transition.terminatedPID == nil)
+    }
+
+    @Test func transitionPresentToPresentTracksWithoutEvent() {
+        let samePID = observerPresenceTransition(lastKnownPID: pid, currentObserverPID: pid)
+        let changedPID = observerPresenceTransition(lastKnownPID: pid, currentObserverPID: pid + 1)
+
+        #expect(samePID.newLastKnownPID == pid)
+        #expect(samePID.terminatedPID == nil)
+        #expect(changedPID.newLastKnownPID == pid + 1)
+        #expect(changedPID.terminatedPID == nil)
+    }
+
+    @Test func transitionDoesNotRefireWhileAbsent() {
+        var lastKnownPID: Int32? = pid
+
+        let first = observerPresenceTransition(lastKnownPID: lastKnownPID, currentObserverPID: nil)
+        #expect(first.terminatedPID == pid)
+
+        lastKnownPID = first.newLastKnownPID
+        let second = observerPresenceTransition(lastKnownPID: lastKnownPID, currentObserverPID: nil)
+
+        #expect(second.newLastKnownPID == nil)
+        #expect(second.terminatedPID == nil)
+    }
+
     @Test func readAndConsumeRoundTripsAndDeletesMarker() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
