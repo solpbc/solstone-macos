@@ -825,7 +825,7 @@ struct AppOwnedJournalTests {
         #expect(await runner.currentRuntimeKey() == nil)
     }
 
-    @Test func terminationHandshakeRepliesWhenChildIsWedged() async throws {
+    @Test func terminationPreparesJournalBeforeSchedulingTerminate() async throws {
         let runtime = try makeSleepingRuntime()
         let runner = SupervisedJournalRunner(
             clock: FakeMonotonicClock(),
@@ -834,18 +834,30 @@ struct AppOwnedJournalTests {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         state.supervisedJournalRunner = runner
         try await runner.start(runtime: runtime, journalRoot: try makeTemporaryDirectory(), port: 5015)
-        let replied = LockedValue<Bool>()
-
-        await runApplicationTerminationHandshake(
-            stopSupervisedJournal: {
-                await state.stopSupervisedJournalForTermination()
+        let events = LockedArray<String>([])
+        let coordinator = AppQuitCoordinator(
+            writeMarker: {
+                events.append("marker")
             },
-            reply: {
-                replied.set(true)
+            stopObservation: {
+                events.append("stopObservation")
+            },
+            stopJournal: {
+                events.append("stopJournal:start")
+                await state.stopSupervisedJournalForTermination()
+                events.append("stopJournal:end")
+            },
+            scheduleTerminate: {
+                events.append("terminate")
             }
         )
 
-        #expect(replied.current == true)
+        coordinator.requestExit()
+
+        try await waitUntil(timeout: .seconds(10)) {
+            events.all.contains("terminate")
+        }
+        #expect(events.all == ["marker", "stopObservation", "stopJournal:start", "stopJournal:end", "terminate"])
     }
 }
 

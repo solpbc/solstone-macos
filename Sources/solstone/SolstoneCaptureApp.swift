@@ -31,7 +31,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notificationObservers: [Any] = []
     private var ipcService: SolMacIPCService?
     private var solChatNotificationDelegate: SolChatNotificationDelegate?
-    private var terminationTask: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if AppTranslocationDetector.isTranslocated() {
@@ -123,26 +122,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard terminationTask == nil else { return .terminateLater }
-        terminationTask = Task { @MainActor in
-            await runApplicationTerminationHandshake(
-                stopSupervisedJournal: {
-                    guard let state = AppState.shared else {
-                        Logger.general.error("AppState.shared nil in applicationShouldTerminate")
-                        return
-                    }
-                    await state.stopSupervisedJournalForTermination()
-                },
-                reply: {
-                    sender.reply(toApplicationShouldTerminate: true)
-                }
-            )
+        guard let coordinator = AppState.shared?.appQuitCoordinator else {
+            return .terminateNow
         }
-        return .terminateLater
+        if coordinator.isPrepared { return .terminateNow }
+        coordinator.requestExit()
+        return .terminateCancel
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        ExpectedExitMarker.markExpectedExit(reason: "app-will-terminate")
         if let state = AppState.shared {
             state.audioDeviceMonitor.stopListening()
             state.installer.cancel()
@@ -162,7 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         defer { ProcessInfo.processInfo.endActivity(activity) }
 
-        // Recording is already stopped by MenuContent's quit handler.
+        // Observation shutdown is already handled by AppQuitCoordinator.
         // Just wait for any pending remix jobs using a semaphore.
         let semaphore = DispatchSemaphore(value: 0)
 
@@ -180,17 +168,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Logger.general.info("Termination: shutdown complete")
         }
     }
-}
-
-@MainActor
-internal func runApplicationTerminationHandshake(
-    stopSupervisedJournal: @MainActor () async -> Void,
-    reply: @MainActor () -> Void
-) async {
-    defer {
-        reply()
-    }
-    await stopSupervisedJournal()
 }
 
 @main

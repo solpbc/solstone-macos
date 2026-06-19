@@ -83,14 +83,7 @@ struct MenuContent: View {
         Divider()
 
         Button("quit solstone") {
-            Task { @MainActor in
-                await performMenuQuit(
-                    isRecording: appState.isRecording,
-                    stopRecording: { await appState.stopRecording() },
-                    escapeActorJob: { work in DispatchQueue.main.async { work() } },
-                    terminate: { NSApp.terminate(nil) }
-                )
-            }
+            appState.appQuitCoordinator.requestExit()
         }
         .accessibilityIdentifier(AXID.Menubar.quitButton)
     }
@@ -327,28 +320,6 @@ func pausedHeaderText(timeRemaining: String?) -> String {
                    .replacingOccurrences(of: " secs", with: " sec")
                    .replacingOccurrences(of: " hrs", with: " hr")
     return "paused, \(compact) left"
-}
-
-/// Drives the status-bar quit. `escapeActorJob` MUST schedule `terminate` to run
-/// OUTSIDE the current Swift-concurrency job (a plain main-queue callout). Calling
-/// `terminate()` inline here would deadlock: `NSApp.terminate` parks AppKit in a
-/// nested event loop awaiting the `.terminateLater` handshake reply, but that reply
-/// is a second @MainActor job that can't start while this non-reentrant job holds
-/// the MainActor. Escaping the job first lets `terminate()` run with the MainActor
-/// free, identical in shape to the proven AppleEvent/Sparkle/logout quit paths.
-@MainActor
-func performMenuQuit(
-    isRecording: Bool,
-    stopRecording: @MainActor () async -> Void,
-    escapeActorJob: (@escaping @MainActor () -> Void) -> Void,
-    terminate: @escaping @MainActor () -> Void
-) async {
-    if isRecording {
-        await stopRecording()
-    }
-    escapeActorJob {
-        terminate()
-    }
 }
 
 enum SettingsAttentionReason: Equatable {

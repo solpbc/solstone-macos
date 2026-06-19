@@ -58,6 +58,7 @@ public final class AppState {
     public let audioDeviceMonitor: AudioDeviceMonitor
     public private(set) var captureManager: CaptureManager!
     public private(set) var uploadCoordinator: UploadCoordinator!
+    internal private(set) var appQuitCoordinator: AppQuitCoordinator!
     public let installer: SolstoneInstaller
     public let heartbeatService: HeartbeatService
     public let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
@@ -302,6 +303,28 @@ public final class AppState {
 
     private var journalLifecycleBusy: Bool {
         journalRestartTask != nil || journalStopTask != nil || journalStartTask != nil || inFlightBundledStart != nil
+    }
+
+    private func makeAppQuitCoordinator(
+        scheduleTerminate: @escaping @MainActor () -> Void
+    ) -> AppQuitCoordinator {
+        AppQuitCoordinator(
+            writeMarker: {
+                ExpectedExitMarker.markExpectedExit(reason: "ordinary-quit")
+            },
+            stopObservation: { [weak self] in
+                guard let self else { return }
+                if self.isRecording {
+                    await self.stopRecording()
+                }
+            },
+            stopJournal: { [weak self] in
+                await self?.stopSupervisedJournalForTermination()
+            },
+            // This scheduler must escape the current MainActor job before
+            // entering AppKit termination.
+            scheduleTerminate: scheduleTerminate
+        )
     }
 
     // MARK: - Login Item
@@ -642,6 +665,13 @@ public final class AppState {
         self.silenceMusicHolder = silenceMusicHolder
 
         uploadCoordinator = UploadCoordinator(storageManager: storageManager, config: config)
+        appQuitCoordinator = makeAppQuitCoordinator(
+            scheduleTerminate: {
+                DispatchQueue.main.async {
+                    NSApp.terminate(nil)
+                }
+            }
+        )
         uploadCoordinator.bundledAvailabilityProvider = { [weak self] in
             self?.bundledJournalStatusAvailable ?? false
         }
@@ -851,6 +881,7 @@ public final class AppState {
 
         captureManager = CaptureManager(storageManager: storageManager)
         uploadCoordinator = UploadCoordinator(forSnapshot: storageManager, config: config)
+        appQuitCoordinator = makeAppQuitCoordinator(scheduleTerminate: {})
         visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
         heartbeatTarget.state = self
 
