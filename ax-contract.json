@@ -207,6 +207,7 @@
       "settings.help.iconState.offline",
       "settings.help.iconState.paused",
       "settings.help.iconState.recording",
+      "settings.help.version.state",
       "settings.microphones.audioProcessing.silenceMusic",
       "settings.microphones.gain.picker",
       "settings.microphones.gain.state",
@@ -248,6 +249,7 @@
       "settings.service.next.checkStatus",
       "settings.service.prereq.permissions",
       "settings.service.restartRequired.banner",
+      "settings.status.app.version.state",
       "settings.status.debug.keepRejectedAudio",
       "settings.status.debug.oneMinuteSegments",
       "settings.status.health.summary.state",
@@ -358,6 +360,9 @@
       "kind" : "enum",
       "vocabulary" : "MenubarStatusRowState"
     },
+    "settings.help.version.state" : {
+      "kind" : "freeform"
+    },
     "settings.microphones.gain.state" : {
       "kind" : "numeric"
     },
@@ -392,6 +397,9 @@
     "settings.sidebar.tab.{tab}.state" : {
       "kind" : "enum",
       "vocabulary" : "SidebarBadgeState"
+    },
+    "settings.status.app.version.state" : {
+      "kind" : "freeform"
     },
     "settings.status.health.summary.state" : {
       "kind" : "freeform"

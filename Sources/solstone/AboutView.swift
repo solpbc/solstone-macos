@@ -5,9 +5,7 @@ import SwiftUI
 
 /// About window showing app identity, version, and copyright
 struct AboutView: View {
-    private var version: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
-    }
+    private var version: String { AppVersion.short }
 
     private var copyright: String {
         Bundle.main.infoDictionary?["NSHumanReadableCopyright"] as? String ?? ""

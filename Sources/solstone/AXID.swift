@@ -141,6 +141,7 @@ enum AXID {
             static let storageSettings = "settings.status.storage.settings"
             static let debugOneMinuteSegments = "settings.status.debug.oneMinuteSegments"
             static let debugKeepRejectedAudio = "settings.status.debug.keepRejectedAudio"
+            static let appVersionState = "settings.status.app.version.state"
         }
 
         enum Help {
@@ -152,6 +153,7 @@ enum AXID {
             static let iconStateError = "settings.help.iconState.error"
             static let supportSite = "settings.help.support.site"
             static let supportEmail = "settings.help.support.email"
+            static let versionState = "settings.help.version.state"
         }
     }
 

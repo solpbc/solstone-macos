@@ -1491,6 +1491,11 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    Text("app version \(AppVersion.short)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier(AXID.Settings.Status.appVersionState)
+                        .accessibilityValue(AppVersion.short)
                     Button(appState.config.serviceMode == .bundled ? "manage journal →" : "manage connection →") {
                         selectedTab = .service
                     }
@@ -1703,6 +1708,11 @@ struct SettingsView: View {
                         .accessibilityIdentifier(AXID.Settings.Help.supportSite)
                     Link("support@solstone.app", destination: URL(string: "mailto:support@solstone.app?subject=solstone%20(macOS)")!)
                         .accessibilityIdentifier(AXID.Settings.Help.supportEmail)
+                    Text("version \(AppVersion.short)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier(AXID.Settings.Help.versionState)
+                        .accessibilityValue(AppVersion.short)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
