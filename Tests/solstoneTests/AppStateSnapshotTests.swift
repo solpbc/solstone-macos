@@ -12,6 +12,8 @@ struct AppStateSnapshotTests {
         let state = AppState.forSnapshot()
         #expect(state.isRecording == false)
         #expect(state.errorMessage == nil)
+        #expect(state.initialPermissionCheckComplete == false)
+        #expect(state.observationRowState == .starting)
     }
 
     @Test func launchBundledDetectionRunsOnceWhenExplicitlyStarted() async {

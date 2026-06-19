@@ -26,11 +26,15 @@ struct MenubarWireUpTests {
             "AXID.Menubar.pauseIndefinite",
             "AXID.Menubar.pauseMenu",
             "AXID.Menubar.resumeButton",
-            "AXID.Menubar.startObservingButton",
             "value: statusRowAXValue",
             "statusRowState.axToken",
             ".accessibilityValue(rowState.axToken)",
-            "return .paused"
+            "appState.observationRowState",
+            "UICopy.MENUBAR_OBSERVATION_WEDGE_OPEN_SETTINGS",
+            "UICopy.MENUBAR_LOCAL_ONLY_SETUP_JOURNAL",
+            "UICopy.MENUBAR_SYNC_PAUSED",
+            "UICopy.MENUBAR_JOURNAL_WAITING",
+            "UICopy.MENUBAR_OBSERVING_OFFLINE_SAVED_LOCALLY"
         ]
 
         for reference in references {
@@ -48,7 +52,7 @@ struct MenubarWireUpTests {
                     id: AXID.Menubar.statusRowState,
                     value: statusRowAXValue
                 )
-                if hasPauseResumeStartControl {
+                if hasPauseResumeControl {
                     pauseResumeSection
                 }
             }
@@ -63,11 +67,28 @@ struct MenubarWireUpTests {
             "MenubarIconState",
             "iconState.iconName",
             "AXID.Menubar.statusIconState",
-            "iconState.axToken"
+            "iconState.axToken",
+            "appState.observationRowState.iconState"
         ]
 
         for reference in references {
             #expect(wireUpContains(source, reference))
         }
+    }
+
+    @Test func observationSurfacesDoNotUseStoppedLiteral() throws {
+        let paths = [
+            "Sources/solstone/MenuContent.swift",
+            "Sources/solstone/SettingsView.swift",
+            "Sources/solstone/SolstoneCaptureApp.swift"
+        ]
+
+        for path in paths {
+            let source = try readWireUpSource(path)
+            #expect(!source.contains("\"stopped\""))
+        }
+
+        let axTokenSource = try readWireUpSource("Sources/solstone/AXToken.swift")
+        #expect(!axTokenSource.contains("return \"stopped\""))
     }
 }

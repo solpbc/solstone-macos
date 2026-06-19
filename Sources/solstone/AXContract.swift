@@ -28,7 +28,6 @@ enum AXContract {
         AXID.Menubar.pauseOneHour,
         AXID.Menubar.pauseIndefinite,
         AXID.Menubar.resumeButton,
-        AXID.Menubar.startObservingButton,
         AXID.Menubar.openJournalButton,
         AXID.Menubar.settingsButton,
         AXID.Menubar.aboutButton,

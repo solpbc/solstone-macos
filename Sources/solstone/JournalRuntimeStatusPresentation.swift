@@ -42,8 +42,14 @@ extension JournalRuntimeStatus {
 
     var menuRowPresentation: JournalRuntimeMenuRowPresentation? {
         switch self {
-        case .running, .stoppedByUser:
+        case .running:
             return nil
+        case .stoppedByUser:
+            return JournalRuntimeMenuRowPresentation(
+                text: UICopy.MENUBAR_JOURNAL_STOPPED_BY_USER,
+                isEnabled: true,
+                state: .journalStoppedByUser
+            )
         case .setupNeeded:
             return JournalRuntimeMenuRowPresentation(
                 text: UICopy.JOURNAL_SETUP_NEEDED_OPEN_SETTINGS,
@@ -83,7 +89,7 @@ extension JournalRuntimeStatus {
         case .stoppedByUser:
             return JournalRuntimeSettingsPresentation(
                 shortText: UICopy.JOURNAL_STATUS_STOPPED,
-                axValue: "journal_stopped_by_user",
+                axValue: MenubarStatusRowState.journalStoppedByUser.axToken,
                 severity: .neutral,
                 reason: nil
             )

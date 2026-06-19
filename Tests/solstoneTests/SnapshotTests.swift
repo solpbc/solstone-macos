@@ -118,10 +118,21 @@ struct SnapshotTests {
 
     private let menuSize = CGSize(width: 250, height: 350)
 
-    @Test func menuIdle() throws {
+    private func markPermissionsReady(_ state: AppState) {
+        state.initialPermissionCheckComplete = true
+        state.screenRecordingGranted = true
+        state.microphoneGranted = true
+    }
+
+    private func markBundledStatusAvailable(_ state: AppState) {
+        state.installer.main = .done
+        state.installer.probedVersion = .current(version: "0.3.2")
+    }
+
+    @Test func menuStarting() throws {
         let state = AppState.forSnapshot()
         let updateController = makeSnapshotUpdateController()
-        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-idle.png")
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-starting.png")
     }
 
     @Test func menuSolPinged() throws {
@@ -137,15 +148,79 @@ struct SnapshotTests {
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-sol-pinged.png")
     }
 
-    @Test func menuRecording() throws {
-        let state = AppState.forSnapshot()
+    @Test func menuObservingFullExternal() throws {
+        let config = AppConfig(serverURL: "https://solstone.example.com", serverKey: "sk-test-key-1234")
+        let state = AppState.forSnapshot(config: config)
+        markPermissionsReady(state)
+        state.isRecording = true
+        state.uploadCoordinator.status = .synced
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-observing-full-external.png")
+    }
+
+    @Test func menuObservingFullBundled() throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        markPermissionsReady(state)
+        markBundledStatusAvailable(state)
         state.isRecording = true
         let updateController = makeSnapshotUpdateController()
-        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-recording.png")
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-observing-full-bundled.png")
+    }
+
+    @Test func menuObservingHalfOffline() throws {
+        let config = AppConfig(serverURL: "https://solstone.example.com", serverKey: "sk-test-key-1234")
+        let state = AppState.forSnapshot(config: config)
+        markPermissionsReady(state)
+        state.isRecording = true
+        state.uploadCoordinator.status = .notSynced
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-observing-half-offline.png")
+    }
+
+    @Test func menuObservingHalfSyncPaused() throws {
+        let config = AppConfig(
+            serverURL: "https://solstone.example.com",
+            serverKey: "sk-test-key-1234",
+            syncPaused: true
+        )
+        let state = AppState.forSnapshot(config: config)
+        markPermissionsReady(state)
+        state.isRecording = true
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-observing-half-sync-paused.png")
+    }
+
+    @Test func menuObservingHalfLocalOnly() throws {
+        let state = AppState.forSnapshot()
+        markPermissionsReady(state)
+        state.isRecording = true
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-observing-half-local-only.png")
+    }
+
+    @Test func menuObservingHalfBundledUnhealthy() throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        markPermissionsReady(state)
+        markBundledStatusAvailable(state)
+        state.isRecording = true
+        state.journalRuntimeStatus = .setupNeeded
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-observing-half-bundled-unhealthy.png")
+    }
+
+    @Test func menuObservingHalfStoppedByUser() throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        markPermissionsReady(state)
+        markBundledStatusAvailable(state)
+        state.isRecording = true
+        state.journalRuntimeStatus = .stoppedByUser
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-observing-half-stopped-by-user.png")
     }
 
     @Test func menuPaused() throws {
         let state = AppState.forSnapshot()
+        markPermissionsReady(state)
         state.isRecording = true
         state.pauseManager.pause(for: .seconds(125))
         let expectedHeader = pausedHeaderText(timeRemaining: state.pauseManager.formatTimeRemaining())
@@ -157,11 +232,13 @@ struct SnapshotTests {
 
     @Test func menuPausedShort() throws {
         let longState = AppState.forSnapshot()
+        markPermissionsReady(longState)
         longState.isRecording = true
         longState.pauseManager.pause(for: .seconds(125))
         let headerLong = pausedHeaderText(timeRemaining: longState.pauseManager.formatTimeRemaining())
 
         let state = AppState.forSnapshot()
+        markPermissionsReady(state)
         state.isRecording = true
         state.pauseManager.pause(for: .seconds(35))
         let expectedHeader = pausedHeaderText(timeRemaining: state.pauseManager.formatTimeRemaining())
@@ -174,6 +251,7 @@ struct SnapshotTests {
 
     @Test func menuPausedIndefinite() throws {
         let state = AppState.forSnapshot()
+        markPermissionsReady(state)
         state.isRecording = true
         state.pauseManager.pause(for: .indefinite)
         #expect(pausedHeaderText(timeRemaining: state.pauseManager.formatTimeRemaining()) == "paused")
@@ -186,6 +264,22 @@ struct SnapshotTests {
         state.errorMessage = "Screen recording permission denied"
         let updateController = makeSnapshotUpdateController()
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-error.png")
+    }
+
+    @Test func menuErrorPermissions() throws {
+        let state = AppState.forSnapshot()
+        state.initialPermissionCheckComplete = true
+        state.screenRecordingGranted = false
+        state.microphoneGranted = false
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-error-permissions.png")
+    }
+
+    @Test func menuErrorWedge() throws {
+        let state = AppState.forSnapshot()
+        markPermissionsReady(state)
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-error-wedge.png")
     }
 
     private let settingsSize = CGSize(width: 800, height: 560)
@@ -354,7 +448,7 @@ struct SnapshotTests {
         )
     }
 
-    @Test func settingsStatusIdle() throws {
+    @Test func settingsStatusStarting() throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         state.installer.main = .done
         state.installer.probedVersion = .current(version: "0.3.2")
@@ -363,7 +457,7 @@ struct SnapshotTests {
         try render(
             SettingsView(appState: state, updateController: updateController, selectedTab: .status, initialStorageUsedMB: 42),
             size: settingsSize,
-            to: "settings-status-idle.png"
+            to: "settings-status-starting.png"
         )
     }
 
@@ -372,6 +466,7 @@ struct SnapshotTests {
         state.installer.main = .done
         state.installer.probedVersion = .current(version: "0.3.2")
         let updateController = makeSnapshotUpdateController()
+        markPermissionsReady(state)
         state.isRecording = true
         state.uploadCoordinator.status = .syncing(checked: 3, total: 10)
         try render(

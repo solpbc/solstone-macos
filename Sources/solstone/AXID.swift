@@ -19,7 +19,6 @@ enum AXID {
         static let pauseOneHour = "menubar.pause.oneHour"
         static let pauseIndefinite = "menubar.pause.indefinite"
         static let resumeButton = "menubar.pause.resume"
-        static let startObservingButton = "menubar.observing.start"
         static let openJournalButton = "menubar.navigation.openJournal"
         static let settingsButton = "menubar.navigation.settings"
         static let aboutButton = "menubar.navigation.about"

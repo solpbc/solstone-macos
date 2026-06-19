@@ -37,28 +37,41 @@ internal enum MenubarIconState: CaseIterable {
 internal enum MenubarStatusRowState: CaseIterable {
     case permissions
     case error
-    case journalStopped
-    case journalRestarting
+    case starting
     case journalSetupNeeded
+    case journalRestarting
+    case journalStopped
     case journalUnknown
+    case journalStoppedByUser
     case journalWaiting
     case localOnly
+    case syncPaused
     case offline
     case paused
     case observing
-    case stopped
 }
 
 internal enum SettingsObservationAXState: CaseIterable {
     case observing
     case paused
-    case stopped
+    case starting
+    case error
 
-    init(isRecording: Bool, isPaused: Bool) {
-        if isRecording {
-            self = isPaused ? .paused : .observing
-        } else {
-            self = .stopped
+    init(_ rowState: MenubarStatusRowState) {
+        switch rowState {
+        case .starting:
+            self = .starting
+        case .paused:
+            self = .paused
+        default:
+            switch rowState.iconState {
+            case .error:
+                self = .error
+            case .paused:
+                self = .paused
+            case .recording, .offline:
+                self = .observing
+            }
         }
     }
 }
@@ -333,32 +346,60 @@ extension MenubarIconState {
 }
 
 extension MenubarStatusRowState {
+    var iconState: MenubarIconState {
+        switch self {
+        case .permissions, .error:
+            return .error
+        case .starting,
+             .journalSetupNeeded,
+             .journalRestarting,
+             .journalStopped,
+             .journalUnknown,
+             .journalStoppedByUser,
+             .journalWaiting,
+             .localOnly,
+             .syncPaused,
+             .offline:
+            return .offline
+        case .paused:
+            return .paused
+        case .observing:
+            return .recording
+        }
+    }
+}
+
+extension MenubarStatusRowState {
     var axToken: String {
         switch self {
         case .permissions:
             return "permissions"
         case .error:
             return "error"
-        case .journalStopped:
-            return "journal_stopped"
-        case .journalRestarting:
-            return "journal_restarting"
+        case .starting:
+            return "starting"
         case .journalSetupNeeded:
             return "journal_setup_needed"
+        case .journalRestarting:
+            return "journal_restarting"
+        case .journalStopped:
+            return "journal_stopped"
         case .journalUnknown:
             return "journal_unknown"
+        case .journalStoppedByUser:
+            return "journal_stopped_by_user"
         case .journalWaiting:
             return "journal_waiting"
         case .localOnly:
             return "local_only"
+        case .syncPaused:
+            return "sync_paused"
         case .offline:
             return "offline"
         case .paused:
             return "paused"
         case .observing:
             return "observing"
-        case .stopped:
-            return "stopped"
         }
     }
 }
@@ -370,8 +411,10 @@ extension SettingsObservationAXState {
             return "observing"
         case .paused:
             return "paused"
-        case .stopped:
-            return "stopped"
+        case .starting:
+            return "starting"
+        case .error:
+            return "error"
         }
     }
 }

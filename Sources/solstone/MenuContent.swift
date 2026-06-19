@@ -32,14 +32,14 @@ struct MenuContent: View {
             Divider()
         }
 
-        // Status + pause/resume/start controls (single section — no internal divider)
+        // Status + pause/resume controls (single section — no internal divider)
         Section {
             statusRow
             AXStateCompanion(
                 id: AXID.Menubar.statusRowState,
                 value: statusRowAXValue
             )
-            if hasPauseResumeStartControl {
+            if hasPauseResumeControl {
                 pauseResumeSection
             }
         }
@@ -103,90 +103,107 @@ struct MenuContent: View {
         )
     }
 
+    private func openSettings(tab: String) {
+        appState.pendingSettingsTab = tab
+        openWindow(id: "settings")
+        appState.didOpenWindow(.settings)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     @ViewBuilder
     private var statusRow: some View {
         let rowState = statusRowState
 
-        if appState.permissionsNeedAttention {
-            Button("permissions needed — open settings →") {
-                appState.pendingSettingsTab = "permissions"
-                openWindow(id: "settings")
-                appState.didOpenWindow(.settings)
-                NSApp.activate(ignoringOtherApps: true)
+        switch rowState {
+        case .permissions:
+            Button(UICopy.MENUBAR_PERMISSIONS_OPEN_SETTINGS) {
+                openSettings(tab: "permissions")
             }
             .foregroundStyle(.red)
             .accessibilityIdentifier(AXID.Menubar.permissionsButton)
-        } else if appState.bundledJournalStatusAvailable,
-                  let journalRow = appState.journalRuntimeStatus.menuRowPresentation {
-            if journalRow.isEnabled {
-                Button(journalRow.text) {
-                    appState.pendingSettingsTab = "journal"
-                    openWindow(id: "settings")
-                    appState.didOpenWindow(.settings)
-                    NSApp.activate(ignoringOtherApps: true)
+
+        case .error:
+            if let error = appState.errorMessage {
+                Button(UICopy.menubarErrorOpenSettings(error)) {
+                    openSettings(tab: "status")
                 }
                 .foregroundStyle(.red)
-                .accessibilityIdentifier(AXID.Menubar.journalState)
-                .accessibilityValue(journalRow.state.axToken)
+                .accessibilityIdentifier(AXID.Menubar.errorButton)
             } else {
-                Text(journalRow.text)
-                    .foregroundStyle(.red)
-                    .accessibilityIdentifier(AXID.Menubar.journalState)
-                    .accessibilityValue(rowState.axToken)
+                Button(UICopy.MENUBAR_OBSERVATION_WEDGE_OPEN_SETTINGS) {
+                    openSettings(tab: "status")
+                }
+                .foregroundStyle(.red)
+                .accessibilityIdentifier(AXID.Menubar.errorButton)
             }
-        } else if let error = appState.errorMessage {
-            Button("error: \(error)") {
-                appState.pendingSettingsTab = "status"
-                openWindow(id: "settings")
-                appState.didOpenWindow(.settings)
-                NSApp.activate(ignoringOtherApps: true)
+
+        case .starting:
+            Text(UICopy.MENUBAR_STARTING)
+                .accessibilityValue(rowState.axToken)
+
+        case .journalSetupNeeded,
+             .journalRestarting,
+             .journalStopped,
+             .journalUnknown,
+             .journalStoppedByUser:
+            journalRuntimeRow(rowState: rowState)
+
+        case .journalWaiting:
+            Button(UICopy.MENUBAR_JOURNAL_WAITING) {
+                openSettings(tab: "status")
             }
-            .foregroundStyle(.red)
-            .accessibilityIdentifier(AXID.Menubar.errorButton)
-        } else if appState.isRecording && !appState.config.isUploadConfigured && !appState.isPaused && !appState.pauseManager.isPaused {
-            Button("observing, local only →") {
-                appState.pendingSettingsTab = "journal"
-                openWindow(id: "settings")
-                appState.didOpenWindow(.settings)
-                NSApp.activate(ignoringOtherApps: true)
+            .accessibilityIdentifier(AXID.Menubar.journalState)
+            .accessibilityValue(rowState.axToken)
+
+        case .localOnly:
+            Button(UICopy.MENUBAR_LOCAL_ONLY_SETUP_JOURNAL) {
+                openSettings(tab: "journal")
             }
             .accessibilityIdentifier(AXID.Menubar.localOnlyButton)
-        } else if appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused {
-            if appState.captureQueuedForJournalReadiness {
-                Button(UICopy.JOURNAL_WAITING_FOR_READINESS_MENU_BUTTON) {
-                    appState.pendingSettingsTab = "status"
-                    openWindow(id: "settings")
-                    appState.didOpenWindow(.settings)
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-                .accessibilityIdentifier(AXID.Menubar.journalState)
-                .accessibilityValue(MenubarStatusRowState.journalWaiting.axToken)
-            } else
-            if appState.config.syncPaused {
-                Text(recordingStatusText)
-            } else {
-                switch appState.uploadCoordinator.status {
-                case .offline, .retrying:
-                    Button("observing, offline (saved locally) →") {
-                        appState.pendingSettingsTab = "status"
-                        openWindow(id: "settings")
-                        appState.didOpenWindow(.settings)
-                        NSApp.activate(ignoringOtherApps: true)
-                    }
-                    .accessibilityIdentifier(AXID.Menubar.offlineButton)
-                default:
-                    Text(recordingStatusText)
-                        .accessibilityValue(rowState.axToken)
-                }
+
+        case .syncPaused:
+            Text(UICopy.MENUBAR_SYNC_PAUSED)
+                .accessibilityValue(rowState.axToken)
+
+        case .offline:
+            Button(UICopy.MENUBAR_OBSERVING_OFFLINE_SAVED_LOCALLY) {
+                openSettings(tab: "status")
             }
-        } else if appState.pauseManager.isPaused {
+            .accessibilityIdentifier(AXID.Menubar.offlineButton)
+
+        case .paused:
             let _ = appState.pauseManager.refreshTick
             Text(pausedHeaderText(timeRemaining: appState.pauseManager.formatTimeRemaining()))
                 .accessibilityValue(rowState.axToken)
-        } else {
-            Text(recordingStatusText)
+
+        case .observing:
+            Text(appState.bundledJournalStatusAvailable ? UICopy.MENUBAR_OBSERVING_BUNDLED : UICopy.MENUBAR_OBSERVING_CONNECTED)
                 .accessibilityValue(rowState.axToken)
         }
+    }
+
+    @ViewBuilder
+    private func journalRuntimeRow(rowState: MenubarStatusRowState) -> some View {
+        if let journalRow = appState.journalRuntimeStatus.menuRowPresentation {
+            if journalRow.isEnabled {
+                Button(journalRow.text) {
+                    openSettings(tab: "journal")
+                }
+                .accessibilityIdentifier(AXID.Menubar.journalState)
+                .accessibilityValue(rowState.axToken)
+            } else {
+                Text(journalRow.text)
+                    .accessibilityIdentifier(AXID.Menubar.journalState)
+                    .accessibilityValue(rowState.axToken)
+            }
+        } else {
+            missingJournalRuntimeRow(rowState: rowState)
+        }
+    }
+
+    private func missingJournalRuntimeRow(rowState: MenubarStatusRowState) -> EmptyView {
+        assertionFailure("Journal runtime row state \(rowState.axToken) requires a menuRowPresentation")
+        return EmptyView()
     }
 
     private var statusRowAXValue: String {
@@ -194,63 +211,7 @@ struct MenuContent: View {
     }
 
     private var statusRowState: MenubarStatusRowState {
-        if appState.permissionsNeedAttention {
-            return .permissions
-        }
-        if appState.bundledJournalStatusAvailable,
-           let journalRow = appState.journalRuntimeStatus.menuRowPresentation {
-            return journalRow.state
-        }
-        if appState.errorMessage != nil {
-            return .error
-        }
-        if appState.isRecording && !appState.config.isUploadConfigured && !appState.isPaused && !appState.pauseManager.isPaused {
-            return .localOnly
-        }
-        if appState.pauseManager.isPaused || appState.isPaused {
-            return .paused
-        }
-        if !appState.isRecording {
-            return .stopped
-        }
-        if appState.config.syncPaused {
-            return .observing
-        }
-        if appState.captureQueuedForJournalReadiness {
-            return .journalWaiting
-        }
-        switch appState.uploadCoordinator.status {
-        case .synced, .syncing, .uploading:
-            return .observing
-        case .notSynced, .retrying, .offline:
-            return .offline
-        }
-    }
-
-    private var recordingStatusText: String {
-        if appState.pauseManager.isPaused {
-            return "paused"
-        }
-        if appState.isPaused {
-            return "paused"
-        }
-        if !appState.isRecording {
-            return "stopped"
-        }
-        if appState.config.syncPaused {
-            return "observing, sync paused"
-        }
-        if appState.captureQueuedForJournalReadiness {
-            return UICopy.JOURNAL_WAITING_FOR_READINESS_MENU
-        }
-        switch appState.uploadCoordinator.status {
-        case .synced, .syncing, .uploading:
-            return "observing, connected"
-        case .notSynced:
-            return "observing, offline"
-        case .retrying, .offline:
-            return "observing, offline (saved locally)"
-        }
+        appState.observationRowState
     }
 
     // MARK: - Pause Controls
@@ -263,12 +224,8 @@ struct MenuContent: View {
         appState.pauseManager.isPaused
     }
 
-    private var hasStartControl: Bool {
-        !appState.isRecording && appState.errorMessage == nil && !appState.permissionsNeedAttention
-    }
-
-    var hasPauseResumeStartControl: Bool {
-        hasPauseControl || hasResumeControl || hasStartControl
+    var hasPauseResumeControl: Bool {
+        hasPauseControl || hasResumeControl
     }
 
     @ViewBuilder
@@ -296,13 +253,6 @@ struct MenuContent: View {
         } else if hasResumeControl {
             Button("resume") { appState.pauseManager.resume() }
                 .accessibilityIdentifier(AXID.Menubar.resumeButton)
-        } else if hasStartControl {
-            Button("start observing") {
-                Task {
-                    await appState.startRecording()
-                }
-            }
-            .accessibilityIdentifier(AXID.Menubar.startObservingButton)
         }
     }
 

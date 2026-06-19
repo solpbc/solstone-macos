@@ -187,7 +187,6 @@
       "menubar.navigation.about",
       "menubar.navigation.openJournal",
       "menubar.navigation.settings",
-      "menubar.observing.start",
       "menubar.pause.fifteenMinutes",
       "menubar.pause.indefinite",
       "menubar.pause.menu",
@@ -536,16 +535,18 @@
     "MenubarStatusRowState" : [
       "permissions",
       "error",
-      "journal_stopped",
-      "journal_restarting",
+      "starting",
       "journal_setup_needed",
+      "journal_restarting",
+      "journal_stopped",
       "journal_unknown",
+      "journal_stopped_by_user",
       "journal_waiting",
       "local_only",
+      "sync_paused",
       "offline",
       "paused",
-      "observing",
-      "stopped"
+      "observing"
     ],
     "RowStatus" : [
       "pending",
@@ -561,7 +562,8 @@
     "SettingsObservationAXState" : [
       "observing",
       "paused",
-      "stopped"
+      "starting",
+      "error"
     ],
     "SidebarBadgeState" : [
       "done",

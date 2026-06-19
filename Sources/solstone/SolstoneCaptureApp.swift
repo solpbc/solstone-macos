@@ -197,35 +197,37 @@ struct SolstoneCaptureApp: App {
     }
 
     private var statusAccessibilityLabel: String {
-        let baseLabel: String
-        if appState.bundledJournalStatusAvailable
-            && appState.journalRuntimeStatus != .running
-            && !appState.journalRuntimeStatus.isStoppedByUser {
-            baseLabel = switch appState.journalRuntimeStatus {
-            case .setupNeeded:
-                "solstone observer — journal setup needed"
-            case .restarting:
-                "solstone observer — journal restarting"
-            case .stopped, .unknown:
-                "solstone observer — journal needs attention"
-            case .running, .stoppedByUser:
-                "solstone observer"
-            }
-        } else if appState.errorMessage != nil {
-            baseLabel = "solstone observer — error"
-        } else if appState.pauseManager.isPaused || appState.isPaused {
-            baseLabel = "solstone observer — paused"
-        } else if appState.isRecording {
-            switch appState.uploadCoordinator.status {
-            case .offline:
-                baseLabel = "solstone observer — recording, sync offline"
-            case .retrying:
-                baseLabel = "solstone observer — recording, sync retrying"
-            default:
-                baseLabel = "solstone observer — recording"
-            }
-        } else {
-            baseLabel = "solstone observer — stopped"
+        let baseLabel: String = switch appState.observationRowState {
+        case .permissions:
+            UICopy.MENUBAR_A11Y_PERMISSIONS_NEEDED
+        case .error:
+            appState.errorMessage == nil
+                ? UICopy.MENUBAR_A11Y_NEEDS_ATTENTION
+                : UICopy.MENUBAR_A11Y_ERROR
+        case .starting:
+            UICopy.MENUBAR_A11Y_STARTING
+        case .journalSetupNeeded:
+            UICopy.MENUBAR_A11Y_JOURNAL_SETUP_NEEDED
+        case .journalRestarting:
+            UICopy.MENUBAR_A11Y_JOURNAL_RESTARTING
+        case .journalStopped, .journalUnknown:
+            UICopy.MENUBAR_A11Y_JOURNAL_NEEDS_ATTENTION
+        case .journalStoppedByUser:
+            UICopy.MENUBAR_A11Y_JOURNAL_NOT_RUNNING
+        case .journalWaiting:
+            UICopy.MENUBAR_A11Y_WAITING_FOR_JOURNAL
+        case .localOnly:
+            UICopy.MENUBAR_A11Y_JOURNAL_SETUP_NEEDED
+        case .syncPaused:
+            UICopy.MENUBAR_A11Y_OBSERVING_SYNC_PAUSED
+        case .offline:
+            UICopy.MENUBAR_A11Y_OBSERVING_SAVED_LOCALLY
+        case .paused:
+            UICopy.MENUBAR_A11Y_PAUSED
+        case .observing:
+            appState.bundledJournalStatusAvailable
+                ? UICopy.MENUBAR_A11Y_OBSERVING_BUNDLED
+                : UICopy.MENUBAR_A11Y_OBSERVING_CONNECTED
         }
 
         if appState.solChatStale {
@@ -352,23 +354,7 @@ private struct StatusIcon: View {
     @State private var hasCheckedSetup = false
 
     private var iconState: MenubarIconState {
-        if appState.bundledJournalStatusAvailable
-            && appState.journalRuntimeStatus != .running
-            && !appState.journalRuntimeStatus.isStoppedByUser {
-            return .error
-        }
-        if appState.errorMessage != nil {
-            return .error
-        }
-        if !appState.isRecording || appState.isPaused || appState.pauseManager.isPaused {
-            return .paused
-        }
-        switch appState.uploadCoordinator.status {
-        case .synced, .syncing, .uploading:
-            return .recording
-        case .notSynced, .retrying, .offline:
-            return .offline
-        }
+        appState.observationRowState.iconState
     }
 
     private var iconName: String {

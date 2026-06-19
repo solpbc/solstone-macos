@@ -1331,7 +1331,20 @@ struct SettingsView: View {
     // MARK: - Status Tab
 
     private var renderedObservationAXState: SettingsObservationAXState {
-        SettingsObservationAXState(isRecording: appState.isRecording, isPaused: appState.isPaused)
+        SettingsObservationAXState(appState.observationRowState)
+    }
+
+    private var renderedObservationText: String {
+        switch renderedObservationAXState {
+        case .observing:
+            return UICopy.SETTINGS_OBSERVATION_OBSERVING
+        case .paused:
+            return UICopy.SETTINGS_OBSERVATION_PAUSED
+        case .starting:
+            return UICopy.SETTINGS_OBSERVATION_STARTING
+        case .error:
+            return UICopy.SETTINGS_OBSERVATION_ERROR
+        }
     }
 
     private func retentionGlanceLabel(_ days: Int) -> String {
@@ -1436,7 +1449,7 @@ struct SettingsView: View {
 
             GroupBox("observing") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(appState.isRecording ? (appState.isPaused ? "paused" : "observing") : "stopped")
+                    Text(renderedObservationText)
                         .font(.title2)
                         .accessibilityIdentifier(AXID.Settings.Status.observingState)
                         .accessibilityValue(renderedObservationAXState.axToken)
@@ -1716,28 +1729,28 @@ struct SettingsView: View {
                     HStack(spacing: 6) {
                         bundleImage("sol-ring-template", isTemplate: true)
                             .frame(width: 16, height: 16)
-                        Text("observing, connected")
+                        Text(UICopy.SETTINGS_HELP_ICON_FULL)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier(AXID.Settings.Help.iconStateRecording)
                     HStack(spacing: 6) {
                         bundleImage("sol-ring-icon-half-template", isTemplate: true)
                             .frame(width: 16, height: 16)
-                        Text("observing, offline")
+                        Text(UICopy.SETTINGS_HELP_ICON_HALF)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier(AXID.Settings.Help.iconStateOffline)
                     HStack(spacing: 6) {
                         bundleImage("sol-ring-icon-paused-template", isTemplate: true)
                             .frame(width: 16, height: 16)
-                        Text("paused or stopped")
+                        Text(UICopy.SETTINGS_HELP_ICON_PAUSED)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier(AXID.Settings.Help.iconStatePaused)
                     HStack(spacing: 6) {
                         bundleImage("sol-ring-icon-error-template", isTemplate: true)
                             .frame(width: 16, height: 16)
-                        Text("error")
+                        Text(UICopy.SETTINGS_HELP_ICON_ERROR)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier(AXID.Settings.Help.iconStateError)

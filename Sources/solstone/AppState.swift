@@ -1584,8 +1584,8 @@ public final class AppState {
         case .idle:
             isRecording = false
             isPaused = false
-            // Resume polling so we auto-start if user clicks "start recording" later
-            // or permissions change
+            // Resume polling so automatic retry and IPC .start can begin again
+            // when permissions or runtime readiness change.
             if permissionPollTimer == nil {
                 startPermissionPolling()
             }

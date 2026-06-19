@@ -6,30 +6,141 @@ import Testing
 
 @Suite("MenuContent")
 struct MenuContentTests {
-    @Test @MainActor func hasPauseResumeStartControlTruthTable() {
+    @Test @MainActor func hasPauseResumeControlTruthTable() {
         let updateController = UpdateController()
 
         let observing = AppState.forSnapshot()
         observing.isRecording = true
-        #expect(MenuContent(appState: observing, updateController: updateController).hasPauseResumeStartControl)
+        #expect(MenuContent(appState: observing, updateController: updateController).hasPauseResumeControl)
 
         let paused = AppState.forSnapshot()
         paused.isRecording = true
         paused.pauseManager.pause(for: .indefinite)
-        #expect(MenuContent(appState: paused, updateController: updateController).hasPauseResumeStartControl)
+        #expect(MenuContent(appState: paused, updateController: updateController).hasPauseResumeControl)
 
-        let stopped = AppState.forSnapshot()
-        #expect(MenuContent(appState: stopped, updateController: updateController).hasPauseResumeStartControl)
+        let starting = AppState.forSnapshot()
+        #expect(!MenuContent(appState: starting, updateController: updateController).hasPauseResumeControl)
 
-        let stoppedWithError = AppState.forSnapshot()
-        stoppedWithError.errorMessage = "offline"
-        #expect(!MenuContent(appState: stoppedWithError, updateController: updateController).hasPauseResumeStartControl)
+        let error = AppState.forSnapshot()
+        error.errorMessage = "offline"
+        #expect(!MenuContent(appState: error, updateController: updateController).hasPauseResumeControl)
 
         let permissionsNeeded = AppState.forSnapshot()
         permissionsNeeded.initialPermissionCheckComplete = true
         permissionsNeeded.screenRecordingGranted = false
         permissionsNeeded.microphoneGranted = false
-        #expect(!MenuContent(appState: permissionsNeeded, updateController: updateController).hasPauseResumeStartControl)
+        #expect(!MenuContent(appState: permissionsNeeded, updateController: updateController).hasPauseResumeControl)
+
+        let wedge = AppState.forSnapshot()
+        wedge.initialPermissionCheckComplete = true
+        #expect(!MenuContent(appState: wedge, updateController: updateController).hasPauseResumeControl)
+    }
+
+    @Test func menubarStatusRowIconMappingIsExhaustive() {
+        let cases: [(MenubarStatusRowState, MenubarIconState)] = [
+            (.permissions, .error),
+            (.error, .error),
+            (.starting, .offline),
+            (.journalSetupNeeded, .offline),
+            (.journalRestarting, .offline),
+            (.journalStopped, .offline),
+            (.journalUnknown, .offline),
+            (.journalStoppedByUser, .offline),
+            (.journalWaiting, .offline),
+            (.localOnly, .offline),
+            (.syncPaused, .offline),
+            (.offline, .offline),
+            (.paused, .paused),
+            (.observing, .recording),
+        ]
+
+        #expect(cases.count == MenubarStatusRowState.allCases.count)
+        for (rowState, iconState) in cases {
+            #expect(rowState.iconState.axToken == iconState.axToken)
+        }
+    }
+
+    @Test func settingsObservationAXStateMapsFromRowState() {
+        let cases: [(MenubarStatusRowState, SettingsObservationAXState)] = [
+            (.permissions, .error),
+            (.error, .error),
+            (.starting, .starting),
+            (.journalSetupNeeded, .observing),
+            (.journalRestarting, .observing),
+            (.journalStopped, .observing),
+            (.journalUnknown, .observing),
+            (.journalStoppedByUser, .observing),
+            (.journalWaiting, .observing),
+            (.localOnly, .observing),
+            (.syncPaused, .observing),
+            (.offline, .observing),
+            (.paused, .paused),
+            (.observing, .observing),
+        ]
+
+        #expect(cases.count == MenubarStatusRowState.allCases.count)
+        for (rowState, settingsState) in cases {
+            #expect(SettingsObservationAXState(rowState).axToken == settingsState.axToken)
+        }
+    }
+
+    @Test func observationClassifierPrecedenceTable() {
+        let cases: [(String, MenubarStatusRowState)] = [
+            ("permissions", classified(permissionsNeedAttention: true, initialPermissionCheckComplete: false)),
+            ("error", classified(errorMessage: "boom")),
+            ("starting", classified(initialPermissionCheckComplete: false)),
+            ("wedge", classified(isRecording: false)),
+            ("paused", classified(pauseManagerIsPaused: true)),
+            ("journalWaiting", classified(captureQueuedForJournalReadiness: true)),
+            ("journalSetupNeeded", classified(bundledJournalStatusAvailable: true, journalRuntimeStatus: .setupNeeded)),
+            ("journalRestarting", classified(bundledJournalStatusAvailable: true, journalRuntimeStatus: .restarting)),
+            (
+                "journalStopped",
+                classified(
+                    bundledJournalStatusAvailable: true,
+                    journalRuntimeStatus: .stopped(JournalDiagnostic(commandLabel: "journal health"))
+                )
+            ),
+            (
+                "journalUnknown",
+                classified(
+                    bundledJournalStatusAvailable: true,
+                    journalRuntimeStatus: .unknown(JournalDiagnostic(commandLabel: "journal health"))
+                )
+            ),
+            ("journalStoppedByUser", classified(bundledJournalStatusAvailable: true, journalRuntimeStatus: .stoppedByUser)),
+            ("syncPaused", classified(syncPaused: true, isUploadConfigured: false)),
+            ("localOnly", classified(isUploadConfigured: false)),
+            ("offline", classified(uploadStatus: .notSynced)),
+            ("observing", classified(uploadStatus: .synced)),
+        ]
+
+        let expected: [String: MenubarStatusRowState] = [
+            "permissions": .permissions,
+            "error": .error,
+            "starting": .starting,
+            "wedge": .error,
+            "paused": .paused,
+            "journalWaiting": .journalWaiting,
+            "journalSetupNeeded": .journalSetupNeeded,
+            "journalRestarting": .journalRestarting,
+            "journalStopped": .journalStopped,
+            "journalUnknown": .journalUnknown,
+            "journalStoppedByUser": .journalStoppedByUser,
+            "syncPaused": .syncPaused,
+            "localOnly": .localOnly,
+            "offline": .offline,
+            "observing": .observing,
+        ]
+
+        for (name, actual) in cases {
+            #expect(actual == expected[name])
+        }
+
+        #expect(classified(uploadStatus: .retrying(segment: "s1", attempts: 2)) == .offline)
+        #expect(classified(uploadStatus: .offline("offline")) == .offline)
+        #expect(classified(uploadStatus: .syncing(checked: 1, total: 2)) == .observing)
+        #expect(classified(uploadStatus: .uploading(segment: "s1")) == .observing)
     }
 
     @Test func pausedHeaderShowsAutoResumeCountdown() {
@@ -194,9 +305,12 @@ struct MenuContentTests {
         #expect(stoppedStatus.canOfferRestart)
 
         let stoppedByUserStatus = JournalRuntimeStatus.stoppedByUser
-        #expect(stoppedByUserStatus.menuRowPresentation == nil)
+        let stoppedByUser = stoppedByUserStatus.menuRowPresentation
+        #expect(stoppedByUser?.text == UICopy.MENUBAR_JOURNAL_STOPPED_BY_USER)
+        #expect(stoppedByUser?.isEnabled == true)
+        #expect(stoppedByUser?.state == .journalStoppedByUser)
         #expect(stoppedByUserStatus.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_STOPPED)
-        #expect(stoppedByUserStatus.settingsPresentation.axValue == "journal_stopped_by_user")
+        #expect(stoppedByUserStatus.settingsPresentation.axValue == MenubarStatusRowState.journalStoppedByUser.axToken)
         #expect(stoppedByUserStatus.settingsPresentation.severity == .neutral)
         #expect(stoppedByUserStatus.settingsPresentation.reason == nil)
         #expect(!stoppedByUserStatus.canOfferRestart)
@@ -227,6 +341,7 @@ struct MenuContentTests {
             .restarting,
             .stopped(JournalDiagnostic(commandLabel: "journal health")),
             .unknown(JournalDiagnostic(commandLabel: "journal health")),
+            .stoppedByUser,
         ]
 
         for status in statuses {
@@ -234,4 +349,34 @@ struct MenuContentTests {
             #expect(menu.state.axToken == status.settingsPresentation.axValue)
         }
     }
+}
+
+private func classified(
+    permissionsNeedAttention: Bool = false,
+    errorMessage: String? = nil,
+    initialPermissionCheckComplete: Bool = true,
+    isRecording: Bool = true,
+    isPaused: Bool = false,
+    pauseManagerIsPaused: Bool = false,
+    captureQueuedForJournalReadiness: Bool = false,
+    bundledJournalStatusAvailable: Bool = false,
+    journalRuntimeStatus: JournalRuntimeStatus = .running,
+    syncPaused: Bool = false,
+    isUploadConfigured: Bool = true,
+    uploadStatus: UploadCoordinator.Status = .synced
+) -> MenubarStatusRowState {
+    classifyObservationRowState(
+        permissionsNeedAttention: permissionsNeedAttention,
+        errorMessage: errorMessage,
+        initialPermissionCheckComplete: initialPermissionCheckComplete,
+        isRecording: isRecording,
+        isPaused: isPaused,
+        pauseManagerIsPaused: pauseManagerIsPaused,
+        captureQueuedForJournalReadiness: captureQueuedForJournalReadiness,
+        bundledJournalStatusAvailable: bundledJournalStatusAvailable,
+        journalRuntimeStatus: journalRuntimeStatus,
+        syncPaused: syncPaused,
+        isUploadConfigured: isUploadConfigured,
+        uploadStatus: uploadStatus
+    )
 }
