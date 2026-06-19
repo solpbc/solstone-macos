@@ -61,6 +61,27 @@ struct AppQuitCoordinatorTests {
         ])
     }
 
+    @Test func ordinaryQuitPreparedThenLaterAppOwnedRequestIsNoOp() async throws {
+        let events = LockedArray<String>([])
+        let coordinator = makeCoordinator(events: events)
+
+        coordinator.requestAppOwnedQuit()
+
+        try await waitUntil(timeout: .seconds(1)) {
+            events.all.contains("terminate")
+        }
+        #expect(coordinator.isPrepared)
+
+        // Pins the performPreparation flag-set so later app-owned requests cannot re-finalize.
+        coordinator.requestAppOwnedQuit()
+        coordinator.requestSettingsRestart()
+
+        #expect(count(events.all, "terminate") == 1)
+        #expect(count(events.all, "launchReplacement") == 0)
+        #expect(count(events.all, "prepareForQuit") == 1)
+        #expect(count(events.all, "committed:true") == 1)
+    }
+
     @Test func externalTerminationPreparesRepliesTrueAndDoesNotTerminate() async throws {
         let events = LockedArray<String>([])
         let coordinator = makeCoordinator(events: events)
@@ -222,6 +243,81 @@ struct AppQuitCoordinatorTests {
             "prepareForUpdate"
         ])
         #expect(coordinator.isPrepared)
+    }
+
+    @Test func prepareForUpdaterInstallThenAppOwnedQuitTerminatesOnceWithoutCleanupRerun() async {
+        let events = LockedArray<String>([])
+        let coordinator = makeCoordinator(events: events)
+
+        await coordinator.prepareForUpdaterInstall()
+
+        #expect(events.all == [
+            "committed:true",
+            "marker:sparkle-update",
+            "prepareForUpdate"
+        ])
+        #expect(coordinator.isPrepared)
+
+        coordinator.requestAppOwnedQuit()
+
+        #expect(count(events.all, "terminate") == 1)
+        #expect(count(events.all, "prepareForUpdate") == 1)
+        #expect(count(events.all, "prepareForQuit") == 0)
+        #expect(count(events.all, "committed:true") == 1)
+        #expect(count(events.all, "marker:sparkle-update") == 1)
+        #expect(count(events.all, "marker:ordinary-quit") == 0)
+    }
+
+    @Test func prepareForUpdaterInstallThenSettingsRestartLaunchesAndTerminatesOnceNoCleanupRerun() async {
+        let events = LockedArray<String>([])
+        let coordinator = makeCoordinator(events: events)
+
+        await coordinator.prepareForUpdaterInstall()
+        coordinator.requestSettingsRestart()
+
+        #expect(count(events.all, "launchReplacement") == 1)
+        #expect(count(events.all, "terminate") == 1)
+        #expect(count(events.all, "prepareForUpdate") == 1)
+        #expect(count(events.all, "prepareForQuit") == 0)
+    }
+
+    @Test func duplicateAppOwnedFinalizationAfterUpdaterPreparationIsIdempotent() async {
+        let events = LockedArray<String>([])
+        let coordinator = makeCoordinator(events: events)
+
+        await coordinator.prepareForUpdaterInstall()
+        coordinator.requestAppOwnedQuit()
+        coordinator.requestAppOwnedQuit()
+        coordinator.requestSettingsRestart()
+
+        #expect(count(events.all, "terminate") == 1)
+        #expect(count(events.all, "launchReplacement") <= 1)
+        #expect(count(events.all, "prepareForQuit") == 0)
+        #expect(count(events.all, "prepareForUpdate") == 1)
+    }
+
+    @Test func externalTerminationAfterPreparedRepliesTrueImmediatelyWithoutTerminate() async {
+        let events = LockedArray<String>([])
+        let coordinator = makeCoordinator(events: events)
+
+        await coordinator.prepareForUpdaterInstall()
+        coordinator.requestExternalTermination { proceed in
+            events.append("reply:\(proceed)")
+        }
+
+        #expect(events.all.contains("reply:true"))
+        #expect(!events.all.contains("terminate"))
+    }
+
+    @Test func regressionUpdaterPreparedStillAliveAppOwnedQuitDoesNotSilentlyNoOp() async {
+        let events = LockedArray<String>([])
+        let coordinator = makeCoordinator(events: events)
+
+        await coordinator.prepareForUpdaterInstall()
+        coordinator.requestAppOwnedQuit()
+
+        // Pins the updater-prepared/still-alive window where app-owned quit used to silently no-op.
+        #expect(count(events.all, "terminate") == 1)
     }
 
     @Test func resetAfterFailedUpdaterInstallInvalidatesResetsAndCancelsQueuedReplies() async throws {

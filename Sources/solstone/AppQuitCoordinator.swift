@@ -111,6 +111,7 @@ final class AppQuitCoordinator {
     private var preparationTask: Task<Void, Never>?
     private var preparationGeneration = 0
     private var committedIntent: ExitIntent?
+    private var finalActionPerformed = false
     private var externalReplies: [@MainActor (Bool) -> Void] = []
     private let dependencies: Dependencies
 
@@ -150,6 +151,7 @@ final class AppQuitCoordinator {
         preparationGeneration &+= 1
         committedIntent = nil
         preparationTask = nil
+        finalActionPerformed = false
         // If AppKit termination joined a failed updater preparation, cancel it
         // because recovery returns the app to a usable, non-terminating state.
         drainExternalReplies(proceed: false)
@@ -183,6 +185,10 @@ final class AppQuitCoordinator {
             if externalReply != nil {
                 drainExternalReplies(proceed: true)
             }
+            if let finalize = intent.finalize, !finalActionPerformed {
+                finalActionPerformed = true
+                finalize()
+            }
             return nil
         }
     }
@@ -194,7 +200,10 @@ final class AppQuitCoordinator {
         stateMachine.markPrepared()
         preparationTask = nil
         drainExternalReplies(proceed: true)
-        intent.finalize?()
+        if let finalize = intent.finalize {
+            finalActionPerformed = true
+            finalize()
+        }
     }
 
     private func drainExternalReplies(proceed: Bool) {
