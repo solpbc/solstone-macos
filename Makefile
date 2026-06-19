@@ -62,7 +62,7 @@ PYTHON_VENDOR_SHA_FILE := vendor/python-aarch64-apple-darwin.sha256
 
 # bundled backend wheelhouse
 SOLSTONE_SRC_DIR ?= ../solstone
-SOLSTONE_REF ?= v0.6.7
+SOLSTONE_REF ?= v0.6.8
 WHEELHOUSE_DIR := vendor/solstone-wheelhouse
 WHEELHOUSE_MANIFEST := $(WHEELHOUSE_DIR)/MANIFEST.sha256
 WHEELHOUSE_PLATFORM_TAG ?= macosx_15_0_arm64
