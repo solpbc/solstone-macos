@@ -42,10 +42,13 @@ struct MenubarWireUpTests {
         let source = try readWireUpSource("Sources/solstone/MenuContent.swift")
 
         #expect(wireUpContains(source, """
-            if hasPauseResumeStartControl {
-                Divider()
-                // Pause / Resume / Start observing controls
-                Section {
+            Section {
+                statusRow
+                AXStateCompanion(
+                    id: AXID.Menubar.statusRowState,
+                    value: statusRowAXValue
+                )
+                if hasPauseResumeStartControl {
                     pauseResumeSection
                 }
             }

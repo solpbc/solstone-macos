@@ -32,20 +32,14 @@ struct MenuContent: View {
             Divider()
         }
 
-        // Status section
+        // Status + pause/resume/start controls (single section — no internal divider)
         Section {
             statusRow
             AXStateCompanion(
                 id: AXID.Menubar.statusRowState,
                 value: statusRowAXValue
             )
-        }
-
-        if hasPauseResumeStartControl {
-            Divider()
-
-            // Pause / Resume / Start observing controls
-            Section {
+            if hasPauseResumeStartControl {
                 pauseResumeSection
             }
         }
