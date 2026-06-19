@@ -15,7 +15,15 @@ public enum AppTranslocationModal {
         alert.addButton(withTitle: SolMacCopy.TRANSLOCATION_MODAL_BUTTON)
         NSApp.activate(ignoringOtherApps: true)
         _ = alert.runModal()
-        ExpectedExitMarker.markExpectedExit(reason: "translocation")
-        NSApp.terminate(nil)
+
+        // Translocation aborts launch before observation/journal startup; use the
+        // coordinator's empty-prepare intent when available, with a direct marker
+        // fallback so translocation detection never depends on app state readiness.
+        if let coordinator = AppState.shared?.appQuitCoordinator {
+            coordinator.requestTranslocationRepair()
+        } else {
+            ExpectedExitMarker.markExpectedExit(reason: ExitReason.translocation.markerString)
+            NSApp.terminate(nil)
+        }
     }
 }

@@ -466,14 +466,7 @@ struct SettingsView: View {
     }
 
     private func relaunchApp() {
-        let bundlePath = Bundle.main.bundlePath
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-n", bundlePath]
-        try? process.run()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            NSApp.terminate(nil)
-        }
+        appState.appQuitCoordinator.requestSettingsRestart()
     }
 
     // MARK: - Observer Tab

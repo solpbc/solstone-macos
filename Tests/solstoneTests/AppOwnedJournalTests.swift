@@ -639,6 +639,7 @@ struct AppOwnedJournalTests {
         state.journalReadinessGate = JournalReadinessGate(
             runner: runner,
             fileExists: { $0.hasSuffix("health/supervisor.ready") },
+            acceptProbe: { true },
             clock: FakeMonotonicClock(),
             pollInterval: .milliseconds(1)
         )
@@ -835,24 +836,23 @@ struct AppOwnedJournalTests {
         state.supervisedJournalRunner = runner
         try await runner.start(runtime: runtime, journalRoot: try makeTemporaryDirectory(), port: 5015)
         let events = LockedArray<String>([])
-        let coordinator = AppQuitCoordinator(
-            writeMarker: {
+        let coordinator = AppQuitCoordinator(dependencies: AppQuitCoordinator.Dependencies(
+            setCommitted: { _ in },
+            writeMarker: { _ in
                 events.append("marker")
             },
-            stopObservation: {
+            prepareForQuit: {
                 events.append("stopObservation")
-            },
-            stopJournal: {
                 events.append("stopJournal:start")
                 await state.stopSupervisedJournalForTermination()
                 events.append("stopJournal:end")
             },
-            scheduleTerminate: {
+            terminate: {
                 events.append("terminate")
             }
-        )
+        ))
 
-        coordinator.requestExit()
+        coordinator.requestAppOwnedQuit()
 
         try await waitUntil(timeout: .seconds(10)) {
             events.all.contains("terminate")

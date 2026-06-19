@@ -69,6 +69,44 @@ struct ExpectedExitMarkerWriterTests {
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
+    @Test func invalidateRemovesExistingMarker() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent("expected-exit.json")
+        ExpectedExitMarker.markExpectedExit(reason: "test", at: url)
+
+        ExpectedExitMarker.invalidate(at: url)
+
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func invalidateMissingMarkerIsNoOp() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent("expected-exit.json")
+
+        ExpectedExitMarker.invalidate(at: url)
+
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func invalidateFailureDoesNotThrow() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let regularFile = directory.appendingPathComponent("not-a-directory")
+        _ = FileManager.default.createFile(atPath: regularFile.path, contents: Data())
+        let url = regularFile
+            .appendingPathComponent("sub", isDirectory: true)
+            .appendingPathComponent("expected-exit.json")
+
+        ExpectedExitMarker.invalidate(at: url)
+
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("solstone-expected-exit-writer-tests-\(UUID().uuidString)", isDirectory: true)

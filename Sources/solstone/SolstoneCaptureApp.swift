@@ -126,8 +126,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return .terminateNow
         }
         if coordinator.isPrepared { return .terminateNow }
-        coordinator.requestExit()
-        return .terminateCancel
+        coordinator.requestExternalTermination { proceed in
+            NSApp.reply(toApplicationShouldTerminate: proceed)
+        }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -185,12 +187,10 @@ struct SolstoneCaptureApp: App {
         _updateController = State(initialValue: UpdateController(
             exclusivity: { appState.installer.exclusiveOperationInProgress },
             preInstallFinalizer: { @MainActor in
-                if appState.isRecording {
-                    await appState.stopRecording()
-                }
-                await appState.stopSupervisedJournalForUpdate()
+                await appState.appQuitCoordinator.prepareForUpdaterInstall()
             },
             installFailureRecovery: { @MainActor in
+                appState.appQuitCoordinator.resetAfterFailedUpdaterInstall()
                 await appState.reestablishSupervisedJournalAfterFailedUpdate()
             }
         ))

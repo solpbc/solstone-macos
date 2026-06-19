@@ -7,134 +7,312 @@ import Testing
 @Suite("AppQuitCoordinator")
 @MainActor
 struct AppQuitCoordinatorTests {
-    @Test func firstRequestWritesMarkerRunsCleanupThenSchedulesTerminate() async throws {
+    @Test func appOwnedQuitWritesMarkerRunsCleanupThenTerminates() async throws {
         let events = LockedArray<String>([])
-        let coordinator = AppQuitCoordinator(
-            writeMarker: { events.append("marker") },
-            stopObservation: { events.append("stopObservation") },
-            stopJournal: { events.append("stopJournal") },
-            scheduleTerminate: { events.append("terminate") }
-        )
+        let coordinator = makeCoordinator(events: events)
 
-        coordinator.requestExit()
+        coordinator.requestAppOwnedQuit()
 
         try await waitUntil(timeout: .seconds(1)) {
-            events.all.count == 4
+            events.all.contains("terminate")
         }
-        #expect(events.all == ["marker", "stopObservation", "stopJournal", "terminate"])
+        #expect(events.all == [
+            "committed:true",
+            "marker:ordinary-quit",
+            "prepareForQuit",
+            "terminate"
+        ])
         #expect(coordinator.isPrepared)
     }
 
-    @Test func terminateIsScheduledOnlyAfterCleanupCompletes() async throws {
+    @Test func appOwnedQuitSchedulesTerminateOnlyAfterCleanupCompletes() async throws {
         let events = LockedArray<String>([])
-        let journalCanFinish = LockedValue<Bool>()
-        journalCanFinish.set(false)
-        let coordinator = AppQuitCoordinator(
-            writeMarker: { events.append("marker") },
-            stopObservation: { events.append("stopObservation") },
-            stopJournal: {
-                events.append("stopJournal")
-                while journalCanFinish.current != true {
+        let canFinish = LockedValue<Bool>()
+        canFinish.set(false)
+        let coordinator = makeCoordinator(
+            events: events,
+            prepareForQuit: {
+                events.append("prepareForQuit:start")
+                while canFinish.current != true {
                     try? await Task.sleep(for: .milliseconds(10))
                 }
-            },
-            scheduleTerminate: { events.append("terminate") }
+                events.append("prepareForQuit:end")
+            }
         )
 
-        coordinator.requestExit()
+        coordinator.requestAppOwnedQuit()
 
         try await waitUntil(timeout: .seconds(1)) {
-            events.all.contains("stopJournal")
+            events.all.contains("prepareForQuit:start")
         }
         #expect(!events.all.contains("terminate"))
 
-        journalCanFinish.set(true)
+        canFinish.set(true)
 
         try await waitUntil(timeout: .seconds(1)) {
             events.all.contains("terminate")
         }
-        #expect(events.all == ["marker", "stopObservation", "stopJournal", "terminate"])
+        #expect(events.all == [
+            "committed:true",
+            "marker:ordinary-quit",
+            "prepareForQuit:start",
+            "prepareForQuit:end",
+            "terminate"
+        ])
     }
 
-    @Test func preparedRequestSchedulesTerminateWithoutRepeatingCleanup() async throws {
+    @Test func externalTerminationPreparesRepliesTrueAndDoesNotTerminate() async throws {
         let events = LockedArray<String>([])
-        let coordinator = AppQuitCoordinator(
-            writeMarker: { events.append("marker") },
-            stopObservation: { events.append("stopObservation") },
-            stopJournal: { events.append("stopJournal") },
-            scheduleTerminate: { events.append("terminate") }
+        let coordinator = makeCoordinator(events: events)
+
+        coordinator.requestExternalTermination { proceed in
+            events.append("reply:\(proceed)")
+        }
+
+        try await waitUntil(timeout: .seconds(1)) {
+            events.all.contains("reply:true")
+        }
+        #expect(events.all == [
+            "committed:true",
+            "marker:external-quit",
+            "prepareForQuit",
+            "reply:true"
+        ])
+        #expect(!events.all.contains("terminate"))
+        #expect(coordinator.isPrepared)
+    }
+
+    @Test func duplicateExternalTerminationsCoalesceAndAllRepliesFireOnce() async throws {
+        let events = LockedArray<String>([])
+        let canFinish = LockedValue<Bool>()
+        canFinish.set(false)
+        let coordinator = makeCoordinator(
+            events: events,
+            prepareForQuit: {
+                events.append("prepareForQuit")
+                while canFinish.current != true {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+            }
         )
 
-        coordinator.requestExit()
+        coordinator.requestExternalTermination { proceed in
+            events.append("reply1:\(proceed)")
+        }
+        coordinator.requestExternalTermination { proceed in
+            events.append("reply2:\(proceed)")
+        }
+
+        try await waitUntil(timeout: .seconds(1)) {
+            events.all.contains("prepareForQuit")
+        }
+        canFinish.set(true)
+
+        try await waitUntil(timeout: .seconds(1)) {
+            events.all.contains("reply1:true") && events.all.contains("reply2:true")
+        }
+        #expect(count(events.all, "committed:true") == 1)
+        #expect(count(events.all, "marker:external-quit") == 1)
+        #expect(count(events.all, "prepareForQuit") == 1)
+        #expect(count(events.all, "reply1:true") == 1)
+        #expect(count(events.all, "reply2:true") == 1)
+        #expect(!events.all.contains("terminate"))
+    }
+
+    @Test func appOwnedThenExternalFiresReplyAndTerminate() async throws {
+        let events = LockedArray<String>([])
+        let canFinish = LockedValue<Bool>()
+        canFinish.set(false)
+        let coordinator = makeCoordinator(
+            events: events,
+            prepareForQuit: {
+                events.append("prepareForQuit")
+                while canFinish.current != true {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+            }
+        )
+
+        coordinator.requestAppOwnedQuit()
+        try await waitUntil(timeout: .seconds(1)) {
+            events.all.contains("prepareForQuit")
+        }
+
+        coordinator.requestExternalTermination { proceed in
+            events.append("reply:\(proceed)")
+        }
+        canFinish.set(true)
+
+        try await waitUntil(timeout: .seconds(1)) {
+            events.all.contains("reply:true") && events.all.contains("terminate")
+        }
+        #expect(events.all == [
+            "committed:true",
+            "marker:ordinary-quit",
+            "prepareForQuit",
+            "reply:true",
+            "terminate"
+        ])
+    }
+
+    @Test func settingsRestartSingleFlightLaunchesReplacementOnce() async throws {
+        let events = LockedArray<String>([])
+        let canFinish = LockedValue<Bool>()
+        canFinish.set(false)
+        let coordinator = makeCoordinator(
+            events: events,
+            prepareForQuit: {
+                events.append("prepareForQuit")
+                while canFinish.current != true {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+            }
+        )
+
+        coordinator.requestSettingsRestart()
+        coordinator.requestSettingsRestart()
+
+        try await waitUntil(timeout: .seconds(1)) {
+            events.all.contains("prepareForQuit")
+        }
+        canFinish.set(true)
+
         try await waitUntil(timeout: .seconds(1)) {
             events.all.contains("terminate")
         }
-
-        coordinator.requestExit()
-
-        try await waitUntil(timeout: .seconds(1)) {
-            count(events.all, "terminate") == 2
-        }
-        #expect(count(events.all, "marker") == 1)
-        #expect(count(events.all, "stopObservation") == 1)
-        #expect(count(events.all, "stopJournal") == 1)
-    }
-
-    @Test func duplicateRequestsCoalesceIntoOnePreparation() async throws {
-        let events = LockedArray<String>([])
-        let coordinator = AppQuitCoordinator(
-            writeMarker: { events.append("marker") },
-            stopObservation: { events.append("stopObservation") },
-            stopJournal: { events.append("stopJournal") },
-            scheduleTerminate: { events.append("terminate") }
-        )
-
-        coordinator.requestExit()
-        coordinator.requestExit()
-
-        try await waitUntil(timeout: .seconds(1)) {
-            events.all.count == 4
-        }
-        #expect(count(events.all, "marker") == 1)
-        #expect(count(events.all, "stopObservation") == 1)
-        #expect(count(events.all, "stopJournal") == 1)
+        #expect(count(events.all, "marker:settings-restart") == 1)
+        #expect(count(events.all, "prepareForQuit") == 1)
+        #expect(count(events.all, "launchReplacement") == 1)
         #expect(count(events.all, "terminate") == 1)
     }
 
-    @Test func recordingActiveQuitInvokesStopObservationBeforeTerminate() async throws {
+    @Test func translocationWritesMarkerUsesEmptyPrepareThenTerminates() async throws {
         let events = LockedArray<String>([])
-        let isRecording = LockedValue<Bool>()
-        isRecording.set(true)
-        let coordinator = AppQuitCoordinator(
-            writeMarker: { events.append("marker") },
-            stopObservation: {
-                if isRecording.current == true {
-                    events.append("stopObservation")
-                }
+        let coordinator = makeCoordinator(
+            events: events,
+            prepareForQuit: {
+                events.append("unexpectedPrepareForQuit")
             },
-            stopJournal: { events.append("stopJournal") },
-            scheduleTerminate: { events.append("terminate") }
+            prepareForUpdate: {
+                events.append("unexpectedPrepareForUpdate")
+            }
         )
 
-        coordinator.requestExit()
+        coordinator.requestTranslocationRepair()
 
         try await waitUntil(timeout: .seconds(1)) {
             events.all.contains("terminate")
         }
-        #expect(events.all == ["marker", "stopObservation", "stopJournal", "terminate"])
+        #expect(events.all == [
+            "committed:true",
+            "marker:translocation",
+            "terminate"
+        ])
     }
 
-    @Test func delegateDecisionModelCancelsUntilPreparedThenTerminatesNow() {
+    @Test func prepareForUpdaterInstallRunsSharedBodyAndMarksPrepared() async {
+        let events = LockedArray<String>([])
+        let coordinator = makeCoordinator(events: events)
+
+        await coordinator.prepareForUpdaterInstall()
+
+        #expect(events.all == [
+            "committed:true",
+            "marker:sparkle-update",
+            "prepareForUpdate"
+        ])
+        #expect(coordinator.isPrepared)
+    }
+
+    @Test func resetAfterFailedUpdaterInstallInvalidatesResetsAndCancelsQueuedReplies() async throws {
+        let events = LockedArray<String>([])
+        let canFinish = LockedValue<Bool>()
+        canFinish.set(false)
+        let coordinator = makeCoordinator(
+            events: events,
+            prepareForUpdate: {
+                events.append("prepareForUpdate:start")
+                while canFinish.current != true {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+                events.append("prepareForUpdate:end")
+            }
+        )
+        let updaterTask = Task { @MainActor in
+            await coordinator.prepareForUpdaterInstall()
+        }
+
+        try await waitUntil(timeout: .seconds(5)) {
+            events.all.contains("prepareForUpdate:start")
+        }
+        coordinator.requestExternalTermination { proceed in
+            events.append("reply:\(proceed)")
+        }
+
+        coordinator.resetAfterFailedUpdaterInstall()
+
+        #expect(events.all.contains("reply:false"))
+        #expect(events.all.contains("invalidateMarker"))
+        #expect(events.all.contains("committed:false"))
+        #expect(!coordinator.isPrepared)
+
+        canFinish.set(true)
+        await updaterTask.value
+        #expect(!events.all.contains("reply:true"))
+        #expect(!events.all.contains("terminate"))
+        #expect(!coordinator.isPrepared)
+
+        coordinator.requestAppOwnedQuit()
+        #expect(events.all.contains("marker:ordinary-quit"))
+    }
+
+    @Test func stateMachineTransitionsAndReset() {
         var stateMachine = AppQuitStateMachine()
 
         #expect(!stateMachine.isPrepared)
-        #expect(stateMachine.requestExit() == .startPreparation)
+        #expect(stateMachine.requestPreparation() == .startPreparation)
+        #expect(stateMachine.requestPreparation() == .joinPreparation)
         #expect(!stateMachine.isPrepared)
 
         stateMachine.markPrepared()
 
         #expect(stateMachine.isPrepared)
-        #expect(stateMachine.requestExit() == .scheduleTerminate)
+        #expect(stateMachine.requestPreparation() == .alreadyPrepared)
+
+        stateMachine.reset()
+
+        #expect(!stateMachine.isPrepared)
+        #expect(stateMachine.requestPreparation() == .startPreparation)
+    }
+
+    private func makeCoordinator(
+        events: LockedArray<String>,
+        prepareForQuit: (@MainActor () async -> Void)? = nil,
+        prepareForUpdate: (@MainActor () async -> Void)? = nil
+    ) -> AppQuitCoordinator {
+        AppQuitCoordinator(dependencies: AppQuitCoordinator.Dependencies(
+            setCommitted: { committed in
+                events.append("committed:\(committed)")
+            },
+            writeMarker: { reason in
+                events.append("marker:\(reason.markerString)")
+            },
+            invalidateMarker: {
+                events.append("invalidateMarker")
+            },
+            prepareForQuit: prepareForQuit ?? {
+                events.append("prepareForQuit")
+            },
+            prepareForUpdate: prepareForUpdate ?? {
+                events.append("prepareForUpdate")
+            },
+            terminate: {
+                events.append("terminate")
+            },
+            launchReplacement: {
+                events.append("launchReplacement")
+            }
+        ))
     }
 }
 

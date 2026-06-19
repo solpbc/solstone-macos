@@ -170,6 +170,20 @@ struct SettingsRestartContractTests {
         #expect(!body.contains(".start(runtime:"))
     }
 
+    @Test func settingsRelaunchRoutesThroughAppQuitCoordinator() throws {
+        let source = try readSource("Sources/solstone/SettingsView.swift")
+        let body = try extract(
+            from: source,
+            start: "private func relaunchApp()",
+            end: "    // MARK: - Observer Tab"
+        )
+
+        #expect(body.contains("appState.appQuitCoordinator.requestSettingsRestart()"))
+        #expect(!body.contains("Process()"))
+        #expect(!body.contains("asyncAfter"))
+        #expect(!body.contains("NSApp.terminate"))
+    }
+
     @Test func journalLifecycleRequestsUseTaskHandleMutualExclusion() throws {
         let source = try readSource("Sources/solstone/AppState.swift")
         let restartBody = try extract(

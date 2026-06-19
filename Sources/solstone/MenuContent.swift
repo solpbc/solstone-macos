@@ -83,7 +83,7 @@ struct MenuContent: View {
         Divider()
 
         Button("quit solstone") {
-            appState.appQuitCoordinator.requestExit()
+            appState.appQuitCoordinator.requestAppOwnedQuit()
         }
         .accessibilityIdentifier(AXID.Menubar.quitButton)
     }

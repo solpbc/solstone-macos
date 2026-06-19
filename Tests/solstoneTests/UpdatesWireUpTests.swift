@@ -34,16 +34,30 @@ struct UpdatesWireUpTests {
         }
     }
 
-    @Test func appUpdateControllerFinalizerStopsRecordingBeforeJournalAndWiresRecovery() throws {
+    @Test func appUpdateControllerFinalizerRoutesThroughCoordinatorAndWiresRecovery() throws {
         let source = try readWireUpSource("Sources/solstone/SolstoneCaptureApp.swift")
-        let stopRecording = try #require(source.range(of: "await appState.stopRecording()"))
-        let stopJournal = try #require(source.range(of: "await appState.stopSupervisedJournalForUpdate()"))
 
-        #expect(stopRecording.lowerBound < stopJournal.lowerBound)
+        #expect(wireUpContains(source, """
+            preInstallFinalizer: { @MainActor in
+                await appState.appQuitCoordinator.prepareForUpdaterInstall()
+            }
+        """))
         #expect(wireUpContains(source, """
             installFailureRecovery: { @MainActor in
+                appState.appQuitCoordinator.resetAfterFailedUpdaterInstall()
                 await appState.reestablishSupervisedJournalAfterFailedUpdate()
             }
         """))
+    }
+
+    @Test func appQuitCoordinatorUpdatePreparationStopsRecordingBeforeJournal() throws {
+        let source = try readWireUpSource("Sources/solstone/AppState.swift")
+        let prepareStart = try #require(source.range(of: "prepareForUpdate: { [weak self] in"))
+        let prepareEnd = try #require(source[prepareStart.upperBound...].range(of: "terminate: terminate"))
+        let body = String(source[prepareStart.lowerBound..<prepareEnd.lowerBound])
+        let stopRecording = try #require(body.range(of: "await self.stopRecording()"))
+        let stopJournal = try #require(body.range(of: "await self.stopSupervisedJournalForUpdate()"))
+
+        #expect(stopRecording.lowerBound < stopJournal.lowerBound)
     }
 }

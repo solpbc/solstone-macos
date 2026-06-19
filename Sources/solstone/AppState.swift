@@ -306,24 +306,38 @@ public final class AppState {
     }
 
     private func makeAppQuitCoordinator(
-        scheduleTerminate: @escaping @MainActor () -> Void
+        setCommitted: @escaping @MainActor (Bool) -> Void,
+        terminate: @escaping @MainActor () -> Void,
+        launchReplacement: @escaping @MainActor () -> Void
     ) -> AppQuitCoordinator {
         AppQuitCoordinator(
-            writeMarker: {
-                ExpectedExitMarker.markExpectedExit(reason: "ordinary-quit")
-            },
-            stopObservation: { [weak self] in
-                guard let self else { return }
-                if self.isRecording {
-                    await self.stopRecording()
-                }
-            },
-            stopJournal: { [weak self] in
-                await self?.stopSupervisedJournalForTermination()
-            },
-            // This scheduler must escape the current MainActor job before
-            // entering AppKit termination.
-            scheduleTerminate: scheduleTerminate
+            dependencies: AppQuitCoordinator.Dependencies(
+                setCommitted: setCommitted,
+                writeMarker: { reason in
+                    ExpectedExitMarker.markExpectedExit(reason: reason.markerString)
+                },
+                invalidateMarker: {
+                    ExpectedExitMarker.invalidate()
+                },
+                prepareForQuit: { [weak self] in
+                    guard let self else { return }
+                    if self.isRecording {
+                        await self.stopRecording()
+                    }
+                    await self.stopSupervisedJournalForTermination()
+                },
+                prepareForUpdate: { [weak self] in
+                    guard let self else { return }
+                    if self.isRecording {
+                        await self.stopRecording()
+                    }
+                    await self.stopSupervisedJournalForUpdate()
+                },
+                // This scheduler must escape the current MainActor job before
+                // entering AppKit termination.
+                terminate: terminate,
+                launchReplacement: launchReplacement
+            )
         )
     }
 
@@ -666,10 +680,20 @@ public final class AppState {
 
         uploadCoordinator = UploadCoordinator(storageManager: storageManager, config: config)
         appQuitCoordinator = makeAppQuitCoordinator(
-            scheduleTerminate: {
+            setCommitted: { [weak self] committed in
+                self?.isTerminating = committed
+            },
+            terminate: {
                 DispatchQueue.main.async {
                     NSApp.terminate(nil)
                 }
+            },
+            launchReplacement: {
+                let bundlePath = Bundle.main.bundlePath
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                process.arguments = ["-n", bundlePath]
+                try? process.run()
             }
         )
         uploadCoordinator.bundledAvailabilityProvider = { [weak self] in
@@ -881,7 +905,11 @@ public final class AppState {
 
         captureManager = CaptureManager(storageManager: storageManager)
         uploadCoordinator = UploadCoordinator(forSnapshot: storageManager, config: config)
-        appQuitCoordinator = makeAppQuitCoordinator(scheduleTerminate: {})
+        appQuitCoordinator = makeAppQuitCoordinator(
+            setCommitted: { _ in },
+            terminate: {},
+            launchReplacement: {}
+        )
         visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
         heartbeatTarget.state = self
 
@@ -892,6 +920,11 @@ public final class AppState {
     // MARK: - Recording Control
 
     public func startRecording() async {
+        guard !isTerminating else {
+            Logger.general.info("startRecording() ignored because app is terminating")
+            return
+        }
+
         do {
             try await captureManager.startRecording(
                 disabledMicUIDs: config.disabledMicrophoneUIDs,
@@ -973,8 +1006,12 @@ public final class AppState {
 
         // Auto-start if permissions are ready, not paused, and not already recording
         if allGranted && !pauseManager.isPaused && !isRecording {
-            Logger.general.info("[Permissions] all granted, auto-starting observation")
-            await startRecording()
+            if isTerminating {
+                Logger.general.info("[Permissions] auto-start skipped because app is terminating")
+            } else {
+                Logger.general.info("[Permissions] all granted, auto-starting observation")
+                await startRecording()
+            }
         }
 
         // Stop polling once recording is active — lifecycle manager handles recovery from there
@@ -1009,6 +1046,11 @@ public final class AppState {
     }
 
     private func coordinateBundledJournalStart(journalRoot rawJournalRoot: URL) -> Task<Bool, Never> {
+        guard !isTerminating else {
+            Logger.setup.notice("journal-lifecycle: coordinate-start branch=noop reason=terminating")
+            return Task { false }
+        }
+
         let journalRoot = rawJournalRoot.standardizedFileURL
         if bundledJournalAlreadyReady(for: journalRoot) {
             Logger.setup.notice("journal-lifecycle: coordinate-start branch=already-ready journalRoot=\(journalRoot.path, privacy: .public)")
@@ -1276,6 +1318,11 @@ public final class AppState {
     }
 
     public func requestJournalRestart() {
+        guard !isTerminating else {
+            emitJournalRestartLog(step: .serviceRestart, outcome: "noop", detail: "terminating")
+            return
+        }
+
         if config.serviceMode == .bundled {
             guard !journalRuntimeStatus.isSetupNeeded else { return }
             guard !journalLifecycleBusy else {
@@ -1319,6 +1366,11 @@ public final class AppState {
     }
 
     public func requestJournalStart() {
+        guard !isTerminating else {
+            emitJournalRestartLog(step: .serviceRestart, outcome: "noop", detail: "terminating")
+            return
+        }
+
         guard config.serviceMode == .bundled else { return }
         guard journalRuntimeStatus.isStoppedByUser else { return }
         guard !journalLifecycleBusy else {
@@ -1331,6 +1383,11 @@ public final class AppState {
     }
 
     internal func requestBundledJournalRuntimeStart() {
+        guard !isTerminating else {
+            Logger.setup.notice("journal-lifecycle: runtime-start outcome=noop detail=terminating")
+            return
+        }
+
         guard config.serviceMode == .bundled else { return }
         guard !bundledRuntimeStartInFlight else { return }
         _ = coordinateBundledJournalStart(journalRoot: configuredJournalRoot())

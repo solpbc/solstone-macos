@@ -41,6 +41,7 @@ final class UpdateController {
     private var pendingCancellation: (() -> Void)?
     private var expectedContentLength: UInt64?
     private var blockedAutomaticCheckDuringExclusive = false
+    // Sparkle handoff flags; distinct from AppQuitCoordinator's app committed-exit state.
     private var installFinalizationInFlight = false
     private var installFinalizationCommitted = false
     private var pendingDownloadIntent = false
@@ -559,7 +560,6 @@ final class UpdateController {
         // exclusivity is not re-checked before handing control back to Sparkle.
         Task { @MainActor in
             await preInstallFinalizer?()
-            ExpectedExitMarker.markExpectedExit(reason: "sparkle-update")
             installFinalizationCommitted = true
             reply(.install)
             installFinalizationInFlight = false

@@ -84,4 +84,19 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
 
         return try? decode(data)
     }
+
+    public static func invalidate(
+        at url: URL = markerURL,
+        fileManager: FileManager = .default
+    ) {
+        guard fileManager.fileExists(atPath: url.path) else {
+            return
+        }
+
+        do {
+            try fileManager.removeItem(at: url)
+        } catch {
+            Logger.general.warning("expected-exit marker invalidate failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
 }
