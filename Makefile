@@ -321,8 +321,9 @@ release-preflight: signing-check
 # Usage: make bump-release VERSION=1.1.4 BUILD=6 SOLSTONE=0.3.3
 #   VERSION  required, semver — sets CFBundleShortVersionString
 #   BUILD    required, integer — sets CFBundleVersion (must be > current)
-#   SOLSTONE optional — sets SOLSTONE_PIN_VERSION + SOLSTONE_MIN_VERSION;
-#            omit to keep the current pin.
+#   SOLSTONE optional — sets SOLSTONE_PIN_VERSION + SOLSTONE_MIN_VERSION
+#            + SOLSTONE_REF (as the vX.Y.Z tag, so wheelhouse vendoring
+#            archives the matching journal source); omit to keep all three.
 #
 # Side effects: Info.plist updated via plutil, Makefile pins updated via
 # sed, BundleConfig.swift regenerated, CHANGELOG.md scaffold prepended
@@ -340,7 +341,8 @@ bump-release:
 	@if [ -n "$(SOLSTONE)" ]; then \
 		sed -i '' "s/^SOLSTONE_PIN_VERSION ?= .*/SOLSTONE_PIN_VERSION ?= $(SOLSTONE)/" Makefile; \
 		sed -i '' "s/^SOLSTONE_MIN_VERSION ?= .*/SOLSTONE_MIN_VERSION ?= $(SOLSTONE)/" Makefile; \
-		echo "✓ Makefile pins: SOLSTONE_PIN_VERSION = $(SOLSTONE)"; \
+		sed -i '' "s/^SOLSTONE_REF ?= .*/SOLSTONE_REF ?= v$(SOLSTONE)/" Makefile; \
+		echo "✓ Makefile pins: SOLSTONE_PIN_VERSION = $(SOLSTONE), SOLSTONE_REF = v$(SOLSTONE)"; \
 		$(MAKE) -s SOLSTONE_PIN_VERSION="$(SOLSTONE)" SOLSTONE_MIN_VERSION="$(SOLSTONE)" generate-bundle-config; \
 	else \
 		$(MAKE) -s generate-bundle-config; \
