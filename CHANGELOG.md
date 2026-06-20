@@ -5,6 +5,15 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.18] - 2026-06-19
+
+### Changed
+- the menubar status now tells you the honest truth about whether what you're observing is reaching your journal right now. before, the sun icon could look full even when observing was paused, local-only, or stopped. now a full sun means your journal is receiving, a half sun means it isn't, and there's a clear starting state and an error state. the status text in Settings and the Help legend match this too, and the tray status now sits cleanly next to its pause and resume control.
+- Help and Settings → Status now show the solstone app version on its own, so it's no longer mixed up with your journal's version.
+- updated the bundled solstone journal to 0.6.9 →
+
+### Fixed
+- quitting, restarting, and updating solstone are now clean and reliable, including right after an update has been prepared. a normal quit is also no longer mistaken for a crash, so solstone won't relaunch itself when you meant to close it.
 ## [1.3.17] - 2026-06-18
 
 ### Changed
