@@ -119,7 +119,8 @@ vendor-wheelhouse: check-versions vendor-uv vendor-python
 	        echo "error: SOLSTONE_SRC_DIR '$(SOLSTONE_SRC_DIR)' is not a git repo; set SOLSTONE_SRC_DIR=/path/to/solstone"; \
 	        exit 1; \
 	    fi; \
-	    git -C "$(SOLSTONE_SRC_DIR)" rev-parse --verify "$(SOLSTONE_REF)" >/dev/null 2>&1 || { echo "error: SOLSTONE_REF '$(SOLSTONE_REF)' not found in $(SOLSTONE_SRC_DIR)"; exit 1; }; \
+	    git -C "$(SOLSTONE_SRC_DIR)" rev-parse --verify "$(SOLSTONE_REF)" >/dev/null 2>&1 || { echo "vendor: SOLSTONE_REF '$(SOLSTONE_REF)' not in $(SOLSTONE_SRC_DIR) yet; fetching tags from origin..."; git -C "$(SOLSTONE_SRC_DIR)" fetch --quiet --tags origin >/dev/null 2>&1 || true; }; \
+	    git -C "$(SOLSTONE_SRC_DIR)" rev-parse --verify "$(SOLSTONE_REF)" >/dev/null 2>&1 || { echo "error: SOLSTONE_REF '$(SOLSTONE_REF)' not found in $(SOLSTONE_SRC_DIR) (even after a tag fetch from origin)"; exit 1; }; \
 	    if python3 scripts/wheelhouse_helper.py verify-wheelhouse "$(WHEELHOUSE_DIR)" "$(SOLSTONE_PIN_VERSION)" >/dev/null 2>&1; then \
 	        echo "vendor: solstone wheelhouse $(SOLSTONE_PIN_VERSION) already present and verified"; \
 	        exit 0; \
