@@ -5,7 +5,8 @@ import Foundation
 /// - `ReconciledUpdateStatus` is the durable fact persisted across launches. It
 ///   remembers the latest version Sparkle found and the most recent check
 ///   outcome. A found result sets `availableVersion`, a definitive up-to-date
-///   result clears it, and a failed check preserves it.
+///   result clears it, a staged result restores a downloaded-and-staged update,
+///   and a failed check preserves it.
 /// - `UpdateActivity` is only live Sparkle activity. It must not be restored
 ///   from disk because downloading, extraction, ready-to-install, and installing
 ///   states are backed by Sparkle replies or sessions that only exist in memory.
@@ -51,6 +52,7 @@ struct ReconciledUpdateStatus: Codable, Equatable, Sendable {
     enum Outcome: String, Codable, Equatable, Sendable {
         case upToDate
         case found
+        case staged
         case failed
     }
 }

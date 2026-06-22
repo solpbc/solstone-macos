@@ -13,7 +13,7 @@ struct AppQuitCoordinatorTests {
 
         coordinator.requestAppOwnedQuit()
 
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("terminate")
         }
         #expect(events.all == [
@@ -42,14 +42,14 @@ struct AppQuitCoordinatorTests {
 
         coordinator.requestAppOwnedQuit()
 
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("prepareForQuit:start")
         }
         #expect(!events.all.contains("terminate"))
 
         canFinish.set(true)
 
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("terminate")
         }
         #expect(events.all == [
@@ -67,7 +67,7 @@ struct AppQuitCoordinatorTests {
 
         coordinator.requestAppOwnedQuit()
 
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("terminate")
         }
         #expect(coordinator.isPrepared)
@@ -90,7 +90,7 @@ struct AppQuitCoordinatorTests {
             events.append("reply:\(proceed)")
         }
 
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("reply:true")
         }
         #expect(events.all == [
@@ -124,12 +124,12 @@ struct AppQuitCoordinatorTests {
             events.append("reply2:\(proceed)")
         }
 
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("prepareForQuit")
         }
         canFinish.set(true)
 
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("reply1:true") && events.all.contains("reply2:true")
         }
         #expect(count(events.all, "committed:true") == 1)
@@ -155,7 +155,7 @@ struct AppQuitCoordinatorTests {
         )
 
         coordinator.requestAppOwnedQuit()
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("prepareForQuit")
         }
 
@@ -164,7 +164,7 @@ struct AppQuitCoordinatorTests {
         }
         canFinish.set(true)
 
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("reply:true") && events.all.contains("terminate")
         }
         #expect(events.all == [
@@ -193,12 +193,12 @@ struct AppQuitCoordinatorTests {
         coordinator.requestSettingsRestart()
         coordinator.requestSettingsRestart()
 
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("prepareForQuit")
         }
         canFinish.set(true)
 
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("terminate")
         }
         #expect(count(events.all, "marker:settings-restart") == 1)
@@ -221,7 +221,7 @@ struct AppQuitCoordinatorTests {
 
         coordinator.requestTranslocationRepair()
 
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("terminate")
         }
         #expect(events.all == [

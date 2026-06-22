@@ -11,6 +11,7 @@ struct UpdateControllerTests {
     private let feedURLOverrideKey = "solstone.updates.feedURLOverride"
     private let legacyLastCheckedAtKey = "solstone.updates.lastCheckedAt"
     private let legacyLastCheckResultKey = "solstone.updates.lastCheckResult"
+    private let isolatedDefaults = IsolatedUserDefaults()
 
     @Test func invalidWhenFeedURLMissing() {
         #expect(UpdateController.validateSparkleConfig(feedURL: nil, publicKey: validPublicKey) == false)
@@ -37,56 +38,56 @@ struct UpdateControllerTests {
         clearDefaults()
         defer { clearDefaults() }
 
-        #expect(UpdateController.feedURLOverride(from: .standard) == nil)
+        #expect(UpdateController.feedURLOverride(from: isolatedDefaults.defaults) == nil)
     }
 
     @Test func feedURLOverrideReturnsNilWhenEmpty() {
         clearDefaults()
         defer { clearDefaults() }
-        UserDefaults.standard.set("", forKey: feedURLOverrideKey)
+        isolatedDefaults.defaults.set("", forKey: feedURLOverrideKey)
 
-        #expect(UpdateController.feedURLOverride(from: .standard) == nil)
+        #expect(UpdateController.feedURLOverride(from: isolatedDefaults.defaults) == nil)
     }
 
     @Test func feedURLOverrideReturnsNilWhenWhitespaceOnly() {
         clearDefaults()
         defer { clearDefaults() }
-        UserDefaults.standard.set("   ", forKey: feedURLOverrideKey)
+        isolatedDefaults.defaults.set("   ", forKey: feedURLOverrideKey)
 
-        #expect(UpdateController.feedURLOverride(from: .standard) == nil)
+        #expect(UpdateController.feedURLOverride(from: isolatedDefaults.defaults) == nil)
     }
 
     @Test func feedURLOverrideReturnsNilWhenMalformedWithInternalSpace() {
         clearDefaults()
         defer { clearDefaults() }
-        UserDefaults.standard.set("https:// updates.solstone.app", forKey: feedURLOverrideKey)
+        isolatedDefaults.defaults.set("https:// updates.solstone.app", forKey: feedURLOverrideKey)
 
-        #expect(UpdateController.feedURLOverride(from: .standard) == nil)
+        #expect(UpdateController.feedURLOverride(from: isolatedDefaults.defaults) == nil)
     }
 
     @Test func feedURLOverrideReturnsNilWhenNonHTTPS() {
         clearDefaults()
         defer { clearDefaults() }
-        UserDefaults.standard.set("http://updates.solstone.app/appcast.xml", forKey: feedURLOverrideKey)
+        isolatedDefaults.defaults.set("http://updates.solstone.app/appcast.xml", forKey: feedURLOverrideKey)
 
-        #expect(UpdateController.feedURLOverride(from: .standard) == nil)
+        #expect(UpdateController.feedURLOverride(from: isolatedDefaults.defaults) == nil)
     }
 
     @Test func feedURLOverrideReturnsNilWhenFileScheme() {
         clearDefaults()
         defer { clearDefaults() }
-        UserDefaults.standard.set("file:///tmp/appcast.xml", forKey: feedURLOverrideKey)
+        isolatedDefaults.defaults.set("file:///tmp/appcast.xml", forKey: feedURLOverrideKey)
 
-        #expect(UpdateController.feedURLOverride(from: .standard) == nil)
+        #expect(UpdateController.feedURLOverride(from: isolatedDefaults.defaults) == nil)
     }
 
     @Test func feedURLOverrideReturnsValidHTTPSStagingURL() {
         clearDefaults()
         defer { clearDefaults() }
         let stagingFeedURL = "https://staging.updates.solstone.app/solstone-macos/appcast.xml"
-        UserDefaults.standard.set(stagingFeedURL, forKey: feedURLOverrideKey)
+        isolatedDefaults.defaults.set(stagingFeedURL, forKey: feedURLOverrideKey)
 
-        #expect(UpdateController.feedURLOverride(from: .standard) == stagingFeedURL)
+        #expect(UpdateController.feedURLOverride(from: isolatedDefaults.defaults) == stagingFeedURL)
     }
 
     @Test func canCheckForUpdatesUsesBundledConfigWhenOverrideUnset() {
@@ -105,9 +106,13 @@ struct UpdateControllerTests {
         #expect(baseline)
 
         let stagingFeedURL = "https://staging.updates.solstone.app/solstone-macos/appcast.xml"
-        UserDefaults.standard.set(stagingFeedURL, forKey: feedURLOverrideKey)
+        isolatedDefaults.defaults.set(stagingFeedURL, forKey: feedURLOverrideKey)
 
-        let controller = UpdateController(feedURL: validFeedURL, publicKey: validPublicKey) { _, _ in nil }
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in nil }
 
         #expect(controller.canCheckForUpdates == baseline)
     }
@@ -117,7 +122,11 @@ struct UpdateControllerTests {
         defer { clearDefaults() }
         var attempts = 0
 
-        let controller = UpdateController(feedURL: validFeedURL, publicKey: validPublicKey) { _, _ in
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
             attempts += 1
             return nil
         }
@@ -125,6 +134,58 @@ struct UpdateControllerTests {
         #expect(attempts == 1)
         #expect(controller.canCheckForUpdates)
         #expect(controller.activity == .idle)
+    }
+
+    @Test func updaterSettingsWritesReachSparkleUpdater() {
+        clearDefaults()
+        defer { clearDefaults() }
+        let spy = SpyUpdater(
+            automaticallyChecksForUpdates: false,
+            updateCheckInterval: 3_600,
+            automaticallyDownloadsUpdates: true
+        )
+
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            spy
+        }
+
+        #expect(spy.startCallCount == 1)
+        #expect(controller.automaticChecksEnabled == false)
+        #expect(controller.updateCheckInterval == 3_600)
+        #expect(controller.automaticDownloadsEnabled == true)
+
+        controller.automaticChecksEnabled = true
+        controller.updateCheckInterval = 604_800
+        controller.automaticDownloadsEnabled = false
+
+        #expect(spy.automaticallyChecksForUpdates)
+        #expect(spy.updateCheckInterval == 604_800)
+        #expect(!spy.automaticallyDownloadsUpdates)
+    }
+
+    @Test func checkForUpdatesRoutesThroughSpyAndHonorsSessionGuard() {
+        clearDefaults()
+        defer { clearDefaults() }
+        let spy = SpyUpdater()
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            spy
+        }
+
+        spy.sessionInProgress = true
+        controller.checkForUpdates()
+        #expect(spy.checkForUpdatesCallCount == 0)
+
+        spy.sessionInProgress = false
+        controller.checkForUpdates()
+        #expect(spy.checkForUpdatesCallCount == 1)
     }
 
     @Test func surfacedFlagsReflectDurableStatusAndDeferredIntent() {
@@ -283,6 +344,15 @@ struct UpdateControllerTests {
 
         controller.applyDebugFixture(
             activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .staged)
+        )
+        #expect(controller.updateIsStaged)
+        #expect(controller.stagedVersion == "1.3.9")
+        #expect(controller.statusAXToken == "staged_ready")
+
+        controller.applyDebugFixture(
+            activity: .idle,
             lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .failed)
         )
         #expect(controller.statusAXToken == "error")
@@ -321,13 +391,14 @@ struct UpdateControllerTests {
 
     private func makeController() -> UpdateController {
         clearDefaults()
-        return UpdateController(feedURL: validFeedURL, publicKey: validPublicKey) { _, _ in nil }
+        return UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in nil }
     }
 
     private func clearDefaults() {
-        UserDefaults.standard.removeObject(forKey: statusKey)
-        UserDefaults.standard.removeObject(forKey: feedURLOverrideKey)
-        UserDefaults.standard.removeObject(forKey: legacyLastCheckedAtKey)
-        UserDefaults.standard.removeObject(forKey: legacyLastCheckResultKey)
+        isolatedDefaults.clear()
     }
 }

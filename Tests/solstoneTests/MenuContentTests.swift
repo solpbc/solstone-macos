@@ -6,8 +6,10 @@ import Testing
 
 @Suite("MenuContent")
 struct MenuContentTests {
+    private let isolatedDefaults = IsolatedUserDefaults()
+
     @Test @MainActor func hasPauseResumeControlTruthTable() {
-        let updateController = UpdateController()
+        let updateController = UpdateController(defaults: isolatedDefaults.defaults)
 
         let observing = AppState.forSnapshot()
         observing.isRecording = true

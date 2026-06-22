@@ -313,7 +313,8 @@ enum UpdateStatus {
         "deferred_install",
         "update_available",
         "up_to_date",
-        "error"
+        "error",
+        "staged_ready"
     ]
 }
 

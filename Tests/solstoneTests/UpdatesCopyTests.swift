@@ -24,6 +24,16 @@ struct UpdatesCopyTests {
         #expect(UpdatesCopy.readyToInstallSubtitle == "the update is downloaded and ready when you are.")
     }
 
+    @Test func stagedReadyStrings() {
+        #expect(UpdatesCopy.stagedReadyTitle(version: "1.1.0") == "ready to install v1.1.0")
+        #expect(UpdatesCopy.stagedReadySubtitle == "the update is downloaded and will install when solstone relaunches.")
+        #expect(UpdatesCopy.actionRelaunchToInstall == "relaunch to install")
+        #expect(
+            UpdatesCopy.lastCheckedStaged(relative: "just now", version: "1.1.0")
+                == "last checked just now — version 1.1.0 ready to install"
+        )
+    }
+
     @Test func installingTitleString() {
         #expect(UpdatesCopy.installingTitle(version: "1.1.0") == "installing 1.1.0")
     }

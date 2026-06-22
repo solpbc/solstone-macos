@@ -11,9 +11,7 @@ struct AXContractTests {
     private let contractPath = "ax-contract.json"
     private let validFeedURL = "https://updates.solstone.app/solstone-macos/appcast.xml"
     private let validPublicKey = "11qYAYKxCrfVS/7TyWQHOg7hcvPa9jIlrwIaaPcHUho="
-    private let statusKey = "solstone.updates.status"
-    private let legacyLastCheckedAtKey = "solstone.updates.lastCheckedAt"
-    private let legacyLastCheckResultKey = "solstone.updates.lastCheckResult"
+    private let isolatedDefaults = IsolatedUserDefaults()
 
     @Test func contractMatchesCommittedFileOrRegenerates() throws {
         let generated = AXContract.generate()
@@ -82,7 +80,11 @@ struct AXContractTests {
         clearUpdateDefaults()
         defer { clearUpdateDefaults() }
 
-        let controller = UpdateController(feedURL: validFeedURL, publicKey: validPublicKey) { _, _ in nil }
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in nil }
         let now = Date()
 
         let emitted = [
@@ -112,6 +114,12 @@ struct AXContractTests {
                 controller,
                 activity: .idle,
                 lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .failed)
+            ),
+            statusToken(
+                controller,
+                activity: .idle,
+                availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+                lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .staged)
             )
         ]
 
@@ -136,8 +144,6 @@ struct AXContractTests {
     }
 
     private func clearUpdateDefaults() {
-        UserDefaults.standard.removeObject(forKey: statusKey)
-        UserDefaults.standard.removeObject(forKey: legacyLastCheckedAtKey)
-        UserDefaults.standard.removeObject(forKey: legacyLastCheckResultKey)
+        isolatedDefaults.clear()
     }
 }

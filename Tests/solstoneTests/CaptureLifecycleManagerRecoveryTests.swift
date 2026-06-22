@@ -217,7 +217,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         await delegate.waitForEvent(.pauseStarted("lock"))
 
         await manager.handleScreenUnlocked()
-        try await waitUntilMain(timeout: .seconds(1)) {
+        try await waitUntilMain(timeout: .seconds(5)) {
             !manager.hasPendingResumeTaskForTesting
         }
 

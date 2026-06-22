@@ -10,6 +10,7 @@ struct UpdateStateTests {
     private let statusKey = "solstone.updates.status"
     private let legacyLastCheckedAtKey = "solstone.updates.lastCheckedAt"
     private let legacyLastCheckResultKey = "solstone.updates.lastCheckResult"
+    private let isolatedDefaults = IsolatedUserDefaults()
 
     @Test func activityEquality() {
         #expect(UpdateActivity.idle == .idle)
@@ -57,46 +58,62 @@ struct UpdateStateTests {
         #expect(decoded == status)
     }
 
+    @Test func reconciledStatusCodableShapeRoundTripsStagedOutcome() throws {
+        let checkedAt = Date(timeIntervalSinceReferenceDate: 2_468)
+        let status = ReconciledUpdateStatus(
+            availableVersion: "1.3.9",
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: checkedAt, outcome: .staged)
+        )
+
+        let data = try JSONEncoder().encode(status)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let lastCheck = try #require(object["lastCheck"] as? [String: Any])
+
+        #expect(object["availableVersion"] as? String == "1.3.9")
+        #expect(lastCheck["outcome"] as? String == "staged")
+        #expect(try JSONDecoder().decode(ReconciledUpdateStatus.self, from: data) == status)
+    }
+
     @Test func migratesLegacyUpToDateResultAndDeletesLegacyKeys() {
         clearDefaults()
         defer { clearDefaults() }
         let checkedAt = Date(timeIntervalSinceReferenceDate: 10)
-        UserDefaults.standard.set(checkedAt, forKey: legacyLastCheckedAtKey)
-        UserDefaults.standard.set("upToDate", forKey: legacyLastCheckResultKey)
+        isolatedDefaults.defaults.set(checkedAt, forKey: legacyLastCheckedAtKey)
+        isolatedDefaults.defaults.set("upToDate", forKey: legacyLastCheckResultKey)
 
         let controller = makeController()
 
         #expect(controller.availableUpdate == nil)
         #expect(controller.reconciledStatus.lastCheck?.checkedAt == checkedAt)
         #expect(controller.reconciledStatus.lastCheck?.outcome == .upToDate)
-        #expect(UserDefaults.standard.data(forKey: statusKey) != nil)
-        #expect(UserDefaults.standard.object(forKey: legacyLastCheckedAtKey) == nil)
-        #expect(UserDefaults.standard.object(forKey: legacyLastCheckResultKey) == nil)
+        #expect(isolatedDefaults.defaults.data(forKey: statusKey) != nil)
+        #expect(isolatedDefaults.defaults.object(forKey: legacyLastCheckedAtKey) == nil)
+        #expect(isolatedDefaults.defaults.object(forKey: legacyLastCheckResultKey) == nil)
     }
 
     @Test func migratesLegacyFailedResultAndDeletesLegacyKeys() {
         clearDefaults()
         defer { clearDefaults() }
         let checkedAt = Date(timeIntervalSinceReferenceDate: 20)
-        UserDefaults.standard.set(checkedAt, forKey: legacyLastCheckedAtKey)
-        UserDefaults.standard.set("failed", forKey: legacyLastCheckResultKey)
+        isolatedDefaults.defaults.set(checkedAt, forKey: legacyLastCheckedAtKey)
+        isolatedDefaults.defaults.set("failed", forKey: legacyLastCheckResultKey)
 
         let controller = makeController()
 
         #expect(controller.availableUpdate == nil)
         #expect(controller.reconciledStatus.lastCheck?.checkedAt == checkedAt)
         #expect(controller.reconciledStatus.lastCheck?.outcome == .failed)
-        #expect(UserDefaults.standard.data(forKey: statusKey) != nil)
-        #expect(UserDefaults.standard.object(forKey: legacyLastCheckedAtKey) == nil)
-        #expect(UserDefaults.standard.object(forKey: legacyLastCheckResultKey) == nil)
+        #expect(isolatedDefaults.defaults.data(forKey: statusKey) != nil)
+        #expect(isolatedDefaults.defaults.object(forKey: legacyLastCheckedAtKey) == nil)
+        #expect(isolatedDefaults.defaults.object(forKey: legacyLastCheckResultKey) == nil)
     }
 
     @Test func migratesLegacyFoundResultIntoDurableAvailableVersion() {
         clearDefaults()
         defer { clearDefaults() }
         let checkedAt = Date(timeIntervalSinceReferenceDate: 30)
-        UserDefaults.standard.set(checkedAt, forKey: legacyLastCheckedAtKey)
-        UserDefaults.standard.set("updateFound:1.3.9", forKey: legacyLastCheckResultKey)
+        isolatedDefaults.defaults.set(checkedAt, forKey: legacyLastCheckedAtKey)
+        isolatedDefaults.defaults.set("updateFound:1.3.9", forKey: legacyLastCheckResultKey)
 
         let controller = makeController(runningVersion: "1.3.8")
 
@@ -105,9 +122,9 @@ struct UpdateStateTests {
         #expect(controller.reconciledStatus.availableVersion == "1.3.9")
         #expect(controller.reconciledStatus.lastCheck?.checkedAt == checkedAt)
         #expect(controller.reconciledStatus.lastCheck?.outcome == .found)
-        #expect(UserDefaults.standard.data(forKey: statusKey) != nil)
-        #expect(UserDefaults.standard.object(forKey: legacyLastCheckedAtKey) == nil)
-        #expect(UserDefaults.standard.object(forKey: legacyLastCheckResultKey) == nil)
+        #expect(isolatedDefaults.defaults.data(forKey: statusKey) != nil)
+        #expect(isolatedDefaults.defaults.object(forKey: legacyLastCheckedAtKey) == nil)
+        #expect(isolatedDefaults.defaults.object(forKey: legacyLastCheckResultKey) == nil)
     }
 
     @Test func persistedAvailableVersionEqualToRunningVersionClearsDurableFact() throws {
@@ -149,11 +166,33 @@ struct UpdateStateTests {
         #expect(controller.reconciledStatus.lastCheck?.outcome == .found)
     }
 
+    @Test func persistedStagedVersionDifferentFromRunningVersionIsRestored() throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        try persistStatus(
+            ReconciledUpdateStatus(
+                availableVersion: "1.3.9",
+                lastCheck: ReconciledUpdateStatus.LastCheck(
+                    checkedAt: Date(timeIntervalSinceReferenceDate: 60),
+                    outcome: .staged
+                )
+            )
+        )
+
+        let controller = makeController(runningVersion: "1.4.0")
+
+        #expect(controller.availableUpdate?.version == "1.3.9")
+        #expect(controller.reconciledStatus.availableVersion == "1.3.9")
+        #expect(controller.reconciledStatus.lastCheck?.outcome == .staged)
+        #expect(controller.updateIsStaged)
+    }
+
     private func makeController(runningVersion: String = "1.3.8") -> UpdateController {
         UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
-            runningVersion: { runningVersion }
+            runningVersion: { runningVersion },
+            defaults: isolatedDefaults.defaults
         ) { _, _ in
             nil
         }
@@ -161,12 +200,10 @@ struct UpdateStateTests {
 
     private func persistStatus(_ status: ReconciledUpdateStatus) throws {
         let data = try JSONEncoder().encode(status)
-        UserDefaults.standard.set(data, forKey: statusKey)
+        isolatedDefaults.defaults.set(data, forKey: statusKey)
     }
 
     private func clearDefaults() {
-        UserDefaults.standard.removeObject(forKey: statusKey)
-        UserDefaults.standard.removeObject(forKey: legacyLastCheckedAtKey)
-        UserDefaults.standard.removeObject(forKey: legacyLastCheckResultKey)
+        isolatedDefaults.clear()
     }
 }

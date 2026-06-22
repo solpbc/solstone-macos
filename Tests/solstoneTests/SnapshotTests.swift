@@ -45,6 +45,8 @@ private func makeSnapshotOutputDir() throws -> URL {
 @Suite("Snapshots")
 @MainActor
 struct SnapshotTests {
+    private let isolatedDefaults = IsolatedUserDefaults()
+
     private static nonisolated(unsafe) var _outputDir: URL?
 
     private var outputDir: URL {
@@ -61,7 +63,7 @@ struct SnapshotTests {
     }
 
     private func makeSnapshotUpdateController() -> UpdateController {
-        UpdateController(feedURL: nil, publicKey: nil) { _, _ in nil }
+        UpdateController(feedURL: nil, publicKey: nil, defaults: isolatedDefaults.defaults) { _, _ in nil }
     }
 
     private func render<V: View>(_ view: V, size: CGSize, to filename: String) throws {

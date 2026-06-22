@@ -11,6 +11,7 @@ struct SparkleDeferralTests {
     private let statusKey = "solstone.updates.status"
     private let legacyLastCheckedAtKey = "solstone.updates.lastCheckedAt"
     private let legacyLastCheckResultKey = "solstone.updates.lastCheckResult"
+    private let isolatedDefaults = IsolatedUserDefaults()
 
     @Test func delegateGateAllowsManualChecksAndBlocksAutomaticAndProbeChecksDuringExclusive() async {
         let signal = ExclusiveSignal()
@@ -457,6 +458,37 @@ struct SparkleDeferralTests {
         }
     }
 
+    @Test func duplicateFailedCheckClearsDownloadIntentBeforeLaterUpdateFound() async throws {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+        var checks = 0
+        var replies: [SPUUserUpdateChoice] = []
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .failed),
+            hasLiveChoiceReply: false
+        )
+
+        controller.download()
+        controller.presentUpdaterError(NSError(domain: "test", code: 1))
+        controller.presentUpdateFound(
+            version: "1.3.9",
+            releaseNotes: nil,
+            state: try userUpdateState(stage: .notDownloaded),
+            reply: { choice in
+                replies.append(choice)
+                Issue.record("unexpected \(choice) reply after duplicate failed check")
+            }
+        )
+        await Task.yield()
+
+        #expect(checks == 1)
+        #expect(replies.isEmpty)
+        #expect(controller.reconciledStatus.lastCheck?.outcome == .found)
+    }
+
     @Test func deferredIntentWithMissingReplyFallsBackToCheckWhenSignalClears() async {
         let signal = ExclusiveSignal()
         let controller = makeController(exclusivity: signal)
@@ -613,7 +645,8 @@ struct SparkleDeferralTests {
             exclusivity: { signal.value },
             sessionInProgress: sessionInProgress,
             preInstallFinalizer: preInstallFinalizer,
-            installFailureRecovery: installFailureRecovery
+            installFailureRecovery: installFailureRecovery,
+            defaults: isolatedDefaults.defaults
         ) { _, _ in
             nil
         }
@@ -668,9 +701,7 @@ struct SparkleDeferralTests {
     }
 
     private func clearDefaults() {
-        UserDefaults.standard.removeObject(forKey: statusKey)
-        UserDefaults.standard.removeObject(forKey: legacyLastCheckedAtKey)
-        UserDefaults.standard.removeObject(forKey: legacyLastCheckResultKey)
+        isolatedDefaults.clear()
     }
 }
 

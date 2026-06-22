@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct UpdatesTabView: View {
@@ -149,6 +150,8 @@ struct UpdatesTabView: View {
     private var idleTransientBlock: some View {
         if let deferred = controller.deferredInstallIntent {
             deferredBlock(deferred)
+        } else if controller.updateIsStaged, let update = controller.availableUpdate {
+            stagedReadyBlock(update)
         } else if controller.updateCheckFailed {
             failedBlock
         } else if let update = controller.availableUpdate {
@@ -172,6 +175,20 @@ struct UpdatesTabView: View {
             primaryTitle: UpdatesCopy.actionCheckAgain,
             primaryAction: controller.checkForUpdates,
             primaryID: AXID.Updates.check
+        )
+    }
+
+    @ViewBuilder
+    private func stagedReadyBlock(_ update: AvailableUpdate) -> some View {
+        titleBlock(
+            title: UpdatesCopy.stagedReadyTitle(version: update.version),
+            subtitle: UpdatesCopy.stagedReadySubtitle
+        )
+        releaseNotesSection(update.releaseNotes)
+        actionRow(
+            primaryTitle: UpdatesCopy.actionRelaunchToInstall,
+            primaryAction: relaunchToInstallStagedUpdate,
+            primaryID: AXID.Updates.install
         )
     }
 
@@ -279,11 +296,20 @@ struct UpdatesTabView: View {
                 return UpdatesCopy.lastCheckedGeneric(relative: relative)
             }
             return UpdatesCopy.lastCheckedUpdateFound(relative: relative, version: version)
+        case .staged:
+            guard let version = controller.reconciledStatus.availableVersion else {
+                return UpdatesCopy.lastCheckedGeneric(relative: relative)
+            }
+            return UpdatesCopy.lastCheckedStaged(relative: relative, version: version)
         case .failed:
             return UpdatesCopy.lastCheckedFailed(relative: relative)
         case .none:
             return UpdatesCopy.lastCheckedGeneric(relative: relative)
         }
+    }
+
+    private func relaunchToInstallStagedUpdate() {
+        NSApplication.shared.terminate(nil)
     }
 
     private func titleBlock(title: String, subtitle: String) -> some View {

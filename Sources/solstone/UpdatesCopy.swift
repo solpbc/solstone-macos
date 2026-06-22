@@ -26,6 +26,7 @@ enum UpdatesCopy {
     static let actionCheckAgain = "check again"
     static let actionDownload = "download"
     static let actionInstall = "install"
+    static let actionRelaunchToInstall = "relaunch to install"
     static let actionCancel = "cancel"
     static let actionDismiss = "dismiss"
     static let actionRetry = "retry"
@@ -51,6 +52,10 @@ enum UpdatesCopy {
 
     static func lastCheckedUpdateFound(relative: String, version: String) -> String {
         "last checked \(relative) — version \(version) found"
+    }
+
+    static func lastCheckedStaged(relative: String, version: String) -> String {
+        "last checked \(relative) — version \(version) ready to install"
     }
 
     static func lastCheckedFailed(relative: String) -> String {
@@ -93,7 +98,13 @@ enum UpdatesCopy {
         "ready to install \(version)"
     }
 
+    static func stagedReadyTitle(version: String) -> String {
+        "ready to install v\(version)"
+    }
+
     static let readyToInstallSubtitle = "the update is downloaded and ready when you are."
+
+    static let stagedReadySubtitle = "the update is downloaded and will install when solstone relaunches."
 
     static func installingTitle(version: String) -> String {
         "installing \(version)"

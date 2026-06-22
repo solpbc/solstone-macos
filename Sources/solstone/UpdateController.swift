@@ -5,9 +5,21 @@ import Sparkle
 import os
 
 @MainActor
+protocol SparkleUpdating: AnyObject {
+    var automaticallyChecksForUpdates: Bool { get set }
+    var updateCheckInterval: TimeInterval { get set }
+    var automaticallyDownloadsUpdates: Bool { get set }
+    func checkForUpdates()
+    var sessionInProgress: Bool { get }
+    func start() throws
+}
+
+extension SPUUpdater: SparkleUpdating {}
+
+@MainActor
 @Observable
 final class UpdateController {
-    typealias UpdaterFactory = @MainActor (SparkleUserDriver, any SPUUpdaterDelegate) -> SPUUpdater?
+    typealias UpdaterFactory = @MainActor (SparkleUserDriver, any SPUUpdaterDelegate) -> (any SparkleUpdating)?
     typealias ExclusivityProvider = @MainActor () -> Bool
     typealias SessionLivenessProvider = @MainActor () -> Bool
     typealias PreInstallFinalizer = @MainActor () async -> Void
@@ -34,8 +46,9 @@ final class UpdateController {
     private let sessionLivenessProvider: SessionLivenessProvider?
     private let preInstallFinalizer: PreInstallFinalizer?
     private let installFailureRecovery: InstallFailureRecovery?
+    private let defaults: UserDefaults
 
-    private var updater: SPUUpdater?
+    private var updater: (any SparkleUpdating)?
     private var updaterStarted = false
     private var pendingChoiceReply: ((SPUUserUpdateChoice) -> Void)?
     private var pendingCancellation: (() -> Void)?
@@ -135,6 +148,7 @@ final class UpdateController {
         sessionInProgress: SessionLivenessProvider? = nil,
         preInstallFinalizer: PreInstallFinalizer? = nil,
         installFailureRecovery: InstallFailureRecovery? = nil,
+        defaults: UserDefaults = .standard,
         updaterFactory: @escaping UpdaterFactory
     ) {
         let info = Bundle.main.infoDictionary
@@ -145,12 +159,12 @@ final class UpdateController {
         self.sessionLivenessProvider = sessionInProgress
         self.preInstallFinalizer = preInstallFinalizer
         self.installFailureRecovery = installFailureRecovery
+        self.defaults = defaults
         self.canCheckForUpdates = Self.validateSparkleConfig(
             feedURL: feedURL ?? info?["SUFeedURL"] as? String,
             publicKey: publicKey ?? info?["SUPublicEDKey"] as? String
         )
 
-        let defaults = UserDefaults.standard
         let loaded = Self.loadPersistedStatus(from: defaults)
         let reconciled = Self.reconcilePersistedStatus(loaded.status, runningVersion: runningVersion())
         self.reconciledStatus = reconciled.status
@@ -178,12 +192,14 @@ final class UpdateController {
     convenience init(
         exclusivity: ExclusivityProvider? = nil,
         preInstallFinalizer: PreInstallFinalizer? = nil,
-        installFailureRecovery: InstallFailureRecovery? = nil
+        installFailureRecovery: InstallFailureRecovery? = nil,
+        defaults: UserDefaults = .standard
     ) {
         self.init(
             exclusivity: exclusivity,
             preInstallFinalizer: preInstallFinalizer,
-            installFailureRecovery: installFailureRecovery
+            installFailureRecovery: installFailureRecovery,
+            defaults: defaults
         ) { userDriver, delegate in
             SPUUpdater(
                 hostBundle: .main,
@@ -289,7 +305,7 @@ final class UpdateController {
     }
 
     func sparkleFeedURLOverride() -> String? {
-        Self.feedURLOverride(from: .standard)
+        Self.feedURLOverride(from: defaults)
     }
 
     func beginUserInitiatedCheck(cancellation: @escaping () -> Void) {
@@ -422,6 +438,14 @@ final class UpdateController {
         reconciledStatus.lastCheck?.outcome == .failed
     }
 
+    var updateIsStaged: Bool {
+        reconciledStatus.lastCheck?.outcome == .staged && availableUpdate != nil
+    }
+
+    var stagedVersion: String? {
+        updateIsStaged ? availableUpdate?.version : nil
+    }
+
     var updatesNeedAttention: Bool {
         updateIsAvailable || updateCheckFailed || deferredInstallIntent != nil
     }
@@ -435,6 +459,9 @@ final class UpdateController {
         case .idle:
             if deferredInstallIntent != nil {
                 return "deferred_install"
+            }
+            if updateIsStaged {
+                return "staged_ready"
             }
             if updateCheckFailed {
                 return "error"
@@ -472,6 +499,34 @@ final class UpdateController {
         self.expectedContentLength = nil
     }
     #endif
+
+    func ingestFoundUpdate(version: String, releaseNotes: String?) {
+        recordFoundUpdate(version: version, releaseNotes: releaseNotes)
+    }
+
+    func ingestStagedUpdate(version: String) {
+        recordStagedUpdate(version: version)
+    }
+
+    func ingestCycleFinished(error: (any Error)?) {
+        guard let error else { return }
+
+        let nsError = error as NSError
+        guard nsError.domain == SUSparkleErrorDomain else {
+            recordFailedCheck()
+            return
+        }
+
+        switch nsError.code {
+        case Int(SUError.noUpdateError.rawValue):
+            recordUpToDateCheck()
+        case Int(SUError.installationCanceledError.rawValue),
+             Int(SUError.installationAuthorizeLaterError.rawValue):
+            return
+        default:
+            recordFailedCheck()
+        }
+    }
 
     private func stashChoiceReply(_ reply: @escaping (SPUUserUpdateChoice) -> Void) {
         pendingChoiceReply = reply
@@ -579,13 +634,27 @@ final class UpdateController {
     }
 
     private func recordFoundUpdate(version: String, releaseNotes: String?, now: Date = Date()) {
+        guard !reconciledStatus.matches(availableVersion: version, outcome: .found) else { return }
+
         availableUpdate = AvailableUpdate(version: version, releaseNotes: releaseNotes)
         reconciledStatus.availableVersion = version
         reconciledStatus.lastCheck = ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found)
         persistStatus()
     }
 
+    private func recordStagedUpdate(version: String, now: Date = Date()) {
+        guard !reconciledStatus.matches(availableVersion: version, outcome: .staged) else { return }
+
+        let releaseNotes = availableUpdate?.version == version ? availableUpdate?.releaseNotes : nil
+        availableUpdate = AvailableUpdate(version: version, releaseNotes: releaseNotes)
+        reconciledStatus.availableVersion = version
+        reconciledStatus.lastCheck = ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .staged)
+        persistStatus()
+    }
+
     private func recordUpToDateCheck(now: Date = Date()) {
+        guard !reconciledStatus.matches(availableVersion: nil, outcome: .upToDate) else { return }
+
         availableUpdate = nil
         reconciledStatus.availableVersion = nil
         reconciledStatus.lastCheck = ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .upToDate)
@@ -594,6 +663,9 @@ final class UpdateController {
 
     private func recordFailedCheck(now: Date = Date()) {
         pendingDownloadIntent = false
+        let preservedVersion = reconciledStatus.availableVersion
+        guard !reconciledStatus.matches(availableVersion: preservedVersion, outcome: .failed) else { return }
+
         reconciledStatus.lastCheck = ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .failed)
         if availableUpdate == nil, let version = reconciledStatus.availableVersion {
             availableUpdate = AvailableUpdate(version: version, releaseNotes: nil)
@@ -604,7 +676,7 @@ final class UpdateController {
     private func persistStatus() {
         do {
             let data = try JSONEncoder().encode(reconciledStatus)
-            UserDefaults.standard.set(data, forKey: Self.statusKey)
+            defaults.set(data, forKey: Self.statusKey)
         } catch {
             Logger.setup.error("Failed to persist update status: \(String(describing: error), privacy: .public)")
         }
@@ -627,7 +699,6 @@ final class UpdateController {
             updaterStarted = true
             refreshUpdaterSettings(from: updater)
 
-            let defaults = UserDefaults.standard
             if defaults.string(forKey: Self.feedURLOverrideKey) == nil {
                 Logger.setup.info("Sparkle feed URL: using bundled Info.plist feed (no override set)")
             } else if let override = Self.feedURLOverride(from: defaults) {
@@ -643,7 +714,7 @@ final class UpdateController {
         }
     }
 
-    private func refreshUpdaterSettings(from updater: SPUUpdater) {
+    private func refreshUpdaterSettings(from updater: any SparkleUpdating) {
         _automaticChecksEnabled = updater.automaticallyChecksForUpdates
         _updateCheckInterval = updater.updateCheckInterval
         _automaticDownloadsEnabled = updater.automaticallyDownloadsUpdates
@@ -717,6 +788,12 @@ final class UpdateController {
     }
 }
 
+private extension ReconciledUpdateStatus {
+    func matches(availableVersion: String?, outcome: ReconciledUpdateStatus.Outcome) -> Bool {
+        self.availableVersion == availableVersion && lastCheck?.outcome == outcome
+    }
+}
+
 @MainActor
 private final class SparkleUpdaterDelegateAdapter: NSObject, SPUUpdaterDelegate {
     private weak var controller: UpdateController?
@@ -736,5 +813,42 @@ private final class SparkleUpdaterDelegateAdapter: NSObject, SPUUpdaterDelegate 
 
     func feedURLString(for updater: SPUUpdater) -> String? {
         controller?.sparkleFeedURLOverride()
+    }
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        controller?.ingestFoundUpdate(version: item.displayVersionString, releaseNotes: item.itemDescription)
+    }
+
+    func updater(
+        _ updater: SPUUpdater,
+        didFinishUpdateCycleFor updateCheck: SPUUpdateCheck,
+        error: (any Error)?
+    ) {
+        controller?.ingestCycleFinished(error: error)
+    }
+
+    func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
+        Logger.setup.debug("Sparkle downloaded update \(item.displayVersionString, privacy: .public)")
+    }
+
+    func updater(_ updater: SPUUpdater, didExtractUpdate item: SUAppcastItem) {
+        Logger.setup.debug("Sparkle extracted update \(item.displayVersionString, privacy: .public)")
+    }
+
+    func updater(
+        _ updater: SPUUpdater,
+        willInstallUpdateOnQuit item: SUAppcastItem,
+        immediateInstallationBlock immediateInstallHandler: @escaping () -> Void
+    ) -> Bool {
+        controller?.ingestStagedUpdate(version: item.displayVersionString)
+        return false
+    }
+
+    func updater(_ updater: SPUUpdater, failedToDownloadUpdate item: SUAppcastItem, error: any Error) {
+        controller?.ingestCycleFinished(error: error)
+    }
+
+    func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) {
+        controller?.ingestCycleFinished(error: error)
     }
 }
