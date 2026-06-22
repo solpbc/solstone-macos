@@ -206,7 +206,7 @@ struct SparkleDeferralTests {
         #expect(installReplyCount == 1)
     }
 
-    @Test func recoveryFiresOnErrorAfterCommittedInstall() async {
+    @Test func recoveryFiresOnErrorAfterCommittedInstall() async throws {
         let signal = ExclusiveSignal()
         let gate = PreInstallFinalizerGate()
         let controller = makeController(
@@ -232,10 +232,30 @@ struct SparkleDeferralTests {
         gate.release()
         await yieldUntil { gate.events.contains("sparkle-install") }
 
+        controller.checkForUpdatesInterceptor = {}
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found)
+        )
+        controller.download()
         controller.presentUpdaterError(NSError(domain: "test", code: 1))
         await yieldUntil { gate.events.contains("recovery") }
 
+        var replies: [SPUUserUpdateChoice] = []
+        controller.presentUpdateFound(
+            version: "1.3.9",
+            releaseNotes: nil,
+            state: try userUpdateState(stage: .notDownloaded),
+            reply: { choice in
+                replies.append(choice)
+                Issue.record("unexpected \(choice) reply after recovery error")
+            }
+        )
+        await Task.yield()
+
         #expect(gate.events == ["finalizer-start", "finalizer-end", "sparkle-install", "recovery"])
+        #expect(replies.isEmpty)
     }
 
     @Test func recoveryDoesNotFireOnSuccessPath() async {
@@ -486,7 +506,7 @@ struct SparkleDeferralTests {
 
         #expect(checks == 1)
         #expect(replies.isEmpty)
-        #expect(controller.reconciledStatus.lastCheck?.outcome == .found)
+        #expect(controller.reconciledStatus.lastCheck?.outcome == .failed)
     }
 
     @Test func deferredIntentWithMissingReplyFallsBackToCheckWhenSignalClears() async {

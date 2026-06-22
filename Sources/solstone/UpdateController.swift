@@ -58,9 +58,6 @@ final class UpdateController {
     private var installFinalizationInFlight = false
     private var installFinalizationCommitted = false
     private var pendingDownloadIntent = false
-    private var _automaticChecksEnabled: Bool = true
-    private var _updateCheckInterval: TimeInterval = 86_400
-    private var _automaticDownloadsEnabled: Bool = false
 
     internal var onExclusivityReevaluated: ((Bool) -> Void)?
     #if DEBUG
@@ -68,25 +65,22 @@ final class UpdateController {
     #endif
 
     var automaticChecksEnabled: Bool {
-        get { _automaticChecksEnabled }
+        get { updater?.automaticallyChecksForUpdates ?? true }
         set {
-            _automaticChecksEnabled = newValue
             updater?.automaticallyChecksForUpdates = newValue
         }
     }
 
     var updateCheckInterval: TimeInterval {
-        get { _updateCheckInterval }
+        get { updater?.updateCheckInterval ?? 86_400 }
         set {
-            _updateCheckInterval = newValue
             updater?.updateCheckInterval = newValue
         }
     }
 
     var automaticDownloadsEnabled: Bool {
-        get { _automaticDownloadsEnabled }
+        get { updater?.automaticallyDownloadsUpdates ?? false }
         set {
-            _automaticDownloadsEnabled = newValue
             updater?.automaticallyDownloadsUpdates = newValue
         }
     }
@@ -319,7 +313,6 @@ final class UpdateController {
         state: SPUUserUpdateState,
         reply: @escaping (SPUUserUpdateChoice) -> Void
     ) {
-        recordFoundUpdate(version: version, releaseNotes: releaseNotes)
         stashChoiceReply(reply)
 
         switch state.stage {
@@ -356,7 +349,6 @@ final class UpdateController {
         clearPendingInteractions()
         activity = .idle
         deferredInstallIntent = nil
-        recordUpToDateCheck()
     }
 
     func presentUpdaterError(_ error: Error) {
@@ -366,8 +358,8 @@ final class UpdateController {
         }
         Logger.setup.error("Sparkle error: \(String(describing: error), privacy: .public)")
         clearPendingInteractions()
+        pendingDownloadIntent = false
         activity = .idle
-        recordFailedCheck()
     }
 
     func beginDownload(cancellation: @escaping () -> Void) {
@@ -454,25 +446,50 @@ final class UpdateController {
         !updateIsAvailable && reconciledStatus.lastCheck?.outcome == .upToDate
     }
 
+    var durableUpdateStatus: DurableUpdateStatus {
+        if let deferredInstallIntent {
+            return .deferred(version: deferredInstallIntent.version)
+        }
+
+        if updateIsStaged, let update = availableUpdate {
+            return .staged(version: update.version, releaseNotes: update.releaseNotes)
+        }
+
+        if updateCheckFailed {
+            if let version = availableUpdate?.version {
+                return .failedWithAvailable(version: version)
+            }
+            return .failed
+        }
+
+        if let update = availableUpdate {
+            return .available(version: update.version, releaseNotes: update.releaseNotes)
+        }
+
+        if updatesAreCurrent {
+            return .upToDate
+        }
+
+        return .idle
+    }
+
     var statusAXToken: String {
         switch activity {
         case .idle:
-            if deferredInstallIntent != nil {
+            switch durableUpdateStatus {
+            case .deferred:
                 return "deferred_install"
-            }
-            if updateIsStaged {
+            case .staged:
                 return "staged_ready"
-            }
-            if updateCheckFailed {
+            case .failedWithAvailable, .failed:
                 return "error"
-            }
-            if updateIsAvailable {
+            case .available:
                 return "update_available"
-            }
-            if updatesAreCurrent {
+            case .upToDate:
                 return "up_to_date"
+            case .idle:
+                return "idle"
             }
-            return "idle"
         default:
             return activity.axToken
         }
@@ -697,7 +714,6 @@ final class UpdateController {
         do {
             try updater.start()
             updaterStarted = true
-            refreshUpdaterSettings(from: updater)
 
             if defaults.string(forKey: Self.feedURLOverrideKey) == nil {
                 Logger.setup.info("Sparkle feed URL: using bundled Info.plist feed (no override set)")
@@ -712,12 +728,6 @@ final class UpdateController {
             Logger.setup.error("Sparkle updater start failed: \(String(describing: error), privacy: .public)")
             return false
         }
-    }
-
-    private func refreshUpdaterSettings(from updater: any SparkleUpdating) {
-        _automaticChecksEnabled = updater.automaticallyChecksForUpdates
-        _updateCheckInterval = updater.updateCheckInterval
-        _automaticDownloadsEnabled = updater.automaticallyDownloadsUpdates
     }
 
     private static func loadPersistedStatus(from defaults: UserDefaults) -> (status: ReconciledUpdateStatus, migrated: Bool) {

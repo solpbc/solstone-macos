@@ -72,8 +72,7 @@ struct SparkleDelegateIngestTests {
             firstSettingsAttention(
                 permissionsNeedAttention: false,
                 journalNeedsAttention: false,
-                updateIsAvailable: harness.controller.updateIsAvailable,
-                updateCheckFailed: harness.controller.updateCheckFailed
+                durableUpdateStatus: harness.controller.durableUpdateStatus
             ) == .updateAvailable
         )
         #expect(settingsUpdatesBadgeAXToken(for: harness.controller) == SettingsView.SidebarBadgeState.attention.axToken)
@@ -211,9 +210,10 @@ struct SparkleDelegateIngestTests {
         ) { choice in
             choices.append(choice)
         }
-        let firstBlob = try persistedBlob()
+        #expect(isolatedDefaults.defaults.data(forKey: statusKey) == nil)
 
         harness.delegate.updater?(harness.sparkleUpdater, didFindValidUpdate: item)
+        let firstBlob = try persistedBlob()
 
         #expect(choices.isEmpty)
         #expect(harness.controller.activity == .readyToInstall(version: "1.3.9", releaseNotes: "release notes"))
@@ -221,6 +221,202 @@ struct SparkleDelegateIngestTests {
         #expect(harness.controller.reconciledStatus.lastCheck?.outcome == .found)
         #expect(harness.controller.statusAXToken == "ready_to_install")
         #expect(try persistedBlob() == firstBlob)
+    }
+
+    @Test func userDriverResultsDoNotPersistButMatchingDelegateCallbacksDo() throws {
+        clearDefaults()
+        let foundHarness = try makeHarness()
+        let item = try appcastItem(version: "1.3.9", notes: "release notes")
+        foundHarness.userDriver.showUpdateFound(
+            with: item,
+            state: try userUpdateState(stage: .notDownloaded)
+        ) { _ in }
+        #expect(isolatedDefaults.defaults.data(forKey: statusKey) == nil)
+        #expect(foundHarness.controller.reconciledStatus.lastCheck == nil)
+
+        foundHarness.delegate.updater?(foundHarness.sparkleUpdater, didFindValidUpdate: item)
+        #expect(foundHarness.controller.reconciledStatus.availableVersion == "1.3.9")
+        #expect(foundHarness.controller.reconciledStatus.lastCheck?.outcome == .found)
+        #expect(try persistedBlob().isEmpty == false)
+
+        clearDefaults()
+        let noUpdateHarness = try makeHarness()
+        noUpdateHarness.delegate.updater?(noUpdateHarness.sparkleUpdater, didFindValidUpdate: item)
+        let foundBlob = try persistedBlob()
+        var noUpdateAcknowledged = false
+        noUpdateHarness.userDriver.showUpdateNotFoundWithError(sparkleError(.noUpdateError)) {
+            noUpdateAcknowledged = true
+        }
+        #expect(noUpdateAcknowledged)
+        #expect(try persistedBlob() == foundBlob)
+        #expect(noUpdateHarness.controller.reconciledStatus.lastCheck?.outcome == .found)
+
+        noUpdateHarness.delegate.updater?(
+            noUpdateHarness.sparkleUpdater,
+            didFinishUpdateCycleFor: .updates,
+            error: sparkleError(.noUpdateError)
+        )
+        #expect(noUpdateHarness.controller.availableUpdate == nil)
+        #expect(noUpdateHarness.controller.reconciledStatus.availableVersion == nil)
+        #expect(noUpdateHarness.controller.reconciledStatus.lastCheck?.outcome == .upToDate)
+        #expect(try persistedBlob() != foundBlob)
+
+        clearDefaults()
+        let errorHarness = try makeHarness()
+        errorHarness.delegate.updater?(errorHarness.sparkleUpdater, didFindValidUpdate: item)
+        let errorSeedBlob = try persistedBlob()
+        var errorAcknowledged = false
+        errorHarness.userDriver.showUpdaterError(NSError(domain: "test", code: 1)) {
+            errorAcknowledged = true
+        }
+        #expect(errorAcknowledged)
+        #expect(try persistedBlob() == errorSeedBlob)
+        #expect(errorHarness.controller.reconciledStatus.lastCheck?.outcome == .found)
+
+        errorHarness.delegate.updater?(errorHarness.sparkleUpdater, didAbortWithError: NSError(domain: "test", code: 1))
+        #expect(errorHarness.controller.reconciledStatus.availableVersion == "1.3.9")
+        #expect(errorHarness.controller.reconciledStatus.lastCheck?.outcome == .failed)
+        #expect(try persistedBlob() != errorSeedBlob)
+    }
+
+    @Test func installationCancelAndAuthorizeLaterPreserveStagedOutcome() throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        let harness = try makeHarness()
+        let item = try appcastItem(version: "1.3.9", notes: "release notes")
+
+        harness.delegate.updater?(harness.sparkleUpdater, didFindValidUpdate: item)
+        _ = harness.delegate.updater?(
+            harness.sparkleUpdater,
+            willInstallUpdateOnQuit: item,
+            immediateInstallationBlock: {}
+        )
+        let stagedBlob = try persistedBlob()
+
+        harness.delegate.updater?(
+            harness.sparkleUpdater,
+            didFinishUpdateCycleFor: .updates,
+            error: sparkleError(.installationCanceledError)
+        )
+        harness.delegate.updater?(
+            harness.sparkleUpdater,
+            didFinishUpdateCycleFor: .updates,
+            error: sparkleError(.installationAuthorizeLaterError)
+        )
+
+        #expect(try persistedBlob() == stagedBlob)
+        #expect(harness.controller.reconciledStatus.availableVersion == "1.3.9")
+        #expect(harness.controller.reconciledStatus.lastCheck?.outcome == .staged)
+        #expect(harness.controller.durableUpdateStatus == .staged(version: "1.3.9", releaseNotes: "release notes"))
+    }
+
+    @Test func durableStatusResolutionMatrix() throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        let harness = try makeHarness()
+        let controller = harness.controller
+
+        for status in durableStatusCases {
+            applyDurableStatus(status, to: controller)
+            #expect(controller.durableUpdateStatus == status)
+        }
+    }
+
+    @Test func durableStatusSurfaceMatrix() throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        let harness = try makeHarness()
+        let controller = harness.controller
+
+        let cases: [(DurableUpdateStatus, String, UpdatesPaneIdleBlock, SettingsAttentionReason?, SettingsView.SidebarBadgeState)] = [
+            (.deferred(version: "1.3.9"), "deferred_install", .deferredBlock, .updateAvailable, .attention),
+            (.staged(version: "1.3.9", releaseNotes: "release notes"), "staged_ready", .stagedReadyBlock, .updateAvailable, .attention),
+            (.failedWithAvailable(version: "1.3.9"), "error", .failedBlock, .updateAvailable, .attention),
+            (.available(version: "1.3.9", releaseNotes: "release notes"), "update_available", .availableBlock, .updateAvailable, .attention),
+            (.failed, "error", .failedBlock, .updateCheckFailed, .attention),
+            (.upToDate, "up_to_date", .empty, nil, .done),
+            (.idle, "idle", .empty, nil, .blank)
+        ]
+
+        for (status, axToken, paneBlock, menuReason, badge) in cases {
+            applyDurableStatus(status, to: controller)
+            #expect(controller.statusAXToken == axToken)
+            #expect(updatesPaneIdleBlock(for: controller.durableUpdateStatus) == paneBlock)
+            #expect(firstSettingsAttention(
+                permissionsNeedAttention: false,
+                journalNeedsAttention: false,
+                durableUpdateStatus: controller.durableUpdateStatus
+            ) == menuReason)
+            #expect(updatesSidebarBadge(for: controller.durableUpdateStatus) == badge)
+        }
+    }
+
+    @Test func liveActivityKeepsMenuAndSidebarOnDurableFacts() throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        let harness = try makeHarness()
+        let controller = harness.controller
+
+        controller.applyDebugFixture(
+            activity: .downloading(version: "1.3.9", receivedBytes: 1, totalBytes: 2),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found)
+        )
+        #expect(controller.statusAXToken == "downloading")
+        #expect(controller.durableUpdateStatus == .available(version: "1.3.9", releaseNotes: nil))
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: false,
+            journalNeedsAttention: false,
+            durableUpdateStatus: controller.durableUpdateStatus
+        ) == .updateAvailable)
+        #expect(updatesSidebarBadge(for: controller.durableUpdateStatus) == .attention)
+
+        controller.applyDebugFixture(
+            activity: .checking,
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .upToDate)
+        )
+        #expect(controller.statusAXToken == "checking")
+        #expect(controller.durableUpdateStatus == .upToDate)
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: false,
+            journalNeedsAttention: false,
+            durableUpdateStatus: controller.durableUpdateStatus
+        ) == nil)
+        #expect(updatesSidebarBadge(for: controller.durableUpdateStatus) == .done)
+    }
+
+    @Test func failedCheckAfterStagedUpdateKeepsCompositeAvailableFailure() throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        let harness = try makeHarness()
+        let item = try appcastItem(version: "1.3.9", notes: "release notes")
+
+        harness.delegate.updater?(harness.sparkleUpdater, didFindValidUpdate: item)
+        _ = harness.delegate.updater?(
+            harness.sparkleUpdater,
+            willInstallUpdateOnQuit: item,
+            immediateInstallationBlock: {}
+        )
+        harness.delegate.updater?(
+            harness.sparkleUpdater,
+            didFinishUpdateCycleFor: .updatesInBackground,
+            error: NSError(domain: "test", code: 1)
+        )
+
+        #expect(harness.controller.reconciledStatus.availableVersion == "1.3.9")
+        #expect(harness.controller.reconciledStatus.lastCheck?.outcome == .failed)
+        #expect(!harness.controller.updateIsStaged)
+        #expect(harness.controller.updateIsAvailable)
+        #expect(harness.controller.updateCheckFailed)
+        #expect(harness.controller.durableUpdateStatus == .failedWithAvailable(version: "1.3.9"))
+        #expect(harness.controller.statusAXToken == "error")
+        #expect(updatesPaneIdleBlock(for: harness.controller.durableUpdateStatus) == .failedBlock)
+        #expect(firstSettingsAttention(
+            permissionsNeedAttention: false,
+            journalNeedsAttention: false,
+            durableUpdateStatus: harness.controller.durableUpdateStatus
+        ) == .updateAvailable)
+        #expect(updatesSidebarBadge(for: harness.controller.durableUpdateStatus) == .attention)
     }
 
     private func makeHarness(
@@ -280,10 +476,7 @@ struct SparkleDelegateIngestTests {
     }
 
     private func settingsUpdatesBadgeAXToken(for controller: UpdateController) -> String {
-        let badge: SettingsView.SidebarBadgeState = controller.updatesNeedAttention
-            ? .attention
-            : (controller.updatesAreCurrent ? .done : .blank)
-        return badge.axToken
+        updatesSidebarBadge(for: controller.durableUpdateStatus).axToken
     }
 
     private func assertUpdatesPaneStagedOutput(for controller: UpdateController) {
@@ -296,6 +489,60 @@ struct SparkleDelegateIngestTests {
 
     private func clearDefaults() {
         isolatedDefaults.clear()
+    }
+
+    private var durableStatusCases: [DurableUpdateStatus] {
+        [
+            .deferred(version: "1.3.9"),
+            .staged(version: "1.3.9", releaseNotes: "release notes"),
+            .failedWithAvailable(version: "1.3.9"),
+            .available(version: "1.3.9", releaseNotes: "release notes"),
+            .failed,
+            .upToDate,
+            .idle
+        ]
+    }
+
+    private func applyDurableStatus(_ status: DurableUpdateStatus, to controller: UpdateController) {
+        let now = Date()
+
+        switch status {
+        case .deferred(let version):
+            controller.applyDebugFixture(
+                activity: .idle,
+                deferredInstallIntent: DeferredInstallIntent(version: version, requestedAt: now)
+            )
+        case .staged(let version, let releaseNotes):
+            controller.applyDebugFixture(
+                activity: .idle,
+                availableUpdate: AvailableUpdate(version: version, releaseNotes: releaseNotes),
+                lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .staged)
+            )
+        case .failedWithAvailable(let version):
+            controller.applyDebugFixture(
+                activity: .idle,
+                availableUpdate: AvailableUpdate(version: version, releaseNotes: nil),
+                lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .failed)
+            )
+        case .available(let version, let releaseNotes):
+            controller.applyDebugFixture(
+                activity: .idle,
+                availableUpdate: AvailableUpdate(version: version, releaseNotes: releaseNotes),
+                lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found)
+            )
+        case .failed:
+            controller.applyDebugFixture(
+                activity: .idle,
+                lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .failed)
+            )
+        case .upToDate:
+            controller.applyDebugFixture(
+                activity: .idle,
+                lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .upToDate)
+            )
+        case .idle:
+            controller.applyDebugFixture(activity: .idle)
+        }
     }
 }
 

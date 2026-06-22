@@ -154,7 +154,7 @@ struct SettingsView: View {
                         UpdatesCopy.tabTitle,
                         tab: .updates,
                         systemImage: "arrow.down.circle",
-                        badge: updateController.updatesNeedAttention ? .attention : (updateController.updatesAreCurrent ? .done : .blank),
+                        badge: updatesSidebarBadge(for: updateController.durableUpdateStatus),
                         doneAccessibilityLabel: UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y
                     )
                         .tag(Tab.updates)
@@ -1787,6 +1787,17 @@ struct SettingsView: View {
         }
     }
 
+}
+
+func updatesSidebarBadge(for status: DurableUpdateStatus) -> SettingsView.SidebarBadgeState {
+    switch status {
+    case .deferred, .staged, .failedWithAvailable, .available, .failed:
+        return .attention
+    case .upToDate:
+        return .done
+    case .idle:
+        return .blank
+    }
 }
 
 /// Row view for a microphone in the priority list

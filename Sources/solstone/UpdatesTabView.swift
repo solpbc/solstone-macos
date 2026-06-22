@@ -148,23 +148,35 @@ struct UpdatesTabView: View {
 
     @ViewBuilder
     private var idleTransientBlock: some View {
-        if let deferred = controller.deferredInstallIntent {
-            deferredBlock(deferred)
-        } else if controller.updateIsStaged, let update = controller.availableUpdate {
-            stagedReadyBlock(update)
-        } else if controller.updateCheckFailed {
-            failedBlock
-        } else if let update = controller.availableUpdate {
-            availableBlock(update)
-        } else {
+        let status = controller.durableUpdateStatus
+        switch updatesPaneIdleBlock(for: status) {
+        case .deferredBlock:
+            if case .deferred(let version) = status {
+                deferredBlock(version: version)
+            }
+        case .stagedReadyBlock:
+            if case .staged(let version, let releaseNotes) = status {
+                stagedReadyBlock(AvailableUpdate(version: version, releaseNotes: releaseNotes))
+            }
+        case .failedBlock:
+            if case .failedWithAvailable(let version) = status {
+                failedBlock(availableVersion: version)
+            } else {
+                failedBlock(availableVersion: nil)
+            }
+        case .availableBlock:
+            if case .available(let version, let releaseNotes) = status {
+                availableBlock(AvailableUpdate(version: version, releaseNotes: releaseNotes))
+            }
+        case .empty:
             EmptyView()
         }
     }
 
     @ViewBuilder
-    private func deferredBlock(_ deferred: DeferredInstallIntent) -> some View {
+    private func deferredBlock(version: String) -> some View {
         titleBlock(
-            title: UpdatesCopy.deferredTitle(version: deferred.version),
+            title: UpdatesCopy.deferredTitle(version: version),
             subtitle: UpdatesCopy.deferredSubtitle
         )
         AXStateCompanion(
@@ -193,10 +205,10 @@ struct UpdatesTabView: View {
     }
 
     @ViewBuilder
-    private var failedBlock: some View {
+    private func failedBlock(availableVersion: String?) -> some View {
         titleBlock(
             title: UpdatesCopy.errorTitle,
-            subtitle: failedSubtitle()
+            subtitle: failedSubtitle(availableVersion: availableVersion)
         )
         if controller.hasLiveUpdateReply {
             actionRow(
@@ -241,8 +253,8 @@ struct UpdatesTabView: View {
         }
     }
 
-    private func failedSubtitle() -> String {
-        if let version = controller.availableUpdate?.version {
+    private func failedSubtitle(availableVersion: String?) -> String {
+        if let version = availableVersion {
             return UpdatesCopy.errorWithAvailableMessage(version: version)
         }
 
@@ -455,6 +467,29 @@ enum FrequencyOption: String, CaseIterable, Identifiable {
     static func nearest(to interval: TimeInterval) -> FrequencyOption {
         guard interval > 0 else { return .week }
         return Self.allCases.min { abs($0.seconds - interval) < abs($1.seconds - interval) } ?? .week
+    }
+}
+
+enum UpdatesPaneIdleBlock: Equatable {
+    case deferredBlock
+    case stagedReadyBlock
+    case failedBlock
+    case availableBlock
+    case empty
+}
+
+func updatesPaneIdleBlock(for status: DurableUpdateStatus) -> UpdatesPaneIdleBlock {
+    switch status {
+    case .deferred:
+        return .deferredBlock
+    case .staged:
+        return .stagedReadyBlock
+    case .failedWithAvailable, .failed:
+        return .failedBlock
+    case .available:
+        return .availableBlock
+    case .upToDate, .idle:
+        return .empty
     }
 }
 

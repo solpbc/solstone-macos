@@ -30,6 +30,16 @@ enum UpdateActivity: Equatable, Sendable {
     case installing(version: String)
 }
 
+enum DurableUpdateStatus: Equatable, Sendable {
+    case deferred(version: String)
+    case staged(version: String, releaseNotes: String?)
+    case failedWithAvailable(version: String)
+    case available(version: String, releaseNotes: String?)
+    case failed
+    case upToDate
+    case idle
+}
+
 struct ReconciledUpdateStatus: Codable, Equatable, Sendable {
     var availableVersion: String?
     var lastCheck: LastCheck?

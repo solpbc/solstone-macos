@@ -95,8 +95,7 @@ struct MenuContent: View {
             reason: firstSettingsAttention(
                 permissionsNeedAttention: appState.permissionsNeedAttention,
                 journalNeedsAttention: appState.serviceNeedsAttention,
-                updateIsAvailable: updateController.updateIsAvailable,
-                updateCheckFailed: updateController.updateCheckFailed
+                durableUpdateStatus: updateController.durableUpdateStatus
             ),
             statusRowCarriesPermissions: appState.permissionsNeedAttention,
             statusRowCarriesJournal: appState.bundledJournalStatusAvailable && appState.journalRuntimeStatus.menuRowPresentation != nil
@@ -279,14 +278,19 @@ enum SettingsAttentionReason: Equatable {
 func firstSettingsAttention(
     permissionsNeedAttention: Bool,
     journalNeedsAttention: Bool,
-    updateIsAvailable: Bool,
-    updateCheckFailed: Bool
+    durableUpdateStatus: DurableUpdateStatus
 ) -> SettingsAttentionReason? {
     if permissionsNeedAttention { return .permissions }
     if journalNeedsAttention { return .journal }
-    if updateIsAvailable { return .updateAvailable }
-    if updateCheckFailed { return .updateCheckFailed }
-    return nil
+
+    switch durableUpdateStatus {
+    case .deferred, .staged, .failedWithAvailable, .available:
+        return .updateAvailable
+    case .failed:
+        return .updateCheckFailed
+    case .upToDate, .idle:
+        return nil
+    }
 }
 
 func settingsAttentionSuffixToShow(

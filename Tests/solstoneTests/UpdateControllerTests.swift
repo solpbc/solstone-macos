@@ -165,6 +165,34 @@ struct UpdateControllerTests {
         #expect(spy.automaticallyChecksForUpdates)
         #expect(spy.updateCheckInterval == 604_800)
         #expect(!spy.automaticallyDownloadsUpdates)
+        #expect(controller.automaticChecksEnabled)
+        #expect(controller.updateCheckInterval == 604_800)
+        #expect(!controller.automaticDownloadsEnabled)
+    }
+
+    @Test func updaterSettingsNilUpdaterReadsSparkleDefaultsAndIgnoresWrites() {
+        clearDefaults()
+        defer { clearDefaults() }
+
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            nil
+        }
+
+        #expect(controller.automaticChecksEnabled)
+        #expect(controller.updateCheckInterval == 86_400)
+        #expect(!controller.automaticDownloadsEnabled)
+
+        controller.automaticChecksEnabled = false
+        controller.updateCheckInterval = 604_800
+        controller.automaticDownloadsEnabled = true
+
+        #expect(controller.automaticChecksEnabled)
+        #expect(controller.updateCheckInterval == 86_400)
+        #expect(!controller.automaticDownloadsEnabled)
     }
 
     @Test func checkForUpdatesRoutesThroughSpyAndHonorsSessionGuard() {
@@ -270,7 +298,7 @@ struct UpdateControllerTests {
         #expect(controller.hasLiveUpdateReply)
     }
 
-    @Test func failedCheckPreservesDurableAvailableFact() {
+    @Test func presentUpdaterErrorPreservesDurableAvailableFact() {
         let controller = makeController()
         controller.applyDebugFixture(
             activity: .idle,
@@ -285,11 +313,11 @@ struct UpdateControllerTests {
         #expect(controller.availableUpdate?.version == "1.3.9")
         #expect(controller.availableUpdate?.releaseNotes == "notes")
         #expect(controller.reconciledStatus.availableVersion == "1.3.9")
-        #expect(controller.reconciledStatus.lastCheck?.outcome == .failed)
+        #expect(controller.reconciledStatus.lastCheck?.outcome == .found)
         #expect(!controller.hasLiveUpdateReply)
     }
 
-    @Test func definitiveUpToDateCheckClearsDurableAvailableFact() {
+    @Test func presentNoUpdateFoundPreservesDurableAvailableFact() {
         let controller = makeController()
         controller.applyDebugFixture(
             activity: .idle,
@@ -301,9 +329,9 @@ struct UpdateControllerTests {
         controller.presentNoUpdateFound()
 
         #expect(controller.activity == .idle)
-        #expect(controller.availableUpdate == nil)
-        #expect(controller.reconciledStatus.availableVersion == nil)
-        #expect(controller.reconciledStatus.lastCheck?.outcome == .upToDate)
+        #expect(controller.availableUpdate?.version == "1.3.9")
+        #expect(controller.reconciledStatus.availableVersion == "1.3.9")
+        #expect(controller.reconciledStatus.lastCheck?.outcome == .found)
         #expect(!controller.hasLiveUpdateReply)
     }
 

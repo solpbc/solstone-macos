@@ -168,70 +168,59 @@ struct MenuContentTests {
         #expect(firstSettingsAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: false,
-            updateIsAvailable: false,
-            updateCheckFailed: false
+            durableUpdateStatus: .idle
         ) == nil)
 
         #expect(firstSettingsAttention(
             permissionsNeedAttention: true,
             journalNeedsAttention: false,
-            updateIsAvailable: false,
-            updateCheckFailed: false
+            durableUpdateStatus: .idle
         ) == .permissions)
         #expect(firstSettingsAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: true,
-            updateIsAvailable: false,
-            updateCheckFailed: false
+            durableUpdateStatus: .idle
         ) == .journal)
         #expect(firstSettingsAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: false,
-            updateIsAvailable: true,
-            updateCheckFailed: false
+            durableUpdateStatus: .available(version: "1.3.9", releaseNotes: nil)
         ) == .updateAvailable)
         #expect(firstSettingsAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: false,
-            updateIsAvailable: false,
-            updateCheckFailed: true
+            durableUpdateStatus: .failed
         ) == .updateCheckFailed)
 
         #expect(firstSettingsAttention(
             permissionsNeedAttention: true,
             journalNeedsAttention: true,
-            updateIsAvailable: false,
-            updateCheckFailed: false
+            durableUpdateStatus: .idle
         ) == .permissions)
         #expect(firstSettingsAttention(
             permissionsNeedAttention: true,
             journalNeedsAttention: false,
-            updateIsAvailable: true,
-            updateCheckFailed: false
+            durableUpdateStatus: .available(version: "1.3.9", releaseNotes: nil)
         ) == .permissions)
         #expect(firstSettingsAttention(
             permissionsNeedAttention: true,
             journalNeedsAttention: false,
-            updateIsAvailable: false,
-            updateCheckFailed: true
+            durableUpdateStatus: .failed
         ) == .permissions)
         #expect(firstSettingsAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: true,
-            updateIsAvailable: true,
-            updateCheckFailed: false
+            durableUpdateStatus: .available(version: "1.3.9", releaseNotes: nil)
         ) == .journal)
         #expect(firstSettingsAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: true,
-            updateIsAvailable: false,
-            updateCheckFailed: true
+            durableUpdateStatus: .failed
         ) == .journal)
         #expect(firstSettingsAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: false,
-            updateIsAvailable: true,
-            updateCheckFailed: true
+            durableUpdateStatus: .failedWithAvailable(version: "1.3.9")
         ) == .updateAvailable)
     }
 
