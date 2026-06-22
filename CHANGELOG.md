@@ -5,6 +5,15 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.19] - 2026-06-22
+
+### Changed
+- some wording is clearer and more consistent across the app and the sol command line: "device" in place of "machine," a tidier line for the journal on this Mac, and clearer help text for the private network command. nothing about how solstone works changed, just how it reads.
+- updated the bundled solstone journal to 0.6.10 →
+
+### Fixed
+- if you had an update download in the background, settings and the menu could still say "up to date" even though the new version was already downloaded and staged, ready to install when you quit. those now honestly reflect a downloaded-and-staged update, so what you see matches what's actually waiting.
+
 ## [1.3.18] - 2026-06-19
 
 ### Changed
