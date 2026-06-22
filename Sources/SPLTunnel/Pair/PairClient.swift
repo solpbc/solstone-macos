@@ -120,7 +120,7 @@ public struct PairClient: Sendable {
 
     static func makeLANRequest(pairURL: PairURL, csrPEM: String, deviceLabel: String) throws -> URLRequest {
         // Dotted-quad IPv4 plus UInt16 port and fixed path are parser-controlled.
-        let url = URL(string: "https://\(pairURL.addressString):\(pairURL.port)/app/link/pair")!
+        let url = URL(string: "https://\(pairURL.addressString):\(pairURL.port)/app/network/pair")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -32,7 +32,7 @@ struct LiveStagingTests {
         }
 
         let stream = try await tunnel.openStream()
-        let request = "GET /app/link/api/status HTTP/1.1\r\nHost: \(pairing.homeLabel)\r\nConnection: close\r\n\r\n"
+        let request = "GET /app/network/api/status HTTP/1.1\r\nHost: \(pairing.homeLabel)\r\nConnection: close\r\n\r\n"
         try await stream.write(Data(request.utf8))
         try await stream.close()
         let response = try await readLiveResponse(from: await stream.inbound)

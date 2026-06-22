@@ -227,7 +227,7 @@ actor MockHome {
     private func handlePair(_ connection: NWConnection) async {
         do {
             let request = try await MockHTTPConnection.readRequest(from: connection)
-            guard request.method == "POST", request.path == "/app/link/pair" else {
+            guard request.method == "POST", request.path == "/app/network/pair" else {
                 try await MockHTTPConnection.send(status: 404, body: #"{"error":"not_found"}"#, to: connection)
                 connection.cancel()
                 return
@@ -305,7 +305,7 @@ actor MockHome {
                 response = (411, ["error": "chunked_unsupported"])
             } else if request.body.count > MockHTTPConnection.maxBodySize {
                 response = (413, ["error": "body_too_large"])
-            } else if request.method == "GET", request.path == "/app/link/api/status" {
+            } else if request.method == "GET", request.path == "/app/network/api/status" {
                 response = (200, ["status": "ok", "echo": "mock-home"])
             } else if request.method == "GET", request.path.hasPrefix("/echo") {
                 let msg = URLComponents(string: request.path)?.queryItems?.first(where: { $0.name == "msg" })?.value ?? ""

@@ -8,15 +8,15 @@ struct UICopyTests {
     }
 
     @Test func journalModeAnotherMachineLabelString() {
-        #expect(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL == "another machine")
+        #expect(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL == "another device")
     }
 
     @Test func journalModeThisMacTradeoffString() {
-        #expect(UICopy.JOURNAL_MODE_THIS_MAC_TRADEOFF == "solstone runs the full system on this Mac and hosts your journal here. recommended if you\u{0027}re just getting started.")
+        #expect(UICopy.JOURNAL_MODE_THIS_MAC_TRADEOFF == "solstone runs the full system on this Mac and your journal lives here. recommended if you\u{0027}re just getting started.")
     }
 
     @Test func journalModeAnotherMachineTradeoffString() {
-        #expect(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF == "this Mac becomes an observer feeding a journal that lives on another machine \u{2014} your other Mac, your home server, or a journal you\u{0027}ve been invited to.")
+        #expect(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF == "this Mac becomes an observer feeding a journal that lives on another device \u{2014} your other Mac, your home server, or a journal you\u{0027}ve been invited to.")
     }
 
     @Test func settingsPrereqPermissionsString() {

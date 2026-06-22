@@ -21,7 +21,7 @@ struct IntegrationTests {
     @Test func endToEndPairConnectSmallRequestUploadDisconnect() async throws {
         try await withMockEnv { env in
             let session = URLSession(configuration: .ephemeral)
-            let statusURL = URL(string: "http://127.0.0.1:\(env.proxyPort)/app/link/api/status")!
+            let statusURL = URL(string: "http://127.0.0.1:\(env.proxyPort)/app/network/api/status")!
             let (statusData, statusResponse) = try await session.data(from: statusURL)
             let statusHTTP = try #require(statusResponse as? HTTPURLResponse)
             #expect(statusHTTP.statusCode == 200)

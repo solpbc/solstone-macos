@@ -150,7 +150,7 @@ struct PairClientTests {
         )
 
         let request = try #require(PairURLProtocol.store.requests.first)
-        #expect(request.url?.absoluteString == "https://192.0.2.42:7070/app/link/pair")
+        #expect(request.url?.absoluteString == "https://192.0.2.42:7070/app/network/pair")
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(request.value(forHTTPHeaderField: "Accept") == nil)

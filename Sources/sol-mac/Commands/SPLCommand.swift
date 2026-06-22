@@ -9,7 +9,7 @@ import SPLTunnel
 struct SPL: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "spl",
-        abstract: "pair and test sol private link.",
+        abstract: "pair and test sol private network.",
         subcommands: [Pair.self, Unpair.self, Status.self, DialTest.self]
     )
 }
@@ -18,7 +18,7 @@ extension SPL {
     struct Pair: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "pair",
-            abstract: "pair this device with a sol private link home.",
+            abstract: "pair this device with a sol private network home.",
             discussion: """
             note: this command may trigger a macOS keychain unlock prompt because the
             sol-mac CLI runs unbundled. authorize once to allow writing the pairing bundle.
@@ -79,7 +79,7 @@ extension SPL {
     struct Unpair: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "unpair",
-            abstract: "remove the local sol private link pairing."
+            abstract: "remove the local sol private network pairing."
         )
 
         func run() async throws {
@@ -96,7 +96,7 @@ extension SPL {
     struct Status: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "status",
-            abstract: "show the local sol private link pairing."
+            abstract: "show the local sol private network pairing."
         )
 
         func run() async throws {
@@ -128,7 +128,7 @@ extension SPL {
     struct DialTest: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "dial-test",
-            abstract: "open a sol private link tunnel and request home status."
+            abstract: "open a sol private network tunnel and request home status."
         )
 
         func run() async throws {
@@ -148,7 +148,7 @@ extension SPL {
             do {
                 let via = try await tunnel.connect(endpoints: TransportEndpoint.candidates(for: stored))
                 let stream = try await tunnel.openStream()
-                let request = "GET /app/link/api/status HTTP/1.1\r\nHost: \(stored.homeLabel)\r\nConnection: close\r\n\r\n"
+                let request = "GET /app/network/api/status HTTP/1.1\r\nHost: \(stored.homeLabel)\r\nConnection: close\r\n\r\n"
                 try await stream.write(Data(request.utf8))
                 try await stream.close()
                 let response = try await readResponse(from: await stream.inbound)

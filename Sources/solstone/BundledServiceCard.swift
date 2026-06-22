@@ -849,7 +849,7 @@ func installedServiceMessage(for state: InstallerCardState) -> String {
 
 let externalManagedTitle = "solstone is managed outside this app"
 
-let externalManagedBody = "this Mac can connect in another-machine mode, or keep using the local journal already set up here."
+let externalManagedBody = "this Mac can connect in another-device mode, or keep using the local journal already set up here."
 
 func externalManagedVersionLine(for probe: VersionProbeResult?) -> String {
     switch probe {
