@@ -216,6 +216,152 @@ struct UpdateControllerTests {
         #expect(spy.checkForUpdatesCallCount == 1)
     }
 
+    @Test func canStartManualCheckReflectsIdleLiveAndRestoredStagedStates() {
+        let now = Date()
+        let idleController = makeController()
+        idleController.applyDebugFixture(
+            activity: .idle,
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .upToDate)
+        )
+        #expect(idleController.canStartManualCheck)
+
+        clearDefaults()
+        defer { clearDefaults() }
+        let spy = SpyUpdater()
+        let liveController = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            spy
+        }
+        spy.sessionInProgress = true
+        #expect(!liveController.canStartManualCheck)
+
+        let stagedController = makeController()
+        stagedController.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.4.0", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .staged)
+        )
+        #expect(stagedController.updateIsStaged)
+        #expect(stagedController.activity == .idle)
+        #expect(!stagedController.hasLiveUpdateReply)
+        // An implementation deriving only from sessionInProgress would wrongly return true here.
+        #expect(!stagedController.canStartManualCheck)
+    }
+
+    @Test func manualCheckStartsCheckingThroughBeginAndThenNoOpsWhileLive() {
+        let controller = makeController()
+        var checks = 0
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+        controller.applyDebugFixture(
+            activity: .idle,
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .upToDate)
+        )
+
+        controller.checkForUpdates()
+
+        #expect(checks == 1)
+        #expect(controller.activity == .checking)
+
+        controller.checkForUpdates()
+
+        #expect(checks == 1)
+        #expect(controller.activity == .checking)
+    }
+
+    @Test func lastCheckedRelativeUsesJustNowThreshold() {
+        let base = Date()
+
+        #expect(
+            UpdatesCopy.lastCheckedRelative(checkedAt: base, now: base.addingTimeInterval(59))
+                == UpdatesCopy.lastCheckedJustNow
+        )
+        #expect(
+            UpdatesCopy.lastCheckedRelative(checkedAt: base, now: base.addingTimeInterval(60))
+                != UpdatesCopy.lastCheckedJustNow
+        )
+    }
+
+    @Test func lastCheckedRelativeAdvancesWithInjectedNow() {
+        let base = Date()
+        let initial = UpdatesCopy.lastCheckedRelative(checkedAt: base, now: base)
+        let fiveMinutesLater = UpdatesCopy.lastCheckedRelative(
+            checkedAt: base,
+            now: base.addingTimeInterval(300)
+        )
+        let formatter = RelativeDateTimeFormatter()
+        formatter.dateTimeStyle = .named
+        formatter.unitsStyle = .full
+        let expectedFiveMinutesLater = formatter.localizedString(
+            for: base,
+            relativeTo: base.addingTimeInterval(300)
+        )
+
+        #expect(initial == UpdatesCopy.lastCheckedJustNow)
+        #expect(fiveMinutesLater != initial)
+        #expect(fiveMinutesLater != UpdatesCopy.lastCheckedJustNow)
+        #expect(fiveMinutesLater == expectedFiveMinutesLater)
+    }
+
+    @Test func perControlActionabilityReflectsLiveStateAndDirectDownloadException() {
+        let now = Date()
+        let update = AvailableUpdate(version: "1.4.0", releaseNotes: nil)
+
+        let retryEnabledController = makeController()
+        retryEnabledController.applyDebugFixture(
+            activity: .idle,
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .failed)
+        )
+        #expect(retryEnabledController.canRetry)
+
+        let retryDisabledController = makeController()
+        retryDisabledController.applyDebugFixture(
+            activity: .checking,
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .failed)
+        )
+        #expect(!retryDisabledController.canRetry)
+
+        let directDownloadController = makeController()
+        directDownloadController.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: update,
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found),
+            hasLiveChoiceReply: true
+        )
+        #expect(directDownloadController.canActOnAvailableUpdateDirectly)
+        #expect(directDownloadController.canDownload)
+
+        let downloadDisabledController = makeController()
+        downloadDisabledController.applyDebugFixture(
+            activity: .downloading(version: "1.4.0", receivedBytes: 0, totalBytes: nil),
+            availableUpdate: update,
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found)
+        )
+        #expect(!downloadDisabledController.canActOnAvailableUpdateDirectly)
+        #expect(!downloadDisabledController.canDownload)
+
+        let deferredEnabledController = makeController()
+        deferredEnabledController.applyDebugFixture(
+            activity: .idle,
+            deferredInstallIntent: DeferredInstallIntent(version: "1.4.0", requestedAt: now)
+        )
+        #expect(deferredEnabledController.canCheckAgainFromDeferred)
+
+        let deferredDisabledController = makeController()
+        deferredDisabledController.applyDebugFixture(
+            activity: .checking,
+            deferredInstallIntent: DeferredInstallIntent(version: "1.4.0", requestedAt: now)
+        )
+        #expect(!deferredDisabledController.canCheckAgainFromDeferred)
+    }
+
+    @Test func settingsContentGateRequiresOpenSettingsWindow() {
+        #expect(!shouldRenderSettingsContent(settingsWindowOpen: false))
+        #expect(shouldRenderSettingsContent(settingsWindowOpen: true))
+    }
+
     @Test func surfacedFlagsReflectDurableStatusAndDeferredIntent() {
         let controller = makeController()
         let now = Date()

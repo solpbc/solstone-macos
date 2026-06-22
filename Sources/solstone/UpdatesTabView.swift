@@ -62,9 +62,12 @@ struct UpdatesTabView: View {
                     .font(.title3)
                     .fontWeight(.semibold)
 
-                Text(lastCheckedSubtitle())
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                // TimelineView only updates when visible, avoiding background timer
+                TimelineView(.periodic(from: .now, by: 1.0)) { context in
+                    Text(lastCheckedSubtitle(now: context.date))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()
@@ -86,11 +89,18 @@ struct UpdatesTabView: View {
                     .accessibilityIdentifier(AXID.Updates.cancel)
             }
         default:
-            Button(
-                controller.lastCheckedAt == nil ? UpdatesCopy.actionCheckNow : UpdatesCopy.actionCheckAgain,
-                action: controller.checkForUpdates
-            )
-            .accessibilityIdentifier(AXID.Updates.check)
+            HStack(spacing: 8) {
+                Button(
+                    controller.lastCheckedAt == nil ? UpdatesCopy.actionCheckNow : UpdatesCopy.actionCheckAgain,
+                    action: controller.checkForUpdates
+                )
+                .disabled(!controller.canStartManualCheck)
+                .accessibilityIdentifier(AXID.Updates.check)
+                AXStateCompanion(
+                    id: AXID.Updates.checkState,
+                    value: axEnabledString(controller.canStartManualCheck)
+                )
+            }
         }
     }
 
@@ -186,7 +196,12 @@ struct UpdatesTabView: View {
         actionRow(
             primaryTitle: UpdatesCopy.actionCheckAgain,
             primaryAction: controller.checkForUpdates,
-            primaryID: AXID.Updates.check
+            primaryID: AXID.Updates.check,
+            primaryDisabled: !controller.canCheckAgainFromDeferred
+        )
+        AXStateCompanion(
+            id: AXID.Updates.checkAgainState,
+            value: axEnabledString(controller.canCheckAgainFromDeferred)
         )
     }
 
@@ -215,6 +230,7 @@ struct UpdatesTabView: View {
                 primaryTitle: UpdatesCopy.actionRetry,
                 primaryAction: controller.checkForUpdates,
                 primaryID: AXID.Updates.retry,
+                primaryDisabled: !controller.canRetry,
                 secondaryTitle: UpdatesCopy.actionDismiss,
                 secondaryAction: controller.dismiss,
                 secondaryID: AXID.Updates.dismiss
@@ -223,9 +239,14 @@ struct UpdatesTabView: View {
             actionRow(
                 primaryTitle: UpdatesCopy.actionRetry,
                 primaryAction: controller.checkForUpdates,
-                primaryID: AXID.Updates.retry
+                primaryID: AXID.Updates.retry,
+                primaryDisabled: !controller.canRetry
             )
         }
+        AXStateCompanion(
+            id: AXID.Updates.retryState,
+            value: axEnabledString(controller.canRetry)
+        )
     }
 
     @ViewBuilder
@@ -240,6 +261,7 @@ struct UpdatesTabView: View {
                 primaryTitle: UpdatesCopy.actionDownload,
                 primaryAction: controller.download,
                 primaryID: AXID.Updates.download,
+                primaryDisabled: !controller.canDownload,
                 secondaryTitle: UpdatesCopy.actionDismiss,
                 secondaryAction: controller.dismiss,
                 secondaryID: AXID.Updates.dismiss
@@ -248,9 +270,14 @@ struct UpdatesTabView: View {
             actionRow(
                 primaryTitle: UpdatesCopy.actionDownload,
                 primaryAction: controller.download,
-                primaryID: AXID.Updates.download
+                primaryID: AXID.Updates.download,
+                primaryDisabled: !controller.canDownload
             )
         }
+        AXStateCompanion(
+            id: AXID.Updates.downloadState,
+            value: axEnabledString(controller.canDownload)
+        )
     }
 
     private func failedSubtitle(availableVersion: String?) -> String {
@@ -293,12 +320,12 @@ struct UpdatesTabView: View {
         )
     }
 
-    private func lastCheckedSubtitle() -> String {
+    private func lastCheckedSubtitle(now: Date) -> String {
         guard let date = controller.lastCheckedAt else {
             return UpdatesCopy.lastCheckedNever
         }
 
-        let relative = date.formatted(.relative(presentation: .named))
+        let relative = UpdatesCopy.lastCheckedRelative(checkedAt: date, now: now)
 
         switch controller.reconciledStatus.lastCheck?.outcome {
         case .upToDate:
@@ -407,6 +434,7 @@ struct UpdatesTabView: View {
         primaryTitle: String?,
         primaryAction: (() -> Void)?,
         primaryID: String? = nil,
+        primaryDisabled: Bool = false,
         secondaryTitle: String? = nil,
         secondaryAction: (() -> Void)? = nil,
         secondaryID: String? = nil
@@ -414,7 +442,7 @@ struct UpdatesTabView: View {
         if primaryTitle != nil || secondaryTitle != nil {
             HStack {
                 if let primaryTitle, let primaryAction {
-                    actionButton(primaryTitle, id: primaryID, action: primaryAction)
+                    actionButton(primaryTitle, id: primaryID, disabled: primaryDisabled, action: primaryAction)
                 }
 
                 if let secondaryTitle, let secondaryAction {
@@ -425,12 +453,19 @@ struct UpdatesTabView: View {
     }
 
     @ViewBuilder
-    private func actionButton(_ title: String, id: String?, action: @escaping () -> Void) -> some View {
+    private func actionButton(
+        _ title: String,
+        id: String?,
+        disabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
         if let id {
             Button(title, action: action)
+                .disabled(disabled)
                 .accessibilityIdentifier(id)
         } else {
             Button(title, action: action)
+                .disabled(disabled)
         }
     }
 }

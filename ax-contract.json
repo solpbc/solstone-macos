@@ -269,10 +269,14 @@
       "settings.status.upload.total.state",
       "updates.action.cancel",
       "updates.action.check",
+      "updates.action.check.state",
+      "updates.action.checkAgain.state",
       "updates.action.dismiss",
       "updates.action.download",
+      "updates.action.download.state",
       "updates.action.install",
       "updates.action.retry",
+      "updates.action.retry.state",
       "updates.debug.state",
       "updates.deferredInstall.state",
       "updates.downloadProgress.state",
@@ -438,6 +442,18 @@
     },
     "settings.status.upload.total.state" : {
       "kind" : "numeric"
+    },
+    "updates.action.check.state" : {
+      "kind" : "freeform"
+    },
+    "updates.action.checkAgain.state" : {
+      "kind" : "freeform"
+    },
+    "updates.action.download.state" : {
+      "kind" : "freeform"
+    },
+    "updates.action.retry.state" : {
+      "kind" : "freeform"
     },
     "updates.debug.state" : {
       "kind" : "freeform"

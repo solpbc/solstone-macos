@@ -446,6 +446,26 @@ final class UpdateController {
         !updateIsAvailable && reconciledStatus.lastCheck?.outcome == .upToDate
     }
 
+    private var canDriveManualCheck: Bool {
+        canCheckForUpdates && !hasLiveSparkleSessionOrReply
+    }
+
+    var canStartManualCheck: Bool {
+        canDriveManualCheck && !updateIsStaged
+    }
+
+    var canRetry: Bool {
+        canDriveManualCheck
+    }
+
+    var canCheckAgainFromDeferred: Bool {
+        canDriveManualCheck
+    }
+
+    var canDownload: Bool {
+        canActOnAvailableUpdateDirectly || canDriveManualCheck
+    }
+
     var durableUpdateStatus: DurableUpdateStatus {
         if let deferredInstallIntent {
             return .deferred(version: deferredInstallIntent.version)

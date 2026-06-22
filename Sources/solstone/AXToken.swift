@@ -461,6 +461,10 @@ func axIntegerString(_ value: Int) -> String {
     String(value)
 }
 
+func axEnabledString(_ enabled: Bool) -> String {
+    enabled ? "enabled" : "disabled"
+}
+
 func axPercentString(_ fraction: Double) -> String {
     let percent = Int((fraction * 100).rounded())
     return String(min(max(percent, 0), 100))

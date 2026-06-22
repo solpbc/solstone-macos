@@ -40,6 +40,7 @@ enum UpdatesCopy {
     static let frequencyMonth = "every month"
 
     static let lastCheckedNever = "never checked for updates"
+    static let lastCheckedJustNow = "just now"
     static let privacyFootnote = "solstone never sends usage data. update checks only fetch the version manifest."
 
     static func appHeader(version: String) -> String {
@@ -64,6 +65,16 @@ enum UpdatesCopy {
 
     static func lastCheckedGeneric(relative: String) -> String {
         "last checked \(relative)"
+    }
+
+    static func lastCheckedRelative(checkedAt: Date, now: Date) -> String {
+        if now.timeIntervalSince(checkedAt) < 60 {
+            return lastCheckedJustNow
+        }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.dateTimeStyle = .named
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: checkedAt, relativeTo: now)
     }
 
     static func updateAvailableTitle(version: String) -> String {
