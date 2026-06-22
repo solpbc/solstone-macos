@@ -172,7 +172,22 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
         } else {
             try createBundledPythonLink(layout: layout)
         }
-        return try await verifyPython(at: materializedPython)
+        guard try await verifyPython(at: materializedPython) else {
+            return false
+        }
+        do {
+            let scripts = try discoverConsoleScripts(in: layout)
+            let rootPath = layout.rootURL.resolvingSymlinksInPath().standardizedFileURL.path
+            for script in scripts {
+                let path = script.resolved.path
+                guard path == rootPath || path.hasPrefix(rootPath + "/") else {
+                    return false
+                }
+            }
+        } catch {
+            return false
+        }
+        return true
     }
 
     private func verifyJournalVersion(layout: SolstoneRuntimeLayout) async throws -> Bool {
@@ -229,15 +244,61 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
         try fileManager.createSymbolicLink(at: link, withDestinationURL: bundledPythonURL)
     }
 
-    /// Rewrites uv's staging-absolute entrypoint references so they survive the temp -> final rename.
-    /// uv writes `<bin>/{journal,sol}` as absolute symlinks into `<tools>/.../bin/` and the console
-    /// scripts there carry an absolute python trampoline into the staging venv. Both reference the
-    /// `.tmp-*` staging dir, which vanishes after the rename. Rewrite the entrypoint symlinks to
-    /// relative targets (move-proof) and the console-script trampoline to the final venv python.
+    private func discoverConsoleScripts(in layout: SolstoneRuntimeLayout) throws -> [(name: String, entry: URL, resolved: URL)] {
+        let entries: [URL]
+        do {
+            entries = try fileManager.contentsOfDirectory(
+                at: layout.binDir,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        } catch {
+            throw RuntimeMaterializerError.verificationFailed(
+                "could not enumerate runtime bin directory \(layout.binDir.path): \(error.localizedDescription)"
+            )
+        }
+
+        var scripts: [(name: String, entry: URL, resolved: URL)] = []
+        for entry in entries {
+            let name = entry.lastPathComponent
+            let resolved = entry.resolvingSymlinksInPath().standardizedFileURL
+            guard fileManager.fileExists(atPath: resolved.path) else {
+                throw RuntimeMaterializerError.verificationFailed(
+                    "entrypoint \(name) target missing or dangling: \(resolved.path)"
+                )
+            }
+
+            let data: Data
+            do {
+                data = try Data(contentsOf: resolved)
+            } catch {
+                throw RuntimeMaterializerError.verificationFailed(
+                    "entrypoint \(name) target unreadable: \(resolved.path): \(error.localizedDescription)"
+                )
+            }
+
+            guard let text = String(data: data, encoding: .utf8) else {
+                continue
+            }
+            let lines = text.components(separatedBy: "\n")
+            guard Self.isUvPolyglot(lines) else {
+                continue
+            }
+            scripts.append((name: name, entry: entry, resolved: resolved))
+        }
+        return scripts
+    }
+
+    /// Rewrites every uv polyglot console script discovered in `bin/` so it survives temp -> final rename.
+    /// uv writes console entrypoints as absolute symlinks into `<tools>/.../bin/` and the scripts there
+    /// carry an absolute python trampoline into the staging venv. Both reference the `.tmp-*` staging dir,
+    /// which vanishes after rename. Rewrite entrypoint symlinks to relative targets and trampolines to the final venv python.
     private func makeRelocationSafe(layout: SolstoneRuntimeLayout, finalURL: URL) throws {
         let tempRoot = layout.rootURL.standardizedFileURL.path
-        for entry in [layout.journalBinary, layout.solBinary] {
-            let name = entry.lastPathComponent
+        for script in try discoverConsoleScripts(in: layout) {
+            let entry = script.entry
+            let name = script.name
             // Read uv's absolute symlink target into the staging tools tree.
             let targetPath = try fileManager.destinationOfSymbolicLink(atPath: entry.path)
             guard targetPath.hasPrefix(tempRoot + "/") else {
@@ -260,9 +321,7 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
     private func rewriteConsoleScriptPython(of script: URL, to interpreter: String) throws {
         let original = try String(contentsOf: script, encoding: .utf8)
         var lines = original.components(separatedBy: "\n")
-        guard lines.count >= 2,
-              lines[0] == "#!/bin/sh",
-              lines[1].hasPrefix("'''exec' '") else {
+        guard Self.isUvPolyglot(lines) else {
             throw RuntimeMaterializerError.verificationFailed(
                 "console script \(script.lastPathComponent) does not match uv polyglot trampoline"
             )
@@ -276,38 +335,49 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
         }
     }
 
-    /// Fails loudly if any entrypoint would dangle post-rename: resolves the real path of
-    /// `bin/{journal,sol}` and the rewritten console script and asserts neither references a
-    /// `.tmp-*` staging segment, then executes both final entrypoints. This is the completeness
-    /// guarantee against post-rename reality; `isExecutableFile` follows symlinks and false-passes
-    /// against the still-present temp tree, so the check must run after the temp dir is gone.
+    /// Fails loudly if any discovered uv console script would dangle post-rename. All scripts get
+    /// static relocation checks; `sol` and `journal` also get a `--version` liveness probe. The
+    /// probe is intentionally limited because entries like `mlx-vlm-server` do not implement `--version`.
     private func assertRelocationSafe(layout: SolstoneRuntimeLayout) async throws {
         let rootPath = layout.rootURL.resolvingSymlinksInPath().standardizedFileURL.path
-        // In production the injected runner is SubprocessRunner, so this is a real kernel exec of
-        // the relocated polyglot; the regression test also execs the bin entrypoints hermetically.
-        let entries = [layout.journalBinary, layout.solBinary]
-        var probes: [(name: String, executable: URL)] = []
-        for entry in entries {
-            let name = entry.lastPathComponent
-            let resolved = entry.resolvingSymlinksInPath().standardizedFileURL
+        let scripts = try discoverConsoleScripts(in: layout)
+        for script in scripts {
+            let name = script.name
+            let entry = script.entry
+            let resolved = script.resolved
             guard fileManager.isExecutableFile(atPath: resolved.path) else {
                 throw RuntimeMaterializerError.verificationFailed(
                     "entrypoint \(name) does not resolve to an executable: \(resolved.path)"
                 )
             }
             try assertWithinRoot(resolved.path, rootPath: rootPath, what: "entrypoint \(name)")
+            let destination = try fileManager.destinationOfSymbolicLink(atPath: entry.path)
+            guard !destination.hasPrefix("/") else {
+                throw RuntimeMaterializerError.verificationFailed(
+                    "entrypoint \(name) is not a relative symlink after relocation: \(destination)"
+                )
+            }
 
-            let script = try String(contentsOf: resolved, encoding: .utf8)
-            let lines = script.components(separatedBy: "\n")
+            let scriptText = try String(contentsOf: resolved, encoding: .utf8)
+            let lines = scriptText.components(separatedBy: "\n")
             guard lines.first == "#!/bin/sh" else {
                 throw RuntimeMaterializerError.verificationFailed("console script \(name) lost its space-safe shebang")
             }
             if lines.contains(where: { containsStagingSegment(in: $0) }) {
                 throw RuntimeMaterializerError.verificationFailed("console script \(name) references staging dir after relocation")
             }
-            probes.append((name: name, executable: resolved))
+            guard lines.count >= 2,
+                  let interpreterPath = uvPolyglotInterpreterPath(from: lines[1]) else {
+                throw RuntimeMaterializerError.verificationFailed("console script \(name) lost its uv python trampoline")
+            }
+            let standardizedInterpreter = URL(fileURLWithPath: interpreterPath).standardizedFileURL.path
+            try assertWithinRoot(standardizedInterpreter, rootPath: rootPath, what: "entrypoint \(name) trampoline")
         }
 
+        let probeNames: Set<String> = ["sol", "journal"]
+        let probes: [(name: String, executable: URL)] = scripts
+            .filter { probeNames.contains($0.name) }
+            .map { (name: $0.name, executable: $0.resolved) }
         let environment = layout.uvEnvironment()
         let runner = self.runner
         try await withThrowingTaskGroup(of: Void.self) { group in
@@ -356,6 +426,44 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
 
     private func containsStagingSegment(in text: String) -> Bool {
         text.split(separator: "/").contains { $0.hasPrefix(".tmp-") }
+    }
+
+    private static func isUvPolyglot(_ lines: [String]) -> Bool {
+        lines.count >= 2 && lines[0] == "#!/bin/sh" && lines[1].hasPrefix("'''exec' '")
+    }
+
+    private func uvPolyglotInterpreterPath(from line: String) -> String? {
+        let prefix = "'''exec' "
+        guard line.hasPrefix(prefix) else { return nil }
+        var index = line.index(line.startIndex, offsetBy: prefix.count)
+        guard index < line.endIndex, line[index] == "'" else { return nil }
+        index = line.index(after: index)
+
+        var value = ""
+        while index < line.endIndex {
+            let character = line[index]
+            if character == "'" {
+                let backslashIndex = line.index(after: index)
+                if backslashIndex < line.endIndex,
+                   line[backslashIndex] == "\\" {
+                    let escapedQuoteIndex = line.index(after: backslashIndex)
+                    if escapedQuoteIndex < line.endIndex,
+                       line[escapedQuoteIndex] == "'" {
+                        let reopenQuoteIndex = line.index(after: escapedQuoteIndex)
+                        if reopenQuoteIndex < line.endIndex,
+                           line[reopenQuoteIndex] == "'" {
+                            value.append("'")
+                            index = line.index(after: reopenQuoteIndex)
+                            continue
+                        }
+                    }
+                }
+                return value
+            }
+            value.append(character)
+            index = line.index(after: index)
+        }
+        return nil
     }
 
     private func shellSingleQuoted(_ value: String) -> String {

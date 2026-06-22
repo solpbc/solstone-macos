@@ -43,6 +43,7 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
     private let lock = NSLock()
     private var responses: [String: [Response]] = [:]
     private var recordedInvocations: [SubprocessInvocation] = []
+    private var materializedToolBinariesSideEffect: (@Sendable () -> Void)?
 
     var invocations: [SubprocessInvocation] {
         lock.lock()
@@ -53,6 +54,12 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
     func enqueue(_ key: String, _ response: Response) {
         lock.lock()
         responses[key, default: []].append(response)
+        lock.unlock()
+    }
+
+    func onMaterializedToolBinaries(_ sideEffect: @escaping @Sendable () -> Void) {
+        lock.lock()
+        materializedToolBinariesSideEffect = sideEffect
         lock.unlock()
     }
 
@@ -69,6 +76,10 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
             Issue.record("unexpected sol subprocess invocation: \(executable.path) \(arguments.joined(separator: " "))")
             throw FakeRunError(message: "unexpected sol subprocess invocation")
         }
+        if executable.lastPathComponent == "mlx-vlm-server" {
+            Issue.record("unexpected mlx-vlm-server subprocess invocation: \(executable.path) \(arguments.joined(separator: " "))")
+            throw FakeRunError(message: "unexpected mlx-vlm-server subprocess invocation")
+        }
         let response = nextResponse(executable: executable, arguments: arguments, environment: environment, timeout: timeout)
         if let timeout, response.delay >= timeout {
             try? await Task.sleep(for: timeout)
@@ -80,6 +91,7 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         response.sideEffect?()
         if response.exitCode == 0, arguments.starts(with: ["tool", "install"]) {
             createMaterializedToolBinaries(environment: environment)
+            materializedToolBinariesHook()?()
         }
         if let message = response.throwMessage {
             throw FakeRunError(message: message)
@@ -135,6 +147,12 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         return first
     }
 
+    private func materializedToolBinariesHook() -> (@Sendable () -> Void)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return materializedToolBinariesSideEffect
+    }
+
     private func createMaterializedToolBinaries(environment: [String: String]?) {
         guard let binPath = environment?["UV_TOOL_BIN_DIR"],
               let toolsPath = environment?["UV_TOOL_DIR"] else { return }
@@ -152,7 +170,7 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
             try Data((pythonBody + "\n").utf8).write(to: python)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: python.path)
 
-            for name in ["sol", "journal"] {
+            for name in ["sol", "journal", "solstone", "mlx-vlm-server"] {
                 let consoleScript = toolBinURL.appendingPathComponent(name)
                 let body = """
                 #!/bin/sh
