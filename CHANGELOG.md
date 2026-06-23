@@ -5,6 +5,15 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.20] - 2026-06-23
+
+### Changed
+- the "check for updates" controls in Settings now reflect what's actually possible: they're available when a check could do something, and they step back when one is already running, a download is staged and waiting, or your update settings aren't ready. the "last checked" line also reads as a live clock, saying "just now" for the first minute. nothing about how updates install changed, just how honestly the pane reads.
+- updated the bundled solstone journal to 0.6.11 →
+
+### Fixed
+- after a solstone update, on-device screen analysis (how sol makes sense of what's on your screen, right on your Mac) could stop working until the next restart. it now keeps running cleanly across updates.
+
 ## [1.3.19] - 2026-06-22
 
 ### Changed
