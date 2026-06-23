@@ -142,8 +142,14 @@ vendor-wheelhouse: check-versions vendor-uv vendor-python
 	    mkdir -p "$(WHEELHOUSE_DIR)"; \
 	    mv "$$BUILT_WHEEL" "$(WHEELHOUSE_DIR)/"; \
 	    REQS="$$BUILD_DIR/requirements.txt"; \
-	    (cd "$$EXPORT_DIR" && "$(abspath $(UV_VENDOR_BINARY))" export --frozen --no-dev --no-emit-project --no-editable --extra journal --python "$(abspath $(PYTHON_VENDOR_DIR))/bin/python3.13" -o "$$REQS") || { echo "error: uv export failed"; exit 1; }; \
+	    (cd "$$EXPORT_DIR" && "$(abspath $(UV_VENDOR_BINARY))" export --frozen --no-dev --no-emit-project --no-emit-package solstone-journal-host --no-editable --extra journal --python "$(abspath $(PYTHON_VENDOR_DIR))/bin/python3.13" -o "$$REQS") || { echo "error: uv export failed"; exit 1; }; \
 	    "$(PYTHON_VENDOR_DIR)/bin/python3.13" -m pip download -r "$$REQS" --only-binary=:all: --dest "$(WHEELHOUSE_DIR)" --platform "$(WHEELHOUSE_PLATFORM_TAG)" --python-version "$(WHEELHOUSE_PYTHON_TAG)" --implementation cp --abi "$(WHEELHOUSE_ABI)" || { echo "error: pip wheel download failed"; exit 1; }; \
+	    SHIM_BUILD_DIR="$$BUILD_DIR/shim"; \
+	    mkdir -p "$$SHIM_BUILD_DIR"; \
+	    (cd "$$EXPORT_DIR" && "$(abspath $(UV_VENDOR_BINARY))" build --package solstone-journal-host --wheel --out-dir "$$SHIM_BUILD_DIR") || { echo "error: solstone-journal-host shim wheel build failed"; exit 1; }; \
+	    SHIM_WHEEL="$$(find "$$SHIM_BUILD_DIR" -maxdepth 1 -type f -name 'solstone_journal_host-$(SOLSTONE_PIN_VERSION)-*.whl' | head -n 1)"; \
+	    [ -n "$$SHIM_WHEEL" ] || { echo "error: solstone-journal-host shim wheel not produced for $(SOLSTONE_PIN_VERSION)"; exit 1; }; \
+	    mv "$$SHIM_WHEEL" "$(WHEELHOUSE_DIR)/"; \
 	    PINNED_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
 	    [ "$$PINNED_COUNT" = "1" ] || { echo "error: expected exactly one solstone-$(SOLSTONE_PIN_VERSION)-*.whl in $(WHEELHOUSE_DIR)"; exit 1; }; \
 	    WHEEL_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name '*.whl' | wc -l | tr -d ' ')"; \
