@@ -870,6 +870,8 @@ struct SolstoneInstallerTests {
         let wheelPath = String(install.arguments[2].dropLast("[journal]".count))
         #expect(URL(fileURLWithPath: wheelPath).lastPathComponent == "solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl")
         #expect(Array(install.arguments.dropFirst(3)) == [
+            "--with-executables-from",
+            "solstone-journal-host",
             "--find-links",
             fixtureURLs.wheelhouse.path,
             "--no-index",

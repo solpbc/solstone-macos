@@ -205,6 +205,52 @@ struct RuntimeMaterializerTests {
         #expect(lines[1] == "'''exec' \(shellSingleQuotedForTest(expectedInterpreter)) \"$0\" \"$@\"")
     }
 
+    @Test func installPassesJournalHostExecutablesFlagToUvToolInstall() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("tool", .success())
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        _ = try await materializer.materialize(excludingLiveKey: nil)
+
+        let install = try #require(runner.invocations.first {
+            $0.arguments.starts(with: ["tool", "install"])
+        })
+        // exact adjacent flag+value pair, so a malformed flag cannot pass
+        let pairIndex = install.arguments.indices.first { i in
+            i + 1 < install.arguments.count
+                && install.arguments[i] == "--with-executables-from"
+                && install.arguments[i + 1] == "solstone-journal-host"
+        }
+        #expect(pairIndex != nil)
+        // still carries the journal-extra spec, offline + find-links args
+        #expect(install.arguments.contains { $0.hasSuffix("[journal]") })
+        #expect(install.arguments.contains("--offline"))
+        #expect(install.arguments.contains("--find-links"))
+    }
+
+    @Test func materializeSurfacesSpecificReasonWhenJournalExecutableMissing() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        runner.forcePrimaryOnlyExposure = true
+        runner.enqueue("tool", .success())
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        do {
+            _ = try await materializer.materialize(excludingLiveKey: nil)
+            Issue.record("expected materialize to fail when journal executable is missing")
+        } catch let error as RuntimeMaterializerError {
+            guard case .verificationFailed(let message) = error else {
+                Issue.record("expected verificationFailed, got \(error)")
+                return
+            }
+            #expect(message.contains("journal executable missing"))
+            #expect(message != "staged runtime verification failed")
+        }
+    }
+
     private func createDirectories(_ names: [String], in root: URL) throws {
         for name in names {
             try FileManager.default.createDirectory(

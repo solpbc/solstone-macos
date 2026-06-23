@@ -46,7 +46,7 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
         let key = try runtimeKey()
         let finalURL = runtimeRootURL.appendingPathComponent(key, isDirectory: true)
         let finalLayout = SolstoneRuntimeLayout(rootURL: finalURL)
-        if try await verify(layout: finalLayout) {
+        if try await verify(layout: finalLayout) == nil {
             try rewriteAliases(layout: finalLayout)
             garbageCollect(keeping: key, liveKey: liveKey)
             return MaterializedRuntime(key: key, layout: finalLayout)
@@ -59,8 +59,9 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
             try tempLayout.ensureCreated()
             try createBundledPythonLink(layout: tempLayout)
             try await install(into: tempLayout)
-            guard try await verify(layout: tempLayout) else {
-                throw RuntimeMaterializerError.verificationFailed("staged runtime verification failed")
+            if let reason = try await verify(layout: tempLayout) {
+                Logger.setup.notice("runtime materializer: staged runtime verification failed: \(reason, privacy: .public)")
+                throw RuntimeMaterializerError.verificationFailed(reason)
             }
             try makeRelocationSafe(layout: tempLayout, finalURL: finalURL)
             try? fileManager.removeItem(at: finalURL)
@@ -132,6 +133,8 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
                 "tool",
                 "install",
                 try projectWheelJournalSpec(),
+                "--with-executables-from",
+                "solstone-journal-host",
                 "--find-links",
                 wheelhouseURL.path,
                 "--no-index",
@@ -150,30 +153,30 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
         }
     }
 
-    private func verify(layout: SolstoneRuntimeLayout) async throws -> Bool {
+    private func verify(layout: SolstoneRuntimeLayout) async throws -> String? {
         guard fileManager.isExecutableFile(atPath: layout.journalBinary.path) else {
-            return false
+            return "journal executable missing at \(layout.journalBinary.path)"
         }
         guard try await verifyJournalVersion(layout: layout) else {
-            return false
+            return "journal --version check failed (mismatch or non-zero exit)"
         }
         guard try await verifyJournalHostImports(layout: layout) else {
-            return false
+            return "journal host import (frontmatter) check failed"
         }
         guard try await verifyPython(at: bundledPythonURL) else {
-            return false
+            return "bundled python check failed at \(bundledPythonURL.path)"
         }
         let materializedPython = layout.binDir.appendingPathComponent("python3.13")
         if fileManager.fileExists(atPath: materializedPython.path) {
             let resolved = materializedPython.resolvingSymlinksInPath().standardizedFileURL.path
             guard resolved == bundledPythonURL.standardizedFileURL.path else {
-                return false
+                return "materialized python3.13 link does not resolve to bundled python"
             }
         } else {
             try createBundledPythonLink(layout: layout)
         }
         guard try await verifyPython(at: materializedPython) else {
-            return false
+            return "materialized python check failed at \(materializedPython.path)"
         }
         do {
             let scripts = try discoverConsoleScripts(in: layout)
@@ -181,13 +184,13 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
             for script in scripts {
                 let path = script.resolved.path
                 guard path == rootPath || path.hasPrefix(rootPath + "/") else {
-                    return false
+                    return "console script \(script.name) resolves outside runtime root: \(path)"
                 }
             }
         } catch {
-            return false
+            return "console script discovery failed: \(error.localizedDescription)"
         }
-        return true
+        return nil
     }
 
     private func verifyJournalVersion(layout: SolstoneRuntimeLayout) async throws -> Bool {

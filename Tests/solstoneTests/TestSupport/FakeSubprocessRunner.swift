@@ -44,6 +44,7 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
     private var responses: [String: [Response]] = [:]
     private var recordedInvocations: [SubprocessInvocation] = []
     private var materializedToolBinariesSideEffect: (@Sendable () -> Void)?
+    var forcePrimaryOnlyExposure = false
 
     var invocations: [SubprocessInvocation] {
         lock.lock()
@@ -90,7 +91,7 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         }
         response.sideEffect?()
         if response.exitCode == 0, arguments.starts(with: ["tool", "install"]) {
-            createMaterializedToolBinaries(environment: environment)
+            createMaterializedToolBinaries(environment: environment, arguments: arguments)
             materializedToolBinariesHook()?()
         }
         if let message = response.throwMessage {
@@ -153,9 +154,17 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         return materializedToolBinariesSideEffect
     }
 
-    private func createMaterializedToolBinaries(environment: [String: String]?) {
+    private func createMaterializedToolBinaries(environment: [String: String]?, arguments: [String]) {
         guard let binPath = environment?["UV_TOOL_BIN_DIR"],
               let toolsPath = environment?["UV_TOOL_DIR"] else { return }
+        let exposesJournalHost = !forcePrimaryOnlyExposure && arguments.indices.contains { i in
+            i + 1 < arguments.count
+                && arguments[i] == "--with-executables-from"
+                && arguments[i + 1] == "solstone-journal-host"
+        }
+        let exposedNames = exposesJournalHost
+            ? ["sol", "journal", "solstone", "mlx-vlm-server"]
+            : ["sol", "solstone"]
         let binURL = URL(fileURLWithPath: binPath, isDirectory: true)
         let toolBinURL = URL(fileURLWithPath: toolsPath, isDirectory: true)
             .appendingPathComponent("solstone/bin", isDirectory: true)
@@ -182,14 +191,16 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
                 try Data((body + "\n").utf8).write(to: consoleScript)
                 try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: consoleScript.path)
 
-                let entrypoint = binURL.appendingPathComponent(name)
-                if FileManager.default.fileExists(atPath: entrypoint.path) {
-                    try FileManager.default.removeItem(at: entrypoint)
+                if exposedNames.contains(name) {
+                    let entrypoint = binURL.appendingPathComponent(name)
+                    if FileManager.default.fileExists(atPath: entrypoint.path) {
+                        try FileManager.default.removeItem(at: entrypoint)
+                    }
+                    try FileManager.default.createSymbolicLink(
+                        atPath: entrypoint.path,
+                        withDestinationPath: consoleScript.path
+                    )
                 }
-                try FileManager.default.createSymbolicLink(
-                    atPath: entrypoint.path,
-                    withDestinationPath: consoleScript.path
-                )
             }
         } catch {
             Issue.record("failed to create fake materialized binaries: \(error.localizedDescription)")
