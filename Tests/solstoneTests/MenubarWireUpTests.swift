@@ -26,7 +26,7 @@ struct MenubarWireUpTests {
             "AXID.Menubar.pauseIndefinite",
             "AXID.Menubar.pauseMenu",
             "AXID.Menubar.resumeButton",
-            "value: statusRowAXValue",
+            ".accessibilityValue(statusRowAXValue)",
             "statusRowState.axToken",
             ".accessibilityValue(rowState.axToken)",
             "appState.observationRowState",
@@ -48,10 +48,7 @@ struct MenubarWireUpTests {
         #expect(wireUpContains(source, """
             Section {
                 statusRow
-                AXStateCompanion(
-                    id: AXID.Menubar.statusRowState,
-                    value: statusRowAXValue
-                )
+                    .accessibilityValue(statusRowAXValue)
                 if hasPauseResumeControl {
                     pauseResumeSection
                 }

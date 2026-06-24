@@ -35,10 +35,7 @@ struct MenuContent: View {
         // Status + pause/resume controls (single section — no internal divider)
         Section {
             statusRow
-            AXStateCompanion(
-                id: AXID.Menubar.statusRowState,
-                value: statusRowAXValue
-            )
+                .accessibilityValue(statusRowAXValue)
             if hasPauseResumeControl {
                 pauseResumeSection
             }
@@ -139,6 +136,7 @@ struct MenuContent: View {
         case .starting:
             Text(UICopy.MENUBAR_STARTING)
                 .accessibilityValue(rowState.axToken)
+                .accessibilityIdentifier(AXID.Menubar.statusRowState)
 
         case .journalSetupNeeded,
              .journalRestarting,
@@ -163,6 +161,7 @@ struct MenuContent: View {
         case .syncPaused:
             Text(UICopy.MENUBAR_SYNC_PAUSED)
                 .accessibilityValue(rowState.axToken)
+                .accessibilityIdentifier(AXID.Menubar.statusRowState)
 
         case .offline:
             Button(UICopy.MENUBAR_OBSERVING_OFFLINE_SAVED_LOCALLY) {
@@ -174,10 +173,12 @@ struct MenuContent: View {
             let _ = appState.pauseManager.refreshTick
             Text(pausedHeaderText(timeRemaining: appState.pauseManager.formatTimeRemaining()))
                 .accessibilityValue(rowState.axToken)
+                .accessibilityIdentifier(AXID.Menubar.statusRowState)
 
         case .observing:
             Text(appState.bundledJournalStatusAvailable ? UICopy.MENUBAR_OBSERVING_BUNDLED : UICopy.MENUBAR_OBSERVING_CONNECTED)
                 .accessibilityValue(rowState.axToken)
+                .accessibilityIdentifier(AXID.Menubar.statusRowState)
         }
     }
 
