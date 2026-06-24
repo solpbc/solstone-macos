@@ -279,9 +279,9 @@ struct BundledServiceCard: View {
                             doctorCheckRow(check)
                         }
                     case .setupNeeded:
-                        doctorErrorRow(UICopy.JOURNAL_STATUS_SETUP_NEEDED)
+                        doctorErrorRow(UICopy.DOCTOR_SETUP_NEEDED_TITLE, detail: UICopy.DOCTOR_SETUP_NEEDED_DETAIL)
                     case .stopped(let diagnostic), .unknown(let diagnostic):
-                        doctorErrorRow(diagnostic.outputExcerpt ?? diagnostic.commandLabel)
+                        doctorErrorRow(UICopy.DOCTOR_CHECK_FAILED_TITLE, detail: diagnostic.outputExcerpt ?? diagnostic.commandLabel)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -329,18 +329,27 @@ struct BundledServiceCard: View {
         .accessibilityValue(check.status.axToken)
     }
 
-    private func doctorErrorRow(_ message: String) -> some View {
+    private func doctorErrorRow(_ title: String, detail: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.octagon.fill")
                     .foregroundStyle(.red)
-                Text(message)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                    if let detail, !detail.isEmpty {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier(AXID.Installer.doctorErrorState)
-            .accessibilityValue(message)
+            .accessibilityValue([title, detail].compactMap { $0 }.joined(separator: " — "))
 
             Button("try again") {
                 restartDoctor()
@@ -355,7 +364,7 @@ struct BundledServiceCard: View {
         doctorResult = nil
         let runner = doctorRunner
         doctorTask = Task { @MainActor in
-            let result = await JournalHealthCheck.doctor(runner: runner)
+            let result = await JournalHealthCheck.doctor(journalBinary: appState.journalBinaryProvider(), runner: runner)
             guard !Task.isCancelled else { return }
             doctorResult = result
             doctorTask = nil

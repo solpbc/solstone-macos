@@ -78,6 +78,13 @@ struct InstallerWireUpTests {
         #expect(!errorRow.contains(".lineLimit(3)"))
     }
 
+    @Test func restartDoctorUsesAuthoritativeJournalBinary() throws {
+        let source = try readWireUpSource("Sources/solstone/BundledServiceCard.swift")
+        let body = try functionSource(named: "restartDoctor", in: source)
+        #expect(body.contains("JournalHealthCheck.doctor(journalBinary: appState.journalBinaryProvider()"))
+        #expect(!body.contains("JournalHealthCheck.doctor(runner: runner)"))
+    }
+
     // Proves registry wire-up presence, not live AX-tree attachment; device-phase AX dumps cover that.
     @Test func installerProgressRowReferencesExpectedAXIDs() throws {
         let source = try readWireUpSource("Sources/solstone/InstallerProgressRowView.swift")

@@ -103,6 +103,27 @@ struct BundledServiceCardTests {
         }
     }
 
+    @Test func doctorErrorCopyAvoidsForbiddenTokensAndStartsLowercase() {
+        let copies = [
+            UICopy.DOCTOR_SETUP_NEEDED_TITLE,
+            UICopy.DOCTOR_SETUP_NEEDED_DETAIL,
+            UICopy.DOCTOR_CHECK_FAILED_TITLE,
+        ]
+        let forbidden = ["server", "capture", "record", "monitor", "track", "collect", "watch"]
+        for copy in copies {
+            if let firstScalar = copy.unicodeScalars.first {
+                #expect(CharacterSet.lowercaseLetters.contains(firstScalar))
+            } else {
+                Issue.record("expected non-empty copy")
+            }
+            let lowered = copy.lowercased()
+            let words = Set(lowered.split { !$0.isLetter }.map(String.init))
+            for token in forbidden {
+                #expect(!words.contains(token))
+            }
+        }
+    }
+
     @Test func upgradeFailedStatusMessageUsesSpecLiteral() {
         #expect(upgradeFailedStatusMessage(installedVersion: "0.3.1", pinnedVersion: "0.4.0") == "couldn't upgrade solstone — still running 0.3.1")
     }
