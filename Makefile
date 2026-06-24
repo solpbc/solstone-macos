@@ -188,9 +188,14 @@ brand-sync:
 	cp "$(BRAND_DIR)/sol-ring-icon-error.svg"   assets/sol-ring-icon-error.svg
 	cp "$(BRAND_DIR)/sol-ring-icon-paused.svg"  assets/sol-ring-icon-paused.svg
 	cp "$(BRAND_DIR)/sol-ring-icon-half.svg"    assets/sol-ring-icon-half.svg
-	cp "$(BRAND_DIR)/sol-app-icon.svg"          assets/icon-app.svg
-	cp "$(BRAND_DIR)/sol-app-icon-16.svg"       assets/icon-app-16.svg
-	cp "$(BRAND_DIR)/sol-app-icon-32.svg"       assets/icon-app-32.svg
+	# macOS app icon uses the macOS-convention squircle sources (inset rounded-rect
+	# plate on a transparent canvas — macOS does NOT auto-mask icons). iOS keeps the
+	# full-bleed sol-app-icon.svg in solstone-swift (iOS auto-masks). Do NOT point
+	# these back at the full-bleed sources — that ships the lone non-native square in
+	# the Dock. See cmo/brand/sol/index.md § macOS-vs-iOS app-icon divergence.
+	cp "$(BRAND_DIR)/sol-app-icon-macos.svg"    assets/icon-app.svg
+	cp "$(BRAND_DIR)/sol-app-icon-macos-16.svg" assets/icon-app-16.svg
+	cp "$(BRAND_DIR)/sol-app-icon-macos-32.svg" assets/icon-app-32.svg
 	@echo "brand: synced from $(BRAND_DIR)"
 
 # Build debug version
