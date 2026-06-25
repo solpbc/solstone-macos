@@ -196,6 +196,85 @@ struct SolOwnershipTests {
         #expect(ownership == .appManaged(solPath: wrapper.path))
     }
 
+    @Test func resolverClassifiesJournalConfigWrapperUnderRootAsAppManaged() async throws {
+        let workspace = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let layout = try makeRuntimeWithSpace(in: workspace)
+        let target = layout.rootURL
+            .appendingPathComponent("7.0.0_py_xyz/tools/solstone/bin", isDirectory: true)
+            .appendingPathComponent("sol")
+        try writeText("runtime sol\n", to: target)
+        let home = workspace.appendingPathComponent("home", isDirectory: true)
+        let wrapper = home.appendingPathComponent(".local/bin/sol")
+        try writeJournalConfigWrapper(at: wrapper, target: target.path)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("sol", .success(exitCode: 1))
+        let resolver = SolOwnership.defaultResolver(
+            runner: runner,
+            fileExists: { FileManager.default.fileExists(atPath: $0) },
+            homeDirectory: home,
+            rootURL: layout.rootURL
+        )
+
+        let ownership = await resolver(true)
+
+        #expect(ownership == .appManaged(solPath: wrapper.path))
+    }
+
+    @Test func resolverClassifiesJournalConfigWrapperOutsideRootAsExternal() async throws {
+        let workspace = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let layout = try makeRuntimeWithSpace(in: workspace)
+        let home = workspace.appendingPathComponent("home", isDirectory: true)
+        let wrapper = home.appendingPathComponent(".local/bin/sol")
+        let outsideTarget = workspace.appendingPathComponent("outside/bin/sol")
+        try writeText("outside sol\n", to: outsideTarget)
+        try writeJournalConfigWrapper(at: wrapper, target: outsideTarget.path)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("sol", .success(exitCode: 1))
+        let resolver = SolOwnership.defaultResolver(
+            runner: runner,
+            fileExists: { FileManager.default.fileExists(atPath: $0) },
+            homeDirectory: home,
+            rootURL: layout.rootURL
+        )
+
+        let ownership = await resolver(true)
+
+        #expect(ownership == .externallyManaged(solPath: wrapper.path))
+    }
+
+    @Test func resolverClassifiesJournalConfigWrapperWithDoubleQuotedSolBinAsExternal() async throws {
+        let workspace = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let layout = try makeRuntimeWithSpace(in: workspace)
+        let target = layout.rootURL
+            .appendingPathComponent("7.0.0_py_xyz/tools/solstone/bin", isDirectory: true)
+            .appendingPathComponent("sol")
+        try writeText("runtime sol\n", to: target)
+        let home = workspace.appendingPathComponent("home", isDirectory: true)
+        let wrapper = home.appendingPathComponent(".local/bin/sol")
+        let script = """
+        #!/bin/bash
+        # managed-version: 7
+        SOL_BIN="\(target.path)"
+        exec "$SOL_BIN" "$@"
+        """
+        try writeText(script + "\n", to: wrapper)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("sol", .success(exitCode: 1))
+        let resolver = SolOwnership.defaultResolver(
+            runner: runner,
+            fileExists: { FileManager.default.fileExists(atPath: $0) },
+            homeDirectory: home,
+            rootURL: layout.rootURL
+        )
+
+        let ownership = await resolver(true)
+
+        #expect(ownership == .externallyManaged(solPath: wrapper.path))
+    }
+
     @Test func resolverAppOwnedChildWrapperWinsOverLeftoverRuntime() async throws {
         let workspace = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: workspace) }
@@ -324,6 +403,17 @@ struct SolOwnershipTests {
 
     private func writeAppOwnedChildWrapper(at url: URL, target: String) throws {
         try writeText(ManagedWrapper.script(forTarget: target) + "\n", to: url)
+    }
+
+    private func writeJournalConfigWrapper(at url: URL, target: String) throws {
+        let script = """
+        #!/bin/bash
+        # sol — managed by 'journal config'. Edits will be overwritten.
+        # managed-version: 7
+        SOL_BIN=\(ManagedWrapper.shellSingleQuoted(target))
+        exec "$SOL_BIN" "$@"
+        """
+        try writeText(script + "\n", to: url)
     }
 
     private func writeText(_ text: String, to url: URL) throws {

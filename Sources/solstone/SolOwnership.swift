@@ -158,15 +158,21 @@ internal enum SolOwnership: Equatable {
             provenance = .bare
         }
 
-        switch provenance {
-        case .appOwnedChild:
-            let target = lines.lazy.compactMap { line in
-                ManagedWrapper.execTarget(fromLine: String(line))
-            }.first
-            return (provenance, target)
-        case .bare:
-            return (provenance, nil)
+        // Precedence: a literal `exec '...' "$@"` target is authoritative.
+        if let literalTarget = lines.lazy.compactMap({ ManagedWrapper.execTarget(fromLine: String($0)) }).first {
+            return (provenance, literalTarget)
         }
+
+        // Otherwise, if the exec line dereferences $SOL_BIN, honor the last
+        // uncommented single-quoted SOL_BIN assignment (shell last-assignment wins).
+        if lines.contains(where: { ManagedWrapper.execDereferencesSolBin(String($0)) }) {
+            let target = lines.reversed().lazy
+                .compactMap { ManagedWrapper.solBinAssignment(fromLine: String($0)) }
+                .first
+            return (provenance, target)
+        }
+
+        return (provenance, nil)
     }
 
     private static func canonicalPath(_ path: String) -> String {

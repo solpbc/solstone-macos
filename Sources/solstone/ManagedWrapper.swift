@@ -37,4 +37,20 @@ internal enum ManagedWrapper {
 
         return shellSingleUnquoted(String(trimmed[tokenStart..<tokenEnd]))
     }
+
+    /// True when the line is the `$SOL_BIN`-dereference exec form: `exec "$SOL_BIN" "$@"`.
+    static func execDereferencesSolBin(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespaces) == "exec \"$SOL_BIN\" \"$@\""
+    }
+
+    /// Extracts the single-quoted value of a `SOL_BIN='...'` assignment on one line.
+    /// Returns nil for comments, non-assignments, or non-single-quoted values
+    /// (so an unquoted or double-quoted value yields no target -> safe).
+    static func solBinAssignment(fromLine line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.hasPrefix("#") else { return nil }
+        let prefix = "SOL_BIN="
+        guard trimmed.hasPrefix(prefix) else { return nil }
+        return shellSingleUnquoted(String(trimmed.dropFirst(prefix.count)))
+    }
 }
