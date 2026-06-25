@@ -367,7 +367,7 @@ struct SolstoneInstallerTests {
     @Test func precleanConfigFailureSanitizesDiagnosticExcerpt() async throws {
         let runner = FakeSubprocessRunner()
         let home = NSHomeDirectory()
-        let oldSolPath = "\(home)/Library/Application Support/sol/runtime/current/bin/sol"
+        let oldSolPath = "\(home)/.local/bin/sol"
         runner.enqueue(
             "config",
             .success(stderr: Data("config failed\n\(home)/journal/private detail\n".utf8), exitCode: 2)
@@ -419,12 +419,34 @@ struct SolstoneInstallerTests {
             "/tmp/journal",
             "--skip-service"
         ])
-        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == nil)
         let runtimeChildren = try FileManager.default.contentsOfDirectory(
             at: fixtureURLs.runtimeRoot,
             includingPropertiesForKeys: nil
         )
         #expect(runtimeChildren.contains { $0.lastPathComponent.hasPrefix("\(BundleConfig.solstonePinVersion)_py\(BundleConfig.bundledPythonBuild)_") })
+    }
+
+    @Test func defaultSolBinaryFinderIgnoresStaleRuntimeSolWithoutWrapper() async throws {
+        let runner = FakeSubprocessRunner()
+        let workspace = try makeTemporaryDirectory(prefix: "solstone-stale-runtime")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let runtimeRoot = workspace.appendingPathComponent("runtime", isDirectory: true)
+        let layout = SolstoneRuntimeLayout(rootURL: runtimeRoot)
+        try layout.ensureCreated()
+        try Data("stale sol\n".utf8).write(to: layout.solBinary)
+        runner.enqueue("sol", .success(exitCode: 1))
+        let installer = SolstoneInstaller(
+            runtimeRootURL: runtimeRoot,
+            subprocessRunner: runner,
+            failureRecordStore: InMemoryUpgradeFailureRecordStore(),
+            wrapperDirURL: workspace.appendingPathComponent("wrappers", isDirectory: true),
+            fileExists: { path in path == layout.solBinary.path }
+        )
+
+        await installer.probeVersion()
+
+        #expect(installer.probedVersion == .unknown)
+        #expect(!runner.invocations.contains { $0.arguments == ["--version"] })
     }
 
     @Test func createFreshContentAddressedInstallProbesMaterializedJournalBinary() async throws {
@@ -502,6 +524,13 @@ struct SolstoneInstallerTests {
 
         let installModels = try #require(runner.invocations.first { $0.arguments.first == "install-models" })
         #expect(installModels.executable.lastPathComponent == "journal")
+        let materializedRoot = installModels.executable
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        assertRuntimeEnvironment(
+            try #require(installModels.environment),
+            layout: SolstoneRuntimeLayout(rootURL: materializedRoot)
+        )
     }
 
     @Test func precleanFailsWhenJournalPathCannotResolve() async throws {
@@ -1551,7 +1580,6 @@ struct SolstoneInstallerTests {
             probe: installer.probedVersion,
             failureRecord: installer.upgradeFailureRecord
         ) == .failed(.installSolstone(message: UICopy.JOURNAL_MATERIALIZE_FAILED)))
-        #expect(SolstoneRuntimeLayout.readActiveVersion(rootURL: fixtureURLs.runtimeRoot) == nil)
     }
 
     @Test func upgradeStartClearsRecordSynchronously() {
@@ -1933,15 +1961,6 @@ struct SolstoneInstallerTests {
 
     private func cleanupMessage(step: CleanupStep, why: String) -> String {
         "upgrade pre-clean failed at \(step.displayName) — \(why)"
-    }
-
-    private func assertRuntimeEnvironment(_ environment: [String: String]) {
-        let layout = SolstoneRuntimeLayout()
-        #expect(environment["UV_PYTHON_INSTALL_DIR"] == layout.pythonDir.path)
-        #expect(environment["UV_PYTHON_CACHE_DIR"] == layout.pythonDir.path)
-        #expect(environment["UV_CACHE_DIR"] == layout.cacheDir.path)
-        #expect(environment["UV_TOOL_DIR"] == layout.toolsDir.path)
-        #expect(environment["UV_TOOL_BIN_DIR"] == layout.binDir.path)
     }
 
     private func assertRuntimeEnvironment(_ environment: [String: String], layout: SolstoneRuntimeLayout) {

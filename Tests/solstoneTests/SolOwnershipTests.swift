@@ -23,8 +23,8 @@ struct SolOwnershipTests {
         #expect(SolOwnership.classify(candidates: [candidate], runtimeRoot: "/tmp/runtime", hasLocalJournalCreds: true) == .appManaged(solPath: candidate.path))
     }
 
-    @Test func classifyVersionedRuntimePathIsAppManaged() {
-        let candidate = (path: "/tmp/runtime/versions/0.4.8/bin/sol", resolved: "/tmp/runtime/versions/0.4.8/bin/sol", provenance: SolOwnership.Provenance.bare)
+    @Test func classifyKeyedRuntimePathIsAppManaged() {
+        let candidate = (path: "/tmp/runtime/0.4.8_py20260510_aaaaaaaaaaaaaaaa/bin/sol", resolved: "/tmp/runtime/0.4.8_py20260510_aaaaaaaaaaaaaaaa/bin/sol", provenance: SolOwnership.Provenance.bare)
 
         #expect(SolOwnership.classify(candidates: [candidate], runtimeRoot: "/tmp/runtime", hasLocalJournalCreds: false) == .appManaged(solPath: candidate.path))
     }
@@ -97,10 +97,10 @@ struct SolOwnershipTests {
         ) == .externallyManaged(solPath: wrapper.path))
     }
 
-    @Test func resolverIncludesRuntimeLocalAndWhichCandidates() async throws {
+    @Test func resolverIncludesLocalAndWhichCandidates() async throws {
         let workspace = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: workspace) }
-        let layout = try makeRuntimeWithSpace(in: workspace)
+        let runtimeRoot = workspace.appendingPathComponent("runtime", isDirectory: true)
         let home = workspace.appendingPathComponent("home", isDirectory: true)
         let preferred = home.appendingPathComponent(".local/bin/sol")
         try writeText("bare sol\n", to: preferred)
@@ -110,7 +110,7 @@ struct SolOwnershipTests {
             runner: runner,
             fileExists: { FileManager.default.fileExists(atPath: $0) },
             homeDirectory: home,
-            rootURL: layout.rootURL
+            rootURL: runtimeRoot
         )
 
         let ownership = await resolver(true)
@@ -120,25 +120,26 @@ struct SolOwnershipTests {
         #expect(runner.invocations.map(\.arguments) == [["sol"]])
     }
 
-    @Test func resolverPrefersActiveVersionedRuntimeWithoutCreds() async throws {
+    @Test func resolverIgnoresStaleRuntimeSolWithoutWrapper() async throws {
         let root = try makeTemporaryDirectory()
             .appendingPathComponent("runtime", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
-        let layout = SolstoneRuntimeLayout(rootURL: root, mode: .versioned("0.4.8"))
+        let layout = SolstoneRuntimeLayout(rootURL: root)
         try layout.ensureCreated()
         try Data("sol\n".utf8).write(to: layout.solBinary)
-        try FileManager.default.createSymbolicLink(atPath: layout.currentLink.path, withDestinationPath: "versions/0.4.8")
         let runner = FakeSubprocessRunner()
-        runner.enqueue("sol", .success(stdout: Data("/opt/which/sol\n".utf8)))
+        runner.enqueue("sol", .success(exitCode: 1))
+        let home = root.deletingLastPathComponent().appendingPathComponent("home", isDirectory: true)
         let resolver = SolOwnership.defaultResolver(
             runner: runner,
             fileExists: { FileManager.default.fileExists(atPath: $0) },
+            homeDirectory: home,
             rootURL: root
         )
 
         let ownership = await resolver(false)
 
-        #expect(ownership == .appManaged(solPath: layout.solBinary.path))
+        #expect(ownership == .absent)
     }
 
     @Test func resolverClassifiesSymlinkedLocalBinByResolvedTarget() async throws {
@@ -165,29 +166,6 @@ struct SolOwnershipTests {
         let ownership = await resolver(true)
 
         #expect(ownership == .externallyManaged(solPath: link.path))
-    }
-
-    @Test func resolverResolvesManagedWrapperThroughToAppManaged() async throws {
-        let workspace = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: workspace) }
-        let layout = try makeRuntimeWithSpace(in: workspace)
-        let home = workspace.appendingPathComponent("home", isDirectory: true)
-        let wrapper = home.appendingPathComponent(".local/bin/sol")
-        try writeManagedWrapper(at: wrapper, solBin: layout.solBinary.path)
-        let runner = FakeSubprocessRunner()
-        runner.enqueue("sol", .success(exitCode: 1))
-        let resolver = SolOwnership.defaultResolver(
-            runner: runner,
-            fileExists: { FileManager.default.fileExists(atPath: $0) },
-            homeDirectory: home,
-            rootURL: layout.rootURL
-        )
-
-        let ownership = await resolver(true)
-
-        #expect(layout.rootURL.path.contains("Application Support"))
-        #expect(layout.solBinary.path.contains("Application Support"))
-        #expect(ownership == .appManaged(solPath: layout.solBinary.path))
     }
 
     @Test func resolverClassifiesAppOwnedChildWrapperAsAppManaged() async throws {
@@ -218,7 +196,7 @@ struct SolOwnershipTests {
         #expect(ownership == .appManaged(solPath: wrapper.path))
     }
 
-    @Test func resolverAppOwnedChildWrapperWinsOverLeftoverVersionedRuntime() async throws {
+    @Test func resolverAppOwnedChildWrapperWinsOverLeftoverRuntime() async throws {
         let workspace = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: workspace) }
         let layout = try makeRuntimeWithSpace(in: workspace)
@@ -227,10 +205,6 @@ struct SolOwnershipTests {
             .appendingPathComponent("1.0.0_py_abc/bin", isDirectory: true)
             .appendingPathComponent("sol")
         try writeText("runtime sol\n", to: keySol)
-        let legacyLayout = SolstoneRuntimeLayout(rootURL: layout.rootURL, mode: .versioned("0.4.8"))
-        try legacyLayout.ensureCreated()
-        try writeText("legacy runtime sol\n", to: legacyLayout.solBinary)
-        try FileManager.default.createSymbolicLink(atPath: layout.currentLink.path, withDestinationPath: "versions/0.4.8")
         let home = workspace.appendingPathComponent("home", isDirectory: true)
         let wrapper = home.appendingPathComponent(".local/bin/sol")
         try writeAppOwnedChildWrapper(at: wrapper, target: keySol.path)
@@ -307,7 +281,7 @@ struct SolOwnershipTests {
         #expect(ownership == .externallyManaged(solPath: wrapper.path))
     }
 
-    @Test func resolverKeepsMarkerWrapperWithOutsideRootTargetExternal() async throws {
+    @Test func resolverClassifiesAppOwnedChildWrapperOutsideRootAsExternal() async throws {
         let workspace = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: workspace) }
         let layout = try makeRuntimeWithSpace(in: workspace)
@@ -315,54 +289,7 @@ struct SolOwnershipTests {
         let wrapper = home.appendingPathComponent(".local/bin/sol")
         let outsideTarget = workspace.appendingPathComponent("outside/bin/sol")
         try writeText("outside sol\n", to: outsideTarget)
-        try writeManagedWrapper(at: wrapper, solBin: outsideTarget.path)
-        let runner = FakeSubprocessRunner()
-        runner.enqueue("sol", .success(exitCode: 1))
-        let resolver = SolOwnership.defaultResolver(
-            runner: runner,
-            fileExists: { FileManager.default.fileExists(atPath: $0) },
-            homeDirectory: home,
-            rootURL: layout.rootURL
-        )
-
-        let ownership = await resolver(true)
-
-        #expect(ownership == .externallyManaged(solPath: wrapper.path))
-    }
-
-    @Test func resolverClassifiesStaleMarkerWrapperAsExternal() async throws {
-        let workspace = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: workspace) }
-        let layout = try makeRuntimeWithSpace(in: workspace)
-        let home = workspace.appendingPathComponent("home", isDirectory: true)
-        let wrapper = home.appendingPathComponent(".local/bin/sol")
-        let staleTarget = workspace.appendingPathComponent("does not exist/sol")
-        try writeManagedWrapper(at: wrapper, solBin: staleTarget.path)
-        let runner = FakeSubprocessRunner()
-        runner.enqueue("sol", .success(exitCode: 1))
-        let resolver = SolOwnership.defaultResolver(
-            runner: runner,
-            fileExists: { FileManager.default.fileExists(atPath: $0) },
-            homeDirectory: home,
-            rootURL: layout.rootURL
-        )
-
-        let ownership = await resolver(true)
-
-        #expect(!FileManager.default.fileExists(atPath: staleTarget.path))
-        #expect(ownership == .externallyManaged(solPath: wrapper.path))
-    }
-
-    @Test func resolverFallsBackToLiteralOnUnparseableSolBin() async throws {
-        let workspace = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: workspace) }
-        let layout = try makeRuntimeWithSpace(in: workspace)
-        let home = workspace.appendingPathComponent("home", isDirectory: true)
-        let wrapper = home.appendingPathComponent(".local/bin/sol")
-        try writeText(
-            "#!/bin/bash\n# sol - managed by 'journal config'. Edits will be overwritten.\nSOL_BIN=\"\(layout.solBinary.path)\"\nexec \"$SOL_BIN\" \"$@\"\n",
-            to: wrapper
-        )
+        try writeAppOwnedChildWrapper(at: wrapper, target: outsideTarget.path)
         let runner = FakeSubprocessRunner()
         runner.enqueue("sol", .success(exitCode: 1))
         let resolver = SolOwnership.defaultResolver(
@@ -393,15 +320,6 @@ struct SolOwnershipTests {
         try layout.ensureCreated()
         try writeText("runtime sol\n", to: layout.solBinary)
         return layout
-    }
-
-    private func writeManagedWrapper(
-        at url: URL,
-        solBin: String,
-        marker: String = "# sol - managed by 'journal config'. Edits will be overwritten.\n# managed-version: 7"
-    ) throws {
-        let body = "#!/bin/bash\n\(marker)\nSOL_BIN='\(solBin)'\nexec \"$SOL_BIN\" \"$@\"\n"
-        try writeText(body, to: url)
     }
 
     private func writeAppOwnedChildWrapper(at url: URL, target: String) throws {

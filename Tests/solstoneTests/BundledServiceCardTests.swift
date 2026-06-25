@@ -335,7 +335,7 @@ doctor checks:
 
 dig deeper:
 - runtime: ~/Library/Application Support/sol/runtime
-- journal: ~/Library/Application Support/sol/runtime/current/bin/journal (or runtime/bin/journal for legacy installs)
+- journal: app-owned runtime under ~/Library/Application Support/sol/runtime/<key>/bin/journal
 - repo: https://github.com/solpbc/solstone-macos
 - log show: /usr/bin/log show --predicate 'subsystem == "app.solstone.observer" AND category == "setup"' --last 30m --info --debug --style compact
 
@@ -458,7 +458,7 @@ error: network is unreachable
 
     @Test func failureDiagnosticAvoidsForbiddenPublicHygieneTokens() {
         let markdown = buildFailureDiagnosticMarkdown(
-            diagnosticInput(logExcerpt: "target: ~/Library/Application Support/sol/runtime\njournal: ~/Library/Application Support/sol/runtime/current/bin/journal"),
+            diagnosticInput(logExcerpt: "target: ~/Library/Application Support/sol/runtime\njournal: ~/Library/Application Support/sol/runtime/0.4.8_py20260510_aaaaaaaaaaaaaaaa/bin/journal"),
             doctorReport: DoctorReport(checks: [
                 DoctorCheck(name: "journal command", status: .warn, severity: nil, detail: "setup state needs attention", fix: nil),
             ], summary: nil)
@@ -469,7 +469,7 @@ error: network is unreachable
         }
         #expect(markdown.contains("https://github.com/solpbc/solstone-macos"))
         #expect(markdown.contains("~/Library/Application Support/sol/runtime"))
-        #expect(markdown.contains("~/Library/Application Support/sol/runtime/current/bin/journal"))
+        #expect(markdown.contains("~/Library/Application Support/sol/runtime/0.4.8_py20260510_aaaaaaaaaaaaaaaa/bin/journal"))
         #expect(markdown.contains("https://support.solstone.app"))
     }
 

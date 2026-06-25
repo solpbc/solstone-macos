@@ -12,15 +12,12 @@ internal enum SolOwnership: Equatable {
 
     enum Provenance: Equatable, CustomStringConvertible {
         case bare
-        case legacyManaged
         case appOwnedChild
 
         var description: String {
             switch self {
             case .bare:
                 return "bare"
-            case .legacyManaged:
-                return "legacyManaged"
             case .appOwnedChild:
                 return "appOwnedChild"
             }
@@ -87,9 +84,6 @@ internal enum SolOwnership: Equatable {
     ) async -> SolOwnership {
         var paths: [String] = []
 
-        for candidate in SolstoneRuntimeLayout.solCandidatePaths(rootURL: rootURL) where fileExists(candidate) {
-            paths.append(candidate)
-        }
         let preferred = homeDirectory.appendingPathComponent(".local/bin/sol").path
         if fileExists(preferred) {
             paths.append(preferred)
@@ -160,14 +154,6 @@ internal enum SolOwnership: Equatable {
             return trimmedLeading == ManagedWrapper.appOwnedChildMarker
         }) {
             provenance = .appOwnedChild
-        } else if lines.contains(where: { line in
-            if line.contains("managed by 'journal config'") {
-                return true
-            }
-            let trimmedLeading = line.drop(while: { $0.isWhitespace })
-            return trimmedLeading.hasPrefix("# managed-version:")
-        }) {
-            provenance = .legacyManaged
         } else {
             provenance = .bare
         }
@@ -178,20 +164,6 @@ internal enum SolOwnership: Equatable {
                 ManagedWrapper.execTarget(fromLine: String(line))
             }.first
             return (provenance, target)
-        case .legacyManaged:
-            let prefix = "SOL_BIN='"
-            guard let solBinLine = lines.first(where: { line in
-                let trimmedLeading = line.drop(while: { $0.isWhitespace })
-                return trimmedLeading.hasPrefix(prefix)
-            }) else {
-                return (provenance, nil)
-            }
-            let trimmedLeading = solBinLine.drop(while: { $0.isWhitespace })
-            let remainder = trimmedLeading.dropFirst(prefix.count)
-            guard let closingQuote = remainder.firstIndex(of: "'") else { return (provenance, nil) }
-            let value = String(remainder[..<closingQuote])
-            guard !value.isEmpty else { return (provenance, nil) }
-            return (provenance, value)
         case .bare:
             return (provenance, nil)
         }

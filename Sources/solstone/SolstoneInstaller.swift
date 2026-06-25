@@ -140,7 +140,15 @@ public final class SolstoneInstaller {
         self.failureRecordStore = failureRecordStore
         self.wrapperDirURL = wrapperDirURL
         self.solBinaryFinder = solBinaryFinder ?? {
-            Self.findAppManagedSolBinary(rootURL: resolvedRuntimeRootURL, fileExists: fileExists)
+            let ownership = await SolOwnership.defaultResolver(
+                runner: subprocessRunner,
+                fileExists: fileExists,
+                rootURL: resolvedRuntimeRootURL
+            )(false)
+            if case .appManaged(let solPath) = ownership {
+                return solPath
+            }
+            return nil
         }
         self.fileExists = fileExists
         self.solOwnershipResolver = solOwnershipResolver ?? SolOwnership.defaultResolver(
@@ -589,7 +597,7 @@ public final class SolstoneInstaller {
         setMain(.registering(SubprocessProgress(phase: phase)))
 
         modelsTask = Task { [weak self] in
-            await self?.runInstallModels(journalBinary: journalBinary)
+            await self?.runInstallModels(runtime: runtime)
         }
 
         guard await runReadinessGate(runtime: runtime, phase: phase, journalURL: journalURL) else { return }
@@ -922,16 +930,16 @@ public final class SolstoneInstaller {
         )
     }
 
-    private func runInstallModels(journalBinary: URL) async {
+    private func runInstallModels(runtime: MaterializedRuntime) async {
         let phase = "journal install-models"
         modelsProgress = .running(SubprocessProgress(phase: phase))
-        let environment = SolstoneRuntimeLayout.active(rootURL: runtimeRootURL).uvEnvironment()
+        let environment = runtime.layout.uvEnvironment()
 
         let output = InstallerOutput()
         let result: SubprocessResult
         do {
             result = try await subprocessRunner.run(
-                executable: journalBinary,
+                executable: runtime.layout.journalBinary,
                 arguments: ["install-models"],
                 environment: environment,
                 stdoutHandler: { [weak self, output] data in
@@ -1196,13 +1204,6 @@ public final class SolstoneInstaller {
 
     private static func defaultJournalURL() -> URL {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("journal")
-    }
-
-    private nonisolated static func findAppManagedSolBinary(
-        rootURL: URL,
-        fileExists: @Sendable (String) -> Bool
-    ) -> String? {
-        SolstoneRuntimeLayout.solCandidatePaths(rootURL: rootURL).first(where: fileExists)
     }
 
     private nonisolated static func journalPath(siblingOf solPath: String) -> String {

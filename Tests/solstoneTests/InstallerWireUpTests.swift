@@ -81,7 +81,8 @@ struct InstallerWireUpTests {
     @Test func restartDoctorUsesAuthoritativeJournalBinary() throws {
         let source = try readWireUpSource("Sources/solstone/BundledServiceCard.swift")
         let body = try functionSource(named: "restartDoctor", in: source)
-        #expect(body.contains("JournalHealthCheck.doctor(journalBinary: appState.journalBinaryProvider()"))
+        #expect(wireUpContains(body, "guard let binary = appState.journalBinaryProvider() else { return }"))
+        #expect(wireUpContains(body, "JournalHealthCheck.doctor(journalBinary: binary, runner: runner)"))
         #expect(!body.contains("JournalHealthCheck.doctor(runner: runner)"))
     }
 

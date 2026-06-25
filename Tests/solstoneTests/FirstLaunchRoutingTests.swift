@@ -19,7 +19,7 @@ struct FirstLaunchRoutingTests {
             openService: { openedService = true },
             journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in true },
-            bundledOutdated: { false }
+            bundledOutdated: { _ in false }
         )
 
         #expect(checkedPermissions)
@@ -39,7 +39,7 @@ struct FirstLaunchRoutingTests {
             openService: { openedService = true },
             journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in true },
-            bundledOutdated: { false }
+            bundledOutdated: { _ in false }
         )
 
         #expect(!openedPermissions)
@@ -58,7 +58,7 @@ struct FirstLaunchRoutingTests {
             openService: { openedService = true },
             journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in true },
-            bundledOutdated: { false }
+            bundledOutdated: { _ in false }
         )
 
         #expect(!openedPermissions)
@@ -76,7 +76,7 @@ struct FirstLaunchRoutingTests {
             openService: { openedService = true },
             journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in true },
-            bundledOutdated: { false }
+            bundledOutdated: { _ in false }
         )
 
         #expect(!openedService)
@@ -93,7 +93,7 @@ struct FirstLaunchRoutingTests {
             openService: { openedService = true },
             journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in false },
-            bundledOutdated: { false }
+            bundledOutdated: { _ in false }
         )
 
         #expect(openedService)
@@ -110,7 +110,7 @@ struct FirstLaunchRoutingTests {
             openService: { openedService = true },
             journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in false },
-            bundledOutdated: { false }
+            bundledOutdated: { _ in false }
         )
 
         #expect(openedService)
@@ -127,7 +127,7 @@ struct FirstLaunchRoutingTests {
             openService: { openedService = true },
             journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in false },
-            bundledOutdated: { false }
+            bundledOutdated: { _ in false }
         )
 
         #expect(!openedService)
@@ -146,7 +146,7 @@ struct FirstLaunchRoutingTests {
                 openService: { serviceOpenCount += 1 },
                 journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
                 healthCheck: { _ in false },
-                bundledOutdated: { false }
+                bundledOutdated: { _ in false }
             )
         }
 
@@ -165,10 +165,61 @@ struct FirstLaunchRoutingTests {
             openService: { openedService = true },
             journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in true },
-            bundledOutdated: { true }
+            bundledOutdated: { _ in true }
         )
 
         #expect(openedService)
+    }
+
+    @Test func firstLaunch_unresolvedBundledRuntime_noops() async {
+        var openedService = false
+
+        await FirstLaunchRouting.route(
+            config: AppConfig(serverURL: "http://localhost:5015", serverKey: "key", serviceMode: .bundled),
+            waitForPermissionCheck: {},
+            permissionsMissing: { false },
+            openPermissions: {},
+            openService: { openedService = true },
+            journalBinary: { nil },
+            healthCheck: { _ in
+                Issue.record("healthCheck should not run without a journal binary")
+                return false
+            },
+            bundledOutdated: { _ in
+                Issue.record("bundledOutdated should not run without a journal binary")
+                return true
+            }
+        )
+
+        #expect(!openedService)
+    }
+
+    @Test func firstLaunch_resolvedBundledRuntime_runsOutdatedAndHealthChecks() async {
+        let binary = URL(fileURLWithPath: "/runtime/bin/journal")
+        var bundledOutdatedBinary: URL?
+        var healthCheckBinary: URL?
+        var openedService = false
+
+        await FirstLaunchRouting.route(
+            config: AppConfig(serverURL: "http://localhost:5015", serverKey: "key", serviceMode: .bundled),
+            waitForPermissionCheck: {},
+            permissionsMissing: { false },
+            openPermissions: {},
+            openService: { openedService = true },
+            journalBinary: { binary },
+            healthCheck: {
+                healthCheckBinary = $0
+                return true
+            },
+            bundledOutdated: {
+                bundledOutdatedBinary = $0
+                return false
+            }
+        )
+
+        #expect(bundledOutdatedBinary == binary)
+        #expect(healthCheckBinary == binary)
+        #expect(!openedService)
     }
 
     @Test func firstLaunch_externalOutdated_noops() async {
@@ -182,7 +233,7 @@ struct FirstLaunchRoutingTests {
             openService: { openedService = true },
             journalBinary: { URL(fileURLWithPath: "/runtime/bin/journal") },
             healthCheck: { _ in false },
-            bundledOutdated: { true }
+            bundledOutdated: { _ in true }
         )
 
         #expect(!openedService)

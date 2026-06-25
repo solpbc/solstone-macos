@@ -191,6 +191,9 @@ struct JournalRuntimeProbeTests {
         defer { try? FileManager.default.removeItem(at: journalRoot) }
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .external))
         let restartRunner = FakeSubprocessRunner()
+        state.journalBinaryProvider = {
+            journalRoot.appendingPathComponent("bin/journal")
+        }
         state.journalRuntimeFileExists = { _ in true }
         state.journalRestartRunnerFactory = { journalBinary, logSink in
             JournalRestartRunner(

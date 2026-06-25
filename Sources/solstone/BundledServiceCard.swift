@@ -363,8 +363,9 @@ struct BundledServiceCard: View {
         cancelDoctor()
         doctorResult = nil
         let runner = doctorRunner
+        guard let binary = appState.journalBinaryProvider() else { return }
         doctorTask = Task { @MainActor in
-            let result = await JournalHealthCheck.doctor(journalBinary: appState.journalBinaryProvider(), runner: runner)
+            let result = await JournalHealthCheck.doctor(journalBinary: binary, runner: runner)
             guard !Task.isCancelled else { return }
             doctorResult = result
             doctorTask = nil
@@ -1059,7 +1060,7 @@ func buildFailureDiagnosticMarkdown(_ input: FailureDiagnosticInput, doctorRepor
         "",
         "dig deeper:",
         "- runtime: ~/Library/Application Support/sol/runtime",
-        "- journal: ~/Library/Application Support/sol/runtime/current/bin/journal (or runtime/bin/journal for legacy installs)",
+        "- journal: app-owned runtime under ~/Library/Application Support/sol/runtime/<key>/bin/journal",
         "- repo: https://github.com/solpbc/solstone-macos",
         "- log show: /usr/bin/log show --predicate 'subsystem == \"app.solstone.observer\" AND category == \"setup\"' --last 30m --info --debug --style compact",
         "",

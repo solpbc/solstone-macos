@@ -64,7 +64,6 @@ public enum UICopy {
     public static let SETTINGS_HELP_ICON_PAUSED = "paused"
     public static let SETTINGS_HELP_ICON_ERROR = "needs your attention — permissions or a problem"
     public static let JOURNAL_CHILD_BREAKER_TRIPPED = "journal stopped after repeated exits"
-    public static let JOURNAL_MIGRATION_BLOCKED = "journal couldn't move off the old service"
     public static let JOURNAL_MATERIALIZE_FAILED = "journal runtime couldn't be prepared"
     public static let JOURNAL_SPAWN_BLOCKED_PORTS = "journal ports are still in use"
     public static let JOURNAL_SPAWN_FAILED = "journal couldn't start"

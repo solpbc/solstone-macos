@@ -170,7 +170,7 @@ enum JournalHealthCheck {
     }
 
     static func doctor(
-        journalBinary: URL = SolstoneRuntimeLayout.active().journalBinary,
+        journalBinary: URL,
         runner: SubprocessRunning = SubprocessRunner(),
         fileExists: @Sendable (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
     ) async -> JournalDoctorResult {
@@ -245,7 +245,7 @@ internal enum JournalRuntimeProbeOutcome: Equatable, Sendable {
 
 internal enum JournalRuntimeProbe {
     static func run(
-        journalBinary: URL = SolstoneRuntimeLayout.active().journalBinary,
+        journalBinary: URL,
         runner: SubprocessRunning = SubprocessRunner(),
         fileExists: @Sendable (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
     ) async -> JournalRuntimeProbeOutcome {

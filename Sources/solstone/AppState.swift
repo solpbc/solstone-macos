@@ -126,9 +126,7 @@ public final class AppState {
     private var activationObserver: NSObjectProtocol?
     private var preRestartErrorMessage: String?
     internal var journalRestartLogSink: (@Sendable (JournalRestartLogEvent) -> Void)?
-    internal var journalBinaryProvider: @Sendable () -> URL = {
-        SolstoneRuntimeLayout.active().journalBinary
-    }
+    internal var journalBinaryProvider: @Sendable () -> URL? = { nil }
     internal var journalRuntimeFileExists: @Sendable (String) -> Bool = {
         FileManager.default.isExecutableFile(atPath: $0)
     }
@@ -141,7 +139,6 @@ public final class AppState {
     internal var journalOwnershipResolver: @Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership = SolOwnership.defaultResolver()
     internal var runtimeMaterializer: any RuntimeMaterializing
     internal var supervisedJournalRunner: any SupervisedChildRunning
-    internal var legacyJournalMigrator: any LegacyJournalMigrating
     internal var singleSupervisorGate: any SingleSupervisorGating
     internal var journalReadinessGate: any JournalReadinessChecking
 
@@ -623,7 +620,6 @@ public final class AppState {
                 }
             }
         )
-        self.legacyJournalMigrator = LegacyJournalMigrator()
         self.singleSupervisorGate = SingleSupervisorGate()
         self.journalReadinessGate = JournalReadinessGate()
         self.recoveryCoordinator = .shared
@@ -880,7 +876,6 @@ public final class AppState {
         )
         self.runtimeMaterializer = RuntimeMaterializer()
         self.supervisedJournalRunner = SupervisedJournalRunner(statusSink: { _ in })
-        self.legacyJournalMigrator = LegacyJournalMigrator()
         self.singleSupervisorGate = SingleSupervisorGate()
         self.journalReadinessGate = JournalReadinessGate()
         self.recoveryCoordinator = .shared
@@ -1103,23 +1098,7 @@ public final class AppState {
             configureJournalDependentServices()
             Logger.setup.notice("journal-lifecycle: bundled-start outcome=external-managed generation=\(generation, privacy: .public)")
             return true
-        case .appManaged(let oldSolPath):
-            switch await legacyJournalMigrator.teardownLegacyAppManagedJournal(
-                oldSolPath: oldSolPath,
-                journalRoot: journalRoot
-            ) {
-            case .success:
-                break
-            case .failed(let diagnostic):
-                journalRuntimeStatus = .stopped(attentionDiagnostic(
-                    commandLabel: diagnostic.commandLabel,
-                    ownerMessage: UICopy.JOURNAL_MIGRATION_BLOCKED,
-                    diagnostic: diagnostic
-                ))
-                Logger.setup.error("journal-lifecycle: legacy-teardown branch=failed generation=\(generation, privacy: .public) commandLabel=\(diagnostic.commandLabel, privacy: .public)")
-                return false
-            }
-        case .absent:
+        case .appManaged, .absent:
             break
         }
 
@@ -1438,8 +1417,8 @@ public final class AppState {
             preRestartErrorMessage = nil
         }
 
-        let journalBinary = journalBinaryProvider()
-        guard journalRuntimeFileExists(journalBinary.path) else {
+        guard let journalBinary = journalBinaryProvider(),
+              journalRuntimeFileExists(journalBinary.path) else {
             clearJournalProbeState()
             journalRuntimeStatus = .setupNeeded
             restartOutcome = .binaryMissing

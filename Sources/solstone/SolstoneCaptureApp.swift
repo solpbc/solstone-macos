@@ -309,18 +309,9 @@ enum FirstLaunchRouting {
         permissionsMissing: @escaping @MainActor () -> Bool,
         openPermissions: @escaping @MainActor () -> Void,
         openService: @escaping @MainActor () -> Void,
-        journalBinary: @escaping @Sendable () -> URL = { SolstoneRuntimeLayout.active().journalBinary },
-        healthCheck: @escaping @Sendable (URL) async -> Bool = {
-            await JournalRuntimeProbe.run(journalBinary: $0) == .reachable
-        },
-        bundledOutdated: @escaping @Sendable () async -> Bool = {
-            guard let installed = await JournalHealthCheck.version(
-                journalBinary: SolstoneRuntimeLayout.active().journalBinary
-            ) else {
-                return false
-            }
-            return installed.compare(BundleConfig.solstonePinVersion, options: .numeric) == .orderedAscending
-        }
+        journalBinary: @escaping @MainActor () -> URL?,
+        healthCheck: @escaping @MainActor (URL) async -> Bool,
+        bundledOutdated: @escaping @MainActor (URL) async -> Bool
     ) async {
         await waitForPermissionCheck()
         if permissionsMissing() {
@@ -334,12 +325,13 @@ enum FirstLaunchRouting {
         }
 
         guard config.serviceMode != .external else { return }
-        if config.serviceMode == .bundled, await bundledOutdated() {
+        guard let binary = journalBinary() else { return }
+        if config.serviceMode == .bundled, await bundledOutdated(binary) {
             openService()
             return
         }
         guard LoopbackHost.isLocalhost(config.serverURL) else { return }
-        guard await healthCheck(journalBinary()) else {
+        guard await healthCheck(binary) else {
             openService()
             return
         }
@@ -389,7 +381,17 @@ private struct StatusIcon: View {
                     waitForPermissionCheck: waitForInitialPermissionCheck,
                     permissionsMissing: permissionsMissing,
                     openPermissions: openPermissions,
-                    openService: openService
+                    openService: openService,
+                    journalBinary: { appState.journalBinaryProvider() },
+                    healthCheck: {
+                        await JournalRuntimeProbe.run(journalBinary: $0) == .reachable
+                    },
+                    bundledOutdated: { binary in
+                        guard let installed = await JournalHealthCheck.version(journalBinary: binary) else {
+                            return false
+                        }
+                        return installed.compare(BundleConfig.solstonePinVersion, options: .numeric) == .orderedAscending
+                    }
                 )
             }
             .onReceive(NotificationCenter.default.publisher(for: .solMacOpenSettings)) { _ in

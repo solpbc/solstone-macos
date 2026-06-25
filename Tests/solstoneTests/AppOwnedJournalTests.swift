@@ -7,46 +7,37 @@ import SolstoneCore
 @Suite("App-owned journal")
 @MainActor
 struct AppOwnedJournalTests {
-    @Test func externallyManagedDoesNotTeardownOrSpawnChild() async throws {
+    @Test func externallyManagedDoesNotMaterializeOrSpawnChild() async throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
-        let migrator = MockLegacyMigrator()
         let materializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
         let runner = MockSupervisedChildRunner()
         state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .externallyManaged(solPath: "/opt/sol/bin/sol") }
-        state.legacyJournalMigrator = migrator
         state.runtimeMaterializer = materializer
         state.supervisedJournalRunner = runner
 
         let ready = await state.ensureBundledJournalRuntime(journalRoot: try makeTemporaryDirectory())
 
         #expect(ready)
-        #expect(migrator.teardownCalls == 0)
         #expect(materializer.materializeCalls == 0)
         #expect(runner.startCalls == 0)
     }
 
-    @Test func migrationFailureWritesAttentionAndBlocksSpawn() async throws {
+    @Test func appManagedOwnershipMaterializesAndStarts() async throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         let materializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
         let runner = MockSupervisedChildRunner()
         state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .appManaged(solPath: "/tmp/runtime/bin/sol") }
-        state.legacyJournalMigrator = MockLegacyMigrator(result: .failed(JournalDiagnostic(
-            commandLabel: "journal service uninstall",
-            outputExcerpt: "still alive"
-        )))
         state.runtimeMaterializer = materializer
+        state.singleSupervisorGate = MockSingleSupervisorGate()
         state.supervisedJournalRunner = runner
+        state.journalReadinessGate = MockJournalReadinessGate(result: .ready)
 
         let ready = await state.ensureBundledJournalRuntime(journalRoot: try makeTemporaryDirectory())
 
-        #expect(!ready)
-        if case .stopped(let diagnostic) = state.journalRuntimeStatus {
-            #expect(diagnostic.outputExcerpt?.contains(UICopy.JOURNAL_MIGRATION_BLOCKED) == true)
-        } else {
-            Issue.record("expected stopped attention status")
-        }
-        #expect(materializer.materializeCalls == 0)
-        #expect(runner.startCalls == 0)
+        #expect(ready)
+        #expect(materializer.materializeCalls == 1)
+        #expect(runner.startCalls == 1)
+        #expect(runner.markReadyCalls == 1)
     }
 
     @Test func materializeFailureWritesAttentionAndBlocksSpawn() async throws {
@@ -422,16 +413,14 @@ struct AppOwnedJournalTests {
         #expect(state.errorMessage != nil)
     }
 
-    @Test func requestJournalStartAfterCleanStopDoesNotTeardownLegacyJob() async throws {
+    @Test func requestJournalStartAfterCleanStopRunsBundledStartup() async throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         let runner = MockSupervisedChildRunner()
-        let migrator = MockLegacyMigrator()
         state.supervisedJournalRunner = runner
 
         state.requestJournalStop()
         try await waitUntilMain { state.journalRuntimeStatus.isStoppedByUser }
 
-        state.legacyJournalMigrator = migrator
         state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
         state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
         state.singleSupervisorGate = MockSingleSupervisorGate()
@@ -442,7 +431,6 @@ struct AppOwnedJournalTests {
 
         #expect(state.journalRuntimeStatus == .running)
         #expect(runner.startCalls == 1)
-        #expect(migrator.teardownCalls == 0)
     }
 
     @Test func requestJournalStopIsReentrantNoOpWhileInFlight() async throws {
@@ -584,6 +572,7 @@ struct AppOwnedJournalTests {
             // test's temp workspace (dangling after teardown). Every `make ci` on the
             // build Mac was silently rewriting the user's wrappers (found 2026-06-10).
             wrapperDirURL: workspace.appendingPathComponent("wrappers", isDirectory: true),
+            solBinaryFinder: { nil },
             observerRegistrar: { _ in .success("observer-key") }
         )
         defer { installer.cancel() }
@@ -682,46 +671,6 @@ struct AppOwnedJournalTests {
             ["-axo", "pid=,ppid=,comm="],
             ["-nP", "-iTCP:7657", "-sTCP:LISTEN"]
         ])
-    }
-
-    @Test func migrationPurgeWaitsForSupervisorDeath() async throws {
-        let workspace = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: workspace) }
-        let runtimeRoot = workspace.appendingPathComponent("runtime", isDirectory: true)
-        let layout = SolstoneRuntimeLayout(rootURL: runtimeRoot)
-        try FileManager.default.createDirectory(at: layout.versionsDir, withIntermediateDirectories: true)
-        let oldVersion = layout.versionsDir.appendingPathComponent("old", isDirectory: true)
-        try FileManager.default.createDirectory(at: oldVersion, withIntermediateDirectories: true)
-        try FileManager.default.createSymbolicLink(atPath: layout.currentLink.path, withDestinationPath: "versions/old")
-        let journalRoot = workspace.appendingPathComponent("journal", isDirectory: true)
-        try FileManager.default.createDirectory(at: journalRoot.appendingPathComponent("health", isDirectory: true), withIntermediateDirectories: true)
-        try Data("1234".utf8).write(to: journalRoot.appendingPathComponent("health/supervisor.pid"))
-        let runner = FakeSubprocessRunner()
-        runner.enqueue("service", .success())
-        runner.enqueue("ps", .success(stdout: Data()))
-        runner.enqueue("lsof", .success(exitCode: 1))
-        runner.enqueue("lsof", .success(exitCode: 1))
-        let clock = FakeMonotonicClock()
-        let pidProbe = SequencedPIDProbe(aliveResponses: [true, true, false], layout: layout)
-        let migrator = LegacyJournalMigrator(
-            runtimeRootURL: runtimeRoot,
-            runner: runner,
-            pidExists: { pidProbe.exists($0) },
-            terminate: { _, _ in 0 },
-            clock: clock,
-            pidWaitPollInterval: .milliseconds(1),
-            orphanGracePeriod: .milliseconds(1)
-        )
-
-        let result = await migrator.teardownLegacyAppManagedJournal(
-            oldSolPath: workspace.appendingPathComponent("bin/sol").path,
-            journalRoot: journalRoot
-        )
-
-        #expect(result == .success)
-        #expect(pidProbe.sawLegacyLayoutWhileAlive)
-        #expect(!FileManager.default.fileExists(atPath: layout.currentLink.path))
-        #expect((try? FileManager.default.contentsOfDirectory(atPath: layout.versionsDir.path).isEmpty) == true)
     }
 
     @Test func breakerTripsToAttentionStatus() async throws {
@@ -858,23 +807,6 @@ struct AppOwnedJournalTests {
             events.all.contains("terminate")
         }
         #expect(events.all == ["marker", "stopObservation", "stopJournal:start", "stopJournal:end", "terminate"])
-    }
-}
-
-private final class MockLegacyMigrator: LegacyJournalMigrating, @unchecked Sendable {
-    private let lock = NSLock()
-    private let result: LegacyJournalMigrationResult
-    private var calls = 0
-
-    var teardownCalls: Int { lock.withLock { calls } }
-
-    init(result: LegacyJournalMigrationResult = .success) {
-        self.result = result
-    }
-
-    func teardownLegacyAppManagedJournal(oldSolPath: String, journalRoot: URL) async -> LegacyJournalMigrationResult {
-        lock.withLock { calls += 1 }
-        return result
     }
 }
 
@@ -1033,28 +965,6 @@ private final class ControllableSleepWaiter: @unchecked Sendable {
             return continuation
         }
         continuation?.resume()
-    }
-}
-
-private final class SequencedPIDProbe: @unchecked Sendable {
-    private let lock = NSLock()
-    private var aliveResponses: [Bool]
-    private let layout: SolstoneRuntimeLayout
-    private(set) var sawLegacyLayoutWhileAlive = false
-
-    init(aliveResponses: [Bool], layout: SolstoneRuntimeLayout) {
-        self.aliveResponses = aliveResponses
-        self.layout = layout
-    }
-
-    func exists(_ pid: pid_t) -> Bool {
-        lock.withLock {
-            let next = aliveResponses.isEmpty ? false : aliveResponses.removeFirst()
-            if next, FileManager.default.fileExists(atPath: layout.currentLink.path) {
-                sawLegacyLayoutWhileAlive = true
-            }
-            return next
-        }
     }
 }
 
