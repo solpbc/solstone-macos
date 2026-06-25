@@ -5,6 +5,16 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.22] - 2026-06-24
+
+### Changed
+- solstone's icon now sits naturally among the other apps in your Dock, with the same mark. nothing else about the icon changed.
+- updated the bundled solstone journal to 0.6.13 →
+
+### Fixed
+- the health check in Settings could report "setup needed" on a healthy install before it had actually run. it now reads the same path the rest of the app uses, so a healthy install reads as healthy.
+- a blank entry could appear in the menubar menu. it's gone, with no change to what the menu does.
+
 ## [1.3.21] - 2026-06-23
 
 ### Changed
