@@ -46,6 +46,11 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
     private var isRunning = false
     private var isRecovering = false  // Prevents recursive recovery attempts
+    #if DEBUG
+    /// Test-only: records teardown call order ("engine.stop", "removeTap").
+    /// Mutated only on writerQueue inside teardownEngine(). Not in release builds.
+    internal private(set) var _teardownTraceForTesting: [String] = []
+    #endif
     private var receivedFirstBuffer = false
     private var recordingStartTime: Date?
     private var firstBufferTime: CMTime?
@@ -106,6 +111,8 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
     /// Internal start implementation (must be called on writerQueue)
     private func startCapture() throws {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
+
         // Access inputNode first to ensure engine is initialized
         let inputNode = engine.inputNode
 
@@ -161,15 +168,38 @@ public final class ExternalMicCapture: @unchecked Sendable {
         Logger.audio.info("Started external mic capture: \(self.device.name, privacy: .public)")
     }
 
+    /// Tears down the running engine. Order is load-bearing: stop the engine
+    /// FIRST (halts new tap callbacks), THEN remove the tap. removeTap is
+    /// ObjC-wrapped because it can throw on an already-torn-down node. Must run
+    /// on writerQueue so it cannot race handleConfigChange's recovery, which
+    /// mutates the same engine. Safe to call on a never-started engine.
+    private func teardownEngine() {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
+
+        engine.stop()
+        #if DEBUG
+        _teardownTraceForTesting.append("engine.stop")
+        #endif
+
+        do {
+            try ObjCExceptionCatcher.`try` {
+                self.engine.inputNode.removeTap(onBus: 0)
+            }
+        } catch {
+            // Tap may already be gone, that's fine
+        }
+        #if DEBUG
+        _teardownTraceForTesting.append("removeTap")
+        #endif
+    }
+
     /// Stop capturing
     public func stop() {
-        // Stop engine first to prevent new callbacks
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-
         writerQueue.sync {
-            guard isRunning else { return }
-            isRunning = false
+            teardownEngine()
+            if isRunning {
+                isRunning = false
+            }
         }
 
         if verbose { Logger.audio.debug("Stopped external mic capture: \(self.device.name, privacy: .public)") }
@@ -186,14 +216,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
             Logger.audio.info("\(self.device.name, privacy: .public): Config change detected, re-pinning to hardware...")
 
             // Teardown current state
-            self.engine.stop()
-            do {
-                try ObjCExceptionCatcher.`try` {
-                    self.engine.inputNode.removeTap(onBus: 0)
-                }
-            } catch {
-                // Tap may already be gone, that's fine
-            }
+            self.teardownEngine()
 
             // Clear cached converter (format may have changed)
             self.cachedConverter = nil
