@@ -5,6 +5,7 @@ import Foundation
 import AVFoundation
 import CoreMedia
 import CoreVideo
+import ObjCHelpers
 import os
 
 /// Manages video capture and .mov file writing using hardware H.264 encoding
@@ -149,12 +150,22 @@ public final class VideoWriter: @unchecked Sendable {
             return
         }
 
+        // The status guard is still TOCTOU: sleep/lock can invalidate the
+        // underlying session between the .writing read and append. The append
+        // stays under this synchronous lock; the ObjC barrier contains that
+        // same class as 28effae without introducing lock-across-await.
         if pixelBufferAdaptor.assetWriterInput.isReadyForMoreMediaData {
-            if pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: pts) {
-                frameCount += 1
-                lastPresentationTime = pts
-            } else {
-                Logger.capture.error("VideoWriter: frame \(self.frameCount + 1, privacy: .public) FAILED to append, status=\(self.writer.status.rawValue, privacy: .public)")
+            do {
+                try ObjCExceptionCatcher.`try` {
+                    if pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: pts) {
+                        frameCount += 1
+                        lastPresentationTime = pts
+                    } else {
+                        Logger.capture.error("VideoWriter: frame \(self.frameCount + 1, privacy: .public) FAILED to append, status=\(self.writer.status.rawValue, privacy: .public)")
+                    }
+                }
+            } catch {
+                Logger.capture.error("VideoWriter: frame append threw (sleep/lock session invalidation), dropping frame: \(error.localizedDescription, privacy: .public)")
             }
         } else {
             Logger.capture.warning("VideoWriter: frame \(self.frameCount + 1, privacy: .public) dropped (not ready)")

@@ -30,6 +30,9 @@ public final class ScreenshotCapturer {
     private var healthCheckFrameCount = 0
     private var firstFrameLogged = false
     private var streamStartTime: Date?
+#if DEBUG
+    internal private(set) var _teardownTraceForTesting: [String] = []
+#endif
 
     private let healthCheckInterval: TimeInterval = 30.0
     private let maxEmptyChecks: Int = 2
@@ -176,21 +179,7 @@ public final class ScreenshotCapturer {
         stopHealthCheck()
         isRunning = false
 
-        if let stream = stream {
-            do {
-                try await withTimeout(seconds: 5) {
-                    try await stream.stopCapture()
-                }
-            } catch is TimeoutError {
-                Logger.capture.warning("ScreenshotCapturer: Timeout stopping capture stream for display \(self.displayID, privacy: .public)")
-            } catch {
-                if verbose { Logger.capture.debug("ScreenshotCapturer: Error stopping stream: \(error, privacy: .public)") }
-            }
-        }
-
-        stream = nil
-        streamOutput = nil
-        streamDelegate = nil
+        await teardownStream()
 
         let totalFrames = frameIndex + skippedFrames
         let skipPercent = totalFrames > 0 ? (skippedFrames * 100) / totalFrames : 0
@@ -260,6 +249,30 @@ public final class ScreenshotCapturer {
         healthCheckTimer = nil
     }
 
+    private func teardownStream() async {
+#if DEBUG
+        _teardownTraceForTesting.append("stopCapture")
+#endif
+        if let stream = stream {
+            do {
+                try await withTimeout(seconds: 5) {
+                    try await stream.stopCapture()
+                }
+            } catch is TimeoutError {
+                Logger.capture.warning("ScreenshotCapturer: Timeout stopping capture stream for display \(self.displayID, privacy: .public)")
+            } catch {
+                if verbose { Logger.capture.debug("ScreenshotCapturer: Error stopping stream: \(error, privacy: .public)") }
+            }
+        }
+
+#if DEBUG
+        _teardownTraceForTesting.append("dropOutput")
+#endif
+        stream = nil
+        streamOutput = nil
+        streamDelegate = nil
+    }
+
     private func performHealthCheck() async {
         guard stream != nil else { return }
 
@@ -287,21 +300,7 @@ public final class ScreenshotCapturer {
 
         Logger.capture.info("ScreenshotCapturer: Restarting stream for display \(self.displayID, privacy: .public)")
 
-        if let stream = self.stream {
-            self.streamOutput = nil
-            do {
-                try await withTimeout(seconds: 5) {
-                    try await stream.stopCapture()
-                }
-            } catch is TimeoutError {
-                Logger.capture.warning("ScreenshotCapturer: Timeout stopping stream during restart for display \(self.displayID, privacy: .public)")
-            } catch {
-                if verbose { Logger.capture.debug("ScreenshotCapturer: Error stopping stream during restart for display \(self.displayID, privacy: .public): \(error, privacy: .public)") }
-            }
-        }
-
-        self.stream = nil
-        self.streamDelegate = nil
+        await teardownStream()
 
         do {
             try await Task.sleep(nanoseconds: 500_000_000)

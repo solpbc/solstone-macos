@@ -66,6 +66,9 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     private var firstBufferTime: CMTime?
     private var lastBufferTime: CMTime?
     private let lock = NSLock()
+#if DEBUG
+    internal private(set) var _appendAttemptCountForTesting: Int = 0
+#endif
 
     // Silence batching state
     private var silenceStartTime: CMTime?
@@ -184,15 +187,28 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             flushSilence(firstTime: firstTime)
         }
 
-        lock.unlock()
-
-        // Write the non-silent buffer
+        // Append while still holding the lock so this cannot race
+        // extractTimingState(), which sets isFinished under this same lock
+        // before finish() marks the input finished and ends the session. The
+        // ObjC barrier additionally contains the sleep/lock case where the
+        // writer still reports .writing but its underlying session is already
+        // invalid (same class as 28effae).
         if input.isReadyForMoreMediaData {
             let adjustedTime = CMTimeSubtract(currentTime, firstTime)
             if let retimedBuffer = createRetimedSampleBuffer(sampleBuffer, newTime: adjustedTime) {
-                input.append(retimedBuffer)
+#if DEBUG
+                _appendAttemptCountForTesting += 1
+#endif
+                do {
+                    try ObjCExceptionCatcher.`try` {
+                        input.append(retimedBuffer)
+                    }
+                } catch {
+                    Logger.audio.error("Audio append threw for \(self.trackType.displayName, privacy: .public), dropping buffer: \(error.localizedDescription, privacy: .public)")
+                }
             }
         }
+        lock.unlock()
     }
 
     /// Check if a sample buffer contains silence (RMS below threshold)

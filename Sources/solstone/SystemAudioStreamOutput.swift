@@ -10,7 +10,19 @@ import os
 /// Used for routing system audio to PerSourceAudioManager
 public final class SystemAudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     /// Callback for system audio sample buffers
-    public var onAudioBuffer: ((CMSampleBuffer) -> Void)?
+    public var onAudioBuffer: ((CMSampleBuffer) -> Void)? {
+        get {
+            logLock.lock()
+            defer { logLock.unlock() }
+            return _onAudioBuffer
+        }
+        set {
+            logLock.lock()
+            defer { logLock.unlock() }
+            _onAudioBuffer = newValue
+        }
+    }
+    private var _onAudioBuffer: ((CMSampleBuffer) -> Void)?
 
     private let verbose: Bool
 
@@ -44,8 +56,9 @@ public final class SystemAudioStreamOutput: NSObject, SCStreamOutput, @unchecked
             systemAudioBufferCount += 1
             totalBufferCount += 1
             logAudioBuffersIfNeeded()
+            let callback = _onAudioBuffer
             logLock.unlock()
-            onAudioBuffer?(sb)
+            callback?(sb)
 
         default:
             return

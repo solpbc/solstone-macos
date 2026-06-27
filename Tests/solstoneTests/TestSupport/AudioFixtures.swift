@@ -236,6 +236,84 @@ func makeSilentAudioSampleBuffer(seconds: Double) throws -> CMSampleBuffer {
     return sampleBuffer
 }
 
+func makeNonSilentAudioSampleBuffer(seconds: Double) throws -> CMSampleBuffer {
+    let sampleRate: Double = 48_000
+    let sampleCount = max(1, Int(sampleRate * seconds))
+    let byteCount = sampleCount * MemoryLayout<Float>.size
+
+    var asbd = AudioStreamBasicDescription(
+        mSampleRate: sampleRate,
+        mFormatID: kAudioFormatLinearPCM,
+        mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+        mBytesPerPacket: UInt32(MemoryLayout<Float>.size),
+        mFramesPerPacket: 1,
+        mBytesPerFrame: UInt32(MemoryLayout<Float>.size),
+        mChannelsPerFrame: 1,
+        mBitsPerChannel: 32,
+        mReserved: 0
+    )
+
+    var formatDescription: CMAudioFormatDescription?
+    var status = CMAudioFormatDescriptionCreate(
+        allocator: kCFAllocatorDefault,
+        asbd: &asbd,
+        layoutSize: 0,
+        layout: nil,
+        magicCookieSize: 0,
+        magicCookie: nil,
+        extensions: nil,
+        formatDescriptionOut: &formatDescription
+    )
+    guard status == noErr, let formatDescription else {
+        throw MediaFixtureError.formatDescriptionFailed(status)
+    }
+
+    var blockBuffer: CMBlockBuffer?
+    status = CMBlockBufferCreateWithMemoryBlock(
+        allocator: kCFAllocatorDefault,
+        memoryBlock: nil,
+        blockLength: byteCount,
+        blockAllocator: kCFAllocatorDefault,
+        customBlockSource: nil,
+        offsetToData: 0,
+        dataLength: byteCount,
+        flags: 0,
+        blockBufferOut: &blockBuffer
+    )
+    guard status == noErr, let blockBuffer else {
+        throw MediaFixtureError.blockBufferFailed(status)
+    }
+
+    let samples = [Float](repeating: 0.1, count: sampleCount)
+    status = samples.withUnsafeBytes { bytes in
+        CMBlockBufferReplaceDataBytes(
+            with: bytes.baseAddress!,
+            blockBuffer: blockBuffer,
+            offsetIntoDestination: 0,
+            dataLength: byteCount
+        )
+    }
+    guard status == noErr else {
+        throw MediaFixtureError.blockBufferFailed(status)
+    }
+
+    var sampleBuffer: CMSampleBuffer?
+    status = CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+        allocator: kCFAllocatorDefault,
+        dataBuffer: blockBuffer,
+        formatDescription: formatDescription,
+        sampleCount: sampleCount,
+        presentationTimeStamp: .zero,
+        packetDescriptions: nil,
+        sampleBufferOut: &sampleBuffer
+    )
+    guard status == noErr, let sampleBuffer else {
+        throw MediaFixtureError.sampleBufferFailed(status)
+    }
+
+    return sampleBuffer
+}
+
 private func makeBlackPixelBuffer() throws -> CVPixelBuffer {
     var pixelBuffer: CVPixelBuffer?
     let status = CVPixelBufferCreate(
