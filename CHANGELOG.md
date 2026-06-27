@@ -5,6 +5,15 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.24] - 2026-06-27
+
+### Changed
+- updated the bundled solstone journal to 0.6.15 →
+
+### Fixed
+- changing or unplugging an audio device while solstone was paused could freeze the app, and the only way out was a force quit. that's resolved, along with a rarer case where solstone could quit unexpectedly around a device change or when it stopped.
+- solstone now stops cleanly when your screen locks or your Mac goes to sleep. previously, in some narrow timing cases, it could stay active for a brief moment after the screen locked instead of pausing. that timing gap is closed.
+
 ## [1.3.23] - 2026-06-26
 
 ### Changed
