@@ -114,6 +114,9 @@ public final class CaptureManager {
     /// Flag to prevent concurrent segment rotations
     private var isRotatingSegment: Bool = false
 
+    /// True while a lifecycle pause is finalizing; used to supersede an in-flight rotation.
+    private var pauseTransitionActive: Bool = false
+
     /// Current default microphone device ID (for change detection)
     private var currentDefaultMicID: AudioDeviceID?
 
@@ -128,6 +131,11 @@ public final class CaptureManager {
 
     /// Called when state changes
     public var onStateChanged: ((State) -> Void)?
+
+#if DEBUG
+    internal var onRotationAfterOldSegmentFinishedForTesting: (@MainActor () async -> Void)?
+    internal var onRotationAfterNewSegmentStartedForTesting: (@MainActor () async -> Void)?
+#endif
 
     /// Time remaining in current segment
     public var segmentTimeRemaining: TimeInterval {
@@ -409,6 +417,10 @@ public final class CaptureManager {
 
     // MARK: - Private Methods
 
+    private var rotationSuperseded: Bool {
+        pauseTransitionActive || !state.isRecording
+    }
+
     private func rebuildDisplaysAndFilters() async throws {
         let content = try await SCShareableContent.current
         let newDisplays = content.displays
@@ -568,6 +580,41 @@ public final class CaptureManager {
         return result?.segmentDirectory
     }
 
+    private func discardCurrentSegmentWithoutEnqueue(matching expectedDirectory: URL?) async -> URL? {
+        guard let segment = currentSegment else { return nil }
+        let segmentDirectory = segment.outputDirectory
+        if let expectedDirectory, segmentDirectory != expectedDirectory {
+            return nil
+        }
+
+        _ = await segment.finishCapture()
+        if currentSegment?.outputDirectory == segmentDirectory {
+            currentSegment = nil
+        }
+        segmentTimer?.invalidate()
+        segmentTimer = nil
+        return segmentDirectory
+    }
+
+    private func stopPersistentAudioForDiscard() async {
+        micCaptureManager.stopAll()
+        await systemAudioCaptureManager.stop()
+    }
+
+    private func markDiscardedSegmentFailedAndRecover(_ segmentDir: URL) async {
+        await markIncompleteSegmentAsFailed(segmentDir)
+        recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
+    }
+
+    private func bailSupersededRotation(newSegmentDir: URL, discardStartedSegment: Bool) async {
+        Logger.capture.info("Segment rotation superseded by pause/lock; bailing without a new segment")
+        if discardStartedSegment {
+            _ = await discardCurrentSegmentWithoutEnqueue(matching: newSegmentDir)
+            await stopPersistentAudioForDiscard()
+        }
+        await markDiscardedSegmentFailedAndRecover(newSegmentDir)
+    }
+
     internal func enterNoDisplayRecovery() async {
         _ = await finalizeActiveSegmentForTransition(stopAudio: true)
         transitionToError("all displays disconnected", error: CaptureError.noDisplaysAvailable, trigger: "no_displays")
@@ -640,6 +687,15 @@ public final class CaptureManager {
                     self.logSegmentSummary(result)
                 }
 
+#if DEBUG
+                await self.onRotationAfterOldSegmentFinishedForTesting?()
+#endif
+
+                if self.rotationSuperseded {
+                    await self.bailSupersededRotation(newSegmentDir: newSegmentDir, discardStartedSegment: false)
+                    return nil
+                }
+
                 try Task.checkCancellation()
 
                 // Collect available mics for new segment
@@ -655,6 +711,13 @@ public final class CaptureManager {
 
                 // Start recording to new segment IMMEDIATELY (no waiting for remix)
                 try await self.startNewSegmentWithDirectory(newSegmentDir, timePrefix: newTimePrefix, mics: Array(availableMics))
+#if DEBUG
+                await self.onRotationAfterNewSegmentStartedForTesting?()
+#endif
+                if self.rotationSuperseded {
+                    await self.bailSupersededRotation(newSegmentDir: newSegmentDir, discardStartedSegment: true)
+                    return nil
+                }
                 return result
             }
         } catch is TimeoutError {
@@ -817,6 +880,39 @@ public final class CaptureManager {
         currentSegment
     }
 
+#if DEBUG
+    internal func simulateSettledPauseForTesting(enqueue result: SegmentCaptureResult?) async {
+        currentSegment = nil
+        state = .paused
+        if let result {
+            await enqueueRemix(result)
+        }
+    }
+
+    internal func simulatePauseTransitionWindowForTesting(enqueue result: SegmentCaptureResult?) async {
+        pauseTransitionActive = true
+        currentSegment = nil
+        if let result {
+            await enqueueRemix(result)
+        }
+    }
+
+    internal func simulatePausedStateForTesting(enqueue result: SegmentCaptureResult?) async {
+        state = .paused
+        if let result {
+            await enqueueRemix(result)
+        }
+    }
+
+    internal func setPauseTransitionActiveForTesting(_ active: Bool) {
+        pauseTransitionActive = active
+    }
+
+    internal var isSystemAudioRunningForTesting: Bool {
+        systemAudioCaptureManager.isRunning
+    }
+#endif
+
     // MARK: - Errors
 
     public enum CaptureError: Error, LocalizedError {
@@ -843,17 +939,19 @@ extension CaptureManager: CaptureLifecycleDelegate {
     var lifecycleCurrentState: CaptureManager.State { state }
 
     func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL? {
+        pauseTransitionActive = true
         let completedURL = await finalizeActiveSegmentForTransition(stopAudio: stopAudio)
 
         let oldState = state.label
         state = .paused
         Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: \(trigger, privacy: .public))")
         onStateChanged?(state)
+        pauseTransitionActive = false
 
         return completedURL
     }
 
-    func lifecycleResumeCapture(trigger: String) async throws {
+    func lifecyclePrepareResume(trigger: String) async throws {
         recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
 
         if !allowsEmptyDisplayConfigurationForTesting {
@@ -865,12 +963,31 @@ extension CaptureManager: CaptureLifecycleDelegate {
         try await startNewSegment()
 
         currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
+    }
 
+    func lifecycleCommitResume(trigger: String) {
         let oldState = state.label
         state = .recording
         Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: \(trigger, privacy: .public))")
         onStateChanged?(state)
         startHeartbeat()
+    }
+
+    func lifecycleAbortPreparedResume(trigger: String) async {
+        let abortedDirectory = await discardCurrentSegmentWithoutEnqueue(matching: nil)
+        await stopPersistentAudioForDiscard()
+        if let abortedDirectory {
+            Logger.capture.info("[Event] \(trigger, privacy: .public): aborting prepared resume segment \(abortedDirectory.lastPathComponent, privacy: .public)")
+            await markDiscardedSegmentFailedAndRecover(abortedDirectory)
+        } else {
+            Logger.capture.info("[Event] \(trigger, privacy: .public): aborting prepared resume with no active segment")
+            recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
+        }
+
+        let oldState = state.label
+        state = .paused
+        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: \(trigger, privacy: .public)_aborted)")
+        onStateChanged?(state)
     }
 
     func lifecycleTransitionToError(message: String, error: Error, trigger: String) {

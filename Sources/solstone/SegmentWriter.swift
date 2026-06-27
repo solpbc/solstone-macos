@@ -108,6 +108,9 @@ public final class SegmentWriter {
     /// Time when capture actually started (for computing actual duration)
     private var captureStartTime: Date?
 
+    /// Shared finish task so concurrent lifecycle paths close the segment exactly once.
+    private var finishTask: Task<SegmentCaptureResult?, Never>?
+
     /// Segment duration in seconds (default 5 minutes, can be changed for debug mode)
     public static var segmentDuration: TimeInterval = 300
 
@@ -308,6 +311,18 @@ public final class SegmentWriter {
     /// Does NOT wait for remix - returns immediately after streams stop
     /// Use this for segment rotation to minimize gap between segments
     public func finishCapture() async -> SegmentCaptureResult? {
+        if let finishTask {
+            return await finishTask.value
+        }
+
+        let task = Task { @MainActor in
+            await self.performFinishCapture()
+        }
+        finishTask = task
+        return await task.value
+    }
+
+    private func performFinishCapture() async -> SegmentCaptureResult? {
         // Stop all screenshot capturers first
         Logger.capture.info("Stopping \(self.screenshotCapturers.count, privacy: .public) screenshot capturer(s) for background remix...")
         for (displayID, capturer) in screenshotCapturers {

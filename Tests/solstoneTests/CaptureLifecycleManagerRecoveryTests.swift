@@ -117,7 +117,10 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(manager.hasPendingResumeTaskForTesting)
 
         delegate.releasePause()
-        await delegate.waitForEvent(.resumeStarted("unlock"))
+        await delegate.waitForEvent(.resumeCompleted("unlock"))
+        try await waitUntilMain(timeout: .seconds(5)) {
+            !manager.suspendedForRecovery
+        }
         await lockTask.value
 
         let pauseCompleted = try #require(delegate.index(of: .pauseCompleted("lock")))
@@ -145,7 +148,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(!delegate.events.contains(.resumeStarted("wake")))
 
         delegate.releasePause()
-        await delegate.waitForEvent(.resumeStarted("wake"))
+        await delegate.waitForEvent(.resumeCompleted("wake"))
         await sleepTask.value
         await wakeTask.value
 
@@ -191,7 +194,10 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(!delegate.events.contains(.resumeStarted("unlock")))
 
         delegate.releasePause()
-        await delegate.waitForEvent(.resumeStarted("unlock"))
+        await delegate.waitForEvent(.resumeCompleted("unlock"))
+        try await waitUntilMain(timeout: .seconds(5)) {
+            !manager.suspendedForRecovery
+        }
         await firstLockTask.value
         await secondLockTask.value
 
@@ -263,12 +269,161 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(!delegate.events.contains(.resumeStarted("unlock")))
     }
 
+    @Test func screenLockDuringInFlightResumeVetoesCommit() async throws {
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        let manager = makeManager(delegate: delegate, unlockResumeDelay: {})
+        await pauseForLock(manager: manager, delegate: delegate)
+
+        delegate.armResumeGate()
+        await manager.handleScreenUnlocked()
+        await delegate.waitForEvent(.resumeStarted("unlock"))
+        #expect(manager.hasInFlightResumeForTesting)
+
+        let relockTask = Task { @MainActor in
+            await manager.handleScreenLocked()
+        }
+        await Task.yield()
+        delegate.releaseResume()
+        await delegate.waitForEvent(.resumeAborted("unlock"))
+        await relockTask.value
+
+        #expect(!delegate.events.contains(.resumeCompleted("unlock")))
+        #expect(delegate.lifecycleCurrentState.isPaused)
+        #expect(manager.suspendedForRecovery)
+    }
+
+    @Test func screenLockDuringInFlightResumeTimeoutStillVetoesLateCommit() async throws {
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        let manager = makeManager(
+            delegate: delegate,
+            unlockResumeDelay: {},
+            resumeSettleTimeoutSeconds: 0.05
+        )
+        await pauseForLock(manager: manager, delegate: delegate)
+
+        delegate.armResumeGate()
+        await manager.handleScreenUnlocked()
+        await delegate.waitForEvent(.resumeStarted("unlock"))
+        #expect(manager.hasInFlightResumeForTesting)
+
+        let relockTask = Task { @MainActor in
+            await manager.handleScreenLocked()
+        }
+        await relockTask.value
+
+        #expect(delegate.lifecycleCurrentState.isPaused)
+        #expect(manager.suspendedForRecovery)
+        #expect(!delegate.events.contains(.resumeCompleted("unlock")))
+
+        delegate.releaseResume()
+        await delegate.waitForEvent(.resumeAborted("unlock"))
+
+        #expect(delegate.lifecycleCurrentState.isPaused)
+        #expect(!delegate.events.contains(.resumeCompleted("unlock")))
+    }
+
+    @Test func willSleepDuringInFlightResumeVetoesCommit() async throws {
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        let manager = makeManager(delegate: delegate, unlockResumeDelay: {})
+        await pauseForLock(manager: manager, delegate: delegate)
+
+        delegate.armResumeGate()
+        await manager.handleScreenUnlocked()
+        await delegate.waitForEvent(.resumeStarted("unlock"))
+        #expect(manager.hasInFlightResumeForTesting)
+
+        let sleepTask = Task { @MainActor in
+            await manager.handleWillSleep()
+        }
+        await Task.yield()
+        delegate.releaseResume()
+        await delegate.waitForEvent(.resumeAborted("unlock"))
+        await sleepTask.value
+
+        #expect(!delegate.events.contains(.resumeCompleted("unlock")))
+        #expect(delegate.lifecycleCurrentState.isPaused)
+        #expect(manager.suspendedForRecovery)
+    }
+
+    @Test func resumeThrowDuringLockSettlesToErrorWithoutPauseOverwrite() async throws {
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        let manager = makeManager(delegate: delegate, unlockResumeDelay: {})
+        await pauseForLock(manager: manager, delegate: delegate)
+
+        delegate.resumePrepareShouldThrow = true
+        delegate.armResumeGate()
+        await manager.handleScreenUnlocked()
+        await delegate.waitForEvent(.resumeStarted("unlock"))
+
+        let relockTask = Task { @MainActor in
+            await manager.handleScreenLocked()
+        }
+        await Task.yield()
+        delegate.releaseResume()
+        await delegate.waitForEvent(.transitionToError("unlock_failed"))
+        await relockTask.value
+
+        #expect(delegate.lifecycleCurrentState.isError)
+        #expect(!delegate.events.contains(.resumeCompleted("unlock")))
+        #expect(!delegate.events.contains(.resumeAborted("unlock")))
+    }
+
+    @Test func lockDuringRecoveryResumeUsesLiveLockVeto() async throws {
+        let locked = LockedValue<Bool>()
+        locked.set(true)
+        let delegate = FakeLifecycleDelegate(state: .error("all displays disconnected"))
+        let manager = makeManager(
+            delegate: delegate,
+            isScreenLocked: { locked.current ?? false }
+        )
+
+        delegate.armResumeGate()
+        let recoveryTask = Task { @MainActor in
+            await manager.attemptRecovery()
+        }
+        await delegate.waitForEvent(.resumeStarted("recovery"))
+
+        delegate.releaseResume()
+        await delegate.waitForEvent(.resumeAborted("recovery"))
+        await recoveryTask.value
+
+        #expect(delegate.lifecycleCurrentState.isPaused)
+        #expect(manager.suspendedForRecovery)
+        #expect(!delegate.events.contains(.resumeCompleted("recovery")))
+    }
+
+    @Test func resetCancelsInFlightResumeAndSupersedeMarker() async throws {
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        let manager = makeManager(delegate: delegate, unlockResumeDelay: {})
+        await pauseForLock(manager: manager, delegate: delegate)
+
+        delegate.armResumeGate()
+        await manager.handleScreenUnlocked()
+        await delegate.waitForEvent(.resumeStarted("unlock"))
+        #expect(manager.hasInFlightResumeForTesting)
+
+        let relockTask = Task { @MainActor in
+            await manager.handleScreenLocked()
+        }
+        await Task.yield()
+
+        manager.reset(stopRecovery: true)
+        #expect(!manager.hasInFlightResumeForTesting)
+
+        delegate.releaseResume()
+        await relockTask.value
+        await Task.yield()
+
+        #expect(!delegate.events.contains(.resumeCompleted("unlock")))
+    }
+
     private func makeManager(
         scheduler: FakeRecoveryScheduler = FakeRecoveryScheduler(),
         delegate: FakeLifecycleDelegate,
         isScreenLocked: @escaping @MainActor () -> Bool = { false },
         unlockResumeDelay: @escaping @MainActor @Sendable () async throws -> Void = {},
-        pauseSettleTimeoutSeconds: TimeInterval = 30
+        pauseSettleTimeoutSeconds: TimeInterval = 30,
+        resumeSettleTimeoutSeconds: TimeInterval = 30
     ) -> CaptureLifecycleManager {
         let manager = CaptureLifecycleManager(
             recoveryScheduler: { delay, fire in
@@ -276,10 +431,20 @@ struct CaptureLifecycleManagerRecoveryTests {
             },
             isScreenLocked: isScreenLocked,
             unlockResumeDelay: unlockResumeDelay,
-            pauseSettleTimeoutSeconds: pauseSettleTimeoutSeconds
+            pauseSettleTimeoutSeconds: pauseSettleTimeoutSeconds,
+            resumeSettleTimeoutSeconds: resumeSettleTimeoutSeconds
         )
         manager.configure(delegate: delegate)
         return manager
+    }
+
+    private func pauseForLock(manager: CaptureLifecycleManager, delegate: FakeLifecycleDelegate) async {
+        let lockTask = Task { @MainActor in
+            await manager.handleScreenLocked()
+        }
+        await delegate.waitForEvent(.pauseStarted("lock"))
+        delegate.releasePause()
+        await lockTask.value
     }
 
     private func waitUntilMain(
@@ -310,17 +475,22 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
         case pauseStarted(String)
         case pauseCompleted(String)
         case resumeStarted(String)
+        case resumeCompleted(String)
+        case resumeAborted(String)
         case transitionToError(String)
         case processSegment(String, Bool)
     }
 
     var lifecycleCurrentState: CaptureManager.State
     var resumeBehavior: ResumeBehavior = .succeed
+    var resumePrepareShouldThrow = false
     var pauseResultURL: URL?
     private(set) var resumeTriggers: [String] = []
     private(set) var events: [Event] = []
     private var pauseReleased = false
     private var pauseReleaseContinuation: CheckedContinuation<Void, Never>?
+    private var resumeGateArmed = false
+    private var resumeReleaseContinuation: CheckedContinuation<Void, Never>?
     private var eventWaiters: [((Event) -> Bool, CheckedContinuation<Void, Never>)] = []
 
     init(state: CaptureManager.State, pauseResultURL: URL? = nil) {
@@ -336,15 +506,29 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
         return pauseResultURL
     }
 
-    func lifecycleResumeCapture(trigger: String) async throws {
+    func lifecyclePrepareResume(trigger: String) async throws {
         appendEvent(.resumeStarted(trigger))
         resumeTriggers.append(trigger)
+        await waitForResumeRelease()
+        if resumePrepareShouldThrow {
+            throw SyntheticLifecycleRecoveryError()
+        }
         switch resumeBehavior {
         case .succeed:
-            lifecycleCurrentState = .recording
+            return
         case .fail:
             throw SyntheticLifecycleRecoveryError()
         }
+    }
+
+    func lifecycleCommitResume(trigger: String) {
+        lifecycleCurrentState = .recording
+        appendEvent(.resumeCompleted(trigger))
+    }
+
+    func lifecycleAbortPreparedResume(trigger: String) async {
+        lifecycleCurrentState = .paused
+        appendEvent(.resumeAborted(trigger))
     }
 
     func lifecycleTransitionToError(message: String, error: Error, trigger: String) {
@@ -360,6 +544,17 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
         pauseReleased = true
         let continuation = pauseReleaseContinuation
         pauseReleaseContinuation = nil
+        continuation?.resume()
+    }
+
+    func armResumeGate() {
+        resumeGateArmed = true
+    }
+
+    func releaseResume() {
+        resumeGateArmed = false
+        let continuation = resumeReleaseContinuation
+        resumeReleaseContinuation = nil
         continuation?.resume()
     }
 
@@ -392,6 +587,16 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
 
         await withCheckedContinuation { continuation in
             pauseReleaseContinuation = continuation
+        }
+    }
+
+    private func waitForResumeRelease() async {
+        if !resumeGateArmed {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            resumeReleaseContinuation = continuation
         }
     }
 

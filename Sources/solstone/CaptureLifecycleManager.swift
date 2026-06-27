@@ -9,7 +9,9 @@ import os
 protocol CaptureLifecycleDelegate: AnyObject {
     var lifecycleCurrentState: CaptureManager.State { get }
     func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL?
-    func lifecycleResumeCapture(trigger: String) async throws
+    func lifecyclePrepareResume(trigger: String) async throws
+    func lifecycleCommitResume(trigger: String)
+    func lifecycleAbortPreparedResume(trigger: String) async
     func lifecycleTransitionToError(message: String, error: Error, trigger: String)
     func lifecycleProcessSegment(_ url: URL, useSleepActivity: Bool)
 }
@@ -50,10 +52,27 @@ final class CaptureLifecycleManager {
         let task: Task<Void, Never>
     }
 
+    private struct InFlightResume {
+        let id: UInt64
+        let trigger: String
+        let task: Task<ResumeOutcome, Never>
+    }
+
     private enum PauseSettleResult {
         case settled
         case timedOut
         case notPaused(String)
+    }
+
+    private struct ResumeFailure: Sendable {
+        let message: String
+        let isPermissionError: Bool
+    }
+
+    private enum ResumeOutcome: Sendable {
+        case committed
+        case vetoed
+        case threw(ResumeFailure)
     }
 
     weak var delegate: (any CaptureLifecycleDelegate)?
@@ -69,10 +88,14 @@ final class CaptureLifecycleManager {
     private var inFlightPause: InFlightPause?
     private var nextResumeID: UInt64 = 0
     private var pendingResumeTask: PendingResume?
+    private var nextInFlightResumeID: UInt64 = 0
+    private var inFlightResume: InFlightResume?
+    private var supersededResumeID: UInt64?
     private let recoveryScheduler: RecoveryScheduler
     private let isScreenLockedProvider: @MainActor () -> Bool
     private let unlockResumeDelay: @MainActor @Sendable () async throws -> Void
     private let pauseSettleTimeoutSeconds: TimeInterval
+    private let resumeSettleTimeoutSeconds: TimeInterval
 
     nonisolated(unsafe) private var willSleepObserver: NSObjectProtocol?
     nonisolated(unsafe) private var didWakeObserver: NSObjectProtocol?
@@ -85,12 +108,14 @@ final class CaptureLifecycleManager {
         unlockResumeDelay: @escaping @MainActor @Sendable () async throws -> Void = {
             try await Task.sleep(nanoseconds: 500_000_000)
         },
-        pauseSettleTimeoutSeconds: TimeInterval = 30
+        pauseSettleTimeoutSeconds: TimeInterval = 30,
+        resumeSettleTimeoutSeconds: TimeInterval = 30
     ) {
         self.recoveryScheduler = recoveryScheduler
         self.isScreenLockedProvider = isScreenLocked
         self.unlockResumeDelay = unlockResumeDelay
         self.pauseSettleTimeoutSeconds = pauseSettleTimeoutSeconds
+        self.resumeSettleTimeoutSeconds = resumeSettleTimeoutSeconds
     }
 
     private static func liveRecoveryScheduler(
@@ -121,6 +146,10 @@ final class CaptureLifecycleManager {
 
     internal var hasPendingResumeTaskForTesting: Bool {
         pendingResumeTask != nil
+    }
+
+    internal var hasInFlightResumeForTesting: Bool {
+        inFlightResume != nil
     }
 
     func configure(delegate: any CaptureLifecycleDelegate) {
@@ -188,6 +217,9 @@ final class CaptureLifecycleManager {
             pendingResumeTask = nil
             inFlightPause?.task.cancel()
             inFlightPause = nil
+            inFlightResume?.task.cancel()
+            inFlightResume = nil
+            supersededResumeID = nil
         }
     }
 
@@ -197,6 +229,9 @@ final class CaptureLifecycleManager {
         pendingResumeTask = nil
         inFlightPause?.task.cancel()
         inFlightPause = nil
+        inFlightResume?.task.cancel()
+        inFlightResume = nil
+        supersededResumeID = nil
         if stopRecovery {
             stopRecoveryTimer()
         }
@@ -225,13 +260,35 @@ final class CaptureLifecycleManager {
         let stateLabel = delegate?.lifecycleCurrentState.label ?? "unknown"
         Logger.capture.info("[Event] willSleep (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
 
-        // Cancel any pending lifecycle resume; sleep supersedes it.
-        pendingResumeTask?.task.cancel()
-        pendingResumeTask = nil
+        // Cancel only pre-execution lifecycle resumes; an executing resume must reach its commit gate.
+        if inFlightResume == nil {
+            pendingResumeTask?.task.cancel()
+            pendingResumeTask = nil
+        }
 
-        guard delegate?.lifecycleCurrentState.isRecording == true || inFlightPause != nil else { return }
+        guard delegate?.lifecycleCurrentState.isRecording == true || inFlightPause != nil || inFlightResume != nil else { return }
 
         suspendedForRecovery = true
+
+        if let resume = inFlightResume {
+            supersededResumeID = resume.id
+            Logger.capture.info("[Event] sleep: superseding in-flight resume from \(resume.trigger, privacy: .public)")
+            let resumeSettled = await waitForResumeToSettle(resume, trigger: "sleep")
+            if delegate?.lifecycleCurrentState.isError == true {
+                Logger.capture.info("[Event] sleep: resume settled to error; pause skipped")
+                return
+            }
+            if resumeSettled, delegate?.lifecycleCurrentState.isPaused == true {
+                Logger.capture.info("[Event] sleep: resume veto settled paused")
+                return
+            }
+            if !resumeSettled, delegate?.lifecycleCurrentState.isPaused == true {
+                Logger.capture.warning("[Event] sleep: resume settle timed out while paused; aborting any prepared resume segment")
+                await delegate?.lifecycleAbortPreparedResume(trigger: "sleep_resume_timeout")
+                suspendedForRecovery = true
+                return
+            }
+        }
 
         let lease = beginOrJoinPause(trigger: "sleep", stopAudio: false)
         let completedURL = await lease.pause.task.value
@@ -261,8 +318,13 @@ final class CaptureLifecycleManager {
             return
         }
 
-        pendingResumeTask?.task.cancel()
-        pendingResumeTask = nil
+        if inFlightResume == nil {
+            pendingResumeTask?.task.cancel()
+            pendingResumeTask = nil
+        } else {
+            Logger.capture.info("[Event] didWake: resume already in flight; wake will let it settle")
+            return
+        }
 
         let resume = schedulePendingResume(trigger: "wake", useDebounce: false)
         await resume.task.value
@@ -272,13 +334,35 @@ final class CaptureLifecycleManager {
         let stateLabel = delegate?.lifecycleCurrentState.label ?? "unknown"
         Logger.capture.info("[Event] screenLocked (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
 
-        // Cancel any pending lifecycle resume; lock supersedes it.
-        pendingResumeTask?.task.cancel()
-        pendingResumeTask = nil
+        // Cancel only pre-execution lifecycle resumes; an executing resume must reach its commit gate.
+        if inFlightResume == nil {
+            pendingResumeTask?.task.cancel()
+            pendingResumeTask = nil
+        }
 
-        guard delegate?.lifecycleCurrentState.isRecording == true || inFlightPause != nil else { return }
+        guard delegate?.lifecycleCurrentState.isRecording == true || inFlightPause != nil || inFlightResume != nil else { return }
 
         suspendedForRecovery = true
+
+        if let resume = inFlightResume {
+            supersededResumeID = resume.id
+            Logger.capture.info("[Event] screenLocked: superseding in-flight resume from \(resume.trigger, privacy: .public)")
+            let resumeSettled = await waitForResumeToSettle(resume, trigger: "lock")
+            if delegate?.lifecycleCurrentState.isError == true {
+                Logger.capture.info("[Event] screenLocked: resume settled to error; pause skipped")
+                return
+            }
+            if resumeSettled, delegate?.lifecycleCurrentState.isPaused == true {
+                Logger.capture.info("[Event] screenLocked: resume veto settled paused")
+                return
+            }
+            if !resumeSettled, delegate?.lifecycleCurrentState.isPaused == true {
+                Logger.capture.warning("[Event] screenLocked: resume settle timed out while paused; aborting any prepared resume segment")
+                await delegate?.lifecycleAbortPreparedResume(trigger: "lock_resume_timeout")
+                suspendedForRecovery = true
+                return
+            }
+        }
 
         let lease = beginOrJoinPause(trigger: "lock", stopAudio: true)
         let completedURL = await lease.pause.task.value
@@ -301,9 +385,14 @@ final class CaptureLifecycleManager {
 
         guard suspendedForRecovery else { return }
 
-        // Replace any pending lifecycle resume with the latest unlock.
-        pendingResumeTask?.task.cancel()
-        pendingResumeTask = nil
+        // Replace only pre-execution lifecycle resumes with the latest unlock.
+        if inFlightResume == nil {
+            pendingResumeTask?.task.cancel()
+            pendingResumeTask = nil
+        } else {
+            Logger.capture.info("[Event] screenUnlocked: resume already in flight; unlock will let it settle")
+            return
+        }
 
         _ = schedulePendingResume(trigger: "unlock", useDebounce: true)
     }
@@ -377,18 +466,69 @@ final class CaptureLifecycleManager {
 
         guard suspendedForRecovery else { return }
 
-        do {
-            try await delegate?.lifecycleResumeCapture(trigger: trigger)
+        let outcome = await executeResume(trigger: trigger)
+        switch outcome {
+        case .committed:
             suspendedForRecovery = false
             Logger.capture.info("Capture resumed after \(trigger, privacy: .public)")
-        } catch {
-            delegate?.lifecycleTransitionToError(
-                message: "Failed to resume after \(trigger): \(error.localizedDescription)",
-                error: error,
-                trigger: "\(trigger)_failed"
-            )
-            Logger.capture.error("Failed to resume capture after \(trigger, privacy: .public): \(error, privacy: .public)")
+        case .vetoed:
+            Logger.capture.info("Capture resume after \(trigger, privacy: .public) was vetoed")
+        case .threw:
+            break
         }
+    }
+
+    private func executeResume(trigger: String) async -> ResumeOutcome {
+        nextInFlightResumeID &+= 1
+        let id = nextInFlightResumeID
+        let task: Task<ResumeOutcome, Never> = Task { @MainActor [weak self] in
+            guard let self else { return .vetoed }
+            defer {
+                if self.inFlightResume?.id == id {
+                    self.inFlightResume = nil
+                }
+                if self.supersededResumeID == id {
+                    self.supersededResumeID = nil
+                }
+            }
+
+            do {
+                try await self.delegate?.lifecyclePrepareResume(trigger: trigger)
+            } catch {
+                let failure = ResumeFailure(
+                    message: error.localizedDescription,
+                    isPermissionError: isPermissionError(error)
+                )
+                self.delegate?.lifecycleTransitionToError(
+                    message: "Failed to resume after \(trigger): \(failure.message)",
+                    error: error,
+                    trigger: "\(trigger)_failed"
+                )
+                Logger.capture.error("Failed to prepare resume after \(trigger, privacy: .public): \(error, privacy: .public)")
+                return .threw(failure)
+            }
+
+            do {
+                try Task.checkCancellation()
+            } catch {
+                Logger.capture.info("[Event] \(trigger, privacy: .public): resume task cancelled before commit; aborting prepared segment")
+                await self.delegate?.lifecycleAbortPreparedResume(trigger: trigger)
+                self.suspendedForRecovery = true
+                return .vetoed
+            }
+
+            if self.supersededResumeID == id || self.isScreenLocked() {
+                Logger.capture.info("[Event] \(trigger, privacy: .public): resume commit vetoed (superseded: \(self.supersededResumeID == id, privacy: .public), locked: \(self.isScreenLocked(), privacy: .public))")
+                await self.delegate?.lifecycleAbortPreparedResume(trigger: trigger)
+                self.suspendedForRecovery = true
+                return .vetoed
+            }
+
+            self.delegate?.lifecycleCommitResume(trigger: trigger)
+            return .committed
+        }
+        inFlightResume = InFlightResume(id: id, trigger: trigger, task: task)
+        return await task.value
     }
 
     private func waitForPauseToSettle(trigger: String) async -> PauseSettleResult {
@@ -419,6 +559,23 @@ final class CaptureLifecycleManager {
         }
 
         return .settled
+    }
+
+    private func waitForResumeToSettle(_ resume: InFlightResume, trigger: String) async -> Bool {
+        do {
+            _ = try await withTimeout(seconds: resumeSettleTimeoutSeconds) {
+                await resume.task.value
+            }
+            return true
+        } catch is TimeoutError {
+            let stateLabel = delegate?.lifecycleCurrentState.label ?? "unknown"
+            Logger.capture.warning("[Event] \(trigger, privacy: .public): timed out waiting \(self.resumeSettleTimeoutSeconds, privacy: .public)s for in-flight resume from \(resume.trigger, privacy: .public) to settle; pause will proceed (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
+            return false
+        } catch {
+            let stateLabel = delegate?.lifecycleCurrentState.label ?? "unknown"
+            Logger.capture.warning("[Event] \(trigger, privacy: .public): resume settle wait failed; pause will proceed (state: \(stateLabel, privacy: .public), error: \(error, privacy: .public))")
+            return false
+        }
     }
 
     private static func defaultIsScreenLocked() -> Bool {
@@ -481,12 +638,6 @@ final class CaptureLifecycleManager {
             return
         }
 
-        guard !isScreenLocked() else {
-            Logger.capture.info("[Recovery] Screen is locked, deferring recovery")
-            startRecoveryTimer()
-            return
-        }
-
         guard !isRecovering else {
             Logger.capture.info("[Recovery] Already in progress, skipping")
             return
@@ -498,15 +649,19 @@ final class CaptureLifecycleManager {
         let attempt = retryCount + 1
         Logger.capture.info("[Recovery] Attempting recovery \(attempt, privacy: .public)/\(self.maxRetryCount, privacy: .public)")
 
-        do {
-            try await delegate?.lifecycleResumeCapture(trigger: "recovery")
+        let outcome = await executeResume(trigger: "recovery")
+        switch outcome {
+        case .committed:
             stopRecoveryTimer()
             Logger.capture.info("[Recovery] Successfully recovered on attempt \(attempt, privacy: .public)")
-        } catch {
+        case .vetoed:
+            stopRecoveryTimer()
+            Logger.capture.info("[Recovery] Recovery resume vetoed on attempt \(attempt, privacy: .public)")
+        case .threw(let failure):
             retryCount += 1
-            Logger.capture.info("[Recovery] Attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            Logger.capture.info("[Recovery] Attempt \(attempt, privacy: .public) failed: \(failure.message, privacy: .public)")
 
-            if isPermissionError(error) {
+            if failure.isPermissionError {
                 Logger.capture.info("[Recovery] Permission error detected, stopping auto-recovery")
                 stopRecoveryTimer()
             } else if retryCount >= maxRetryCount {

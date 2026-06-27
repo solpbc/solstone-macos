@@ -53,6 +53,130 @@ struct CaptureManagerRotationWatchdogTests {
         #expect(newStartCount.count >= 1)
     }
 
+    @Test func rotateSegmentSupersededAfterOldFinishBailsWithoutStartingNewSegment() async throws {
+        let root = try makeTempDirectory("capture-rotation-supersede-before-start")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "444441.incomplete")
+        let current = FakeCaptureSegment(outputDirectory: oldDir, finishBehaviors: [.normal(oldDir)])
+        let finalizer = FakeFinalizer()
+        let recovery = CountingRecovery()
+        let newStartCount = LockedCounter()
+        let firstNow = fixedDate(second: 3)
+
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                newStartCount.increment()
+                return FakeCaptureSegment(outputDirectory: outputDirectory)
+            },
+            recoveryCoordinator: IncompleteSegmentRecoveryCoordinator(recoveryFactory: { recovery }),
+            finalizer: finalizer,
+            now: { firstNow },
+            allowsEmptyDisplayConfigurationForTesting: true
+        )
+        manager.seedRecordingForTesting(currentSegment: current)
+        let pauseResult = makeResult(for: oldDir)
+        manager.onRotationAfterOldSegmentFinishedForTesting = {
+            await manager.simulateSettledPauseForTesting(enqueue: pauseResult)
+        }
+
+        await manager.rotateSegmentForTesting()
+
+        #expect(newStartCount.count == 0)
+        #expect(finalizer.enqueuedDirectories.all == [oldDir])
+        #expect(manager.currentSegmentForTesting == nil)
+        #expect(manager.state.isPaused)
+        #expect(manager.isRotatingSegmentForTesting == false)
+        #expect(manager.hasPendingRotationRetryForTesting == false)
+        #expect(manager.isSystemAudioRunningForTesting == false)
+        await recovery.waitForRecoverAll(1)
+        #expect(try findDirs(root: root, suffix: ".failed").count == 1)
+    }
+
+    @Test func rotateSegmentSupersededAfterNewStartDiscardsStartedSegment() async throws {
+        let root = try makeTempDirectory("capture-rotation-supersede-after-start")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "444442.incomplete")
+        let current = FakeCaptureSegment(outputDirectory: oldDir, finishBehaviors: [.normal(oldDir)])
+        let finalizer = FakeFinalizer()
+        let recovery = CountingRecovery()
+        let newSegment = LockedValue<FakeCaptureSegment>()
+        let firstNow = fixedDate(second: 4)
+
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                let segment = FakeCaptureSegment(outputDirectory: outputDirectory, finishBehaviors: [.normal(outputDirectory)])
+                newSegment.set(segment)
+                return segment
+            },
+            recoveryCoordinator: IncompleteSegmentRecoveryCoordinator(recoveryFactory: { recovery }),
+            finalizer: finalizer,
+            now: { firstNow },
+            allowsEmptyDisplayConfigurationForTesting: true
+        )
+        manager.seedRecordingForTesting(currentSegment: current)
+        let pauseResult = makeResult(for: oldDir)
+        manager.onRotationAfterNewSegmentStartedForTesting = {
+            await manager.simulatePausedStateForTesting(enqueue: pauseResult)
+        }
+
+        await manager.rotateSegmentForTesting()
+
+        let startedSegment = try #require(newSegment.current)
+        #expect(startedSegment.finishCaptureCount.count == 1)
+        #expect(finalizer.enqueuedDirectories.all == [oldDir])
+        #expect(manager.currentSegmentForTesting == nil)
+        #expect(manager.state.isPaused)
+        #expect(manager.isRotatingSegmentForTesting == false)
+        #expect(manager.hasPendingRotationRetryForTesting == false)
+        #expect(manager.isSystemAudioRunningForTesting == false)
+        await recovery.waitForRecoverAll(1)
+        #expect(try findDirs(root: root, suffix: ".failed").count == 1)
+    }
+
+    @Test func rotateSegmentSupersededByPauseTransitionMarkerBeforeStateFlip() async throws {
+        let root = try makeTempDirectory("capture-rotation-supersede-marker")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "444443.incomplete")
+        let current = FakeCaptureSegment(outputDirectory: oldDir, finishBehaviors: [.normal(oldDir)])
+        let finalizer = FakeFinalizer()
+        let recovery = CountingRecovery()
+        let newStartCount = LockedCounter()
+        let firstNow = fixedDate(second: 5)
+
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                newStartCount.increment()
+                return FakeCaptureSegment(outputDirectory: outputDirectory)
+            },
+            recoveryCoordinator: IncompleteSegmentRecoveryCoordinator(recoveryFactory: { recovery }),
+            finalizer: finalizer,
+            now: { firstNow },
+            allowsEmptyDisplayConfigurationForTesting: true
+        )
+        manager.seedRecordingForTesting(currentSegment: current)
+        let pauseResult = makeResult(for: oldDir)
+        manager.onRotationAfterOldSegmentFinishedForTesting = {
+            await manager.simulatePauseTransitionWindowForTesting(enqueue: pauseResult)
+        }
+
+        await manager.rotateSegmentForTesting()
+        manager.setPauseTransitionActiveForTesting(false)
+
+        #expect(newStartCount.count == 0)
+        #expect(finalizer.enqueuedDirectories.all == [oldDir])
+        #expect(manager.currentSegmentForTesting == nil)
+        #expect(manager.state.isRecording)
+        #expect(manager.hasPendingRotationRetryForTesting == false)
+        await recovery.waitForRecoverAll(1)
+        #expect(try findDirs(root: root, suffix: ".failed").count == 1)
+    }
+
     @Test func heartbeatTickSchedulesRecovery() async throws {
         let root = try makeTempDirectory("capture-heartbeat")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -106,7 +230,8 @@ struct CaptureManagerRotationWatchdogTests {
             allowsEmptyDisplayConfigurationForTesting: true
         )
 
-        try await manager.lifecycleResumeCapture(trigger: "test")
+        try await manager.lifecyclePrepareResume(trigger: "test")
+        manager.lifecycleCommitResume(trigger: "test")
 
         await recovery.waitForRecoverAll(1)
         await manager.stopRecording()
@@ -241,5 +366,17 @@ struct CaptureManagerRotationWatchdogTests {
         components.minute = 0
         components.second = second
         return calendar.date(from: components)!
+    }
+
+    private func makeResult(for dir: URL) -> SegmentCaptureResult {
+        SegmentCaptureResult(
+            segmentDirectory: dir,
+            timePrefix: String(dir.lastPathComponent.prefix(6)),
+            captureStartTime: Date().addingTimeInterval(-1),
+            audioInputs: [],
+            debugKeepRejected: false,
+            silenceMusic: true,
+            micMetadataJSON: nil
+        )
     }
 }
