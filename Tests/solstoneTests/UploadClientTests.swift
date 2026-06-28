@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import SolstoneCore
 @testable import solstone
 
 @Suite("UploadClient")
@@ -92,11 +93,12 @@ struct UploadClientTests {
     }
 
     @Test(arguments: [true, false])
-    func buildObserverStatusRequestShape(paused: Bool) throws {
+    func buildObserverStatusRequestLegacyShape(paused: Bool) throws {
         let request = try client.buildObserverStatusRequest(
             serverURL: "http://example.com",
             serverKey: "secret123",
-            paused: paused
+            paused: paused,
+            health: nil
         )
 
         #expect(request.url?.absoluteString == "http://example.com/app/observer/ingest/event")
@@ -113,5 +115,92 @@ struct UploadClientTests {
         #expect(payload["event"] as? String == "status")
         #expect(payload["paused"] as? Bool == paused)
         #expect(payload["source"] as? String == "heartbeat")
+    }
+
+    @Test func buildObserverStatusRequestIncludesHealthSnapshot() throws {
+        let lastSync = Date(timeIntervalSince1970: 1_700_000_000)
+        let health = ObserverHealthSnapshot(
+            name: "desktop-one",
+            streamType: "desktop",
+            version: "1.2.3",
+            uptimeSeconds: 42,
+            lastSuccessfulSync: lastSync,
+            pendingQueueDepth: 7,
+            recentErrorCount: 3,
+            lastErrorReason: "http_503"
+        )
+
+        let request = try client.buildObserverStatusRequest(
+            serverURL: "http://example.com",
+            serverKey: "secret123",
+            paused: false,
+            health: health
+        )
+
+        let body = try #require(request.httpBody)
+        let payload = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(Set(payload.keys) == [
+            "tract",
+            "event",
+            "paused",
+            "source",
+            "name",
+            "stream_type",
+            "version",
+            "uptime",
+            "last_successful_sync",
+            "pending_queue_depth",
+            "recent_error_count",
+            "last_error_reason"
+        ])
+        #expect(payload["tract"] as? String == "observe")
+        #expect(payload["event"] as? String == "status")
+        #expect(payload["paused"] as? Bool == false)
+        #expect(payload["source"] as? String == "heartbeat")
+        #expect(payload["name"] as? String == "desktop-one")
+        #expect(payload["stream_type"] as? String == "desktop")
+        #expect(payload["version"] as? String == "1.2.3")
+        #expect(payload["uptime"] as? Int == 42)
+        #expect(payload["last_successful_sync"] as? String == ISO8601DateFormatter().string(from: lastSync))
+        #expect(payload["pending_queue_depth"] as? Int == 7)
+        #expect(payload["recent_error_count"] as? Int == 3)
+        #expect(payload["last_error_reason"] as? String == "http_503")
+    }
+
+    @Test func buildObserverStatusRequestOmitsNilHealthFields() throws {
+        let health = ObserverHealthSnapshot(
+            name: nil,
+            streamType: "desktop",
+            version: "1.2.3",
+            uptimeSeconds: 42,
+            lastSuccessfulSync: nil,
+            pendingQueueDepth: 0,
+            recentErrorCount: 0,
+            lastErrorReason: nil
+        )
+
+        let request = try client.buildObserverStatusRequest(
+            serverURL: "http://example.com",
+            serverKey: "secret123",
+            paused: true,
+            health: health
+        )
+
+        let body = try #require(request.httpBody)
+        let payload = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(Set(payload.keys) == [
+            "tract",
+            "event",
+            "paused",
+            "source",
+            "stream_type",
+            "version",
+            "uptime",
+            "pending_queue_depth",
+            "recent_error_count"
+        ])
+        #expect(payload["name"] == nil)
+        #expect(payload["last_successful_sync"] == nil)
+        #expect(payload["last_error_reason"] == nil)
     }
 }

@@ -15,9 +15,10 @@ public actor SyncService {
         case uploadStarted(segment: String)
         case uploadRetrying(segment: String, attempt: Int)
         case uploadSucceeded(segment: String)
-        case uploadFailed(segment: String, error: String)
+        case uploadFailed(segment: String, error: String, healthReason: ObserverHealthFailureReason)
+        case journalContactSucceeded
         case syncComplete
-        case offline(error: String)
+        case offline(error: String, healthReason: ObserverHealthFailureReason)
     }
 
     // MARK: - Dependencies
@@ -173,8 +174,12 @@ public actor SyncService {
                     day: day
                 )
             } catch {
-                Logger.upload.info("Network error querying server: \(error.localizedDescription, privacy: .public)")
-                progressContinuation.yield(.offline(error: error.localizedDescription))
+                let healthReason = observerHealthFailureReason(from: error)
+                Logger.upload.info("Network error querying server: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
+                progressContinuation.yield(.offline(
+                    error: error.localizedDescription,
+                    healthReason: healthReason
+                ))
                 return
             }
             guard let serverSegments else {
@@ -182,6 +187,7 @@ public actor SyncService {
                 checked += localSegments.count
                 continue
             }
+            progressContinuation.yield(.journalContactSucceeded)
 
             Logger.upload.info("Day \(day, privacy: .public): \(localSegments.count, privacy: .public) local, \(serverSegments.count, privacy: .public) on server")
 
@@ -300,7 +306,11 @@ public actor SyncService {
             let mediaFiles = selectFilesForUpload(segmentDirectory: segmentURL)
             guard !mediaFiles.isEmpty else {
                 Logger.upload.info("No files to upload for segment \(segment, privacy: .public)")
-                progressContinuation.yield(.uploadFailed(segment: segment, error: "No files"))
+                progressContinuation.yield(.uploadFailed(
+                    segment: segment,
+                    error: "No files",
+                    healthReason: .uploadNoFiles
+                ))
                 return
             }
 
@@ -319,10 +329,15 @@ public actor SyncService {
                 progressContinuation.yield(.uploadSucceeded(segment: segment))
                 return
             case .failure(let error):
-                Logger.upload.info("Attempt \(attempts, privacy: .public) failed: \(error, privacy: .public)")
+                let healthReason = observerHealthFailureReason(from: error)
+                Logger.upload.info("Attempt \(attempts, privacy: .public) failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
 
                 if attempts >= maxRetries {
-                    progressContinuation.yield(.uploadFailed(segment: segment, error: error.localizedDescription))
+                    progressContinuation.yield(.uploadFailed(
+                        segment: segment,
+                        error: error.localizedDescription,
+                        healthReason: healthReason
+                    ))
                     return
                 }
 
@@ -340,11 +355,19 @@ public actor SyncService {
                 // Check if still configured
                 if syncPaused || serverURL != self.serverURL {
                     Logger.upload.info("Config changed during retry, aborting")
-                    progressContinuation.yield(.uploadFailed(segment: segment, error: "Config changed"))
+                    progressContinuation.yield(.uploadFailed(
+                        segment: segment,
+                        error: "Config changed",
+                        healthReason: .configChanged
+                    ))
                     return
                 }
             case .notConfigured:
-                progressContinuation.yield(.uploadFailed(segment: segment, error: "Not configured"))
+                progressContinuation.yield(.uploadFailed(
+                    segment: segment,
+                    error: "Not configured",
+                    healthReason: .notConfigured
+                ))
                 return
             }
         }

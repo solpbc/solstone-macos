@@ -4,6 +4,7 @@
 import Foundation
 import CryptoKit
 import os
+import SolstoneCore
 
 /// File info returned by the server for a segment
 public struct ServerFileInfo: Sendable {
@@ -271,7 +272,8 @@ public struct UploadClient: Sendable {
     func buildObserverStatusRequest(
         serverURL: String,
         serverKey: String,
-        paused: Bool
+        paused: Bool,
+        health: ObserverHealthSnapshot?
     ) throws -> URLRequest {
         let urlString = "\(serverURL)/app/observer/ingest/event"
         guard let url = URL(string: urlString) else {
@@ -284,26 +286,52 @@ public struct UploadClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 5
-        request.httpBody = try JSONSerialization.data(
-            withJSONObject: [
+        if let health {
+            var payload: [String: Any] = [
                 "tract": "observe",
                 "event": "status",
                 "paused": paused,
                 "source": "heartbeat",
+                "stream_type": health.streamType,
+                "version": health.version,
+                "uptime": health.uptimeSeconds,
+                "pending_queue_depth": health.pendingQueueDepth,
+                "recent_error_count": health.recentErrorCount,
             ]
-        )
+            if let name = health.name {
+                payload["name"] = name
+            }
+            if let lastSuccessfulSync = health.lastSuccessfulSync {
+                payload["last_successful_sync"] = ISO8601DateFormatter().string(from: lastSuccessfulSync)
+            }
+            if let lastErrorReason = health.lastErrorReason {
+                payload["last_error_reason"] = lastErrorReason
+            }
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        } else {
+            request.httpBody = try JSONSerialization.data(
+                withJSONObject: [
+                    "tract": "observe",
+                    "event": "status",
+                    "paused": paused,
+                    "source": "heartbeat",
+                ]
+            )
+        }
         return request
     }
 
     public func postObserverStatus(
         serverURL: String,
         serverKey: String,
-        paused: Bool
+        paused: Bool,
+        health: ObserverHealthSnapshot?
     ) async throws {
         let request = try buildObserverStatusRequest(
             serverURL: serverURL,
             serverKey: serverKey,
-            paused: paused
+            paused: paused,
+            health: health
         )
 
         let (data, response) = try await session.data(for: request)

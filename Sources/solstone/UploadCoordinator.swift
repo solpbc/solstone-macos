@@ -5,6 +5,61 @@ import Foundation
 import os
 import SolstoneCore
 
+public enum ObserverHealthFailureReason: Sendable, Equatable {
+    case urlErrorCode(Int)
+    case httpStatus(Int)
+    case uploadInvalidURL
+    case uploadNoFiles
+    case uploadInvalidResponse
+    case configChanged
+    case notConfigured
+    case uploadFailed
+}
+
+internal func observerHealthFailureReason(from error: Error) -> ObserverHealthFailureReason {
+    if let urlError = error as? URLError {
+        return .urlErrorCode(urlError.code.rawValue)
+    }
+
+    if let uploadError = error as? UploadError {
+        switch uploadError {
+        case .invalidURL:
+            return .uploadInvalidURL
+        case .noFiles:
+            return .uploadNoFiles
+        case .invalidResponse:
+            return .uploadInvalidResponse
+        case .serverError(let statusCode, _):
+            return .httpStatus(statusCode)
+        }
+    }
+
+    return .uploadFailed
+}
+
+internal func sanitizedObserverHealthErrorReason(_ reason: ObserverHealthFailureReason) -> String {
+    let token: String
+    switch reason {
+    case .urlErrorCode(let code):
+        token = "url_error_\(code)"
+    case .httpStatus(let statusCode):
+        token = "http_\(statusCode)"
+    case .uploadInvalidURL:
+        token = "upload_invalid_url"
+    case .uploadNoFiles:
+        token = "upload_no_files"
+    case .uploadInvalidResponse:
+        token = "upload_invalid_response"
+    case .configChanged:
+        token = "config_changed"
+    case .notConfigured:
+        token = "not_configured"
+    case .uploadFailed:
+        token = "upload_failed"
+    }
+    return String(token.prefix(200))
+}
+
 /// UI-facing coordinator for upload/sync status
 /// Thin @MainActor layer that observes SyncService events and exposes state for SwiftUI
 @MainActor
@@ -26,6 +81,8 @@ public final class UploadCoordinator {
     public internal(set) var pendingCount: Int = 0
     public internal(set) var lastError: String?
     public internal(set) var lastSyncedAt: Date?
+    public internal(set) var recentErrorCount: Int = 0
+    public internal(set) var lastErrorReason: String?
     private var bundledLastIngestAt: Date?
 
     internal var nowProvider: @MainActor () -> Date = { Date() }
@@ -192,22 +249,38 @@ public final class UploadCoordinator {
                 bundledLastIngestAt = nowProvider()
             }
 
-        case .uploadFailed(let segment, let error):
-            Logger.upload.info("Upload failed for \(segment, privacy: .public): \(error, privacy: .public)")
+        case .uploadFailed(_, let error, let healthReason):
+            let sanitizedReason = sanitizedObserverHealthErrorReason(healthReason)
+            Logger.upload.info("Upload failed: \(sanitizedReason, privacy: .public)")
             lastError = error
+            incrementRecentErrorCount()
+            lastErrorReason = sanitizedReason
             // Continue with next segment
+
+        case .journalContactSucceeded:
+            lastSyncedAt = nowProvider()
+            recentErrorCount = 0
+            lastErrorReason = nil
+            lastError = nil
 
         case .syncComplete:
             status = .synced
             pendingCount = 0
-            lastSyncedAt = Date()
+            recentErrorCount = 0
             lastError = nil
+            lastErrorReason = nil
 
-        case .offline(let error):
+        case .offline(let error, let healthReason):
             lastError = error
+            incrementRecentErrorCount()
+            lastErrorReason = sanitizedObserverHealthErrorReason(healthReason)
             status = .offline(error)
             scheduleRetry()
         }
+    }
+
+    private func incrementRecentErrorCount() {
+        recentErrorCount = min(recentErrorCount + 1, 99)
     }
 
     private func scheduleRetry() {

@@ -62,7 +62,8 @@ public struct AppConfig: Sendable {
         "excludePrivateBrowsing", "serverURL", "serverKey",
         "cacheRetentionDays", "syncPaused", "debugSegments",
         "debugKeepRejectedAudio", "microphoneGain", "silenceMusic",
-        "solInitiatedChatNotificationsEnabled", "serviceMode", "journalPath"
+        "solInitiatedChatNotificationsEnabled", "serviceMode", "journalPath",
+        "observerName"
     ]
 
     public static func isKnownKey(_ key: String) -> Bool {
@@ -85,6 +86,7 @@ public struct AppConfig: Sendable {
         static let solInitiatedChatNotificationsEnabled = "solInitiatedChatNotificationsEnabled"
         static let serviceMode = "serviceMode"
         static let journalPath = "journalPath"
+        static let observerName = "observerName"
         static let didMigrateFromJSON = "didMigrateFromJSON"
         static let didReseedNotificationPreference = "didReseedNotificationPreference"
         static let didReseedOptInMicrophones = "didReseedOptInMicrophones"
@@ -144,6 +146,9 @@ public struct AppConfig: Sendable {
     /// Local journal data directory for bundled mode.
     public var journalPath: String?
 
+    /// Journal-assigned observer name returned during registration.
+    public var observerName: String?
+
     /// Default exclusions written on first run
     public static let defaultExclusions: [AppEntry] = [
         AppEntry(bundleID: "com.1password.1password", name: "1Password"),
@@ -166,7 +171,8 @@ public struct AppConfig: Sendable {
         silenceMusic: Bool = true,
         solInitiatedChatNotificationsEnabled: Bool = Defaults.solInitiatedChatNotificationsEnabled,
         serviceMode: ServiceMode? = nil,
-        journalPath: String? = nil
+        journalPath: String? = nil,
+        observerName: String? = nil
     ) {
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
@@ -183,6 +189,7 @@ public struct AppConfig: Sendable {
         self.solInitiatedChatNotificationsEnabled = solInitiatedChatNotificationsEnabled
         self.serviceMode = serviceMode
         self.journalPath = journalPath
+        self.observerName = observerName
     }
 
     // MARK: - Load/Save
@@ -240,7 +247,8 @@ public struct AppConfig: Sendable {
             solInitiatedChatNotificationsEnabled: defaults.object(forKey: Keys.solInitiatedChatNotificationsEnabled) as? Bool
                 ?? Defaults.solInitiatedChatNotificationsEnabled,
             serviceMode: serviceMode,
-            journalPath: defaults.string(forKey: Keys.journalPath)
+            journalPath: defaults.string(forKey: Keys.journalPath),
+            observerName: defaults.string(forKey: Keys.observerName)
         )
         return config
     }
@@ -304,6 +312,11 @@ public struct AppConfig: Sendable {
             defaults.set(journalPath, forKey: Keys.journalPath)
         } else {
             defaults.removeObject(forKey: Keys.journalPath)
+        }
+        if let observerName {
+            defaults.set(observerName, forKey: Keys.observerName)
+        } else {
+            defaults.removeObject(forKey: Keys.observerName)
         }
         defaults.set(cacheRetentionDays, forKey: Keys.cacheRetentionDays)
         defaults.set(syncPaused, forKey: Keys.syncPaused)

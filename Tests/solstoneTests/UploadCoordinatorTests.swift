@@ -46,21 +46,42 @@ struct UploadCoordinatorTests {
         #expect(coordinator.bundledJournalLastIngestAt == nil)
     }
 
-    @Test func externalSyncCompleteStillUpdatesLastSyncedAt() throws {
+    @Test func syncCompleteDoesNotUpdateLastSyncedAt() throws {
         let fixed = Date(timeIntervalSince1970: 1_700_000_000)
         let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: false)
 
         coordinator.handleProgressEvent(.syncComplete)
 
         #expect(coordinator.bundledJournalLastIngestAt == nil)
-        #expect(coordinator.lastSyncedAt != nil)
+        #expect(coordinator.lastSyncedAt == nil)
+    }
+
+    @Test func journalContactSucceededUpdatesLastSyncedAtAndResetsHealthErrors() throws {
+        let fixed = Date(timeIntervalSince1970: 1_700_000_000)
+        let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: false)
+
+        coordinator.handleProgressEvent(.uploadFailed(
+            segment: "x",
+            error: "raw failure",
+            healthReason: .uploadFailed
+        ))
+        coordinator.handleProgressEvent(.journalContactSucceeded)
+
+        #expect(coordinator.lastSyncedAt == fixed)
+        #expect(coordinator.recentErrorCount == 0)
+        #expect(coordinator.lastError == nil)
+        #expect(coordinator.lastErrorReason == nil)
     }
 
     @Test func uploadFailedDoesNotSetBundledLastIngestAt() throws {
         let fixed = Date(timeIntervalSince1970: 1_700_000_000)
         let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: true)
 
-        coordinator.handleProgressEvent(.uploadFailed(segment: "x", error: "offline"))
+        coordinator.handleProgressEvent(.uploadFailed(
+            segment: "x",
+            error: "offline",
+            healthReason: .uploadFailed
+        ))
 
         #expect(coordinator.bundledJournalLastIngestAt == nil)
     }
@@ -70,7 +91,11 @@ struct UploadCoordinatorTests {
         let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: true)
 
         coordinator.handleProgressEvent(.uploadSucceeded(segment: "x"))
-        coordinator.handleProgressEvent(.uploadFailed(segment: "x", error: "offline"))
+        coordinator.handleProgressEvent(.uploadFailed(
+            segment: "x",
+            error: "offline",
+            healthReason: .uploadFailed
+        ))
 
         #expect(coordinator.bundledJournalLastIngestAt == fixed)
     }
@@ -99,6 +124,120 @@ struct UploadCoordinatorTests {
         coordinator.handleProgressEvent(.uploadSucceeded(segment: "y"))
 
         #expect(coordinator.bundledJournalLastIngestAt == second)
+    }
+
+    @Test func recentErrorCountIncrementsClampsAndResetsOnJournalContact() throws {
+        let fixed = Date(timeIntervalSince1970: 1_700_000_000)
+        let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: false)
+
+        coordinator.handleProgressEvent(.uploadFailed(
+            segment: "x",
+            error: "upload failed",
+            healthReason: .uploadFailed
+        ))
+        coordinator.handleProgressEvent(.offline(
+            error: "offline",
+            healthReason: .urlErrorCode(URLError.notConnectedToInternet.rawValue)
+        ))
+
+        #expect(coordinator.recentErrorCount == 2)
+        #expect(coordinator.lastErrorReason == "url_error_-1009")
+
+        for _ in 0..<120 {
+            coordinator.handleProgressEvent(.uploadFailed(
+                segment: "x",
+                error: "upload failed",
+                healthReason: .uploadFailed
+            ))
+        }
+
+        #expect(coordinator.recentErrorCount == 99)
+
+        coordinator.handleProgressEvent(.journalContactSucceeded)
+        #expect(coordinator.recentErrorCount == 0)
+        #expect(coordinator.lastErrorReason == nil)
+    }
+
+    @Test func lastErrorReasonUsesTypedSanitizedTokens() throws {
+        let coordinator = try makeCoordinator(
+            now: Date(timeIntervalSince1970: 1_700_000_000),
+            isBundledAvailable: false
+        )
+
+        coordinator.handleProgressEvent(.offline(
+            error: "timed out",
+            healthReason: observerHealthFailureReason(from: URLError(.timedOut))
+        ))
+        #expect(coordinator.lastErrorReason == "url_error_-1001")
+
+        coordinator.handleProgressEvent(.uploadFailed(
+            segment: "x",
+            error: "server failed",
+            healthReason: observerHealthFailureReason(from: UploadError.serverError(statusCode: 503, message: "body"))
+        ))
+        #expect(coordinator.lastErrorReason == "http_503")
+
+        coordinator.handleProgressEvent(.uploadFailed(
+            segment: "143022_300",
+            error: "/tmp/private/143022_300/file.mp4?token=secret",
+            healthReason: .uploadFailed
+        ))
+        #expect(coordinator.lastError == "/tmp/private/143022_300/file.mp4?token=secret")
+        #expect(coordinator.lastErrorReason == "upload_failed")
+        #expect(coordinator.lastErrorReason?.contains("143022_300") == false)
+        #expect(coordinator.lastErrorReason?.contains("/tmp/private") == false)
+        #expect(coordinator.lastErrorReason?.contains("token") == false)
+        #expect(coordinator.lastErrorReason?.contains("secret") == false)
+    }
+
+    @Test func observerHealthPayloadDoesNotLeakRawFailureDetails() throws {
+        let coordinator = try makeCoordinator(
+            now: Date(timeIntervalSince1970: 1_700_000_000),
+            isBundledAvailable: false
+        )
+        coordinator.handleProgressEvent(.uploadFailed(
+            segment: "143022_300",
+            error: "/tmp/private/143022_300/file.mp4?token=secret",
+            healthReason: .uploadFailed
+        ))
+
+        let health = ObserverHealthSnapshot(
+            name: nil,
+            streamType: "desktop",
+            version: "1.2.3",
+            uptimeSeconds: 5,
+            lastSuccessfulSync: coordinator.lastSyncedAt,
+            pendingQueueDepth: coordinator.pendingCount,
+            recentErrorCount: coordinator.recentErrorCount,
+            lastErrorReason: coordinator.lastErrorReason
+        )
+        let request = try UploadClient().buildObserverStatusRequest(
+            serverURL: "http://example.com",
+            serverKey: "secret",
+            paused: false,
+            health: health
+        )
+        let body = try #require(request.httpBody)
+        let payload = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let serialized = String(data: body, encoding: .utf8) ?? ""
+
+        #expect(Set(payload.keys) == [
+            "tract",
+            "event",
+            "paused",
+            "source",
+            "stream_type",
+            "version",
+            "uptime",
+            "pending_queue_depth",
+            "recent_error_count",
+            "last_error_reason"
+        ])
+        #expect(payload["last_error_reason"] as? String == "upload_failed")
+        #expect(!serialized.contains("143022_300"))
+        #expect(!serialized.contains("/tmp/private"))
+        #expect(!serialized.contains("token"))
+        #expect(!serialized.contains("secret"))
     }
 
     private func makeCoordinator(now: Date, isBundledAvailable: Bool) throws -> UploadCoordinator {

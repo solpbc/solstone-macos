@@ -25,6 +25,19 @@ struct AppConfigMigrationTests {
         #expect(AppConfig.load().serviceMode == .external)
     }
 
+    @Test func observerNameRoundTripsThroughDefaultsAndLoadsNilWhenMissing() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+
+        var config = AppConfig(observerName: "observer-name")
+        try config.save()
+        #expect(AppConfig.load().observerName == "observer-name")
+
+        config.observerName = nil
+        try config.save()
+        #expect(AppConfig.load().observerName == nil)
+    }
+
     @Test func loadLeavesServiceModeNilForExactBundledURL() throws {
         clearServiceDefaults()
         defer { clearServiceDefaults() }

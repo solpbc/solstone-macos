@@ -3,18 +3,22 @@
 
 import Foundation
 import os
+import SolstoneCore
 
 public actor HeartbeatService {
     /// Scope name: HEARTBEAT_INTERVAL_SECONDS.
     public static let heartbeatIntervalSeconds: TimeInterval = 15
 
     public typealias PostHeartbeat =
-        @Sendable (_ serverURL: String, _ serverKey: String, _ paused: Bool) async throws -> Void
+        @Sendable (_ serverURL: String, _ serverKey: String, _ paused: Bool, _ health: ObserverHealthSnapshot?) async throws -> Void
     public typealias IsPausedProvider = @MainActor @Sendable () -> Bool
+    public typealias HealthProvider = @MainActor @Sendable () -> ObserverHealthSnapshot?
 
     private let intervalSeconds: TimeInterval
     private let isPaused: IsPausedProvider
+    private let healthProvider: HealthProvider
     private let postHeartbeat: PostHeartbeat
+    private let clock: any MonotonicClock
 
     private var task: Task<Void, Never>?
     private var currentURL: String?
@@ -24,11 +28,30 @@ public actor HeartbeatService {
     public init(
         intervalSeconds: TimeInterval = HeartbeatService.heartbeatIntervalSeconds,
         isPaused: @escaping IsPausedProvider,
+        healthProvider: @escaping HealthProvider,
         postHeartbeat: @escaping PostHeartbeat
+    ) {
+        self.init(
+            intervalSeconds: intervalSeconds,
+            isPaused: isPaused,
+            healthProvider: healthProvider,
+            postHeartbeat: postHeartbeat,
+            clock: SystemMonotonicClock()
+        )
+    }
+
+    internal init(
+        intervalSeconds: TimeInterval = HeartbeatService.heartbeatIntervalSeconds,
+        isPaused: @escaping IsPausedProvider,
+        healthProvider: @escaping HealthProvider,
+        postHeartbeat: @escaping PostHeartbeat,
+        clock: any MonotonicClock
     ) {
         self.intervalSeconds = intervalSeconds
         self.isPaused = isPaused
+        self.healthProvider = healthProvider
         self.postHeartbeat = postHeartbeat
+        self.clock = clock
     }
 
     public func configure(serverURL: String, serverKey: String) {
@@ -47,6 +70,7 @@ public actor HeartbeatService {
         lastAuthStatus = nil
         currentURL = serverURL
         currentKey = serverKey
+        let startedAt = clock.now()
 
         if hadExistingTask {
             Logger.upload.info("Heartbeat reconfigured")
@@ -54,19 +78,23 @@ public actor HeartbeatService {
             Logger.upload.info("Heartbeat started")
         }
 
-        task = Task { [intervalSeconds, isPaused, postHeartbeat] in
+        task = Task { [intervalSeconds, isPaused, healthProvider, postHeartbeat, clock] in
             while !Task.isCancelled {
                 let paused = await isPaused()
+                var health = await healthProvider()
+                if health != nil {
+                    health?.uptimeSeconds = Self.uptimeSeconds(clock: clock, startedAt: startedAt)
+                }
                 Logger.upload.debug("heartbeat tick paused=\(paused, privacy: .public)")
 
                 do {
-                    try await postHeartbeat(serverURL, serverKey, paused)
+                    try await postHeartbeat(serverURL, serverKey, paused, health)
                     clearAuthFailureState()
                 } catch {
                     handleHeartbeatError(error)
                 }
 
-                try? await Task.sleep(for: .seconds(intervalSeconds))
+                await clock.sleep(for: .seconds(intervalSeconds))
             }
         }
     }
@@ -128,5 +156,10 @@ public actor HeartbeatService {
         default:
             return nil
         }
+    }
+
+    private nonisolated static func uptimeSeconds(clock: any MonotonicClock, startedAt: Duration) -> Int {
+        let elapsed = clock.now() - startedAt
+        return max(0, Int(elapsed.components.seconds))
     }
 }

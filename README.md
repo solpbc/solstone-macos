@@ -9,11 +9,14 @@ solstone observer is a macOS status bar app — one of your observers, experienc
 - 5-minute segment rotation at clock boundaries
 - Pause with timed auto-resume
 - Journal sync with automatic upload and retry
+- Diagnostics-only observer health beacon on the existing journal heartbeat
 - Window exclusion for password managers and private browsers
 - Dynamic microphone join/leave mid-segment
 - Auto-start at login
 - Auto-recovery from segment errors with escalating retry
 - Incomplete segment recovery on startup
+
+The health beacon carries operational sync state only. It intentionally excludes screen/audio content and local segment file paths; journal-side ingest rejections are a separate health source from the journal.
 
 ## Requirements
 

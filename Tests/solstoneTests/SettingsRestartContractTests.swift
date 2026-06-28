@@ -32,6 +32,7 @@ struct SettingsRestartContractTests {
             "debugSegments",
             "debugKeepRejectedAudio",
             "loginItemEnabled",
+            "observerName",
         ]
         for key in keys {
             #expect(SettingsReloadSemantics.semantic[key] == .live)

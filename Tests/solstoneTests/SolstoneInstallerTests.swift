@@ -966,6 +966,7 @@ struct SolstoneInstallerTests {
 
         #expect(appState.config.serverURL == ServiceMode.bundledServiceURL)
         #expect(appState.config.serverKey == "observer-key")
+        #expect(appState.config.observerName == "observer-name")
         #expect(appState.config.serviceMode == .bundled)
         #expect(registrar.invocationCount == 1)
         let descriptor = try #require(registrar.lastDescriptor)
@@ -983,7 +984,7 @@ struct SolstoneInstallerTests {
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue("install-models", .success())
         runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
-        let registrar = FakeObserverRegistrar(result: .success("new-key"))
+        let registrar = FakeObserverRegistrar(result: .success(ObserverRegistration(key: "new-key", name: "new-name")))
         let installer = makeInstaller(runner: runner, observerRegistrar: registrar.register)
         installer.attach(appState: appState)
         defer { installer.cancel() }
@@ -1028,7 +1029,7 @@ struct SolstoneInstallerTests {
         let registrar = FakeObserverRegistrar(results: [
             .failure(transientObserverRegistrationFailure("transient one")),
             .failure(transientObserverRegistrationFailure("transient two")),
-            .success("observer-key")
+            .success(ObserverRegistration(key: "observer-key", name: "observer-name"))
         ])
         let sleeps = RecordingRetrySleeps()
         let installer = makeInstaller(
@@ -1748,7 +1749,7 @@ struct SolstoneInstallerTests {
         runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
         runner.enqueue("install-models", .success())
         let registrar = FakeObserverRegistrar(result: observerSucceeds
-            ? .success("observer-key")
+            ? .success(ObserverRegistration(key: "observer-key", name: "observer-name"))
             : .failure(ObserverRegistrationFailure(
                 category: .unknown,
                 message: "observer failed",
@@ -1841,7 +1842,7 @@ struct SolstoneInstallerTests {
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
         solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
-        observerRegistrar: @escaping ObserverRegistrar = { _ in .success("observer-key") },
+        observerRegistrar: @escaping ObserverRegistrar = { _ in .success(ObserverRegistration(key: "observer-key", name: "observer-name")) },
         fileExists: @escaping @Sendable (String) -> Bool = defaultTestFileExists,
         clock: any MonotonicClock = SystemMonotonicClock(),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in }
@@ -1875,7 +1876,7 @@ struct SolstoneInstallerTests {
         solBinaryFinder: @escaping @Sendable () async -> String? = { "/usr/bin/sol" },
         solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
-        observerRegistrar: @escaping ObserverRegistrar = { _ in .success("observer-key") },
+        observerRegistrar: @escaping ObserverRegistrar = { _ in .success(ObserverRegistration(key: "observer-key", name: "observer-name")) },
         fileExists: @escaping @Sendable (String) -> Bool = defaultTestFileExists,
         pidExists: @escaping @Sendable (pid_t) -> Bool,
         terminate: @escaping @Sendable (pid_t, Int32) -> Int32 = { _, _ in 0 },
@@ -2209,7 +2210,7 @@ private final class CountingRetryableObserverRegistrar: @unchecked Sendable {
         lock.withLock { count }
     }
 
-    func register(_ descriptor: ObserverRegistrationDescriptor) async -> Result<String, ObserverRegistrationFailure> {
+    func register(_ descriptor: ObserverRegistrationDescriptor) async -> Result<ObserverRegistration, ObserverRegistrationFailure> {
         let attempt = lock.withLock {
             count += 1
             return count

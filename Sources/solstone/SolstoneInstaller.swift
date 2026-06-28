@@ -714,7 +714,7 @@ public final class SolstoneInstaller {
         return true
     }
 
-    private nonisolated static func defaultObserverRegister(descriptor: ObserverRegistrationDescriptor) async -> Result<String, ObserverRegistrationFailure> {
+    private nonisolated static func defaultObserverRegister(descriptor: ObserverRegistrationDescriptor) async -> Result<ObserverRegistration, ObserverRegistrationFailure> {
         let endpoint = ServiceMode.bundledServiceURL + "/app/observer/register"
         guard let url = URL(string: endpoint) else {
             return .failure(ObserverRegistrationFailure(
@@ -797,7 +797,12 @@ public final class SolstoneInstaller {
                 logExcerpt: "observer registration response key was empty"
             ))
         }
-        return .success(key)
+        let name = decoded.name?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return .success(ObserverRegistration(
+            key: key,
+            name: name?.isEmpty == false ? name : nil
+        ))
     }
 
     private nonisolated static func isRetryableObserverRegistrationError(_ error: Error) -> Bool {
@@ -870,8 +875,8 @@ public final class SolstoneInstaller {
             }
 
             switch await observerRegistrar(descriptor) {
-            case .success(let key):
-                persistObserverKey(key)
+            case .success(let registration):
+                persistObserverRegistration(registration)
                 return true
             case .failure(let failure):
                 guard failure.retryableConnection else {
@@ -1041,11 +1046,12 @@ public final class SolstoneInstaller {
         )
     }
 
-    private func persistObserverKey(_ key: String) {
+    private func persistObserverRegistration(_ registration: ObserverRegistration) {
         guard let appState else { return }
         var config = appState.config
         config.serverURL = ServiceMode.bundledServiceURL
-        config.serverKey = key
+        config.serverKey = registration.key
+        config.observerName = registration.name
         config.serviceMode = .bundled
         appState.updateConfig(config)
     }
@@ -1481,9 +1487,15 @@ struct ObserverRegistrationFailure: Error, Sendable, Equatable {
 
 private struct ObserverRegistrationResponse: Decodable {
     let key: String
+    let name: String?
 }
 
-typealias ObserverRegistrar = @Sendable (ObserverRegistrationDescriptor) async -> Result<String, ObserverRegistrationFailure>
+struct ObserverRegistration: Sendable, Equatable {
+    let key: String
+    let name: String?
+}
+
+typealias ObserverRegistrar = @Sendable (ObserverRegistrationDescriptor) async -> Result<ObserverRegistration, ObserverRegistrationFailure>
 
 private func truncate(_ value: String, limit: Int) -> String {
     guard value.count > limit else { return value }

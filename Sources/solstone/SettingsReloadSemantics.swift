@@ -25,6 +25,7 @@ public enum SettingsReloadSemantics {
         "syncPaused": .live,
         "debugSegments": .live,
         "debugKeepRejectedAudio": .live,
+        "observerName": .live,
         "loginItemEnabled": .live,
         // app-restart: macOS TCC grants require the host process to relaunch
         "screenRecordingGranted": .appRestart,

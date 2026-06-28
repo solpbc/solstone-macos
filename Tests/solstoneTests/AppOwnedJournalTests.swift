@@ -573,7 +573,7 @@ struct AppOwnedJournalTests {
             // build Mac was silently rewriting the user's wrappers (found 2026-06-10).
             wrapperDirURL: workspace.appendingPathComponent("wrappers", isDirectory: true),
             solBinaryFinder: { nil },
-            observerRegistrar: { _ in .success("observer-key") }
+            observerRegistrar: { _ in .success(ObserverRegistration(key: "observer-key", name: "observer-name")) }
         )
         defer { installer.cancel() }
 

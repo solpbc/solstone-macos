@@ -3,13 +3,13 @@ import Foundation
 
 final class FakeObserverRegistrar: @unchecked Sendable {
     private let lock = NSLock()
-    private var results: [Result<String, ObserverRegistrationFailure>]
-    private let fallbackResult: Result<String, ObserverRegistrationFailure>
+    private var results: [Result<ObserverRegistration, ObserverRegistrationFailure>]
+    private let fallbackResult: Result<ObserverRegistration, ObserverRegistrationFailure>
     private let delay: Duration
     private var descriptors: [ObserverRegistrationDescriptor] = []
 
     init(
-        result: Result<String, ObserverRegistrationFailure> = .success("observer-key"),
+        result: Result<ObserverRegistration, ObserverRegistrationFailure> = .success(ObserverRegistration(key: "observer-key", name: "observer-name")),
         delay: Duration = .zero
     ) {
         self.results = [result]
@@ -18,11 +18,11 @@ final class FakeObserverRegistrar: @unchecked Sendable {
     }
 
     init(
-        results: [Result<String, ObserverRegistrationFailure>],
+        results: [Result<ObserverRegistration, ObserverRegistrationFailure>],
         delay: Duration = .zero
     ) {
         self.results = results
-        self.fallbackResult = results.last ?? .success("observer-key")
+        self.fallbackResult = results.last ?? .success(ObserverRegistration(key: "observer-key", name: "observer-name"))
         self.delay = delay
     }
 
@@ -38,7 +38,7 @@ final class FakeObserverRegistrar: @unchecked Sendable {
         return descriptors.last
     }
 
-    func register(_ descriptor: ObserverRegistrationDescriptor) async -> Result<String, ObserverRegistrationFailure> {
+    func register(_ descriptor: ObserverRegistrationDescriptor) async -> Result<ObserverRegistration, ObserverRegistrationFailure> {
         record(descriptor)
         if delay != .zero {
             try? await Task.sleep(for: delay)
@@ -52,7 +52,7 @@ final class FakeObserverRegistrar: @unchecked Sendable {
         descriptors.append(descriptor)
     }
 
-    private func nextResult() -> Result<String, ObserverRegistrationFailure> {
+    private func nextResult() -> Result<ObserverRegistration, ObserverRegistrationFailure> {
         lock.lock()
         defer { lock.unlock() }
         guard !results.isEmpty else {

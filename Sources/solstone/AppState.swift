@@ -66,6 +66,7 @@ public final class AppState {
     private let notifier: any SolChatNotifying
     private let loginService: any LoginItemService
     private let isSnapshot: Bool
+    private let observerHealthSnapshotEnabled: Bool
     public private(set) var config: AppConfig
     private var debugAudioHolder: DebugSettingHolder!
     private var silenceMusicHolder: DebugSettingHolder!
@@ -503,6 +504,24 @@ public final class AppState {
         updateConfig(reloaded)
     }
 
+    internal func observerHealthSnapshot() -> ObserverHealthSnapshot? {
+        guard observerHealthSnapshotEnabled else { return nil }
+        guard config.isUploadConfigured else { return nil }
+
+        let trimmedName = config.observerName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = trimmedName?.isEmpty == false ? trimmedName : nil
+        return ObserverHealthSnapshot(
+            name: name,
+            streamType: "desktop",
+            version: AppVersion.short,
+            uptimeSeconds: 0,
+            lastSuccessfulSync: uploadCoordinator.lastSyncedAt,
+            pendingQueueDepth: max(0, uploadCoordinator.pendingCount),
+            recentErrorCount: uploadCoordinator.recentErrorCount,
+            lastErrorReason: uploadCoordinator.lastErrorReason
+        )
+    }
+
     public func setSolChatNotificationPreference(_ enabled: Bool) {
         var newConfig = config
         newConfig.solInitiatedChatNotificationsEnabled = enabled
@@ -611,6 +630,7 @@ public final class AppState {
         self.config = config
         self.notifier = notifier
         self.loginService = loginService
+        self.observerHealthSnapshotEnabled = true
         self.installer = SolstoneInstaller()
         self.runtimeMaterializer = RuntimeMaterializer()
         self.supervisedJournalRunner = SupervisedJournalRunner(
@@ -627,11 +647,15 @@ public final class AppState {
             isPaused: { [pauseManager, heartbeatTarget] in
                 pauseManager.isPaused || (heartbeatTarget.state?.isPaused ?? false)
             },
-            postHeartbeat: { [uploadClient] url, key, paused in
+            healthProvider: { [heartbeatTarget] in
+                heartbeatTarget.state?.observerHealthSnapshot()
+            },
+            postHeartbeat: { [uploadClient] url, key, paused, health in
                 try await uploadClient.postObserverStatus(
                     serverURL: url,
                     serverKey: key,
-                    paused: paused
+                    paused: paused,
+                    health: health
                 )
             }
         )
@@ -869,6 +893,7 @@ public final class AppState {
         self.config = config
         self.notifier = notifier
         self.loginService = loginService
+        self.observerHealthSnapshotEnabled = false
         self.notificationAuthorizationStatus = notificationStatus
         self.installer = SolstoneInstaller(
             subprocessRunner: SubprocessRunner(),
@@ -883,7 +908,8 @@ public final class AppState {
             isPaused: { [pauseManager, heartbeatTarget] in
                 pauseManager.isPaused || (heartbeatTarget.state?.isPaused ?? false)
             },
-            postHeartbeat: { _, _, _ in }
+            healthProvider: { nil },
+            postHeartbeat: { _, _, _, _ in }
         )
         self.solChatBridge = SolChatBridge(
             notificationsEnabled: config.solInitiatedChatNotificationsEnabled,
@@ -1661,17 +1687,19 @@ public final class AppState {
         }
     }
 
-    /// Reloads config when an external process writes serverURL/serverKey to UserDefaults.
+    /// Reloads config when an external process writes observer upload identity to UserDefaults.
     /// Guards against feedback loops: updateConfig() -> save() -> notification -> load() -> same values -> return.
     private func handleExternalDefaultsChange() {
         let fresh = AppConfig.load()
 
-        // Only react to server config changes — ignore unrelated defaults
-        guard fresh.serverURL != config.serverURL || fresh.serverKey != config.serverKey else {
+        // Only react to observer identity changes — ignore unrelated defaults
+        guard fresh.serverURL != config.serverURL ||
+              fresh.serverKey != config.serverKey ||
+              fresh.observerName != config.observerName else {
             return
         }
 
-        Logger.general.info("External defaults change detected — reloading server config")
+        Logger.general.info("External defaults change detected — reloading observer upload config")
         updateConfig(fresh)
 
         if fresh.isUploadConfigured,
