@@ -237,6 +237,7 @@ struct AXIDTests {
             .synced,
             .uploading(segment: "segment"),
             .retrying(segment: "segment", attempts: 2),
+            .awaitingTunnel,
             .offline("offline")
         ]
     }

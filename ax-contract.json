@@ -613,6 +613,7 @@
       "synced",
       "uploading",
       "retrying",
+      "awaiting_tunnel",
       "offline"
     ]
   }

@@ -267,7 +267,7 @@ public final class SolstoneInstaller {
 
     private func hasLocalJournalCreds() -> Bool {
         guard let config = appState?.config,
-              LoopbackHost.isLocalhost(config.serverURL),
+              BundledJournalEndpoint.isBundledServiceURL(config.serverURL),
               let key = config.serverKey,
               !key.isEmpty else {
             return false

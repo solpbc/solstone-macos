@@ -19,20 +19,22 @@ public actor HeartbeatService {
     private let healthProvider: HealthProvider
     private let postHeartbeat: PostHeartbeat
     private let clock: any MonotonicClock
+    private let resolver: HomeBaseURLResolver
 
     private var task: Task<Void, Never>?
-    private var currentURL: String?
     private var currentKey: String?
     private var lastAuthStatus: Int?
 
     public init(
         intervalSeconds: TimeInterval = HeartbeatService.heartbeatIntervalSeconds,
+        resolver: HomeBaseURLResolver,
         isPaused: @escaping IsPausedProvider,
         healthProvider: @escaping HealthProvider,
         postHeartbeat: @escaping PostHeartbeat
     ) {
         self.init(
             intervalSeconds: intervalSeconds,
+            resolver: resolver,
             isPaused: isPaused,
             healthProvider: healthProvider,
             postHeartbeat: postHeartbeat,
@@ -42,25 +44,27 @@ public actor HeartbeatService {
 
     internal init(
         intervalSeconds: TimeInterval = HeartbeatService.heartbeatIntervalSeconds,
+        resolver: HomeBaseURLResolver,
         isPaused: @escaping IsPausedProvider,
         healthProvider: @escaping HealthProvider,
         postHeartbeat: @escaping PostHeartbeat,
         clock: any MonotonicClock
     ) {
         self.intervalSeconds = intervalSeconds
+        self.resolver = resolver
         self.isPaused = isPaused
         self.healthProvider = healthProvider
         self.postHeartbeat = postHeartbeat
         self.clock = clock
     }
 
-    public func configure(serverURL: String, serverKey: String) {
-        guard !serverURL.isEmpty, !serverKey.isEmpty else {
+    public func configure(serverKey: String) {
+        guard !serverKey.isEmpty else {
             stop()
             return
         }
 
-        guard currentURL != serverURL || currentKey != serverKey || task == nil else {
+        guard currentKey != serverKey || task == nil else {
             return
         }
 
@@ -68,7 +72,6 @@ public actor HeartbeatService {
         task?.cancel()
         task = nil
         lastAuthStatus = nil
-        currentURL = serverURL
         currentKey = serverKey
         let startedAt = clock.now()
 
@@ -78,7 +81,7 @@ public actor HeartbeatService {
             Logger.upload.info("Heartbeat started")
         }
 
-        task = Task { [intervalSeconds, isPaused, healthProvider, postHeartbeat, clock] in
+        task = Task { [intervalSeconds, isPaused, healthProvider, postHeartbeat, clock, resolver] in
             while !Task.isCancelled {
                 let paused = await isPaused()
                 var health = await healthProvider()
@@ -87,11 +90,16 @@ public actor HeartbeatService {
                 }
                 Logger.upload.debug("heartbeat tick paused=\(paused, privacy: .public)")
 
-                do {
-                    try await postHeartbeat(serverURL, serverKey, paused, health)
-                    clearAuthFailureState()
-                } catch {
-                    handleHeartbeatError(error)
+                switch await resolver.resolve() {
+                case .url(let serverURL):
+                    do {
+                        try await postHeartbeat(serverURL, serverKey, paused, health)
+                        clearAuthFailureState()
+                    } catch {
+                        handleHeartbeatError(error)
+                    }
+                case .held:
+                    break
                 }
 
                 await clock.sleep(for: .seconds(intervalSeconds))
@@ -100,10 +108,9 @@ public actor HeartbeatService {
     }
 
     public func stop() {
-        let hadTask = task != nil || currentURL != nil || currentKey != nil
+        let hadTask = task != nil || currentKey != nil
         task?.cancel()
         task = nil
-        currentURL = nil
         currentKey = nil
         lastAuthStatus = nil
 

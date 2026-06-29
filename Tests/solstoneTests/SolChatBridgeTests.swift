@@ -151,6 +151,7 @@ struct SolChatBridgeTests {
 
     private func makeBridge(
         notificationsEnabled: Bool = false,
+        resolver: HomeBaseURLResolver = HomeBaseURLResolver { .url("https://example.com") },
         state: SolChatStateBox,
         notifier: SolChatTestNotifier = SolChatTestNotifier(),
         staleThresholdSeconds: TimeInterval = 60,
@@ -162,6 +163,7 @@ struct SolChatBridgeTests {
     ) -> SolChatBridge {
         SolChatBridge(
             notificationsEnabled: notificationsEnabled,
+            resolver: resolver,
             setPending: { [state] pending in state.setPending(pending) },
             setStale: { [state] stale in state.setStale(stale) },
             postOpenChat: { [state] url in
@@ -207,7 +209,7 @@ struct SolChatBridgeTests {
         let state = SolChatStateBox()
         let bridge = makeBridge(state: state)
 
-        await bridge.configure(serverURL: "https://example.com", serverKey: "secret")
+        await bridge.configure(serverKey: "secret")
         let pending = await waitForPending(state)
         await bridge.stop()
 
@@ -233,7 +235,7 @@ struct SolChatBridgeTests {
         let state = SolChatStateBox()
         let bridge = makeBridge(state: state)
 
-        await bridge.configure(serverURL: "https://example.com", serverKey: "secret")
+        await bridge.configure(serverKey: "secret")
         let pending = await waitForPending(state)
         await bridge.stop()
 
@@ -247,11 +249,79 @@ struct SolChatBridgeTests {
         let state = SolChatStateBox()
         let bridge = makeBridge(state: state)
 
-        await bridge.configure(serverURL: "https://example.com", serverKey: "secret")
+        await bridge.configure(serverKey: "secret")
         let pending = await waitForPending(state)
         await bridge.stop()
 
         #expect(pending?.id == "req-3")
+    }
+
+    @Test func subscribeUsesResolverLoopbackTarget() async {
+        SolChatURLProtocol.store.reset()
+        SolChatURLProtocol.store.enqueue(body: "")
+        let state = SolChatStateBox()
+        let bridge = makeBridge(
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24681") },
+            state: state,
+            backoffSeconds: [0.01]
+        )
+
+        await bridge.configure(serverKey: "secret")
+        try? await waitUntil(timeout: .seconds(2)) {
+            SolChatURLProtocol.store.requests.count >= 1
+        }
+        await bridge.stop()
+
+        let request = SolChatURLProtocol.store.requests.first
+        #expect(request?.url?.host == "127.0.0.1")
+        #expect(request?.url?.port == 24681)
+        #expect(request?.url?.path == "/app/observer/callosum")
+    }
+
+    @Test func subscribeUsesResolverStaticTarget() async {
+        SolChatURLProtocol.store.reset()
+        SolChatURLProtocol.store.enqueue(body: "")
+        let state = SolChatStateBox()
+        let bridge = makeBridge(
+            resolver: HomeBaseURLResolver { .url("https://journal.example:9443") },
+            state: state,
+            backoffSeconds: [0.01]
+        )
+
+        await bridge.configure(serverKey: "secret")
+        try? await waitUntil(timeout: .seconds(2)) {
+            SolChatURLProtocol.store.requests.count >= 1
+        }
+        await bridge.stop()
+
+        let request = SolChatURLProtocol.store.requests.first
+        #expect(request?.url?.host == "journal.example")
+        #expect(request?.url?.port == 9443)
+        #expect(request?.url?.path == "/app/observer/callosum")
+    }
+
+    @Test func heldResolverBacksOffWithoutCallosumRequest() async {
+        SolChatURLProtocol.store.reset()
+        let state = SolChatStateBox()
+        let sleepRecorder = SleepRecorder()
+        let bridge = makeBridge(
+            resolver: HomeBaseURLResolver { .held },
+            state: state,
+            watchdogIntervalSeconds: 999,
+            backoffSeconds: [0.01],
+            sleep: { seconds in
+                await sleepRecorder.record(seconds)
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+        )
+
+        await bridge.configure(serverKey: "secret")
+        try? await waitUntil(timeout: .seconds(2)) {
+            await !sleepRecorder.values.isEmpty
+        }
+        await bridge.stop()
+
+        #expect(SolChatURLProtocol.store.requests.isEmpty)
     }
 
     @Test func dispatchSupersededClearsKnownPendingAndNotification() async {
@@ -267,8 +337,8 @@ struct SolChatBridgeTests {
             backoffSeconds: [0.01]
         )
 
-        await bridge.configure(serverURL: "https://example.com", serverKey: "secret")
-        for _ in 0..<40 where !state.pendingValues.contains(where: { $0?.id == "req-4" }) || state.pending != nil {
+        await bridge.configure(serverKey: "secret")
+        for _ in 0..<120 where !state.pendingValues.contains(where: { $0?.id == "req-4" }) || state.pending != nil {
             try? await Task.sleep(for: .milliseconds(25))
         }
         await bridge.stop()
@@ -292,8 +362,8 @@ struct SolChatBridgeTests {
             backoffSeconds: [0.01]
         )
 
-        await bridge.configure(serverURL: "https://example.com", serverKey: "secret")
-        for _ in 0..<40 where !state.pendingValues.contains(where: { $0?.id == "req-open" }) || state.pending != nil {
+        await bridge.configure(serverKey: "secret")
+        for _ in 0..<120 where !state.pendingValues.contains(where: { $0?.id == "req-open" }) || state.pending != nil {
             try? await Task.sleep(for: .milliseconds(25))
         }
         await bridge.stop()
@@ -317,8 +387,8 @@ struct SolChatBridgeTests {
             backoffSeconds: [0.01]
         )
 
-        await bridge.configure(serverURL: "https://example.com", serverKey: "secret")
-        for _ in 0..<40 where !state.pendingValues.contains(where: { $0?.id == "req-dismissed" }) || state.pending != nil {
+        await bridge.configure(serverKey: "secret")
+        for _ in 0..<120 where !state.pendingValues.contains(where: { $0?.id == "req-dismissed" }) || state.pending != nil {
             try? await Task.sleep(for: .milliseconds(25))
         }
         await bridge.stop()
@@ -336,7 +406,7 @@ struct SolChatBridgeTests {
         let enabledNotifier = SolChatTestNotifier()
         let enabledBridge = makeBridge(notificationsEnabled: true, state: enabledState, notifier: enabledNotifier)
 
-        await enabledBridge.configure(serverURL: "https://example.com", serverKey: "secret")
+        await enabledBridge.configure(serverKey: "secret")
         _ = await waitForPending(enabledState)
         await enabledBridge.stop()
         #expect(await enabledNotifier.posts.count == 1)
@@ -347,7 +417,7 @@ struct SolChatBridgeTests {
         let staleNotifier = SolChatTestNotifier()
         let staleBridge = makeBridge(notificationsEnabled: true, state: staleState, notifier: staleNotifier)
 
-        await staleBridge.configure(serverURL: "https://example.com", serverKey: "secret")
+        await staleBridge.configure(serverKey: "secret")
         try? await Task.sleep(for: .milliseconds(100))
         await staleBridge.stop()
         #expect(await staleNotifier.posts.isEmpty)
@@ -359,7 +429,7 @@ struct SolChatBridgeTests {
         let disabledNotifier = SolChatTestNotifier()
         let disabledBridge = makeBridge(notificationsEnabled: false, state: disabledState, notifier: disabledNotifier)
 
-        await disabledBridge.configure(serverURL: "https://example.com", serverKey: "secret")
+        await disabledBridge.configure(serverKey: "secret")
         _ = await waitForPending(disabledState)
         await disabledBridge.stop()
         #expect(await disabledNotifier.posts.isEmpty)
@@ -376,7 +446,7 @@ struct SolChatBridgeTests {
             backoffSeconds: [0.01]
         )
 
-        await bridge.configure(serverURL: "https://example.com", serverKey: "secret")
+        await bridge.configure(serverKey: "secret")
         for _ in 0..<20 where !state.staleValues.contains(true) {
             try? await Task.sleep(for: .milliseconds(10))
         }
@@ -395,6 +465,7 @@ struct SolChatBridgeTests {
         let state = SolChatStateBox()
         let sleepRecorder = SleepRecorder()
         let bridge = makeBridge(
+            resolver: HomeBaseURLResolver { .url("not a valid url") },
             state: state,
             watchdogIntervalSeconds: 999,
             backoffSeconds: [1, 2, 4],
@@ -404,7 +475,7 @@ struct SolChatBridgeTests {
             }
         )
 
-        await bridge.configure(serverURL: "not a valid url", serverKey: "secret")
+        await bridge.configure(serverKey: "secret")
         for _ in 0..<80 where await sleepRecorder.values.filter({ $0 != 999 }).isEmpty {
             try? await Task.sleep(for: .milliseconds(25))
         }
@@ -421,7 +492,7 @@ struct SolChatBridgeTests {
         let state = SolChatStateBox()
         let bridge = makeBridge(state: state, backoffSeconds: [0.01])
 
-        await bridge.configure(serverURL: "https://example.com", serverKey: "secret")
+        await bridge.configure(serverKey: "secret")
         try? await Task.sleep(for: .milliseconds(150))
         await bridge.stop()
 
@@ -434,7 +505,7 @@ struct SolChatBridgeTests {
         let state = SolChatStateBox()
         let bridge = makeBridge(state: state, backoffSeconds: [0.01])
 
-        await bridge.configure(serverURL: "https://example.com", serverKey: "secret")
+        await bridge.configure(serverKey: "secret")
         try? await Task.sleep(for: .milliseconds(150))
         await bridge.stop()
 
@@ -448,7 +519,7 @@ struct SolChatBridgeTests {
         let state = SolChatStateBox()
         let bridge = makeBridge(state: state)
 
-        await bridge.configure(serverURL: "https://example.com", serverKey: "secret")
+        await bridge.configure(serverKey: "secret")
         _ = await waitForPending(state)
         await bridge.handleClick(requestID: "req-8")
         await bridge.stop()

@@ -19,17 +19,30 @@ public actor SyncService {
         case journalContactSucceeded
         case syncComplete
         case offline(error: String, healthReason: ObserverHealthFailureReason)
+        case awaitingTunnel
+    }
+
+    private struct SyncJournalIdentity: Sendable, Equatable {
+        let configuredServerURL: String
+        let serverKey: String
+    }
+
+    private enum UploadRetryOutcome: Sendable {
+        case finished
+        case held
+        case stopped
     }
 
     // MARK: - Dependencies
 
     private let client: UploadClient
+    private let resolver: HomeBaseURLResolver
     private let storageManager: StorageManager
 
     // MARK: - Configuration
 
-    private var serverURL: String?
     private var serverKey: String?
+    private var journalIdentity: SyncJournalIdentity?
     private var cacheRetentionDays: Int = AppConfig.Defaults.cacheRetentionDays
     private var syncPaused: Bool = false
 
@@ -50,14 +63,21 @@ public actor SyncService {
 
     // MARK: - Retry Configuration
 
-    private let retryDelays: [TimeInterval] = [5, 30, 120, 300]
+    private let retryDelays: [TimeInterval]
     private let maxRetries = 10
 
     // MARK: - Initialization
 
-    public init(storageManager: StorageManager) {
+    init(
+        storageManager: StorageManager,
+        client: UploadClient = UploadClient(),
+        resolver: HomeBaseURLResolver,
+        retryDelays: [TimeInterval] = [5, 30, 120, 300]
+    ) {
         self.storageManager = storageManager
-        self.client = UploadClient()
+        self.client = client
+        self.resolver = resolver
+        self.retryDelays = retryDelays
 
         var continuation: AsyncStream<ProgressEvent>.Continuation!
         self.progressStream = AsyncStream { continuation = $0 }
@@ -79,15 +99,22 @@ public actor SyncService {
         cacheRetentionDays: Int,
         syncPaused: Bool
     ) {
-        self.serverURL = serverURL
         self.serverKey = serverKey
+        if let serverURL, let serverKey {
+            self.journalIdentity = SyncJournalIdentity(
+                configuredServerURL: serverURL,
+                serverKey: serverKey
+            )
+        } else {
+            self.journalIdentity = nil
+        }
         self.cacheRetentionDays = cacheRetentionDays
         self.syncPaused = syncPaused
     }
 
     /// Check if sync is configured and not paused
     public var isConfigured: Bool {
-        serverURL != nil && serverKey != nil && !syncPaused
+        journalIdentity != nil && serverKey != nil && !syncPaused
     }
 
     // MARK: - Sync Trigger
@@ -118,7 +145,7 @@ public actor SyncService {
             return
         }
 
-        guard let serverURL = serverURL, let serverKey = serverKey else {
+        guard let journalIdentity, let serverKey else {
             Logger.upload.info("Sync not configured, skipping")
             return
         }
@@ -168,6 +195,14 @@ public actor SyncService {
             // Query server for all segments on this day
             let serverSegments: [ServerSegmentInfo]?
             do {
+                let serverURL: String
+                switch await resolver.resolve() {
+                case .url(let resolved):
+                    serverURL = resolved
+                case .held:
+                    progressContinuation.yield(.awaitingTunnel)
+                    return
+                }
                 serverSegments = try await client.getServerSegments(
                     serverURL: serverURL,
                     serverKey: serverKey,
@@ -214,14 +249,23 @@ public actor SyncService {
                     anyNeededUpload = true
                     Logger.upload.info("Segment \(segment, privacy: .public) needs upload...")
                     let metadataJSON = readSegmentMetadataJSON(segmentURL: segmentURL, segment: segment)
-                    await uploadSegmentWithRetry(
-                        serverURL: serverURL,
+                    let outcome = await uploadSegmentWithRetry(
+                        identity: journalIdentity,
                         serverKey: serverKey,
                         segmentURL: segmentURL,
                         day: day,
                         segment: segment,
                         metadataJSON: metadataJSON
                     )
+                    switch outcome {
+                    case .finished:
+                        break
+                    case .held:
+                        progressContinuation.yield(.awaitingTunnel)
+                        return
+                    case .stopped:
+                        return
+                    }
                 }
 
                 checked += 1
@@ -234,7 +278,9 @@ public actor SyncService {
             }
         }
 
-        await cleanupSyncedSegments(serverURL: serverURL, serverKey: serverKey)
+        guard await cleanupSyncedSegments(identity: journalIdentity, serverKey: serverKey) else {
+            return
+        }
 
         progressContinuation.yield(.syncComplete)
         Logger.upload.info("Sync complete")
@@ -284,16 +330,34 @@ public actor SyncService {
     // MARK: - Upload with Retry
 
     private func uploadSegmentWithRetry(
-        serverURL: String,
+        identity: SyncJournalIdentity,
         serverKey: String,
         segmentURL: URL,
         day: String,
         segment: String,
         metadataJSON: String?
-    ) async {
+    ) async -> UploadRetryOutcome {
         var attempts = 0
 
         while attempts < maxRetries {
+            guard !syncPaused, journalIdentity == identity else {
+                Logger.upload.info("Config changed during retry, aborting")
+                progressContinuation.yield(.uploadFailed(
+                    segment: segment,
+                    error: "Config changed",
+                    healthReason: .configChanged
+                ))
+                return .stopped
+            }
+
+            let serverURL: String
+            switch await resolver.resolve() {
+            case .url(let resolved):
+                serverURL = resolved
+            case .held:
+                return .held
+            }
+
             attempts += 1
 
             if attempts == 1 {
@@ -311,7 +375,7 @@ public actor SyncService {
                     error: "No files",
                     healthReason: .uploadNoFiles
                 ))
-                return
+                return .finished
             }
 
             let result = await client.uploadSegment(
@@ -327,7 +391,7 @@ public actor SyncService {
             switch result {
             case .success, .skipped:
                 progressContinuation.yield(.uploadSucceeded(segment: segment))
-                return
+                return .finished
             case .failure(let error):
                 let healthReason = observerHealthFailureReason(from: error)
                 Logger.upload.info("Attempt \(attempts, privacy: .public) failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
@@ -338,7 +402,7 @@ public actor SyncService {
                         error: error.localizedDescription,
                         healthReason: healthReason
                     ))
-                    return
+                    return .finished
                 }
 
                 // Calculate delay with exponential backoff
@@ -351,26 +415,16 @@ public actor SyncService {
 
                 Logger.upload.info("Retrying in \(Int(delay), privacy: .public)s...")
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-
-                // Check if still configured
-                if syncPaused || serverURL != self.serverURL {
-                    Logger.upload.info("Config changed during retry, aborting")
-                    progressContinuation.yield(.uploadFailed(
-                        segment: segment,
-                        error: "Config changed",
-                        healthReason: .configChanged
-                    ))
-                    return
-                }
             case .notConfigured:
                 progressContinuation.yield(.uploadFailed(
                     segment: segment,
                     error: "Not configured",
                     healthReason: .notConfigured
                 ))
-                return
+                return .finished
             }
         }
+        return .finished
     }
 
     // MARK: - File Selection
@@ -502,14 +556,14 @@ public actor SyncService {
 
     /// Delete synced segments older than cacheRetentionDays.
     /// Safety gates: (1) day in syncedDays, (2) age check, (3) server reachable, (4) per-segment server confirmation.
-    private func cleanupSyncedSegments(serverURL: String, serverKey: String) async {
+    private func cleanupSyncedSegments(identity: SyncJournalIdentity, serverKey: String) async -> Bool {
         guard cacheRetentionDays >= 0 else {
             Logger.upload.info("Cache retention: keep forever, skipping cleanup")
-            return
+            return true
         }
 
         let segmentsByDay = collectSegmentsByDay()
-        guard !segmentsByDay.isEmpty else { return }
+        guard !segmentsByDay.isEmpty else { return true }
 
         let fm = FileManager.default
         let calendar = Calendar.current
@@ -542,6 +596,17 @@ public actor SyncService {
             // Gate 3: server must be reachable and return segment data
             if serverSegmentsCache[day] == nil {
                 do {
+                    guard !syncPaused, journalIdentity == identity else {
+                        return false
+                    }
+                    let serverURL: String
+                    switch await resolver.resolve() {
+                    case .url(let resolved):
+                        serverURL = resolved
+                    case .held:
+                        progressContinuation.yield(.awaitingTunnel)
+                        return false
+                    }
                     guard let serverSegments = try await client.getServerSegments(
                         serverURL: serverURL,
                         serverKey: serverKey,
@@ -589,6 +654,7 @@ public actor SyncService {
                 Logger.upload.info("Cleanup: removed empty date directory \(dateDir.lastPathComponent, privacy: .public)")
             }
         }
+        return true
     }
 
     // MARK: - Synced Days Persistence

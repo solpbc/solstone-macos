@@ -332,7 +332,7 @@ enum FirstLaunchRouting {
             openService()
             return
         }
-        guard LoopbackHost.isLocalhost(config.serverURL) else { return }
+        guard BundledJournalEndpoint.isBundledServiceURL(config.serverURL) else { return }
         guard await healthCheck(binary) else {
             openService()
             return

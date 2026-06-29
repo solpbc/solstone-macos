@@ -55,10 +55,15 @@ public enum UploadError: Error, LocalizedError {
 public struct UploadClient: Sendable {
     private let session: URLSession
 
-    public init() {
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 300  // 5 min for large files
-        config.timeoutIntervalForResource = 600  // 10 min total
+    public init(sessionConfiguration: URLSessionConfiguration? = nil) {
+        let config: URLSessionConfiguration
+        if let sessionConfiguration {
+            config = sessionConfiguration
+        } else {
+            config = .default
+            config.timeoutIntervalForRequest = 300  // 5 min for large files
+            config.timeoutIntervalForResource = 600  // 10 min total
+        }
         self.session = URLSession(configuration: config)
     }
 

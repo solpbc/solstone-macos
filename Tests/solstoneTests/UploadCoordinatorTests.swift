@@ -190,6 +190,23 @@ struct UploadCoordinatorTests {
         #expect(coordinator.lastErrorReason?.contains("secret") == false)
     }
 
+    @Test func awaitingTunnelDoesNotChangeErrorStateOrRetryBudget() throws {
+        let coordinator = try makeCoordinator(
+            now: Date(timeIntervalSince1970: 1_700_000_000),
+            isBundledAvailable: false
+        )
+        coordinator.recentErrorCount = 7
+        coordinator.lastError = "existing error"
+        coordinator.lastErrorReason = "existing_reason"
+
+        coordinator.handleProgressEvent(.awaitingTunnel)
+
+        #expect(coordinator.status == .awaitingTunnel)
+        #expect(coordinator.recentErrorCount == 7)
+        #expect(coordinator.lastError == "existing error")
+        #expect(coordinator.lastErrorReason == "existing_reason")
+    }
+
     @Test func observerHealthPayloadDoesNotLeakRawFailureDetails() throws {
         let coordinator = try makeCoordinator(
             now: Date(timeIntervalSince1970: 1_700_000_000),

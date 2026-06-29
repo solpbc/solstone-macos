@@ -58,6 +58,8 @@ internal func classifyObservationRowState(
     switch uploadStatus {
     case .synced, .syncing, .uploading:
         return .observing
+    case .awaitingTunnel:
+        return .journalWaiting
     case .notSynced, .retrying, .offline:
         return .offline
     }

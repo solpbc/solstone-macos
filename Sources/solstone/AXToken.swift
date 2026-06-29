@@ -226,6 +226,7 @@ extension UploadCoordinator.Status {
         "synced",
         "uploading",
         "retrying",
+        "awaiting_tunnel",
         "offline"
     ]
 
@@ -241,6 +242,8 @@ extension UploadCoordinator.Status {
             return "uploading"
         case .retrying:
             return "retrying"
+        case .awaitingTunnel:
+            return "awaiting_tunnel"
         case .offline:
             return "offline"
         }

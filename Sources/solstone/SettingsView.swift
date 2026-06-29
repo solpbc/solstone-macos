@@ -1641,6 +1641,8 @@ struct SettingsView: View {
             ("arrow.up.circle", .blue)
         case .retrying:
             ("exclamationmark.triangle", .orange)
+        case .awaitingTunnel:
+            ("arrow.triangle.2.circlepath", .orange)
         case .offline:
             ("xmark.circle", .red)
         }
@@ -1661,6 +1663,8 @@ struct SettingsView: View {
             return "uploading: \(segment)"
         case .retrying(let segment, let attempts):
             return "retrying \(segment) (attempt \(attempts))"
+        case .awaitingTunnel:
+            return "connecting to your journal…"
         case .offline(let error):
             return "offline: \(error)"
         }

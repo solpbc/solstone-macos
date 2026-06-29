@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import Observation
 import SwiftUI
 import ServiceManagement
 import UserNotifications
@@ -109,6 +110,8 @@ public final class AppState {
     private var journalStopTask: Task<Void, Never>?
     private var journalStartTask: Task<Void, Never>?
     private var bundledJournalStartupTask: Task<Void, Never>?
+    private var tunnelLifecycleObservationEnabled = false
+    private var previousTunnelLifecycleState: TunnelLifecycleState?
     private struct InFlightBundledStart {
         let journalRoot: URL
         let generation: UInt64
@@ -451,13 +454,12 @@ public final class AppState {
         let canConfigureJournalServices = newConfig.serviceMode != .bundled || journalDependentServicesReady
         if canConfigureJournalServices,
            newConfig.isUploadConfigured,
-           let serverURL = newConfig.serverURL,
            let serverKey = newConfig.serverKey {
             Task { [heartbeatService] in
-                await heartbeatService.configure(serverURL: serverURL, serverKey: serverKey)
+                await heartbeatService.configure(serverKey: serverKey)
             }
             Task { [solChatBridge] in
-                await solChatBridge.configure(serverURL: serverURL, serverKey: serverKey)
+                await solChatBridge.configure(serverKey: serverKey)
             }
         } else {
             Task { [heartbeatService] in
@@ -610,6 +612,27 @@ public final class AppState {
 
     // MARK: - Initialization
 
+    private static func makeHomeBaseURLResolver(target: AppStateBridgeTarget) -> HomeBaseURLResolver {
+        HomeBaseURLResolver { [target] in
+            await MainActor.run {
+                guard let state = target.state else {
+                    return .held
+                }
+                let owner = state.tunnelLifecycleOwner
+                if owner.isTunnelManaged {
+                    guard let localPort = owner.localPort else {
+                        return .held
+                    }
+                    return .url("http://127.0.0.1:\(localPort)")
+                }
+                guard let serverURL = state.config.serverURL else {
+                    return .held
+                }
+                return .url(serverURL)
+            }
+        }
+    }
+
     public init(
         notifier: any SolChatNotifying = UNUserNotificationSolChatNotifier(),
         loginService: any LoginItemService = LiveLoginItemService()
@@ -623,6 +646,7 @@ public final class AppState {
         let solChatTarget = AppStateBridgeTarget()
         let journalStatusTarget = AppStateBridgeTarget()
         let heartbeatTarget = AppStateBridgeTarget()
+        let homeBaseURLTarget = AppStateBridgeTarget()
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager
@@ -644,7 +668,10 @@ public final class AppState {
         self.singleSupervisorGate = SingleSupervisorGate()
         self.journalReadinessGate = JournalReadinessGate()
         self.recoveryCoordinator = .shared
+        self.tunnelLifecycleOwner = TunnelLifecycleOwner()
+        let homeBaseURLResolver = Self.makeHomeBaseURLResolver(target: homeBaseURLTarget)
         self.heartbeatService = HeartbeatService(
+            resolver: homeBaseURLResolver,
             isPaused: { [pauseManager, heartbeatTarget] in
                 pauseManager.isPaused || (heartbeatTarget.state?.isPaused ?? false)
             },
@@ -662,6 +689,7 @@ public final class AppState {
         )
         self.solChatBridge = SolChatBridge(
             notificationsEnabled: config.solInitiatedChatNotificationsEnabled,
+            resolver: homeBaseURLResolver,
             setPending: { [solChatTarget] pending in
                 solChatTarget.state?.solChatPending = pending
             },
@@ -675,7 +703,6 @@ public final class AppState {
             },
             notifier: notifier
         )
-        self.tunnelLifecycleOwner = TunnelLifecycleOwner()
 
         // Apply debug segments setting if enabled
         if config.debugSegments {
@@ -700,7 +727,11 @@ public final class AppState {
         self.debugAudioHolder = debugAudioHolder
         self.silenceMusicHolder = silenceMusicHolder
 
-        uploadCoordinator = UploadCoordinator(storageManager: storageManager, config: config)
+        uploadCoordinator = UploadCoordinator(
+            storageManager: storageManager,
+            config: config,
+            resolver: homeBaseURLResolver
+        )
         appQuitCoordinator = makeAppQuitCoordinator(
             setCommitted: { [weak self] committed in
                 self?.isTerminating = committed
@@ -803,6 +834,7 @@ public final class AppState {
         solChatTarget.state = self
         journalStatusTarget.state = self
         heartbeatTarget.state = self
+        homeBaseURLTarget.state = self
         AppState.shared = self
     }
 
@@ -887,6 +919,12 @@ public final class AppState {
         let storageManager = StorageManager()
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
         let heartbeatTarget = AppStateBridgeTarget()
+        let snapshotResolver = HomeBaseURLResolver { [config] in
+            guard let serverURL = config.serverURL else {
+                return .held
+            }
+            return .url(serverURL)
+        }
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager
@@ -907,6 +945,7 @@ public final class AppState {
         self.journalReadinessGate = JournalReadinessGate()
         self.recoveryCoordinator = .shared
         self.heartbeatService = HeartbeatService(
+            resolver: snapshotResolver,
             isPaused: { [pauseManager, heartbeatTarget] in
                 pauseManager.isPaused || (heartbeatTarget.state?.isPaused ?? false)
             },
@@ -915,6 +954,7 @@ public final class AppState {
         )
         self.solChatBridge = SolChatBridge(
             notificationsEnabled: config.solInitiatedChatNotificationsEnabled,
+            resolver: snapshotResolver,
             setPending: { _ in },
             setStale: { _ in },
             postOpenChat: { _ in },
@@ -928,7 +968,11 @@ public final class AppState {
         self.silenceMusicHolder = silenceMusicHolder
 
         captureManager = CaptureManager(storageManager: storageManager)
-        uploadCoordinator = UploadCoordinator(forSnapshot: storageManager, config: config)
+        uploadCoordinator = UploadCoordinator(
+            forSnapshot: storageManager,
+            config: config,
+            resolver: snapshotResolver
+        )
         appQuitCoordinator = makeAppQuitCoordinator(
             setCommitted: { _ in },
             terminate: {},
@@ -945,12 +989,49 @@ public final class AppState {
 
     internal func startTunnelLifecycleOwner() {
         tunnelLifecycleOwner.start()
+        startTunnelLifecycleObservation()
     }
 
     internal func stopTunnelLifecycleOwner() {
+        tunnelLifecycleObservationEnabled = false
+        previousTunnelLifecycleState = nil
         Task { [tunnelLifecycleOwner] in
             await tunnelLifecycleOwner.stop()
         }
+    }
+
+    private func startTunnelLifecycleObservation() {
+        guard !tunnelLifecycleObservationEnabled else { return }
+        tunnelLifecycleObservationEnabled = true
+        previousTunnelLifecycleState = tunnelLifecycleOwner.state
+        observeTunnelLifecycleState()
+    }
+
+    private func observeTunnelLifecycleState() {
+        guard tunnelLifecycleObservationEnabled else { return }
+        let current = withObservationTracking {
+            tunnelLifecycleOwner.state
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.observeTunnelLifecycleState()
+            }
+        }
+        handleTunnelLifecycleState(current)
+    }
+
+    private func handleTunnelLifecycleState(_ newState: TunnelLifecycleState) {
+        let previousState = previousTunnelLifecycleState
+        previousTunnelLifecycleState = newState
+        guard isConnected(newState), !isConnected(previousState) else { return }
+        uploadCoordinator.triggerSync()
+    }
+
+    private func isConnected(_ state: TunnelLifecycleState?) -> Bool {
+        guard let state else { return false }
+        if case .connected = state {
+            return true
+        }
+        return false
     }
 
     public func startRecording() async {
@@ -1234,7 +1315,7 @@ public final class AppState {
     }
 
     private func hasLocalJournalCreds() -> Bool {
-        guard LoopbackHost.isLocalhost(config.serverURL),
+        guard BundledJournalEndpoint.isBundledServiceURL(config.serverURL),
               let key = config.serverKey,
               !key.isEmpty else {
             return false
@@ -1251,12 +1332,12 @@ public final class AppState {
         journalDependentServicesReady = true
         captureQueuedForJournalReadiness = false
         scheduleStartupUploadSyncIfNeeded()
-        if config.isUploadConfigured, let serverURL = config.serverURL, let serverKey = config.serverKey {
+        if config.isUploadConfigured, let serverKey = config.serverKey {
             Task { [heartbeatService] in
-                await heartbeatService.configure(serverURL: serverURL, serverKey: serverKey)
+                await heartbeatService.configure(serverKey: serverKey)
             }
             Task { [solChatBridge] in
-                await solChatBridge.configure(serverURL: serverURL, serverKey: serverKey)
+                await solChatBridge.configure(serverKey: serverKey)
             }
         }
     }

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import Observation
 import SPLTunnel
 import Testing
 @testable import solstone
@@ -45,6 +46,39 @@ struct TunnelLifecycleOwnerTests {
 
         #expect(lanTransport.connectAttempts == 1)
         #expect(relayTransport.connectAttempts == 1)
+    }
+
+    @Test func tunnelManagedSignalSurvivesTransientDisconnect() async throws {
+        let transport = FakeTunnelTransport(connection: .init(localPort: 23456, via: .relay))
+        let owner = makeOwner(factory: FakeTransportFactory([transport]))
+
+        #expect(owner.isTunnelManaged)
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 23456, via: .relay) }
+        #expect(owner.isTunnelManaged)
+
+        transport.emit(.disconnected)
+        try await waitUntil { owner.state == .disconnected }
+        await owner.stop()
+
+        #expect(owner.isTunnelManaged)
+    }
+
+    @Test func connectedObservationFiresExactlyOnceOnTransitionEdge() async throws {
+        let transport = FakeTunnelTransport(connection: .init(localPort: 34567, via: .relay))
+        let owner = makeOwner(factory: FakeTransportFactory([transport]))
+        let observer = TunnelConnectedEdgeObserver(owner: owner)
+
+        observer.start()
+        owner.start()
+        try await waitUntil { observer.triggerCount == 1 }
+
+        transport.emit(.connected(via: URL(string: "ws://relay.example")!.relayConnectedVia))
+        try await Task.sleep(for: .milliseconds(100))
+        observer.stop()
+        await owner.stop()
+
+        #expect(observer.triggerCount == 1)
     }
 
     @Test func coldStartOfflineRetriesAndRecoversOnEstablishmentBackoff() async throws {
@@ -671,6 +705,57 @@ private actor ProbeScript {
             return true
         }
         return results.removeFirst()
+    }
+}
+
+@MainActor
+private final class TunnelConnectedEdgeObserver {
+    private let owner: TunnelLifecycleOwner
+    private var enabled = false
+    private var previousState: TunnelLifecycleState?
+    private(set) var triggerCount = 0
+
+    init(owner: TunnelLifecycleOwner) {
+        self.owner = owner
+    }
+
+    func start() {
+        guard !enabled else { return }
+        enabled = true
+        previousState = owner.state
+        observe()
+    }
+
+    func stop() {
+        enabled = false
+        previousState = nil
+    }
+
+    private func observe() {
+        guard enabled else { return }
+        let current = withObservationTracking {
+            owner.state
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.observe()
+            }
+        }
+        handle(current)
+    }
+
+    private func handle(_ state: TunnelLifecycleState) {
+        let previous = previousState
+        previousState = state
+        guard isConnected(state), !isConnected(previous) else { return }
+        triggerCount += 1
+    }
+
+    private func isConnected(_ state: TunnelLifecycleState?) -> Bool {
+        guard let state else { return false }
+        if case .connected = state {
+            return true
+        }
+        return false
     }
 }
 

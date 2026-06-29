@@ -129,6 +129,16 @@ extension StatusHealthSummary {
             }
         } else {
             switch uploadStatus {
+            case .awaitingTunnel:
+                let subtitle = pendingCount > 0
+                    ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here"
+                    : "sync resumes when the journal connection is ready"
+                return .init(
+                    severity: .warn,
+                    title: "connecting to your journal…",
+                    subtitle: subtitle,
+                    axValue: "external_awaiting_tunnel"
+                )
             case .offline:
                 let subtitle = pendingCount > 0
                     ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here — nothing is lost, sync resumes when it's back"

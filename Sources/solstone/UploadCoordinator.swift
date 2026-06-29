@@ -73,6 +73,7 @@ public final class UploadCoordinator {
         case uploading(segment: String)
         case retrying(segment: String, attempts: Int)
         case offline(String)    // Can't reach server
+        case awaitingTunnel
     }
 
     // MARK: - Observable State
@@ -111,9 +112,18 @@ public final class UploadCoordinator {
 
     // MARK: - Initialization
 
-    public init(storageManager: StorageManager, config: AppConfig) {
+    public init(
+        storageManager: StorageManager,
+        config: AppConfig,
+        client: UploadClient = UploadClient(),
+        resolver: HomeBaseURLResolver
+    ) {
         self.config = config
-        self.syncService = SyncService(storageManager: storageManager)
+        self.syncService = SyncService(
+            storageManager: storageManager,
+            client: client,
+            resolver: resolver
+        )
 
         // Configure sync service with initial settings
         Task {
@@ -130,9 +140,24 @@ public final class UploadCoordinator {
     }
 
     /// Internal init for snapshot/testing — creates SyncService but skips configuration Tasks and event listener
-    internal init(forSnapshot storageManager: StorageManager, config: AppConfig) {
+    internal init(
+        forSnapshot storageManager: StorageManager,
+        config: AppConfig,
+        client: UploadClient = UploadClient(),
+        resolver: HomeBaseURLResolver? = nil
+    ) {
         self.config = config
-        self.syncService = SyncService(storageManager: storageManager)
+        let resolvedBase = config.serverURL
+        self.syncService = SyncService(
+            storageManager: storageManager,
+            client: client,
+            resolver: resolver ?? HomeBaseURLResolver {
+                if let resolvedBase {
+                    return .url(resolvedBase)
+                }
+                return .held
+            }
+        )
     }
 
     // MARK: - Public API
@@ -276,6 +301,11 @@ public final class UploadCoordinator {
             lastErrorReason = sanitizedObserverHealthErrorReason(healthReason)
             status = .offline(error)
             scheduleRetry()
+
+        case .awaitingTunnel:
+            retryTask?.cancel()
+            retryTask = nil
+            status = .awaitingTunnel
         }
     }
 

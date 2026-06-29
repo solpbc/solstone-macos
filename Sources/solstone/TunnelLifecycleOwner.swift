@@ -53,6 +53,7 @@ final class TunnelLifecycleOwner {
 
     private(set) var state: TunnelLifecycleState = .disconnected
     private(set) var health: TunnelHealth = .unknown
+    private(set) var isTunnelManaged = false
 
     var localPort: Int? {
         guard case .connected(let localPort, _) = state else {
@@ -119,6 +120,7 @@ final class TunnelLifecycleOwner {
         self.probe = probe
         self.sleep = sleep
         self.now = now
+        refreshTunnelManagedFromStoredPairing()
     }
 
     static func dormantForSnapshot() -> TunnelLifecycleOwner {
@@ -130,6 +132,7 @@ final class TunnelLifecycleOwner {
             return
         }
         running = true
+        refreshTunnelManagedFromStoredPairing()
         state = .disconnected
         health = .unknown
         startPathMonitor()
@@ -159,20 +162,21 @@ final class TunnelLifecycleOwner {
         let pairing: StoredPairing
         do {
             guard let loaded = try loadPairing() else {
-                becomeDormant()
+                becomeDormant(tunnelManaged: false)
                 return
             }
             pairing = loaded
         } catch {
             splOwnerLog.debug("pairing load unavailable: \(String(describing: type(of: error)), privacy: .public)")
-            becomeDormant()
+            becomeDormant(tunnelManaged: isTunnelManaged)
             return
         }
 
         guard !usableCandidates(for: pairing).isEmpty else {
-            becomeDormant()
+            becomeDormant(tunnelManaged: false)
             return
         }
+        isTunnelManaged = true
 
         switch await tokenRefresher.refreshIfNeeded(pairing, now()) {
         case .refreshed(let updated):
@@ -223,20 +227,21 @@ final class TunnelLifecycleOwner {
         let pairing: StoredPairing
         do {
             guard let loaded = try loadPairing() else {
-                becomeDormant()
+                becomeDormant(tunnelManaged: false)
                 return .dormant
             }
             pairing = loaded
         } catch {
-            becomeDormant()
+            becomeDormant(tunnelManaged: isTunnelManaged)
             return .dormant
         }
 
         let candidates = usableCandidates(for: pairing)
         guard !candidates.isEmpty else {
-            becomeDormant()
+            becomeDormant(tunnelManaged: false)
             return .dormant
         }
+        isTunnelManaged = true
 
         state = .connecting
         health = .unknown
@@ -383,13 +388,13 @@ final class TunnelLifecycleOwner {
         do {
             guard let loaded = try loadPairing() else {
                 await disconnectCurrentTransport()
-                becomeDormant()
+                becomeDormant(tunnelManaged: false)
                 return
             }
             pairing = loaded
         } catch {
             await disconnectCurrentTransport()
-            becomeDormant()
+            becomeDormant(tunnelManaged: isTunnelManaged)
             return
         }
 
@@ -505,7 +510,20 @@ final class TunnelLifecycleOwner {
         }
     }
 
-    private func becomeDormant() {
+    private func refreshTunnelManagedFromStoredPairing() {
+        do {
+            guard let pairing = try loadPairing() else {
+                isTunnelManaged = false
+                return
+            }
+            isTunnelManaged = !usableCandidates(for: pairing).isEmpty
+        } catch {
+            // Preserve the previous signal on transient keychain load failures.
+        }
+    }
+
+    private func becomeDormant(tunnelManaged: Bool) {
+        isTunnelManaged = tunnelManaged
         state = .disconnected
         health = .unknown
     }
@@ -516,6 +534,7 @@ final class TunnelLifecycleOwner {
         } catch {
             splOwnerLog.error("pairing delete failed: \(String(describing: type(of: error)), privacy: .public)")
         }
+        isTunnelManaged = false
         await disconnectCurrentTransport()
         state = .error(.revoked)
         health = .unknown

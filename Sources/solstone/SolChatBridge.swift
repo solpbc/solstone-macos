@@ -186,10 +186,10 @@ public actor SolChatBridge {
     private let notifier: any SolChatNotifying
     private let session: URLSession
     private let sleep: Sleeper
+    private let resolver: HomeBaseURLResolver
 
     private var task: Task<Void, Never>?
     private var watchdog: Task<Void, Never>?
-    private var currentURL: String?
     private var currentKey: String?
     private var lastAuthStatus: Int?
     private var lastHeartbeatAt: Date?
@@ -200,6 +200,7 @@ public actor SolChatBridge {
 
     public init(
         notificationsEnabled: Bool,
+        resolver: HomeBaseURLResolver,
         setPending: @escaping SetPending,
         setStale: @escaping SetStale,
         postOpenChat: @escaping PostOpenChat,
@@ -213,6 +214,7 @@ public actor SolChatBridge {
         }
     ) {
         self.notificationsEnabled = notificationsEnabled
+        self.resolver = resolver
         self.setPending = setPending
         self.setStale = setStale
         self.postOpenChat = postOpenChat
@@ -234,22 +236,21 @@ public actor SolChatBridge {
         self.session = URLSession(configuration: config)
     }
 
-    public func configure(serverURL: String, serverKey: String) async {
-        guard !serverURL.isEmpty, !serverKey.isEmpty else {
+    public func configure(serverKey: String) async {
+        guard !serverKey.isEmpty else {
             await stop()
             return
         }
 
-        guard currentURL != serverURL || currentKey != serverKey || task == nil else {
+        guard currentKey != serverKey || task == nil else {
             return
         }
 
         let hadExistingTask = task != nil
-        let hadExistingState = task != nil || watchdog != nil || currentURL != nil || currentKey != nil
+        let hadExistingState = task != nil || watchdog != nil || currentKey != nil
             || !pendingByID.isEmpty || staleFlag
         await teardownState(clearConnection: false, publishClear: hadExistingState)
         lastHeartbeatAt = Date()
-        currentURL = serverURL
         currentKey = serverKey
 
         if hadExistingTask {
@@ -262,12 +263,12 @@ public actor SolChatBridge {
             await self?.watchdogLoop()
         }
         task = Task { [weak self] in
-            await self?.subscribeLoop(serverURL: serverURL, serverKey: serverKey)
+            await self?.subscribeLoop(serverKey: serverKey)
         }
     }
 
     public func stop() async {
-        let hadTask = task != nil || watchdog != nil || currentURL != nil || currentKey != nil
+        let hadTask = task != nil || watchdog != nil || currentKey != nil
         await teardownState(clearConnection: true)
 
         if hadTask {
@@ -288,8 +289,17 @@ public actor SolChatBridge {
         await publishMostRecentPending()
     }
 
-    private func subscribeLoop(serverURL: String, serverKey: String) async {
+    private func subscribeLoop(serverKey: String) async {
         while !Task.isCancelled {
+            let serverURL: String
+            switch await resolver.resolve() {
+            case .url(let resolved):
+                serverURL = resolved
+            case .held:
+                await sleepBeforeReconnect()
+                continue
+            }
+
             do {
                 try await subscribe(serverURL: serverURL, serverKey: serverKey)
             } catch BridgeError.authStatus(let statusCode) {
@@ -302,10 +312,14 @@ public actor SolChatBridge {
             }
 
             if Task.isCancelled { return }
-            let delay = backoffSeconds[min(reconnectIndex, backoffSeconds.count - 1)]
-            reconnectIndex = min(reconnectIndex + 1, backoffSeconds.count - 1)
-            await sleep(delay)
+            await sleepBeforeReconnect()
         }
+    }
+
+    private func sleepBeforeReconnect() async {
+        let delay = backoffSeconds[min(reconnectIndex, backoffSeconds.count - 1)]
+        reconnectIndex = min(reconnectIndex + 1, backoffSeconds.count - 1)
+        await sleep(delay)
     }
 
     private func subscribe(serverURL: String, serverKey: String) async throws {
@@ -459,7 +473,6 @@ public actor SolChatBridge {
         watchdog = nil
 
         if clearConnection {
-            currentURL = nil
             currentKey = nil
         }
         lastAuthStatus = nil
@@ -499,7 +512,14 @@ public actor SolChatBridge {
     }
 
     private func postOwnerChatOpen(requestID: String) async {
-        guard let serverURL = currentURL, let serverKey = currentKey else {
+        guard let serverKey = currentKey else {
+            return
+        }
+        let serverURL: String
+        switch await resolver.resolve() {
+        case .url(let resolved):
+            serverURL = resolved
+        case .held:
             return
         }
         let baseURL = serverURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -532,7 +552,11 @@ public actor SolChatBridge {
     }
 
     private func postOpenChatIfConfigured(summary: SolChatRequestSummary?) async {
-        guard let serverURL = currentURL else {
+        let serverURL: String
+        switch await resolver.resolve() {
+        case .url(let resolved):
+            serverURL = resolved
+        case .held:
             return
         }
         let baseURL = serverURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
