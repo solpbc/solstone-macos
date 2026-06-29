@@ -108,14 +108,25 @@ struct SPLKeychainTests {
         #expect(pairing.relayEnrollment == .enrolled(deviceToken: "current-token", expiresAt: "2036-01-01T00:00:00Z"))
     }
 
-    @Test func localEndpointCodableKeepsHostWireKey() throws {
+    @Test func localEndpointEncodesCanonicalIPKeyAndDecodesBoth() throws {
         let endpoint = LocalEndpoint(host: "192.168.1.10", port: 7657, scope: "lan")
+        // Encodes the canonical "ip" key (matches the home's pairing response + iOS).
         let data = try JSONEncoder().encode(endpoint)
         let json = try #require(String(data: data, encoding: .utf8))
-
-        #expect(json.contains(#""host""#))
-        #expect(!json.contains(#""ip""#))
+        #expect(json.contains(#""ip""#))
+        #expect(!json.contains(#""host""#))
         #expect(try JSONDecoder().decode(LocalEndpoint.self, from: data) == endpoint)
+
+        // Decodes the home's real wire shape (key "ip") — the bytes that arrive
+        // in a live relay-form pairing response; decoding "host"-only would throw.
+        let wire = Data(#"{"ip":"192.168.4.27","port":7657,"scope":"lan"}"#.utf8)
+        #expect(try JSONDecoder().decode(LocalEndpoint.self, from: wire)
+            == LocalEndpoint(host: "192.168.4.27", port: 7657, scope: "lan"))
+
+        // Tolerates the legacy macOS keychain shape (key "host") so an in-place
+        // upgrade never drops a stored pairing.
+        let legacy = Data(#"{"host":"192.168.1.10","port":7657,"scope":"lan"}"#.utf8)
+        #expect(try JSONDecoder().decode(LocalEndpoint.self, from: legacy) == endpoint)
     }
 
     @Test func legacyRecordWithLocalEndpointDecodesWithoutEndpointLoss() throws {

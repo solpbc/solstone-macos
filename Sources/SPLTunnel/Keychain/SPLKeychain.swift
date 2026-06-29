@@ -14,6 +14,35 @@ public struct LocalEndpoint: Codable, Sendable, Equatable {
         self.port = port
         self.scope = scope
     }
+
+    // The home's pairing response and the iOS client both key the address as
+    // "ip" (iOS: `case host = "ip"`). Encode/decode the canonical "ip" key, but
+    // tolerate the legacy macOS "host" key for any keychain record written by an
+    // earlier build so an in-place upgrade never drops a stored pairing.
+    private enum CodingKeys: String, CodingKey {
+        case ip
+        case host
+        case port
+        case scope
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let ip = try container.decodeIfPresent(String.self, forKey: .ip) {
+            host = ip
+        } else {
+            host = try container.decode(String.self, forKey: .host)
+        }
+        port = try container.decode(Int.self, forKey: .port)
+        scope = try container.decode(String.self, forKey: .scope)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(host, forKey: .ip)
+        try container.encode(port, forKey: .port)
+        try container.encode(scope, forKey: .scope)
+    }
 }
 
 public enum RelayEnrollment: Codable, Sendable, Equatable {
