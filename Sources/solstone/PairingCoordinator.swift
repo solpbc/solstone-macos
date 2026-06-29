@@ -339,15 +339,15 @@ extension PairingFailure {
     var message: String {
         switch self {
         case .staleLink:
-            return "this link expired. get a fresh link from your home and try again."
+            return "this link expired. get a fresh link from your journal's network app and try again."
         case .homeUnreachable:
-            return "couldn't reach your home through the relay. try again."
+            return "couldn't reach your journal. on the same wi-fi as your journal, or over your own vpn, it connects directly; from elsewhere it needs the paid plan."
         case .relayUnauthorized:
-            return "the relay didn't accept this pairing link. get a fresh link and try again."
+            return "your journal didn't accept this pairing link. get a fresh link from its network app and try again."
         case .instanceMismatch:
-            return "this link is for a different home. get a fresh link from the home you want to use."
+            return "this link is for a different journal. get a fresh link from the journal you want."
         case .network:
-            return "pairing couldn't reach the relay. check your connection and try again."
+            return "pairing couldn't reach your journal. check your connection and try again."
         case .invalidLink(let reason):
             return reason
         case .localSetup:

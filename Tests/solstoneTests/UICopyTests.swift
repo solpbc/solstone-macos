@@ -16,7 +16,9 @@ struct UICopyTests {
     }
 
     @Test func journalModeAnotherMachineTradeoffString() {
-        #expect(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF == "this Mac becomes an observer feeding a journal that lives on another device \u{2014} your other Mac, your home server, or a journal you\u{0027}ve been invited to.")
+        #expect(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF == "this Mac becomes an observer that syncs to a journal that lives on another device \u{2014} your other Mac, your home server, or a journal you\u{0027}ve been invited to.")
+        #expect(UICopy.PAIRING_NOTENTITLED_RECOVERY == "your journal is paired, but it isn\u{0027}t on the paid plan \u{2014} so it can\u{0027}t sync over the internet. on the same wi-fi as your journal, or over your own vpn, it connects directly without the plan.")
+        #expect(UICopy.PAIRING_DISCONNECT_CONFIRM == "disconnect this Mac from your journal? your journal keeps everything \u{2014} you can pair again anytime.")
     }
 
     @Test func settingsPrereqPermissionsString() {

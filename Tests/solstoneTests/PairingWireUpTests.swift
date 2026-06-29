@@ -19,7 +19,7 @@ struct PairingWireUpTests {
             "AXID.Settings.Service.pairingFlowState",
             "AXID.Settings.Service.pairingFailureState",
             "AXID.Settings.Service.pairingConnectionState",
-            "paired, but your home isn't on the paid tier — sync can't connect"
+            "can't sync over the internet yet"
         ]
 
         for reference in references {

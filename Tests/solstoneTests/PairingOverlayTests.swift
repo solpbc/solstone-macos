@@ -13,7 +13,7 @@ struct PairingOverlayTests {
     @Test func notEntitledRendersDistinctPairedButTierWarning() {
         let presentation = makePairingConnectionPresentation(for: .error(.notEntitled), hasPairing: true)
 
-        #expect(presentation.message == "paired, but your home isn't on the paid tier — sync can't connect")
+        #expect(presentation.message == "can't sync over the internet yet")
         #expect(presentation.severity == .warn)
         #expect(presentation.axToken == PairingConnectionAXState.notEntitled.axToken)
     }

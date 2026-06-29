@@ -54,37 +54,37 @@ func makePairingConnectionPresentation(
     switch state {
     case .connected:
         return PairingConnectionPresentation(
-            message: "sync can connect through your paired home",
+            message: "sync can connect through your journal",
             severity: .good,
             axToken: PairingConnectionAXState.connected.axToken
         )
     case .connecting:
         return PairingConnectionPresentation(
-            message: "paired, connecting to your home",
+            message: "connecting to your journal…",
             severity: .warn,
             axToken: PairingConnectionAXState.connecting.axToken
         )
     case .disconnected:
         return PairingConnectionPresentation(
-            message: hasPairing ? "paired, waiting to connect" : "not paired",
+            message: hasPairing ? "paired · waiting to connect" : "not paired",
             severity: .warn,
             axToken: PairingConnectionAXState.disconnected.axToken
         )
     case .error(.notEntitled):
         return PairingConnectionPresentation(
-            message: "paired, but your home isn't on the paid tier — sync can't connect",
+            message: "can't sync over the internet yet",
             severity: .warn,
             axToken: PairingConnectionAXState.notEntitled.axToken
         )
     case .error(.revoked):
         return PairingConnectionPresentation(
-            message: "pairing was revoked. pair again to reconnect.",
+            message: "pairing was revoked — pair again to reconnect.",
             severity: .attention,
             axToken: PairingConnectionAXState.revoked.axToken
         )
     case .error(.loopbackUnavailable):
         return PairingConnectionPresentation(
-            message: "paired, but the local tunnel couldn't start",
+            message: "paired, but the local connection couldn't start",
             severity: .attention,
             axToken: PairingConnectionAXState.loopbackUnavailable.axToken
         )
@@ -147,6 +147,7 @@ struct SettingsView: View {
     @State private var serviceMode: ServiceMode
     @State private var preserveNextServiceFieldChange = false
     @State private var inFlightTestID: UUID?
+    @State private var disconnectConfirmPending = false
 
     init(
         appState: AppState,
@@ -970,18 +971,6 @@ struct SettingsView: View {
                         ProgressView()
                             .scaleEffect(0.5)
                     }
-
-                    Spacer(minLength: 0)
-
-                    if pairingCanUnpair {
-                        Button("unpair") {
-                            Task {
-                                await appState.pairingCoordinator.unpair()
-                            }
-                        }
-                        .disabled(pairingIsBusy)
-                        .accessibilityIdentifier(AXID.Settings.Service.pairingUnpair)
-                    }
                 }
 
                 if let result = pairingResultText {
@@ -996,9 +985,67 @@ struct SettingsView: View {
 
                 pairingConnectionTruthRow
 
-                if case .switchConfirmPending(let newInstanceID) = appState.pairingCoordinator.state {
+                if case .error(.notEntitled) = appState.pairingCoordinator.tunnelState {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("this link is for a different home. switch to \(newInstanceID.prefix(8))?")
+                        Text(UICopy.PAIRING_NOTENTITLED_RECOVERY)
+                            .font(.callout)
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.leading)
+                        Link("set up the paid plan ↗", destination: URL(string: "https://link.solstone.app")!)
+                            .font(.callout)
+                            .accessibilityIdentifier(AXID.Settings.Service.pairingPaidPlanLink)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.orange.opacity(0.12))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+                    )
+                }
+
+                if pairingCanUnpair {
+                    if disconnectConfirmPending {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(UICopy.PAIRING_DISCONNECT_CONFIRM)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            HStack {
+                                Button("disconnect", role: .destructive) {
+                                    disconnectConfirmPending = false
+                                    Task {
+                                        await appState.pairingCoordinator.unpair()
+                                    }
+                                }
+                                .accessibilityIdentifier(AXID.Settings.Service.pairingDisconnectConfirm)
+
+                                Button("cancel") {
+                                    disconnectConfirmPending = false
+                                }
+                                .accessibilityIdentifier(AXID.Settings.Service.pairingDisconnectCancel)
+                            }
+                        }
+                    } else {
+                        HStack {
+                            Spacer()
+                            Button("disconnect") {
+                                disconnectConfirmPending = true
+                            }
+                            .buttonStyle(.plain)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier(AXID.Settings.Service.pairingUnpair)
+                            .disabled(pairingIsBusy)
+                        }
+                    }
+                }
+
+                if case .switchConfirmPending = appState.pairingCoordinator.state {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("this link is for a different journal. switch to it?")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         HStack {
