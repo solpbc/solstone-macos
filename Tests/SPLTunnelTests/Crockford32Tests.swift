@@ -70,8 +70,8 @@ struct Crockford32Tests {
             let pairURL = try PairURL.parse(URL(string: "https://go.solstone.app/p#\(Self.encode(bytes))")!)
             #expect(pairURL.version == bytes[0])
             #expect(pairURL.addressBytes == Array(bytes[2..<6]))
-            #expect(pairURL.addressString == Array(bytes[2..<6]).map(String.init).joined(separator: "."))
-            #expect(pairURL.port == UInt16(bytes[6]) << 8 | UInt16(bytes[7]))
+            #expect(pairURL.candidates.first?.address == Array(bytes[2..<6]).map(String.init).joined(separator: "."))
+            #expect(pairURL.candidates.first?.port == UInt16(bytes[6]) << 8 | UInt16(bytes[7]))
             #expect(pairURL.nonceBytes == Array(bytes[8..<24]))
             #expect(pairURL.caFingerprintBytes == Array(bytes[24..<40]))
         }

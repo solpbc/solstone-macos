@@ -29,8 +29,29 @@ public enum DialClient {
         case .lan(let host, let port, _):
             return try await dialLAN(host: host, port: port, timeout: timeout)
         case .relay(let endpoint, let instanceID, let deviceToken):
-            return try await dialRelay(endpoint: endpoint, instanceID: instanceID, deviceToken: deviceToken, timeout: timeout)
+            return try await dialRelay(
+                endpoint: endpoint,
+                instanceID: instanceID,
+                authToken: deviceToken,
+                path: "session/dial",
+                timeout: timeout
+            )
         }
+    }
+
+    public static func dialPairRelay(
+        endpoint: URL,
+        instanceID: String,
+        pairTicket: String,
+        timeout: Duration = .seconds(5)
+    ) async throws -> any ByteTransport {
+        try await dialRelay(
+            endpoint: endpoint,
+            instanceID: instanceID,
+            authToken: pairTicket,
+            path: "session/pair-dial",
+            timeout: timeout
+        )
     }
 
     private static func dialLAN(host: String, port: Int, timeout: Duration) async throws -> LANTransport {
@@ -61,10 +82,11 @@ public enum DialClient {
     private static func dialRelay(
         endpoint: URL,
         instanceID: String,
-        deviceToken: String,
+        authToken: String,
+        path: String,
         timeout: Duration
     ) async throws -> RelayWSTransport {
-        let transport = try RelayWSTransport(endpoint: endpoint, instanceID: instanceID, deviceToken: deviceToken)
+        let transport = try RelayWSTransport(endpoint: endpoint, instanceID: instanceID, authToken: authToken, path: path)
         let startedAt = ContinuousClock.now
 
         do {
@@ -148,16 +170,11 @@ public actor RelayWSTransport: ByteTransport {
     private let task: URLSessionWebSocketTask
     private var closed = false
 
-    init(endpoint: URL, instanceID: String, deviceToken: String) throws {
-        let url = endpoint
-            .appending(path: "session/dial")
-            .appending(queryItems: [.init(name: "instance", value: instanceID)])
-        guard url.scheme == "ws" || url.scheme == "wss" else {
-            throw DialError.invalidRelayURL(endpoint.absoluteString)
-        }
+    init(endpoint: URL, instanceID: String, authToken: String, path: String) throws {
+        let url = try Self.webSocketURL(endpoint: endpoint, path: path, instanceID: instanceID)
 
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
         request.setValue(Self.userAgent(), forHTTPHeaderField: "User-Agent")
 
         let delegate = WebSocketOpenDelegate()
@@ -217,6 +234,36 @@ public actor RelayWSTransport: ByteTransport {
         closed = true
         task.cancel(with: .normalClosure, reason: nil)
         session.invalidateAndCancel()
+    }
+
+    static func webSocketURL(endpoint: URL, path: String, instanceID: String) throws -> URL {
+        guard var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased() else {
+            throw DialError.invalidRelayURL(endpoint.absoluteString)
+        }
+
+        switch scheme {
+        case "https":
+            components.scheme = "wss"
+        case "http":
+            components.scheme = "ws"
+        case "wss", "ws":
+            components.scheme = scheme
+        default:
+            throw DialError.invalidRelayURL(endpoint.absoluteString)
+        }
+
+        let basePath = components.percentEncodedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let dialPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.percentEncodedPath = "/" + [basePath, dialPath].filter { !$0.isEmpty }.joined(separator: "/")
+        var queryItems = components.queryItems ?? []
+        queryItems.append(URLQueryItem(name: "instance", value: instanceID))
+        components.queryItems = queryItems
+
+        guard let url = components.url else {
+            throw DialError.invalidRelayURL(endpoint.absoluteString)
+        }
+        return url
     }
 
     private static func userAgent() -> String {

@@ -2,6 +2,9 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import Crypto
+import Network
+import Security
 import Testing
 @testable import SPLTunnel
 
@@ -113,7 +116,7 @@ struct PairClientTests {
         #expect(pairing.clientCertPEM == TestCertificates.cert1)
         #expect(pairing.clientKeyPEM.hasPrefix("-----BEGIN PRIVATE KEY-----\n"))
         #expect(pairing.caChainPEM == "\(TestCertificates.cert2)\n")
-        #expect(pairing.deviceToken == "device-token")
+        #expect(pairing.relayEnrollment == .enrolled(deviceToken: "device-token", expiresAt: "2026-05-11T00:00:00Z"))
         #expect(pairing.localEndpoints == [])
         #expect(pairing.pairedAt >= before)
     }
@@ -181,8 +184,8 @@ struct PairClientTests {
 
         let body = try jsonBody(index: 1)
         #expect(body["instance_id"] as? String == "instance-1")
-        #expect(body["client_cert"] as? String == TestCertificates.cert1)
         #expect(body["home_attestation"] as? String == "attestation")
+        #expect(body["client_cert"] == nil)
     }
 
     @Test func lanStatusMappings() async throws {
@@ -197,18 +200,19 @@ struct PairClientTests {
         await expectPairError(.lanResponseInvalid(status: 200), lanBody: #"{"instance_id":"instance-1"}"#)
     }
 
-    @Test func relayStatusMappings() async throws {
-        await expectPairError(.relayRequestFailed(underlying: nil), relayStatus: 503)
-        await expectPairError(.relayResponseInvalid(status: 400), relayStatus: 400)
-        await expectPairError(.relayResponseInvalid(status: 404), relayStatus: 404)
-        await expectPairError(.attestationRejected(status: 401), relayStatus: 401)
-        await expectPairError(.attestationRejected(status: 403), relayStatus: 403)
-        await expectPairError(.attestationRejected(status: 409), relayStatus: 409)
+    @Test func relayEnrollmentFailureCompletesPairingAsUnavailable() async throws {
+        for status in [400, 401, 403, 404, 409, 503] {
+            let pairing = try await pairWithRelay(status: status, body: relayResponseJSON())
+            #expect(pairing.relayEnrollment == .unavailable)
+        }
     }
 
-    @Test func relayMalformedResponsesMapInvalid() async throws {
-        await expectPairError(.relayResponseInvalid(status: 200), relayBody: "{")
-        await expectPairError(.relayResponseInvalid(status: 200), relayBody: #"{"device_token":"token"}"#)
+    @Test func relayMalformedResponseCompletesPairingAsUnavailable() async throws {
+        let malformed = try await pairWithRelay(body: "{")
+        #expect(malformed.relayEnrollment == .unavailable)
+
+        let missingExpiry = try await pairWithRelay(body: #"{"device_token":"token"}"#)
+        #expect(missingExpiry.relayEnrollment == .enrolled(deviceToken: "token", expiresAt: nil))
     }
 
     @Test func transportErrorsMapRequestFailed() async throws {
@@ -219,7 +223,126 @@ struct PairClientTests {
         PairURLProtocol.store.reset()
         PairURLProtocol.store.enqueue(body: lanResponseJSON())
         PairURLProtocol.store.enqueue(error: URLError(.cannotConnectToHost))
-        await expectPairError(.relayRequestFailed(underlying: nil), usingExistingQueue: true)
+        let pairing = try await makeClient().pair(
+            pairURL: makePairURL(),
+            deviceLabel: "test mac",
+            relayEndpoint: URL(string: "https://spl.solpbc.org")!
+        )
+        #expect(pairing.relayEnrollment == .unavailable)
+    }
+
+    @Test func relayFinalizeEnrollmentFailureCompletesPairingAsUnavailable() async throws {
+        PairURLProtocol.store.reset()
+        PairURLProtocol.store.enqueue(error: URLError(.cannotConnectToHost))
+        let lanResponse = try PairClient.decodeLANResponse(data: Data(lanResponseJSON().utf8))
+
+        let pairing = try await makeClient().finalizeRelayPairing(
+            lanResponse: lanResponse,
+            instanceID: "instance-1",
+            generated: PairingMaterial(csrPEM: "unused", privateKeyPEM: "private-key"),
+            relayEndpoint: URL(string: "https://spl.solpbc.org")!
+        )
+
+        #expect(pairing.relayEnrollment == .unavailable)
+    }
+
+    @Test func relayFinalizeInstanceMismatchThrowsBeforeEnrollment() async throws {
+        PairURLProtocol.store.reset()
+        PairURLProtocol.store.enqueue(body: relayResponseJSON())
+        let lanResponse = try PairClient.decodeLANResponse(data: Data(lanResponseJSON().utf8))
+
+        do {
+            _ = try await makeClient().finalizeRelayPairing(
+                lanResponse: lanResponse,
+                instanceID: "different-instance",
+                generated: PairingMaterial(csrPEM: "unused", privateKeyPEM: "private-key"),
+                relayEndpoint: URL(string: "https://spl.solpbc.org")!
+            )
+            Issue.record("Expected relayInstanceMismatch")
+        } catch let error as PairError {
+            #expect(error == .relayInstanceMismatch)
+        } catch {
+            Issue.record("Expected relayInstanceMismatch, got \(error)")
+        }
+        #expect(PairURLProtocol.store.requests.isEmpty)
+    }
+
+    @Test func relayFormCeremonyProducesStoredPairingWithRelayEnrollment() async throws {
+        let instanceID = "12345678-1234-5678-1234-567812345678"
+        let bundle = try TestCA.make()
+        let pairingServer = RelayPairingMuxServer(
+            bundle: bundle,
+            responseJSON: lanResponseJSON(instanceID: instanceID, localEndpoints: [[
+                "host": "127.0.0.1",
+                "port": 7657,
+                "scope": "loopback",
+            ]])
+        )
+        try await pairingServer.start()
+        let relay = RelayBridgeServer(tlsPort: await pairingServer.port)
+        try await relay.start()
+        defer {
+            Task {
+                await relay.stop()
+                await pairingServer.stop()
+            }
+        }
+
+        let relayEndpoint = try #require(URL(string: "ws://127.0.0.1:\(await relay.port)"))
+        let pairURL = try Self.makeRelayPairURL(caCertificatePEM: bundle.caCertificatePEM, instanceID: instanceID)
+        PairURLProtocol.store.reset()
+        PairURLProtocol.store.enqueue(body: #"{"pair_ticket":"pair-ticket","expires_at":"2026-05-11T00:00:00Z"}"#)
+        PairURLProtocol.store.enqueue(body: relayResponseJSON())
+
+        let pairing = try await makeClient().pair(
+            pairURL: pairURL,
+            deviceLabel: "relay mac",
+            relayEndpoint: relayEndpoint
+        )
+
+        #expect(pairing.instanceID == instanceID)
+        #expect(pairing.homeLabel == "living room mac")
+        #expect(pairing.relayEndpoint == relayEndpoint.absoluteString)
+        #expect(pairing.relayEnrollment == .enrolled(deviceToken: "device-token", expiresAt: "2026-05-11T00:00:00Z"))
+        #expect(pairing.localEndpoints == [LocalEndpoint(host: "127.0.0.1", port: 7657, scope: "loopback")])
+        let requests = PairURLProtocol.store.requests
+        #expect(requests.map { $0.url?.path } == ["/session/pair-ticket", "/enroll/device"])
+    }
+
+    @Test func pairTicketRequestTargetsRelayContract() throws {
+        let request = try PairClient.makePairTicketRequest(
+            relayEndpoint: URL(string: "https://spl.solpbc.org")!,
+            instanceID: "12345678-1234-5678-1234-567812345678",
+            totp: "123456",
+            userAgent: "test-agent"
+        )
+
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.absoluteString == "https://spl.solpbc.org/session/pair-ticket?instance=12345678-1234-5678-1234-567812345678")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+        #expect(request.value(forHTTPHeaderField: "User-Agent") == "test-agent")
+
+        let body = try #require(request.httpBody)
+        let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: String])
+        #expect(json["instance_id"] == "12345678-1234-5678-1234-567812345678")
+        #expect(json["totp"] == "123456")
+    }
+
+    @Test func tunnelPairHTTPRequestUsesRelativeMuxPath() throws {
+        let body = Data(#"{"csr":"pem","device_label":"mac"}"#.utf8)
+        let request = PairClient.buildHTTPRequest(
+            method: "POST",
+            path: "/app/network/pair?token=012345",
+            body: body
+        )
+        let text = try #require(String(data: request, encoding: .utf8))
+
+        #expect(text.hasPrefix("POST /app/network/pair?token=012345 HTTP/1.1\r\n"))
+        #expect(text.contains("Host: spl.local\r\n"))
+        #expect(text.contains("User-Agent: solstone-macos/0.0.0-dev\r\n"))
+        #expect(text.contains("Content-Type: application/json\r\n"))
+        #expect(text.contains("Content-Length: \(body.count)\r\n"))
+        #expect(text.hasSuffix(String(data: body, encoding: .utf8)!))
     }
 
     @Test func pairClientDoesNotTouchKeychain() async throws {
@@ -249,11 +372,11 @@ struct PairClientTests {
         try PairURL.parse(URL(string: "https://go.solstone.app/p#0G0W000258DSX8DJRFAEBXG7308J4CT4ANK7F26YNPZEZJQYQAZ028T5CY4TQKFF")!)
     }
 
-    private func lanResponseJSON(localEndpoints: [[String: Any]]? = nil) -> String {
+    private func lanResponseJSON(instanceID: String = "instance-1", localEndpoints: [[String: Any]]? = nil) -> String {
         var response: [String: Any] = [
             "client_cert": TestCertificates.cert1,
             "ca_chain": [TestCertificates.cert2],
-            "instance_id": "instance-1",
+            "instance_id": instanceID,
             "home_label": "living room mac",
             "home_attestation": "attestation",
             "fingerprint": "ignored",
@@ -269,6 +392,18 @@ struct PairClientTests {
             "device_token": "device-token",
             "expires_at": "2026-05-11T00:00:00Z",
         ])
+    }
+
+    private func pairWithRelay(status: Int = 200, body: String) async throws -> StoredPairing {
+        PairURLProtocol.store.reset()
+        PairURLProtocol.store.enqueue(body: lanResponseJSON())
+        PairURLProtocol.store.enqueue(statusCode: status, body: body)
+
+        return try await makeClient().pair(
+            pairURL: makePairURL(),
+            deviceLabel: "test mac",
+            relayEndpoint: URL(string: "https://spl.solpbc.org")!
+        )
     }
 
     private func json(_ object: [String: Any]) -> String {
@@ -310,6 +445,304 @@ struct PairClientTests {
         } catch {
             Issue.record("Expected \(expected), got \(error)")
         }
+    }
+
+    private static func makeRelayPairURL(caCertificatePEM: String, instanceID: String) throws -> PairURL {
+        let caCertificate = try #require(try CertChain.certificates(fromPEM: caCertificatePEM).first)
+        let spkiPrefix = try Self.spkiSHA256Prefix(certificate: caCertificate)
+        let uuid = try #require(UUID(uuidString: instanceID))
+        let tuple = uuid.uuid
+        var bytes: [UInt8] = [
+            0x03,
+            tuple.0, tuple.1, tuple.2, tuple.3,
+            tuple.4, tuple.5,
+            tuple.6, tuple.7,
+            tuple.8, tuple.9,
+            tuple.10, tuple.11, tuple.12, tuple.13, tuple.14, tuple.15,
+            0x01, 0xE2, 0x40,
+        ]
+        bytes.append(contentsOf: Array(0x10...0x1F).map(UInt8.init))
+        bytes.append(0x01)
+        bytes.append(contentsOf: spkiPrefix)
+        bytes.append(0)
+        return try PairURL.parse(URL(string: "https://go.solstone.app/p#\(Self.encodeBase32(bytes))")!)
+    }
+
+    private static func spkiSHA256Prefix(certificate: SecCertificate) throws -> [UInt8] {
+        let key = try #require(SecCertificateCopyKey(certificate))
+        var error: Unmanaged<CFError>?
+        let keyData = try #require(SecKeyCopyExternalRepresentation(key, &error) as Data?)
+        let algorithmIdentifier = DER.sequence([
+            DER.objectIdentifier([1, 2, 840, 10045, 2, 1]),
+            DER.objectIdentifier([1, 2, 840, 10045, 3, 1, 7]),
+        ])
+        let spkiDER = DER.sequence([
+            algorithmIdentifier,
+            DER.bitString(Array(keyData)),
+        ])
+        return Array(SHA256.hash(data: Data(spkiDER)).prefix(16))
+    }
+
+    private static func encodeBase32(_ bytes: [UInt8]) -> String {
+        let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+        var accumulator: UInt64 = 0
+        var bitCount = 0
+        var output = ""
+
+        for byte in bytes {
+            accumulator = (accumulator << 8) | UInt64(byte)
+            bitCount += 8
+
+            while bitCount >= 5 {
+                bitCount -= 5
+                let index = Int((accumulator >> UInt64(bitCount)) & 0x1f)
+                output.append(alphabet[index])
+                accumulator &= (1 << UInt64(bitCount)) - 1
+            }
+        }
+
+        if bitCount > 0 {
+            let index = Int((accumulator << UInt64(5 - bitCount)) & 0x1f)
+            output.append(alphabet[index])
+        }
+
+        return output
+    }
+}
+
+private actor RelayPairingMuxServer {
+    private static let queue = DispatchQueue(label: "app.solstone.observer.spl.tests.relay-pair")
+
+    private let bundle: TestCA.Bundle
+    private let responseJSON: String
+    private var listener: NWListener?
+    private var connections: [NWConnection] = []
+    private var boundPort: NWEndpoint.Port?
+
+    init(bundle: TestCA.Bundle, responseJSON: String) {
+        self.bundle = bundle
+        self.responseJSON = responseJSON
+    }
+
+    var port: Int {
+        Int(boundPort?.rawValue ?? 0)
+    }
+
+    func start() async throws {
+        let identity = try TestCA.secIdentity(
+            certificatePEM: "\(bundle.serverCertificatePEM)\n\(bundle.caCertificatePEM)",
+            privateKeyPEM: bundle.serverPrivateKeyPEM
+        )
+        let options = NWProtocolTLS.Options()
+        let secOptions = options.securityProtocolOptions
+        sec_protocol_options_set_min_tls_protocol_version(secOptions, .TLSv13)
+        sec_protocol_options_set_max_tls_protocol_version(secOptions, .TLSv13)
+        sec_protocol_options_set_local_identity(secOptions, identity)
+
+        let listener = try NWListener(using: NWParameters(tls: options, tcp: NWProtocolTCP.Options()), on: .any)
+        let waiter = RelayPairingListenerWaiter()
+        listener.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                waiter.complete(.success(()))
+            case .failed(let error):
+                waiter.complete(.failure(error))
+            case .cancelled:
+                waiter.complete(.failure(DialError.connectionFailed("listener cancelled")))
+            case .setup, .waiting:
+                break
+            @unknown default:
+                break
+            }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            Task {
+                await self?.accept(connection)
+            }
+        }
+        self.listener = listener
+        listener.start(queue: Self.queue)
+        try await waiter.wait()
+        boundPort = listener.port
+    }
+
+    func stop() {
+        for connection in connections {
+            connection.cancel()
+        }
+        connections.removeAll()
+        listener?.cancel()
+        listener = nil
+        boundPort = nil
+    }
+
+    private func accept(_ connection: NWConnection) {
+        connections.append(connection)
+        connection.start(queue: Self.queue)
+        Task {
+            await handle(connection)
+        }
+    }
+
+    private nonisolated func handle(_ connection: NWConnection) async {
+        let mux = Multiplexer(sink: { data in
+            try await MockHTTPConnection.send(data, to: connection)
+        }, role: .listener)
+        let receiveTask = Task {
+            do {
+                while !Task.isCancelled {
+                    guard let chunk = try await Self.receive(from: connection), !chunk.isEmpty else {
+                        await mux.tearDown(reason: .transportFailure)
+                        return
+                    }
+                    try await mux.feedInbound(chunk)
+                }
+            } catch {
+                await mux.tearDown(reason: .transportFailure)
+            }
+        }
+
+        for await stream in mux.incomingStreams {
+            Task {
+                await handle(stream: stream)
+            }
+        }
+        receiveTask.cancel()
+    }
+
+    private nonisolated func handle(stream: MuxStream) async {
+        do {
+            let request = try await Self.readRequest(from: stream)
+            guard request.method == "POST",
+                  request.path.hasPrefix("/app/network/pair?token=") else {
+                try await Self.write(status: 404, body: #"{"error":"not_found"}"#, to: stream)
+                return
+            }
+            guard let json = try JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  json["csr"] as? String != nil,
+                  json["device_label"] as? String == "relay mac" else {
+                try await Self.write(status: 400, body: #"{"error":"bad_request"}"#, to: stream)
+                return
+            }
+            try await Self.write(status: 200, body: responseJSON, to: stream)
+        } catch {
+            await stream.reset(reason: .internalError)
+        }
+    }
+
+    private nonisolated static func readRequest(from stream: MuxStream) async throws -> MockHTTPRequest {
+        let inbound = await stream.inbound
+        var iterator = inbound.makeAsyncIterator()
+        var buffer = Data()
+        while !buffer.pairClientContainsHeaderTerminator {
+            guard let chunk = try await iterator.next() else {
+                throw MockHTTPError.closed
+            }
+            buffer.append(chunk)
+            if buffer.count > MockHTTPConnection.maxBodySize {
+                throw MockHTTPError.bodyTooLarge
+            }
+        }
+
+        let headerEnd = buffer.pairClientHeaderTerminatorRange!.lowerBound
+        let bodyStart = buffer.pairClientHeaderTerminatorRange!.upperBound
+        let headerData = buffer[..<headerEnd]
+        guard let headerText = String(data: headerData, encoding: .utf8),
+              let requestLine = headerText.components(separatedBy: "\r\n").first else {
+            throw MockHTTPError.invalidRequest
+        }
+        let parts = requestLine.split(separator: " ", maxSplits: 2).map(String.init)
+        guard parts.count >= 2 else {
+            throw MockHTTPError.invalidRequest
+        }
+        var headers: [String: String] = [:]
+        for line in headerText.components(separatedBy: "\r\n").dropFirst() {
+            guard let index = line.firstIndex(of: ":") else {
+                continue
+            }
+            let name = line[..<index].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let value = line[line.index(after: index)...].trimmingCharacters(in: .whitespacesAndNewlines)
+            headers[name] = value
+        }
+        let contentLength = Int(headers["content-length"] ?? "0") ?? 0
+        var body = Data(buffer[bodyStart...])
+        while body.count < contentLength {
+            guard let chunk = try await iterator.next() else {
+                throw MockHTTPError.closed
+            }
+            body.append(chunk)
+        }
+        if body.count > contentLength {
+            body = Data(body.prefix(contentLength))
+        }
+        return MockHTTPRequest(method: parts[0], path: parts[1], headers: headers, body: body)
+    }
+
+    private nonisolated static func write(status: Int, body: String, to stream: MuxStream) async throws {
+        let reason = HTTPURLResponse.localizedString(forStatusCode: status)
+        let response = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+        try await stream.write(Data(response.utf8))
+        try await stream.close()
+    }
+
+    private nonisolated static func receive(from connection: NWConnection) async throws -> Data? {
+        try await withCheckedThrowingContinuation { continuation in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, isComplete, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                if let data, !data.isEmpty {
+                    continuation.resume(returning: data)
+                    return
+                }
+                continuation.resume(returning: isComplete ? nil : Data())
+            }
+        }
+    }
+}
+
+private final class RelayPairingListenerWaiter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var result: Result<Void, Error>?
+
+    func wait() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let result: Result<Void, Error>? = lock.withLock {
+                if let result = self.result {
+                    return result
+                }
+                self.continuation = continuation
+                return nil
+            }
+            if let result {
+                continuation.resume(with: result)
+            }
+        }
+    }
+
+    func complete(_ result: Result<Void, Error>) {
+        let continuation = lock.withLock {
+            guard self.result == nil else {
+                return nil as CheckedContinuation<Void, Error>?
+            }
+            self.result = result
+            let continuation = self.continuation
+            self.continuation = nil
+            return continuation
+        }
+        continuation?.resume(with: result)
+    }
+}
+
+private extension Data {
+    var pairClientHeaderTerminatorRange: Range<Data.Index>? {
+        range(of: Data("\r\n\r\n".utf8))
+    }
+
+    var pairClientContainsHeaderTerminator: Bool {
+        pairClientHeaderTerminatorRange != nil
     }
 }
 

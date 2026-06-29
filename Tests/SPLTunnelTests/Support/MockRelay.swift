@@ -74,7 +74,6 @@ actor MockRelay {
             }
             guard let json = try JSONSerialization.jsonObject(with: request.body) as? [String: Any],
                   json["instance_id"] as? String != nil,
-                  json["client_cert"] as? String != nil,
                   json["home_attestation"] as? String != nil else {
                 try await MockHTTPConnection.send(status: 400, body: #"{"error":"bad_request"}"#, to: connection)
                 connection.cancel()

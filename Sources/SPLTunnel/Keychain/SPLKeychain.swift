@@ -16,6 +16,53 @@ public struct LocalEndpoint: Codable, Sendable, Equatable {
     }
 }
 
+public enum RelayEnrollment: Codable, Sendable, Equatable {
+    case enrolled(deviceToken: String, expiresAt: String?)
+    case unavailable
+
+    private enum CodingKeys: String, CodingKey {
+        case enrolled
+        case unavailable
+    }
+
+    private enum EnrolledCodingKeys: String, CodingKey {
+        case deviceToken
+        case expiresAt
+    }
+
+    private struct EmptyPayload: Codable {}
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.enrolled) {
+            let nested = try container.nestedContainer(keyedBy: EnrolledCodingKeys.self, forKey: .enrolled)
+            let deviceToken = try nested.decode(String.self, forKey: .deviceToken)
+            let expiresAt = try nested.decodeIfPresent(String.self, forKey: .expiresAt)
+            self = .enrolled(deviceToken: deviceToken, expiresAt: expiresAt)
+            return
+        }
+        if container.contains(.unavailable) {
+            self = .unavailable
+            return
+        }
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "invalid relay enrollment")
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .enrolled(let deviceToken, let expiresAt):
+            var nested = container.nestedContainer(keyedBy: EnrolledCodingKeys.self, forKey: .enrolled)
+            try nested.encode(deviceToken, forKey: .deviceToken)
+            try nested.encodeIfPresent(expiresAt, forKey: .expiresAt)
+        case .unavailable:
+            try container.encode(EmptyPayload(), forKey: .unavailable)
+        }
+    }
+}
+
 public struct StoredPairing: Codable, Sendable, Equatable {
     public let instanceID: String
     public let homeLabel: String
@@ -24,7 +71,7 @@ public struct StoredPairing: Codable, Sendable, Equatable {
     public let clientCertPEM: String
     public let clientKeyPEM: String
     public let caChainPEM: String
-    public let deviceToken: String
+    public let relayEnrollment: RelayEnrollment
     public let localEndpoints: [LocalEndpoint]
     public let pairedAt: Date
 
@@ -36,6 +83,7 @@ public struct StoredPairing: Codable, Sendable, Equatable {
         case clientCertPEM
         case clientKeyPEM
         case caChainPEM
+        case relayEnrollment
         case deviceToken
         case localEndpoints
         case pairedAt
@@ -49,7 +97,7 @@ public struct StoredPairing: Codable, Sendable, Equatable {
         clientCertPEM: String,
         clientKeyPEM: String,
         caChainPEM: String,
-        deviceToken: String,
+        relayEnrollment: RelayEnrollment,
         localEndpoints: [LocalEndpoint] = [],
         pairedAt: Date
     ) {
@@ -60,7 +108,7 @@ public struct StoredPairing: Codable, Sendable, Equatable {
         self.clientCertPEM = clientCertPEM
         self.clientKeyPEM = clientKeyPEM
         self.caChainPEM = caChainPEM
-        self.deviceToken = deviceToken
+        self.relayEnrollment = relayEnrollment
         self.localEndpoints = localEndpoints
         self.pairedAt = pairedAt
     }
@@ -74,7 +122,13 @@ public struct StoredPairing: Codable, Sendable, Equatable {
         clientCertPEM = try container.decode(String.self, forKey: .clientCertPEM)
         clientKeyPEM = try container.decode(String.self, forKey: .clientKeyPEM)
         caChainPEM = try container.decode(String.self, forKey: .caChainPEM)
-        deviceToken = try container.decode(String.self, forKey: .deviceToken)
+        if let enrollment = try container.decodeIfPresent(RelayEnrollment.self, forKey: .relayEnrollment) {
+            relayEnrollment = enrollment
+        } else if let legacyDeviceToken = try container.decodeIfPresent(String.self, forKey: .deviceToken) {
+            relayEnrollment = .enrolled(deviceToken: legacyDeviceToken, expiresAt: nil)
+        } else {
+            relayEnrollment = .unavailable
+        }
         localEndpoints = try container.decodeIfPresent([LocalEndpoint].self, forKey: .localEndpoints) ?? []
         pairedAt = try container.decode(Date.self, forKey: .pairedAt)
     }
@@ -88,7 +142,7 @@ public struct StoredPairing: Codable, Sendable, Equatable {
         try container.encode(clientCertPEM, forKey: .clientCertPEM)
         try container.encode(clientKeyPEM, forKey: .clientKeyPEM)
         try container.encode(caChainPEM, forKey: .caChainPEM)
-        try container.encode(deviceToken, forKey: .deviceToken)
+        try container.encode(relayEnrollment, forKey: .relayEnrollment)
         try container.encode(localEndpoints, forKey: .localEndpoints)
         try container.encode(pairedAt, forKey: .pairedAt)
     }
@@ -121,9 +175,7 @@ public enum SPLKeychain {
     static func _save(_ pairing: StoredPairing, service: String) throws {
         try _delete(service: service)
 
-        var query = baseQuery(service: service)
-        query[kSecValueData as String] = try encode(pairing)
-        let status = SecItemAdd(query as CFDictionary, nil)
+        let status = SecItemAdd(addAttributes(data: try encode(pairing), service: service) as CFDictionary, nil)
         guard status == errSecSuccess else {
             throw SPLKeychainError.saveFailed(status: status)
         }
@@ -156,12 +208,20 @@ public enum SPLKeychain {
         }
     }
 
+    // The SPL pairing bundle is intentionally backup-migratable (AfterFirstUnlock rather
+    // than a device-only keychain class) so restoring preserves journal pairing.
+    static func addAttributes(data: Data, service: String) -> [String: Any] {
+        baseQuery(service: service).merging([
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+        ]) { _, new in new }
+    }
+
     static func baseQuery(service: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
             kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
         ]
     }

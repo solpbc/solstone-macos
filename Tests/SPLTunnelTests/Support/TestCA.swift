@@ -60,7 +60,7 @@ enum TestCA {
             clientCertPEM: clientPEM,
             clientKeyPEM: clientKeyPEM,
             caChainPEM: caPEM,
-            deviceToken: "test-token",
+            relayEnrollment: .enrolled(deviceToken: "test-token", expiresAt: nil),
             localEndpoints: localEndpoints,
             pairedAt: Date(timeIntervalSince1970: 0)
         )
@@ -84,7 +84,7 @@ enum TestCA {
             clientCertPEM: certificatePEM,
             clientKeyPEM: privateKeyPEM,
             caChainPEM: certificatePEM,
-            deviceToken: "token",
+            relayEnrollment: .enrolled(deviceToken: "token", expiresAt: nil),
             pairedAt: Date(timeIntervalSince1970: 0)
         )
         return try InnerTLS.makeIdentity(pairing: pairing)

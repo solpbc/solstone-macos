@@ -2,23 +2,39 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
+
+private let transportLog = Logger(subsystem: "app.solstone.observer.spl", category: "transport")
 
 public enum TransportEndpoint: Sendable, Equatable {
     case lan(host: String, port: Int, scope: String)
     case relay(endpoint: URL, instanceID: String, deviceToken: String)
 
-    public static func candidates(for pairing: StoredPairing) throws -> [TransportEndpoint] {
+    public static func candidates(for pairing: StoredPairing) -> [TransportEndpoint] {
         let local = pairing.localEndpoints.map {
             TransportEndpoint.lan(host: $0.host, port: $0.port, scope: $0.scope)
         }
-        guard let relayEndpoint = URL(string: pairing.relayEndpoint) else {
-            throw SessionError.invalidRelayURL(pairing.relayEndpoint)
+
+        guard case .enrolled(let deviceToken, _) = pairing.relayEnrollment else {
+            transportLog.debug("relay transport unavailable; using lan candidates only")
+            return local
         }
+
+        guard !deviceToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            transportLog.debug("relay device token blank; using lan candidates only")
+            return local
+        }
+
+        guard let relayEndpoint = URL(string: pairing.relayEndpoint) else {
+            transportLog.error("relay endpoint invalid; using lan candidates only")
+            return local
+        }
+
         return local + [
             .relay(
                 endpoint: relayEndpoint,
                 instanceID: pairing.instanceID,
-                deviceToken: pairing.deviceToken
+                deviceToken: deviceToken
             ),
         ]
     }

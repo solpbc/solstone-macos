@@ -33,7 +33,7 @@ struct TunnelSessionTests {
         await server.stop()
 
         let states = await recorder.states
-        let candidates = try TransportEndpoint.candidates(for: pairing)
+        let candidates = TransportEndpoint.candidates(for: pairing)
         #expect(Array(states.prefix(3)) == [
             .disconnected,
             .connecting(attempt: 1, candidates: candidates),
@@ -118,7 +118,7 @@ struct TunnelSessionTests {
         await relay.stop()
         await tlsServer.stop()
 
-        let candidates = try TransportEndpoint.candidates(for: pairing)
+        let candidates = TransportEndpoint.candidates(for: pairing)
         #expect(await recorder.states.contains(.connecting(attempt: 1, candidates: candidates)))
         #expect(await recorder.states.contains(.connected(via: .relay(endpoint: relayURL))))
     }
@@ -134,7 +134,7 @@ struct TunnelSessionTests {
         let relayOnly = TransportEndpoint.relay(
             endpoint: URL(string: "ws://127.0.0.1:1")!,
             instanceID: pairing.instanceID,
-            deviceToken: pairing.deviceToken
+            deviceToken: deviceToken(from: pairing)
         )
 
         let firstVia = try await session.connect(endpoints: [direct])
@@ -190,10 +190,17 @@ struct TunnelSessionTests {
             clientCertPEM: fixture.clientCertificatePEM,
             clientKeyPEM: fixture.clientPrivateKeyPEM,
             caChainPEM: fixture.caCertificatePEM,
-            deviceToken: fixture.pairing.deviceToken,
+            relayEnrollment: fixture.pairing.relayEnrollment,
             localEndpoints: localEndpoints ?? [LocalEndpoint(host: "127.0.0.1", port: localPort ?? 1, scope: "local")],
             pairedAt: fixture.pairing.pairedAt
         )
+    }
+
+    private func deviceToken(from pairing: StoredPairing) -> String {
+        if case .enrolled(let deviceToken, _) = pairing.relayEnrollment {
+            return deviceToken
+        }
+        return ""
     }
 
     private func observe(session: TunnelSession, recorder: StateRecorder) -> Task<Void, Never> {

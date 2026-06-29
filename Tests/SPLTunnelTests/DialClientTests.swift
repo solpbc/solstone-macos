@@ -67,6 +67,43 @@ struct DialClientTests {
         #expect(transport.transportKind == "relay")
     }
 
+    @Test func pairRelayConnectsWithPairDialPathAndTicketAuthorization() async throws {
+        let server = WebSocketEchoServer()
+        try await server.start()
+        let port = await server.port
+
+        let transport = try await DialClient.dialPairRelay(
+            endpoint: try relayEndpoint(port: port),
+            instanceID: "instance-1",
+            pairTicket: "pair-ticket"
+        )
+        try await transport.send(Data([0x07, 0x08, 0x09]))
+        let echoed = try await transport.receive()
+        await transport.close()
+        let authorization = await server.authorizationHeader
+        await server.stop()
+
+        #expect(echoed == Data([0x07, 0x08, 0x09]))
+        #expect(authorization == "Bearer pair-ticket")
+        #expect(transport.transportKind == "relay")
+    }
+
+    @Test func webSocketURLBuildsSessionAndPairDialPaths() throws {
+        let relayURL = try RelayWSTransport.webSocketURL(
+            endpoint: URL(string: "https://link.solstone.app")!,
+            path: "session/dial",
+            instanceID: "instance-123"
+        )
+        let pairURL = try RelayWSTransport.webSocketURL(
+            endpoint: URL(string: "https://link.solstone.app/base")!,
+            path: "session/pair-dial",
+            instanceID: "instance-123"
+        )
+
+        #expect(relayURL.absoluteString == "wss://link.solstone.app/session/dial?instance=instance-123")
+        #expect(pairURL.absoluteString == "wss://link.solstone.app/base/session/pair-dial?instance=instance-123")
+    }
+
     @Test func relay401MapsUnauthorized() async throws {
         try await expectRelayStatus(401, .relayUnauthorized)
     }

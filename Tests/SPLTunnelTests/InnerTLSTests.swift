@@ -84,7 +84,7 @@ struct InnerTLSTests {
         let transport = try await DialClient.dial(.relay(
             endpoint: try #require(URL(string: "ws://127.0.0.1:\(relayPort)")),
             instanceID: fixture.pairing.instanceID,
-            deviceToken: fixture.pairing.deviceToken
+            deviceToken: deviceToken(from: fixture.pairing)
         ))
         let tls = try await InnerTLS.connectViaTransport(transport: transport, pairing: fixture.pairing)
         let payload = Data((0..<1024).map { UInt8(($0 * 7) % 251) })
@@ -113,6 +113,13 @@ struct InnerTLSTests {
             group.cancelAll()
             return result
         }
+    }
+
+    private func deviceToken(from pairing: StoredPairing) -> String {
+        if case .enrolled(let deviceToken, _) = pairing.relayEnrollment {
+            return deviceToken
+        }
+        return ""
     }
 
     private func expectPeerNotPinned(_ operation: @escaping @Sendable () async throws -> Void) async {

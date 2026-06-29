@@ -191,6 +191,10 @@ private func pairURLMessage(_ error: PairURLError) -> String {
         return "pair url version is unsupported: \(hexByte(version))"
     case .unsupportedAddrType(let addressType):
         return "pair url address type is unsupported: \(hexByte(addressType))"
+    case .unsupportedCAFingerprintTag(let tag):
+        return "pair url ca fingerprint tag is unsupported: \(hexByte(tag))"
+    case .invalidRelayOrigin:
+        return "pair url relay origin is invalid"
     case .invalidLength(let count):
         return "pair url data length is invalid: \(count) bytes"
     case .malformedOuterURL:
@@ -214,6 +218,12 @@ private func pairErrorCode(_ error: PairError) -> String {
         return "lan_response_invalid"
     case .nonceExpired:
         return "nonce_expired"
+    case .pairingWindowClosed:
+        return "pairing_window_closed"
+    case .lanCandidatesExhausted:
+        return "lan_candidates_exhausted"
+    case .relayInstanceMismatch:
+        return "relay_instance_mismatch"
     case .relayRequestFailed:
         return "relay_request_failed"
     case .relayResponseInvalid:
