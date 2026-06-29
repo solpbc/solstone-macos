@@ -19,6 +19,7 @@ enum TunnelLifecycleError: Error, Sendable, Equatable {
     case revoked
     case loopbackUnavailable
     case keychainUnavailable
+    case notEntitled
 }
 
 enum TunnelHealth: Sendable, Equatable {
@@ -154,6 +155,22 @@ final class TunnelLifecycleOwner {
         health = .unknown
     }
 
+    func reevaluatePairing() async {
+        guard running else {
+            refreshTunnelManagedFromStoredPairing()
+            return
+        }
+
+        startTask?.cancel()
+        startTask = nil
+        authRefreshTask?.cancel()
+        authRefreshTask = nil
+        await disconnectCurrentTransport()
+        startTask = Task { @MainActor [weak self] in
+            await self?.connectFromStoredPairing()
+        }
+    }
+
     private func connectFromStoredPairing() async {
         guard running, !Task.isCancelled else {
             return
@@ -285,6 +302,9 @@ final class TunnelLifecycleOwner {
             } catch SessionError.revoked {
                 await retirePairingAndFailRevoked()
                 return .terminal
+            } catch SessionError.notEntitled {
+                await failWithNotEntitled()
+                return .terminal
             } catch {
                 splOwnerLog.debug("tunnel connect nonterminal failure: \(String(describing: type(of: error)), privacy: .public)")
                 return .retry
@@ -324,6 +344,9 @@ final class TunnelLifecycleOwner {
         guard running else {
             return
         }
+        if case .error = state {
+            return
+        }
 
         switch tunnelState {
         case .disconnected:
@@ -347,6 +370,9 @@ final class TunnelLifecycleOwner {
 
         case .failed(.revoked):
             await retirePairingAndFailRevoked()
+
+        case .failed(.notEntitled):
+            await failWithNotEntitled()
 
         case .failed:
             stopProbe()
@@ -543,6 +569,12 @@ final class TunnelLifecycleOwner {
     private func failWithKeychainUnavailable() async {
         await disconnectCurrentTransport()
         state = .error(.keychainUnavailable)
+        health = .unknown
+    }
+
+    private func failWithNotEntitled() async {
+        await disconnectCurrentTransport()
+        state = .error(.notEntitled)
         health = .unknown
     }
 

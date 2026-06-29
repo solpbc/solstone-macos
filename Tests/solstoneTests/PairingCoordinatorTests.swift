@@ -1,0 +1,366 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 sol pbc
+
+import Foundation
+import SolstoneCore
+import SPLTunnel
+import Testing
+@testable import solstone
+
+@Suite("PairingCoordinator")
+@MainActor
+struct PairingCoordinatorTests {
+    @Test func pairSuccessSavesPairingAndReactivatesOwner() async throws {
+        let saved = pairing(instanceID: "11111111-1111-1111-1111-111111111111")
+        let store = PairingStore(pairing: nil)
+        let script = PairScript([.success(saved)])
+        let reactivate = ReactivateRecorder()
+        let coordinator = makeCoordinator(store: store, script: script, reactivate: reactivate)
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+
+        #expect(coordinator.state == .paired)
+        #expect(store.currentPairing == saved)
+        #expect(store.savedPairings == [saved])
+        #expect(await script.callCount == 1)
+        #expect(await reactivate.count == 1)
+        let calls = await script.calls
+        let call = try #require(calls.first)
+        #expect(call.deviceLabel == "test mac")
+        #expect(call.relayEndpoint.absoluteString == "https://relay.test")
+    }
+
+    @Test func enrollUnavailablePairingStillSavesAndPairs() async throws {
+        let saved = pairing(
+            instanceID: "11111111-1111-1111-1111-111111111111",
+            relayEnrollment: .unavailable
+        )
+        let store = PairingStore(pairing: nil)
+        let coordinator = makeCoordinator(store: store, outcomes: [.success(saved)])
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+
+        #expect(coordinator.state == .paired)
+        #expect(store.currentPairing == saved)
+        #expect(store.savedPairings == [saved])
+    }
+
+    @Test func saveThrowsSetsSaveFailedAndDoesNotReactivate() async throws {
+        let saved = pairing(instanceID: "11111111-1111-1111-1111-111111111111")
+        let store = PairingStore(pairing: nil, saveError: PairScriptError.saveFailed)
+        let script = PairScript([.success(saved)])
+        let reactivate = ReactivateRecorder()
+        let coordinator = makeCoordinator(store: store, script: script, reactivate: reactivate)
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+
+        #expect(coordinator.state == .saveFailed)
+        #expect(store.currentPairing == nil)
+        #expect(store.saveCount == 1)
+        #expect(await script.callCount == 1)
+        #expect(await reactivate.count == 0)
+    }
+
+    @Test func sameInstanceIDSkipsCeremonySetsAlreadyConnected() async throws {
+        let instanceID = "11111111-1111-1111-1111-111111111111"
+        let store = PairingStore(pairing: pairing(instanceID: instanceID.uppercased()))
+        let script = PairScript([.failure(PairError.nonceExpired)])
+        let reactivate = ReactivateRecorder()
+        let coordinator = makeCoordinator(store: store, script: script, reactivate: reactivate)
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: instanceID))
+
+        #expect(coordinator.state == .alreadyConnected)
+        #expect(await script.callCount == 0)
+        #expect(store.saveCount == 0)
+        #expect(await reactivate.count == 1)
+    }
+
+    @Test func differentInstanceIDRequiresSwitchConfirmBeforeOverwrite() async throws {
+        let prior = pairing(instanceID: "11111111-1111-1111-1111-111111111111")
+        let replacement = pairing(instanceID: "22222222-2222-2222-2222-222222222222")
+        let store = PairingStore(pairing: prior)
+        let script = PairScript([.success(replacement)])
+        let coordinator = makeCoordinator(store: store, script: script)
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: replacement.instanceID))
+
+        #expect(coordinator.state == .switchConfirmPending(newInstanceID: replacement.instanceID))
+        #expect(store.currentPairing == prior)
+        #expect(store.saveCount == 0)
+        #expect(await script.callCount == 0)
+    }
+
+    @Test func confirmSwitchRunsCeremonySavesAndSetsSwitched() async throws {
+        let prior = pairing(instanceID: "11111111-1111-1111-1111-111111111111")
+        let replacement = pairing(instanceID: "22222222-2222-2222-2222-222222222222")
+        let store = PairingStore(pairing: prior)
+        let script = PairScript([.success(replacement)])
+        let reactivate = ReactivateRecorder()
+        let coordinator = makeCoordinator(store: store, script: script, reactivate: reactivate)
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: replacement.instanceID))
+        await coordinator.confirmSwitch()
+
+        #expect(coordinator.state == .switched)
+        #expect(store.currentPairing == replacement)
+        #expect(store.savedPairings == [replacement])
+        #expect(await script.callCount == 1)
+        #expect(await reactivate.count == 1)
+    }
+
+    @Test func differentInstanceIDConfirmFailurePreservesPriorPairing() async throws {
+        let prior = pairing(instanceID: "11111111-1111-1111-1111-111111111111")
+        let replacementID = "22222222-2222-2222-2222-222222222222"
+        let store = PairingStore(pairing: prior)
+        let script = PairScript([.failure(PairError.nonceExpired)])
+        let reactivate = ReactivateRecorder()
+        let coordinator = makeCoordinator(store: store, script: script, reactivate: reactivate)
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: replacementID))
+        await coordinator.confirmSwitch()
+
+        #expect(coordinator.state == .failed(.staleLink))
+        #expect(store.currentPairing == prior)
+        #expect(store.saveCount == 0)
+        #expect(await script.callCount == 1)
+        #expect(await reactivate.count == 0)
+    }
+
+    @Test func unpairDeletesPairingReactivatesAndRestoresIdle() async throws {
+        let store = PairingStore(pairing: pairing())
+        let reactivate = ReactivateRecorder()
+        let coordinator = makeCoordinator(store: store, outcomes: [], reactivate: reactivate)
+
+        await coordinator.unpair()
+
+        #expect(coordinator.state == .idle)
+        #expect(store.currentPairing == nil)
+        #expect(store.deleted)
+        #expect(store.deleteCount == 1)
+        #expect(await reactivate.count == 1)
+    }
+
+    @Test func invalidPairURLCasesMapToInvalidLink() async throws {
+        let coordinator = makeCoordinator(store: PairingStore(pairing: nil), outcomes: [])
+
+        await coordinator.submitPairingLink("not a url")
+        #expect(coordinator.state == .failed(.invalidLink("pairing link must use https")))
+
+        await coordinator.submitPairingLink(directPairLink)
+        #expect(coordinator.state == .failed(.invalidLink("pairing link is not a relay link")))
+
+        let cases: [(PairURLError, String)] = [
+            (.wrongScheme(nil), "pairing link must use https"),
+            (.wrongScheme("http"), "pairing link must use https, got http"),
+            (.wrongHost(nil), "pairing link must use go.solstone.app"),
+            (.wrongHost("example.com"), "pairing link must use go.solstone.app, got example.com"),
+            (.wrongPath("/x"), "pairing link path must be /p, got /x"),
+            (.missingFragment, "pairing link is missing its code"),
+            (.invalidBase32(.outOfAlphabet("?")), "pairing link contains an invalid character: ?"),
+            (.invalidBase32(.nonCanonicalPadBits), "pairing link contains invalid encoded data"),
+            (.invalidVersion(0x02), "pairing link version is unsupported: 0x02"),
+            (.unsupportedAddrType(0xff), "pairing link address type is unsupported: 0xff"),
+            (.unsupportedCAFingerprintTag(0x02), "pairing link fingerprint type is unsupported: 0x02"),
+            (.invalidRelayOrigin, "pairing link relay origin is invalid"),
+            (.invalidLength(12), "pairing link data length is invalid: 12 bytes"),
+            (.malformedOuterURL, "pairing link is malformed"),
+        ]
+
+        for (error, expected) in cases {
+            #expect(PairingCoordinator.invalidLinkReason(error) == expected)
+        }
+    }
+
+    @Test func attestationRejected401MapsToStaleLink() async throws {
+        await expectCeremonyFailure(PairError.attestationRejected(status: 401), mapsTo: .staleLink)
+    }
+
+    @Test func attestationRejected403MapsToStaleLink() async throws {
+        await expectCeremonyFailure(PairError.attestationRejected(status: 403), mapsTo: .staleLink)
+    }
+
+    @Test func attestationRejected409MapsToStaleLink() async throws {
+        await expectCeremonyFailure(PairError.attestationRejected(status: 409), mapsTo: .staleLink)
+    }
+
+    @Test func nonceExpiredMapsToStaleLink() async throws {
+        await expectCeremonyFailure(PairError.nonceExpired, mapsTo: .staleLink)
+    }
+
+    @Test func pairingWindowClosedMapsToStaleLink() async throws {
+        await expectCeremonyFailure(PairError.pairingWindowClosed, mapsTo: .staleLink)
+    }
+
+    @Test func relayUnauthorizedMapsToRelayUnauthorized() async throws {
+        await expectCeremonyFailure(DialError.relayUnauthorized, mapsTo: .relayUnauthorized)
+        #expect(PairingCoordinator.failure(for: PairError.relayResponseInvalid(status: 401)) == .relayUnauthorized)
+        #expect(PairingCoordinator.failure(for: PairError.relayResponseInvalid(status: 403)) == .relayUnauthorized)
+        #expect(PairingCoordinator.failure(for: DialError.wsHandshakeFailed(httpStatus: 401)) == .relayUnauthorized)
+        #expect(PairingCoordinator.failure(for: DialError.wsHandshakeFailed(httpStatus: 403)) == .relayUnauthorized)
+    }
+
+    @Test func relayInstanceMismatchMapsToInstanceMismatch() async throws {
+        await expectCeremonyFailure(PairError.relayInstanceMismatch, mapsTo: .instanceMismatch)
+        #expect(PairingCoordinator.failure(for: DialError.relayInstanceUnknown) == .instanceMismatch)
+        #expect(PairingCoordinator.failure(for: DialError.wsHandshakeFailed(httpStatus: 404)) == .instanceMismatch)
+    }
+
+    @Test func dialRelayFailureMapsToHomeUnreachable() async throws {
+        await expectCeremonyFailure(DialError.connectTimeout, mapsTo: .homeUnreachable)
+        #expect(PairingCoordinator.failure(for: DialError.connectionFailed("offline")) == .homeUnreachable)
+        #expect(PairingCoordinator.failure(for: DialError.sendFailed("closed")) == .homeUnreachable)
+        #expect(PairingCoordinator.failure(for: DialError.receiveFailed("closed")) == .homeUnreachable)
+        #expect(PairingCoordinator.failure(for: DialError.unexpectedTextFrame) == .homeUnreachable)
+    }
+
+    @Test func underlyingRelayNetworkFailureMapsToNetwork() async throws {
+        await expectCeremonyFailure(PairError.relayRequestFailed(underlying: URLError(.cannotConnectToHost)), mapsTo: .network)
+        #expect(PairingCoordinator.failure(for: PairError.relayResponseInvalid(status: nil)) == .network)
+        #expect(PairingCoordinator.failure(for: PairError.lanResponseInvalid(status: 400)) == .network)
+        #expect(PairingCoordinator.failure(for: DialError.wsHandshakeFailed(httpStatus: nil)) == .network)
+    }
+
+    private func expectCeremonyFailure(_ error: any Error & Sendable, mapsTo failure: PairingFailure) async {
+        let instanceID = "11111111-1111-1111-1111-111111111111"
+        let coordinator = makeCoordinator(
+            store: PairingStore(pairing: nil),
+            outcomes: [.failure(error)]
+        )
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: instanceID))
+
+        #expect(coordinator.state == .failed(failure))
+    }
+
+    private func makeCoordinator(
+        store: PairingStore,
+        outcomes: [PairScriptOutcome],
+        reactivate: ReactivateRecorder = ReactivateRecorder()
+    ) -> PairingCoordinator {
+        makeCoordinator(
+            store: store,
+            script: PairScript(outcomes),
+            reactivate: reactivate
+        )
+    }
+
+    private func makeCoordinator(
+        store: PairingStore,
+        script: PairScript,
+        reactivate: ReactivateRecorder = ReactivateRecorder(),
+        ownerState: TunnelLifecycleState = .disconnected
+    ) -> PairingCoordinator {
+        PairingCoordinator(
+            pair: { pairURL, deviceLabel, relayEndpoint in
+                try await script.pair(pairURL: pairURL, deviceLabel: deviceLabel, relayEndpoint: relayEndpoint)
+            },
+            loadPairing: { try store.load() },
+            savePairing: { try store.save($0) },
+            deletePairing: { try store.delete() },
+            reactivate: {
+                await reactivate.record()
+            },
+            ownerState: { ownerState },
+            relayEndpoint: { URL(string: "https://relay.test")! },
+            deviceLabel: { "test mac" }
+        )
+    }
+}
+
+private enum PairScriptError: Error, Sendable {
+    case noOutcome
+    case saveFailed
+}
+
+private struct PairCall: Sendable {
+    let pairURL: PairURL
+    let deviceLabel: String
+    let relayEndpoint: URL
+}
+
+private enum PairScriptOutcome: Sendable {
+    case success(StoredPairing)
+    case failure(any Error & Sendable)
+}
+
+private actor PairScript {
+    private var outcomes: [PairScriptOutcome]
+    private(set) var calls: [PairCall] = []
+
+    var callCount: Int {
+        calls.count
+    }
+
+    init(_ outcomes: [PairScriptOutcome]) {
+        self.outcomes = outcomes
+    }
+
+    func pair(pairURL: PairURL, deviceLabel: String, relayEndpoint: URL) throws -> StoredPairing {
+        calls.append(PairCall(pairURL: pairURL, deviceLabel: deviceLabel, relayEndpoint: relayEndpoint))
+        guard !outcomes.isEmpty else {
+            throw PairScriptError.noOutcome
+        }
+        switch outcomes.removeFirst() {
+        case .success(let pairing):
+            return pairing
+        case .failure(let error):
+            throw error
+        }
+    }
+}
+
+private actor ReactivateRecorder {
+    private(set) var count = 0
+
+    func record() {
+        count += 1
+    }
+}
+
+private let directPairLink = "https://go.solstone.app/p#0G0W000258DSX8DJRFAEBXG7308J4CT4ANK7F26YNPZEZJQYQAZ028T5CY4TQKFF"
+
+private func relayPairLink(instanceID: String) -> String {
+    let uuid = UUID(uuidString: instanceID)!
+    let tuple = uuid.uuid
+    var bytes: [UInt8] = [
+        0x03,
+        tuple.0, tuple.1, tuple.2, tuple.3,
+        tuple.4, tuple.5,
+        tuple.6, tuple.7,
+        tuple.8, tuple.9,
+        tuple.10, tuple.11, tuple.12, tuple.13, tuple.14, tuple.15,
+        0x01, 0xE2, 0x40,
+    ]
+    bytes.append(contentsOf: Array(0x10...0x1F).map(UInt8.init))
+    bytes.append(0x01)
+    bytes.append(contentsOf: Array(0x30...0x3F).map(UInt8.init))
+    bytes.append(0)
+    return "https://go.solstone.app/p#\(encodeBase32(bytes))"
+}
+
+private func encodeBase32(_ bytes: [UInt8]) -> String {
+    let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+    var accumulator: UInt64 = 0
+    var bitCount = 0
+    var output = ""
+
+    for byte in bytes {
+        accumulator = (accumulator << 8) | UInt64(byte)
+        bitCount += 8
+
+        while bitCount >= 5 {
+            bitCount -= 5
+            let index = Int((accumulator >> UInt64(bitCount)) & 0x1f)
+            output.append(alphabet[index])
+            accumulator &= (1 << UInt64(bitCount)) - 1
+        }
+    }
+
+    if bitCount > 0 {
+        let index = Int((accumulator << UInt64(5 - bitCount)) & 0x1f)
+        output.append(alphabet[index])
+    }
+
+    return output
+}

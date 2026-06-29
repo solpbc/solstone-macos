@@ -44,10 +44,10 @@ struct TunnelSessionTests {
     }
 
     @Test func reconnectSurvivesThreeServerKillRestartCycles() async throws {
-        let fixedPort = Int.random(in: 20_000...60_000)
         let fixture = try TestCA.make()
-        let server = TLSEchoServer(bundle: fixture, port: fixedPort)
+        let server = TLSEchoServer(bundle: fixture)
         try await server.start()
+        let fixedPort = await server.port
         let pairing = pairing(from: fixture, localPort: fixedPort)
         let session = TunnelSession(pairing: pairing)
         let recorder = StateRecorder()

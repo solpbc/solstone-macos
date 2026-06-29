@@ -77,7 +77,9 @@ struct SyncServiceTests {
 
         #expect(ObserverURLProtocol.store.snapshotRequests().isEmpty)
         #expect(FileManager.default.fileExists(atPath: segment.url.path))
-        #expect(await recorder.containsAwaitingTunnel())
+        try await waitUntil(timeout: .seconds(3), poll: .milliseconds(100)) {
+            await recorder.containsAwaitingTunnel()
+        }
 
         ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
         ObserverURLProtocol.store.enqueue(statusCode: 200, body: "{}")

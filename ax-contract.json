@@ -246,6 +246,15 @@
       "settings.service.journalMode.picker",
       "settings.service.journalMode.state",
       "settings.service.next.checkStatus",
+      "settings.service.pairing.connect",
+      "settings.service.pairing.connection.state",
+      "settings.service.pairing.failure.state",
+      "settings.service.pairing.flow.state",
+      "settings.service.pairing.link",
+      "settings.service.pairing.retry",
+      "settings.service.pairing.switchCancel",
+      "settings.service.pairing.switchConfirm",
+      "settings.service.pairing.unpair",
       "settings.service.prereq.permissions",
       "settings.service.restartRequired.banner",
       "settings.status.app.version.state",
@@ -396,6 +405,18 @@
     "settings.service.journalMode.state" : {
       "kind" : "enum",
       "vocabulary" : "ServiceMode"
+    },
+    "settings.service.pairing.connection.state" : {
+      "kind" : "enum",
+      "vocabulary" : "PairingConnectionAXState"
+    },
+    "settings.service.pairing.failure.state" : {
+      "kind" : "enum",
+      "vocabulary" : "PairingFailure"
+    },
+    "settings.service.pairing.flow.state" : {
+      "kind" : "enum",
+      "vocabulary" : "PairingFlowState"
     },
     "settings.sidebar.tab.{tab}.state" : {
       "kind" : "enum",
@@ -563,6 +584,34 @@
       "offline",
       "paused",
       "observing"
+    ],
+    "PairingConnectionAXState" : [
+      "disconnected",
+      "connecting",
+      "connected",
+      "not_entitled",
+      "revoked",
+      "loopback_unavailable",
+      "keychain_unavailable"
+    ],
+    "PairingFailure" : [
+      "stale_link",
+      "home_unreachable",
+      "relay_unauthorized",
+      "instance_mismatch",
+      "network",
+      "invalid_link",
+      "local_setup"
+    ],
+    "PairingFlowState" : [
+      "idle",
+      "pairing",
+      "switch_confirm_pending",
+      "paired",
+      "already_connected",
+      "switched",
+      "save_failed",
+      "failed"
     ],
     "RowStatus" : [
       "pending",

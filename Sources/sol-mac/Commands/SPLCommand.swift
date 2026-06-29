@@ -29,10 +29,10 @@ extension SPL {
         var pairUrl: String
 
         @Option(name: .customLong("device-label"))
-        var deviceLabel: String = ProcessInfo.processInfo.hostName
+        var deviceLabel: String = SPLPairingDefaults.deviceLabel
 
         @Option(name: .customLong("relay-endpoint"))
-        var relayEndpoint: String = "https://spl-relay-staging.jer-3f2.workers.dev"
+        var relayEndpoint: String = SPLPairingDefaults.relayEndpoint
 
         func run() async throws {
             guard let relayURL = URL(string: relayEndpoint) else {

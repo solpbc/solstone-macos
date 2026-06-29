@@ -8,6 +8,7 @@ import ServiceManagement
 import UserNotifications
 import os
 import SolstoneCore
+import SPLTunnel
 
 /// Thread-safe holder for a debug setting value
 /// Allows Sendable closures to read the current value
@@ -65,6 +66,7 @@ public final class AppState {
     public let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
     internal let solChatBridge: SolChatBridge
     internal let tunnelLifecycleOwner: TunnelLifecycleOwner
+    internal let pairingCoordinator: PairingCoordinator
     private let notifier: any SolChatNotifying
     private let loginService: any LoginItemService
     private let isSnapshot: Bool
@@ -668,7 +670,19 @@ public final class AppState {
         self.singleSupervisorGate = SingleSupervisorGate()
         self.journalReadinessGate = JournalReadinessGate()
         self.recoveryCoordinator = .shared
-        self.tunnelLifecycleOwner = TunnelLifecycleOwner()
+        let tunnelLifecycleOwner = TunnelLifecycleOwner()
+        self.tunnelLifecycleOwner = tunnelLifecycleOwner
+        self.pairingCoordinator = PairingCoordinator(
+            loadPairing: { try SPLKeychain.load() },
+            savePairing: { try SPLKeychain.save($0) },
+            deletePairing: { try SPLKeychain.delete() },
+            reactivate: { [owner = tunnelLifecycleOwner] in
+                await owner.reevaluatePairing()
+            },
+            ownerState: { [owner = tunnelLifecycleOwner] in
+                owner.state
+            }
+        )
         let homeBaseURLResolver = Self.makeHomeBaseURLResolver(target: homeBaseURLTarget)
         self.heartbeatService = HeartbeatService(
             resolver: homeBaseURLResolver,
@@ -960,7 +974,19 @@ public final class AppState {
             postOpenChat: { _ in },
             notifier: notifier
         )
-        self.tunnelLifecycleOwner = .dormantForSnapshot()
+        let tunnelLifecycleOwner = TunnelLifecycleOwner.dormantForSnapshot()
+        self.tunnelLifecycleOwner = tunnelLifecycleOwner
+        self.pairingCoordinator = PairingCoordinator(
+            loadPairing: { nil },
+            savePairing: { _ in },
+            deletePairing: {},
+            reactivate: { [owner = tunnelLifecycleOwner] in
+                await owner.reevaluatePairing()
+            },
+            ownerState: { [owner = tunnelLifecycleOwner] in
+                owner.state
+            }
+        )
 
         let debugAudioHolder = DebugSettingHolder(value: false)
         let silenceMusicHolder = DebugSettingHolder(value: true)

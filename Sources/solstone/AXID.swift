@@ -72,6 +72,15 @@ enum AXID {
             static let externalConnect = "settings.service.external.connect"
             static let externalConnectionTestState = "settings.service.external.connectionTest.state"
             static let externalViewStatus = "settings.service.external.viewStatus"
+            static let pairingLink = "settings.service.pairing.link"
+            static let pairingConnect = "settings.service.pairing.connect"
+            static let pairingUnpair = "settings.service.pairing.unpair"
+            static let pairingRetry = "settings.service.pairing.retry"
+            static let pairingSwitchConfirm = "settings.service.pairing.switchConfirm"
+            static let pairingSwitchCancel = "settings.service.pairing.switchCancel"
+            static let pairingFlowState = "settings.service.pairing.flow.state"
+            static let pairingFailureState = "settings.service.pairing.failure.state"
+            static let pairingConnectionState = "settings.service.pairing.connection.state"
             static let nextCheckStatus = "settings.service.next.checkStatus"
         }
 

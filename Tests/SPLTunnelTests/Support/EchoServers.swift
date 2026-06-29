@@ -373,7 +373,7 @@ actor TLSEchoServer {
     private let clientCAPEM: String
     private let rejectClientCertificate: Bool
     private let mode: TLSEchoMode
-    private let requestedPort: Int?
+    private var requestedPort: Int?
     private let capture = CertificateCapture()
     private var listener: NWListener?
     private var connections: [NWConnection] = []
@@ -414,6 +414,9 @@ actor TLSEchoServer {
         self.listener = listener
         try await startAndWaitForListenerReady(listener)
         boundPort = listener.port
+        if requestedPort == nil {
+            requestedPort = listener.port.map { Int($0.rawValue) }
+        }
     }
 
     func stop() async {

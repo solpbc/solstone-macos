@@ -41,6 +41,62 @@ func initialServiceMode(for config: AppConfig) -> ServiceMode {
     config.serviceMode ?? .bundled
 }
 
+struct PairingConnectionPresentation {
+    let message: String
+    let severity: StatusDotSeverity
+    let axToken: String
+}
+
+func makePairingConnectionPresentation(
+    for state: TunnelLifecycleState,
+    hasPairing: Bool
+) -> PairingConnectionPresentation {
+    switch state {
+    case .connected:
+        return PairingConnectionPresentation(
+            message: "sync can connect through your paired home",
+            severity: .good,
+            axToken: PairingConnectionAXState.connected.axToken
+        )
+    case .connecting:
+        return PairingConnectionPresentation(
+            message: "paired, connecting to your home",
+            severity: .warn,
+            axToken: PairingConnectionAXState.connecting.axToken
+        )
+    case .disconnected:
+        return PairingConnectionPresentation(
+            message: hasPairing ? "paired, waiting to connect" : "not paired",
+            severity: .warn,
+            axToken: PairingConnectionAXState.disconnected.axToken
+        )
+    case .error(.notEntitled):
+        return PairingConnectionPresentation(
+            message: "paired, but your home isn't on the paid tier — sync can't connect",
+            severity: .warn,
+            axToken: PairingConnectionAXState.notEntitled.axToken
+        )
+    case .error(.revoked):
+        return PairingConnectionPresentation(
+            message: "pairing was revoked. pair again to reconnect.",
+            severity: .attention,
+            axToken: PairingConnectionAXState.revoked.axToken
+        )
+    case .error(.loopbackUnavailable):
+        return PairingConnectionPresentation(
+            message: "paired, but the local tunnel couldn't start",
+            severity: .attention,
+            axToken: PairingConnectionAXState.loopbackUnavailable.axToken
+        )
+    case .error(.keychainUnavailable):
+        return PairingConnectionPresentation(
+            message: "paired, but this Mac couldn't read the pairing",
+            severity: .attention,
+            axToken: PairingConnectionAXState.keychainUnavailable.axToken
+        )
+    }
+}
+
 private struct SettingsPaneScrollEdgeModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -87,6 +143,7 @@ struct SettingsView: View {
     // Service tab state
     @State private var observerURL = ""
     @State private var observerKey = ""
+    @State private var pairingLink = ""
     @State private var serviceMode: ServiceMode
     @State private var preserveNextServiceFieldChange = false
     @State private var inFlightTestID: UUID?
@@ -625,6 +682,7 @@ struct SettingsView: View {
                 if shouldShowBundledStatusSurface(cardState: cardState) {
                     BundledServiceCard(appState: appState, allowsLocalJournalActions: false)
                 }
+                pairingSection
                 externalServiceSection
                 externalJournalSyncSection
                 externalJournalStorageSection
@@ -889,6 +947,173 @@ struct SettingsView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
+    }
+
+    private var pairingSection: some View {
+        GroupBox("pairing") {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("pairing link").font(.caption).foregroundStyle(.secondary)
+                    TextField("paste relay pairing link", text: $pairingLink)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier(AXID.Settings.Service.pairingLink)
+                }
+
+                HStack {
+                    Button("pair") {
+                        submitPairingLink()
+                    }
+                    .disabled(pairingLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pairingIsBusy)
+                    .accessibilityIdentifier(AXID.Settings.Service.pairingConnect)
+
+                    if pairingIsBusy {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if pairingCanUnpair {
+                        Button("unpair") {
+                            Task {
+                                await appState.pairingCoordinator.unpair()
+                            }
+                        }
+                        .disabled(pairingIsBusy)
+                        .accessibilityIdentifier(AXID.Settings.Service.pairingUnpair)
+                    }
+                }
+
+                if let result = pairingResultText {
+                    LabeledContent("pairing") {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text(result)
+                        }
+                    }
+                }
+
+                pairingConnectionTruthRow
+
+                if case .switchConfirmPending(let newInstanceID) = appState.pairingCoordinator.state {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("this link is for a different home. switch to \(newInstanceID.prefix(8))?")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Button("switch") {
+                                Task {
+                                    await appState.pairingCoordinator.confirmSwitch()
+                                }
+                            }
+                            .accessibilityIdentifier(AXID.Settings.Service.pairingSwitchConfirm)
+
+                            Button("cancel") {
+                                appState.pairingCoordinator.cancelSwitch()
+                            }
+                            .accessibilityIdentifier(AXID.Settings.Service.pairingSwitchCancel)
+                        }
+                    }
+                }
+
+                pairingFailureRow
+
+                AXStateCompanion(
+                    id: AXID.Settings.Service.pairingFlowState,
+                    value: appState.pairingCoordinator.state.axToken
+                )
+                AXStateCompanion(
+                    id: AXID.Settings.Service.pairingConnectionState,
+                    value: pairingConnectionPresentation.axToken
+                )
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var pairingConnectionTruthRow: some View {
+        let presentation = pairingConnectionPresentation
+        return LabeledContent("connection") {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(presentation.severity.color)
+                    .frame(width: 8, height: 8)
+                Text(presentation.message)
+                    .foregroundStyle(presentation.severity.color)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var pairingFailureRow: some View {
+        switch appState.pairingCoordinator.state {
+        case .failed(let failure):
+            VStack(alignment: .leading, spacing: 8) {
+                Text(failure.message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                Button("retry") {
+                    submitPairingLink()
+                }
+                .disabled(pairingLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pairingIsBusy)
+                .accessibilityIdentifier(AXID.Settings.Service.pairingRetry)
+                AXStateCompanion(
+                    id: AXID.Settings.Service.pairingFailureState,
+                    value: failure.axToken
+                )
+            }
+        case .saveFailed:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("pairing worked, but this Mac couldn't save it. try again.")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                Button("retry") {
+                    submitPairingLink()
+                }
+                .disabled(pairingLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pairingIsBusy)
+                .accessibilityIdentifier(AXID.Settings.Service.pairingRetry)
+            }
+        case .idle, .pairing, .switchConfirmPending, .paired, .alreadyConnected, .switched:
+            EmptyView()
+        }
+    }
+
+    private var pairingResultText: String? {
+        switch appState.pairingCoordinator.state {
+        case .paired:
+            return "paired ✓"
+        case .alreadyConnected:
+            return "already paired ✓"
+        case .switched:
+            return "switched ✓"
+        case .idle, .pairing, .switchConfirmPending, .saveFailed, .failed:
+            return nil
+        }
+    }
+
+    private var pairingIsBusy: Bool {
+        if case .pairing = appState.pairingCoordinator.state {
+            return true
+        }
+        return false
+    }
+
+    private var pairingCanUnpair: Bool {
+        appState.tunnelLifecycleOwner.isTunnelManaged || pairingResultText != nil
+    }
+
+    private var pairingConnectionPresentation: PairingConnectionPresentation {
+        makePairingConnectionPresentation(
+            for: appState.pairingCoordinator.tunnelState,
+            hasPairing: pairingCanUnpair
+        )
+    }
+
+    private func submitPairingLink() {
+        Task {
+            await appState.pairingCoordinator.submitPairingLink(pairingLink)
+        }
     }
 
     @ViewBuilder

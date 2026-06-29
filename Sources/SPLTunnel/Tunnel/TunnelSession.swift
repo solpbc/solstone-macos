@@ -25,6 +25,7 @@ public enum SessionError: Error, Equatable, Sendable {
     case tlsFailed(String)
     case revoked
     case tokenExpired
+    case notEntitled
 }
 
 public enum TunnelState: Sendable, Equatable {

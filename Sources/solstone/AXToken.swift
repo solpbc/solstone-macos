@@ -82,6 +82,16 @@ internal enum DoctorProgress: CaseIterable {
     case error
 }
 
+internal enum PairingConnectionAXState: CaseIterable {
+    case disconnected
+    case connecting
+    case connected
+    case notEntitled
+    case revoked
+    case loopbackUnavailable
+    case keychainUnavailable
+}
+
 struct AXStateCompanion: View {
     let id: String
     let value: String
@@ -268,6 +278,102 @@ extension ConnectionTestState {
             return "success"
         case .failure:
             return "failure"
+        }
+    }
+}
+
+extension PairingFlowState {
+    static let axTokens = [
+        "idle",
+        "pairing",
+        "switch_confirm_pending",
+        "paired",
+        "already_connected",
+        "switched",
+        "save_failed",
+        "failed"
+    ]
+
+    var axToken: String {
+        switch self {
+        case .idle:
+            return "idle"
+        case .pairing:
+            return "pairing"
+        case .switchConfirmPending:
+            return "switch_confirm_pending"
+        case .paired:
+            return "paired"
+        case .alreadyConnected:
+            return "already_connected"
+        case .switched:
+            return "switched"
+        case .saveFailed:
+            return "save_failed"
+        case .failed:
+            return "failed"
+        }
+    }
+}
+
+extension PairingFailure {
+    static let axTokens = [
+        "stale_link",
+        "home_unreachable",
+        "relay_unauthorized",
+        "instance_mismatch",
+        "network",
+        "invalid_link",
+        "local_setup"
+    ]
+
+    var axToken: String {
+        switch self {
+        case .staleLink:
+            return "stale_link"
+        case .homeUnreachable:
+            return "home_unreachable"
+        case .relayUnauthorized:
+            return "relay_unauthorized"
+        case .instanceMismatch:
+            return "instance_mismatch"
+        case .network:
+            return "network"
+        case .invalidLink:
+            return "invalid_link"
+        case .localSetup:
+            return "local_setup"
+        }
+    }
+}
+
+extension PairingConnectionAXState {
+    static let axTokens = [
+        "disconnected",
+        "connecting",
+        "connected",
+        "not_entitled",
+        "revoked",
+        "loopback_unavailable",
+        "keychain_unavailable"
+    ]
+
+    var axToken: String {
+        switch self {
+        case .disconnected:
+            return "disconnected"
+        case .connecting:
+            return "connecting"
+        case .connected:
+            return "connected"
+        case .notEntitled:
+            return "not_entitled"
+        case .revoked:
+            return "revoked"
+        case .loopbackUnavailable:
+            return "loopback_unavailable"
+        case .keychainUnavailable:
+            return "keychain_unavailable"
         }
     }
 }

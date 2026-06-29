@@ -68,6 +68,8 @@ struct AXIDTests {
         expectTokens(doctorStatusRepresentatives.map(\.axToken), DoctorStatus.axTokens)
         expectTokens(uploadStatusRepresentatives.map(\.axToken), UploadCoordinator.Status.axTokens)
         expectTokens(connectionTestStateRepresentatives.map(\.axToken), ConnectionTestState.axTokens)
+        expectTokens(pairingFlowStateRepresentatives.map(\.axToken), PairingFlowState.axTokens)
+        expectTokens(pairingFailureRepresentatives.map(\.axToken), PairingFailure.axTokens)
         expectTokens(updateActivityRepresentatives.map(\.axToken), UpdateActivity.axTokens)
         expectTokens(journalRuntimeStatusRepresentatives.map(\.settingsPresentation.axValue), JournalRuntimeStatus.axTokens)
 
@@ -77,6 +79,7 @@ struct AXIDTests {
         expectTokensMatchGrammar(MenubarStatusRowState.allCases.map(\.axToken))
         expectTokensMatchGrammar(SettingsObservationAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(DoctorProgress.allCases.map(\.axToken))
+        expectTokensMatchGrammar(PairingConnectionAXState.allCases.map(\.axToken))
     }
 
     @Test func doctorProgressAXTokenMapsDoctorResult() {
@@ -248,6 +251,31 @@ struct AXIDTests {
             .testing,
             .success,
             .failure("boom")
+        ]
+    }
+
+    private var pairingFlowStateRepresentatives: [PairingFlowState] {
+        [
+            .idle,
+            .pairing,
+            .switchConfirmPending(newInstanceID: "instance-2"),
+            .paired,
+            .alreadyConnected,
+            .switched,
+            .saveFailed,
+            .failed(.network)
+        ]
+    }
+
+    private var pairingFailureRepresentatives: [PairingFailure] {
+        [
+            .staleLink,
+            .homeUnreachable,
+            .relayUnauthorized,
+            .instanceMismatch,
+            .network,
+            .invalidLink("bad"),
+            .localSetup
         ]
     }
 
