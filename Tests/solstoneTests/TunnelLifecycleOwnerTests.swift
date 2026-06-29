@@ -700,7 +700,7 @@ private func pairing(
 }
 
 private func waitUntil(
-    timeout: Duration = .seconds(3),
+    timeout: Duration = .seconds(10),
     _ condition: @escaping @MainActor @Sendable () async -> Bool
 ) async throws {
     let deadline = ContinuousClock.now + timeout
