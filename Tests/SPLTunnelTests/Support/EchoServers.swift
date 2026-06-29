@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import Crypto
 import Network
 import Security
 @testable import SPLTunnel
@@ -193,6 +194,122 @@ actor WebSocketEchoServer {
         connection.send(content: Data(text.utf8), contentContext: context, isComplete: true, completion: .contentProcessed { _ in
             connection.cancel()
         })
+    }
+}
+
+actor WebSocketClosingServer {
+    private let closeCode: UInt16
+    private let closeDelay: TimeInterval
+    private var listener: NWListener?
+    private var connections: [NWConnection] = []
+    private var boundPort: NWEndpoint.Port?
+
+    init(closeCode: UInt16, closeDelay: TimeInterval = 0.1) {
+        self.closeCode = closeCode
+        self.closeDelay = closeDelay
+    }
+
+    var port: Int {
+        Int(boundPort?.rawValue ?? 0)
+    }
+
+    func start() async throws {
+        let listener = try NWListener(using: .tcp, on: .any)
+        listener.newConnectionHandler = { [weak self] connection in
+            Task {
+                await self?.accept(connection)
+            }
+        }
+        self.listener = listener
+        try await startAndWaitForListenerReady(listener)
+        boundPort = listener.port
+    }
+
+    func stop() async {
+        for connection in connections {
+            connection.cancel()
+        }
+        connections.removeAll()
+        listener?.cancel()
+        listener = nil
+        boundPort = nil
+    }
+
+    private func accept(_ connection: NWConnection) {
+        connections.append(connection)
+        connection.start(queue: serverQueue)
+        readHandshake(on: connection, buffered: Data())
+    }
+
+    private func readHandshake(on connection: NWConnection, buffered: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [weak self] data, _, _, error in
+            guard error == nil, let data else {
+                connection.cancel()
+                return
+            }
+
+            var request = buffered
+            request.append(data)
+            if request.range(of: Data("\r\n\r\n".utf8)) != nil {
+                Task {
+                    await self?.sendAcceptAndClose(on: connection, request: request)
+                }
+            } else {
+                Task {
+                    await self?.readHandshake(on: connection, buffered: request)
+                }
+            }
+        }
+    }
+
+    private func sendAcceptAndClose(on connection: NWConnection, request: Data) {
+        guard let key = Self.webSocketKey(from: request) else {
+            connection.cancel()
+            return
+        }
+
+        let response = "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            "Sec-WebSocket-Accept: \(Self.acceptValue(for: key))\r\n" +
+            "\r\n"
+        connection.send(content: Data(response.utf8), completion: .contentProcessed { [closeCode, closeDelay] _ in
+            serverQueue.asyncAfter(deadline: .now() + closeDelay) {
+                let closeFrame = Data([
+                    0x88,
+                    0x02,
+                    UInt8((closeCode >> 8) & 0xff),
+                    UInt8(closeCode & 0xff),
+                ])
+                connection.send(content: closeFrame, completion: .contentProcessed { _ in
+                    serverQueue.asyncAfter(deadline: .now() + 0.05) {
+                        connection.cancel()
+                    }
+                })
+            }
+        })
+    }
+
+    private static func webSocketKey(from request: Data) -> String? {
+        guard let text = String(data: request, encoding: .utf8) else {
+            return nil
+        }
+        for line in text.components(separatedBy: "\r\n") {
+            let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: true)
+            guard parts.count == 2,
+                  parts[0].trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "sec-websocket-key"
+            else {
+                continue
+            }
+            return parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    private static func acceptValue(for key: String) -> String {
+        let data = Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8)
+        let digest = Insecure.SHA1.hash(data: data)
+        return Data(digest).base64EncodedString()
     }
 }
 

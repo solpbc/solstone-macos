@@ -13,11 +13,11 @@ public enum LoopbackProxyError: Error, Sendable, Equatable {
 }
 
 public actor LoopbackProxy {
-    private let tunnel: TunnelSession
+    private let tunnel: any TunnelSessioning
     private var listener: NWListener?
     private var connectionTasks: [UUID: Task<Void, Never>] = [:]
 
-    public init(tunnel: TunnelSession) {
+    public init(tunnel: any TunnelSessioning) {
         self.tunnel = tunnel
     }
 
@@ -89,7 +89,7 @@ public actor LoopbackProxy {
         connectionTasks[id] = nil
     }
 
-    private nonisolated static func handle(connection: NWConnection, tunnel: TunnelSession) async {
+    private nonisolated static func handle(connection: NWConnection, tunnel: any TunnelSessioning) async {
         var bytesIn = 0
         var bytesOut = 0
         defer {

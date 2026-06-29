@@ -81,6 +81,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
             var successes: [(order: Int, endpoint: TransportEndpoint, value: Value)] = []
             var graceStarted = false
             var sawRevocation = false
+            var sawTokenExpired = false
 
             while let event = try await group.next() {
                 switch event {
@@ -103,21 +104,24 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                     if error == .revoked {
                         sawRevocation = true
                     }
+                    if error == .tokenExpired {
+                        sawTokenExpired = true
+                    }
                     if failures == sorted.count, successes.isEmpty {
                         group.cancelAll()
-                        throw sawRevocation ? SessionError.revoked : SessionError.unreachable
+                        throw Self.aggregateFailure(sawRevocation: sawRevocation, sawTokenExpired: sawTokenExpired)
                     }
 
                 case .budgetExpired:
                     if successes.isEmpty {
                         group.cancelAll()
-                        throw sawRevocation ? SessionError.revoked : SessionError.unreachable
+                        throw Self.aggregateFailure(sawRevocation: sawRevocation, sawTokenExpired: sawTokenExpired)
                     }
 
                 case .graceExpired:
                     guard let winner = successes.min(by: { $0.order < $1.order }) else {
                         group.cancelAll()
-                        throw sawRevocation ? SessionError.revoked : SessionError.unreachable
+                        throw Self.aggregateFailure(sawRevocation: sawRevocation, sawTokenExpired: sawTokenExpired)
                     }
                     group.cancelAll()
                     return RaceResult(endpoint: winner.endpoint, value: winner.value)
@@ -125,7 +129,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
             }
 
             guard let winner = successes.min(by: { $0.order < $1.order }) else {
-                throw sawRevocation ? SessionError.revoked : SessionError.unreachable
+                throw Self.aggregateFailure(sawRevocation: sawRevocation, sawTokenExpired: sawTokenExpired)
             }
             return RaceResult(endpoint: winner.endpoint, value: winner.value)
         }
@@ -181,11 +185,22 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
         if let sessionError = error as? SessionError {
             return sessionError
         }
-        if let dialError = error as? DialError, dialError == .relayUnauthorized {
-            return .revoked
+        if let dialError = error as? DialError,
+           dialError == .relayUnauthorized || dialError == .relayTokenExpired {
+            return .tokenExpired
         }
         if let tlsError = error as? InnerTLSError {
             return .tlsFailed(String(describing: tlsError))
+        }
+        return .unreachable
+    }
+
+    private static func aggregateFailure(sawRevocation: Bool, sawTokenExpired: Bool) -> SessionError {
+        if sawRevocation {
+            return .revoked
+        }
+        if sawTokenExpired {
+            return .tokenExpired
         }
         return .unreachable
     }

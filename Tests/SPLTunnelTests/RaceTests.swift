@@ -124,7 +124,7 @@ struct RaceTests {
         }
     }
 
-    @Test func singleRelayUnauthorizedThrowsRevoked() async {
+    @Test func singleRelayUnauthorizedThrowsTokenExpired() async {
         let relay = TransportEndpoint.relay(
             endpoint: URL(string: "wss://relay.example/session")!,
             instanceID: "instance",
@@ -138,12 +138,12 @@ struct RaceTests {
             throw DialError.relayUnauthorized
         }
 
-        await expectSessionError(.revoked) {
+        await expectSessionError(.tokenExpired) {
             _ = try await coordinator.connect(endpoints: [relay])
         }
     }
 
-    @Test func anyRevokedCandidateWinsAllFailSurface() async {
+    @Test func relayUnauthorizedWinsAllFailSurfaceAsTokenExpired() async {
         let direct = TransportEndpoint.lan(host: "10.0.0.5", port: 443, scope: "local")
         let relay = TransportEndpoint.relay(
             endpoint: URL(string: "wss://relay.example/session")!,
@@ -161,7 +161,30 @@ struct RaceTests {
             throw SessionError.transportFailed("timeout")
         }
 
-        await expectSessionError(.revoked) {
+        await expectSessionError(.tokenExpired) {
+            _ = try await coordinator.connect(endpoints: [direct, relay])
+        }
+    }
+
+    @Test func relayTokenExpiredWinsAllFailSurfaceAsTokenExpired() async {
+        let direct = TransportEndpoint.lan(host: "10.0.0.5", port: 443, scope: "local")
+        let relay = TransportEndpoint.relay(
+            endpoint: URL(string: "wss://relay.example/session")!,
+            instanceID: "instance",
+            deviceToken: "token"
+        )
+        let coordinator = RaceCoordinator<Int>(
+            stagger: .milliseconds(1),
+            loserGrace: .milliseconds(1),
+            budget: .milliseconds(200)
+        ) { endpoint in
+            if case .relay = endpoint {
+                throw DialError.relayTokenExpired
+            }
+            throw SessionError.transportFailed("timeout")
+        }
+
+        await expectSessionError(.tokenExpired) {
             _ = try await coordinator.connect(endpoints: [direct, relay])
         }
     }

@@ -287,6 +287,19 @@ struct MultiplexerTests {
         #expect(frames == [try buildPong(nonce: nonce)])
     }
 
+    @Test("inbound activity counter increments for control and stream frames")
+    func inboundActivityCounterIncrementsForDecodedFrames() async throws {
+        let (mux, _) = makeMultiplexer()
+
+        #expect(await mux.inboundActivitySnapshot() == 0)
+
+        try await mux.feedInbound(try encodeFrame(buildPing(nonce: Data([1, 2, 3, 4, 5, 6, 7, 8]))))
+        #expect(await mux.inboundActivitySnapshot() == 1)
+
+        try await mux.feedInbound(try encodeFrame(buildData(streamID: 1, payload: Data([0x01]))))
+        #expect(await mux.inboundActivitySnapshot() == 2)
+    }
+
     @Test("keepalive sends pings at configured cadence")
     func keepaliveSendsPingsAtCadence() async throws {
         let (mux, recorder, gate) = makeGatedMultiplexer()

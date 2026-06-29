@@ -48,6 +48,7 @@ public actor Multiplexer {
     private var keepaliveTask: Task<Void, Never>?
     private var pendingPingNonce: Data?
     private var missedPings = 0
+    private var inboundActivityCounter: UInt64 = 0
 
     public init(sink: @escaping @Sendable (Data) async throws -> Void, role: Role = .dialer) {
         self.init(sink: sink, role: role, sleeper: { try await Task.sleep(for: $0) })
@@ -125,6 +126,8 @@ public actor Multiplexer {
     }
 
     private func dispatch(_ frame: Frame) async throws {
+        inboundActivityCounter &+= 1
+
         let isOpen = frame.flags & FrameFlags.open.rawValue != 0
         let isData = frame.flags & FrameFlags.data.rawValue != 0
         let isClose = frame.flags & FrameFlags.close.rawValue != 0
@@ -257,5 +260,9 @@ public actor Multiplexer {
             }
         }
         return count
+    }
+
+    public func inboundActivitySnapshot() -> UInt64 {
+        inboundActivityCounter
     }
 }

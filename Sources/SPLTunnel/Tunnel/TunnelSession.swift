@@ -24,6 +24,7 @@ public enum SessionError: Error, Equatable, Sendable {
     case transportFailed(String)
     case tlsFailed(String)
     case revoked
+    case tokenExpired
 }
 
 public enum TunnelState: Sendable, Equatable {
@@ -34,7 +35,20 @@ public enum TunnelState: Sendable, Equatable {
     case failed(SessionError)
 }
 
-public actor TunnelSession {
+public protocol TunnelSessioning: Sendable {
+    nonisolated var stateUpdates: AsyncStream<TunnelState> { get }
+    nonisolated var connectionModeUpdates: AsyncStream<ConnectionMode?> { get }
+    var connectionMode: ConnectionMode? { get async }
+
+    @discardableResult
+    func connect(endpoints: [TransportEndpoint]) async throws -> ConnectedVia
+    func disconnect() async
+    func openStream() async throws -> MuxStream
+    func requestReconnect() async
+    func inboundActivitySnapshot() async -> UInt64
+}
+
+public actor TunnelSession: TunnelSessioning {
     public nonisolated var stateUpdates: AsyncStream<TunnelState> {
         stateStream
     }
@@ -50,6 +64,7 @@ public actor TunnelSession {
     private let stateContinuation: AsyncStream<TunnelState>.Continuation
     private let connectionModeStream: AsyncStream<ConnectionMode?>
     private let connectionModeContinuation: AsyncStream<ConnectionMode?>.Continuation
+    private let reconnectSignal = ReconnectSignal()
     private var state: TunnelState = .disconnected
     private var reconnectTask: Task<Void, Never>?
     private var inboundPumpTask: Task<Void, Never>?
@@ -59,6 +74,7 @@ public actor TunnelSession {
     private var lastTrustedDirectEndpoint: TransportEndpoint?
     private var trustDirectUntil: ContinuousClock.Instant?
     private var relayOnlyNextReconnect = false
+    private var reconnectRequestPending = false
 
     public init(pairing: StoredPairing) {
         self.pairing = pairing
@@ -109,26 +125,53 @@ public actor TunnelSession {
         return try await multiplexer.openStream()
     }
 
+    public func requestReconnect() async {
+        guard reconnectTask != nil else {
+            return
+        }
+        guard !reconnectRequestPending else {
+            return
+        }
+
+        reconnectRequestPending = true
+        reconnectSignal.send()
+    }
+
+    public func inboundActivitySnapshot() async -> UInt64 {
+        guard let multiplexer else {
+            return 0
+        }
+        return await multiplexer.inboundActivitySnapshot()
+    }
+
     private func monitorAndReconnect(endpoints: [TransportEndpoint]) async {
         var attempt = 1
         while !Task.isCancelled {
             let pump = inboundPumpTask
-            await pump?.value
+            switch await waitForPumpOrReconnect(pump) {
+            case .pumpCompleted, .requested:
+                break
+            case .cancelled:
+                return
+            }
             await tearDownCurrent(reason: .transportFailure)
 
             do {
+                beginReconnectCycle()
                 let candidates = reconnectCandidates(from: endpoints)
                 let connected = try await connectOnce(attempt: attempt, endpoints: candidates)
                 attempt = 1
                 await installConnected(connected)
             } catch {
                 let delay = jitter(backoff(forAttempt: attempt))
-                do {
-                    try await Task.sleep(for: delay)
-                } catch {
-                    break
+                switch await waitForBackoffOrReconnect(delay) {
+                case .elapsed:
+                    attempt += 1
+                case .requested:
+                    attempt = 1
+                case .cancelled:
+                    return
                 }
-                attempt += 1
             }
         }
     }
@@ -159,8 +202,11 @@ public actor TunnelSession {
             publish(.failed(error))
             throw error
         } catch DialError.relayUnauthorized {
-            publish(.failed(.revoked))
-            throw SessionError.revoked
+            publish(.failed(.tokenExpired))
+            throw SessionError.tokenExpired
+        } catch DialError.relayTokenExpired {
+            publish(.failed(.tokenExpired))
+            throw SessionError.tokenExpired
         } catch {
             let sessionError = SessionError.transportFailed(error.localizedDescription)
             publish(.failed(sessionError))
@@ -279,6 +325,60 @@ public actor TunnelSession {
         connectionModeContinuation.yield(newMode)
     }
 
+    private func beginReconnectCycle() {
+        reconnectRequestPending = false
+    }
+
+    private func waitForPumpOrReconnect(_ pump: Task<Void, Never>?) async -> ConnectedWaitResult {
+        let signal = reconnectSignal
+        let race = WaitRace<ConnectedWaitResult>()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                race.setContinuation(continuation)
+                let pumpTask = Task.detached {
+                    guard !Task.isCancelled else {
+                        race.complete(.cancelled)
+                        return
+                    }
+                    await pump?.value
+                    race.complete(.pumpCompleted)
+                }
+                let signalTask = Task.detached {
+                    await signal.wait()
+                    race.complete(.requested)
+                }
+                race.setTasks([pumpTask, signalTask])
+            }
+        } onCancel: {
+            race.complete(.cancelled)
+        }
+    }
+
+    private func waitForBackoffOrReconnect(_ delay: Duration) async -> BackoffWaitResult {
+        let signal = reconnectSignal
+        let race = WaitRace<BackoffWaitResult>()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                race.setContinuation(continuation)
+                let sleepTask = Task.detached {
+                    do {
+                        try await Task.sleep(for: delay)
+                        race.complete(.elapsed)
+                    } catch {
+                        race.complete(.cancelled)
+                    }
+                }
+                let signalTask = Task.detached {
+                    await signal.wait()
+                    race.complete(.requested)
+                }
+                race.setTasks([sleepTask, signalTask])
+            }
+        } onCancel: {
+            race.complete(.cancelled)
+        }
+    }
+
     private func backoff(forAttempt attempt: Int) -> Duration {
         [.seconds(1), .seconds(5), .seconds(10), .seconds(30)][min(max(attempt - 1, 0), 3)]
     }
@@ -288,6 +388,124 @@ public actor TunnelSession {
         let seconds = Double(components.seconds) + Double(components.attoseconds) / 1e18
         return .milliseconds(Int(seconds * 1_000 * Double.random(in: 0.75...1.25)))
     }
+}
+
+private final class WaitRace<Result: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Result, Never>?
+    private var tasks: [Task<Void, Never>] = []
+    private var completed = false
+    private var pendingResult: Result?
+
+    func setContinuation(_ continuation: CheckedContinuation<Result, Never>) {
+        let pending = lock.withLock {
+            if completed {
+                return pendingResult
+            }
+            self.continuation = continuation
+            return nil
+        }
+        if let pending {
+            continuation.resume(returning: pending)
+        }
+    }
+
+    func setTasks(_ tasks: [Task<Void, Never>]) {
+        let shouldCancel = lock.withLock {
+            guard !completed else {
+                return true
+            }
+            self.tasks = tasks
+            return false
+        }
+        if shouldCancel {
+            tasks.forEach { $0.cancel() }
+        }
+    }
+
+    func complete(_ result: Result) {
+        let completion = lock.withLock {
+            guard !completed else {
+                return nil as (CheckedContinuation<Result, Never>, [Task<Void, Never>])?
+            }
+            completed = true
+            let continuation = self.continuation
+            self.continuation = nil
+            if continuation == nil {
+                pendingResult = result
+            }
+            let tasks = self.tasks
+            self.tasks = []
+            guard let continuation else {
+                return nil
+            }
+            return (continuation, tasks)
+        }
+
+        guard let completion else {
+            return
+        }
+        completion.1.forEach { $0.cancel() }
+        completion.0.resume(returning: result)
+    }
+}
+
+private final class ReconnectSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private var signaled = false
+
+    func send() {
+        let waiters = lock.withLock {
+            let waiters = self.waiters
+            self.waiters.removeAll()
+            signaled = waiters.isEmpty
+            return waiters
+        }
+        for continuation in waiters.values {
+            continuation.resume()
+        }
+    }
+
+    func wait() async {
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let shouldResume = lock.withLock {
+                    if signaled {
+                        signaled = false
+                        return true
+                    }
+                    waiters[id] = continuation
+                    return false
+                }
+                if shouldResume {
+                    continuation.resume()
+                }
+            }
+        } onCancel: {
+            cancel(id)
+        }
+    }
+
+    private func cancel(_ id: UUID) {
+        let continuation = lock.withLock {
+            waiters.removeValue(forKey: id)
+        }
+        continuation?.resume()
+    }
+}
+
+private enum ConnectedWaitResult: Sendable {
+    case pumpCompleted
+    case requested
+    case cancelled
+}
+
+private enum BackoffWaitResult: Sendable {
+    case elapsed
+    case requested
+    case cancelled
 }
 
 private struct ConnectedAttempt: Sendable {

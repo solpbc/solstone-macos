@@ -63,6 +63,7 @@ public final class AppState {
     public let heartbeatService: HeartbeatService
     public let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
     internal let solChatBridge: SolChatBridge
+    internal let tunnelLifecycleOwner: TunnelLifecycleOwner
     private let notifier: any SolChatNotifying
     private let loginService: any LoginItemService
     private let isSnapshot: Bool
@@ -674,6 +675,7 @@ public final class AppState {
             },
             notifier: notifier
         )
+        self.tunnelLifecycleOwner = TunnelLifecycleOwner()
 
         // Apply debug segments setting if enabled
         if config.debugSegments {
@@ -918,6 +920,7 @@ public final class AppState {
             postOpenChat: { _ in },
             notifier: notifier
         )
+        self.tunnelLifecycleOwner = .dormantForSnapshot()
 
         let debugAudioHolder = DebugSettingHolder(value: false)
         let silenceMusicHolder = DebugSettingHolder(value: true)
@@ -939,6 +942,16 @@ public final class AppState {
     }
 
     // MARK: - Recording Control
+
+    internal func startTunnelLifecycleOwner() {
+        tunnelLifecycleOwner.start()
+    }
+
+    internal func stopTunnelLifecycleOwner() {
+        Task { [tunnelLifecycleOwner] in
+            await tunnelLifecycleOwner.stop()
+        }
+    }
 
     public func startRecording() async {
         guard !isTerminating else {

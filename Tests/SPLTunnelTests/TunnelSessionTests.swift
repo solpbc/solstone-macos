@@ -176,6 +176,39 @@ struct TunnelSessionTests {
         #expect(mode == .plViaSpl)
     }
 
+    @Test func requestReconnectCoalescesConnectedRequestsThroughExistingLoop() async throws {
+        let fixture = try TestCA.make()
+        let server = TLSEchoServer(bundle: fixture, mode: .mux)
+        try await server.start()
+        let port = await server.port
+        let pairing = pairing(from: fixture, localPort: port)
+        let session = TunnelSession(pairing: pairing)
+        await session.requestReconnect()
+        let recorder = StateRecorder()
+        let observation = observe(session: session, recorder: recorder)
+
+        try await session.connect(endpoints: TransportEndpoint.candidates(for: pairing))
+        try await waitForConnected(recorder, via: .lanDirect(host: "127.0.0.1", port: port), minimumCount: 1)
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<5 {
+                group.addTask {
+                    await session.requestReconnect()
+                }
+            }
+        }
+        try await waitForConnected(recorder, via: .lanDirect(host: "127.0.0.1", port: port), minimumCount: 2)
+        let connectedCountAfterReconnect = await recorder.connectedCount
+        try await Task.sleep(for: .milliseconds(300))
+
+        await session.disconnect()
+        observation.cancel()
+        await server.stop()
+
+        #expect(connectedCountAfterReconnect == 2)
+        #expect(await recorder.connectedCount == 2)
+    }
+
     private func pairing(
         from fixture: TestCA.Bundle,
         localPort: Int? = nil,
@@ -266,6 +299,15 @@ private actor StateRecorder {
 
     var states: [TunnelState] {
         values
+    }
+
+    var connectedCount: Int {
+        values.filter { state in
+            if case .connected = state {
+                return true
+            }
+            return false
+        }.count
     }
 
     func append(_ state: TunnelState) {

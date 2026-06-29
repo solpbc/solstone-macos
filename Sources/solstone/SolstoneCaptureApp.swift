@@ -93,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.ipcServiceRunning = service.isRunning
             ipcService = service
             Task { await state.startBundledJournalDetectionIfNeeded() }
+            state.startTunnelLifecycleOwner()
         } else {
             Logger.general.error("AppState.shared nil in applicationDidFinishLaunching")
         }
@@ -139,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.isTerminating = true
             Task { await state.heartbeatService.stop() }
             Task { await state.solChatBridge.stop() }
+            state.stopTunnelLifecycleOwner()
         } else {
             Logger.general.error("AppState.shared nil in applicationWillTerminate")
         }

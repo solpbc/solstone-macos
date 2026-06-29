@@ -137,6 +137,43 @@ struct DialClientTests {
         await server.stop()
     }
 
+    @Test func relayClose4401MapsTokenExpiredOnReceive() async throws {
+        let server = WebSocketClosingServer(closeCode: 4401)
+        try await server.start()
+        let port = await server.port
+
+        let transport = try await DialClient.dial(.relay(
+            endpoint: try relayEndpoint(port: port),
+            instanceID: "instance-1",
+            deviceToken: "device-token"
+        ))
+        await expectDialError(.relayTokenExpired) {
+            _ = try await transport.receive()
+        }
+        await transport.close()
+        await server.stop()
+    }
+
+    @Test func relayClose4401MapsTokenExpiredOnSendAfterCloseRecorded() async throws {
+        let server = WebSocketClosingServer(closeCode: 4401)
+        try await server.start()
+        let port = await server.port
+
+        let transport = try await DialClient.dial(.relay(
+            endpoint: try relayEndpoint(port: port),
+            instanceID: "instance-1",
+            deviceToken: "device-token"
+        ))
+        await expectDialError(.relayTokenExpired) {
+            _ = try await transport.receive()
+        }
+        await expectDialError(.relayTokenExpired) {
+            try await transport.send(Data([0x01]))
+        }
+        await transport.close()
+        await server.stop()
+    }
+
     private func expectRelayStatus(_ status: Int, _ expected: DialError) async throws {
         let server = WebSocketFailingServer(statusCode: status)
         try await server.start()

@@ -36,6 +36,7 @@ let package = Package(
             name: "solstone",
             dependencies: [
                 .target(name: "SolstoneCore"),
+                .target(name: "SPLTunnel"),
                 .target(name: "ObjCHelpers"),
                 .product(name: "Sparkle", package: "Sparkle")
             ],
