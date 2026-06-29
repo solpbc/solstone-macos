@@ -16,6 +16,7 @@ public enum DialError: Error, Equatable, Sendable {
     case receiveFailed(String)
     case unexpectedTextFrame
     case relayUnauthorized
+    case relayNotEntitled
     case relayTokenExpired
     case relayInstanceUnknown
     case wsHandshakeFailed(httpStatus: Int?)
@@ -408,6 +409,8 @@ final class WebSocketOpenDelegate: NSObject, URLSessionWebSocketDelegate, URLSes
         switch status {
         case 401, 403:
             return .relayUnauthorized
+        case 402:
+            return .relayNotEntitled
         case 404:
             return .relayInstanceUnknown
         default:

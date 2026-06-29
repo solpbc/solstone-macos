@@ -143,6 +143,25 @@ struct RaceTests {
         }
     }
 
+    @Test func relayNotEntitledMapsToNotEntitled() async {
+        let relay = TransportEndpoint.relay(
+            endpoint: URL(string: "wss://relay.example/session")!,
+            instanceID: "instance",
+            deviceToken: "token"
+        )
+        let coordinator = RaceCoordinator<Int>(
+            stagger: .milliseconds(1),
+            loserGrace: .milliseconds(1),
+            budget: .milliseconds(200)
+        ) { _ in
+            throw DialError.relayNotEntitled
+        }
+
+        await expectSessionError(.notEntitled) {
+            _ = try await coordinator.connect(endpoints: [relay])
+        }
+    }
+
     @Test func relayUnauthorizedWinsAllFailSurfaceAsTokenExpired() async {
         let direct = TransportEndpoint.lan(host: "10.0.0.5", port: 443, scope: "local")
         let relay = TransportEndpoint.relay(
@@ -162,6 +181,52 @@ struct RaceTests {
         }
 
         await expectSessionError(.tokenExpired) {
+            _ = try await coordinator.connect(endpoints: [direct, relay])
+        }
+    }
+
+    @Test func notEntitledWinsOverUnreachableInAggregate() async {
+        let direct = TransportEndpoint.lan(host: "10.0.0.5", port: 443, scope: "local")
+        let relay = TransportEndpoint.relay(
+            endpoint: URL(string: "wss://relay.example/session")!,
+            instanceID: "instance",
+            deviceToken: "token"
+        )
+        let coordinator = RaceCoordinator<Int>(
+            stagger: .milliseconds(1),
+            loserGrace: .milliseconds(1),
+            budget: .milliseconds(200)
+        ) { endpoint in
+            if case .relay = endpoint {
+                throw DialError.relayNotEntitled
+            }
+            throw SessionError.transportFailed("timeout")
+        }
+
+        await expectSessionError(.notEntitled) {
+            _ = try await coordinator.connect(endpoints: [direct, relay])
+        }
+    }
+
+    @Test func revokedWinsOverNotEntitled() async {
+        let direct = TransportEndpoint.lan(host: "10.0.0.5", port: 443, scope: "local")
+        let relay = TransportEndpoint.relay(
+            endpoint: URL(string: "wss://relay.example/session")!,
+            instanceID: "instance",
+            deviceToken: "token"
+        )
+        let coordinator = RaceCoordinator<Int>(
+            stagger: .milliseconds(1),
+            loserGrace: .milliseconds(1),
+            budget: .milliseconds(200)
+        ) { endpoint in
+            if case .relay = endpoint {
+                throw DialError.relayNotEntitled
+            }
+            throw SessionError.revoked
+        }
+
+        await expectSessionError(.revoked) {
             _ = try await coordinator.connect(endpoints: [direct, relay])
         }
     }

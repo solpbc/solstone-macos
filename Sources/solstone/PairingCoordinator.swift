@@ -267,6 +267,8 @@ final class PairingCoordinator {
             return .homeUnreachable
         case .unexpectedTextFrame:
             return .homeUnreachable
+        case .relayNotEntitled:
+            return .relayUnauthorized
         case .relayUnauthorized:
             return .relayUnauthorized
         case .relayTokenExpired:

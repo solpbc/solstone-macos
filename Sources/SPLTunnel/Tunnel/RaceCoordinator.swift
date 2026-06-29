@@ -81,6 +81,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
             var successes: [(order: Int, endpoint: TransportEndpoint, value: Value)] = []
             var graceStarted = false
             var sawRevocation = false
+            var sawNotEntitled = false
             var sawTokenExpired = false
 
             while let event = try await group.next() {
@@ -104,24 +105,39 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                     if error == .revoked {
                         sawRevocation = true
                     }
+                    if error == .notEntitled {
+                        sawNotEntitled = true
+                    }
                     if error == .tokenExpired {
                         sawTokenExpired = true
                     }
                     if failures == sorted.count, successes.isEmpty {
                         group.cancelAll()
-                        throw Self.aggregateFailure(sawRevocation: sawRevocation, sawTokenExpired: sawTokenExpired)
+                        throw Self.aggregateFailure(
+                            sawRevocation: sawRevocation,
+                            sawNotEntitled: sawNotEntitled,
+                            sawTokenExpired: sawTokenExpired
+                        )
                     }
 
                 case .budgetExpired:
                     if successes.isEmpty {
                         group.cancelAll()
-                        throw Self.aggregateFailure(sawRevocation: sawRevocation, sawTokenExpired: sawTokenExpired)
+                        throw Self.aggregateFailure(
+                            sawRevocation: sawRevocation,
+                            sawNotEntitled: sawNotEntitled,
+                            sawTokenExpired: sawTokenExpired
+                        )
                     }
 
                 case .graceExpired:
                     guard let winner = successes.min(by: { $0.order < $1.order }) else {
                         group.cancelAll()
-                        throw Self.aggregateFailure(sawRevocation: sawRevocation, sawTokenExpired: sawTokenExpired)
+                        throw Self.aggregateFailure(
+                            sawRevocation: sawRevocation,
+                            sawNotEntitled: sawNotEntitled,
+                            sawTokenExpired: sawTokenExpired
+                        )
                     }
                     group.cancelAll()
                     return RaceResult(endpoint: winner.endpoint, value: winner.value)
@@ -129,7 +145,11 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
             }
 
             guard let winner = successes.min(by: { $0.order < $1.order }) else {
-                throw Self.aggregateFailure(sawRevocation: sawRevocation, sawTokenExpired: sawTokenExpired)
+                throw Self.aggregateFailure(
+                    sawRevocation: sawRevocation,
+                    sawNotEntitled: sawNotEntitled,
+                    sawTokenExpired: sawTokenExpired
+                )
             }
             return RaceResult(endpoint: winner.endpoint, value: winner.value)
         }
@@ -189,15 +209,26 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
            dialError == .relayUnauthorized || dialError == .relayTokenExpired {
             return .tokenExpired
         }
+        if let dialError = error as? DialError,
+           dialError == .relayNotEntitled {
+            return .notEntitled
+        }
         if let tlsError = error as? InnerTLSError {
             return .tlsFailed(String(describing: tlsError))
         }
         return .unreachable
     }
 
-    private static func aggregateFailure(sawRevocation: Bool, sawTokenExpired: Bool) -> SessionError {
+    private static func aggregateFailure(
+        sawRevocation: Bool,
+        sawNotEntitled: Bool,
+        sawTokenExpired: Bool
+    ) -> SessionError {
         if sawRevocation {
             return .revoked
+        }
+        if sawNotEntitled {
+            return .notEntitled
         }
         if sawTokenExpired {
             return .tokenExpired

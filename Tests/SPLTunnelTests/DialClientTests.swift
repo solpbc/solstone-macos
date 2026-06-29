@@ -112,6 +112,10 @@ struct DialClientTests {
         try await expectRelayStatus(403, .relayUnauthorized)
     }
 
+    @Test func relay402MapsNotEntitled() async throws {
+        try await expectRelayStatus(402, .relayNotEntitled)
+    }
+
     @Test func relay404MapsInstanceUnknown() async throws {
         try await expectRelayStatus(404, .relayInstanceUnknown)
     }
