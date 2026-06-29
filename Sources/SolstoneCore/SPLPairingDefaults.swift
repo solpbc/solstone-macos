@@ -4,7 +4,9 @@
 import Foundation
 
 public enum SPLPairingDefaults {
-    public static let relayEndpoint = "https://spl-relay-staging.jer-3f2.workers.dev"
+    // Production operated relay. A relay-form pair link does not carry a relay
+    // origin, so this default is the relay the client actually dials when pairing.
+    public static let relayEndpoint = "https://link.solstone.app"
 
     public static var relayEndpointURL: URL {
         URL(string: relayEndpoint)!
