@@ -84,6 +84,10 @@ enum AXID {
             static let pairingPaidPlanLink = "settings.service.pairing.paidPlanLink"
             static let pairingDisconnectConfirm = "settings.service.pairing.disconnectConfirm"
             static let pairingDisconnectCancel = "settings.service.pairing.disconnectCancel"
+            static let pairingMarkConfirm = "settings.service.pairing.markConfirm"
+            static let pairingMarkMismatch = "settings.service.pairing.markMismatch"
+            static let pairingMismatchFreshLink = "settings.service.pairing.mismatchFreshLink"
+            static let pairingMismatchSupport = "settings.service.pairing.mismatchSupport"
             static let nextCheckStatus = "settings.service.next.checkStatus"
         }
 

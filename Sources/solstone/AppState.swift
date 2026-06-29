@@ -67,6 +67,7 @@ public final class AppState {
     internal let solChatBridge: SolChatBridge
     internal let tunnelLifecycleOwner: TunnelLifecycleOwner
     internal let pairingCoordinator: PairingCoordinator
+    private let homeBaseURLResolver: HomeBaseURLResolver
     private let notifier: any SolChatNotifying
     private let loginService: any LoginItemService
     private let isSnapshot: Bool
@@ -89,6 +90,7 @@ public final class AppState {
     public internal(set) var solChatPending: SolChatRequestSummary?
     public internal(set) var solChatStale = false
     public internal(set) var connectionTestState: ConnectionTestState = .idle
+    internal private(set) var confirmedMark: JournalMark?
     public private(set) var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
 
     /// Screen recording permission — polled periodically via SCShareableContent.
@@ -635,6 +637,18 @@ public final class AppState {
         }
     }
 
+    internal func resolveHomeBase() async -> ResolvedHomeBase {
+        await homeBaseURLResolver.resolve()
+    }
+
+    internal func setConfirmedMark(_ mark: JournalMark) {
+        confirmedMark = mark
+    }
+
+    internal func clearConfirmedMark() {
+        confirmedMark = nil
+    }
+
     public init(
         notifier: any SolChatNotifying = UNUserNotificationSolChatNotifier(),
         loginService: any LoginItemService = LiveLoginItemService()
@@ -684,6 +698,7 @@ public final class AppState {
             }
         )
         let homeBaseURLResolver = Self.makeHomeBaseURLResolver(target: homeBaseURLTarget)
+        self.homeBaseURLResolver = homeBaseURLResolver
         self.heartbeatService = HeartbeatService(
             resolver: homeBaseURLResolver,
             isPaused: { [pauseManager, heartbeatTarget] in
@@ -939,6 +954,7 @@ public final class AppState {
             }
             return .url(serverURL)
         }
+        self.homeBaseURLResolver = snapshotResolver
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager

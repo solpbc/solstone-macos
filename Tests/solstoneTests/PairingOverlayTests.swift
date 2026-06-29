@@ -41,7 +41,10 @@ struct PairingOverlayTests {
         await owner.stop()
 
         #expect(serviceConfigSnapshot(config) == before)
+        #expect(coordinator.state == .idle)
+        #expect(transport.disconnectCount >= 1)
         #expect(!owner.isTunnelManaged)
+        #expect(store.deleted)
         #expect(store.currentPairing == nil)
     }
 

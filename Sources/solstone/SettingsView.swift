@@ -148,6 +148,11 @@ struct SettingsView: View {
     @State private var preserveNextServiceFieldChange = false
     @State private var inFlightTestID: UUID?
     @State private var disconnectConfirmPending = false
+    @State private var journalMarkDriver = JournalMarkConfirmationDriver()
+    @State private var pairingMismatch = false
+    @State private var journalMarkRederiveEligible = false
+    @State private var journalMarkRederiveStarted = false
+    @State private var journalMarkRederiveTask: Task<Void, Never>?
 
     init(
         appState: AppState,
@@ -242,9 +247,35 @@ struct SettingsView: View {
         .onAppear {
             appState.syncMicrophonePriorityList()
             applyPendingSettingsTab()
+            journalMarkRederiveEligible = appState.confirmedMark == nil && appState.tunnelLifecycleOwner.isTunnelManaged
+            startJournalMarkRederiveIfNeeded()
+        }
+        .onChange(of: appState.pairingCoordinator.state) { _, newValue in
+            handlePairingStateChange(newValue)
+        }
+        .onChange(of: appState.pairingCoordinator.tunnelState) { _, _ in
+            startJournalMarkRederiveIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: .solMacOpenSettings)) { _ in
             applyPendingSettingsTab()
+        }
+        .sheet(isPresented: Binding(
+            get: { journalMarkDriver.isPresented },
+            set: { newValue in
+                if !newValue {
+                    journalMarkDriver.cancel()
+                }
+            }
+        ), onDismiss: {
+            journalMarkDriver.cancel()
+        }) {
+            journalMarkSheet
+                .interactiveDismissDisabled(true)
+        }
+        .onDisappear {
+            journalMarkDriver.cancel()
+            journalMarkRederiveTask?.cancel()
+            journalMarkRederiveTask = nil
         }
         .onExitCommand {
             dismiss()
@@ -288,6 +319,86 @@ struct SettingsView: View {
             default: break
             }
             appState.pendingSettingsTab = nil
+        }
+    }
+
+    private var journalMarkSheet: some View {
+        VStack(spacing: 16) {
+            switch journalMarkDriver.phase {
+            case .connecting:
+                ProgressView()
+                    .controlSize(.small)
+                Text(UICopy.JOURNAL_MARK_CONNECTING)
+                    .font(.headline)
+            case .valid(let mark):
+                JournalMarkView(mark: mark)
+                VStack(spacing: 6) {
+                    Text(UICopy.JOURNAL_MARK_CONFIRM_QUESTION)
+                        .font(.headline)
+                    Text(UICopy.JOURNAL_MARK_CONFIRM_SUBTEXT)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                HStack {
+                    Button(UICopy.JOURNAL_MARK_MISMATCH_BUTTON) {
+                        rejectJournalMark()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Service.pairingMarkMismatch)
+
+                    Button(UICopy.JOURNAL_MARK_CONFIRM_BUTTON) {
+                        confirmJournalMark()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier(AXID.Settings.Service.pairingMarkConfirm)
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 380)
+    }
+
+    private func handlePairingStateChange(_ state: PairingFlowState) {
+        journalMarkDriver.startIfNeeded(for: state, appState: appState)
+    }
+
+    private func confirmJournalMark() {
+        journalMarkDriver.confirm(appState: appState)
+        pairingMismatch = false
+    }
+
+    private func rejectJournalMark() {
+        Task { @MainActor in
+            await journalMarkDriver.reject(appState: appState) {
+                pairingMismatch = true
+                journalMarkRederiveEligible = false
+                journalMarkRederiveStarted = false
+            }
+        }
+    }
+
+    private func startJournalMarkRederiveIfNeeded() {
+        guard journalMarkRederiveEligible,
+              !journalMarkRederiveStarted,
+              appState.confirmedMark == nil,
+              appState.tunnelLifecycleOwner.isTunnelManaged,
+              case .connected = appState.pairingCoordinator.tunnelState
+        else {
+            return
+        }
+
+        journalMarkRederiveStarted = true
+        journalMarkRederiveTask?.cancel()
+        journalMarkRederiveTask = Task { @MainActor in
+            let fetcher = JournalIdentityFetcher()
+            switch await appState.resolveHomeBase() {
+            case .url(let baseURL):
+                if let mark = await fetcher.fetch(baseURL: baseURL) {
+                    appState.setConfirmedMark(mark)
+                }
+            case .held:
+                break
+            }
         }
     }
 
@@ -973,17 +1084,13 @@ struct SettingsView: View {
                     }
                 }
 
-                if let result = pairingResultText {
-                    LabeledContent("pairing") {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                            Text(result)
-                        }
-                    }
-                }
+                pairingResultView
 
                 pairingConnectionTruthRow
+
+                if pairingMismatch {
+                    pairingMismatchPane
+                }
 
                 if case .error(.notEntitled) = appState.pairingCoordinator.tunnelState {
                     VStack(alignment: .leading, spacing: 8) {
@@ -1010,15 +1117,12 @@ struct SettingsView: View {
                 if pairingCanUnpair {
                     if disconnectConfirmPending {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(UICopy.PAIRING_DISCONNECT_CONFIRM)
+                            Text(pairingDisconnectConfirmText)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             HStack {
                                 Button("disconnect", role: .destructive) {
-                                    disconnectConfirmPending = false
-                                    Task {
-                                        await appState.pairingCoordinator.unpair()
-                                    }
+                                    disconnectPairing()
                                 }
                                 .accessibilityIdentifier(AXID.Settings.Service.pairingDisconnectConfirm)
 
@@ -1079,6 +1183,55 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private var pairingResultView: some View {
+        if let mark = appState.confirmedMark, pairingCanUnpair {
+            JournalMarkView(mark: mark, isConfirmed: true)
+        } else if let result = pairingResultText {
+            LabeledContent("pairing") {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text(result)
+                }
+            }
+        }
+    }
+
+    private var pairingMismatchPane: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(UICopy.JOURNAL_MARK_MISMATCH_TITLE)
+                .font(.headline)
+            Text(UICopy.JOURNAL_MARK_MISMATCH_BODY)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button(UICopy.JOURNAL_MARK_MISMATCH_FRESH_LINK) {
+                    pairingMismatch = false
+                    pairingLink = ""
+                }
+                .accessibilityIdentifier(AXID.Settings.Service.pairingMismatchFreshLink)
+
+                Button(UICopy.JOURNAL_MARK_MISMATCH_SUPPORT) {
+                    if let url = URL(string: "mailto:support@solstone.app") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .accessibilityIdentifier(AXID.Settings.Service.pairingMismatchSupport)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.red.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.red.opacity(0.25), lineWidth: 1)
+        )
+    }
+
     private var pairingConnectionTruthRow: some View {
         let presentation = pairingConnectionPresentation
         return LabeledContent("connection") {
@@ -1090,6 +1243,13 @@ struct SettingsView: View {
                     .foregroundStyle(presentation.severity.color)
             }
         }
+    }
+
+    private var pairingDisconnectConfirmText: String {
+        if let mark = appState.confirmedMark {
+            return "disconnect this Mac from \(mark.words.joined(separator: " · "))? your journal keeps everything — you can pair again anytime."
+        }
+        return UICopy.PAIRING_DISCONNECT_CONFIRM
     }
 
     @ViewBuilder
@@ -1158,8 +1318,27 @@ struct SettingsView: View {
     }
 
     private func submitPairingLink() {
+        pairingMismatch = false
+        journalMarkRederiveEligible = false
+        journalMarkRederiveStarted = false
+        journalMarkDriver.resetForNewPairAttempt()
+        appState.clearConfirmedMark()
         Task {
             await appState.pairingCoordinator.submitPairingLink(pairingLink)
+        }
+    }
+
+    private func disconnectPairing() {
+        disconnectConfirmPending = false
+        Task { @MainActor in
+            await appState.pairingCoordinator.unpair()
+            if appState.pairingCoordinator.state == .idle {
+                appState.clearConfirmedMark()
+                pairingMismatch = false
+                journalMarkRederiveEligible = false
+                journalMarkRederiveStarted = false
+                journalMarkDriver.resetForNewPairAttempt()
+            }
         }
     }
 

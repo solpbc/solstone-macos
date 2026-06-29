@@ -24,6 +24,13 @@ struct AXIDTests {
         #expect(Set(AXContract.enumerableIDs).count == AXContract.enumerableIDs.count)
     }
 
+    @Test func journalMarkPairingIDsAreStable() {
+        #expect(AXID.Settings.Service.pairingMarkConfirm == "settings.service.pairing.markConfirm")
+        #expect(AXID.Settings.Service.pairingMarkMismatch == "settings.service.pairing.markMismatch")
+        #expect(AXID.Settings.Service.pairingMismatchFreshLink == "settings.service.pairing.mismatchFreshLink")
+        #expect(AXID.Settings.Service.pairingMismatchSupport == "settings.service.pairing.mismatchSupport")
+    }
+
     @Test func runtimeKeysArePrefixStableAndInjective() {
         let firstUID = "AppleHDAEngineInput:1B,0,1,0:1"
         let secondUID = "com.EXAMPLE.Device.2"

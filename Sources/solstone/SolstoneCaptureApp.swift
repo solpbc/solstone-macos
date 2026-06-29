@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        JournalMarkFont.register()
+
         notificationObservers.append(
             NotificationCenter.default.addObserver(
                 forName: NSWindow.willCloseNotification,

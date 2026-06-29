@@ -19,6 +19,10 @@ struct PairingWireUpTests {
             "AXID.Settings.Service.pairingFlowState",
             "AXID.Settings.Service.pairingFailureState",
             "AXID.Settings.Service.pairingConnectionState",
+            "AXID.Settings.Service.pairingMarkConfirm",
+            "AXID.Settings.Service.pairingMarkMismatch",
+            "AXID.Settings.Service.pairingMismatchFreshLink",
+            "AXID.Settings.Service.pairingMismatchSupport",
             "can't sync over the internet yet"
         ]
 
