@@ -5,6 +5,14 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.26] - 2026-06-29
+
+### Added
+- this Mac can now reach your journal even when the two aren't on the same network. pair this Mac to your journal once with a pairing link, and from then on it sends what it observes to your journal over a relay sol pbc operates while you're away, and directly over your local network when you're home. it stays off until you pair this way, so nothing changes unless you set it up. the connection row shows whether this Mac is paired and whether it's connected right now, so a saved pairing never looks like a live connection.
+- this Mac also sends your journal a small health note alongside its regular check-in, so you can tell at a glance that it's running and keeping up. the note is diagnostics only, its name, version, how long it's been running, and whether it's caught up. none of what it observes with you, no screen or audio, is included.
+
+updated the bundled solstone journal to 0.6.17 →
+
 ## [1.3.25] - 2026-06-28
 
 ### Changed
