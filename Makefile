@@ -7,9 +7,9 @@
 # opt-in (run it manually when the brand spec updates).
 .DEFAULT_GOAL := build
 
-# Canonical brand source — only used by `make brand-sync`. Override to point
-# at the sol brand source directory: BRAND_DIR=/path/to/brand make brand-sync
-BRAND_DIR ?= ../sol-brand
+# Brand asset source — REQUIRED by `make brand-sync` (no default). Point it at
+# your sol brand asset directory: BRAND_DIR=/path/to/brand make brand-sync
+BRAND_DIR ?=
 
 # ---------------------------------------------------------------------------
 # Distribution signing (Apple Developer ID + notarization)
@@ -180,7 +180,8 @@ generate-bundle-config: check-versions
 # output (it does not run brand-sync) — run this locally when the brand spec
 # updates, then commit the diff.
 brand-sync:
-	@test -d "$(BRAND_DIR)" || { echo "brand: $(BRAND_DIR) not found — set BRAND_DIR to the sol brand source directory (BRAND_DIR=/path/to/brand make brand-sync)"; exit 1; }
+	@test -n "$(BRAND_DIR)" || { echo "brand: BRAND_DIR is required — point it at your sol brand asset directory (BRAND_DIR=/path/to/brand make brand-sync)"; exit 1; }
+	@test -d "$(BRAND_DIR)" || { echo "brand: BRAND_DIR=$(BRAND_DIR) not found"; exit 1; }
 	cp "$(BRAND_DIR)/sol-wordmark.svg"          assets/sol-wordmark.svg
 	cp "$(BRAND_DIR)/sol-wordmark-white.svg"    assets/sol-wordmark-white.svg
 	cp "$(BRAND_DIR)/sol-ring.svg"              assets/sol-ring.svg
