@@ -5,24 +5,6 @@
         "color-space" : "srgb",
         "components" : {
           "alpha" : "1.000",
-          "blue" : "0.102",
-          "green" : "0.416",
-          "red" : "0.690"
-        }
-      },
-      "idiom" : "universal"
-    },
-    {
-      "appearances" : [
-        {
-          "appearance" : "luminosity",
-          "value" : "dark"
-        }
-      ],
-      "color" : {
-        "color-space" : "srgb",
-        "components" : {
-          "alpha" : "1.000",
           "blue" : "0.227",
           "green" : "0.573",
           "red" : "0.910"
@@ -33,7 +15,7 @@
   ],
   "info" : {
     "author" : "xcode",
-    "comment" : "sol brand canon — solOrangeAccessible (light, WCAG-AA-on-cream) & solOrange (dark)",
+    "comment" : "sol brand canon — solOrange #E8923A for the mark accent; orange ink #B06A1A is text/link/focus only",
     "version" : 1
   }
 }
