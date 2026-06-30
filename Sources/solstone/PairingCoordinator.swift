@@ -61,7 +61,7 @@ final class PairingCoordinator {
     @ObservationIgnored
     private let deviceLabel: DeviceLabelSource
     @ObservationIgnored
-    private var pendingSwitchPairURL: PairURL?
+    private var pendingSwitchPairing: StoredPairing?
 
     var tunnelState: TunnelLifecycleState {
         ownerState()
@@ -90,7 +90,7 @@ final class PairingCoordinator {
     }
 
     func submitPairingLink(_ rawLink: String) async {
-        pendingSwitchPairURL = nil
+        pendingSwitchPairing = nil
 
         let pairURL: PairURL
         do {
@@ -116,34 +116,22 @@ final class PairingCoordinator {
         }
 
         guard let stored else {
-            await runCeremony(pairURL, successState: .paired)
+            await runCeremony(pairURL, stored: nil)
             return
         }
 
-        guard let instanceID = pairURL.instanceID else {
-            state = .failed(.invalidLink("pairing link is missing its home id"))
-            return
-        }
-
-        if stored.instanceID.caseInsensitiveCompare(instanceID) == .orderedSame {
-            await reactivate()
-            state = .alreadyConnected
-            return
-        }
-
-        pendingSwitchPairURL = pairURL
-        state = .switchConfirmPending(newInstanceID: instanceID)
+        await runCeremony(pairURL, stored: stored)
     }
 
     func confirmSwitch() async {
-        guard let pairURL = pendingSwitchPairURL else {
+        guard let pairing = pendingSwitchPairing else {
             return
         }
-        await runCeremony(pairURL, successState: .switched)
+        await activate(pairing, successState: .switched)
     }
 
     func cancelSwitch() {
-        pendingSwitchPairURL = nil
+        pendingSwitchPairing = nil
         state = .idle
     }
 
@@ -155,7 +143,7 @@ final class PairingCoordinator {
             state = .failed(.localSetup)
             return
         }
-        pendingSwitchPairURL = nil
+        pendingSwitchPairing = nil
         await reactivate()
         state = .idle
     }
@@ -166,32 +154,44 @@ final class PairingCoordinator {
         guard pairURL.kind == .relay else {
             throw LocalPairingFailure(.invalidLink("pairing link is not a relay link"))
         }
-        guard pairURL.instanceID != nil else {
-            throw LocalPairingFailure(.invalidLink("pairing link is missing its home id"))
-        }
         return pairURL
     }
 
-    private func runCeremony(_ pairURL: PairURL, successState: PairingFlowState) async {
+    private func runCeremony(_ pairURL: PairURL, stored: StoredPairing?) async {
         state = .pairing
-        let stored: StoredPairing
+        let newPairing: StoredPairing
         do {
-            stored = try await pair(pairURL, deviceLabel(), relayEndpoint())
+            newPairing = try await pair(pairURL, deviceLabel(), relayEndpoint())
         } catch {
             pairingLog.info("pairing ceremony failed: \(String(describing: type(of: error)), privacy: .public)")
             state = .failed(Self.failure(for: error))
             return
         }
 
+        guard let stored else {
+            await activate(newPairing, successState: .paired)
+            return
+        }
+
+        if stored.instanceID.caseInsensitiveCompare(newPairing.instanceID) == .orderedSame {
+            await activate(newPairing, successState: .alreadyConnected)
+            return
+        }
+
+        pendingSwitchPairing = newPairing
+        state = .switchConfirmPending(newInstanceID: newPairing.instanceID)
+    }
+
+    private func activate(_ pairing: StoredPairing, successState: PairingFlowState) async {
         do {
-            try savePairing(stored)
+            try savePairing(pairing)
         } catch {
             pairingLog.error("pairing save failed: \(String(describing: type(of: error)), privacy: .public)")
             state = .saveFailed
             return
         }
 
-        pendingSwitchPairURL = nil
+        pendingSwitchPairing = nil
         await reactivate()
         state = successState
     }
@@ -339,7 +339,7 @@ extension PairingFailure {
     var message: String {
         switch self {
         case .staleLink:
-            return "this link expired. get a fresh link from your journal's network app and try again."
+            return "this pairing window closed or expired. get a fresh link from your journal's network app and try again."
         case .homeUnreachable:
             return "couldn't reach your journal. on the same wi-fi as your journal, or over your own vpn, it connects directly; from elsewhere it needs the paid plan."
         case .relayUnauthorized:

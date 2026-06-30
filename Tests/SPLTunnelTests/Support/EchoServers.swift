@@ -108,6 +108,7 @@ actor WebSocketEchoServer {
     private var connections: [NWConnection] = []
     private var boundPort: NWEndpoint.Port?
     private(set) var authorizationHeader: String?
+    private(set) var pairKeyHeader: String?
     private let textOnConnect: String?
 
     init(textOnConnect: String? = nil) {
@@ -125,6 +126,11 @@ actor WebSocketEchoServer {
             if let authorization = headers.first(where: { $0.name.lowercased() == "authorization" })?.value {
                 Task {
                     await self?.setAuthorizationHeader(authorization)
+                }
+            }
+            if let pairKey = headers.first(where: { $0.name.lowercased() == "sec-pair-key" })?.value {
+                Task {
+                    await self?.setPairKeyHeader(pairKey)
                 }
             }
             return NWProtocolWebSocket.Response(status: .accept, subprotocol: nil)
@@ -153,10 +159,15 @@ actor WebSocketEchoServer {
         listener = nil
         boundPort = nil
         authorizationHeader = nil
+        pairKeyHeader = nil
     }
 
     private func setAuthorizationHeader(_ value: String) {
         authorizationHeader = value
+    }
+
+    private func setPairKeyHeader(_ value: String) {
+        pairKeyHeader = value
     }
 
     private func accept(_ connection: NWConnection) {
@@ -559,6 +570,8 @@ actor RelayBridgeServer {
     private var webSocketConnections: [NWConnection] = []
     private var tcpConnections: [NWConnection] = []
     private var boundPort: NWEndpoint.Port?
+    private(set) var authorizationHeader: String?
+    private(set) var pairKeyHeader: String?
 
     init(tlsPort: Int) {
         self.tlsPort = tlsPort
@@ -571,8 +584,18 @@ actor RelayBridgeServer {
     func start() async throws {
         let options = NWProtocolWebSocket.Options()
         options.autoReplyPing = true
-        options.setClientRequestHandler(serverQueue) { _, _ in
-            NWProtocolWebSocket.Response(status: .accept, subprotocol: nil)
+        options.setClientRequestHandler(serverQueue) { [weak self] _, headers in
+            if let authorization = headers.first(where: { $0.name.lowercased() == "authorization" })?.value {
+                Task {
+                    await self?.setAuthorizationHeader(authorization)
+                }
+            }
+            if let pairKey = headers.first(where: { $0.name.lowercased() == "sec-pair-key" })?.value {
+                Task {
+                    await self?.setPairKeyHeader(pairKey)
+                }
+            }
+            return NWProtocolWebSocket.Response(status: .accept, subprotocol: nil)
         }
 
         let parameters = NWParameters.tcp
@@ -598,6 +621,16 @@ actor RelayBridgeServer {
         listener?.cancel()
         listener = nil
         boundPort = nil
+        authorizationHeader = nil
+        pairKeyHeader = nil
+    }
+
+    private func setAuthorizationHeader(_ value: String) {
+        authorizationHeader = value
+    }
+
+    private func setPairKeyHeader(_ value: String) {
+        pairKeyHeader = value
     }
 
     private func accept(_ webSocket: NWConnection) {

@@ -43,14 +43,15 @@ public enum DialClient {
 
     public static func dialPairRelay(
         endpoint: URL,
-        instanceID: String,
-        pairTicket: String,
+        rk: [UInt8],
         timeout: Duration = .seconds(5)
     ) async throws -> any ByteTransport {
-        try await dialRelay(
+        guard rk.count == 16 else {
+            throw DialError.connectionFailed("invalid pair key")
+        }
+        return try await dialRelay(
             endpoint: endpoint,
-            instanceID: instanceID,
-            authToken: pairTicket,
+            credential: .pair(rk: rk),
             path: "session/pair-dial",
             timeout: timeout
         )
@@ -88,7 +89,21 @@ public enum DialClient {
         path: String,
         timeout: Duration
     ) async throws -> RelayWSTransport {
-        let transport = try RelayWSTransport(endpoint: endpoint, instanceID: instanceID, authToken: authToken, path: path)
+        try await dialRelay(
+            endpoint: endpoint,
+            credential: .session(instanceID: instanceID, authToken: authToken),
+            path: path,
+            timeout: timeout
+        )
+    }
+
+    private static func dialRelay(
+        endpoint: URL,
+        credential: RelayCredential,
+        path: String,
+        timeout: Duration
+    ) async throws -> RelayWSTransport {
+        let transport = try RelayWSTransport(endpoint: endpoint, credential: credential, path: path)
         let startedAt = ContinuousClock.now
 
         do {
@@ -172,14 +187,19 @@ public actor RelayWSTransport: ByteTransport {
     private let task: URLSessionWebSocketTask
     private var closed = false
 
-    init(endpoint: URL, instanceID: String, authToken: String, path: String) throws {
-        let url = try Self.webSocketURL(endpoint: endpoint, path: path, instanceID: instanceID)
+    fileprivate init(endpoint: URL, credential: RelayCredential, path: String) throws {
+        let url = try Self.webSocketURL(endpoint: endpoint, path: path, instanceID: credential.instanceID)
 
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        switch credential {
+        case .session(_, let authToken):
+            request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        case .pair(let rk):
+            request.setValue(CertChain.hex(rk), forHTTPHeaderField: "Sec-Pair-Key")
+        }
         request.setValue(Self.userAgent(), forHTTPHeaderField: "User-Agent")
 
-        let delegate = WebSocketOpenDelegate()
+        let delegate = WebSocketOpenDelegate(failureMode: credential.failureMode)
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         let task = session.webSocketTask(with: request)
 
@@ -258,7 +278,7 @@ public actor RelayWSTransport: ByteTransport {
         session.invalidateAndCancel()
     }
 
-    static func webSocketURL(endpoint: URL, path: String, instanceID: String) throws -> URL {
+    static func webSocketURL(endpoint: URL, path: String, instanceID: String?) throws -> URL {
         guard var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
               let scheme = components.scheme?.lowercased() else {
             throw DialError.invalidRelayURL(endpoint.absoluteString)
@@ -279,8 +299,10 @@ public actor RelayWSTransport: ByteTransport {
         let dialPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         components.percentEncodedPath = "/" + [basePath, dialPath].filter { !$0.isEmpty }.joined(separator: "/")
         var queryItems = components.queryItems ?? []
-        queryItems.append(URLQueryItem(name: "instance", value: instanceID))
-        components.queryItems = queryItems
+        if let instanceID {
+            queryItems.append(URLQueryItem(name: "instance", value: instanceID))
+        }
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
 
         guard let url = components.url else {
             throw DialError.invalidRelayURL(endpoint.absoluteString)
@@ -298,6 +320,29 @@ public actor RelayWSTransport: ByteTransport {
             return .relayTokenExpired
         }
         return nil
+    }
+}
+
+fileprivate enum RelayCredential: Sendable {
+    case session(instanceID: String, authToken: String)
+    case pair(rk: [UInt8])
+
+    var instanceID: String? {
+        switch self {
+        case .session(let instanceID, _):
+            return instanceID
+        case .pair:
+            return nil
+        }
+    }
+
+    var failureMode: WebSocketOpenDelegate.FailureMode {
+        switch self {
+        case .session:
+            return .session
+        case .pair:
+            return .pairDial
+        }
     }
 }
 
@@ -322,10 +367,20 @@ private final class WebSocketOpenCancellation: @unchecked Sendable {
 
 // why: URLSession invokes delegate callbacks outside actor isolation; access is guarded by NSLock.
 final class WebSocketOpenDelegate: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate, @unchecked Sendable {
+    enum FailureMode: Sendable, Equatable {
+        case session
+        case pairDial
+    }
+
     private let lock = NSLock()
+    private let failureMode: FailureMode
     private var continuation: CheckedContinuation<Void, Error>?
     private var result: Result<Void, Error>?
     private var closeCode: Int?
+
+    init(failureMode: FailureMode = .session) {
+        self.failureMode = failureMode
+    }
 
     var recordedCloseCode: Int? {
         lock.withLock { closeCode }
@@ -363,7 +418,7 @@ final class WebSocketOpenDelegate: NSObject, URLSessionWebSocketDelegate, URLSes
         guard let error else {
             return
         }
-        complete(.failure(Self.mapFailure(error: error, task: task)))
+        complete(.failure(Self.mapFailure(error: error, task: task, failureMode: failureMode)))
     }
 
     func urlSession(
@@ -397,24 +452,26 @@ final class WebSocketOpenDelegate: NSObject, URLSessionWebSocketDelegate, URLSes
         continuation?.resume(with: result)
     }
 
-    private static func mapFailure(error: any Error, task: URLSessionTask) -> DialError {
+    private static func mapFailure(error: any Error, task: URLSessionTask, failureMode: FailureMode) -> any Error {
         let nsError = error as NSError
         let response = (task.response as? HTTPURLResponse)
             ?? (nsError.userInfo["NSErrorFailingURLResponseKey"] as? HTTPURLResponse)
 
         guard let status = response?.statusCode else {
-            return .connectionFailed(error.localizedDescription)
+            return DialError.connectionFailed(error.localizedDescription)
         }
 
         switch status {
+        case 401 where failureMode == .pairDial:
+            return PairError.pairingWindowClosed
         case 401, 403:
-            return .relayUnauthorized
+            return DialError.relayUnauthorized
         case 402:
-            return .relayNotEntitled
+            return DialError.relayNotEntitled
         case 404:
-            return .relayInstanceUnknown
+            return DialError.relayInstanceUnknown
         default:
-            return .wsHandshakeFailed(httpStatus: status)
+            return DialError.wsHandshakeFailed(httpStatus: status)
         }
     }
 }

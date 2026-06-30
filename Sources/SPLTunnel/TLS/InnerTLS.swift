@@ -10,6 +10,11 @@ import Security
 private let logger = Logger(subsystem: "app.solstone.observer.spl", category: "tls")
 private let tlsQueue = DispatchQueue(label: "app.solstone.observer.spl.tls")
 
+public struct PairingTLSConnection: Sendable {
+    public let tls: InnerTLS
+    public let caSPKIDER: [UInt8]
+}
+
 public enum InnerTLSError: Error, Equatable, Sendable {
     case invalidPort(Int)
     case identityAssemblyFailed
@@ -186,9 +191,10 @@ public actor InnerTLS {
         return tls
     }
 
-    public static func connectPairingViaTransport(transport: any ByteTransport, caPin: PairingCAPin) async throws -> InnerTLS {
+    public static func connectPairingViaTransport(transport: any ByteTransport, caPin: PairingCAPin) async throws -> PairingTLSConnection {
         let verifyFailure = TLSVerifyFailure()
-        let options = makePairingTLSOptions(caPin: caPin, verifyFailure: verifyFailure)
+        let trustCapture = PairingTrustCapture()
+        let options = makePairingTLSOptions(caPin: caPin, verifyFailure: verifyFailure, trustCapture: trustCapture)
         let listener = try NWListener(using: .tcp, on: .any)
         let acceptor = OneShotConnectionAcceptor()
         listener.newConnectionHandler = { connection in
@@ -237,6 +243,15 @@ public actor InnerTLS {
         let elapsed = startedAt.duration(to: .now).milliseconds
         logger.debug("pairing handshake transport=\(transport.transportKind, privacy: .public) duration_ms=\(elapsed, privacy: .public)")
 
+        guard let caSPKIDER = trustCapture.caSPKIDER else {
+            pumps.forEach { $0.cancel() }
+            peer.cancel()
+            connection.cancel()
+            listener.cancel()
+            await transport.close()
+            throw InnerTLSError.peerNotPinned
+        }
+
         let tls = InnerTLS(
             connection: connection,
             relayTransport: transport,
@@ -245,7 +260,7 @@ public actor InnerTLS {
             pumpTasks: pumps
         )
         await tls.startReceiveLoop()
-        return tls
+        return PairingTLSConnection(tls: tls, caSPKIDER: caSPKIDER)
     }
 
     public func send(_ plaintext: Data) async throws {
@@ -343,7 +358,8 @@ public actor InnerTLS {
     private static func makePairingTLSOptions(
         caPin: PairingCAPin,
         verifyFailure: TLSVerifyFailure,
-        mismatchReason: InnerTLSError = .peerNotPinned
+        mismatchReason: InnerTLSError = .peerNotPinned,
+        trustCapture: PairingTrustCapture? = nil
     ) -> NWProtocolTLS.Options {
         let options = NWProtocolTLS.Options()
         let secOptions = options.securityProtocolOptions
@@ -353,11 +369,13 @@ public actor InnerTLS {
         sec_protocol_options_set_verify_block(secOptions, { _, trust, complete in
             let secTrust = sec_trust_copy_ref(trust).takeRetainedValue()
             let chain = (SecTrustCopyCertificateChain(secTrust) as? [SecCertificate]) ?? []
-            let trusted = pairingTrustAccepts(chain: chain, caPin: caPin)
-            if !trusted {
+            if let caSPKIDER = pairingTrustAnchorSPKI(chain: chain, caPin: caPin) {
+                trustCapture?.set(caSPKIDER)
+                complete(true)
+            } else {
                 verifyFailure.set(mismatchReason)
+                complete(false)
             }
-            complete(trusted)
         }, tlsQueue)
         return options
     }
@@ -373,23 +391,37 @@ public actor InnerTLS {
     }
 
     static func pairingTrustAccepts(chain: [SecCertificate], caPin: PairingCAPin) -> Bool {
+        pairingTrustAnchorCertificate(chain: chain, caPin: caPin) != nil
+    }
+
+    private static func pairingTrustAnchorSPKI(chain: [SecCertificate], caPin: PairingCAPin) -> [UInt8]? {
+        guard let anchor = pairingTrustAnchorCertificate(chain: chain, caPin: caPin) else {
+            return nil
+        }
+        return try? CertChain.canonicalP256SubjectPublicKeyInfoDER(certificate: anchor)
+    }
+
+    private static func pairingTrustAnchorCertificate(chain: [SecCertificate], caPin: PairingCAPin) -> SecCertificate? {
         guard let anchor = chain.first(where: { CertChain.pinMatches(certificate: $0, pin: caPin) }) else {
-            return false
+            return nil
         }
 
         var trust: SecTrust?
         guard SecTrustCreateWithCertificates(chain as CFArray, SecPolicyCreateBasicX509(), &trust) == errSecSuccess,
               let trust else {
-            return false
+            return nil
         }
         guard SecTrustSetAnchorCertificates(trust, [anchor] as CFArray) == errSecSuccess else {
-            return false
+            return nil
         }
         guard SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess else {
-            return false
+            return nil
         }
         var error: CFError?
-        return SecTrustEvaluateWithError(trust, &error)
+        guard SecTrustEvaluateWithError(trust, &error) else {
+            return nil
+        }
+        return anchor
     }
 
     static func makeIdentity(pairing: StoredPairing) throws -> sec_identity_t {
@@ -454,6 +486,23 @@ private final class TLSVerifyFailure: @unchecked Sendable {
         lock.withLock {
             if value == nil {
                 value = reason
+            }
+        }
+    }
+}
+
+private final class PairingTrustCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: [UInt8]?
+
+    var caSPKIDER: [UInt8]? {
+        lock.withLock { value }
+    }
+
+    func set(_ caSPKIDER: [UInt8]) {
+        lock.withLock {
+            if value == nil {
+                value = caSPKIDER
             }
         }
     }

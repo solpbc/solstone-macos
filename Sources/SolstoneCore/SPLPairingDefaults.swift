@@ -4,8 +4,8 @@
 import Foundation
 
 public enum SPLPairingDefaults {
-    // Production operated relay. A relay-form pair link does not carry a relay
-    // origin, so this default is the relay the client actually dials when pairing.
+    // Production operated relay. A 0x06 pair link with selector 0x00 carries no
+    // relay origin, so this default is the relay the client dials in that case.
     public static let relayEndpoint = "https://link.solstone.app"
 
     public static var relayEndpointURL: URL {

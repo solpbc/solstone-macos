@@ -67,24 +67,25 @@ struct DialClientTests {
         #expect(transport.transportKind == "relay")
     }
 
-    @Test func pairRelayConnectsWithPairDialPathAndTicketAuthorization() async throws {
+    @Test func pairRelayConnectsWithPairDialPathAndPairKeyHeader() async throws {
         let server = WebSocketEchoServer()
         try await server.start()
         let port = await server.port
 
         let transport = try await DialClient.dialPairRelay(
             endpoint: try relayEndpoint(port: port),
-            instanceID: "instance-1",
-            pairTicket: "pair-ticket"
+            rk: Array(UInt8(0x00)...UInt8(0x0f))
         )
         try await transport.send(Data([0x07, 0x08, 0x09]))
         let echoed = try await transport.receive()
         await transport.close()
         let authorization = await server.authorizationHeader
+        let pairKey = await server.pairKeyHeader
         await server.stop()
 
         #expect(echoed == Data([0x07, 0x08, 0x09]))
-        #expect(authorization == "Bearer pair-ticket")
+        #expect(authorization == nil)
+        #expect(pairKey == "000102030405060708090a0b0c0d0e0f")
         #expect(transport.transportKind == "relay")
     }
 
@@ -97,15 +98,29 @@ struct DialClientTests {
         let pairURL = try RelayWSTransport.webSocketURL(
             endpoint: URL(string: "https://link.solstone.app/base")!,
             path: "session/pair-dial",
-            instanceID: "instance-123"
+            instanceID: nil
         )
 
         #expect(relayURL.absoluteString == "wss://link.solstone.app/session/dial?instance=instance-123")
-        #expect(pairURL.absoluteString == "wss://link.solstone.app/base/session/pair-dial?instance=instance-123")
+        #expect(pairURL.absoluteString == "wss://link.solstone.app/base/session/pair-dial")
     }
 
     @Test func relay401MapsUnauthorized() async throws {
         try await expectRelayStatus(401, .relayUnauthorized)
+    }
+
+    @Test func pairRelay401MapsPairingWindowClosed() async throws {
+        let server = WebSocketFailingServer(statusCode: 401)
+        try await server.start()
+        let port = await server.port
+
+        await expectPairError(.pairingWindowClosed) {
+            _ = try await DialClient.dialPairRelay(
+                endpoint: try relayEndpoint(port: port),
+                rk: Array(UInt8(0x00)...UInt8(0x0f))
+            )
+        }
+        await server.stop()
     }
 
     @Test func relay403MapsUnauthorized() async throws {
@@ -205,6 +220,20 @@ struct DialClientTests {
             try await operation()
             Issue.record("Expected \(expected)")
         } catch let error as DialError {
+            #expect(error == expected)
+        } catch {
+            Issue.record("Expected \(expected), got \(error)")
+        }
+    }
+
+    private func expectPairError(
+        _ expected: PairError,
+        _ operation: () async throws -> Void
+    ) async {
+        do {
+            try await operation()
+            Issue.record("Expected \(expected)")
+        } catch let error as PairError {
             #expect(error == expected)
         } catch {
             Issue.record("Expected \(expected), got \(error)")

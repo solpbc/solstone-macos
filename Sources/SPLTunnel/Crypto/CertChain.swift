@@ -55,7 +55,7 @@ public enum CertChain {
             let data = SecCertificateCopyData(certificate) as Data
             digest = Array(SHA256.hash(data: data))
         case .spkiSHA256:
-            guard let spkiDER = subjectPublicKeyInfoDER(certificate: certificate) else {
+            guard let spkiDER = try? canonicalP256SubjectPublicKeyInfoDER(certificate: certificate) else {
                 return false
             }
             digest = Array(SHA256.hash(data: Data(spkiDER)))
@@ -93,27 +93,47 @@ public enum CertChain {
         bytes.map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func subjectPublicKeyInfoDER(certificate: SecCertificate) -> [UInt8]? {
+    public static func canonicalP256SubjectPublicKeyInfoDER(certificate: SecCertificate) throws -> [UInt8] {
         guard let key = SecCertificateCopyKey(certificate) else {
-            return nil
+            throw CertChainError.invalidPublicKey
         }
         var error: Unmanaged<CFError>?
         guard let keyData = SecKeyCopyExternalRepresentation(key, &error) as Data? else {
-            return nil
+            throw CertChainError.invalidPublicKey
         }
-        let algorithmIdentifier = DER.sequence([
-            DER.objectIdentifier([1, 2, 840, 10045, 2, 1]),
-            DER.objectIdentifier([1, 2, 840, 10045, 3, 1, 7])
-        ])
-        return DER.sequence([
-            algorithmIdentifier,
-            DER.bitString(Array(keyData))
-        ])
+        do {
+            let publicKey = try P256.Signing.PublicKey(x963Representation: keyData)
+            return Array(publicKey.derRepresentation)
+        } catch {
+            throw CertChainError.invalidPublicKey
+        }
     }
+
+    public static func jidFromSPKI(_ spkiDER: [UInt8]) -> String {
+        let key = HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: Data(spkiDER)),
+            salt: Data("solstone/journal/v1".utf8),
+            info: Data("solstone/jid/uuidv8/v1".utf8),
+            outputByteCount: 16
+        )
+        var bytes = key.withUnsafeBytes { Array($0) }
+        bytes[6] = (bytes[6] & 0x0F) | 0x80
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        let uuid = UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5],
+            bytes[6], bytes[7],
+            bytes[8], bytes[9],
+            bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
+        return uuid.uuidString.lowercased()
+    }
+
 }
 
 public enum CertChainError: Error, Equatable, Sendable {
     case invalidPEM
     case emptyChain
     case invalidCertificate
+    case invalidPublicKey
 }

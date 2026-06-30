@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import Crypto
 import os
 
 private let pairLog = Logger(subsystem: "app.solstone.observer.spl", category: "pair")
@@ -55,42 +56,23 @@ public struct PairClient: Sendable {
         deviceLabel: String,
         defaultRelayEndpoint: URL
     ) async throws -> StoredPairing {
-        guard let instanceID = pairURL.instanceID,
-              let totp = pairURL.totp else {
+        guard pairURL.sBytes.count == 8 else {
             throw PairError.relayResponseInvalid(status: nil)
         }
 
         let relayEndpoint = pairURL.relayOrigin ?? defaultRelayEndpoint
-        let pairTicket = try await postPairTicket(relayEndpoint: relayEndpoint, instanceID: instanceID, totp: totp)
+        let rk = try Self.derivePairWindowRK(sBytes: pairURL.sBytes)
         let transport = try await DialClient.dialPairRelay(
             endpoint: relayEndpoint,
-            instanceID: instanceID,
-            pairTicket: pairTicket.pairTicket
+            rk: rk
         )
         let lanResponse = try await Self.postPairThroughTunnel(
             transport: transport,
             caPin: pairURL.caPin,
-            path: "/app/network/pair?token=\(CertChain.hex(pairURL.nonceBytes))",
+            path: "/app/network/pair?token=\(CertChain.hex(pairURL.sBytes))",
             csrPEM: generated.csrPEM,
             deviceLabel: deviceLabel
         )
-        return try await finalizeRelayPairing(
-            lanResponse: lanResponse,
-            instanceID: instanceID,
-            generated: generated,
-            relayEndpoint: relayEndpoint
-        )
-    }
-
-    func finalizeRelayPairing(
-        lanResponse: LANPairResponse,
-        instanceID: String,
-        generated: PairingMaterial,
-        relayEndpoint: URL
-    ) async throws -> StoredPairing {
-        guard lanResponse.instanceID.caseInsensitiveCompare(instanceID) == .orderedSame else {
-            throw PairError.relayInstanceMismatch
-        }
         let relayEnrollment = await optionalRelayEnrollment(relayEndpoint: relayEndpoint, lanResponse: lanResponse)
         return try Self.makeStoredPairing(
             lanResponse: lanResponse,
@@ -135,45 +117,6 @@ public struct PairClient: Sendable {
         }
 
         return try Self.decodePairResponse(status: http.statusCode, body: data)
-    }
-
-    private func postPairTicket(relayEndpoint: URL, instanceID: String, totp: String) async throws -> RelayPairTicketResponse {
-        let request = try Self.makePairTicketRequest(
-            relayEndpoint: relayEndpoint,
-            instanceID: instanceID,
-            totp: totp,
-            userAgent: Self.userAgent()
-        )
-        let relaySession = session ?? URLSession.shared
-
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await relaySession.data(for: request)
-        } catch {
-            throw PairError.relayRequestFailed(underlying: error)
-        }
-
-        guard let http = response as? HTTPURLResponse else {
-            throw PairError.relayResponseInvalid(status: nil)
-        }
-
-        switch http.statusCode {
-        case 200:
-            do {
-                return try JSONDecoder().decode(RelayPairTicketResponse.self, from: data)
-            } catch {
-                throw PairError.relayResponseInvalid(status: http.statusCode)
-            }
-        case 401, 403, 409:
-            throw PairError.attestationRejected(status: http.statusCode)
-        case 400, 404:
-            throw PairError.relayResponseInvalid(status: http.statusCode)
-        case 500...599:
-            throw PairError.relayRequestFailed(underlying: nil)
-        default:
-            throw PairError.relayResponseInvalid(status: http.statusCode)
-        }
     }
 
     private func postRelay(relayEndpoint: URL, lanResponse: LANPairResponse) async throws -> RelayEnrollResponse {
@@ -230,8 +173,11 @@ public struct PairClient: Sendable {
         deviceLabel: String
     ) async throws -> LANPairResponse {
         let tls: InnerTLS
+        let caSPKIDER: [UInt8]
         do {
-            tls = try await InnerTLS.connectPairingViaTransport(transport: transport, caPin: caPin)
+            let pairingTLS = try await InnerTLS.connectPairingViaTransport(transport: transport, caPin: caPin)
+            tls = pairingTLS.tls
+            caSPKIDER = pairingTLS.caSPKIDER
         } catch InnerTLSError.peerNotPinned {
             throw PairError.lanCAFingerprintMismatch
         } catch InnerTLSError.caFingerprintMismatch {
@@ -263,6 +209,7 @@ public struct PairClient: Sendable {
             }
             let response = try Self.parseHTTPResponse(responseData)
             let lanResponse = try Self.decodePairResponse(status: response.status, body: response.body)
+            try Self.verifyRelayPairResponse(lanResponse, caSPKIDER: caSPKIDER)
             await cleanupPairingTunnel(tls: tls, mux: mux, pump: pump)
             return lanResponse
         } catch {
@@ -297,18 +244,42 @@ public struct PairClient: Sendable {
         return try encoder.encode(TunnelPairRequest(csr: csrPEM, deviceLabel: deviceLabel))
     }
 
-    static func makePairTicketRequest(relayEndpoint: URL, instanceID: String, totp: String, userAgent: String = userAgent()) throws -> URLRequest {
-        let url = try controlURL(
-            relayEndpoint,
-            path: "session/pair-ticket",
-            queryItems: [URLQueryItem(name: "instance", value: instanceID)]
+    static func derivePairWindowRK(sBytes: [UInt8]) throws -> [UInt8] {
+        guard sBytes.count == 8 else {
+            throw PairError.relayResponseInvalid(status: nil)
+        }
+        let key = HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: Data(sBytes)),
+            salt: Data(count: 32),
+            info: Data("spl-pair-window-v1".utf8),
+            outputByteCount: 16
         )
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        request.httpBody = try JSONEncoder().encode(RelayPairTicketRequest(instanceID: instanceID, totp: totp))
-        return request
+        return key.withUnsafeBytes { Array($0) }
+    }
+
+    static func verifyRelayPairResponse(_ response: LANPairResponse, caSPKIDER: [UInt8]) throws {
+        let responseCAP256SPKI = try responseCAP256SPKI(response.caChain)
+        guard responseCAP256SPKI == caSPKIDER else {
+            throw PairError.relayInstanceMismatch
+        }
+        let expected = CertChain.jidFromSPKI(responseCAP256SPKI)
+        guard response.instanceID == expected else {
+            throw PairError.relayInstanceMismatch
+        }
+    }
+
+    private static func responseCAP256SPKI(_ caChain: [String]) throws -> [UInt8] {
+        do {
+            let certificates = try CertChain.certificates(fromPEM: joinPEMChain(caChain))
+            guard let caCertificate = certificates.first else {
+                throw PairError.relayInstanceMismatch
+            }
+            return try CertChain.canonicalP256SubjectPublicKeyInfoDER(certificate: caCertificate)
+        } catch let error as PairError {
+            throw error
+        } catch {
+            throw PairError.relayInstanceMismatch
+        }
     }
 
     static func makeRelayRequest(relayEndpoint: URL, response: LANPairResponse, userAgent: String) throws -> URLRequest {
@@ -585,26 +556,6 @@ struct LANPairResponse: Decodable {
     }
 }
 
-struct RelayPairTicketRequest: Encodable {
-    let instanceID: String
-    let totp: String
-
-    enum CodingKeys: String, CodingKey {
-        case instanceID = "instance_id"
-        case totp
-    }
-}
-
-struct RelayPairTicketResponse: Decodable {
-    let pairTicket: String
-    let expiresAt: String?
-
-    enum CodingKeys: String, CodingKey {
-        case pairTicket = "pair_ticket"
-        case expiresAt = "expires_at"
-    }
-}
-
 struct RelayEnrollRequest: Encodable {
     let instanceID: String
     let homeAttestation: String
@@ -651,7 +602,7 @@ public enum PairError: Error, Equatable, LocalizedError, Sendable {
         case .nonceExpired:
             return "this pairing code has expired. generate a new one on your solstone."
         case .pairingWindowClosed:
-            return "the pairing window closed. generate a new code on your solstone."
+            return "the pairing window closed or expired."
         case .lanCandidatesExhausted:
             return "couldn't reach solstone on this network."
         case .relayRequestFailed:

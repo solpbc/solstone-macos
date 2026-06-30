@@ -19,7 +19,7 @@ public struct PairCandidate: Sendable, Equatable, Hashable {
 }
 
 public struct PairURL: Sendable, Equatable, Hashable {
-    private static let relayVersion: UInt8 = 0x03
+    private static let relayVersion: UInt8 = 0x06
     private static let directVersion: UInt8 = 0x04
     private static let multiVersion: UInt8 = 0x05
 
@@ -28,10 +28,9 @@ public struct PairURL: Sendable, Equatable, Hashable {
     public let addressBytes: [UInt8]
     public let candidates: [PairCandidate]
     public let nonceBytes: [UInt8]
+    public let sBytes: [UInt8]
     public let caFingerprintBytes: [UInt8]
     public let caFingerprintKind: PairingCAPinKind
-    public let instanceID: String?
-    public let totp: String?
     public let relayOrigin: URL?
 
     public var caPin: PairingCAPin {
@@ -108,10 +107,9 @@ public struct PairURL: Sendable, Equatable, Hashable {
         addressBytes = parsedAddressBytes
         candidates = [PairCandidate(address: address, port: parsedPort)]
         nonceBytes = Array(bytes[8..<24])
+        sBytes = []
         caFingerprintBytes = Array(bytes[24..<40])
         caFingerprintKind = .certificateSHA256
-        instanceID = nil
-        totp = nil
         relayOrigin = nil
     }
 
@@ -147,39 +145,32 @@ public struct PairURL: Sendable, Equatable, Hashable {
         addressBytes = Array(bytes[5..<9])
         candidates = parsedCandidates
         nonceBytes = Array(bytes[nonceStart..<fingerprintStart])
+        sBytes = []
         caFingerprintBytes = Array(bytes[fingerprintStart..<bytes.endIndex])
         caFingerprintKind = .certificateSHA256
-        instanceID = nil
-        totp = nil
         relayOrigin = nil
     }
 
     private init(relayBytes bytes: [UInt8]) throws {
-        guard bytes.count >= 54 else {
+        guard bytes.count >= 27 else {
             throw PairURLError.invalidLength(bytes.count)
         }
-        guard bytes[36] == 0x01 else {
-            throw PairURLError.unsupportedCAFingerprintTag(bytes[36])
+        guard bytes[9] == 0x01 else {
+            throw PairURLError.unsupportedCAFingerprintTag(bytes[9])
         }
-        let selectorLength = Int(bytes[53])
-        guard bytes.count == 54 + selectorLength else {
-            throw PairURLError.invalidLength(bytes.count)
-        }
-
-        let instanceBytes = Array(bytes[1..<17])
-        let uuid = UUID(uuid: (
-            instanceBytes[0], instanceBytes[1], instanceBytes[2], instanceBytes[3],
-            instanceBytes[4], instanceBytes[5], instanceBytes[6], instanceBytes[7],
-            instanceBytes[8], instanceBytes[9], instanceBytes[10], instanceBytes[11],
-            instanceBytes[12], instanceBytes[13], instanceBytes[14], instanceBytes[15]
-        ))
-        let totpValue = Int(bytes[17]) << 16 | Int(bytes[18]) << 8 | Int(bytes[19])
+        let selectorLength = Int(bytes[26])
 
         let relayOrigin: URL?
         if selectorLength == 0 {
+            guard bytes.count == 27 else {
+                throw PairURLError.invalidLength(bytes.count)
+            }
             relayOrigin = nil
         } else {
-            let selectorBytes = bytes[54..<(54 + selectorLength)]
+            guard bytes.count == 27 + selectorLength else {
+                throw PairURLError.invalidLength(bytes.count)
+            }
+            let selectorBytes = bytes[27..<(27 + selectorLength)]
             guard let selector = String(bytes: selectorBytes, encoding: .utf8),
                   let url = URL(string: selector),
                   let scheme = url.scheme?.lowercased(),
@@ -194,11 +185,10 @@ public struct PairURL: Sendable, Equatable, Hashable {
         kind = .relay
         addressBytes = []
         candidates = []
-        nonceBytes = Array(bytes[20..<36])
-        caFingerprintBytes = Array(bytes[37..<53])
+        nonceBytes = []
+        sBytes = Array(bytes[1..<9])
+        caFingerprintBytes = Array(bytes[10..<26])
         caFingerprintKind = .spkiSHA256
-        instanceID = uuid.uuidString.lowercased()
-        totp = String(format: "%06d", totpValue)
         self.relayOrigin = relayOrigin
     }
 }

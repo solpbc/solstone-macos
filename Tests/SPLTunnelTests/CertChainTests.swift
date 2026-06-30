@@ -52,6 +52,17 @@ struct CertChainTests {
         #expect(CertChain.sha256Fingerprint(of: certificate) == cert1Fingerprint)
     }
 
+    @Test func canonicalP256SPKIMatchesOpenSSLFixture() throws {
+        let certificate = try #require(try CertChain.certificates(fromPEM: cert1).first)
+        let spki = try CertChain.canonicalP256SubjectPublicKeyInfoDER(certificate: certificate)
+        #expect(Self.hex(spki) == "3059301306072a8648ce3d020106082a8648ce3d03010703420004f8a17468f44dbcc10175fab8b4edfeb2a9c1deedf03a213852d9e388bd2a57df292acc1efa360ee7cffe851507e57f8c9cbdd0f42e09cfbf8f636b4ed1ce877c")
+    }
+
+    @Test func jidFromSPKIMatchesMarkVector() {
+        let spki = Self.bytes("3059301306072a8648ce3d020106082a8648ce3d030107034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5")
+        #expect(CertChain.jidFromSPKI(spki) == "5620bab1-476a-88df-93d4-f4f525b991dd")
+    }
+
     @Test func invalidPEMThrows() {
         expectThrows(.emptyChain) {
             _ = try CertChain.certificates(fromPEM: "")
@@ -82,5 +93,17 @@ struct CertChainTests {
         } catch {
             Issue.record("Expected \(expected), got \(error)")
         }
+    }
+
+    private static func bytes(_ hex: String) -> [UInt8] {
+        stride(from: 0, to: hex.count, by: 2).map { offset in
+            let start = hex.index(hex.startIndex, offsetBy: offset)
+            let end = hex.index(start, offsetBy: 2)
+            return UInt8(hex[start..<end], radix: 16)!
+        }
+    }
+
+    private static func hex(_ bytes: [UInt8]) -> String {
+        bytes.map { String(format: "%02x", $0) }.joined()
     }
 }

@@ -61,18 +61,20 @@ struct PairingCoordinatorTests {
         #expect(await reactivate.count == 0)
     }
 
-    @Test func sameInstanceIDSkipsCeremonySetsAlreadyConnected() async throws {
+    @Test func sameInstanceIDRunsCeremonySavesAndSetsAlreadyConnected() async throws {
         let instanceID = "11111111-1111-1111-1111-111111111111"
+        let refreshed = pairing(instanceID: instanceID)
         let store = PairingStore(pairing: pairing(instanceID: instanceID.uppercased()))
-        let script = PairScript([.failure(PairError.nonceExpired)])
+        let script = PairScript([.success(refreshed)])
         let reactivate = ReactivateRecorder()
         let coordinator = makeCoordinator(store: store, script: script, reactivate: reactivate)
 
         await coordinator.submitPairingLink(relayPairLink(instanceID: instanceID))
 
         #expect(coordinator.state == .alreadyConnected)
-        #expect(await script.callCount == 0)
-        #expect(store.saveCount == 0)
+        #expect(store.currentPairing == refreshed)
+        #expect(await script.callCount == 1)
+        #expect(store.saveCount == 1)
         #expect(await reactivate.count == 1)
     }
 
@@ -88,7 +90,7 @@ struct PairingCoordinatorTests {
         #expect(coordinator.state == .switchConfirmPending(newInstanceID: replacement.instanceID))
         #expect(store.currentPairing == prior)
         #expect(store.saveCount == 0)
-        #expect(await script.callCount == 0)
+        #expect(await script.callCount == 1)
     }
 
     @Test func confirmSwitchRunsCeremonySavesAndSetsSwitched() async throws {
@@ -109,7 +111,7 @@ struct PairingCoordinatorTests {
         #expect(await reactivate.count == 1)
     }
 
-    @Test func differentInstanceIDConfirmFailurePreservesPriorPairing() async throws {
+    @Test func differentInstanceIDCeremonyFailurePreservesPriorPairing() async throws {
         let prior = pairing(instanceID: "11111111-1111-1111-1111-111111111111")
         let replacementID = "22222222-2222-2222-2222-222222222222"
         let store = PairingStore(pairing: prior)
@@ -118,7 +120,6 @@ struct PairingCoordinatorTests {
         let coordinator = makeCoordinator(store: store, script: script, reactivate: reactivate)
 
         await coordinator.submitPairingLink(relayPairLink(instanceID: replacementID))
-        await coordinator.confirmSwitch()
 
         #expect(coordinator.state == .failed(.staleLink))
         #expect(store.currentPairing == prior)
@@ -190,6 +191,7 @@ struct PairingCoordinatorTests {
 
     @Test func pairingWindowClosedMapsToStaleLink() async throws {
         await expectCeremonyFailure(PairError.pairingWindowClosed, mapsTo: .staleLink)
+        #expect(PairingFailure.staleLink.message == "this pairing window closed or expired. get a fresh link from your journal's network app and try again.")
     }
 
     @Test func relayUnauthorizedMapsToRelayUnauthorized() async throws {
@@ -320,47 +322,6 @@ private actor ReactivateRecorder {
 
 private let directPairLink = "https://go.solstone.app/p#0G0W000258DSX8DJRFAEBXG7308J4CT4ANK7F26YNPZEZJQYQAZ028T5CY4TQKFF"
 
-private func relayPairLink(instanceID: String) -> String {
-    let uuid = UUID(uuidString: instanceID)!
-    let tuple = uuid.uuid
-    var bytes: [UInt8] = [
-        0x03,
-        tuple.0, tuple.1, tuple.2, tuple.3,
-        tuple.4, tuple.5,
-        tuple.6, tuple.7,
-        tuple.8, tuple.9,
-        tuple.10, tuple.11, tuple.12, tuple.13, tuple.14, tuple.15,
-        0x01, 0xE2, 0x40,
-    ]
-    bytes.append(contentsOf: Array(0x10...0x1F).map(UInt8.init))
-    bytes.append(0x01)
-    bytes.append(contentsOf: Array(0x30...0x3F).map(UInt8.init))
-    bytes.append(0)
-    return "https://go.solstone.app/p#\(encodeBase32(bytes))"
-}
-
-private func encodeBase32(_ bytes: [UInt8]) -> String {
-    let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
-    var accumulator: UInt64 = 0
-    var bitCount = 0
-    var output = ""
-
-    for byte in bytes {
-        accumulator = (accumulator << 8) | UInt64(byte)
-        bitCount += 8
-
-        while bitCount >= 5 {
-            bitCount -= 5
-            let index = Int((accumulator >> UInt64(bitCount)) & 0x1f)
-            output.append(alphabet[index])
-            accumulator &= (1 << UInt64(bitCount)) - 1
-        }
-    }
-
-    if bitCount > 0 {
-        let index = Int((accumulator << UInt64(5 - bitCount)) & 0x1f)
-        output.append(alphabet[index])
-    }
-
-    return output
+private func relayPairLink(instanceID _: String) -> String {
+    "https://go.solstone.app/p#0R0J6HB7H6NWVVR1VTPVXVYAZTXBW0938NKRKAYDXW00"
 }

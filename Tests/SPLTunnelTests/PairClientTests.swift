@@ -231,48 +231,46 @@ struct PairClientTests {
         #expect(pairing.relayEnrollment == .unavailable)
     }
 
-    @Test func relayFinalizeEnrollmentFailureCompletesPairingAsUnavailable() async throws {
-        PairURLProtocol.store.reset()
-        PairURLProtocol.store.enqueue(error: URLError(.cannotConnectToHost))
-        let lanResponse = try PairClient.decodeLANResponse(data: Data(lanResponseJSON().utf8))
-
-        let pairing = try await makeClient().finalizeRelayPairing(
-            lanResponse: lanResponse,
-            instanceID: "instance-1",
-            generated: PairingMaterial(csrPEM: "unused", privateKeyPEM: "private-key"),
-            relayEndpoint: URL(string: "https://spl.solpbc.org")!
-        )
-
-        #expect(pairing.relayEnrollment == .unavailable)
-    }
-
-    @Test func relayFinalizeInstanceMismatchThrowsBeforeEnrollment() async throws {
-        PairURLProtocol.store.reset()
-        PairURLProtocol.store.enqueue(body: relayResponseJSON())
-        let lanResponse = try PairClient.decodeLANResponse(data: Data(lanResponseJSON().utf8))
+    @Test func relayInstanceIDMismatchThrowsBeforeEnrollment() throws {
+        let caSPKI = try Self.caSPKI(caCertificatePEM: TestCertificates.cert2)
+        let lanResponse = try PairClient.decodeLANResponse(data: Data(lanResponseJSON(
+            instanceID: "different-instance",
+            caChain: [TestCertificates.cert2]
+        ).utf8))
 
         do {
-            _ = try await makeClient().finalizeRelayPairing(
-                lanResponse: lanResponse,
-                instanceID: "different-instance",
-                generated: PairingMaterial(csrPEM: "unused", privateKeyPEM: "private-key"),
-                relayEndpoint: URL(string: "https://spl.solpbc.org")!
-            )
+            try PairClient.verifyRelayPairResponse(lanResponse, caSPKIDER: caSPKI)
             Issue.record("Expected relayInstanceMismatch")
         } catch let error as PairError {
             #expect(error == .relayInstanceMismatch)
         } catch {
             Issue.record("Expected relayInstanceMismatch, got \(error)")
         }
-        #expect(PairURLProtocol.store.requests.isEmpty)
+    }
+
+    @Test func relayCAChainMismatchThrowsBeforeEnrollment() throws {
+        let caSPKI = try Self.caSPKI(caCertificatePEM: TestCertificates.cert1)
+        let lanResponse = try PairClient.decodeLANResponse(data: Data(lanResponseJSON(
+            instanceID: CertChain.jidFromSPKI(caSPKI),
+            caChain: [TestCertificates.cert2]
+        ).utf8))
+
+        do {
+            try PairClient.verifyRelayPairResponse(lanResponse, caSPKIDER: caSPKI)
+            Issue.record("Expected relayInstanceMismatch")
+        } catch let error as PairError {
+            #expect(error == .relayInstanceMismatch)
+        } catch {
+            Issue.record("Expected relayInstanceMismatch, got \(error)")
+        }
     }
 
     @Test func relayFormCeremonyProducesStoredPairingWithRelayEnrollment() async throws {
-        let instanceID = "12345678-1234-5678-1234-567812345678"
         let bundle = try TestCA.make()
+        let instanceID = try Self.jid(caCertificatePEM: bundle.caCertificatePEM)
         let pairingServer = RelayPairingMuxServer(
             bundle: bundle,
-            responseJSON: lanResponseJSON(instanceID: instanceID, localEndpoints: [[
+            responseJSON: lanResponseJSON(instanceID: instanceID, caChain: [bundle.caCertificatePEM], localEndpoints: [[
                 "host": "127.0.0.1",
                 "port": 7657,
                 "scope": "loopback",
@@ -289,9 +287,8 @@ struct PairClientTests {
         }
 
         let relayEndpoint = try #require(URL(string: "ws://127.0.0.1:\(await relay.port)"))
-        let pairURL = try Self.makeRelayPairURL(caCertificatePEM: bundle.caCertificatePEM, instanceID: instanceID)
+        let pairURL = try Self.makeRelayPairURL(caCertificatePEM: bundle.caCertificatePEM)
         PairURLProtocol.store.reset()
-        PairURLProtocol.store.enqueue(body: #"{"pair_ticket":"pair-ticket","expires_at":"2026-05-11T00:00:00Z"}"#)
         PairURLProtocol.store.enqueue(body: relayResponseJSON())
 
         let pairing = try await makeClient().pair(
@@ -306,26 +303,14 @@ struct PairClientTests {
         #expect(pairing.relayEnrollment == .enrolled(deviceToken: "device-token", expiresAt: "2026-05-11T00:00:00Z"))
         #expect(pairing.localEndpoints == [LocalEndpoint(host: "127.0.0.1", port: 7657, scope: "loopback")])
         let requests = PairURLProtocol.store.requests
-        #expect(requests.map { $0.url?.path } == ["/session/pair-ticket", "/enroll/device"])
+        #expect(requests.map { $0.url?.path } == ["/enroll/device"])
+        #expect(await relay.authorizationHeader == nil)
+        #expect(await relay.pairKeyHeader == "e34481a4cde647ba9c9fb29a59e18271")
     }
 
-    @Test func pairTicketRequestTargetsRelayContract() throws {
-        let request = try PairClient.makePairTicketRequest(
-            relayEndpoint: URL(string: "https://spl.solpbc.org")!,
-            instanceID: "12345678-1234-5678-1234-567812345678",
-            totp: "123456",
-            userAgent: "test-agent"
-        )
-
-        #expect(request.httpMethod == "POST")
-        #expect(request.url?.absoluteString == "https://spl.solpbc.org/session/pair-ticket?instance=12345678-1234-5678-1234-567812345678")
-        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
-        #expect(request.value(forHTTPHeaderField: "User-Agent") == "test-agent")
-
-        let body = try #require(request.httpBody)
-        let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: String])
-        #expect(json["instance_id"] == "12345678-1234-5678-1234-567812345678")
-        #expect(json["totp"] == "123456")
+    @Test func pairWindowRKMatchesReferenceVector() throws {
+        let rk = try PairClient.derivePairWindowRK(sBytes: [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF])
+        #expect(Self.hex(rk) == "e34481a4cde647ba9c9fb29a59e18271")
     }
 
     @Test func tunnelPairHTTPRequestUsesRelativeMuxPath() throws {
@@ -372,10 +357,14 @@ struct PairClientTests {
         try PairURL.parse(URL(string: "https://go.solstone.app/p#0G0W000258DSX8DJRFAEBXG7308J4CT4ANK7F26YNPZEZJQYQAZ028T5CY4TQKFF")!)
     }
 
-    private func lanResponseJSON(instanceID: String = "instance-1", localEndpoints: [[String: Any]]? = nil) -> String {
+    private func lanResponseJSON(
+        instanceID: String = "instance-1",
+        caChain: [String] = [TestCertificates.cert2],
+        localEndpoints: [[String: Any]]? = nil
+    ) -> String {
         var response: [String: Any] = [
             "client_cert": TestCertificates.cert1,
-            "ca_chain": [TestCertificates.cert2],
+            "ca_chain": caChain,
             "instance_id": instanceID,
             "home_label": "living room mac",
             "home_attestation": "attestation",
@@ -447,40 +436,31 @@ struct PairClientTests {
         }
     }
 
-    private static func makeRelayPairURL(caCertificatePEM: String, instanceID: String) throws -> PairURL {
+    private static func makeRelayPairURL(caCertificatePEM: String) throws -> PairURL {
         let caCertificate = try #require(try CertChain.certificates(fromPEM: caCertificatePEM).first)
-        let spkiPrefix = try Self.spkiSHA256Prefix(certificate: caCertificate)
-        let uuid = try #require(UUID(uuidString: instanceID))
-        let tuple = uuid.uuid
+        let spkiDER = try CertChain.canonicalP256SubjectPublicKeyInfoDER(certificate: caCertificate)
+        let spkiPrefix = Array(SHA256.hash(data: Data(spkiDER)).prefix(16))
         var bytes: [UInt8] = [
-            0x03,
-            tuple.0, tuple.1, tuple.2, tuple.3,
-            tuple.4, tuple.5,
-            tuple.6, tuple.7,
-            tuple.8, tuple.9,
-            tuple.10, tuple.11, tuple.12, tuple.13, tuple.14, tuple.15,
-            0x01, 0xE2, 0x40,
+            0x06,
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
+            0x01,
         ]
-        bytes.append(contentsOf: Array(0x10...0x1F).map(UInt8.init))
-        bytes.append(0x01)
         bytes.append(contentsOf: spkiPrefix)
         bytes.append(0)
         return try PairURL.parse(URL(string: "https://go.solstone.app/p#\(Self.encodeBase32(bytes))")!)
     }
 
-    private static func spkiSHA256Prefix(certificate: SecCertificate) throws -> [UInt8] {
-        let key = try #require(SecCertificateCopyKey(certificate))
-        var error: Unmanaged<CFError>?
-        let keyData = try #require(SecKeyCopyExternalRepresentation(key, &error) as Data?)
-        let algorithmIdentifier = DER.sequence([
-            DER.objectIdentifier([1, 2, 840, 10045, 2, 1]),
-            DER.objectIdentifier([1, 2, 840, 10045, 3, 1, 7]),
-        ])
-        let spkiDER = DER.sequence([
-            algorithmIdentifier,
-            DER.bitString(Array(keyData)),
-        ])
-        return Array(SHA256.hash(data: Data(spkiDER)).prefix(16))
+    private static func jid(caCertificatePEM: String) throws -> String {
+        CertChain.jidFromSPKI(try caSPKI(caCertificatePEM: caCertificatePEM))
+    }
+
+    private static func caSPKI(caCertificatePEM: String) throws -> [UInt8] {
+        let caCertificate = try #require(try CertChain.certificates(fromPEM: caCertificatePEM).first)
+        return try CertChain.canonicalP256SubjectPublicKeyInfoDER(certificate: caCertificate)
+    }
+
+    private static func hex(_ bytes: [UInt8]) -> String {
+        bytes.map { String(format: "%02x", $0) }.joined()
     }
 
     private static func encodeBase32(_ bytes: [UInt8]) -> String {
@@ -614,7 +594,7 @@ private actor RelayPairingMuxServer {
         do {
             let request = try await Self.readRequest(from: stream)
             guard request.method == "POST",
-                  request.path.hasPrefix("/app/network/pair?token=") else {
+                  request.path == "/app/network/pair?token=0123456789abcdef" else {
                 try await Self.write(status: 404, body: #"{"error":"not_found"}"#, to: stream)
                 return
             }
