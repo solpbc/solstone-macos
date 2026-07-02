@@ -58,6 +58,10 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         lock.unlock()
     }
 
+    func enqueueLsof(port: Int, _ response: Response) {
+        enqueue("lsof:\(port)", response)
+    }
+
     func onMaterializedToolBinaries(_ sideEffect: @escaping @Sendable () -> Void) {
         lock.lock()
         materializedToolBinariesSideEffect = sideEffect
@@ -119,8 +123,9 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
            ["journal", "sol"].contains(executable.lastPathComponent) {
             return .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8))
         }
-        let key = responseKey(for: executable, arguments: arguments)
-        guard var values = responses[key], !values.isEmpty else {
+        let keys = responseKeys(for: executable, arguments: arguments)
+        guard let key = keys.first(where: { responses[$0]?.isEmpty == false }),
+              var values = responses[key], !values.isEmpty else {
             if arguments == ["-c", "print(1)"] {
                 return .success(stdout: Data("1\n".utf8))
             }
@@ -131,21 +136,33 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         return response
     }
 
-    private func responseKey(for executable: URL, arguments: [String]) -> String {
+    private func responseKeys(for executable: URL, arguments: [String]) -> [String] {
         let executableName = executable.lastPathComponent
-        if executableName == "codesign" { return "codesign" }
-        if executableName == "ps" { return "ps" }
-        if executableName == "lsof" { return "lsof" }
-        guard let first = arguments.first else { return "" }
-        if first == "tool" { return "tool" }
-        if first == "setup" { return "setup" }
-        if first == "service" { return "service" }
-        if first == "config" { return "config" }
-        if first == "up" { return "up" }
-        if first == "install-models" { return "install-models" }
-        if first == "health" { return "health" }
-        if first == "--version" { return "--version" }
-        return first
+        if executableName == "codesign" { return ["codesign"] }
+        if executableName == "ps" { return ["ps"] }
+        if executableName == "lsof" {
+            if let port = lsofPort(from: arguments) {
+                return ["lsof:\(port)", "lsof"]
+            }
+            return ["lsof"]
+        }
+        guard let first = arguments.first else { return [""] }
+        if first == "tool" { return ["tool"] }
+        if first == "setup" { return ["setup"] }
+        if first == "service" { return ["service"] }
+        if first == "config" { return ["config"] }
+        if first == "up" { return ["up"] }
+        if first == "install-models" { return ["install-models"] }
+        if first == "health" { return ["health"] }
+        if first == "--version" { return ["--version"] }
+        return [first]
+    }
+
+    private func lsofPort(from arguments: [String]) -> Int? {
+        for argument in arguments where argument.hasPrefix("-iTCP:") {
+            return Int(argument.dropFirst("-iTCP:".count))
+        }
+        return nil
     }
 
     private func materializedToolBinariesHook() -> (@Sendable () -> Void)? {

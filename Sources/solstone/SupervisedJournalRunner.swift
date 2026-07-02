@@ -12,6 +12,7 @@ internal protocol SupervisedChildRunning: Sendable {
     func stop() async
     func stopForTermination() async
     func currentRuntimeKey() async -> String?
+    func terminalReason() async -> JournalDiagnostic?
     func markReady() async
 }
 
@@ -60,6 +61,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
     private var currentKey: String?
     private var stopping = false
     private var breakerTripped = false
+    private var terminalDiagnostic: JournalDiagnostic?
     private var backoffIndex = 0
     private var unexpectedExitTimes: [Duration] = []
     private var stabilityTask: Task<Void, Never>?
@@ -88,6 +90,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
         launchRequest = LaunchRequest(runtime: runtime, journalRoot: journalRoot, port: port)
         currentKey = runtime.key
         breakerTripped = false
+        terminalDiagnostic = nil
         stopping = false
         try await launch(runtime: runtime, journalRoot: journalRoot, port: port)
     }
@@ -103,6 +106,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
         await stopCurrentProcess()
         stopping = false
         breakerTripped = false
+        terminalDiagnostic = nil
         try await launch(runtime: launchRequest.runtime, journalRoot: launchRequest.journalRoot, port: launchRequest.port)
     }
 
@@ -113,6 +117,7 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
         await stopCurrentProcess()
         launchRequest = nil
         currentKey = nil
+        terminalDiagnostic = nil
         stabilityTask?.cancel()
         stabilityTask = nil
     }
@@ -126,6 +131,10 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
 
     internal func currentRuntimeKey() async -> String? {
         currentKey
+    }
+
+    internal func terminalReason() async -> JournalDiagnostic? {
+        terminalDiagnostic
     }
 
     internal func markReady() async {
@@ -201,11 +210,13 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
         if unexpectedExitTimes.count >= restartLimit {
             breakerTripped = true
             Logger.journal.error("journal-lifecycle: runner-breaker-tripped status=\(status, privacy: .public) unexpectedCount=\(self.unexpectedExitTimes.count, privacy: .public)")
-            statusSink(.stopped(JournalDiagnostic(
+            let diagnostic = JournalDiagnostic(
                 commandLabel: "journal start --app-supervised",
                 exitCode: status,
                 outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
-            )))
+            )
+            terminalDiagnostic = diagnostic
+            statusSink(.stopped(diagnostic))
             return
         }
 
@@ -231,10 +242,12 @@ internal actor SupervisedJournalRunner: SupervisedChildRunning {
             try await launch(runtime: launchRequest.runtime, journalRoot: launchRequest.journalRoot, port: launchRequest.port)
         } catch {
             Logger.journal.error("journal-lifecycle: runner-backoff-relaunch-failed")
-            statusSink(.stopped(JournalDiagnostic(
+            let diagnostic = JournalDiagnostic(
                 commandLabel: "journal start --app-supervised",
                 outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
-            )))
+            )
+            terminalDiagnostic = diagnostic
+            statusSink(.stopped(diagnostic))
         }
     }
 

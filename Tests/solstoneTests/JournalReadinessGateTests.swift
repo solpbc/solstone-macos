@@ -22,7 +22,8 @@ struct JournalReadinessGateTests {
         let result = await gate.waitUntilReady(
             journalRoot: runtime.layout.rootURL,
             runtime: runtime,
-            timeout: .milliseconds(3)
+            timeout: .milliseconds(3),
+            terminalCheck: { nil }
         )
 
         guard case .failed(let diagnostic) = result else {
@@ -48,7 +49,8 @@ struct JournalReadinessGateTests {
         let result = await gate.waitUntilReady(
             journalRoot: runtime.layout.rootURL,
             runtime: runtime,
-            timeout: .milliseconds(5)
+            timeout: .milliseconds(5),
+            terminalCheck: { nil }
         )
 
         #expect(result == .ready)
@@ -68,10 +70,63 @@ struct JournalReadinessGateTests {
         let result = await gate.waitUntilReady(
             journalRoot: runtime.layout.rootURL,
             runtime: runtime,
-            timeout: .milliseconds(5)
+            timeout: .milliseconds(5),
+            terminalCheck: { nil }
         )
 
         #expect(result == .ready)
+    }
+
+    @Test func terminalCheckFailsImmediatelyBeforeDeadline() async throws {
+        let runtime = try makeRuntime()
+        let clock = AdvancingReadinessClock()
+        let diagnostic = JournalDiagnostic(
+            commandLabel: "journal start --app-supervised",
+            outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
+        )
+        let gate = JournalReadinessGate(
+            runner: FakeSubprocessRunner(),
+            fileExists: { _ in false },
+            acceptProbe: { false },
+            clock: clock,
+            pollInterval: .milliseconds(1)
+        )
+
+        let result = await gate.waitUntilReady(
+            journalRoot: runtime.layout.rootURL,
+            runtime: runtime,
+            timeout: .seconds(120),
+            terminalCheck: { diagnostic }
+        )
+
+        #expect(result == .failedTerminal(diagnostic))
+        #expect(clock.now() == .zero)
+    }
+
+    @Test func slowAlivePathStillTimesOutAtDeadline() async throws {
+        let runtime = try makeRuntime()
+        let clock = AdvancingReadinessClock()
+        let gate = JournalReadinessGate(
+            runner: FakeSubprocessRunner(),
+            fileExists: { _ in false },
+            acceptProbe: { false },
+            clock: clock,
+            pollInterval: .milliseconds(1)
+        )
+
+        let result = await gate.waitUntilReady(
+            journalRoot: runtime.layout.rootURL,
+            runtime: runtime,
+            timeout: .milliseconds(3),
+            terminalCheck: { nil }
+        )
+
+        guard case .failed(let diagnostic) = result else {
+            Issue.record("expected readiness timeout, got \(result)")
+            return
+        }
+        #expect(diagnostic.timedOut)
+        #expect(clock.now() == .milliseconds(3))
     }
 }
 

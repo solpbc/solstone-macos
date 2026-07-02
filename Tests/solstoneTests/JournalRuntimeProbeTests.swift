@@ -308,6 +308,10 @@ private final class ProbeChildRunner: SupervisedChildRunning, @unchecked Sendabl
         nil
     }
 
+    func terminalReason() async -> JournalDiagnostic? {
+        nil
+    }
+
     func markReady() async {
     }
 }
@@ -315,7 +319,12 @@ private final class ProbeChildRunner: SupervisedChildRunning, @unchecked Sendabl
 private struct ProbeReadinessGate: JournalReadinessChecking {
     let result: JournalReadinessResult
 
-    func waitUntilReady(journalRoot: URL, runtime: MaterializedRuntime, timeout: Duration) async -> JournalReadinessResult {
+    func waitUntilReady(
+        journalRoot: URL,
+        runtime: MaterializedRuntime,
+        timeout: Duration,
+        terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?
+    ) async -> JournalReadinessResult {
         result
     }
 }

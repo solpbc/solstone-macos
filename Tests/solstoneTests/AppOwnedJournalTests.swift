@@ -63,10 +63,10 @@ struct AppOwnedJournalTests {
         let runner = MockSupervisedChildRunner()
         state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
         state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
-        state.singleSupervisorGate = MockSingleSupervisorGate(result: .blocked(JournalDiagnostic(
+        state.singleSupervisorGate = MockSingleSupervisorGate(result: .blocked(.portConflict(JournalDiagnostic(
             commandLabel: "journal supervisor gate",
-            outputExcerpt: "port 5015 still bound"
-        )))
+            outputExcerpt: "journal port 5015 is held by Python (pid 5015)"
+        ))))
         state.supervisedJournalRunner = runner
 
         let ready = await state.ensureBundledJournalRuntime(journalRoot: try makeTemporaryDirectory())
@@ -125,6 +125,59 @@ struct AppOwnedJournalTests {
         #expect(runner.startCalls == 1)
         #expect(runner.stopCalls == 1)
         #expect(runner.markReadyCalls == 0)
+    }
+
+    @Test func readinessTerminalFailureWritesRunnerReasonAndStopsChild() async throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        let runner = MockSupervisedChildRunner()
+        let terminalDiagnostic = JournalDiagnostic(
+            commandLabel: "journal start --app-supervised",
+            outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
+        )
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.singleSupervisorGate = MockSingleSupervisorGate()
+        state.supervisedJournalRunner = runner
+        state.journalReadinessGate = MockJournalReadinessGate(result: .failedTerminal(terminalDiagnostic))
+
+        let ready = await state.ensureBundledJournalRuntime(journalRoot: try makeTemporaryDirectory())
+
+        #expect(!ready)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(UICopy.JOURNAL_READINESS_TIMEOUT) == false)
+        #expect(runner.startCalls == 1)
+        #expect(runner.stopCalls == 1)
+        #expect(runner.markReadyCalls == 0)
+    }
+
+    @Test func readinessTimeoutBranchKeepsRunnerTerminalReason() async throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        let runner = MockSupervisedChildRunner()
+        let terminalDiagnostic = JournalDiagnostic(
+            commandLabel: "journal start --app-supervised",
+            outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
+        )
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.singleSupervisorGate = MockSingleSupervisorGate()
+        state.supervisedJournalRunner = runner
+        state.journalReadinessGate = MockJournalReadinessGate(
+            result: .failed(JournalDiagnostic(
+                commandLabel: "journal readiness",
+                timedOut: true,
+                outputExcerpt: UICopy.JOURNAL_READINESS_TIMEOUT
+            )),
+            beforeReturn: {
+                runner.setTerminalDiagnostic(terminalDiagnostic)
+            }
+        )
+
+        let ready = await state.ensureBundledJournalRuntime(journalRoot: try makeTemporaryDirectory())
+
+        #expect(!ready)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(UICopy.JOURNAL_READINESS_TIMEOUT) == false)
+        #expect(runner.stopCalls == 1)
     }
 
     @Test func readinessSuccessClearsQueuedSignalAndMarksRunnerReady() async throws {
@@ -445,6 +498,66 @@ struct AppOwnedJournalTests {
         #expect(runner.stopCalls == 1)
     }
 
+    @Test func supervisedRestartTerminalFailureWritesRunnerReason() async throws {
+        let journalRoot = try makeTemporaryDirectory()
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled, journalPath: journalRoot.path))
+        let runner = MockSupervisedChildRunner()
+        let terminalDiagnostic = JournalDiagnostic(
+            commandLabel: "journal start --app-supervised",
+            outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
+        )
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.supervisedJournalRunner = runner
+        state.singleSupervisorGate = MockSingleSupervisorGate()
+        state.journalReadinessGate = MockJournalReadinessGate(result: .ready)
+        let ready = await state.ensureBundledJournalRuntime(journalRoot: journalRoot)
+        #expect(ready)
+
+        state.journalReadinessGate = MockJournalReadinessGate(result: .failedTerminal(terminalDiagnostic))
+        state.requestJournalRestart()
+        try await waitUntilMain { state.errorMessage == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED }
+
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(UICopy.JOURNAL_READINESS_TIMEOUT) == false)
+        #expect(runner.restartCalls == 1)
+    }
+
+    @Test func supervisedRestartTimeoutBranchKeepsRunnerTerminalReason() async throws {
+        let journalRoot = try makeTemporaryDirectory()
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled, journalPath: journalRoot.path))
+        let runner = MockSupervisedChildRunner()
+        let terminalDiagnostic = JournalDiagnostic(
+            commandLabel: "journal start --app-supervised",
+            outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
+        )
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.supervisedJournalRunner = runner
+        state.singleSupervisorGate = MockSingleSupervisorGate()
+        state.journalReadinessGate = MockJournalReadinessGate(result: .ready)
+        let ready = await state.ensureBundledJournalRuntime(journalRoot: journalRoot)
+        #expect(ready)
+
+        state.journalReadinessGate = MockJournalReadinessGate(
+            result: .failed(JournalDiagnostic(
+                commandLabel: "journal readiness",
+                timedOut: true,
+                outputExcerpt: UICopy.JOURNAL_READINESS_TIMEOUT
+            )),
+            beforeReturn: {
+                runner.setTerminalDiagnostic(terminalDiagnostic)
+            }
+        )
+        state.requestJournalRestart()
+        try await waitUntilMain { state.errorMessage == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED }
+
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(UICopy.JOURNAL_READINESS_TIMEOUT) == false)
+        #expect(runner.restartCalls == 1)
+        #expect(runner.stopCalls == 1)
+    }
+
     @Test func reestablishNonBundledIsNoOp() async {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .external))
         let runner = MockSupervisedChildRunner()
@@ -643,7 +756,7 @@ struct AppOwnedJournalTests {
         #expect(!runner.invocations.contains { $0.arguments.first == "up" })
     }
 
-    @Test func singleSupervisorGateBlocksWhenPortsRemainBound() async throws {
+    @Test func singleSupervisorGateReportsNamedStartupPortCulprit() async throws {
         let journalRoot = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: journalRoot) }
         let runner = FakeSubprocessRunner()
@@ -651,7 +764,14 @@ struct AppOwnedJournalTests {
         111 2 journal:supervisor
         222 1 bash
         """.utf8)))
-        runner.enqueue("lsof", .success(exitCode: 0))
+        let namedConflict = FakeSubprocessRunner.Response.success(stdout: Data("""
+        p123
+        cPython
+        n*:7657
+        """.utf8), exitCode: 0)
+        runner.enqueueLsof(port: 7657, namedConflict)
+        runner.enqueueLsof(port: 7657, namedConflict)
+        runner.enqueueLsof(port: 7657, namedConflict)
         let gate = SingleSupervisorGate(
             runner: runner,
             pidExists: { _ in true },
@@ -662,15 +782,132 @@ struct AppOwnedJournalTests {
 
         let result = await gate.prepareForSpawn(journalRoot: journalRoot)
 
-        if case .blocked(let diagnostic) = result {
-            #expect(diagnostic.outputExcerpt?.contains("port 7657 still bound") == true)
+        if case .blocked(.portConflict(let diagnostic)) = result {
+            #expect(diagnostic.outputExcerpt?.contains("journal port 7657 is held by Python (pid 123)") == true)
         } else {
             Issue.record("expected blocked gate")
         }
         #expect(runner.invocations.map(\.arguments) == [
             ["-axo", "pid=,ppid=,comm="],
-            ["-nP", "-iTCP:7657", "-sTCP:LISTEN"]
+            ["-nP", "-iTCP:7657", "-sTCP:LISTEN", "-F"],
+            ["-nP", "-iTCP:7657", "-sTCP:LISTEN", "-F"],
+            ["-nP", "-iTCP:7657", "-sTCP:LISTEN", "-F"]
         ])
+    }
+
+    @Test func startupPortProbeRetriesBusyPort7657ThenSucceeds() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("ps", .success(stdout: Data()))
+        runner.enqueueLsof(port: 7657, .success(stdout: Data("p101\ncPython\nn*:7657\n".utf8), exitCode: 0))
+        runner.enqueueLsof(port: 7657, .success(stdout: Data("p101\ncPython\nn*:7657\n".utf8), exitCode: 0))
+        runner.enqueueLsof(port: 7657, .success(exitCode: 1))
+        runner.enqueueLsof(port: 5015, .success(exitCode: 1))
+        let clock = FakeMonotonicClock()
+        let gate = SingleSupervisorGate(
+            runner: runner,
+            pidExists: { _ in false },
+            clock: clock,
+            orphanGracePeriod: .zero
+        )
+
+        let result = await gate.prepareForSpawn(journalRoot: try makeTemporaryDirectory())
+
+        #expect(result == .success)
+        #expect(runner.invocations.filter { $0.arguments.contains("-iTCP:7657") }.count == 3)
+        #expect(clock.elapsed == .seconds(5))
+    }
+
+    @Test func startupPortProbeRetriesBusyPort5015ThenSucceeds() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("ps", .success(stdout: Data()))
+        runner.enqueueLsof(port: 7657, .success(exitCode: 1))
+        runner.enqueueLsof(port: 5015, .success(stdout: Data("p202\ncPython\nn*:5015\n".utf8), exitCode: 0))
+        runner.enqueueLsof(port: 5015, .success(stdout: Data("p202\ncPython\nn*:5015\n".utf8), exitCode: 0))
+        runner.enqueueLsof(port: 5015, .success(exitCode: 1))
+        let clock = FakeMonotonicClock()
+        let gate = SingleSupervisorGate(
+            runner: runner,
+            pidExists: { _ in false },
+            clock: clock,
+            orphanGracePeriod: .zero
+        )
+
+        let result = await gate.prepareForSpawn(journalRoot: try makeTemporaryDirectory())
+
+        #expect(result == .success)
+        #expect(runner.invocations.filter { $0.arguments.contains("-iTCP:5015") }.count == 3)
+        #expect(clock.elapsed == .seconds(5))
+    }
+
+    @Test func startupPortProbeReportsUnidentifiedProcessWhenCommandMissing() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("ps", .success(stdout: Data()))
+        let unidentifiedConflict = FakeSubprocessRunner.Response.success(stdout: Data("p303\nn*:7657\n".utf8), exitCode: 0)
+        runner.enqueueLsof(port: 7657, unidentifiedConflict)
+        runner.enqueueLsof(port: 7657, unidentifiedConflict)
+        runner.enqueueLsof(port: 7657, unidentifiedConflict)
+        let gate = SingleSupervisorGate(
+            runner: runner,
+            pidExists: { _ in false },
+            clock: FakeMonotonicClock(),
+            orphanGracePeriod: .milliseconds(1)
+        )
+
+        let result = await gate.prepareForSpawn(journalRoot: try makeTemporaryDirectory())
+
+        if case .blocked(.portConflict(let diagnostic)) = result {
+            #expect(diagnostic.outputExcerpt == "journal port 7657 is held by an unidentified process")
+        } else {
+            Issue.record("expected unidentified port conflict")
+        }
+    }
+
+    @Test func startupPortProbeDedupesMultipleNamesForOneProcess() async throws {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("ps", .success(stdout: Data()))
+        let dualNameConflict = FakeSubprocessRunner.Response.success(stdout: Data("""
+        p404
+        cPython
+        n127.0.0.1:7657
+        n[::1]:7657
+        """.utf8), exitCode: 0)
+        runner.enqueueLsof(port: 7657, dualNameConflict)
+        runner.enqueueLsof(port: 7657, dualNameConflict)
+        runner.enqueueLsof(port: 7657, dualNameConflict)
+        let gate = SingleSupervisorGate(
+            runner: runner,
+            pidExists: { _ in false },
+            clock: FakeMonotonicClock(),
+            orphanGracePeriod: .milliseconds(1)
+        )
+
+        let result = await gate.prepareForSpawn(journalRoot: try makeTemporaryDirectory())
+
+        if case .blocked(.portConflict(let diagnostic)) = result {
+            let line = "journal port 7657 is held by Python (pid 404)"
+            #expect(diagnostic.outputExcerpt?.components(separatedBy: line).count == 2)
+        } else {
+            Issue.record("expected port conflict")
+        }
+    }
+
+    @Test func startupPortProbeVerificationFailureUsesCouldNotVerifyCopy() async throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        let runner = MockSupervisedChildRunner()
+        state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
+        state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
+        state.singleSupervisorGate = MockSingleSupervisorGate(result: .blocked(.portVerificationFailed(JournalDiagnostic(
+            commandLabel: "journal supervisor gate",
+            outputExcerpt: "lsof exited 2 probing port 7657"
+        ))))
+        state.supervisedJournalRunner = runner
+
+        let ready = await state.ensureBundledJournalRuntime(journalRoot: try makeTemporaryDirectory())
+
+        #expect(!ready)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(UICopy.JOURNAL_SPAWN_PORT_CHECK_FAILED) == true)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(UICopy.JOURNAL_SPAWN_BLOCKED_PORTS) == false)
+        #expect(runner.startCalls == 0)
     }
 
     @Test func breakerTripsToAttentionStatus() async throws {
@@ -695,6 +932,69 @@ struct AppOwnedJournalTests {
             if case .stopped = status { return true }
             return false
         })
+        #expect(await runner.terminalReason()?.outputExcerpt == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
+        await runner.stop()
+    }
+
+    @Test func runnerTerminalReasonNilDuringBackoffWindow() async throws {
+        let marker = try makeTemporaryDirectory().appendingPathComponent("launches.txt")
+        let runtime = try makeMarkerExitingRuntime(markerURL: marker)
+        let clock = ControllableMonotonicClock()
+        let runner = SupervisedJournalRunner(clock: clock, statusSink: { _ in })
+
+        try await runner.start(runtime: runtime, journalRoot: try makeTemporaryDirectory(), port: 5015)
+        try await waitUntil {
+            launchCount(at: marker) == 1 && clock.sleepingCount >= 1
+        }
+
+        #expect(await runner.terminalReason() == nil)
+        await runner.stop()
+    }
+
+    @Test func runnerTerminalReasonSetWhenBackoffRelaunchFails() async throws {
+        let marker = try makeTemporaryDirectory().appendingPathComponent("launches.txt")
+        let runtime = try makeSelfDeletingRuntime(markerURL: marker)
+        let runner = SupervisedJournalRunner(clock: FakeMonotonicClock(), statusSink: { _ in })
+
+        try await runner.start(runtime: runtime, journalRoot: try makeTemporaryDirectory(), port: 5015)
+        try await waitUntilAsync {
+            await runner.terminalReason() != nil
+        }
+
+        let diagnostic = await runner.terminalReason()
+        #expect(diagnostic?.commandLabel == "journal start --app-supervised")
+        #expect(diagnostic?.outputExcerpt?.isEmpty == false)
+        await runner.stop()
+    }
+
+    @Test func crashOnceRecoverReturnsReadyWithoutTerminalFastFail() async throws {
+        let marker = try makeTemporaryDirectory().appendingPathComponent("launches.txt")
+        let runtime = try makeCrashOnceThenSleepRuntime(markerURL: marker)
+        let runner = SupervisedJournalRunner(clock: FakeMonotonicClock(), statusSink: { _ in })
+        let readiness = JournalReadinessGate(
+            runner: FakeSubprocessRunner(),
+            fileExists: { $0.hasSuffix("health/supervisor.ready") },
+            acceptProbe: { true },
+            clock: FakeMonotonicClock(),
+            pollInterval: .milliseconds(1)
+        )
+
+        try await runner.start(runtime: runtime, journalRoot: try makeTemporaryDirectory(), port: 5015)
+        try await waitUntil {
+            launchCount(at: marker) == 2
+        }
+        #expect(await runner.terminalReason() == nil)
+
+        let result = await readiness.waitUntilReady(
+            journalRoot: runtime.layout.rootURL,
+            runtime: runtime,
+            timeout: .seconds(120),
+            terminalCheck: {
+                await runner.terminalReason()
+            }
+        )
+
+        #expect(result == .ready)
         await runner.stop()
     }
 
@@ -841,8 +1141,12 @@ private final class ControllableJournalReadinessGate: JournalReadinessChecking, 
     func waitUntilReady(
         journalRoot: URL,
         runtime: MaterializedRuntime,
-        timeout: Duration
+        timeout: Duration,
+        terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?
     ) async -> JournalReadinessResult {
+        if let terminalDiagnostic = await terminalCheck() {
+            return .failedTerminal(terminalDiagnostic)
+        }
         let rootPath = journalRoot.standardizedFileURL.path
         if let result = lock.withLock({ takeQueuedResult(for: rootPath) }) {
             resumeWaiterRegistrationContinuations(for: rootPath)
@@ -903,6 +1207,10 @@ private final class FakeMonotonicClock: MonotonicClock, @unchecked Sendable {
     func sleep(for duration: Duration) async {
         lock.withLock { value += duration }
         await Task.yield()
+    }
+
+    var elapsed: Duration {
+        lock.withLock { value }
     }
 }
 
@@ -1038,6 +1346,27 @@ private func makeMarkerExitingRuntime(markerURL: URL) throws -> MaterializedRunt
     """)
 }
 
+private func makeSelfDeletingRuntime(markerURL: URL) throws -> MaterializedRuntime {
+    try makeScriptRuntime(script: """
+    #!/bin/sh
+    printf 'launch\\n' >> \(shellSingleQuoted(markerURL.path))
+    rm "$0"
+    exit 1
+    """)
+}
+
+private func makeCrashOnceThenSleepRuntime(markerURL: URL) throws -> MaterializedRuntime {
+    try makeScriptRuntime(script: """
+    #!/bin/sh
+    if [ ! -f \(shellSingleQuoted(markerURL.path)) ]; then
+        printf 'launch\\n' > \(shellSingleQuoted(markerURL.path))
+        exit 1
+    fi
+    printf 'launch\\n' >> \(shellSingleQuoted(markerURL.path))
+    sleep 30
+    """)
+}
+
 private func makeScriptRuntime(script: String) throws -> MaterializedRuntime {
     let root = try makeTemporaryDirectory()
     let layout = SolstoneRuntimeLayout(rootURL: root)
@@ -1092,6 +1421,14 @@ private func waitUntil(_ predicate: @escaping @Sendable () -> Bool) async throws
         try await Task.sleep(for: .milliseconds(10))
     }
     #expect(predicate())
+}
+
+private func waitUntilAsync(_ predicate: @escaping @Sendable () async -> Bool) async throws {
+    for _ in 0..<100 {
+        if await predicate() { return }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await predicate())
 }
 
 @MainActor

@@ -448,6 +448,10 @@ private final class RestartChildRunner: SupervisedChildRunning, @unchecked Senda
         nil
     }
 
+    func terminalReason() async -> JournalDiagnostic? {
+        nil
+    }
+
     func markReady() async {
     }
 }
@@ -455,7 +459,15 @@ private final class RestartChildRunner: SupervisedChildRunning, @unchecked Senda
 private struct RestartReadinessGate: JournalReadinessChecking {
     let reprobe: @Sendable () async -> JournalRuntimeProbeOutcome
 
-    func waitUntilReady(journalRoot: URL, runtime: MaterializedRuntime, timeout: Duration) async -> JournalReadinessResult {
+    func waitUntilReady(
+        journalRoot: URL,
+        runtime: MaterializedRuntime,
+        timeout: Duration,
+        terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?
+    ) async -> JournalReadinessResult {
+        if let terminalDiagnostic = await terminalCheck() {
+            return .failedTerminal(terminalDiagnostic)
+        }
         switch await reprobe() {
         case .reachable:
             return .ready

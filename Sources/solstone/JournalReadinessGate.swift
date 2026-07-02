@@ -8,13 +8,15 @@ internal protocol JournalReadinessChecking: Sendable {
     func waitUntilReady(
         journalRoot: URL,
         runtime: MaterializedRuntime,
-        timeout: Duration
+        timeout: Duration,
+        terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?
     ) async -> JournalReadinessResult
 }
 
 internal enum JournalReadinessResult: Equatable, Sendable {
     case ready
     case failed(JournalDiagnostic)
+    case failedTerminal(JournalDiagnostic)
 }
 
 internal struct JournalReadinessGate: JournalReadinessChecking {
@@ -43,13 +45,17 @@ internal struct JournalReadinessGate: JournalReadinessChecking {
     internal func waitUntilReady(
         journalRoot: URL,
         runtime: MaterializedRuntime,
-        timeout: Duration
+        timeout: Duration,
+        terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?
     ) async -> JournalReadinessResult {
         let readyPath = journalRoot.appendingPathComponent("health/supervisor.ready").path
         let deadline = clock.now() + timeout
         var lastDiagnostic: JournalDiagnostic?
 
         while clock.now() < deadline {
+            if let terminalDiagnostic = await terminalCheck() {
+                return .failedTerminal(terminalDiagnostic)
+            }
             let probeAccepts = await acceptProbe()
             let markerReady = fileExists(readyPath)
             var healthReady = false
@@ -69,6 +75,10 @@ internal struct JournalReadinessGate: JournalReadinessChecking {
                 return .ready
             }
             await clock.sleep(for: pollInterval)
+        }
+
+        if let terminalDiagnostic = await terminalCheck() {
+            return .failedTerminal(terminalDiagnostic)
         }
 
         return .failed(lastDiagnostic ?? JournalDiagnostic(

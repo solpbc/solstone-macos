@@ -27,6 +27,7 @@ final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked Sendab
     private var restarts = 0
     private var runtimeKey: String?
     private var journalRoot: URL?
+    private var terminalDiagnostic: JournalDiagnostic?
 
     var startCalls: Int { lock.withLock { starts } }
     var markReadyCalls: Int { lock.withLock { readyMarks } }
@@ -34,8 +35,9 @@ final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked Sendab
     var restartCalls: Int { lock.withLock { restarts } }
     var runningJournalRoot: URL? { lock.withLock { journalRoot } }
 
-    init(startError: Error? = nil) {
+    init(startError: Error? = nil, terminalDiagnostic: JournalDiagnostic? = nil) {
         self.startError = startError
+        self.terminalDiagnostic = terminalDiagnostic
     }
 
     func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
@@ -46,11 +48,15 @@ final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked Sendab
         lock.withLock {
             runtimeKey = runtime.key
             self.journalRoot = journalRoot.standardizedFileURL
+            terminalDiagnostic = nil
         }
     }
 
     func restart() async throws {
-        lock.withLock { restarts += 1 }
+        lock.withLock {
+            restarts += 1
+            terminalDiagnostic = nil
+        }
     }
 
     func stop() async {
@@ -58,6 +64,7 @@ final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked Sendab
             stops += 1
             runtimeKey = nil
             journalRoot = nil
+            terminalDiagnostic = nil
         }
     }
 
@@ -70,6 +77,14 @@ final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked Sendab
 
     func currentRuntimeKey() async -> String? {
         lock.withLock { runtimeKey }
+    }
+
+    func terminalReason() async -> JournalDiagnostic? {
+        lock.withLock { terminalDiagnostic }
+    }
+
+    func setTerminalDiagnostic(_ diagnostic: JournalDiagnostic?) {
+        lock.withLock { terminalDiagnostic = diagnostic }
     }
 
     func markReady() async {
@@ -96,9 +111,16 @@ final class MockSingleSupervisorGate: SingleSupervisorGating, @unchecked Sendabl
 
 struct MockJournalReadinessGate: JournalReadinessChecking {
     var result: JournalReadinessResult
+    var beforeReturn: (@Sendable () async -> Void)?
 
-    func waitUntilReady(journalRoot: URL, runtime: MaterializedRuntime, timeout: Duration) async -> JournalReadinessResult {
-        result
+    func waitUntilReady(
+        journalRoot: URL,
+        runtime: MaterializedRuntime,
+        timeout: Duration,
+        terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?
+    ) async -> JournalReadinessResult {
+        await beforeReturn?()
+        return result
     }
 }
 

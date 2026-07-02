@@ -134,6 +134,10 @@ private actor RecordingSupervisedChildRunner: SupervisedChildRunning {
         nil
     }
 
+    func terminalReason() async -> JournalDiagnostic? {
+        nil
+    }
+
     func markReady() async {
     }
 }

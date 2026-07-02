@@ -12,7 +12,31 @@ internal protocol SingleSupervisorGating: Sendable {
 
 internal enum SingleSupervisorGateResult: Equatable, Sendable {
     case success
-    case blocked(JournalDiagnostic)
+    case blocked(SingleSupervisorGateBlockage)
+}
+
+internal enum SingleSupervisorGateBlockage: Equatable, Sendable {
+    case orphanSweep(JournalDiagnostic)
+    case portConflict(JournalDiagnostic)
+    case portVerificationFailed(JournalDiagnostic)
+
+    var diagnostic: JournalDiagnostic {
+        switch self {
+        case .orphanSweep(let diagnostic),
+             .portConflict(let diagnostic),
+             .portVerificationFailed(let diagnostic):
+            return diagnostic
+        }
+    }
+
+    var ownerMessage: String {
+        switch self {
+        case .orphanSweep, .portConflict:
+            return UICopy.JOURNAL_SPAWN_BLOCKED_PORTS
+        case .portVerificationFailed:
+            return UICopy.JOURNAL_SPAWN_PORT_CHECK_FAILED
+        }
+    }
 }
 
 internal struct SingleSupervisorGate: SingleSupervisorGating {
@@ -50,18 +74,24 @@ internal struct SingleSupervisorGate: SingleSupervisorGating {
             clock: clock
         ) {
             Logger.setup.warning("journal-lifecycle: gate-blocked reason=orphan-sweep detail=\(failure.message, privacy: .public)")
-            return .blocked(JournalDiagnostic(
+            return .blocked(.orphanSweep(JournalDiagnostic(
                 commandLabel: "journal supervisor gate",
                 outputExcerpt: failure.message
-            ))
+            )))
         }
 
-        if let failure = await assertPortsReleased(ports: [7657, 5015], runner: runner) {
+        if let failure = await assertStartupPortsAvailable(ports: [7657, 5015], runner: runner, clock: clock) {
             Logger.setup.warning("journal-lifecycle: gate-blocked reason=ports-not-released ports=7657,5015 detail=\(failure.message, privacy: .public)")
-            return .blocked(JournalDiagnostic(
+            let diagnostic = JournalDiagnostic(
                 commandLabel: "journal supervisor gate",
                 outputExcerpt: failure.message
-            ))
+            )
+            switch failure.kind {
+            case .conflict:
+                return .blocked(.portConflict(diagnostic))
+            case .couldNotVerify:
+                return .blocked(.portVerificationFailed(diagnostic))
+            }
         }
 
         return .success

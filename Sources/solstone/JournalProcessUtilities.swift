@@ -10,6 +10,22 @@ internal struct CleanupFailure {
     let message: String
 }
 
+internal enum StartupPortProbeFailureKind: Equatable, Sendable {
+    case conflict
+    case couldNotVerify
+}
+
+internal struct StartupPortProbeFailure: Equatable, Sendable {
+    let kind: StartupPortProbeFailureKind
+    let message: String
+}
+
+private struct StartupPortCulprit {
+    let pid: String
+    var command: String?
+    var hasName = false
+}
+
 internal func waitForPIDExit(
     pid: pid_t,
     timeout: Duration,
@@ -103,6 +119,114 @@ internal func assertPortsReleased(
         }
     }
     return nil
+}
+
+internal func assertStartupPortsAvailable(
+    ports: [Int],
+    runner: SubprocessRunning,
+    clock: any MonotonicClock
+) async -> StartupPortProbeFailure? {
+    let retryDelays: [Duration] = [.seconds(2), .seconds(3)]
+
+    for port in ports {
+        for attempt in 0...retryDelays.count {
+            let output = LockedProcessUtilityOutput()
+            let result: SubprocessResult
+            do {
+                result = try await runner.run(
+                    executable: URL(fileURLWithPath: "/usr/sbin/lsof"),
+                    arguments: ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-F"],
+                    environment: nil,
+                    stdoutHandler: { data in
+                        output.append(data)
+                    },
+                    stderrHandler: { _ in }
+                )
+            } catch {
+                return StartupPortProbeFailure(
+                    kind: .couldNotVerify,
+                    message: "lsof failed to launch probing port \(port)"
+                )
+            }
+
+            switch result.exitCode {
+            case 1:
+                break
+            case 0:
+                if attempt < retryDelays.count {
+                    await clock.sleep(for: retryDelays[attempt])
+                    continue
+                }
+                return StartupPortProbeFailure(
+                    kind: .conflict,
+                    message: startupPortConflictMessage(port: port, output: output.string())
+                )
+            default:
+                return StartupPortProbeFailure(
+                    kind: .couldNotVerify,
+                    message: "lsof exited \(result.exitCode) probing port \(port)"
+                )
+            }
+            break
+        }
+    }
+    return nil
+}
+
+private func startupPortConflictMessage(port: Int, output: String) -> String {
+    let culprits = parseStartupPortCulprits(output)
+        .filter(\.hasName)
+    guard !culprits.isEmpty else {
+        return unidentifiedStartupPortMessage(port: port)
+    }
+    return culprits
+        .map { culprit in
+            guard let command = culprit.command, !command.isEmpty else {
+                return unidentifiedStartupPortMessage(port: port)
+            }
+            return "journal port \(port) is held by \(command) (pid \(culprit.pid))"
+        }
+        .joined(separator: "\n")
+}
+
+private func unidentifiedStartupPortMessage(port: Int) -> String {
+    "journal port \(port) is held by an unidentified process"
+}
+
+private func parseStartupPortCulprits(_ output: String) -> [StartupPortCulprit] {
+    var culprits: [StartupPortCulprit] = []
+    var current: StartupPortCulprit?
+
+    func flushCurrent() {
+        guard let current else { return }
+        if let index = culprits.firstIndex(where: { $0.pid == current.pid }) {
+            if culprits[index].command == nil {
+                culprits[index].command = current.command
+            }
+            culprits[index].hasName = culprits[index].hasName || current.hasName
+        } else {
+            culprits.append(current)
+        }
+    }
+
+    for rawLine in output.split(whereSeparator: \.isNewline) {
+        let line = String(rawLine)
+        guard let field = line.first else { continue }
+        let value = String(line.dropFirst())
+        switch field {
+        case "p":
+            flushCurrent()
+            current = value.isEmpty ? nil : StartupPortCulprit(pid: value)
+        case "c":
+            current?.command = value.isEmpty ? nil : value
+        case "n":
+            current?.hasName = true
+        default:
+            continue
+        }
+    }
+    flushCurrent()
+    return culprits
 }
 
 internal func readSupervisorPID(from url: URL) -> pid_t? {

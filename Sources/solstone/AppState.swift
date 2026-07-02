@@ -1301,10 +1301,11 @@ public final class AppState {
         case .success:
             Logger.setup.notice("journal-lifecycle: prepare-for-spawn result=success generation=\(generation, privacy: .public)")
             break
-        case .blocked(let diagnostic):
+        case .blocked(let blockage):
+            let diagnostic = blockage.diagnostic
             journalRuntimeStatus = .stopped(attentionDiagnostic(
                 commandLabel: diagnostic.commandLabel,
-                ownerMessage: UICopy.JOURNAL_SPAWN_BLOCKED_PORTS,
+                ownerMessage: blockage.ownerMessage,
                 diagnostic: diagnostic
             ))
             Logger.setup.warning("journal-lifecycle: prepare-for-spawn result=blocked generation=\(generation, privacy: .public)")
@@ -1332,7 +1333,10 @@ public final class AppState {
         switch await journalReadinessGate.waitUntilReady(
             journalRoot: journalRoot,
             runtime: runtime,
-            timeout: .seconds(120)
+            timeout: .seconds(120),
+            terminalCheck: { [supervisedJournalRunner] in
+                await supervisedJournalRunner.terminalReason()
+            }
         ) {
         case .ready:
             guard generation == bundledStartGeneration else {
@@ -1350,6 +1354,13 @@ public final class AppState {
                 Logger.setup.notice("journal-lifecycle: start-superseded phase=ready-failed generation=\(generation, privacy: .public) current=\(self.bundledStartGeneration, privacy: .public)")
                 return false
             }
+            if let terminalDiagnostic = await supervisedJournalRunner.terminalReason() {
+                await supervisedJournalRunner.stop()
+                activeJournalRoot = nil
+                journalRuntimeStatus = .stopped(terminalDiagnostic)
+                Logger.setup.warning("journal-lifecycle: bundled-start outcome=readiness-terminal-failed generation=\(generation, privacy: .public)")
+                return false
+            }
             await supervisedJournalRunner.stop()
             activeJournalRoot = nil
             journalRuntimeStatus = .unknown(attentionDiagnostic(
@@ -1358,6 +1369,16 @@ public final class AppState {
                 diagnostic: diagnostic
             ))
             Logger.setup.warning("journal-lifecycle: bundled-start outcome=readiness-failed generation=\(generation, privacy: .public)")
+            return false
+        case .failedTerminal(let diagnostic):
+            guard generation == bundledStartGeneration else {
+                Logger.setup.notice("journal-lifecycle: start-superseded phase=ready-terminal-failed generation=\(generation, privacy: .public) current=\(self.bundledStartGeneration, privacy: .public)")
+                return false
+            }
+            await supervisedJournalRunner.stop()
+            activeJournalRoot = nil
+            journalRuntimeStatus = .stopped(diagnostic)
+            Logger.setup.warning("journal-lifecycle: bundled-start outcome=readiness-terminal-failed generation=\(generation, privacy: .public)")
             return false
         }
     }
@@ -1683,7 +1704,10 @@ public final class AppState {
         switch await journalReadinessGate.waitUntilReady(
             journalRoot: configuredJournalRoot(),
             runtime: runtime,
-            timeout: .seconds(120)
+            timeout: .seconds(120),
+            terminalCheck: { [supervisedJournalRunner] in
+                await supervisedJournalRunner.terminalReason()
+            }
         ) {
         case .ready:
             await supervisedJournalRunner.markReady()
@@ -1694,6 +1718,14 @@ public final class AppState {
                 restartRequiredBannerVisible = false
             }
         case .failed(let diagnostic):
+            if let terminalDiagnostic = await supervisedJournalRunner.terminalReason() {
+                await supervisedJournalRunner.stop()
+                activeJournalRoot = nil
+                journalRuntimeStatus = .stopped(terminalDiagnostic)
+                Logger.setup.warning("journal-lifecycle: supervised-restart outcome=readiness-terminal-failed")
+                errorMessage = terminalDiagnostic.outputExcerpt ?? UICopy.JOURNAL_SPAWN_FAILED
+                return
+            }
             journalRuntimeStatus = .unknown(attentionDiagnostic(
                 commandLabel: diagnostic.commandLabel,
                 ownerMessage: UICopy.JOURNAL_READINESS_TIMEOUT,
@@ -1701,6 +1733,12 @@ public final class AppState {
             ))
             Logger.setup.warning("journal-lifecycle: supervised-restart outcome=readiness-failed")
             errorMessage = UICopy.JOURNAL_READINESS_TIMEOUT
+        case .failedTerminal(let diagnostic):
+            await supervisedJournalRunner.stop()
+            activeJournalRoot = nil
+            journalRuntimeStatus = .stopped(diagnostic)
+            Logger.setup.warning("journal-lifecycle: supervised-restart outcome=readiness-terminal-failed")
+            errorMessage = diagnostic.outputExcerpt ?? UICopy.JOURNAL_SPAWN_FAILED
         }
     }
 
