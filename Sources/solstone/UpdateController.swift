@@ -24,6 +24,7 @@ final class UpdateController {
     typealias SessionLivenessProvider = @MainActor () -> Bool
     typealias PreInstallFinalizer = @MainActor () async -> Void
     typealias InstallFailureRecovery = @MainActor () async -> Void
+    typealias PostInstallRecoveryScheduler = @MainActor (@escaping @MainActor () -> Void) -> Void
     typealias RunningVersionProvider = @MainActor () -> String
 
     private static let statusKey = "solstone.updates.status"
@@ -46,6 +47,7 @@ final class UpdateController {
     private let sessionLivenessProvider: SessionLivenessProvider?
     private let preInstallFinalizer: PreInstallFinalizer?
     private let installFailureRecovery: InstallFailureRecovery?
+    private let postInstallRecoveryScheduler: PostInstallRecoveryScheduler
     private let defaults: UserDefaults
 
     private var updater: (any SparkleUpdating)?
@@ -58,6 +60,7 @@ final class UpdateController {
     // Sparkle handoff flags; distinct from AppQuitCoordinator's app committed-exit state.
     private var installFinalizationInFlight = false
     private var installFinalizationCommitted = false
+    private var immediateStagedInstallHandler: (() -> Void)?
     private var pendingDownloadIntent = false
 
     internal var onExclusivityReevaluated: ((Bool) -> Void)?
@@ -143,6 +146,7 @@ final class UpdateController {
         sessionInProgress: SessionLivenessProvider? = nil,
         preInstallFinalizer: PreInstallFinalizer? = nil,
         installFailureRecovery: InstallFailureRecovery? = nil,
+        postInstallRecoveryScheduler: PostInstallRecoveryScheduler? = nil,
         defaults: UserDefaults = .standard,
         updaterFactory: @escaping UpdaterFactory
     ) {
@@ -154,6 +158,7 @@ final class UpdateController {
         self.sessionLivenessProvider = sessionInProgress
         self.preInstallFinalizer = preInstallFinalizer
         self.installFailureRecovery = installFailureRecovery
+        self.postInstallRecoveryScheduler = postInstallRecoveryScheduler ?? Self.defaultPostInstallRecoveryScheduler
         self.defaults = defaults
         self.canCheckForUpdates = Self.validateSparkleConfig(
             feedURL: feedURL ?? info?["SUFeedURL"] as? String,
@@ -188,12 +193,14 @@ final class UpdateController {
         exclusivity: ExclusivityProvider? = nil,
         preInstallFinalizer: PreInstallFinalizer? = nil,
         installFailureRecovery: InstallFailureRecovery? = nil,
+        postInstallRecoveryScheduler: PostInstallRecoveryScheduler? = nil,
         defaults: UserDefaults = .standard
     ) {
         self.init(
             exclusivity: exclusivity,
             preInstallFinalizer: preInstallFinalizer,
             installFailureRecovery: installFailureRecovery,
+            postInstallRecoveryScheduler: postInstallRecoveryScheduler,
             defaults: defaults
         ) { userDriver, delegate in
             SPUUpdater(
@@ -242,11 +249,7 @@ final class UpdateController {
         clearPendingInteractions()
         activity = .idle
         deferredInstallIntent = nil
-
-        if installFinalizationCommitted {
-            installFinalizationCommitted = false
-            Task { @MainActor in await installFailureRecovery?() }
-        }
+        recoverCommittedInstallFinalization()
     }
 
     func download() {
@@ -289,11 +292,7 @@ final class UpdateController {
         clearPendingInteractions()
         deferredInstallIntent = nil
         activity = .idle
-
-        if installFinalizationCommitted {
-            installFinalizationCommitted = false
-            Task { @MainActor in await installFailureRecovery?() }
-        }
+        recoverCommittedInstallFinalization()
     }
 
     func shouldAllowSparkleUpdateCheck(_ updateCheck: SPUUpdateCheck) -> Bool {
@@ -370,14 +369,39 @@ final class UpdateController {
     }
 
     func presentUpdaterError(_ error: Error) {
-        if installFinalizationCommitted {
-            installFinalizationCommitted = false
-            Task { @MainActor in await installFailureRecovery?() }
-        }
+        recoverCommittedInstallFinalization()
         Logger.setup.error("Sparkle error: \(String(describing: error), privacy: .public)")
         clearPendingInteractions()
         pendingDownloadIntent = false
         activity = .idle
+    }
+
+    func recordImmediateStagedInstallHandler(_ handler: @escaping () -> Void) {
+        immediateStagedInstallHandler = handler
+    }
+
+    func installStagedUpdate() {
+        guard updateIsStaged else { return }
+        guard !installFinalizationInFlight, !installFinalizationCommitted else { return }
+
+        guard let immediateInstallHandler = immediateStagedInstallHandler else {
+            resumeStagedInstall()
+            return
+        }
+
+        installFinalizationInFlight = true
+
+        Task { @MainActor in
+            await preInstallFinalizer?()
+            installFinalizationCommitted = true
+            immediateInstallHandler()
+            postInstallRecoveryScheduler { [weak self] in
+                guard let self, self.installFinalizationCommitted else { return }
+                Logger.setup.warning("Sparkle staged install handoff did not terminate within 5 seconds; recovering update finalization")
+                self.recoverCommittedInstallFinalization()
+            }
+            installFinalizationInFlight = false
+        }
     }
 
     func beginDownload(cancellation: @escaping () -> Void) {
@@ -670,11 +694,19 @@ final class UpdateController {
             || pendingChoiceReply != nil
             || pendingCancellation != nil
             || installFinalizationInFlight
+            || installFinalizationCommitted
     }
 
     private var sparkleSessionInProgress: Bool {
         if let sessionLivenessProvider { return sessionLivenessProvider() }
         return updater?.sessionInProgress ?? false
+    }
+
+    private static func defaultPostInstallRecoveryScheduler(_ check: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(5))
+            check()
+        }
     }
 
     private func fireInstallReply(
@@ -696,6 +728,33 @@ final class UpdateController {
             reply(.install)
             installFinalizationInFlight = false
         }
+    }
+
+    private func resumeStagedInstall() {
+        guard canCheckForUpdates else {
+            Logger.setup.warning("installStagedUpdate() ignored because Sparkle config gate failed")
+            return
+        }
+
+        guard ensureUpdaterStarted(), let updater else {
+            Logger.setup.error("installStagedUpdate() ignored because Sparkle updater failed to start")
+            activity = .idle
+            recordFailedCheck()
+            return
+        }
+
+        pendingDownloadIntent = true
+        updater.checkForUpdates()
+    }
+
+    @discardableResult
+    private func recoverCommittedInstallFinalization() -> Bool {
+        guard installFinalizationCommitted else { return false }
+
+        installFinalizationCommitted = false
+        immediateStagedInstallHandler = nil
+        Task { @MainActor in await installFailureRecovery?() }
+        return true
     }
 
     private func currentUpdateVersionForIntent() -> String {
@@ -911,7 +970,8 @@ private final class SparkleUpdaterDelegateAdapter: NSObject, SPUUpdaterDelegate 
         immediateInstallationBlock immediateInstallHandler: @escaping () -> Void
     ) -> Bool {
         controller?.ingestStagedUpdate(version: item.displayVersionString)
-        return false
+        controller?.recordImmediateStagedInstallHandler(immediateInstallHandler)
+        return true
     }
 
     func updater(_ updater: SPUUpdater, failedToDownloadUpdate item: SUAppcastItem, error: any Error) {

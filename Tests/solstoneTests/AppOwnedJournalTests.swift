@@ -806,7 +806,7 @@ struct AppOwnedJournalTests {
         try await waitUntil(timeout: .seconds(10)) {
             events.all.contains("terminate")
         }
-        #expect(events.all == ["marker", "stopObservation", "stopJournal:start", "stopJournal:end", "terminate"])
+        #expect(events.all == ["stopObservation", "stopJournal:start", "stopJournal:end", "marker", "terminate"])
     }
 }
 

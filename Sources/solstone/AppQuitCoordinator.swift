@@ -172,7 +172,6 @@ final class AppQuitCoordinator {
             preparationGeneration &+= 1
             let generation = preparationGeneration
             dependencies.setCommitted(true)
-            dependencies.writeMarker(intent.reason)
             let task = Task { @MainActor [weak self] in
                 guard let self else { return }
                 await self.performPreparation(generation: generation)
@@ -197,6 +196,7 @@ final class AppQuitCoordinator {
         guard generation == preparationGeneration, let intent = committedIntent else { return }
         await intent.prepare()
         guard generation == preparationGeneration else { return }
+        dependencies.writeMarker(intent.reason)
         stateMachine.markPrepared()
         preparationTask = nil
         drainExternalReplies(proceed: true)

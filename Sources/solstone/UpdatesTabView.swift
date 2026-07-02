@@ -348,7 +348,7 @@ struct UpdatesTabView: View {
     }
 
     private func relaunchToInstallStagedUpdate() {
-        NSApplication.shared.terminate(nil)
+        controller.installStagedUpdate()
     }
 
     private func titleBlock(title: String, subtitle: String) -> some View {

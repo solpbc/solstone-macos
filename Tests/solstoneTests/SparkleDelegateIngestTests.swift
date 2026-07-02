@@ -59,7 +59,7 @@ struct SparkleDelegateIngestTests {
             immediateInstallationBlock: {}
         ) as Bool?)
 
-        #expect(!handled)
+        #expect(handled)
         #expect(harness.controller.activity == .idle)
         #expect(harness.controller.updateIsStaged)
         #expect(harness.controller.stagedVersion == "1.3.9")
@@ -76,6 +76,36 @@ struct SparkleDelegateIngestTests {
             ) == .updateAvailable
         )
         #expect(settingsUpdatesBadgeAXToken(for: harness.controller) == SettingsView.SidebarBadgeState.attention.axToken)
+    }
+
+    @Test func willInstallUpdateOnQuitRetainsImmediateInstallHandlerForStagedInstall() async throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        let harness = try makeHarness(
+            postInstallRecoveryScheduler: { _ in }
+        )
+        let item = try appcastItem(version: "1.3.9", notes: "release notes")
+        let handlerInvoked = LockedValue<Bool>()
+        handlerInvoked.set(false)
+
+        let handled = try #require(harness.delegate.updater?(
+            harness.sparkleUpdater,
+            willInstallUpdateOnQuit: item,
+            immediateInstallationBlock: {
+                handlerInvoked.set(true)
+            }
+        ) as Bool?)
+
+        #expect(handled)
+        #expect(handlerInvoked.current != true)
+        #expect(harness.controller.updateIsStaged)
+
+        harness.controller.installStagedUpdate()
+        try await waitUntil(timeout: .seconds(5)) {
+            handlerInvoked.current == true
+        }
+
+        #expect(handlerInvoked.current == true)
     }
 
     @Test func stagedFactRestoresAcrossLaunchWhenVersionDiffersFromRunningVersion() throws {
@@ -420,13 +450,15 @@ struct SparkleDelegateIngestTests {
     }
 
     private func makeHarness(
-        runningVersion: @escaping UpdateController.RunningVersionProvider = { "1.3.8" }
+        runningVersion: @escaping UpdateController.RunningVersionProvider = { "1.3.8" },
+        postInstallRecoveryScheduler: UpdateController.PostInstallRecoveryScheduler? = nil
     ) throws -> DelegateHarness {
         try DelegateHarness(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
             defaults: isolatedDefaults.defaults,
-            runningVersion: runningVersion
+            runningVersion: runningVersion,
+            postInstallRecoveryScheduler: postInstallRecoveryScheduler
         )
     }
 
@@ -558,7 +590,8 @@ private final class DelegateHarness {
         feedURL: String,
         publicKey: String,
         defaults: UserDefaults,
-        runningVersion: @escaping UpdateController.RunningVersionProvider
+        runningVersion: @escaping UpdateController.RunningVersionProvider,
+        postInstallRecoveryScheduler: UpdateController.PostInstallRecoveryScheduler?
     ) throws {
         let spy = SpyUpdater()
         var capturedUserDriver: SparkleUserDriver?
@@ -569,6 +602,7 @@ private final class DelegateHarness {
             feedURL: feedURL,
             publicKey: publicKey,
             runningVersion: runningVersion,
+            postInstallRecoveryScheduler: postInstallRecoveryScheduler,
             defaults: defaults
         ) { userDriver, delegate in
             capturedUserDriver = userDriver

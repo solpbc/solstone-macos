@@ -936,11 +936,194 @@ struct SparkleDeferralTests {
         #expect(controller.activity == .checking)
     }
 
+    @Test func stagedInstallAwaitsPreInstallFinalizerBeforeInvokingHandler() async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        var scheduledRecovery: (@MainActor () -> Void)?
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: gate.run,
+            postInstallRecoveryScheduler: { check in
+                scheduledRecovery = check
+            }
+        )
+        applyStagedFixture(to: controller)
+        controller.recordImmediateStagedInstallHandler {
+            gate.events.append("handler")
+        }
+
+        controller.installStagedUpdate()
+        await yieldUntil { gate.started }
+
+        #expect(gate.events == ["finalizer-start"])
+
+        gate.release()
+        await yieldUntil { gate.events.contains("handler") }
+
+        #expect(gate.events == ["finalizer-start", "finalizer-end", "handler"])
+        #expect(scheduledRecovery != nil)
+    }
+
+    @Test func stagedInstallPostInvokeRecoveryFiresOnceWhenStillAlive() async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        var scheduledRecovery: (@MainActor () -> Void)?
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: {
+                gate.events.append("prepare")
+            },
+            installFailureRecovery: {
+                gate.events.append("recovery")
+            },
+            postInstallRecoveryScheduler: { check in
+                scheduledRecovery = check
+            }
+        )
+        applyStagedFixture(to: controller)
+        controller.recordImmediateStagedInstallHandler {
+            gate.events.append("handler")
+        }
+
+        controller.installStagedUpdate()
+        await yieldUntil { gate.events.contains("handler") }
+
+        scheduledRecovery?()
+        await yieldUntil { gate.events.contains("recovery") }
+        scheduledRecovery?()
+        await Task.yield()
+
+        #expect(gate.events == ["prepare", "handler", "recovery"])
+    }
+
+    @Test func postInstallRecoveryNoOpsWhenCommittedCleared() async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        var scheduledRecovery: (@MainActor () -> Void)?
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: {
+                gate.events.append("prepare")
+            },
+            installFailureRecovery: {
+                gate.events.append("recovery")
+            },
+            postInstallRecoveryScheduler: { check in
+                scheduledRecovery = check
+            }
+        )
+        applyStagedFixture(to: controller)
+        controller.recordImmediateStagedInstallHandler {
+            gate.events.append("handler")
+        }
+
+        controller.installStagedUpdate()
+        await yieldUntil { gate.events.contains("handler") }
+
+        controller.updateInstalledAndRelaunched()
+        scheduledRecovery?()
+        await Task.yield()
+
+        #expect(gate.events == ["prepare", "handler"])
+    }
+
+    @Test func committedStagedInstallBlocksManualChecksUntilRecovery() async {
+        let signal = ExclusiveSignal()
+        let spy = SpyUpdater()
+        let gate = PreInstallFinalizerGate()
+        var scheduledRecovery: (@MainActor () -> Void)?
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: {
+                gate.events.append("prepare")
+            },
+            postInstallRecoveryScheduler: { check in
+                scheduledRecovery = check
+            },
+            updater: spy
+        )
+        applyStagedFixture(to: controller)
+        controller.recordImmediateStagedInstallHandler {
+            gate.events.append("handler")
+        }
+
+        controller.installStagedUpdate()
+        await yieldUntil { gate.events.contains("handler") }
+
+        controller.checkForUpdates()
+        #expect(spy.checkForUpdatesCallCount == 0)
+
+        scheduledRecovery?()
+        await Task.yield()
+        controller.checkForUpdates()
+
+        #expect(spy.checkForUpdatesCallCount == 1)
+    }
+
+    @Test func stagedInstallFallbackStartsUserInitiatedCheckWhenHandlerMissing() {
+        let signal = ExclusiveSignal()
+        let spy = SpyUpdater()
+        let controller = makeController(exclusivity: signal, updater: spy)
+        applyStagedFixture(to: controller)
+
+        controller.installStagedUpdate()
+
+        #expect(spy.checkForUpdatesCallCount == 1)
+    }
+
+    @Test func stagedInstallFallbackHonorsConfigGate() {
+        let signal = ExclusiveSignal()
+        let spy = SpyUpdater()
+        let controller = UpdateController(
+            feedURL: "not-a-url",
+            publicKey: "not-a-key",
+            exclusivity: { signal.value },
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            spy
+        }
+        applyStagedFixture(to: controller)
+
+        controller.installStagedUpdate()
+
+        #expect(spy.checkForUpdatesCallCount == 0)
+    }
+
+    @Test func stagedInstallDoesNotPrepareTwiceWhileInFlightOrCommitted() async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: gate.run,
+            postInstallRecoveryScheduler: { _ in }
+        )
+        applyStagedFixture(to: controller)
+        controller.recordImmediateStagedInstallHandler {
+            gate.events.append("handler")
+        }
+
+        controller.installStagedUpdate()
+        await yieldUntil { gate.started }
+        controller.installStagedUpdate()
+        await Task.yield()
+
+        #expect(gate.events == ["finalizer-start"])
+
+        gate.release()
+        await yieldUntil { gate.events.contains("handler") }
+        controller.installStagedUpdate()
+        await Task.yield()
+
+        #expect(gate.events == ["finalizer-start", "finalizer-end", "handler"])
+    }
+
     private func makeController(
         exclusivity signal: ExclusiveSignal,
         sessionInProgress: UpdateController.SessionLivenessProvider? = nil,
         preInstallFinalizer: UpdateController.PreInstallFinalizer? = nil,
-        installFailureRecovery: UpdateController.InstallFailureRecovery? = nil
+        installFailureRecovery: UpdateController.InstallFailureRecovery? = nil,
+        postInstallRecoveryScheduler: UpdateController.PostInstallRecoveryScheduler? = nil,
+        updater: (any SparkleUpdating)? = nil
     ) -> UpdateController {
         clearDefaults()
         return UpdateController(
@@ -950,10 +1133,19 @@ struct SparkleDeferralTests {
             sessionInProgress: sessionInProgress,
             preInstallFinalizer: preInstallFinalizer,
             installFailureRecovery: installFailureRecovery,
+            postInstallRecoveryScheduler: postInstallRecoveryScheduler,
             defaults: isolatedDefaults.defaults
         ) { _, _ in
-            nil
+            updater
         }
+    }
+
+    private func applyStagedFixture(to controller: UpdateController) {
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .staged)
+        )
     }
 
     private func setExclusive(
