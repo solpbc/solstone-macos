@@ -188,6 +188,17 @@ public enum SPLKeychainError: Error, Equatable, Sendable {
 public enum SPLKeychain {
     static let prodService = "app.solstone.observer.spl"
     static let account = "spl-pairing-bundle"
+    // Team-prefixed Data Protection keychain access group. Access is gated by Team ID,
+    // not the binary code signature, so pairing survives every Sparkle app update
+    // (changed cdhash) with zero prompts.
+    //
+    // MUST stay byte-for-byte identical to `keychain-access-groups` in
+    // Sources/solstone/entitlements.plist AND the embedded
+    // Contents/embedded.provisionprofile. Nothing automated guards this Swift↔entitlement
+    // drift: if the three copies disagree, the signed app gets a silent
+    // errSecMissingEntitlement (-34018) at runtime. Verified working in this exact
+    // team-prefixed form on hardware 2026-07-02 — do not reformat or drop the team prefix.
+    static let accessGroup = "7QCG8V4M6H.app.solstone.observer.spl"
 
     public static func save(_ pairing: StoredPairing) throws {
         try _save(pairing, service: prodService)
@@ -202,10 +213,20 @@ public enum SPLKeychain {
     }
 
     static func _save(_ pairing: StoredPairing, service: String) throws {
-        try _delete(service: service)
-
-        let status = SecItemAdd(addAttributes(data: try encode(pairing), service: service) as CFDictionary, nil)
-        guard status == errSecSuccess else {
+        let data = try encode(pairing)
+        let status = SecItemAdd(addAttributes(data: data, service: service) as CFDictionary, nil)
+        switch status {
+        case errSecSuccess:
+            return
+        case errSecDuplicateItem:
+            let updateStatus = SecItemUpdate(
+                baseQuery(service: service) as CFDictionary,
+                updateAttributes(data: data) as CFDictionary
+            )
+            guard updateStatus == errSecSuccess else {
+                throw SPLKeychainError.saveFailed(status: updateStatus)
+            }
+        default:
             throw SPLKeychainError.saveFailed(status: status)
         }
     }
@@ -237,13 +258,23 @@ public enum SPLKeychain {
         }
     }
 
-    // The SPL pairing bundle is intentionally backup-migratable (AfterFirstUnlock rather
-    // than a device-only keychain class) so restoring preserves journal pairing.
+    // The bundle holds a device-specific client cert + private key authenticating THIS
+    // Mac to the journal. It must never be backed up or moved by Migration Assistant;
+    // ThisDeviceOnly keeps it off backups and pinned to this device. Re-pairing on a
+    // new or restored Mac is the intended path — there is no migration (founder-decided
+    // 2026-07-02).
     static func addAttributes(data: Data, service: String) -> [String: Any] {
         baseQuery(service: service).merging([
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]) { _, new in new }
+    }
+
+    // attributesToUpdate for SecItemUpdate must contain ONLY the new value — never
+    // kSecClass or any query/primary key (kSecAttrService/kSecAttrAccount), which
+    // return errSecParam (-50). Kept as an inspectable helper so the shape is unit-tested.
+    static func updateAttributes(data: Data) -> [String: Any] {
+        [kSecValueData as String: data]
     }
 
     static func baseQuery(service: String) -> [String: Any] {
@@ -252,6 +283,8 @@ public enum SPLKeychain {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
+            kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
+            kSecAttrAccessGroup as String: accessGroup,
         ]
     }
 

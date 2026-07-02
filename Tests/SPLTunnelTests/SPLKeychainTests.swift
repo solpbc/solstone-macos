@@ -6,11 +6,32 @@ import Security
 import Testing
 @testable import SPLTunnel
 
+/// Probes whether the DP keychain is reachable for this binary. Returns false ONLY on
+/// errSecMissingEntitlement (-34018) — the unsigned/unentitled `swift test` binary under
+/// `make ci`. Any other status lets the gated tests run (and fail) so a real DP regression
+/// on an entitled host is still caught. Global `let` → evaluated once, cached.
+let dpKeychainReachable: Bool = {
+    let probeService = "app.solstone.observer.spl.dpprobe.\(UUID().uuidString)"
+    let base: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
+        kSecAttrAccessGroup as String: SPLKeychain.accessGroup,
+        kSecAttrService as String: probeService,
+        kSecAttrAccount as String: "probe",
+    ]
+    var add = base
+    add[kSecValueData as String] = Data("probe".utf8)
+    let status = SecItemAdd(add as CFDictionary, nil)
+    if status == errSecMissingEntitlement { return false }
+    SecItemDelete(base as CFDictionary)
+    return true
+}()
+
 @Suite("SPLKeychain", .serialized)
 struct SPLKeychainTests {
     private let testService = "app.solstone.observer.spl.test.\(UUID().uuidString)"
 
-    @Test func saveLoadRoundTrip() throws {
+    @Test(.enabled(if: dpKeychainReachable)) func saveLoadRoundTrip() throws {
         try clean()
         defer { try? clean() }
 
@@ -21,13 +42,13 @@ struct SPLKeychainTests {
         #expect(loaded == pairing)
     }
 
-    @Test func deleteIsIdempotent() throws {
+    @Test(.enabled(if: dpKeychainReachable)) func deleteIsIdempotent() throws {
         try clean()
         try SPLKeychain._delete(service: testService)
         try SPLKeychain._delete(service: testService)
     }
 
-    @Test func saveTwiceOverwrites() throws {
+    @Test(.enabled(if: dpKeychainReachable)) func saveTwiceOverwrites() throws {
         try clean()
         defer { try? clean() }
 
@@ -39,35 +60,30 @@ struct SPLKeychainTests {
         #expect(try SPLKeychain._load(service: testService) == second)
     }
 
-    @Test func loadMissingReturnsNil() throws {
+    @Test(.enabled(if: dpKeychainReachable)) func loadMissingReturnsNil() throws {
         try clean()
         #expect(try SPLKeychain._load(service: testService) == nil)
     }
 
-    @Test func attributesAreExpected() throws {
-        try clean()
-        defer { try? clean() }
-
-        try SPLKeychain._save(fixture(), service: testService)
-        var query = SPLKeychain.baseQuery(service: testService)
-        query[kSecReturnAttributes as String] = kCFBooleanTrue as Any
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        #expect(status == errSecSuccess)
-        let attrs = try #require(result as? [String: Any])
-        #expect(attrs[kSecAttrService as String] as? String == testService)
-        #expect(attrs[kSecAttrAccount as String] as? String == SPLKeychain.account)
-        if let accessible = attrs[kSecAttrAccessible as String] as? String {
-            #expect(accessible == kSecAttrAccessibleAfterFirstUnlock as String)
-        }
-        if let synchronizable = attrs[kSecAttrSynchronizable as String] as? Bool {
-            #expect(synchronizable == false)
-        }
+    @Test func addAttributesUseDataProtectionKeychainAndTeamAccessGroup() throws {
+        let attrs = SPLKeychain.addAttributes(data: Data("x".utf8), service: "svc")
+        #expect(try #require(attrs[kSecUseDataProtectionKeychain as String] as? Bool) == true)
+        #expect(try #require(attrs[kSecAttrAccessGroup as String] as? String)
+            == "7QCG8V4M6H.app.solstone.observer.spl")
+        #expect(try #require(attrs[kSecAttrAccessible as String] as? String)
+            == (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String))
+        #expect(try #require(attrs[kSecAttrSynchronizable as String] as? Bool) == false)
     }
 
-    @Test func tearDownDeletesTestServiceItems() throws {
+    @Test func updateAttributesContainOnlyValueData() throws {
+        let attrs = SPLKeychain.updateAttributes(data: Data("x".utf8))
+        #expect(try #require(attrs[kSecValueData as String] as? Data) == Data("x".utf8))
+        #expect(attrs[kSecClass as String] == nil)
+        #expect(attrs[kSecAttrService as String] == nil)
+        #expect(attrs[kSecAttrAccount as String] == nil)
+    }
+
+    @Test(.enabled(if: dpKeychainReachable)) func tearDownDeletesTestServiceItems() throws {
         try clean()
         try SPLKeychain._save(fixture(), service: testService)
         try clean()

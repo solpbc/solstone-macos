@@ -330,7 +330,7 @@ struct PairClientTests {
         #expect(text.hasSuffix(String(data: body, encoding: .utf8)!))
     }
 
-    @Test func pairClientDoesNotTouchKeychain() async throws {
+    @Test(.enabled(if: dpKeychainReachable)) func pairClientDoesNotTouchKeychain() async throws {
         let service = "app.solstone.observer.spl.pairclient.test"
         try SPLKeychain._delete(service: service)
         defer { try? SPLKeychain._delete(service: service) }

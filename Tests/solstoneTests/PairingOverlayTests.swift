@@ -85,18 +85,6 @@ struct PairingOverlayTests {
         #expect(serviceConfigSnapshot(state.config) == serviceConfigSnapshot(config))
     }
 
-    @Test func appOwnedKeychainRoundTripPassesWithNoAccessGroup() throws {
-        let service = "app.solstone.observer.spl.m4-pairing-overlay.test"
-        try SPLKeychain._delete(service: service)
-        defer { try? SPLKeychain._delete(service: service) }
-
-        let expected = pairing(instanceID: "33333333-3333-3333-3333-333333333333")
-        try SPLKeychain._save(expected, service: service)
-        #expect(try SPLKeychain._load(service: service) == expected)
-        try SPLKeychain._delete(service: service)
-        #expect(try SPLKeychain._load(service: service) == nil)
-    }
-
     private func makeCoordinator(store: PairingStore, owner: TunnelLifecycleOwner) -> PairingCoordinator {
         PairingCoordinator(
             pair: { _, _, _ in pairing() },
