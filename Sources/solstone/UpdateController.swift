@@ -51,6 +51,7 @@ final class UpdateController {
     private var updater: (any SparkleUpdating)?
     private var updaterStarted = false
     private var pendingChoiceReply: ((SPUUserUpdateChoice) -> Void)?
+    private var pendingReplyRequiresFinalization = false
     private var pendingCancellation: (() -> Void)?
     private var expectedContentLength: UInt64?
     private var blockedAutomaticCheckDuringExclusive = false
@@ -241,6 +242,11 @@ final class UpdateController {
         clearPendingInteractions()
         activity = .idle
         deferredInstallIntent = nil
+
+        if installFinalizationCommitted {
+            installFinalizationCommitted = false
+            Task { @MainActor in await installFailureRecovery?() }
+        }
     }
 
     func download() {
@@ -269,8 +275,10 @@ final class UpdateController {
         }
 
         guard let reply = pendingChoiceReply else { return }
+        let requiresFinalization = pendingReplyRequiresFinalization
         pendingChoiceReply = nil
-        fireInstallReply(reply)
+        pendingReplyRequiresFinalization = false
+        fireInstallReply(reply, requiresFinalization: requiresFinalization)
     }
 
     func dismiss() {
@@ -281,6 +289,11 @@ final class UpdateController {
         clearPendingInteractions()
         deferredInstallIntent = nil
         activity = .idle
+
+        if installFinalizationCommitted {
+            installFinalizationCommitted = false
+            Task { @MainActor in await installFailureRecovery?() }
+        }
     }
 
     func shouldAllowSparkleUpdateCheck(_ updateCheck: SPUUpdateCheck) -> Bool {
@@ -313,16 +326,21 @@ final class UpdateController {
         state: SPUUserUpdateState,
         reply: @escaping (SPUUserUpdateChoice) -> Void
     ) {
-        stashChoiceReply(reply)
-
+        let requiresFinalization: Bool
+        let nextActivity: UpdateActivity
         switch state.stage {
         case .notDownloaded:
-            activity = .idle
+            requiresFinalization = false
+            nextActivity = .idle
         case .downloaded, .installing:
-            activity = .readyToInstall(version: version, releaseNotes: releaseNotes)
+            requiresFinalization = true
+            nextActivity = .readyToInstall(version: version, releaseNotes: releaseNotes)
         @unknown default:
-            activity = .readyToInstall(version: version, releaseNotes: releaseNotes)
+            requiresFinalization = true
+            nextActivity = .readyToInstall(version: version, releaseNotes: releaseNotes)
         }
+        stashChoiceReply(reply, requiresFinalization: requiresFinalization)
+        activity = nextActivity
 
         if pendingDownloadIntent {
             pendingDownloadIntent = false
@@ -397,7 +415,7 @@ final class UpdateController {
     }
 
     func readyToInstall(reply: @escaping (SPUUserUpdateChoice) -> Void) {
-        stashChoiceReply(reply)
+        stashChoiceReply(reply, requiresFinalization: true)
         activity = .readyToInstall(
             version: availableUpdate?.version ?? "",
             releaseNotes: availableUpdate?.releaseNotes
@@ -405,18 +423,19 @@ final class UpdateController {
     }
 
     func installingUpdate() {
-        installFinalizationCommitted = false
         clearPendingCancellation()
         activity = .installing(version: availableUpdate?.version ?? "")
     }
 
     func updateInstalledAndRelaunched() {
+        installFinalizationCommitted = false
         clearPendingInteractions()
         deferredInstallIntent = nil
         activity = .idle
     }
 
     func dismissUpdateInstallation() {
+        installFinalizationCommitted = false
         clearPendingInteractions()
         deferredInstallIntent = nil
         activity = .idle
@@ -532,6 +551,12 @@ final class UpdateController {
             lastCheck: lastCheck
         )
         self.pendingChoiceReply = choiceReply ?? (hasLiveChoiceReply ? { _ in } : nil)
+        self.pendingReplyRequiresFinalization = self.pendingChoiceReply != nil && {
+            if case .readyToInstall = activity {
+                return true
+            }
+            return false
+        }()
         self.pendingCancellation = nil
         self.expectedContentLength = nil
     }
@@ -565,8 +590,12 @@ final class UpdateController {
         }
     }
 
-    private func stashChoiceReply(_ reply: @escaping (SPUUserUpdateChoice) -> Void) {
+    private func stashChoiceReply(
+        _ reply: @escaping (SPUUserUpdateChoice) -> Void,
+        requiresFinalization: Bool
+    ) {
         pendingChoiceReply = reply
+        pendingReplyRequiresFinalization = requiresFinalization
     }
 
     private func stashCancellation(_ cancellation: @escaping () -> Void) {
@@ -575,6 +604,7 @@ final class UpdateController {
 
     private func clearPendingInteractions() {
         pendingChoiceReply = nil
+        pendingReplyRequiresFinalization = false
         pendingCancellation = nil
     }
 
@@ -614,8 +644,10 @@ final class UpdateController {
         if deferredInstallIntent != nil {
             deferredInstallIntent = nil
             if let reply = pendingChoiceReply {
+                let requiresFinalization = pendingReplyRequiresFinalization
                 pendingChoiceReply = nil
-                fireInstallReply(reply)
+                pendingReplyRequiresFinalization = false
+                fireInstallReply(reply, requiresFinalization: requiresFinalization)
             } else {
                 checkForUpdates()
             }
@@ -645,7 +677,15 @@ final class UpdateController {
         return updater?.sessionInProgress ?? false
     }
 
-    private func fireInstallReply(_ reply: @escaping (SPUUserUpdateChoice) -> Void) {
+    private func fireInstallReply(
+        _ reply: @escaping (SPUUserUpdateChoice) -> Void,
+        requiresFinalization: Bool
+    ) {
+        guard requiresFinalization else {
+            reply(.install)
+            return
+        }
+
         installFinalizationInFlight = true
 
         // Once finalization starts, the user's explicit install intent is committed;

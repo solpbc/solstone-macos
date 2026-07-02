@@ -320,6 +320,22 @@ struct AppQuitCoordinatorTests {
         #expect(count(events.all, "terminate") == 1)
     }
 
+    @Test func resetAfterFailedUpdaterInstallWithoutPreparationIsSafeNoOp() {
+        let events = LockedArray<String>([])
+        let coordinator = makeCoordinator(events: events)
+
+        coordinator.resetAfterFailedUpdaterInstall()
+
+        #expect(events.all == ["invalidateMarker", "committed:false"])
+        #expect(!coordinator.isPrepared)
+
+        coordinator.requestAppOwnedQuit()
+
+        #expect(events.all.contains("marker:ordinary-quit"))
+        #expect(!events.all.contains("prepareForUpdate"))
+        #expect(!events.all.contains("terminate"))
+    }
+
     @Test func resetAfterFailedUpdaterInstallInvalidatesResetsAndCancelsQueuedReplies() async throws {
         let events = LockedArray<String>([])
         let canFinish = LockedValue<Bool>()

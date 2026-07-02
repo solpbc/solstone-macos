@@ -111,6 +111,102 @@ struct SparkleDeferralTests {
         #expect(gate.events == ["finalizer-start", "finalizer-end", "sparkle-install"])
     }
 
+    @Test func notDownloadedDownloadReplySkipsPreInstallFinalizer() async throws {
+        let signal = ExclusiveSignal()
+        var finalizerInvocations = 0
+        var recoveryCalls = 0
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: {
+                finalizerInvocations += 1
+            },
+            installFailureRecovery: {
+                recoveryCalls += 1
+            }
+        )
+        var checks = 0
+        var replies: [SPUUserUpdateChoice] = []
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found)
+        )
+
+        controller.download()
+        controller.presentUpdateFound(
+            version: "1.3.9",
+            releaseNotes: nil,
+            state: try userUpdateState(stage: .notDownloaded),
+            reply: { choice in
+                replies.append(choice)
+            }
+        )
+        await yieldUntil { replies.count == 1 }
+        controller.presentUpdaterError(NSError(domain: "test", code: 1))
+        await Task.yield()
+
+        #expect(checks == 1)
+        #expect(replies == [.install])
+        #expect(finalizerInvocations == 0)
+        #expect(recoveryCalls == 0)
+    }
+
+    @Test func notDownloadedDownloadCanCancelWithoutRecoveryOrFinalizer() async throws {
+        let signal = ExclusiveSignal()
+        var finalizerInvocations = 0
+        var recoveryCalls = 0
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: {
+                finalizerInvocations += 1
+            },
+            installFailureRecovery: {
+                recoveryCalls += 1
+            }
+        )
+        var checks = 0
+        var replies: [SPUUserUpdateChoice] = []
+        var cancellationInvoked = false
+        controller.checkForUpdatesInterceptor = { checks += 1 }
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found)
+        )
+
+        controller.download()
+        controller.presentUpdateFound(
+            version: "1.3.9",
+            releaseNotes: nil,
+            state: try userUpdateState(stage: .notDownloaded),
+            reply: { choice in
+                replies.append(choice)
+            }
+        )
+        await yieldUntil { replies.count == 1 }
+        controller.beginDownload {
+            cancellationInvoked = true
+        }
+        controller.cancel()
+        controller.presentUpdaterError(NSError(domain: "test", code: 1))
+        await Task.yield()
+
+        #expect(checks == 1)
+        #expect(replies == [.install])
+        #expect(cancellationInvoked)
+        #expect(finalizerInvocations == 0)
+        #expect(recoveryCalls == 0)
+    }
+
+    @Test func downloadedUpdateFoundAwaitsPreInstallFinalizerBeforeReply() async throws {
+        try await assertUpdateFoundStageAwaitsPreInstallFinalizer(.downloaded)
+    }
+
+    @Test func installingUpdateFoundAwaitsPreInstallFinalizerBeforeReply() async throws {
+        try await assertUpdateFoundStageAwaitsPreInstallFinalizer(.installing)
+    }
+
     @Test func nonInstallActionsDoNotRunPreInstallFinalizer() {
         let signal = ExclusiveSignal()
         var finalizerInvocations = 0
@@ -258,7 +354,7 @@ struct SparkleDeferralTests {
         #expect(replies.isEmpty)
     }
 
-    @Test func recoveryDoesNotFireOnSuccessPath() async {
+    @Test func recoveryFiresOnErrorAfterInstallingUpdate() async {
         let signal = ExclusiveSignal()
         let gate = PreInstallFinalizerGate()
         let controller = makeController(
@@ -286,14 +382,12 @@ struct SparkleDeferralTests {
 
         controller.installingUpdate()
         controller.presentUpdaterError(NSError(domain: "test", code: 1))
-        for _ in 0..<20 {
-            await Task.yield()
-        }
+        await yieldUntil { gate.events.contains("recovery") }
 
-        #expect(!gate.events.contains("recovery"))
+        #expect(gate.events == ["finalizer-start", "finalizer-end", "sparkle-install", "recovery"])
     }
 
-    @Test func recoveryDoesNotFireOnPreInstallError() async {
+    @Test func recoveryDoesNotFireBeforeInstallFinalization() async {
         let signal = ExclusiveSignal()
         var recoveryCalls = 0
         let controller = makeController(
@@ -303,12 +397,135 @@ struct SparkleDeferralTests {
             }
         )
 
+        controller.cancel()
+        controller.dismiss()
         controller.presentUpdaterError(NSError(domain: "test", code: 1))
         for _ in 0..<20 {
             await Task.yield()
         }
 
         #expect(recoveryCalls == 0)
+    }
+
+    @Test func recoveryFiresOnceOnCancelAfterCommittedInstall() async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: gate.run,
+            installFailureRecovery: {
+                gate.events.append("recovery")
+            }
+        )
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { choice in
+                if choice == .install {
+                    gate.events.append("sparkle-install")
+                }
+            }
+        )
+
+        controller.install()
+        await yieldUntil { gate.started }
+        gate.release()
+        await yieldUntil { gate.events.contains("sparkle-install") }
+
+        controller.cancel()
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        #expect(gate.events.contains("recovery"))
+        controller.presentUpdaterError(NSError(domain: "test", code: 1))
+        await Task.yield()
+
+        #expect(count(gate.events, "recovery") == 1)
+    }
+
+    @Test func recoveryFiresOnceOnDismissAfterCommittedInstall() async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: gate.run,
+            installFailureRecovery: {
+                gate.events.append("recovery")
+            }
+        )
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { choice in
+                if choice == .install {
+                    gate.events.append("sparkle-install")
+                }
+            }
+        )
+
+        controller.install()
+        await yieldUntil { gate.started }
+        gate.release()
+        await yieldUntil { gate.events.contains("sparkle-install") }
+
+        controller.dismiss()
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        #expect(gate.events.contains("recovery"))
+        controller.presentUpdaterError(NSError(domain: "test", code: 1))
+        await Task.yield()
+
+        #expect(count(gate.events, "recovery") == 1)
+    }
+
+    @Test func committedInstallRecoveryFiresAtMostOnceAcrossTerminalCallbacks() async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: gate.run,
+            installFailureRecovery: {
+                gate.events.append("recovery")
+            }
+        )
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { choice in
+                if choice == .install {
+                    gate.events.append("sparkle-install")
+                }
+            }
+        )
+
+        controller.install()
+        await yieldUntil { gate.started }
+        gate.release()
+        await yieldUntil { gate.events.contains("sparkle-install") }
+
+        controller.presentUpdaterError(NSError(domain: "test", code: 1))
+        await yieldUntil { gate.events.contains("recovery") }
+        controller.presentUpdaterError(NSError(domain: "test", code: 2))
+        controller.updateInstalledAndRelaunched()
+        controller.dismissUpdateInstallation()
+        controller.cancel()
+        controller.dismiss()
+        await Task.yield()
+
+        #expect(count(gate.events, "recovery") == 1)
+    }
+
+    @Test func successfulInstallTerminalsClearCommittedInstallWithoutRecovery() async {
+        await assertSuccessfulTerminalClearsCommittedInstall { controller in
+            controller.updateInstalledAndRelaunched()
+        }
+        await assertSuccessfulTerminalClearsCommittedInstall { controller in
+            controller.dismissUpdateInstallation()
+        }
     }
 
     @Test func durableAvailableWithoutLiveReplyDownloadStartsCheck() {
@@ -529,6 +746,73 @@ struct SparkleDeferralTests {
         #expect(controller.deferredInstallIntent == nil)
     }
 
+    @Test func exclusiveClearPreservesFinalizationDecisionForPendingReply() async throws {
+        let downloadedSignal = ExclusiveSignal()
+        let downloadedGate = PreInstallFinalizerGate()
+        let downloadedController = makeController(
+            exclusivity: downloadedSignal,
+            preInstallFinalizer: downloadedGate.run
+        )
+        await setExclusive(downloadedSignal, to: true, controller: downloadedController)
+        downloadedController.presentUpdateFound(
+            version: "1.3.9",
+            releaseNotes: nil,
+            state: try userUpdateState(stage: .downloaded),
+            reply: { choice in
+                if choice == .install {
+                    downloadedGate.events.append("sparkle-install")
+                }
+            }
+        )
+
+        downloadedController.install()
+        #expect(downloadedController.deferredInstallIntent?.version == "1.3.9")
+        await setExclusive(downloadedSignal, to: false, controller: downloadedController)
+        await yieldUntil { downloadedGate.started }
+
+        #expect(downloadedGate.events == ["finalizer-start"])
+
+        downloadedGate.release()
+        await yieldUntil { downloadedGate.events.contains("sparkle-install") }
+
+        #expect(downloadedGate.events == ["finalizer-start", "finalizer-end", "sparkle-install"])
+
+        let notDownloadedSignal = ExclusiveSignal()
+        let notDownloadedGate = PreInstallFinalizerGate()
+        let notDownloadedController = makeController(
+            exclusivity: notDownloadedSignal,
+            preInstallFinalizer: notDownloadedGate.run
+        )
+        var checks = 0
+        var replies: [SPUUserUpdateChoice] = []
+        notDownloadedController.checkForUpdatesInterceptor = { checks += 1 }
+        notDownloadedController.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found)
+        )
+
+        await setExclusive(notDownloadedSignal, to: true, controller: notDownloadedController)
+        notDownloadedController.download()
+        notDownloadedController.presentUpdateFound(
+            version: "1.3.9",
+            releaseNotes: nil,
+            state: try userUpdateState(stage: .notDownloaded),
+            reply: { choice in
+                replies.append(choice)
+            }
+        )
+
+        #expect(notDownloadedController.deferredInstallIntent?.version == "1.3.9")
+
+        await setExclusive(notDownloadedSignal, to: false, controller: notDownloadedController)
+        await Task.yield()
+
+        #expect(checks == 1)
+        #expect(replies == [.install])
+        #expect(notDownloadedGate.events.isEmpty)
+    }
+
     @Test func signalClearWithDurableAvailableFactAndNoLiveReplyTriggersCheck() async {
         let signal = ExclusiveSignal()
         let controller = makeController(exclusivity: signal)
@@ -720,9 +1004,75 @@ struct SparkleDeferralTests {
         return try #require(SPUUserUpdateState(coder: unarchiver) as SPUUserUpdateState?)
     }
 
+    private func assertUpdateFoundStageAwaitsPreInstallFinalizer(_ stage: SPUUserUpdateStage) async throws {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        let controller = makeController(exclusivity: signal, preInstallFinalizer: gate.run)
+        controller.presentUpdateFound(
+            version: "1.3.9",
+            releaseNotes: nil,
+            state: try userUpdateState(stage: stage),
+            reply: { choice in
+                if choice == .install {
+                    gate.events.append("sparkle-install")
+                }
+            }
+        )
+
+        controller.install()
+        await yieldUntil { gate.started }
+
+        #expect(gate.events == ["finalizer-start"])
+
+        gate.release()
+        await yieldUntil { gate.events.contains("sparkle-install") }
+
+        #expect(gate.events == ["finalizer-start", "finalizer-end", "sparkle-install"])
+    }
+
+    private func assertSuccessfulTerminalClearsCommittedInstall(
+        _ terminal: (UpdateController) -> Void
+    ) async {
+        let signal = ExclusiveSignal()
+        let gate = PreInstallFinalizerGate()
+        let controller = makeController(
+            exclusivity: signal,
+            preInstallFinalizer: gate.run,
+            installFailureRecovery: {
+                gate.events.append("recovery")
+            }
+        )
+        controller.applyDebugFixture(
+            activity: .readyToInstall(version: "1.3.9", releaseNotes: nil),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found),
+            choiceReply: { choice in
+                if choice == .install {
+                    gate.events.append("sparkle-install")
+                }
+            }
+        )
+
+        controller.install()
+        await yieldUntil { gate.started }
+        gate.release()
+        await yieldUntil { gate.events.contains("sparkle-install") }
+
+        controller.installingUpdate()
+        terminal(controller)
+        controller.presentUpdaterError(NSError(domain: "test", code: 1))
+        await Task.yield()
+
+        #expect(!gate.events.contains("recovery"))
+    }
+
     private func clearDefaults() {
         isolatedDefaults.clear()
     }
+}
+
+private func count(_ events: [String], _ event: String) -> Int {
+    events.count { $0 == event }
 }
 
 @MainActor
