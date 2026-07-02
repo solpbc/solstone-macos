@@ -399,6 +399,10 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 	@cp .build/apple/Products/Release/sol-mac solstone.app/Contents/MacOS/
 	@cp .build/apple/Products/Release/solstone-watchdog solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
+	@# Embedded Developer ID provisioning profile authorizes the keychain-access-groups
+	@# entitlement (Data Protection keychain for the SPL pairing bundle). Must be in place
+	@# before the app is signed so it is sealed into the signature.
+	@cp Sources/solstone/embedded.provisionprofile solstone.app/Contents/embedded.provisionprofile
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@mkdir -p solstone.app/Contents/Library/LaunchAgents
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
@@ -493,7 +497,9 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 			rm -f "$$VERIFY_OUT"; \
 			exit 1; \
 		fi
-	@echo "✓ Signed: solstone.app"
+	@test -f solstone.app/Contents/embedded.provisionprofile || { echo "error: embedded.provisionprofile missing from bundle"; exit 1; }
+	@codesign -d --entitlements - --xml solstone.app 2>/dev/null | plutil -p - 2>/dev/null | grep -q '7QCG8V4M6H.app.solstone.observer.spl' || { echo "error: keychain-access-group entitlement missing from signed app (DP keychain would -34018)"; exit 1; }
+	@echo "✓ Signed: solstone.app (keychain-access-group + embedded profile verified)"
 
 # Create and sign the DMG using create-dmg. Produces a polished mounted
 # volume — cream brand background with sol-ring watermark, app icon
