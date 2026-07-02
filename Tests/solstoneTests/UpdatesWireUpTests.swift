@@ -54,11 +54,17 @@ struct UpdatesWireUpTests {
         let source = try readWireUpSource("Sources/solstone/AppState.swift")
         let prepareStart = try #require(source.range(of: "prepareForUpdate: { [weak self] in"))
         let prepareEnd = try #require(source[prepareStart.upperBound...].range(of: "terminate: terminate"))
-        let body = String(source[prepareStart.lowerBound..<prepareEnd.lowerBound])
-        let stopRecording = try #require(body.range(of: "await self.stopRecording()"))
-        let stopJournal = try #require(body.range(of: "await self.stopSupervisedJournalForUpdate()"))
+        let prepareBody = String(source[prepareStart.lowerBound..<prepareEnd.lowerBound])
+        let methodStart = try #require(source.range(of: "internal func performUpdatePreparation() async"))
+        let methodEnd = try #require(source[methodStart.upperBound...].range(of: "private func drainRemixQueueForTermination() async"))
+        let methodBody = String(source[methodStart.lowerBound..<methodEnd.lowerBound])
+        let stopRecording = try #require(methodBody.range(of: "await stopRecording()"))
+        let stopJournal = try #require(methodBody.range(of: "await stopSupervisedJournalForUpdate()"))
+        let drain = try #require(methodBody.range(of: "await drainRemixQueueForTermination()"))
 
+        #expect(wireUpContains(prepareBody, "await self?.performUpdatePreparation()"))
         #expect(stopRecording.lowerBound < stopJournal.lowerBound)
+        #expect(stopJournal.lowerBound < drain.lowerBound)
     }
 
     @Test func stagedInstallButtonRoutesThroughUpdateController() throws {

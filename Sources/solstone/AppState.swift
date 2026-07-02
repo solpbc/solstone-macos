@@ -149,6 +149,8 @@ public final class AppState {
     internal var supervisedJournalRunner: any SupervisedChildRunning
     internal var singleSupervisorGate: any SingleSupervisorGating
     internal var journalReadinessGate: any JournalReadinessChecking
+    internal var terminationDrainer: any TerminationDraining = RemixQueue.shared
+    internal var replacementLaunchRunner: @MainActor (ReplacementLaunchCommand) throws -> Void = ReplacementLaunchGate.runDetached
 
     // MARK: - Activation Policy
 
@@ -325,18 +327,10 @@ public final class AppState {
                     ExpectedExitMarker.invalidate()
                 },
                 prepareForQuit: { [weak self] in
-                    guard let self else { return }
-                    if self.isRecording {
-                        await self.stopRecording()
-                    }
-                    await self.stopSupervisedJournalForTermination()
+                    await self?.performQuitPreparation()
                 },
                 prepareForUpdate: { [weak self] in
-                    guard let self else { return }
-                    if self.isRecording {
-                        await self.stopRecording()
-                    }
-                    await self.stopSupervisedJournalForUpdate()
+                    await self?.performUpdatePreparation()
                 },
                 // This scheduler must escape the current MainActor job before
                 // entering AppKit termination.
@@ -344,6 +338,32 @@ public final class AppState {
                 launchReplacement: launchReplacement
             )
         )
+    }
+
+    internal func performQuitPreparation() async {
+        if isRecording {
+            await stopRecording()
+        }
+        await stopSupervisedJournalForTermination()
+        await drainRemixQueueForTermination()
+    }
+
+    internal func performUpdatePreparation() async {
+        if isRecording {
+            await stopRecording()
+        }
+        await stopSupervisedJournalForUpdate()
+        await drainRemixQueueForTermination()
+    }
+
+    private func drainRemixQueueForTermination() async {
+        let drainer = terminationDrainer
+        await drainer.setOnSegmentComplete(nil)
+        do {
+            try await withTimeout(seconds: 30) { await drainer.waitForCompletion() }
+        } catch {
+            Logger.general.warning("Timed out draining pending remix work during termination; leaving in-flight segment recoverable")
+        }
     }
 
     // MARK: - Login Item
@@ -763,12 +783,13 @@ public final class AppState {
                     NSApp.terminate(nil)
                 }
             },
-            launchReplacement: {
-                let bundlePath = Bundle.main.bundlePath
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                process.arguments = ["-n", bundlePath]
-                try? process.run()
+            launchReplacement: { [weak self] in
+                guard let self else { return }
+                let command = ReplacementLaunchGate.command(
+                    predecessorPID: getpid(),
+                    bundlePath: Bundle.main.bundlePath
+                )
+                try? self.replacementLaunchRunner(command)
             }
         )
         uploadCoordinator.bundledAvailabilityProvider = { [weak self] in

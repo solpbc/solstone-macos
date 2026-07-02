@@ -80,6 +80,39 @@ struct WatchdogTests {
         #expect(relaunchDecision(marker: mismatched, terminatedPID: pid, now: now, recentRelaunches: []) == .relaunch)
     }
 
+    @Test func decisionSuppressesFreshSettingsRestartMarkerAfterBoundedWait() {
+        let marker = ExpectedExitMarker(
+            pid: pid,
+            timestamp: now.addingTimeInterval(-30),
+            reason: "settings-restart"
+        )
+
+        let decision = relaunchDecision(
+            marker: marker,
+            terminatedPID: pid,
+            now: now,
+            recentRelaunches: []
+        )
+
+        #expect(decision == .suppress)
+    }
+
+    @Test func decisionRelaunchesForStaleOrMismatchedSettingsRestartMarker() {
+        let stale = ExpectedExitMarker(
+            pid: pid,
+            timestamp: now.addingTimeInterval(-200),
+            reason: "settings-restart"
+        )
+        let mismatched = ExpectedExitMarker(
+            pid: pid + 1,
+            timestamp: now.addingTimeInterval(-30),
+            reason: "settings-restart"
+        )
+
+        #expect(relaunchDecision(marker: stale, terminatedPID: pid, now: now, recentRelaunches: []) == .relaunch)
+        #expect(relaunchDecision(marker: mismatched, terminatedPID: pid, now: now, recentRelaunches: []) == .relaunch)
+    }
+
     @Test func decisionThrottleStopsWithinWindowAndRecoversAfterWindow() {
         let recent = [
             now.addingTimeInterval(-1),

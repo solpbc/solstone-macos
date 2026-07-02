@@ -23,6 +23,11 @@ public protocol SegmentFinalizing: Sendable {
     func waitForCompletion() async
 }
 
+public protocol TerminationDraining: Sendable {
+    func setOnSegmentComplete(_ callback: (@Sendable (URL, SegmentReconciliation) async -> Void)?) async
+    func waitForCompletion() async
+}
+
 public enum SegmentReconciliation: Sendable {
     case normal
     case recovered(Int)
@@ -277,3 +282,5 @@ public actor RemixQueue {
 }
 
 extension RemixQueue: SegmentFinalizing {}
+
+extension RemixQueue: TerminationDraining {}

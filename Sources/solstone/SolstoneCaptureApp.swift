@@ -151,31 +151,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Logger.general.error("AppState.shared nil in applicationWillTerminate")
         }
         Logger.general.info("Termination: starting shutdown...")
-
-        // Request time to complete pending work before termination
-        let activity = ProcessInfo.processInfo.beginActivity(
-            options: [.suddenTerminationDisabled, .automaticTerminationDisabled],
-            reason: "Completing pending work before termination"
-        )
-        defer { ProcessInfo.processInfo.endActivity(activity) }
-
-        // Observation shutdown is already handled by AppQuitCoordinator.
-        // Just wait for any pending remix jobs using a semaphore.
-        let semaphore = DispatchSemaphore(value: 0)
-
-        Task.detached {
-            // Clear the callback to prevent issues during final remix
-            await RemixQueue.shared.setOnSegmentComplete(nil)
-            await RemixQueue.shared.waitForCompletion()
-            semaphore.signal()
-        }
-
-        let result = semaphore.wait(timeout: .now() + 30)
-        if result == .timedOut {
-            Logger.general.warning("Timeout waiting for remix queue during termination")
-        } else {
-            Logger.general.info("Termination: shutdown complete")
-        }
     }
 }
 
