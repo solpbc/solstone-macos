@@ -1,79 +1,80 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 //
-// Live staging dial test. Env-gated via SPL_LIVE_STAGING=1.
+// Live staging dial harness. Operator-direct only; never runs in CI because the
+// suite is gated off unless SPL_LIVE=1.
 //
-// OPERATOR PRECONDITIONS:
-//   1. A real spl/pl pairing must already be in the Data Protection keychain (paired via the app's Settings pairing flow).
-//   2. Network access to spl-relay-staging.jer-3f2.workers.dev must work.
-//   3. The home device must be online and accepting connections.
-//   4. Run from an interactive shell - keychain prompts may appear.
+// ENV:
+//   SPL_LIVE=1 gates the suite on.
+//   SPL_PAIR_URL is a required fresh one-shot pair link.
+//   SPL_RELAY_ENDPOINT overrides the relay endpoint; default:
+//     https://spl-relay-staging.jer-3f2.workers.dev
+//   SPL_FORCE_RELAY=1 forces relay-only candidates and asserts relay transport.
+//
+// The one-shot pair link is consumed even on a failed dial. Every retry needs a
+// fresh SPL_PAIR_URL.
+//
+// This registers a device labeled "solstone-live-harness"; prune it server-side
+// in convey after runs.
+//
+// No keychain prompts: pairing is held in memory only and never persisted.
+//
+// Example:
+//   SPL_LIVE=1 SPL_PAIR_URL='https://go.solstone.app/p#…' [SPL_FORCE_RELAY=1] swift test --filter LiveStaging
 
 import Foundation
 import Testing
-@testable import SPLTunnel
+import SPLTunnel
 
-@Suite(.enabled(if: ProcessInfo.processInfo.environment["SPL_LIVE_STAGING"] == "1"))
+@Suite(.disabled(if: ProcessInfo.processInfo.environment["SPL_LIVE"] != "1",
+                 "set SPL_LIVE=1 to run the live staging dial harness"))
 struct LiveStagingTests {
-    @Test func dialPairedHomeStatusEndpoint() async throws {
-        let pairing = try #require(try SPLKeychain.load())
+    static let deviceLabel = "solstone-live-harness"
+
+    @Test func dialStatusEndpoint() async throws {
+        let config = try parseLiveEnv(ProcessInfo.processInfo.environment)
+        let pairing = try await PairClient().pair(
+            pairURL: config.pairURL,
+            deviceLabel: Self.deviceLabel,
+            relayEndpoint: config.relayEndpoint
+        )
+        let endpoints: [TransportEndpoint]
+        if config.forceRelay {
+            endpoints = try relayOnlyCandidates(for: pairing)
+        } else {
+            endpoints = TransportEndpoint.candidates(for: pairing)
+        }
         let tunnel = TunnelSession(pairing: pairing)
-        let recorder = LiveStateRecorder()
-        let observation = observeLive(session: tunnel, recorder: recorder)
+        let via = try await tunnel.connect(endpoints: endpoints)
 
-        try await tunnel.connect(endpoints: TransportEndpoint.candidates(for: pairing))
-        try await waitForLive {
-            await recorder.states.contains { state in
-                if case .connected = state {
-                    return true
+        do {
+            let stream = try await tunnel.openStream()
+            let request = "GET /app/network/api/status HTTP/1.1\r\nHost: \(pairing.homeLabel)\r\nConnection: close\r\n\r\n"
+            try await stream.write(Data(request.utf8))
+            try await stream.close()
+            let response = try await readLiveResponse(from: await stream.inbound)
+            #expect(response.statusLine.contains("200"))
+            let json = try #require(try JSONSerialization.jsonObject(with: response.body) as? [String: Any])
+            _ = try #require(json["status"])
+
+            if config.forceRelay {
+                let connectedViaRelay: Bool
+                if case .relay = via {
+                    connectedViaRelay = true
+                } else {
+                    connectedViaRelay = false
                 }
-                return false
+                #expect(connectedViaRelay)
+            } else {
+                print("LiveStagingTests connected via \(via)")
             }
-        }
 
-        let stream = try await tunnel.openStream()
-        let request = "GET /app/network/api/status HTTP/1.1\r\nHost: \(pairing.homeLabel)\r\nConnection: close\r\n\r\n"
-        try await stream.write(Data(request.utf8))
-        try await stream.close()
-        let response = try await readLiveResponse(from: await stream.inbound)
-        #expect(response.statusLine.contains("200"))
-        let json = try #require(try JSONSerialization.jsonObject(with: response.body) as? [String: Any])
-        #expect(json["status"] != nil)
-
-        await tunnel.disconnect()
-        observation.cancel()
-    }
-}
-
-private actor LiveStateRecorder {
-    private var values: [TunnelState] = []
-
-    var states: [TunnelState] {
-        values
-    }
-
-    func append(_ state: TunnelState) {
-        values.append(state)
-    }
-}
-
-private func observeLive(session: TunnelSession, recorder: LiveStateRecorder) -> Task<Void, Never> {
-    Task {
-        for await state in session.stateUpdates {
-            await recorder.append(state)
+            await tunnel.disconnect()
+        } catch {
+            await tunnel.disconnect()
+            throw error
         }
     }
-}
-
-private func waitForLive(_ condition: @escaping @Sendable () async -> Bool) async throws {
-    let deadline = ContinuousClock.now + .seconds(20)
-    while ContinuousClock.now < deadline {
-        if await condition() {
-            return
-        }
-        try await Task.sleep(for: .milliseconds(50))
-    }
-    throw LiveStagingError.timeout
 }
 
 private func readLiveResponse(from inbound: AsyncThrowingStream<Data, Error>) async throws -> (statusLine: String, body: Data) {
@@ -91,5 +92,4 @@ private func readLiveResponse(from inbound: AsyncThrowingStream<Data, Error>) as
 
 private enum LiveStagingError: Error {
     case invalidResponse
-    case timeout
 }
