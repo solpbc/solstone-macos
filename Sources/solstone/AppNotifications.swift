@@ -4,5 +4,5 @@
 import Foundation
 
 extension Notification.Name {
-    static let solMacOpenSettings = Notification.Name("app.solstone.observer.openSettings")
+    static let openSettingsWindow = Notification.Name("app.solstone.observer.openSettings")
 }

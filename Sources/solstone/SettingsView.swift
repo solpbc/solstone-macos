@@ -256,7 +256,7 @@ struct SettingsView: View {
         .onChange(of: appState.pairingCoordinator.tunnelState) { _, _ in
             startJournalMarkRederiveIfNeeded()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .solMacOpenSettings)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .openSettingsWindow)) { _ in
             applyPendingSettingsTab()
         }
         .sheet(isPresented: Binding(

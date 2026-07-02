@@ -267,8 +267,7 @@ internal enum JournalRuntimeProbe {
 func appProbeChecks(
     screenRecordingGranted: Bool,
     microphoneGranted: Bool,
-    permissionCheckComplete: Bool,
-    ipcServiceRunning: Bool
+    permissionCheckComplete: Bool
 ) -> [DoctorCheck] {
     [
         permissionProbeCheck(
@@ -282,13 +281,6 @@ func appProbeChecks(
             granted: microphoneGranted,
             permissionCheckComplete: permissionCheckComplete,
             fix: "open System Settings › Privacy & Security and allow Microphone for solstone observer"
-        ),
-        DoctorCheck(
-            name: "ipc service",
-            status: ipcServiceRunning ? .ok : .warn,
-            severity: nil,
-            detail: ipcServiceRunning ? "ipc service running" : "ipc service not available",
-            fix: nil
         ),
     ]
 }

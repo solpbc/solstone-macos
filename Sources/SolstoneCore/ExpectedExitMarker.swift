@@ -17,7 +17,7 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
     }
 
     public static var markerURL: URL {
-        SolMacIPCConstants.solstoneApplicationSupportURL.appendingPathComponent("expected-exit.json")
+        SolstoneIdentity.applicationSupportURL.appendingPathComponent("expected-exit.json")
     }
 
     public static let defaultFreshnessWindow: TimeInterval = 120

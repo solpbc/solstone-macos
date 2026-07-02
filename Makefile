@@ -210,7 +210,6 @@ release:
 # Build universal binary (arm64 + x86_64)
 release-universal:
 	swift build -c release --arch arm64 --arch x86_64
-	swift build -c release --arch arm64 --arch x86_64 --product sol-mac
 	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
 
 # Run the built app from the source tree and stream all logs to a timestamped
@@ -396,7 +395,6 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
 	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
-	@cp .build/apple/Products/Release/sol-mac solstone.app/Contents/MacOS/
 	@cp .build/apple/Products/Release/solstone-watchdog solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@# Embedded Developer ID provisioning profile authorizes the keychain-access-groups
@@ -408,7 +406,7 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
 	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
-	@# arm64-only uv; .app remains universal for graceful Intel detection by sol-mac installer
+	@# arm64-only uv; .app remains universal.
 	@cp $(UV_VENDOR_BINARY) solstone.app/Contents/Resources/uv
 	@chmod +x solstone.app/Contents/Resources/uv
 	@rm -rf solstone.app/Contents/Resources/python
@@ -433,10 +431,6 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		solstone.app/Contents/Resources/solstone_solstone.bundle
-	@codesign --force --options runtime --timestamp \
-		--identifier app.solstone.observer.cli \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		solstone.app/Contents/MacOS/sol-mac
 	@codesign --force --options runtime --timestamp \
 		--identifier app.solstone.observer.watchdog \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
@@ -544,18 +538,6 @@ verify-notarization: staple
 	@spctl --assess --type open --context context:primary-signature -v $(DMG_NAME) || \
 		{ echo "spctl verification failed"; exit 1; }
 	@xcrun stapler validate $(DMG_NAME)
-	@codesign --verify --strict --verbose=2 solstone.app/Contents/MacOS/sol-mac || \
-		{ echo "inner CLI signature invalid"; exit 1; }
-	@codesign -dvvv solstone.app/Contents/MacOS/sol-mac 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || \
-		{ echo "inner CLI missing Team ID 7QCG8V4M6H"; exit 1; }
-	@codesign -dvvv solstone.app/Contents/MacOS/sol-mac 2>&1 | grep -q 'flags=0x10000(runtime)' || \
-		{ echo "inner CLI missing hardened runtime flag"; exit 1; }
-	@codesign -dvvv solstone.app/Contents/MacOS/sol-mac 2>&1 | grep -q 'Identifier=app.solstone.observer.cli' || \
-		{ echo "inner CLI identifier mismatch (expected app.solstone.observer.cli)"; exit 1; }
-	@lipo -archs solstone.app/Contents/MacOS/sol-mac | grep -q 'arm64' || \
-		{ echo "inner CLI missing arm64 slice"; exit 1; }
-	@lipo -archs solstone.app/Contents/MacOS/sol-mac | grep -q 'x86_64' || \
-		{ echo "inner CLI missing x86_64 slice"; exit 1; }
 	@codesign --verify --strict --verbose=2 solstone.app/Contents/MacOS/solstone-watchdog || \
 		{ echo "watchdog signature invalid"; exit 1; }
 	@codesign -dvvv solstone.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || \
@@ -579,7 +561,7 @@ verify-notarization: staple
 	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'Identifier=app.solstone.observer.python' || { echo "error: bundled python identifier mismatch"; exit 1; }
 	@lipo -archs solstone.app/Contents/Resources/python/bin/python3.13 | grep -q 'arm64' || { echo "error: bundled python missing arm64 slice"; exit 1; }
 	@solstone.app/Contents/Resources/python/bin/python3.13 --version 2>&1 | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: bundled python reported wrong version"; exit 1; }
-	@echo "✓ $(DMG_NAME) notarized + stapled (inner CLI signature verified)"
+	@echo "✓ $(DMG_NAME) notarized + stapled"
 
 # One-shot: build + sign + notarize + staple + verify. This is the canonical
 # entry point for creating an ad-hoc distributable DMG.
@@ -675,12 +657,10 @@ reset:
 reset-full:
 	@echo "==> quitting solstone..."
 	-@osascript -e 'tell application "solstone" to quit' 2>/dev/null
-	-@killall -9 solstone sol-mac 2>/dev/null
-	@echo "==> removing installed app + cli symlink..."
+	-@killall -9 solstone 2>/dev/null
+	@echo "==> removing installed app..."
 	-@rm -rf /Applications/solstone.app
-	-@rm -f $(HOME)/.local/bin/sol-mac
 	@echo "==> wiping app state (keeping captures/, parakeet/, journal/)..."
-	-@rm -f  "$(HOME)/Library/Application Support/Solstone/sol-mac.sock"
 	-@rm -f  "$(HOME)/Library/Application Support/Solstone/config.json.migrated"
 	-@rm -rf "$(HOME)/Library/Application Support/Solstone/logs"
 	-@rm -f  $(HOME)/Library/Preferences/app.solstone.capture.plist
@@ -688,7 +668,7 @@ reset-full:
 	-@rm -f  $(HOME)/Library/Preferences/app.solstone.observer.tests.*.plist
 	-@killall cfprefsd 2>/dev/null
 	@echo "==> clearing caches + LaunchServices registration..."
-	-@rm -rf $(HOME)/Library/Caches/app.solstone.* $(HOME)/Library/Caches/com.solstone.* $(HOME)/Library/Caches/sol-mac
+	-@rm -rf $(HOME)/Library/Caches/app.solstone.* $(HOME)/Library/Caches/com.solstone.*
 	-@rm -rf "$(HOME)/Library/Saved Application State/app.solstone."* "$(HOME)/Library/Saved Application State/com.solstone."*
 	-@/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister -kill -r -domain local -domain system -domain user >/dev/null 2>&1 || true
 	@echo ""

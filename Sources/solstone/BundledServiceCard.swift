@@ -265,8 +265,7 @@ struct BundledServiceCard: View {
                     ForEach(appProbeChecks(
                         screenRecordingGranted: appState.screenRecordingGranted,
                         microphoneGranted: appState.microphoneGranted,
-                        permissionCheckComplete: appState.initialPermissionCheckComplete,
-                        ipcServiceRunning: appState.ipcServiceRunning
+                        permissionCheckComplete: appState.initialPermissionCheckComplete
                     ), id: \.name) { check in
                         doctorCheckRow(check)
                     }

@@ -5,6 +5,18 @@ import Testing
 
 @Suite("Settings WireUp")
 struct SettingsWireUpTests {
+    @Test func openSettingsWindowNotificationReferencesSurvivingSites() throws {
+        let appSource = try readWireUpSource("Sources/solstone/SolstoneCaptureApp.swift")
+        let settingsSource = try readWireUpSource("Sources/solstone/SettingsView.swift")
+        let oldNotificationName = ".solMac" + "OpenSettings"
+
+        #expect(wireUpContains(appSource, "NotificationCenter.default.post(name: .openSettingsWindow, object: nil)"))
+        #expect(wireUpContains(appSource, ".onReceive(NotificationCenter.default.publisher(for: .openSettingsWindow))"))
+        #expect(wireUpContains(settingsSource, ".onReceive(NotificationCenter.default.publisher(for: .openSettingsWindow))"))
+        #expect(!appSource.contains(oldNotificationName))
+        #expect(!settingsSource.contains(oldNotificationName))
+    }
+
     // Proves registry wire-up presence, not live AX-tree attachment; device-phase AX dumps cover that.
     @Test func settingsViewReferencesExpectedAXIDs() throws {
         let source = try readWireUpSource("Sources/solstone/SettingsView.swift")

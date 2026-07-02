@@ -84,7 +84,6 @@ public final class AppState {
     public internal(set) var audioReconciledCount: Int = 0
     public internal(set) var journalRuntimeStatus: JournalRuntimeStatus = .running
     public internal(set) var captureQueuedForJournalReadiness: Bool = false
-    public internal(set) var ipcServiceRunning = false
     public internal(set) var restartRequiredBannerVisible: Bool = false
     private var restartRequiredGeneration: UInt64 = 0
     public internal(set) var solChatPending: SolChatRequestSummary?
@@ -503,12 +502,6 @@ public final class AppState {
             Logger.general.error("Failed to save config: \(error.localizedDescription, privacy: .public)")
             errorMessage = UICopy.ERROR_SAVE_CONFIG
         }
-    }
-
-    public func reloadConfigFromDisk() {
-        CFPreferencesAppSynchronize(SolMacIPCConstants.appBundleIdentifier as CFString)
-        let reloaded = AppConfig.load()
-        updateConfig(reloaded)
     }
 
     internal func observerHealthSnapshot() -> ObserverHealthSnapshot? {

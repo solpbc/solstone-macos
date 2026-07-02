@@ -11,7 +11,6 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.1"),
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0")
     ],
     targets: [
@@ -62,18 +61,6 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "sol-mac",
-            dependencies: [
-                .target(name: "SolstoneCore"),
-                .target(name: "SPLTunnel"),
-                .product(name: "ArgumentParser", package: "swift-argument-parser")
-            ],
-            path: "Sources/sol-mac",
-            swiftSettings: [
-                .swiftLanguageMode(.v6)
-            ]
-        ),
-        .executableTarget(
             name: "solstone-watchdog",
             dependencies: [
                 .target(name: "SolstoneCore")
@@ -96,7 +83,6 @@ let package = Package(
             dependencies: [
                 .target(name: "solstone"),
                 .target(name: "SolstoneCore"),
-                .target(name: "sol-mac"),
                 .target(name: "solstone-watchdog")
             ],
             path: "Tests/solstoneTests",

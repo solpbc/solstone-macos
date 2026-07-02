@@ -11,7 +11,7 @@ final class WatchdogCoordinator {
     private var recentRelaunches: [Date] = []
     private var pollTimer: Timer?
     private var lastKnownObserverPID: Int32?
-    private let targetBundleID = SolMacIPCConstants.appBundleIdentifier
+    private let targetBundleID = SolstoneIdentity.bundleIdentifier
 
     func start() {
         let runningApplications = NSWorkspace.shared.runningApplications

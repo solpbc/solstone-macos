@@ -203,26 +203,22 @@ struct JournalHealthCheckTests {
         #expect(sanitized == "~/path \(String(repeating: "x", count: 32))…")
     }
 
-    @Test func appProbeChecksMapsPermissionsAndIPC() throws {
+    @Test func appProbeChecksMapsPermissions() throws {
         let unknown = appProbeChecks(
             screenRecordingGranted: true,
             microphoneGranted: true,
-            permissionCheckComplete: false,
-            ipcServiceRunning: true
+            permissionCheckComplete: false
         )
         #expect(try #require(unknown.check(named: "screen recording")).status == .warn)
         #expect(try #require(unknown.check(named: "microphone")).status == .warn)
-        #expect(try #require(unknown.check(named: "ipc service")).status == .ok)
 
         let denied = appProbeChecks(
             screenRecordingGranted: false,
             microphoneGranted: false,
-            permissionCheckComplete: true,
-            ipcServiceRunning: false
+            permissionCheckComplete: true
         )
         #expect(try #require(denied.check(named: "screen recording")).status == .fail)
         #expect(try #require(denied.check(named: "microphone")).status == .fail)
-        #expect(try #require(denied.check(named: "ipc service")).status == .warn)
     }
 
     private func fixture(_ name: String) -> Data {

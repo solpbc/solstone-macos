@@ -66,10 +66,6 @@ public struct AppConfig: Sendable {
         "observerName"
     ]
 
-    public static func isKnownKey(_ key: String) -> Bool {
-        knownKeys.contains(key)
-    }
-
     private enum Keys {
         static let microphonePriority = "microphonePriority"
         static let excludedApps = "excludedApps"
@@ -196,7 +192,7 @@ public struct AppConfig: Sendable {
 
     /// Loads config from UserDefaults
     public static func load() -> AppConfig {
-        CFPreferencesAppSynchronize(SolMacIPCConstants.appBundleIdentifier as CFString)
+        CFPreferencesAppSynchronize(SolstoneIdentity.bundleIdentifier as CFString)
         let defaults = UserDefaults.standard
 
         // Load microphonePriority from JSON data

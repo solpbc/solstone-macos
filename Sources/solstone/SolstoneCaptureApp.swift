@@ -24,12 +24,22 @@ public enum DockMode: String {
 /// Takes the authoritative window-open Bool (`.settings ∈ openSceneIds`), deliberately not ScenePhase.
 func shouldRenderSettingsContent(settingsWindowOpen: Bool) -> Bool { settingsWindowOpen }
 
+@MainActor
+func routeOpenSettingsWindow(
+    appState: AppState,
+    openWindow: (String) -> Void,
+    activate: () -> Void
+) {
+    openWindow(SolstoneSceneID.settings.rawValue)
+    appState.didOpenWindow(.settings)
+    activate()
+}
+
 /// Handles app termination to ensure pending remixes complete
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuTrackingObserver: Any?
     private var notificationObservers: [Any] = []
-    private var ipcService: SolMacIPCService?
     private var solChatNotificationDelegate: SolChatNotificationDelegate?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -88,12 +98,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await state.bootstrapNotificationAuthorization() }
 
             state.reevaluateActivationPolicy(debounced: false)
-            SolMacSymlinkInstaller.ensureInstalled()
-            let responder = SolMacResponder(appState: state)
-            let service = SolMacIPCService(responder: responder)
-            service.start()
-            state.ipcServiceRunning = service.isRunning
-            ipcService = service
             Task { await state.startBundledJournalDetectionIfNeeded() }
             state.startTunnelLifecycleOwner()
         } else {
@@ -115,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSApp.activate(ignoringOtherApps: true)
                 } else {
                     Logger.general.info("applicationShouldHandleReopen: no settings NSWindow found; posting open settings notification")
-                    NotificationCenter.default.post(name: .solMacOpenSettings, object: nil)
+                    NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
                 }
             } else {
                 Logger.general.error("AppState.shared nil in applicationShouldHandleReopen")
@@ -146,7 +150,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             Logger.general.error("AppState.shared nil in applicationWillTerminate")
         }
-        ipcService?.stop()
         Logger.general.info("Termination: starting shutdown...")
 
         // Request time to complete pending work before termination
@@ -398,10 +401,12 @@ private struct StatusIcon: View {
                     }
                 )
             }
-            .onReceive(NotificationCenter.default.publisher(for: .solMacOpenSettings)) { _ in
-                openWindow(id: "settings")
-                appState.didOpenWindow(.settings)
-                NSApp.activate(ignoringOtherApps: true)
+            .onReceive(NotificationCenter.default.publisher(for: .openSettingsWindow)) { _ in
+                routeOpenSettingsWindow(
+                    appState: appState,
+                    openWindow: { openWindow(id: $0) },
+                    activate: { NSApp.activate(ignoringOtherApps: true) }
+                )
             }
     }
 

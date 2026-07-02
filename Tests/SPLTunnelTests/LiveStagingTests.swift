@@ -4,7 +4,7 @@
 // Live staging dial test. Env-gated via SPL_LIVE_STAGING=1.
 //
 // OPERATOR PRECONDITIONS:
-//   1. A real spl/pl pairing must already be in the login keychain (run `sol-mac spl pair`).
+//   1. A real spl/pl pairing must already be in the Data Protection keychain (paired via the app's Settings pairing flow).
 //   2. Network access to spl-relay-staging.jer-3f2.workers.dev must work.
 //   3. The home device must be online and accepting connections.
 //   4. Run from an interactive shell - keychain prompts may appear.

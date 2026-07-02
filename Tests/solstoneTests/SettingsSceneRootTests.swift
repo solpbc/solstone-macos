@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import Foundation
 import Testing
 @testable import solstone
 
@@ -13,6 +14,32 @@ struct SettingsSceneRootTests {
 
     @Test func openSettingsWindowRendersSettingsContent() {
         #expect(shouldRenderSettingsContent(settingsWindowOpen: true))
+    }
+
+    @Test func openSettingsWindowNotificationRoutesToSettingsContent() {
+        let state = AppState.forSnapshot()
+        state.dockMode = .alwaysAccessory
+        let center = NotificationCenter()
+        var openedWindowID: String?
+        var activationRequested = false
+
+        let observer = center.addObserver(forName: .openSettingsWindow, object: nil, queue: nil) { _ in
+            MainActor.assumeIsolated {
+                routeOpenSettingsWindow(
+                    appState: state,
+                    openWindow: { openedWindowID = $0 },
+                    activate: { activationRequested = true }
+                )
+            }
+        }
+        defer { center.removeObserver(observer) }
+
+        center.post(name: .openSettingsWindow, object: nil)
+
+        #expect(openedWindowID == SolstoneSceneID.settings.rawValue)
+        #expect(state.openSceneIds.contains(.settings))
+        #expect(shouldRenderSettingsContent(settingsWindowOpen: state.openSceneIds.contains(.settings)))
+        #expect(activationRequested)
     }
 
     @Test func settingsContentGateTracksOpenSceneMembershipWithoutLatch() {

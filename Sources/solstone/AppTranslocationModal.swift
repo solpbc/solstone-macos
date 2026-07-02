@@ -7,12 +7,16 @@ import SolstoneCore
 
 @MainActor
 public enum AppTranslocationModal {
+    static let translocationModalTitle = "solstone needs to be moved"
+    static let translocationModalBody = "solstone is running from a temporary location. Move solstone.app to /Applications and re-launch."
+    static let translocationModalButton = "Quit solstone"
+
     public static func presentAndQuit() {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = SolMacCopy.TRANSLOCATION_MODAL_TITLE
-        alert.informativeText = SolMacCopy.TRANSLOCATION_MODAL_BODY
-        alert.addButton(withTitle: SolMacCopy.TRANSLOCATION_MODAL_BUTTON)
+        alert.messageText = translocationModalTitle
+        alert.informativeText = translocationModalBody
+        alert.addButton(withTitle: translocationModalButton)
         NSApp.activate(ignoringOtherApps: true)
         _ = alert.runModal()
 
