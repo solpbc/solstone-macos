@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Entitlements for the top-level solstone.app ONLY. The bundled python3.13 and other
+     helper binaries are signed with the base entitlements.plist (no keychain), because a
+     helper carries no embedded provisioning profile and the restricted keychain-access-groups
+     / application-identifier entitlements would be rejected by amfi (SIGKILL / exit 137) on a
+     profile-less binary. Only the .app embeds Contents/embedded.provisionprofile, which
+     authorizes 7QCG8V4M6H.* for these keychain entitlements. -->
+<dict>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <!-- Data Protection keychain access for the SPL pairing bundle. The group string MUST match
+         SPLKeychain.baseQuery's kSecAttrAccessGroup exactly (7QCG8V4M6H.app.solstone.observer.spl)
+         or DP-keychain access fails at runtime with errSecMissingEntitlement (-34018). -->
+    <key>com.apple.application-identifier</key>
+    <string>7QCG8V4M6H.app.solstone.observer</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>7QCG8V4M6H</string>
+    <key>keychain-access-groups</key>
+    <array>
+        <string>7QCG8V4M6H.app.solstone.observer.spl</string>
+    </array>
+</dict>
+</plist>

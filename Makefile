@@ -37,6 +37,10 @@ DMG_NAME               ?= solstone-$(DIST_VERSION).dmg
 SPARKLE_ARTIFACT_DIR   ?= .build/artifacts/sparkle/Sparkle
 SPARKLE_FRAMEWORK      ?= $(SPARKLE_ARTIFACT_DIR)/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
 ENTITLEMENTS_PLIST     := Sources/solstone/entitlements.plist
+# App-only entitlements (adds the DP-keychain keychain-access-groups). Helpers like the
+# bundled python3.13 keep the base ENTITLEMENTS_PLIST — a profile-less helper signed with
+# the restricted keychain entitlements is SIGKILLed by amfi (exit 137).
+APP_ENTITLEMENTS_PLIST := Sources/solstone/entitlements-app.plist
 
 # uv vendoring
 UV_VERSION ?= 0.11.13
@@ -471,7 +475,7 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 	@(cd solstone.app/Contents/Resources/wheelhouse && shasum -a 256 -c MANIFEST.sha256) || { echo "error: bundled signed wheelhouse sha256 manifest verification failed"; exit 1; }
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		--entitlements "$(ENTITLEMENTS_PLIST)" \
+		--entitlements "$(APP_ENTITLEMENTS_PLIST)" \
 		solstone.app
 	@VERIFY_OUT="$$(mktemp -t solstone-codesign-verify)"; \
 		if codesign --verify --strict --deep --verbose=2 solstone.app >"$$VERIFY_OUT" 2>&1; then \
@@ -482,7 +486,7 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 			rm -rf solstone.app/Contents/Resources/python/lib/python3.13/encodings/__pycache__; \
 			codesign --force --options runtime --timestamp \
 				--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-				--entitlements "$(ENTITLEMENTS_PLIST)" \
+				--entitlements "$(APP_ENTITLEMENTS_PLIST)" \
 				solstone.app; \
 			codesign --verify --strict --deep --verbose=2 solstone.app; \
 			rm -f "$$VERIFY_OUT"; \
