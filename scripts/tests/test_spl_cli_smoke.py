@@ -4,6 +4,12 @@ import unittest
 
 
 class SPLCLISmokeTest(unittest.TestCase):
+    @unittest.skip(
+        "sol-mac SPL keychain access was intentionally removed by the Data Protection "
+        "keychain migration: a bare, unentitled CLI cannot hold the keychain-access-groups "
+        "entitlement the DP keychain requires, so `sol-mac spl status/unpair` now returns "
+        "keychain_failed (-34018) instead of 0. sol-mac CLI retirement is tracked separately."
+    )
     def test_status_and_unpair_on_empty_keychain(self):
         root = pathlib.Path(__file__).resolve().parents[2]
 
