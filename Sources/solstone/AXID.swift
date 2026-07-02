@@ -256,6 +256,7 @@ enum AXID {
         static let downloadState = "updates.action.download.state"
         static let install = "updates.action.install"
         static let dismiss = "updates.action.dismiss"
+        static let dismissStaged = "updates.action.dismissStaged"
         static let retry = "updates.action.retry"
         static let retryState = "updates.action.retry.state"
         static let checkAgainState = "updates.action.checkAgain.state"

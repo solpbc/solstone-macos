@@ -89,98 +89,119 @@ struct UpdatesTabView: View {
                     .accessibilityIdentifier(AXID.Updates.cancel)
             }
         default:
-            HStack(spacing: 8) {
-                Button(
-                    controller.lastCheckedAt == nil ? UpdatesCopy.actionCheckNow : UpdatesCopy.actionCheckAgain,
-                    action: controller.checkForUpdates
-                )
-                .disabled(!controller.canStartManualCheck)
-                .accessibilityIdentifier(AXID.Updates.check)
-                AXStateCompanion(
-                    id: AXID.Updates.checkState,
-                    value: axEnabledString(controller.canStartManualCheck)
-                )
+            VStack(alignment: .trailing, spacing: 4) {
+                HStack(spacing: 8) {
+                    Button(
+                        controller.lastCheckedAt == nil ? UpdatesCopy.actionCheckNow : UpdatesCopy.actionCheckAgain,
+                        action: controller.checkForUpdates
+                    )
+                    .disabled(!controller.canStartManualCheck)
+                    .accessibilityIdentifier(AXID.Updates.check)
+                    AXStateCompanion(
+                        id: AXID.Updates.checkState,
+                        value: axEnabledString(controller.canStartManualCheck)
+                    )
+                }
+                actionReasonText(isEnabled: controller.canStartManualCheck, alignment: .trailing)
             }
         }
     }
 
     @ViewBuilder
     private var transientBlock: some View {
-        switch controller.activity {
-        case .idle:
-            idleTransientBlock
+        let status = controller.durableUpdateStatus
+        switch updatesPaneBlock(
+            status: status,
+            activity: controller.activity,
+            backgroundDownload: controller.backgroundDownload,
+            stagedBlockSuppressed: controller.stagedBlockSuppressed
+        ) {
         case .checking:
             EmptyView()
-        case .downloading(let version, let receivedBytes, let totalBytes):
-            titleBlock(
-                title: UpdatesCopy.downloadingTitle(version: version),
-                subtitle: UpdatesCopy.downloadingSubtitle(receivedBytes: receivedBytes, totalBytes: totalBytes)
-            )
-            progressView(receivedBytes: receivedBytes, totalBytes: totalBytes)
-            actionRow(
-                primaryTitle: UpdatesCopy.actionCancel,
-                primaryAction: controller.cancel,
-                primaryID: AXID.Updates.cancel
-            )
-        case .extracting(let version, let progress):
-            titleBlock(
-                title: UpdatesCopy.extractingTitle(version: version),
-                subtitle: UpdatesCopy.extractingSubtitle
-            )
-            ProgressView(value: min(max(0.9 + (progress * 0.1), 0.9), 1.0))
-            AXStateCompanion(
-                id: AXID.Updates.extractProgress,
-                value: axPercentString(progress)
-            )
-            actionRow(primaryTitle: nil, primaryAction: nil)
-        case .readyToInstall(let version, let releaseNotes):
-            titleBlock(
-                title: UpdatesCopy.readyToInstallTitle(version: version),
-                subtitle: UpdatesCopy.readyToInstallSubtitle
-            )
-            releaseNotesSection(releaseNotes)
-            actionRow(
-                primaryTitle: UpdatesCopy.actionInstall,
-                primaryAction: controller.install,
-                primaryID: AXID.Updates.install,
-                secondaryTitle: UpdatesCopy.actionDismiss,
-                secondaryAction: controller.dismiss,
-                secondaryID: AXID.Updates.dismiss
-            )
-        case .installing(let version):
-            titleBlock(
-                title: UpdatesCopy.installingTitle(version: version),
-                subtitle: UpdatesCopy.installingSubtitle
-            )
-            ProgressView()
-        }
-    }
-
-    @ViewBuilder
-    private var idleTransientBlock: some View {
-        let status = controller.durableUpdateStatus
-        switch updatesPaneIdleBlock(for: status) {
-        case .deferredBlock:
+        case .downloading:
+            if case .downloading(let version, let receivedBytes, let totalBytes) = controller.activity {
+                titleBlock(
+                    title: UpdatesCopy.downloadingTitle(version: version),
+                    subtitle: UpdatesCopy.downloadingSubtitle(receivedBytes: receivedBytes, totalBytes: totalBytes)
+                )
+                progressView(receivedBytes: receivedBytes, totalBytes: totalBytes)
+                actionRow(
+                    primaryTitle: UpdatesCopy.actionCancel,
+                    primaryAction: controller.cancel,
+                    primaryID: AXID.Updates.cancel
+                )
+            }
+        case .extracting:
+            if case .extracting(let version, let progress) = controller.activity {
+                titleBlock(
+                    title: UpdatesCopy.extractingTitle(version: version),
+                    subtitle: UpdatesCopy.extractingSubtitle
+                )
+                ProgressView(value: min(max(0.9 + (progress * 0.1), 0.9), 1.0))
+                AXStateCompanion(
+                    id: AXID.Updates.extractProgress,
+                    value: axPercentString(progress)
+                )
+                actionRow(primaryTitle: nil, primaryAction: nil)
+            }
+        case .readyToInstall:
+            if case .readyToInstall(let version, let releaseNotes) = controller.activity {
+                titleBlock(
+                    title: UpdatesCopy.readyToInstallTitle(version: version),
+                    subtitle: UpdatesCopy.readyToInstallSubtitle
+                )
+                releaseNotesSection(releaseNotes)
+                actionRow(
+                    primaryTitle: UpdatesCopy.actionInstall,
+                    primaryAction: controller.install,
+                    primaryID: AXID.Updates.install,
+                    secondaryTitle: UpdatesCopy.actionDismiss,
+                    secondaryAction: controller.dismiss,
+                    secondaryID: AXID.Updates.dismiss
+                )
+            }
+        case .installing:
+            if case .installing(let version) = controller.activity {
+                titleBlock(
+                    title: UpdatesCopy.installingTitle(version: version),
+                    subtitle: UpdatesCopy.installingSubtitle
+                )
+                ProgressView()
+            }
+        case .backgroundDownloading:
+            if let backgroundDownload = controller.backgroundDownload {
+                backgroundDownloadBlock(backgroundDownload)
+            }
+        case .deferred:
             if case .deferred(let version) = status {
                 deferredBlock(version: version)
             }
-        case .stagedReadyBlock:
+        case .stagedReady:
             if case .staged(let version, let releaseNotes) = status {
                 stagedReadyBlock(AvailableUpdate(version: version, releaseNotes: releaseNotes))
             }
-        case .failedBlock:
+        case .failed:
             if case .failedWithAvailable(let version) = status {
                 failedBlock(availableVersion: version)
             } else {
                 failedBlock(availableVersion: nil)
             }
-        case .availableBlock:
+        case .available:
             if case .available(let version, let releaseNotes) = status {
                 availableBlock(AvailableUpdate(version: version, releaseNotes: releaseNotes))
             }
         case .empty:
             EmptyView()
         }
+    }
+
+    @ViewBuilder
+    private func backgroundDownloadBlock(_ phase: BackgroundDownloadPhase) -> some View {
+        titleBlock(
+            title: backgroundDownloadTitle(for: phase),
+            subtitle: UpdatesCopy.backgroundDownloadSubtitle
+        )
+        ProgressView()
     }
 
     @ViewBuilder
@@ -199,6 +220,7 @@ struct UpdatesTabView: View {
             primaryID: AXID.Updates.check,
             primaryDisabled: !controller.canCheckAgainFromDeferred
         )
+        actionReasonText(isEnabled: controller.canCheckAgainFromDeferred)
         AXStateCompanion(
             id: AXID.Updates.checkAgainState,
             value: axEnabledString(controller.canCheckAgainFromDeferred)
@@ -215,7 +237,10 @@ struct UpdatesTabView: View {
         actionRow(
             primaryTitle: UpdatesCopy.actionRelaunchToInstall,
             primaryAction: relaunchToInstallStagedUpdate,
-            primaryID: AXID.Updates.install
+            primaryID: AXID.Updates.install,
+            secondaryTitle: UpdatesCopy.actionDismiss,
+            secondaryAction: controller.suppressStagedBlock,
+            secondaryID: AXID.Updates.dismissStaged
         )
     }
 
@@ -243,6 +268,7 @@ struct UpdatesTabView: View {
                 primaryDisabled: !controller.canRetry
             )
         }
+        actionReasonText(isEnabled: controller.canRetry)
         AXStateCompanion(
             id: AXID.Updates.retryState,
             value: axEnabledString(controller.canRetry)
@@ -274,6 +300,7 @@ struct UpdatesTabView: View {
                 primaryDisabled: !controller.canDownload
             )
         }
+        actionReasonText(isEnabled: controller.canDownload)
         AXStateCompanion(
             id: AXID.Updates.downloadState,
             value: axEnabledString(controller.canDownload)
@@ -286,6 +313,29 @@ struct UpdatesTabView: View {
         }
 
         return UpdatesCopy.errorMessage()
+    }
+
+    private func backgroundDownloadTitle(for phase: BackgroundDownloadPhase) -> String {
+        switch phase {
+        case .downloading(let version):
+            return UpdatesCopy.backgroundDownloadingTitle(version: version)
+        case .finishingUp(let version):
+            return UpdatesCopy.backgroundFinishingTitle(version: version)
+        }
+    }
+
+    @ViewBuilder
+    private func actionReasonText(isEnabled: Bool, alignment: TextAlignment = .leading) -> some View {
+        if let reason = updatesPaneReason(
+            isEnabled: isEnabled,
+            backgroundDownload: controller.backgroundDownload,
+            liveness: controller.updatesPaneLiveness
+        ) {
+            Text(reason)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(alignment)
+        }
     }
 
     private var autoUpdateGroupBox: some View {
@@ -505,27 +555,108 @@ enum FrequencyOption: String, CaseIterable, Identifiable {
     }
 }
 
-enum UpdatesPaneIdleBlock: Equatable {
-    case deferredBlock
-    case stagedReadyBlock
-    case failedBlock
-    case availableBlock
+enum UpdatesPaneBlock: Equatable {
+    case checking
+    case downloading
+    case extracting
+    case readyToInstall
+    case installing
+    case backgroundDownloading
+    case deferred
+    case stagedReady
+    case failed
+    case available
     case empty
 }
 
-func updatesPaneIdleBlock(for status: DurableUpdateStatus) -> UpdatesPaneIdleBlock {
+func updatesPaneBlock(
+    status: DurableUpdateStatus,
+    activity: UpdateActivity,
+    backgroundDownload: BackgroundDownloadPhase?,
+    stagedBlockSuppressed: Bool
+) -> UpdatesPaneBlock {
+    switch activity {
+    case .idle:
+        break
+    case .checking:
+        return .checking
+    case .downloading:
+        return .downloading
+    case .extracting:
+        return .extracting
+    case .readyToInstall:
+        return .readyToInstall
+    case .installing:
+        return .installing
+    }
+
+    if backgroundDownload != nil {
+        return .backgroundDownloading
+    }
+
     switch status {
     case .deferred:
-        return .deferredBlock
+        return .deferred
     case .staged:
-        return .stagedReadyBlock
+        return stagedBlockSuppressed ? .empty : .stagedReady
     case .failedWithAvailable, .failed:
-        return .failedBlock
+        return .failed
     case .available:
-        return .availableBlock
+        return .available
     case .upToDate, .idle:
         return .empty
     }
+}
+
+struct UpdatesPaneLiveness: Equatable, Sendable {
+    var canCheckForUpdates: Bool
+    var sparkleSessionInProgress: Bool
+    var activity: UpdateActivity
+    var hasPendingChoiceReply: Bool
+    var hasPendingCancellation: Bool
+    var installFinalizationInFlight: Bool
+    var installFinalizationCommitted: Bool
+
+    var hasLiveSparkleSessionOrReply: Bool {
+        sparkleSessionInProgress
+            || activity != .idle
+            || hasPendingChoiceReply
+            || hasPendingCancellation
+            || installFinalizationInFlight
+            || installFinalizationCommitted
+    }
+
+    var canDriveManualCheck: Bool {
+        canCheckForUpdates && !hasLiveSparkleSessionOrReply
+    }
+}
+
+func updatesPaneReason(
+    isEnabled: Bool,
+    backgroundDownload: BackgroundDownloadPhase?,
+    liveness: UpdatesPaneLiveness
+) -> String? {
+    guard !isEnabled else { return nil }
+    guard liveness.canCheckForUpdates else { return UpdatesCopy.actionReasonUpdatesUnavailable }
+
+    switch backgroundDownload {
+    case .downloading:
+        return UpdatesCopy.actionReasonDownloadInProgress
+    case .finishingUp:
+        return UpdatesCopy.actionReasonDownloadFinishing
+    case .none:
+        break
+    }
+
+    if liveness.installFinalizationInFlight || liveness.installFinalizationCommitted {
+        return UpdatesCopy.actionReasonInstallHandoff
+    }
+
+    if liveness.hasPendingChoiceReply {
+        return UpdatesCopy.actionReasonUpdateChoicePending
+    }
+
+    return UpdatesCopy.actionReasonUpdateInProgress
 }
 
 #if DEBUG
@@ -535,6 +666,8 @@ private extension UpdatesTabView {
         case checking
         case updateAvailable
         case downloading
+        case backgroundDownloading
+        case backgroundFinishingUp
         case extracting
         case readyToInstall
         case installing
@@ -580,6 +713,20 @@ private extension UpdatesTabView {
                     activity: .downloading(version: "1.1.0", receivedBytes: 1_048_576, totalBytes: 4_194_304),
                     availableUpdate: AvailableUpdate(version: "1.1.0", releaseNotes: nil),
                     lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found)
+                )
+            case .backgroundDownloading:
+                controller.applyDebugFixture(
+                    activity: .idle,
+                    availableUpdate: AvailableUpdate(version: "1.3.0", releaseNotes: Self._debugReleaseNotes_1_3_0),
+                    lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found),
+                    backgroundDownload: .downloading(version: "1.3.0")
+                )
+            case .backgroundFinishingUp:
+                controller.applyDebugFixture(
+                    activity: .idle,
+                    availableUpdate: AvailableUpdate(version: "1.3.0", releaseNotes: Self._debugReleaseNotes_1_3_0),
+                    lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found),
+                    backgroundDownload: .finishingUp(version: "1.3.0")
                 )
             case .extracting:
                 controller.applyDebugFixture(

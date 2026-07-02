@@ -419,6 +419,7 @@ extension JournalRuntimeStatus {
 
 enum UpdateStatus {
     static let axTokens = UpdateActivity.axTokens + [
+        "downloading_background",
         "deferred_install",
         "update_available",
         "up_to_date",

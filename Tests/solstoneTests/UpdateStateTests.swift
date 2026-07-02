@@ -34,6 +34,7 @@ struct UpdateStateTests {
         func _acceptsSendable<T: Sendable>(_: T.Type) {}
         _acceptsSendable(AvailableUpdate.self)
         _acceptsSendable(UpdateActivity.self)
+        _acceptsSendable(BackgroundDownloadPhase.self)
         _acceptsSendable(ReconciledUpdateStatus.self)
         _acceptsSendable(DeferredInstallIntent.self)
         #expect(Bool(true))

@@ -1,4 +1,5 @@
 import Foundation
+import Sparkle
 import Testing
 @testable import solstone
 
@@ -247,8 +248,7 @@ struct UpdateControllerTests {
         #expect(stagedController.updateIsStaged)
         #expect(stagedController.activity == .idle)
         #expect(!stagedController.hasLiveUpdateReply)
-        // An implementation deriving only from sessionInProgress would wrongly return true here.
-        #expect(!stagedController.canStartManualCheck)
+        #expect(stagedController.canStartManualCheck)
     }
 
     @Test func manualCheckStartsCheckingThroughBeginAndThenNoOpsWhileLive() {
@@ -557,6 +557,252 @@ struct UpdateControllerTests {
         #expect(controller.statusAXToken == "checking")
     }
 
+    @Test func statusAXTokenReportsBackgroundDownloadOnlyWhenIdle() {
+        let controller = makeController()
+        let now = Date()
+
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found),
+            backgroundDownload: .downloading(version: "1.3.9")
+        )
+        #expect(controller.statusAXToken == "downloading_background")
+
+        controller.applyDebugFixture(
+            activity: .extracting(version: "1.3.9", progress: 0.5),
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found),
+            backgroundDownload: .finishingUp(version: "1.3.9")
+        )
+        #expect(controller.statusAXToken == "extracting")
+    }
+
+    @Test func updatesPaneBlockSelectionPrioritizesInteractiveThenBackgroundThenDurable() {
+        #expect(updatesPaneBlock(
+            status: .available(version: "1.3.9", releaseNotes: nil),
+            activity: .downloading(version: "1.3.9", receivedBytes: 1, totalBytes: 2),
+            backgroundDownload: .finishingUp(version: "1.3.9"),
+            stagedBlockSuppressed: false
+        ) == .downloading)
+        #expect(updatesPaneBlock(
+            status: .available(version: "1.3.9", releaseNotes: nil),
+            activity: .extracting(version: "1.3.9", progress: 0.5),
+            backgroundDownload: .downloading(version: "1.3.9"),
+            stagedBlockSuppressed: false
+        ) == .extracting)
+        #expect(updatesPaneBlock(
+            status: .available(version: "1.3.9", releaseNotes: nil),
+            activity: .idle,
+            backgroundDownload: .downloading(version: "1.3.9"),
+            stagedBlockSuppressed: false
+        ) == .backgroundDownloading)
+        #expect(updatesPaneBlock(
+            status: .staged(version: "1.3.9", releaseNotes: nil),
+            activity: .idle,
+            backgroundDownload: nil,
+            stagedBlockSuppressed: true
+        ) == .empty)
+    }
+
+    @Test func updatesPaneReasonsCoverDisabledPrimaryActions() {
+        let idle = UpdatesPaneLiveness(
+            canCheckForUpdates: true,
+            sparkleSessionInProgress: false,
+            activity: .idle,
+            hasPendingChoiceReply: false,
+            hasPendingCancellation: false,
+            installFinalizationInFlight: false,
+            installFinalizationCommitted: false
+        )
+        let unavailable = UpdatesPaneLiveness(
+            canCheckForUpdates: false,
+            sparkleSessionInProgress: false,
+            activity: .idle,
+            hasPendingChoiceReply: false,
+            hasPendingCancellation: false,
+            installFinalizationInFlight: false,
+            installFinalizationCommitted: false
+        )
+        let liveSessionNoReply = UpdatesPaneLiveness(
+            canCheckForUpdates: true,
+            sparkleSessionInProgress: true,
+            activity: .idle,
+            hasPendingChoiceReply: false,
+            hasPendingCancellation: false,
+            installFinalizationInFlight: false,
+            installFinalizationCommitted: false
+        )
+        let pendingReply = UpdatesPaneLiveness(
+            canCheckForUpdates: true,
+            sparkleSessionInProgress: false,
+            activity: .idle,
+            hasPendingChoiceReply: true,
+            hasPendingCancellation: false,
+            installFinalizationInFlight: false,
+            installFinalizationCommitted: false
+        )
+        let pendingCancellation = UpdatesPaneLiveness(
+            canCheckForUpdates: true,
+            sparkleSessionInProgress: false,
+            activity: .idle,
+            hasPendingChoiceReply: false,
+            hasPendingCancellation: true,
+            installFinalizationInFlight: false,
+            installFinalizationCommitted: false
+        )
+        let checking = UpdatesPaneLiveness(
+            canCheckForUpdates: true,
+            sparkleSessionInProgress: false,
+            activity: .checking,
+            hasPendingChoiceReply: false,
+            hasPendingCancellation: false,
+            installFinalizationInFlight: false,
+            installFinalizationCommitted: false
+        )
+        let finalizing = UpdatesPaneLiveness(
+            canCheckForUpdates: true,
+            sparkleSessionInProgress: false,
+            activity: .idle,
+            hasPendingChoiceReply: false,
+            hasPendingCancellation: false,
+            installFinalizationInFlight: true,
+            installFinalizationCommitted: false
+        )
+        let committed = UpdatesPaneLiveness(
+            canCheckForUpdates: true,
+            sparkleSessionInProgress: false,
+            activity: .idle,
+            hasPendingChoiceReply: false,
+            hasPendingCancellation: false,
+            installFinalizationInFlight: false,
+            installFinalizationCommitted: true
+        )
+
+        let disabledCases: [(String, BackgroundDownloadPhase?, UpdatesPaneLiveness)] = [
+            ("updates unavailable", nil, unavailable),
+            ("found-to-willDownload live session", nil, liveSessionNoReply),
+            ("background downloading", .downloading(version: "1.3.9"), liveSessionNoReply),
+            ("background finishing", .finishingUp(version: "1.3.9"), liveSessionNoReply),
+            ("pending choice reply", nil, pendingReply),
+            ("pending cancellation", nil, pendingCancellation),
+            ("interactive activity", nil, checking),
+            ("install finalization in flight", nil, finalizing),
+            ("install finalization committed", nil, committed)
+        ]
+
+        for (name, backgroundDownload, liveness) in disabledCases {
+            let reason = updatesPaneReason(
+                isEnabled: false,
+                backgroundDownload: backgroundDownload,
+                liveness: liveness
+            )
+            #expect(reason?.isEmpty == false, "expected disabled reason for \(name)")
+        }
+
+        #expect(updatesPaneReason(
+            isEnabled: true,
+            backgroundDownload: .downloading(version: "1.3.9"),
+            liveness: idle
+        ) == nil)
+
+        clearDefaults()
+        defer { clearDefaults() }
+        let spy = SpyUpdater(sessionInProgress: true)
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            spy
+        }
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .found)
+        )
+
+        #expect(!controller.canDownload)
+        #expect(updatesPaneReason(
+            isEnabled: controller.canDownload,
+            backgroundDownload: controller.backgroundDownload,
+            liveness: controller.updatesPaneLiveness
+        )?.isEmpty == false)
+    }
+
+    @Test func backgroundCopyUsesVersionAndVersionlessFallbacksWithoutTrailingSpaces() {
+        #expect(UpdatesCopy.backgroundDownloadingTitle(version: "1.3.9") == "downloading 1.3.9 in the background…")
+        #expect(UpdatesCopy.backgroundDownloadingTitle(version: nil) == "downloading an update in the background…")
+        #expect(UpdatesCopy.backgroundFinishingTitle(version: "1.3.9") == "finishing up 1.3.9 in the background…")
+        #expect(UpdatesCopy.backgroundFinishingTitle(version: nil) == "finishing up in the background…")
+        #expect(!UpdatesCopy.backgroundDownloadingTitle(version: nil).hasSuffix(" "))
+        #expect(!UpdatesCopy.backgroundFinishingTitle(version: nil).hasSuffix(" "))
+    }
+
+    @Test func suppressingStagedBlockHidesOnlyPaneBlockAndKeepsDurableAttention() {
+        let controller = makeController()
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .staged)
+        )
+
+        controller.suppressStagedBlock()
+
+        #expect(controller.stagedBlockSuppressed)
+        #expect(controller.durableUpdateStatus == .staged(version: "1.3.9", releaseNotes: nil))
+        #expect(controller.updatesNeedAttention)
+        #expect(controller.statusAXToken == "staged_ready")
+        #expect(updatesSidebarBadge(for: controller.durableUpdateStatus) == .attention)
+        #expect(updatesPaneBlock(
+            status: controller.durableUpdateStatus,
+            activity: controller.activity,
+            backgroundDownload: controller.backgroundDownload,
+            stagedBlockSuppressed: controller.stagedBlockSuppressed
+        ) == .empty)
+    }
+
+    @Test func recheckFromStagedUsesNormalCheckAndSameVersionRefindPreservesStaged() {
+        clearDefaults()
+        defer { clearDefaults() }
+        let spy = SpyUpdater()
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            spy
+        }
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: "old notes"),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .staged)
+        )
+
+        #expect(controller.canStartManualCheck)
+        controller.checkForUpdates()
+        #expect(spy.checkForUpdatesCallCount == 1)
+        #expect(controller.activity == .idle)
+
+        controller.ingestFoundUpdate(version: "1.3.9", releaseNotes: "new notes")
+        #expect(controller.updateIsStaged)
+        #expect(controller.durableUpdateStatus == .staged(version: "1.3.9", releaseNotes: "new notes"))
+
+        controller.ingestFoundUpdate(version: "1.4.0", releaseNotes: nil)
+        #expect(!controller.updateIsStaged)
+        #expect(controller.durableUpdateStatus == .available(version: "1.4.0", releaseNotes: nil))
+
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .staged)
+        )
+        controller.ingestCycleFinished(error: sparkleError(.noUpdateError))
+        #expect(controller.activity == .idle)
+        #expect(!controller.updateIsStaged)
+        #expect(controller.durableUpdateStatus == .upToDate)
+    }
+
     @Test func absentExclusivityProviderDefaultsToNeverExclusive() {
         let controller = makeController()
 
@@ -574,5 +820,9 @@ struct UpdateControllerTests {
 
     private func clearDefaults() {
         isolatedDefaults.clear()
+    }
+
+    private func sparkleError(_ code: SUError) -> NSError {
+        NSError(domain: SUSparkleErrorDomain, code: Int(code.rawValue))
     }
 }

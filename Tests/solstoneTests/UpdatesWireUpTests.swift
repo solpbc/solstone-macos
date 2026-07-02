@@ -16,6 +16,7 @@ struct UpdatesWireUpTests {
             "AXID.Updates.check",
             "AXID.Updates.download",
             "AXID.Updates.dismiss",
+            "AXID.Updates.dismissStaged",
             "AXID.Updates.extractProgress",
             "AXID.Updates.install",
             "AXID.Updates.retry",

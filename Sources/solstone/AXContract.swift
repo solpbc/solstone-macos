@@ -146,6 +146,7 @@ enum AXContract {
         AXID.Updates.downloadState,
         AXID.Updates.install,
         AXID.Updates.dismiss,
+        AXID.Updates.dismissStaged,
         AXID.Updates.retry,
         AXID.Updates.retryState,
         AXID.Updates.checkAgainState,

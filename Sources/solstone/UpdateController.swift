@@ -33,10 +33,12 @@ final class UpdateController {
     private static let legacyLastCheckResultKey = "solstone.updates.lastCheckResult"
 
     private(set) var activity: UpdateActivity = .idle
+    private(set) var backgroundDownload: BackgroundDownloadPhase? = nil
     private(set) var reconciledStatus: ReconciledUpdateStatus
     private(set) var availableUpdate: AvailableUpdate?
     private(set) var deferredInstallIntent: DeferredInstallIntent?
     private(set) var exclusiveOperationInProgress = false
+    private(set) var stagedBlockSuppressed = false
 
     private(set) var canCheckForUpdates: Bool
 
@@ -295,6 +297,11 @@ final class UpdateController {
         recoverCommittedInstallFinalization()
     }
 
+    func suppressStagedBlock() {
+        guard updateIsStaged else { return }
+        stagedBlockSuppressed = true
+    }
+
     func shouldAllowSparkleUpdateCheck(_ updateCheck: SPUUpdateCheck) -> Bool {
         guard exclusiveOperationInProgress else { return true }
 
@@ -489,24 +496,36 @@ final class UpdateController {
         !updateIsAvailable && reconciledStatus.lastCheck?.outcome == .upToDate
     }
 
-    private var canDriveManualCheck: Bool {
+    var canStartManualCheck: Bool {
         canCheckForUpdates && !hasLiveSparkleSessionOrReply
     }
 
-    var canStartManualCheck: Bool {
-        canDriveManualCheck && !updateIsStaged
-    }
-
     var canRetry: Bool {
-        canDriveManualCheck
+        canStartManualCheck
     }
 
     var canCheckAgainFromDeferred: Bool {
-        canDriveManualCheck
+        canStartManualCheck
     }
 
     var canDownload: Bool {
-        canActOnAvailableUpdateDirectly || canDriveManualCheck
+        canActOnAvailableUpdateDirectly || canStartManualCheck
+    }
+
+    var updatesPaneLiveness: UpdatesPaneLiveness {
+        currentUpdatesPaneLiveness
+    }
+
+    private var currentUpdatesPaneLiveness: UpdatesPaneLiveness {
+        UpdatesPaneLiveness(
+            canCheckForUpdates: canCheckForUpdates,
+            sparkleSessionInProgress: sparkleSessionInProgress,
+            activity: activity,
+            hasPendingChoiceReply: pendingChoiceReply != nil,
+            hasPendingCancellation: pendingCancellation != nil,
+            installFinalizationInFlight: installFinalizationInFlight,
+            installFinalizationCommitted: installFinalizationCommitted
+        )
     }
 
     var durableUpdateStatus: DurableUpdateStatus {
@@ -539,6 +558,10 @@ final class UpdateController {
     var statusAXToken: String {
         switch activity {
         case .idle:
+            if backgroundDownload != nil {
+                return "downloading_background"
+            }
+
             switch durableUpdateStatus {
             case .deferred:
                 return "deferred_install"
@@ -564,12 +587,16 @@ final class UpdateController {
         availableUpdate: AvailableUpdate? = nil,
         lastCheck: ReconciledUpdateStatus.LastCheck? = nil,
         deferredInstallIntent: DeferredInstallIntent? = nil,
+        backgroundDownload: BackgroundDownloadPhase? = nil,
+        stagedBlockSuppressed: Bool = false,
         hasLiveChoiceReply: Bool = false,
         choiceReply: ((SPUUserUpdateChoice) -> Void)? = nil
     ) {
         self.activity = activity
+        self.backgroundDownload = backgroundDownload
         self.availableUpdate = availableUpdate
         self.deferredInstallIntent = deferredInstallIntent
+        self.stagedBlockSuppressed = stagedBlockSuppressed
         self.reconciledStatus = ReconciledUpdateStatus(
             availableVersion: availableUpdate?.version,
             lastCheck: lastCheck
@@ -590,7 +617,17 @@ final class UpdateController {
         recordFoundUpdate(version: version, releaseNotes: releaseNotes)
     }
 
+    func ingestBackgroundDownloadStarted(version: String?) {
+        backgroundDownload = .downloading(version: version)
+    }
+
+    func ingestBackgroundDownloadFinished(version: String?) {
+        backgroundDownload = .finishingUp(version: version)
+    }
+
     func ingestStagedUpdate(version: String) {
+        backgroundDownload = nil
+        stagedBlockSuppressed = false
         recordStagedUpdate(version: version)
     }
 
@@ -599,6 +636,7 @@ final class UpdateController {
 
         let nsError = error as NSError
         guard nsError.domain == SUSparkleErrorDomain else {
+            backgroundDownload = nil
             recordFailedCheck()
             return
         }
@@ -610,6 +648,7 @@ final class UpdateController {
              Int(SUError.installationAuthorizeLaterError.rawValue):
             return
         default:
+            backgroundDownload = nil
             recordFailedCheck()
         }
     }
@@ -689,12 +728,7 @@ final class UpdateController {
     }
 
     private var hasLiveSparkleSessionOrReply: Bool {
-        sparkleSessionInProgress
-            || activity != .idle
-            || pendingChoiceReply != nil
-            || pendingCancellation != nil
-            || installFinalizationInFlight
-            || installFinalizationCommitted
+        currentUpdatesPaneLiveness.hasLiveSparkleSessionOrReply
     }
 
     private var sparkleSessionInProgress: Bool {
@@ -770,6 +804,15 @@ final class UpdateController {
     }
 
     private func recordFoundUpdate(version: String, releaseNotes: String?, now: Date = Date()) {
+        if reconciledStatus.matches(availableVersion: version, outcome: .staged) {
+            let notes = releaseNotes ?? (availableUpdate?.version == version ? availableUpdate?.releaseNotes : nil)
+            availableUpdate = AvailableUpdate(version: version, releaseNotes: notes)
+            reconciledStatus.availableVersion = version
+            reconciledStatus.lastCheck = ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .staged)
+            persistStatus()
+            return
+        }
+
         guard !reconciledStatus.matches(availableVersion: version, outcome: .found) else { return }
 
         availableUpdate = AvailableUpdate(version: version, releaseNotes: releaseNotes)
@@ -948,6 +991,10 @@ private final class SparkleUpdaterDelegateAdapter: NSObject, SPUUpdaterDelegate 
         controller?.ingestFoundUpdate(version: item.displayVersionString, releaseNotes: item.itemDescription)
     }
 
+    func updater(_ updater: SPUUpdater, willDownloadUpdate item: SUAppcastItem, with request: NSMutableURLRequest) {
+        controller?.ingestBackgroundDownloadStarted(version: backgroundVersion(from: item))
+    }
+
     func updater(
         _ updater: SPUUpdater,
         didFinishUpdateCycleFor updateCheck: SPUUpdateCheck,
@@ -958,6 +1005,7 @@ private final class SparkleUpdaterDelegateAdapter: NSObject, SPUUpdaterDelegate 
 
     func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
         Logger.setup.debug("Sparkle downloaded update \(item.displayVersionString, privacy: .public)")
+        controller?.ingestBackgroundDownloadFinished(version: backgroundVersion(from: item))
     }
 
     func updater(_ updater: SPUUpdater, didExtractUpdate item: SUAppcastItem) {
@@ -980,5 +1028,10 @@ private final class SparkleUpdaterDelegateAdapter: NSObject, SPUUpdaterDelegate 
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) {
         controller?.ingestCycleFinished(error: error)
+    }
+
+    private func backgroundVersion(from item: SUAppcastItem) -> String? {
+        let version = item.displayVersionString.trimmingCharacters(in: .whitespacesAndNewlines)
+        return version.isEmpty ? nil : version
     }
 }

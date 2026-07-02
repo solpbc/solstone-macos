@@ -97,6 +97,13 @@ struct AXContractTests {
             statusToken(
                 controller,
                 activity: .idle,
+                availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
+                lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found),
+                backgroundDownload: .downloading(version: "1.3.9")
+            ),
+            statusToken(
+                controller,
+                activity: .idle,
                 deferredInstallIntent: DeferredInstallIntent(version: "1.3.9", requestedAt: now)
             ),
             statusToken(
@@ -132,13 +139,15 @@ struct AXContractTests {
         activity: UpdateActivity,
         availableUpdate: AvailableUpdate? = nil,
         lastCheck: ReconciledUpdateStatus.LastCheck? = nil,
-        deferredInstallIntent: DeferredInstallIntent? = nil
+        deferredInstallIntent: DeferredInstallIntent? = nil,
+        backgroundDownload: BackgroundDownloadPhase? = nil
     ) -> String {
         controller.applyDebugFixture(
             activity: activity,
             availableUpdate: availableUpdate,
             lastCheck: lastCheck,
-            deferredInstallIntent: deferredInstallIntent
+            deferredInstallIntent: deferredInstallIntent,
+            backgroundDownload: backgroundDownload
         )
         return controller.statusAXToken
     }

@@ -78,6 +78,78 @@ struct SparkleDelegateIngestTests {
         #expect(settingsUpdatesBadgeAXToken(for: harness.controller) == SettingsView.SidebarBadgeState.attention.axToken)
     }
 
+    @Test func silentBackgroundDownloadLifecycleTracksPhaseUntilStagedOrFailure() throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        let harness = try makeHarness()
+        let item = try appcastItem(version: "1.3.9", notes: "release notes")
+        let request = NSMutableURLRequest(url: URL(string: "https://updates.solstone.app/solstone_1.3.9.zip")!)
+
+        harness.delegate.updater?(harness.sparkleUpdater, didFindValidUpdate: item)
+        harness.delegate.updater?(harness.sparkleUpdater, willDownloadUpdate: item, with: request)
+
+        #expect(harness.controller.backgroundDownload == .downloading(version: "1.3.9"))
+        #expect(harness.controller.statusAXToken == "downloading_background")
+        #expect(
+            updatesPaneBlock(
+                status: harness.controller.durableUpdateStatus,
+                activity: harness.controller.activity,
+                backgroundDownload: harness.controller.backgroundDownload,
+                stagedBlockSuppressed: harness.controller.stagedBlockSuppressed
+            ) == .backgroundDownloading
+        )
+
+        harness.delegate.updater?(harness.sparkleUpdater, didDownloadUpdate: item)
+        #expect(harness.controller.backgroundDownload == .finishingUp(version: "1.3.9"))
+        #expect(harness.controller.statusAXToken == "downloading_background")
+        #expect(
+            updatesPaneBlock(
+                status: harness.controller.durableUpdateStatus,
+                activity: harness.controller.activity,
+                backgroundDownload: harness.controller.backgroundDownload,
+                stagedBlockSuppressed: harness.controller.stagedBlockSuppressed
+            ) == .backgroundDownloading
+        )
+
+        harness.delegate.updater?(harness.sparkleUpdater, didExtractUpdate: item)
+        #expect(harness.controller.backgroundDownload == .finishingUp(version: "1.3.9"))
+
+        _ = harness.delegate.updater?(
+            harness.sparkleUpdater,
+            willInstallUpdateOnQuit: item,
+            immediateInstallationBlock: {}
+        )
+        #expect(harness.controller.backgroundDownload == nil)
+        #expect(harness.controller.updateIsStaged)
+        #expect(
+            updatesPaneBlock(
+                status: harness.controller.durableUpdateStatus,
+                activity: harness.controller.activity,
+                backgroundDownload: harness.controller.backgroundDownload,
+                stagedBlockSuppressed: harness.controller.stagedBlockSuppressed
+            ) == .stagedReady
+        )
+
+        clearDefaults()
+        let failedHarness = try makeHarness()
+        failedHarness.delegate.updater?(failedHarness.sparkleUpdater, didFindValidUpdate: item)
+        failedHarness.delegate.updater?(failedHarness.sparkleUpdater, willDownloadUpdate: item, with: request)
+        failedHarness.delegate.updater?(
+            failedHarness.sparkleUpdater,
+            failedToDownloadUpdate: item,
+            error: sparkleError(.downloadError)
+        )
+        #expect(failedHarness.controller.backgroundDownload == nil)
+        #expect(
+            updatesPaneBlock(
+                status: failedHarness.controller.durableUpdateStatus,
+                activity: failedHarness.controller.activity,
+                backgroundDownload: failedHarness.controller.backgroundDownload,
+                stagedBlockSuppressed: failedHarness.controller.stagedBlockSuppressed
+            ) == .failed
+        )
+    }
+
     @Test func willInstallUpdateOnQuitRetainsImmediateInstallHandlerForStagedInstall() async throws {
         clearDefaults()
         defer { clearDefaults() }
@@ -358,12 +430,12 @@ struct SparkleDelegateIngestTests {
         let harness = try makeHarness()
         let controller = harness.controller
 
-        let cases: [(DurableUpdateStatus, String, UpdatesPaneIdleBlock, SettingsAttentionReason?, SettingsView.SidebarBadgeState)] = [
-            (.deferred(version: "1.3.9"), "deferred_install", .deferredBlock, .updateAvailable, .attention),
-            (.staged(version: "1.3.9", releaseNotes: "release notes"), "staged_ready", .stagedReadyBlock, .updateAvailable, .attention),
-            (.failedWithAvailable(version: "1.3.9"), "error", .failedBlock, .updateAvailable, .attention),
-            (.available(version: "1.3.9", releaseNotes: "release notes"), "update_available", .availableBlock, .updateAvailable, .attention),
-            (.failed, "error", .failedBlock, .updateCheckFailed, .attention),
+        let cases: [(DurableUpdateStatus, String, UpdatesPaneBlock, SettingsAttentionReason?, SettingsView.SidebarBadgeState)] = [
+            (.deferred(version: "1.3.9"), "deferred_install", .deferred, .updateAvailable, .attention),
+            (.staged(version: "1.3.9", releaseNotes: "release notes"), "staged_ready", .stagedReady, .updateAvailable, .attention),
+            (.failedWithAvailable(version: "1.3.9"), "error", .failed, .updateAvailable, .attention),
+            (.available(version: "1.3.9", releaseNotes: "release notes"), "update_available", .available, .updateAvailable, .attention),
+            (.failed, "error", .failed, .updateCheckFailed, .attention),
             (.upToDate, "up_to_date", .empty, nil, .done),
             (.idle, "idle", .empty, nil, .blank)
         ]
@@ -371,7 +443,12 @@ struct SparkleDelegateIngestTests {
         for (status, axToken, paneBlock, menuReason, badge) in cases {
             applyDurableStatus(status, to: controller)
             #expect(controller.statusAXToken == axToken)
-            #expect(updatesPaneIdleBlock(for: controller.durableUpdateStatus) == paneBlock)
+            #expect(updatesPaneBlock(
+                status: controller.durableUpdateStatus,
+                activity: controller.activity,
+                backgroundDownload: controller.backgroundDownload,
+                stagedBlockSuppressed: controller.stagedBlockSuppressed
+            ) == paneBlock)
             #expect(firstSettingsAttention(
                 permissionsNeedAttention: false,
                 journalNeedsAttention: false,
@@ -440,7 +517,12 @@ struct SparkleDelegateIngestTests {
         #expect(harness.controller.updateCheckFailed)
         #expect(harness.controller.durableUpdateStatus == .failedWithAvailable(version: "1.3.9"))
         #expect(harness.controller.statusAXToken == "error")
-        #expect(updatesPaneIdleBlock(for: harness.controller.durableUpdateStatus) == .failedBlock)
+        #expect(updatesPaneBlock(
+            status: harness.controller.durableUpdateStatus,
+            activity: harness.controller.activity,
+            backgroundDownload: harness.controller.backgroundDownload,
+            stagedBlockSuppressed: harness.controller.stagedBlockSuppressed
+        ) == .failed)
         #expect(firstSettingsAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: false,

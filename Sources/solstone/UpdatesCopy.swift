@@ -99,6 +99,22 @@ enum UpdatesCopy {
         byteProgress(receivedBytes: receivedBytes, totalBytes: totalBytes)
     }
 
+    static func backgroundDownloadingTitle(version: String?) -> String {
+        if let version, !version.isEmpty {
+            return "downloading \(version) in the background…"
+        }
+        return "downloading an update in the background…"
+    }
+
+    static func backgroundFinishingTitle(version: String?) -> String {
+        if let version, !version.isEmpty {
+            return "finishing up \(version) in the background…"
+        }
+        return "finishing up in the background…"
+    }
+
+    static let backgroundDownloadSubtitle = "solstone will let you know when the update is ready to install."
+
     static func extractingTitle(version: String) -> String {
         "downloading \(version)"
     }
@@ -122,6 +138,13 @@ enum UpdatesCopy {
     }
 
     static let installingSubtitle = "solstone is handing off to the installer."
+
+    static let actionReasonUpdatesUnavailable = "updates are unavailable in this build"
+    static let actionReasonDownloadInProgress = "a download is already in progress"
+    static let actionReasonDownloadFinishing = "a download is finishing up"
+    static let actionReasonInstallHandoff = "an install handoff is already in progress"
+    static let actionReasonUpdateChoicePending = "an update needs a choice first"
+    static let actionReasonUpdateInProgress = "an update is already in progress"
 
     static func byteProgress(receivedBytes: UInt64, totalBytes: UInt64?) -> String {
         let formatter = ByteCountFormatter()

@@ -30,6 +30,11 @@ enum UpdateActivity: Equatable, Sendable {
     case installing(version: String)
 }
 
+enum BackgroundDownloadPhase: Equatable, Sendable {
+    case downloading(version: String?)
+    case finishingUp(version: String?)
+}
+
 enum DurableUpdateStatus: Equatable, Sendable {
     case deferred(version: String)
     case staged(version: String, releaseNotes: String?)
