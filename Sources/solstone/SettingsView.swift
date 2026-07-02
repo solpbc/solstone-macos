@@ -97,6 +97,10 @@ func makePairingConnectionPresentation(
     }
 }
 
+func shouldShowPairingRetry(for state: TunnelLifecycleState) -> Bool {
+    state == .error(.keychainUnavailable)
+}
+
 private struct SettingsPaneScrollEdgeModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -1170,6 +1174,8 @@ struct SettingsView: View {
 
                 pairingFailureRow
 
+                tunnelErrorRetryRow
+
                 AXStateCompanion(
                     id: AXID.Settings.Service.pairingFlowState,
                     value: appState.pairingCoordinator.state.axToken
@@ -1283,6 +1289,29 @@ struct SettingsView: View {
             }
         case .idle, .pairing, .switchConfirmPending, .paired, .alreadyConnected, .switched:
             EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var tunnelErrorRetryRow: some View {
+        if shouldShowPairingRetry(for: appState.pairingCoordinator.tunnelState),
+           !coordinatorShowsPairingRetry {
+            HStack {
+                Button("retry") {
+                    Task { await appState.tunnelLifecycleOwner.reevaluatePairing() }
+                }
+                .disabled(pairingIsBusy)
+                .accessibilityIdentifier(AXID.Settings.Service.pairingRetry)
+            }
+        }
+    }
+
+    private var coordinatorShowsPairingRetry: Bool {
+        switch appState.pairingCoordinator.state {
+        case .failed, .saveFailed:
+            return true
+        default:
+            return false
         }
     }
 

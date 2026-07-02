@@ -10,10 +10,9 @@ import Testing
 @Suite("TunnelLifecycleOwner")
 @MainActor
 struct TunnelLifecycleOwnerTests {
-    @Test func dormancyNilThrowAndNoUsableCandidatesAreIdentical() async throws {
+    @Test func nilAndNoUsableCandidatesStayDormant() async throws {
         let scenarios: [PairingStore] = [
             PairingStore(pairing: nil),
-            PairingStore(pairing: pairing(), loadError: SPLKeychainError.loadFailed(status: -1)),
             PairingStore(pairing: pairing(relayEnrollment: .unavailable, localEndpoints: [])),
         ]
 
@@ -31,6 +30,20 @@ struct TunnelLifecycleOwnerTests {
         }
     }
 
+    @Test func thrownLoadFailureSurfacesKeychainUnavailable() async throws {
+        let store = PairingStore(pairing: pairing(), loadError: SPLKeychainError.loadFailed(status: -1))
+        let transport = FakeTunnelTransport()
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+
+        owner.start()
+        try await waitUntil { owner.state == .error(.keychainUnavailable) }
+
+        #expect(transport.connectAttempts == 0)
+        #expect(owner.state == .error(.keychainUnavailable))
+        #expect(owner.health == .unknown)
+        await owner.stop()
+    }
+
     @Test func stateTransitionsToConnectedWithLanAndRelayRoutes() async throws {
         let lanTransport = FakeTunnelTransport(connectionMode: .plDirect, connection: .init(localPort: 12345, via: .lan))
         let lanOwner = makeOwner(factory: FakeTransportFactory([lanTransport]))
@@ -46,6 +59,47 @@ struct TunnelLifecycleOwnerTests {
 
         #expect(lanTransport.connectAttempts == 1)
         #expect(relayTransport.connectAttempts == 1)
+    }
+
+    @Test func singleLoadPerColdLaunch() async throws {
+        let store = PairingStore(pairing: pairing())
+        let transport = FakeTunnelTransport()
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 8080, via: .relay) }
+
+        #expect(store.loadCount == 1)
+        #expect(owner.state == .connected(localPort: 8080, via: .relay))
+        await owner.stop()
+    }
+
+    @Test func cachedFailureSurfacesOnHotPathAndCachedNilStaysDormant() async throws {
+        do {
+            let store = PairingStore(pairing: pairing(), loadError: SPLKeychainError.loadFailed(status: -1))
+            let transport = FakeTunnelTransport()
+            let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+
+            owner.start()
+            try await waitUntil { owner.state == .error(.keychainUnavailable) }
+            await owner.stop()
+
+            #expect(store.loadCount == 1)
+            #expect(transport.connectAttempts == 0)
+        }
+
+        do {
+            let store = PairingStore(pairing: nil)
+            let transport = FakeTunnelTransport()
+            let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+
+            owner.start()
+            try await waitUntil { owner.state == .disconnected }
+            await owner.stop()
+
+            #expect(store.loadCount == 1)
+            #expect(transport.connectAttempts == 0)
+        }
     }
 
     @Test func tunnelManagedSignalSurvivesTransientDisconnect() async throws {
@@ -283,6 +337,27 @@ struct TunnelLifecycleOwnerTests {
         #expect(!store.deleted)
     }
 
+    @Test func tokenRefreshSaveCarriesUpdatedPairingToTransport() async throws {
+        let current = pairing(deviceToken: "old-token")
+        let updated = pairing(deviceToken: "refreshed-token")
+        let store = PairingStore(pairing: current)
+        let refresh = FakeTokenRefresher(ifNeededResults: [.refreshed(updated)])
+        let transport = FakeTunnelTransport()
+        let owner = makeOwner(
+            store: store,
+            refresher: refresh.seam,
+            factory: FakeTransportFactory([transport])
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 8080, via: .relay) }
+        await owner.stop()
+
+        let connected = try #require(transport.connectedPairings.last)
+        #expect(connected.relayEnrollment == .enrolled(deviceToken: "refreshed-token", expiresAt: nil))
+        #expect(transport.connectedPairings == [updated])
+    }
+
     @Test func reactiveTokenExpiredRefreshesWithoutDeletingAndSwapsSessionAfterDisconnect() async throws {
         let current = pairing(deviceToken: "old-token")
         let updated = pairing(deviceToken: "new-token")
@@ -429,6 +504,55 @@ struct TunnelLifecycleOwnerTests {
         #expect(!owner.isTunnelManaged)
         #expect(transport.disconnectCount >= 1)
         #expect(transport.connectAttempts == 1)
+    }
+
+    @Test func unpairThenReevaluateGoesDormant() async throws {
+        let stored = pairing()
+        let store = PairingStore(pairing: nil, loadOutcomes: [.success(stored), .success(nil)])
+        let transport = FakeTunnelTransport(connection: .init(localPort: 56565, via: .relay))
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 56565, via: .relay) }
+        await owner.reevaluatePairing()
+        try await waitUntil { owner.state == .disconnected }
+        await owner.stop()
+
+        #expect(!owner.isTunnelManaged)
+        #expect(transport.disconnectCount >= 1)
+        #expect(transport.connectAttempts == 1)
+        #expect(store.loadCount == 2)
+    }
+
+    @Test func retryFromKeychainErrorReachesConnected() async throws {
+        let store = PairingStore(
+            pairing: nil,
+            loadOutcomes: [
+                .failure(SPLKeychainError.loadFailed(status: -1)),
+                .success(pairing()),
+            ]
+        )
+        let transport = FakeTunnelTransport(connection: .init(localPort: 67676, via: .relay))
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+
+        owner.start()
+        try await waitUntil { owner.state == .error(.keychainUnavailable) }
+        await owner.reevaluatePairing()
+        try await waitUntil { owner.state == .connected(localPort: 67676, via: .relay) }
+        await owner.stop()
+
+        #expect(!transport.connectedPairings.isEmpty)
+        #expect(store.loadCount == 2)
+    }
+
+    @Test func shouldShowPairingRetryPredicate() {
+        #expect(shouldShowPairingRetry(for: .error(.keychainUnavailable)))
+        #expect(!shouldShowPairingRetry(for: .disconnected))
+        #expect(!shouldShowPairingRetry(for: .connecting))
+        #expect(!shouldShowPairingRetry(for: .connected(localPort: 1, via: .relay)))
+        #expect(!shouldShowPairingRetry(for: .error(.revoked)))
+        #expect(!shouldShowPairingRetry(for: .error(.notEntitled)))
+        #expect(!shouldShowPairingRetry(for: .error(.loopbackUnavailable)))
     }
 
     @Test func notEntitledDuringBootstrapSetsTerminalOwnerError() async throws {

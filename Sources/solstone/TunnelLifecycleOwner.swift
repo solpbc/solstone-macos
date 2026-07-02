@@ -100,6 +100,8 @@ final class TunnelLifecycleOwner {
     private var consecutiveProbeFailures = 0
     @ObservationIgnored
     private var running = false
+    @ObservationIgnored
+    private var cachedPairingOutcome: PairingLoadOutcome?
 
     init(
         loadPairing: @escaping @Sendable () throws -> StoredPairing? = { try SPLKeychain.load() },
@@ -156,6 +158,7 @@ final class TunnelLifecycleOwner {
     }
 
     func reevaluatePairing() async {
+        invalidatePairingCache()
         guard running else {
             refreshTunnelManagedFromStoredPairing()
             return
@@ -177,15 +180,14 @@ final class TunnelLifecycleOwner {
         }
 
         let pairing: StoredPairing
-        do {
-            guard let loaded = try loadPairing() else {
-                becomeDormant(tunnelManaged: false)
-                return
-            }
+        switch loadPairingCached() {
+        case .loaded(let loaded):
             pairing = loaded
-        } catch {
-            splOwnerLog.debug("pairing load unavailable: \(String(describing: type(of: error)), privacy: .public)")
-            becomeDormant(tunnelManaged: isTunnelManaged)
+        case .absent:
+            becomeDormant(tunnelManaged: false)
+            return
+        case .failed:
+            await failWithKeychainUnavailable()
             return
         }
 
@@ -204,6 +206,7 @@ final class TunnelLifecycleOwner {
                 await failWithKeychainUnavailable()
                 return
             }
+            cachedPairingOutcome = .loaded(updated)
             await connect()
 
         case .notNeeded, .transientFailure:
@@ -242,15 +245,15 @@ final class TunnelLifecycleOwner {
         }
 
         let pairing: StoredPairing
-        do {
-            guard let loaded = try loadPairing() else {
-                becomeDormant(tunnelManaged: false)
-                return .dormant
-            }
+        switch loadPairingCached() {
+        case .loaded(let loaded):
             pairing = loaded
-        } catch {
-            becomeDormant(tunnelManaged: isTunnelManaged)
+        case .absent:
+            becomeDormant(tunnelManaged: false)
             return .dormant
+        case .failed:
+            await failWithKeychainUnavailable()
+            return .terminal
         }
 
         let candidates = usableCandidates(for: pairing)
@@ -411,16 +414,15 @@ final class TunnelLifecycleOwner {
         }
 
         let pairing: StoredPairing
-        do {
-            guard let loaded = try loadPairing() else {
-                await disconnectCurrentTransport()
-                becomeDormant(tunnelManaged: false)
-                return
-            }
+        switch loadPairingCached() {
+        case .loaded(let loaded):
             pairing = loaded
-        } catch {
+        case .absent:
             await disconnectCurrentTransport()
-            becomeDormant(tunnelManaged: isTunnelManaged)
+            becomeDormant(tunnelManaged: false)
+            return
+        case .failed:
+            await failWithKeychainUnavailable()
             return
         }
 
@@ -433,6 +435,7 @@ final class TunnelLifecycleOwner {
                 await failWithKeychainUnavailable()
                 return
             }
+            cachedPairingOutcome = .loaded(updated)
             await disconnectCurrentTransport()
             await connect()
 
@@ -536,15 +539,38 @@ final class TunnelLifecycleOwner {
         }
     }
 
-    private func refreshTunnelManagedFromStoredPairing() {
+    private func loadPairingCached() -> PairingLoadOutcome {
+        if let cachedPairingOutcome {
+            return cachedPairingOutcome
+        }
+        let outcome: PairingLoadOutcome
         do {
-            guard let pairing = try loadPairing() else {
-                isTunnelManaged = false
-                return
+            if let loaded = try loadPairing() {
+                outcome = .loaded(loaded)
+            } else {
+                outcome = .absent
             }
-            isTunnelManaged = !usableCandidates(for: pairing).isEmpty
         } catch {
+            splOwnerLog.debug("pairing load unavailable: \(String(describing: type(of: error)), privacy: .public)")
+            outcome = .failed
+        }
+        cachedPairingOutcome = outcome
+        return outcome
+    }
+
+    private func invalidatePairingCache() {
+        cachedPairingOutcome = nil
+    }
+
+    private func refreshTunnelManagedFromStoredPairing() {
+        switch loadPairingCached() {
+        case .loaded(let pairing):
+            isTunnelManaged = !usableCandidates(for: pairing).isEmpty
+        case .absent:
+            isTunnelManaged = false
+        case .failed:
             // Preserve the previous signal on transient keychain load failures.
+            break
         }
     }
 
@@ -560,6 +586,7 @@ final class TunnelLifecycleOwner {
         } catch {
             splOwnerLog.error("pairing delete failed: \(String(describing: type(of: error)), privacy: .public)")
         }
+        cachedPairingOutcome = .absent
         isTunnelManaged = false
         await disconnectCurrentTransport()
         state = .error(.revoked)
@@ -636,6 +663,12 @@ private enum EstablishmentOutcome: Sendable {
     case terminal
     case retry
     case cancelled
+}
+
+private enum PairingLoadOutcome {
+    case loaded(StoredPairing)
+    case absent
+    case failed
 }
 
 private extension Duration {

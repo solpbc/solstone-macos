@@ -9,6 +9,7 @@ import Testing
 final class PairingStore: @unchecked Sendable {
     private let lock = NSLock()
     private var pairing: StoredPairing?
+    private var loadOutcomes: [Result<StoredPairing?, any Error>]
     private let loadError: (any Error)?
     private let saveError: (any Error)?
     private let deleteError: (any Error)?
@@ -24,24 +25,35 @@ final class PairingStore: @unchecked Sendable {
 
     init(
         pairing: StoredPairing?,
+        loadOutcomes: [Result<StoredPairing?, any Error>] = [],
         loadError: (any Error)? = nil,
         saveError: (any Error)? = nil,
         deleteError: (any Error)? = nil
     ) {
         self.pairing = pairing
+        self.loadOutcomes = loadOutcomes
         self.loadError = loadError
         self.saveError = saveError
         self.deleteError = deleteError
     }
 
     func load() throws -> StoredPairing? {
+        lock.lock()
+        defer { lock.unlock() }
+        loadCount += 1
+        if !loadOutcomes.isEmpty {
+            switch loadOutcomes.removeFirst() {
+            case .success(let value):
+                pairing = value
+                return value
+            case .failure(let error):
+                throw error
+            }
+        }
         if let loadError {
             throw loadError
         }
-        return lock.withLock {
-            loadCount += 1
-            return pairing
-        }
+        return pairing
     }
 
     func save(_ pairing: StoredPairing) throws {
