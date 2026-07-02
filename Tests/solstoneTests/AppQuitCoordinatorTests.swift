@@ -18,8 +18,8 @@ struct AppQuitCoordinatorTests {
         }
         #expect(events.all == [
             "committed:true",
-            "marker:ordinary-quit",
             "prepareForQuit",
+            "marker:ordinary-quit",
             "terminate"
         ])
         #expect(coordinator.isPrepared)
@@ -54,11 +54,48 @@ struct AppQuitCoordinatorTests {
         }
         #expect(events.all == [
             "committed:true",
-            "marker:ordinary-quit",
             "prepareForQuit:start",
             "prepareForQuit:end",
+            "marker:ordinary-quit",
             "terminate"
         ])
+    }
+
+    @Test func prepareDelayLongerThanFreshnessWritesMarkerAfterPrepareCompletes() async throws {
+        let events = LockedArray<String>([])
+        let canFinish = LockedValue<Bool>()
+        canFinish.set(false)
+        let coordinator = makeCoordinator(
+            events: events,
+            prepareForQuit: {
+                events.append("prepareForQuit:start")
+                while canFinish.current != true {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+                events.append("prepareForQuit:end")
+            }
+        )
+
+        coordinator.requestAppOwnedQuit()
+
+        try await waitUntil(timeout: .seconds(5)) {
+            events.all.contains("prepareForQuit:start")
+        }
+        #expect(!events.all.contains("marker:ordinary-quit"))
+
+        canFinish.set(true)
+
+        try await waitUntil(timeout: .seconds(5)) {
+            events.all.contains("terminate")
+        }
+        #expect(events.all == [
+            "committed:true",
+            "prepareForQuit:start",
+            "prepareForQuit:end",
+            "marker:ordinary-quit",
+            "terminate"
+        ])
+        #expect(coordinator.isPrepared)
     }
 
     @Test func ordinaryQuitPreparedThenLaterAppOwnedRequestIsNoOp() async throws {
@@ -95,8 +132,8 @@ struct AppQuitCoordinatorTests {
         }
         #expect(events.all == [
             "committed:true",
-            "marker:external-quit",
             "prepareForQuit",
+            "marker:external-quit",
             "reply:true"
         ])
         #expect(!events.all.contains("terminate"))
@@ -169,8 +206,8 @@ struct AppQuitCoordinatorTests {
         }
         #expect(events.all == [
             "committed:true",
-            "marker:ordinary-quit",
             "prepareForQuit",
+            "marker:ordinary-quit",
             "reply:true",
             "terminate"
         ])
@@ -239,8 +276,8 @@ struct AppQuitCoordinatorTests {
 
         #expect(events.all == [
             "committed:true",
-            "marker:sparkle-update",
-            "prepareForUpdate"
+            "prepareForUpdate",
+            "marker:sparkle-update"
         ])
         #expect(coordinator.isPrepared)
     }
@@ -253,8 +290,8 @@ struct AppQuitCoordinatorTests {
 
         #expect(events.all == [
             "committed:true",
-            "marker:sparkle-update",
-            "prepareForUpdate"
+            "prepareForUpdate",
+            "marker:sparkle-update"
         ])
         #expect(coordinator.isPrepared)
 
@@ -320,9 +357,19 @@ struct AppQuitCoordinatorTests {
         #expect(count(events.all, "terminate") == 1)
     }
 
-    @Test func resetAfterFailedUpdaterInstallWithoutPreparationIsSafeNoOp() {
+    @Test func resetAfterFailedUpdaterInstallWithoutPreparationIsSafeNoOp() async throws {
         let events = LockedArray<String>([])
-        let coordinator = makeCoordinator(events: events)
+        let canFinish = LockedValue<Bool>()
+        canFinish.set(false)
+        let coordinator = makeCoordinator(
+            events: events,
+            prepareForQuit: {
+                events.append("prepareForQuit")
+                while canFinish.current != true {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+            }
+        )
 
         coordinator.resetAfterFailedUpdaterInstall()
 
@@ -331,9 +378,19 @@ struct AppQuitCoordinatorTests {
 
         coordinator.requestAppOwnedQuit()
 
+        try await waitUntil(timeout: .seconds(5)) {
+            events.all.contains("prepareForQuit")
+        }
+        #expect(!events.all.contains("marker:ordinary-quit"))
+        #expect(!events.all.contains("terminate"))
+
+        canFinish.set(true)
+
+        try await waitUntil(timeout: .seconds(5)) {
+            events.all.contains("marker:ordinary-quit")
+        }
         #expect(events.all.contains("marker:ordinary-quit"))
         #expect(!events.all.contains("prepareForUpdate"))
-        #expect(!events.all.contains("terminate"))
     }
 
     @Test func resetAfterFailedUpdaterInstallInvalidatesResetsAndCancelsQueuedReplies() async throws {
@@ -375,6 +432,9 @@ struct AppQuitCoordinatorTests {
         #expect(!coordinator.isPrepared)
 
         coordinator.requestAppOwnedQuit()
+        try await waitUntil(timeout: .seconds(5)) {
+            events.all.contains("marker:ordinary-quit")
+        }
         #expect(events.all.contains("marker:ordinary-quit"))
     }
 

@@ -60,4 +60,14 @@ struct UpdatesWireUpTests {
 
         #expect(stopRecording.lowerBound < stopJournal.lowerBound)
     }
+
+    @Test func stagedInstallButtonRoutesThroughUpdateController() throws {
+        let source = try readWireUpSource("Sources/solstone/UpdatesTabView.swift")
+        let functionStart = try #require(source.range(of: "private func relaunchToInstallStagedUpdate()"))
+        let functionEnd = try #require(source[functionStart.upperBound...].range(of: "private func titleBlock"))
+        let body = String(source[functionStart.lowerBound..<functionEnd.lowerBound])
+
+        #expect(wireUpContains(body, "controller.installStagedUpdate()"))
+        #expect(!wireUpContains(body, "NSApplication.shared.terminate(nil)"))
+    }
 }
