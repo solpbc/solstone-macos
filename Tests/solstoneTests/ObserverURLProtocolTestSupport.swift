@@ -10,9 +10,10 @@ final class ObserverURLProtocolStore: @unchecked Sendable {
         var error: URLError?
     }
 
+    let token = UUID().uuidString
+
     private let lock = NSLock()
     private var responses: [Response] = []
-    private var waiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
     private(set) var requests: [URLRequest] = []
     private(set) var requestBodies: [String?] = []
 
@@ -21,11 +22,6 @@ final class ObserverURLProtocolStore: @unchecked Sendable {
             responses.removeAll()
             requests.removeAll()
             requestBodies.removeAll()
-            let pending = waiters
-            waiters.removeAll()
-            for waiter in pending {
-                waiter.continuation.resume()
-            }
         }
     }
 
@@ -36,7 +32,6 @@ final class ObserverURLProtocolStore: @unchecked Sendable {
     }
 
     func next(for request: URLRequest) -> Response {
-        let ready: [CheckedContinuation<Void, Never>]
         let response: Response
         lock.lock()
         requests.append(request)
@@ -46,12 +41,8 @@ final class ObserverURLProtocolStore: @unchecked Sendable {
         } else {
             response = responses.removeFirst()
         }
-        (ready, waiters) = Self.drainWaiters(waiters, requestCount: requests.count)
         lock.unlock()
 
-        for continuation in ready {
-            continuation.resume()
-        }
         return response
     }
 
@@ -59,38 +50,12 @@ final class ObserverURLProtocolStore: @unchecked Sendable {
         lock.withLock { requests }
     }
 
-    func waitForRequestCount(_ target: Int) async {
-        await withCheckedContinuation { continuation in
-            let shouldResume: Bool = lock.withLock {
-                if requests.count >= target {
-                    return true
-                }
-                waiters.append((target: target, continuation: continuation))
-                return false
-            }
-            if shouldResume {
-                continuation.resume()
-            }
+    func waitForRequestCount(_ target: Int, timeout: Duration = .seconds(10)) async {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if lock.withLock({ requests.count >= target }) { return }
+            try? await Task.sleep(for: .milliseconds(10))
         }
-    }
-
-    private static func drainWaiters(
-        _ waiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)],
-        requestCount: Int
-    ) -> (
-        ready: [CheckedContinuation<Void, Never>],
-        pending: [(target: Int, continuation: CheckedContinuation<Void, Never>)]
-    ) {
-        var ready: [CheckedContinuation<Void, Never>] = []
-        var pending: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
-        for waiter in waiters {
-            if requestCount >= waiter.target {
-                ready.append(waiter.continuation)
-            } else {
-                pending.append(waiter)
-            }
-        }
-        return (ready, pending)
     }
 
     private static func bodyString(from request: URLRequest) -> String? {
@@ -114,14 +79,36 @@ final class ObserverURLProtocolStore: @unchecked Sendable {
     }
 }
 
-final class ObserverURLProtocol: URLProtocol {
-    static let store = ObserverURLProtocolStore()
+private final class ObserverURLProtocolStoreRegistry: @unchecked Sendable {
+    static let shared = ObserverURLProtocolStoreRegistry()
 
+    private let lock = NSLock()
+    private var stores: [String: ObserverURLProtocolStore] = [:]
+
+    func register(_ store: ObserverURLProtocolStore) {
+        // Tests create only a small number of stores per run; keeping registry entries avoids lifecycle races.
+        lock.withLock { stores[store.token] = store }
+    }
+
+    func store(for token: String) -> ObserverURLProtocolStore? {
+        lock.withLock { stores[token] }
+    }
+}
+
+final class ObserverURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        let next = Self.store.next(for: request)
+        guard
+            let token = request.value(forHTTPHeaderField: "X-Solstone-Test-Store"),
+            let store = ObserverURLProtocolStoreRegistry.shared.store(for: token)
+        else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unknown))
+            return
+        }
+
+        let next = store.next(for: request)
         if let error = next.error {
             client?.urlProtocol(self, didFailWithError: error)
             return
@@ -143,9 +130,11 @@ final class ObserverURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
-func observerURLProtocolConfiguration() -> URLSessionConfiguration {
+func observerURLProtocolConfiguration(store: ObserverURLProtocolStore) -> URLSessionConfiguration {
+    ObserverURLProtocolStoreRegistry.shared.register(store)
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [ObserverURLProtocol.self]
+    config.httpAdditionalHeaders = ["X-Solstone-Test-Store": store.token]
     config.timeoutIntervalForRequest = 0
     config.timeoutIntervalForResource = 0
     return config

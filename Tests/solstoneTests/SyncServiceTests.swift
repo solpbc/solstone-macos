@@ -7,11 +7,13 @@ import Testing
 
 @Suite("SyncService", .serialized)
 struct SyncServiceTests {
+    private let store = ObserverURLProtocolStore()
+
     @Test func relayResolverRoutesGetAndUploadToLoopbackTarget() async throws {
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "{}")
+        store.reset()
+        store.enqueue(statusCode: 200, body: "[]")
+        store.enqueue(statusCode: 200, body: "{}")
         let root = try makeTempDirectory("sync-relay")
         let segment = try makeSegment(root: root)
         let service = makeService(
@@ -22,7 +24,7 @@ struct SyncServiceTests {
 
         await service.sync()
 
-        let requests = ObserverURLProtocol.store.snapshotRequests()
+        let requests = store.snapshotRequests()
         let get = try #require(requests.first)
         let post = try #require(requests.dropFirst().first)
         #expect(get.httpMethod == "GET")
@@ -37,9 +39,9 @@ struct SyncServiceTests {
 
     @Test func staticResolverRoutesGetAndUploadToExternalTarget() async throws {
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "{}")
+        store.reset()
+        store.enqueue(statusCode: 200, body: "[]")
+        store.enqueue(statusCode: 200, body: "{}")
         let root = try makeTempDirectory("sync-static")
         let segment = try makeSegment(root: root)
         let service = makeService(
@@ -50,7 +52,7 @@ struct SyncServiceTests {
 
         await service.sync()
 
-        let requests = ObserverURLProtocol.store.snapshotRequests()
+        let requests = store.snapshotRequests()
         let get = try #require(requests.first)
         let post = try #require(requests.dropFirst().first)
         #expect(get.url?.host == "journal.example")
@@ -63,7 +65,7 @@ struct SyncServiceTests {
 
     @Test func heldBeforeServerSegmentsMakesNoRequestAndNextURLProceeds() async throws {
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
+        store.reset()
         let root = try makeTempDirectory("sync-held")
         let segment = try makeSegment(root: root)
         let resolver = ResolverScript([.held])
@@ -75,32 +77,32 @@ struct SyncServiceTests {
 
         await service.sync()
 
-        #expect(ObserverURLProtocol.store.snapshotRequests().isEmpty)
+        #expect(store.snapshotRequests().isEmpty)
         #expect(FileManager.default.fileExists(atPath: segment.url.path))
         try await waitUntil(timeout: .seconds(3), poll: .milliseconds(100)) {
             await recorder.containsAwaitingTunnel()
         }
 
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "{}")
+        store.enqueue(statusCode: 200, body: "[]")
+        store.enqueue(statusCode: 200, body: "{}")
         await resolver.replace(with: [.url("http://127.0.0.1:24683")])
         await service.sync()
 
-        let requests = ObserverURLProtocol.store.snapshotRequests()
+        let requests = store.snapshotRequests()
         #expect(requests.count == 2)
         #expect(requests.last?.url?.path == "/app/observer/ingest")
     }
 
     @Test func sameJournalPortChangeRetriesAgainstNewLoopbackPort() async throws {
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
-        ObserverURLProtocol.store.enqueue(statusCode: 500, body: "temporary")
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "{}")
+        store.reset()
+        store.enqueue(statusCode: 200, body: "[]")
+        store.enqueue(statusCode: 500, body: "temporary")
+        store.enqueue(statusCode: 200, body: "{}")
         let root = try makeTempDirectory("sync-port-change")
         _ = try makeSegment(root: root)
         let resolver = HomeBaseURLResolver {
-            let uploads = ObserverURLProtocol.store.snapshotRequests()
+            let uploads = store.snapshotRequests()
                 .filter { $0.url?.path == "/app/observer/ingest" }
                 .count
             return .url(uploads == 0 ? "http://127.0.0.1:1111" : "http://127.0.0.1:2222")
@@ -110,7 +112,7 @@ struct SyncServiceTests {
 
         await service.sync()
 
-        let requests = ObserverURLProtocol.store.snapshotRequests()
+        let requests = store.snapshotRequests()
         let uploadRequests = requests.filter { $0.url?.path == "/app/observer/ingest" }
         #expect(uploadRequests.count == 2)
         #expect(uploadRequests.first?.url?.port == 1111)
@@ -119,9 +121,9 @@ struct SyncServiceTests {
 
     @Test func differentJournalIdentityAbortsRetryWithConfigChanged() async throws {
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
-        ObserverURLProtocol.store.enqueue(statusCode: 500, body: "temporary")
+        store.reset()
+        store.enqueue(statusCode: 200, body: "[]")
+        store.enqueue(statusCode: 500, body: "temporary")
         let root = try makeTempDirectory("sync-config-change")
         _ = try makeSegment(root: root)
         let service = makeService(
@@ -137,7 +139,7 @@ struct SyncServiceTests {
         let syncTask = Task {
             await service.sync()
         }
-        await ObserverURLProtocol.store.waitForRequestCount(2)
+        await store.waitForRequestCount(2)
         await configure(service, configuredServerURL: "https://configured-b.example")
         try await waitUntil(timeout: .seconds(3), poll: .milliseconds(100)) {
             await recorder.containsConfigChangedFailure()
@@ -145,7 +147,7 @@ struct SyncServiceTests {
         await syncTask.value
 
         #expect(await recorder.containsConfigChangedFailure())
-        #expect(ObserverURLProtocol.store.snapshotRequests().count == 2)
+        #expect(store.snapshotRequests().count == 2)
     }
 
     @Test func missingStatusRetainsSegmentAndNeedsUpload() async throws {
@@ -174,7 +176,7 @@ struct SyncServiceTests {
 
     @Test func provenListingAllowsCleanupDeletion() async throws {
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
+        store.reset()
         let root = try makeTempDirectory("sync-proof-cleanup")
         let segment = try makeSegment(root: root, date: oldDateForRetention())
         let sha = try sha256(of: segment.url.appendingPathComponent("\(segment.url.lastPathComponent)_audio.m4a"))
@@ -184,14 +186,14 @@ struct SyncServiceTests {
             sha: sha,
             status: "present"
         )
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: listing)
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: listing)
+        store.enqueue(statusCode: 200, body: listing)
+        store.enqueue(statusCode: 200, body: listing)
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24685") })
         await configure(service, cacheRetentionDays: 0)
 
         await service.sync()
 
-        let requests = ObserverURLProtocol.store.snapshotRequests()
+        let requests = store.snapshotRequests()
         let uploadRequestCount = requests.filter { $0.url?.path == "/app/observer/ingest" }.count
         let listingRequestCount = requests.filter {
             $0.url?.path.contains("/app/observer/ingest/segments/") == true
@@ -203,7 +205,7 @@ struct SyncServiceTests {
 
     @Test func duplicateAliasConfirmsWithinServiceAndFreshServiceFailsClosed() async throws {
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
+        store.reset()
         let oldDate = oldDateForRetention()
 
         let aliasRoot = try makeTempDirectory("sync-duplicate-alias")
@@ -220,19 +222,19 @@ struct SyncServiceTests {
         let aliasService = makeService(root: aliasRoot, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24686") })
         await configure(aliasService, cacheRetentionDays: 0)
 
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: duplicateBody)
+        store.enqueue(statusCode: 200, body: "[]")
+        store.enqueue(statusCode: 200, body: duplicateBody)
         await aliasService.sync()
         #expect(FileManager.default.fileExists(atPath: aliasSegment.url.path))
 
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: heldListing)
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: heldListing)
+        store.reset()
+        store.enqueue(statusCode: 200, body: heldListing)
+        store.enqueue(statusCode: 200, body: heldListing)
         await aliasService.sync()
         #expect(!FileManager.default.fileExists(atPath: aliasSegment.url.path))
 
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
+        store.reset()
         let freshRoot = try makeTempDirectory("sync-duplicate-fresh")
         let freshSegment = try makeSegment(root: freshRoot, date: oldDate)
         let freshSha = try sha256(of: freshSegment.url.appendingPathComponent("\(freshSegment.url.lastPathComponent)_audio.m4a"))
@@ -244,13 +246,13 @@ struct SyncServiceTests {
         )
         let freshService = makeService(root: freshRoot, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24687") })
         await configure(freshService, cacheRetentionDays: 0)
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: freshListing)
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: duplicateBody)
+        store.enqueue(statusCode: 200, body: freshListing)
+        store.enqueue(statusCode: 200, body: duplicateBody)
 
         await freshService.sync()
 
         #expect(FileManager.default.fileExists(atPath: freshSegment.url.path))
-        #expect(ObserverURLProtocol.store.snapshotRequests().filter { $0.url?.path == "/app/observer/ingest" }.count == 1)
+        #expect(store.snapshotRequests().filter { $0.url?.path == "/app/observer/ingest" }.count == 1)
     }
 
     @Test(arguments: [401, 403, 500])
@@ -274,9 +276,9 @@ struct SyncServiceTests {
 
     @Test func emptyServerListingStillCompletesSuccessfulSync() async throws {
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "{}")
+        store.reset()
+        store.enqueue(statusCode: 200, body: "[]")
+        store.enqueue(statusCode: 200, body: "{}")
         let root = try makeTempDirectory("sync-empty-listing-success")
         _ = try makeSegment(root: root)
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24689") })
@@ -296,10 +298,10 @@ struct SyncServiceTests {
 
     @Test func retryExhaustionEndsOfflineInsteadOfSyncComplete() async throws {
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
+        store.reset()
+        store.enqueue(statusCode: 200, body: "[]")
         for _ in 0..<10 {
-            ObserverURLProtocol.store.enqueue(statusCode: 500, body: "temporary")
+            store.enqueue(statusCode: 500, body: "temporary")
         }
         let root = try makeTempDirectory("sync-retry-exhaustion")
         _ = try makeSegment(root: root)
@@ -329,7 +331,7 @@ struct SyncServiceTests {
     ) -> SyncService {
         SyncService(
             storageManager: StorageManager(baseDirectory: root),
-            client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration()),
+            client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
             resolver: resolver,
             retryDelays: retryDelays
         )
@@ -380,7 +382,7 @@ struct SyncServiceTests {
         shaOverride: String?
     ) async throws {
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
+        store.reset()
         let root = try makeTempDirectory(testName)
         let segment = try makeSegment(root: root, date: oldDateForRetention())
         let localSha = try sha256(of: segment.url.appendingPathComponent("\(segment.url.lastPathComponent)_audio.m4a"))
@@ -390,14 +392,14 @@ struct SyncServiceTests {
             sha: shaOverride ?? localSha,
             status: listingStatus
         )
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: listing)
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "{}")
+        store.enqueue(statusCode: 200, body: listing)
+        store.enqueue(statusCode: 200, body: "{}")
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24688") })
         await configure(service, cacheRetentionDays: 0)
 
         await service.sync()
 
-        let requests = ObserverURLProtocol.store.snapshotRequests()
+        let requests = store.snapshotRequests()
         #expect(FileManager.default.fileExists(atPath: segment.url.path))
         #expect(requests.filter { $0.url?.path == "/app/observer/ingest" }.count == 1)
         #expect(requests.filter { $0.url?.path.contains("/app/observer/ingest/segments/") == true }.count == 1)
@@ -410,8 +412,8 @@ struct SyncServiceTests {
         expectedHealthReason: ObserverHealthFailureReason
     ) async throws {
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: statusCode, body: body)
+        store.reset()
+        store.enqueue(statusCode: statusCode, body: body)
         let root = try makeTempDirectory(testName)
         let segment = try makeSegment(root: root, date: oldDateForRetention())
         let day = dayString(for: segment.date)

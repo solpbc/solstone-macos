@@ -8,6 +8,8 @@ import SolstoneCore
 
 @Suite("HeartbeatService", .serialized)
 struct HeartbeatServiceTests {
+    private let store = ObserverURLProtocolStore()
+
     private final class ManualMonotonicClock: MonotonicClock, @unchecked Sendable {
         private let lock = NSLock()
         private var value: Duration = .zero
@@ -342,9 +344,9 @@ struct HeartbeatServiceTests {
     }
 
     @Test func heartbeatRealRequestUsesResolverLoopbackTarget() async {
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "{}")
-        let client = UploadClient(sessionConfiguration: observerURLProtocolConfiguration())
+        store.reset()
+        store.enqueue(statusCode: 200, body: "{}")
+        let client = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
         let service = HeartbeatService(
             intervalSeconds: 999,
             resolver: resolver(url: "http://127.0.0.1:24680"),
@@ -361,19 +363,19 @@ struct HeartbeatServiceTests {
         )
 
         await service.configure(serverKey: "k1")
-        await ObserverURLProtocol.store.waitForRequestCount(1)
+        await store.waitForRequestCount(1)
         await service.stop()
 
-        let request = ObserverURLProtocol.store.snapshotRequests().first
+        let request = store.snapshotRequests().first
         #expect(request?.url?.host == "127.0.0.1")
         #expect(request?.url?.port == 24680)
         #expect(request?.url?.path == "/app/observer/ingest/event")
     }
 
     @Test func heartbeatRealRequestUsesResolverStaticTarget() async {
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "{}")
-        let client = UploadClient(sessionConfiguration: observerURLProtocolConfiguration())
+        store.reset()
+        store.enqueue(statusCode: 200, body: "{}")
+        let client = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
         let service = HeartbeatService(
             intervalSeconds: 999,
             resolver: resolver(url: "https://journal.example:9443"),
@@ -390,17 +392,17 @@ struct HeartbeatServiceTests {
         )
 
         await service.configure(serverKey: "k1")
-        await ObserverURLProtocol.store.waitForRequestCount(1)
+        await store.waitForRequestCount(1)
         await service.stop()
 
-        let request = ObserverURLProtocol.store.snapshotRequests().first
+        let request = store.snapshotRequests().first
         #expect(request?.url?.host == "journal.example")
         #expect(request?.url?.port == 9443)
         #expect(request?.url?.path == "/app/observer/ingest/event")
     }
 
     @Test func heartbeatHeldResolverSkipsPost() async {
-        ObserverURLProtocol.store.reset()
+        store.reset()
         let counter = HeartbeatCallCounter()
         let service = HeartbeatService(
             intervalSeconds: 999,
@@ -417,6 +419,6 @@ struct HeartbeatServiceTests {
         await service.stop()
 
         #expect(await counter.count == 0)
-        #expect(ObserverURLProtocol.store.snapshotRequests().isEmpty)
+        #expect(store.snapshotRequests().isEmpty)
     }
 }

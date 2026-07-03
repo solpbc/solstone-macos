@@ -9,6 +9,8 @@ import SolstoneCore
 @Suite("UploadCoordinator", .serialized)
 @MainActor
 struct UploadCoordinatorTests {
+    private let store = ObserverURLProtocolStore()
+
     @Test func bundledAvailableUploadSucceededRecordsLastIngestAt() throws {
         let fixed = Date(timeIntervalSince1970: 1_700_000_000)
         let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: true)
@@ -259,13 +261,13 @@ struct UploadCoordinatorTests {
 
     @Test func syncOnStartupWaitsForInitialConfigurationBeforeSyncing() async throws {
         resetSyncedDaysCache()
-        ObserverURLProtocol.store.reset()
+        store.reset()
         let root = try makeTempDirectory("upload-coordinator-startup")
         let segment = try makeSegment(root: root)
         let sha = try #require(UploadClient().sha256(
             of: segment.url.appendingPathComponent("\(segment.url.lastPathComponent)_audio.m4a")
         ))
-        ObserverURLProtocol.store.enqueue(
+        store.enqueue(
             statusCode: 200,
             body: listingJSON(
                 key: segment.url.lastPathComponent,
@@ -276,17 +278,17 @@ struct UploadCoordinatorTests {
         let coordinator = UploadCoordinator(
             storageManager: StorageManager(baseDirectory: root),
             config: AppConfig(serverURL: "https://configured.example", serverKey: "secret"),
-            client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration()),
+            client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
             resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24692") }
         )
 
         let syncTask = Task {
             await coordinator.syncOnStartup()
         }
-        await ObserverURLProtocol.store.waitForRequestCount(1)
+        await store.waitForRequestCount(1)
         await syncTask.value
 
-        let request = try #require(ObserverURLProtocol.store.snapshotRequests().first)
+        let request = try #require(store.snapshotRequests().first)
         #expect(request.httpMethod == "GET")
         #expect(request.url?.path == "/app/observer/ingest/segments/\(dayString(for: segment.date))")
     }

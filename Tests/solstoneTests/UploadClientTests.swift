@@ -8,6 +8,7 @@ import SolstoneCore
 
 @Suite("UploadClient", .serialized)
 struct UploadClientTests {
+    private let store = ObserverURLProtocolStore()
     private let client = UploadClient()
     private let localNetworkMessage = "Can't reach local network. Open System Settings → Privacy & Security → Local Network and allow solstone."
 
@@ -206,9 +207,9 @@ struct UploadClientTests {
 
     @Test(arguments: [401, 403, 500])
     func getServerSegmentsThrowsServerErrorForHTTPFailure(statusCode: Int) async throws {
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: statusCode, body: #"{"error":"sensitive"}"#)
-        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration())
+        store.reset()
+        store.enqueue(statusCode: statusCode, body: #"{"error":"sensitive"}"#)
+        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
 
         do {
             _ = try await uploadClient.getServerSegments(
@@ -231,9 +232,9 @@ struct UploadClientTests {
 
     @Test(arguments: ["{}", "not json"])
     func getServerSegmentsThrowsInvalidResponseForMalformedSuccessBody(body: String) async throws {
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: body)
-        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration())
+        store.reset()
+        store.enqueue(statusCode: 200, body: body)
+        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
 
         do {
             _ = try await uploadClient.getServerSegments(
@@ -253,9 +254,9 @@ struct UploadClientTests {
     }
 
     @Test func getServerSegmentsReturnsEmptyArrayForEmptyDay() async throws {
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
-        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration())
+        store.reset()
+        store.enqueue(statusCode: 200, body: "[]")
+        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
 
         let segments = try await uploadClient.getServerSegments(
             serverURL: "http://journal.example",
@@ -267,8 +268,8 @@ struct UploadClientTests {
     }
 
     @Test func getServerSegmentsParsesValidListing() async throws {
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: #"""
+        store.reset()
+        store.enqueue(statusCode: 200, body: #"""
         [{
           "key": "120000_300-1",
           "original_key": "120000_300",
@@ -282,7 +283,7 @@ struct UploadClientTests {
           }]
         }]
         """#)
-        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration())
+        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
 
         let segments = try await uploadClient.getServerSegments(
             serverURL: "http://journal.example",
@@ -305,14 +306,14 @@ struct UploadClientTests {
     }
 
     @Test func getServerSegmentsDropsMalformedElementsInsideValidArray() async throws {
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: #"""
+        store.reset()
+        store.enqueue(statusCode: 200, body: #"""
         [
           {"files": []},
           {"key": "120000_300", "files": [{"name": "audio.m4a", "size": 5}]}
         ]
         """#)
-        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration())
+        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
 
         let segments = try await uploadClient.getServerSegments(
             serverURL: "http://journal.example",
