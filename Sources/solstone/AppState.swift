@@ -55,10 +55,11 @@ public final class AppState {
 
     // MARK: - Managers
 
+    public let capture: CaptureCoordinator
     public let pauseManager: PauseManager
     public let storageManager: StorageManager
     public let audioDeviceMonitor: AudioDeviceMonitor
-    public private(set) var captureManager: CaptureManager!
+    public var captureManager: CaptureManager { capture.captureManager }
     public private(set) var uploadCoordinator: UploadCoordinator!
     internal private(set) var appQuitCoordinator: AppQuitCoordinator!
     public let installer: SolstoneInstaller
@@ -78,12 +79,28 @@ public final class AppState {
 
     // MARK: - State
 
-    public internal(set) var isRecording = false
-    public internal(set) var isPaused = false
+    public internal(set) var isRecording: Bool {
+        get { capture.isRecording }
+        set { capture.isRecording = newValue }
+    }
+
+    public internal(set) var isPaused: Bool {
+        get { capture.capturePaused }
+        set { capture.capturePaused = newValue }
+    }
+
     public internal(set) var errorMessage: String?
-    public internal(set) var audioReconciledCount: Int = 0
+    public internal(set) var audioReconciledCount: Int {
+        get { capture.audioReconciledCount }
+        set { capture.audioReconciledCount = newValue }
+    }
+
     public internal(set) var journalRuntimeStatus: JournalRuntimeStatus = .running
-    public internal(set) var captureQueuedForJournalReadiness: Bool = false
+    public internal(set) var captureQueuedForJournalReadiness: Bool {
+        get { capture.captureQueuedForJournalReadiness }
+        set { capture.captureQueuedForJournalReadiness = newValue }
+    }
+
     public internal(set) var restartRequiredBannerVisible: Bool = false
     private var restartRequiredGeneration: UInt64 = 0
     public internal(set) var solChatPending: SolChatRequestSummary?
@@ -93,21 +110,26 @@ public final class AppState {
     public private(set) var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
 
     /// Screen recording permission — polled periodically via SCShareableContent.
-    public internal(set) var screenRecordingGranted = false
+    public internal(set) var screenRecordingGranted: Bool {
+        get { capture.screenRecordingGranted }
+        set { capture.screenRecordingGranted = newValue }
+    }
 
     /// Microphone permission — polled periodically.
-    public internal(set) var microphoneGranted = false
+    public internal(set) var microphoneGranted: Bool {
+        get { capture.microphoneGranted }
+        set { capture.microphoneGranted = newValue }
+    }
 
     /// Set by SetupView to tell SettingsView which tab to open to
     public var pendingSettingsTab: String?
 
     /// Set to true after the first permission check completes, so startup UI knows real state
-    public internal(set) var initialPermissionCheckComplete = false
+    public internal(set) var initialPermissionCheckComplete: Bool {
+        get { capture.initialPermissionCheckComplete }
+        set { capture.initialPermissionCheckComplete = newValue }
+    }
 
-    /// Timer that polls permissions every few seconds until recording starts
-    private var permissionPollTimer: Timer?
-    /// Prevents concurrent permission check calls (poll interval < check duration)
-    private var isCheckingPermissions = false
     private var hasStartedBundledJournalDetection = false
     private var journalRestartTask: Task<Void, Never>?
     private var journalStopTask: Task<Void, Never>?
@@ -515,14 +537,14 @@ public final class AppState {
 
         // Update mic gain immediately if it changed
         if newConfig.microphoneGain != oldConfig.microphoneGain {
-            captureManager.setMicrophoneGain(newConfig.microphoneGain)
+            capture.captureManager.setMicrophoneGain(newConfig.microphoneGain)
         }
 
         // Update window exclusions immediately if they changed
         if newConfig.excludedAppNames != oldConfig.excludedAppNames ||
            newConfig.excludePrivateBrowsing != oldConfig.excludePrivateBrowsing ||
            newConfig.excludedTitlePatterns != oldConfig.excludedTitlePatterns {
-            captureManager.updateWindowExclusions(
+            capture.captureManager.updateWindowExclusions(
                 excludedAppNames: newConfig.excludedAppNames,
                 excludePrivateBrowsing: newConfig.excludePrivateBrowsing,
                 excludedTitlePatterns: newConfig.excludedTitlePatterns
@@ -688,7 +710,9 @@ public final class AppState {
         let solChatTarget = AppStateBridgeTarget()
         let journalStatusTarget = AppStateBridgeTarget()
         let heartbeatTarget = AppStateBridgeTarget()
+        let captureTarget = AppStateBridgeTarget()
         let homeBaseURLTarget = AppStateBridgeTarget()
+        let recoveryCoordinator = IncompleteSegmentRecoveryCoordinator.shared
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager
@@ -709,7 +733,7 @@ public final class AppState {
         )
         self.singleSupervisorGate = SingleSupervisorGate()
         self.journalReadinessGate = JournalReadinessGate()
-        self.recoveryCoordinator = .shared
+        self.recoveryCoordinator = recoveryCoordinator
         let tunnelLifecycleOwner = TunnelLifecycleOwner()
         self.tunnelLifecycleOwner = tunnelLifecycleOwner
         self.pairingCoordinator = PairingCoordinator(
@@ -725,11 +749,51 @@ public final class AppState {
         )
         let homeBaseURLResolver = Self.makeHomeBaseURLResolver(target: homeBaseURLTarget)
         self.homeBaseURLResolver = homeBaseURLResolver
+
+        // Apply debug segments setting if enabled
+        if config.debugSegments {
+            SegmentWriter.segmentDuration = 60
+            Logger.general.info("Debug segments enabled: using 60s duration")
+        }
+
+        // Create thread-safe holders for settings that are read at segment creation time
+        let debugAudioHolder = DebugSettingHolder(value: config.debugKeepRejectedAudio)
+        let silenceMusicHolder = DebugSettingHolder(value: config.silenceMusic)
+        let captureManager = CaptureManager(
+            storageManager: storageManager,
+            debugKeepRejectedAudio: { debugAudioHolder.value },
+            silenceMusic: { silenceMusicHolder.value },
+            excludedAppNames: config.excludedAppNames,
+            excludePrivateBrowsing: config.excludePrivateBrowsing,
+            excludedTitlePatterns: config.excludedTitlePatterns,
+            microphoneGain: config.microphoneGain,
+            verbose: false,
+            recoveryCoordinator: recoveryCoordinator
+        )
+        self.debugAudioHolder = debugAudioHolder
+        self.silenceMusicHolder = silenceMusicHolder
+        let capture = CaptureCoordinator(
+            captureManager: captureManager,
+            pauseManager: pauseManager,
+            audioDeviceMonitor: audioDeviceMonitor,
+            isTerminating: { [captureTarget] in
+                captureTarget.state?.isTerminating ?? true
+            },
+            configProvider: { [captureTarget, config] in
+                let currentConfig = captureTarget.state?.config ?? config
+                return (
+                    disabled: currentConfig.disabledMicrophoneUIDs,
+                    enabled: currentConfig.enabledMicrophoneUIDs
+                )
+            },
+            bannerSink: { [captureTarget] message in
+                captureTarget.state?.errorMessage = message
+            }
+        )
+        self.capture = capture
         self.heartbeatService = HeartbeatService(
             resolver: homeBaseURLResolver,
-            isPaused: { [pauseManager, heartbeatTarget] in
-                pauseManager.isPaused || (heartbeatTarget.state?.isPaused ?? false)
-            },
+            isPaused: capture.heartbeatIsPausedProvider(),
             healthProvider: { [heartbeatTarget] in
                 heartbeatTarget.state?.observerHealthSnapshot()
             },
@@ -759,29 +823,6 @@ public final class AppState {
             notifier: notifier
         )
 
-        // Apply debug segments setting if enabled
-        if config.debugSegments {
-            SegmentWriter.segmentDuration = 60
-            Logger.general.info("Debug segments enabled: using 60s duration")
-        }
-
-        // Create thread-safe holders for settings that are read at segment creation time
-        let debugAudioHolder = DebugSettingHolder(value: config.debugKeepRejectedAudio)
-        let silenceMusicHolder = DebugSettingHolder(value: config.silenceMusic)
-        captureManager = CaptureManager(
-            storageManager: storageManager,
-            debugKeepRejectedAudio: { debugAudioHolder.value },
-            silenceMusic: { silenceMusicHolder.value },
-            excludedAppNames: config.excludedAppNames,
-            excludePrivateBrowsing: config.excludePrivateBrowsing,
-            excludedTitlePatterns: config.excludedTitlePatterns,
-            microphoneGain: config.microphoneGain,
-            verbose: false,
-            recoveryCoordinator: recoveryCoordinator
-        )
-        self.debugAudioHolder = debugAudioHolder
-        self.silenceMusicHolder = silenceMusicHolder
-
         uploadCoordinator = UploadCoordinator(
             storageManager: storageManager,
             config: config,
@@ -804,13 +845,7 @@ public final class AppState {
         uploadCoordinator.bundledAvailabilityProvider = { [weak self] in
             self?.bundledJournalStatusAvailable ?? false
         }
-
-        // Wire up callbacks
-        captureManager.onStateChanged = { [weak self] state in
-            Task { @MainActor in
-                self?.handleCaptureStateChange(state)
-            }
-        }
+        captureTarget.state = self
 
         // Single segment-completion nudge for rotation, recovery, stop/pause, sleep, and lock.
         Task {
@@ -832,24 +867,6 @@ public final class AppState {
             }
         }
 
-        // Wire up audio device change notifications
-        audioDeviceMonitor.onDeviceChange = { [weak self] added, removed in
-            Task { @MainActor in
-                await self?.captureManager.handleDeviceChange(added: added, removed: removed)
-            }
-        }
-
-        // Wire pause manager callbacks
-        pauseManager.onPause = { [weak self] in
-            await self?.stopRecording()
-        }
-        pauseManager.onResume = { [weak self] in
-            await self?.startRecording()
-        }
-
-        // Clear any persisted pause state from previous sessions
-        pauseManager.restorePauseState()
-
         let connectedOptInOnlyUIDs = Set(audioDeviceMonitor.availableDevices
             .filter { $0.transportType.isOptInOnly }
             .map { $0.uid })
@@ -868,7 +885,7 @@ public final class AppState {
         }
 
         // Start polling permissions — auto-starts recording when ready
-        startPermissionPolling()
+        capture.activate()
 
         // Listen for external defaults changes (e.g. `defaults write` from terminal)
         visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
@@ -896,7 +913,6 @@ public final class AppState {
             if let activationObserver {
                 NotificationCenter.default.removeObserver(activationObserver)
             }
-            permissionPollTimer?.invalidate()
             journalRestartTask?.cancel()
             journalStopTask?.cancel()
             journalStartTask?.cancel()
@@ -971,6 +987,7 @@ public final class AppState {
         let storageManager = StorageManager()
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
         let heartbeatTarget = AppStateBridgeTarget()
+        let captureTarget = AppStateBridgeTarget()
         let snapshotResolver = HomeBaseURLResolver { [config] in
             guard let serverURL = config.serverURL else {
                 return .held
@@ -997,11 +1014,33 @@ public final class AppState {
         self.singleSupervisorGate = SingleSupervisorGate()
         self.journalReadinessGate = JournalReadinessGate()
         self.recoveryCoordinator = .shared
+        let debugAudioHolder = DebugSettingHolder(value: false)
+        let silenceMusicHolder = DebugSettingHolder(value: true)
+        self.debugAudioHolder = debugAudioHolder
+        self.silenceMusicHolder = silenceMusicHolder
+        let captureManager = CaptureManager(storageManager: storageManager)
+        let capture = CaptureCoordinator(
+            captureManager: captureManager,
+            pauseManager: pauseManager,
+            audioDeviceMonitor: audioDeviceMonitor,
+            isTerminating: { [captureTarget] in
+                captureTarget.state?.isTerminating ?? true
+            },
+            configProvider: { [captureTarget, config] in
+                let currentConfig = captureTarget.state?.config ?? config
+                return (
+                    disabled: currentConfig.disabledMicrophoneUIDs,
+                    enabled: currentConfig.enabledMicrophoneUIDs
+                )
+            },
+            bannerSink: { [captureTarget] message in
+                captureTarget.state?.errorMessage = message
+            }
+        )
+        self.capture = capture
         self.heartbeatService = HeartbeatService(
             resolver: snapshotResolver,
-            isPaused: { [pauseManager, heartbeatTarget] in
-                pauseManager.isPaused || (heartbeatTarget.state?.isPaused ?? false)
-            },
+            isPaused: capture.heartbeatIsPausedProvider(),
             healthProvider: { nil },
             postHeartbeat: { _, _, _, _ in }
         )
@@ -1027,12 +1066,6 @@ public final class AppState {
             }
         )
 
-        let debugAudioHolder = DebugSettingHolder(value: false)
-        let silenceMusicHolder = DebugSettingHolder(value: true)
-        self.debugAudioHolder = debugAudioHolder
-        self.silenceMusicHolder = silenceMusicHolder
-
-        captureManager = CaptureManager(storageManager: storageManager)
         uploadCoordinator = UploadCoordinator(
             forSnapshot: storageManager,
             config: config,
@@ -1045,6 +1078,7 @@ public final class AppState {
         )
         visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
         heartbeatTarget.state = self
+        captureTarget.state = self
 
         // No callback wiring, no pause restore, no segment recovery,
         // no startRecording, no upload sync, no AppState.shared assignment.
@@ -1100,106 +1134,15 @@ public final class AppState {
     }
 
     public func startRecording() async {
-        guard !isTerminating else {
-            Logger.general.info("startRecording() ignored because app is terminating")
-            return
-        }
-
-        do {
-            try await captureManager.startRecording(
-                disabledMicUIDs: config.disabledMicrophoneUIDs,
-                enabledMicUIDs: config.enabledMicrophoneUIDs
-            )
-            screenRecordingGranted = true
-        } catch let error as CaptureManager.CaptureError where error == .permissionDenied {
-            Logger.general.info("[Permissions] Recording denied — screen recording permission not granted")
-            screenRecordingGranted = false
-        } catch {
-            Logger.general.error("Recording failed to start: \(error.localizedDescription, privacy: .public)")
-            errorMessage = UICopy.ERROR_START_OBSERVING
-        }
+        await capture.startRecording()
     }
 
     public func stopRecording() async {
-        await captureManager.stopRecording()
+        await capture.stopRecording()
     }
 
     public func toggleRecording() async {
-        if isRecording && !isPaused {
-            await stopRecording()
-        } else {
-            await startRecording()
-        }
-    }
-
-    // MARK: - Permission Polling
-
-    /// Polls permissions every 5 seconds. When both are granted, auto-starts recording and
-    /// stops polling. Resumes polling if recording stops and permissions change.
-    private func startPermissionPolling() {
-        // Check immediately, then poll
-        Task { @MainActor in
-            await self.checkPermissionsAndAutoStart()
-        }
-
-        permissionPollTimer?.invalidate()
-        permissionPollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.checkPermissionsAndAutoStart()
-            }
-        }
-        permissionPollTimer?.tolerance = 2.0
-    }
-
-    private func stopPermissionPolling() {
-        permissionPollTimer?.invalidate()
-        permissionPollTimer = nil
-    }
-
-    private func checkPermissionsAndAutoStart() async {
-        guard !isCheckingPermissions else { return }
-        isCheckingPermissions = true
-        defer { isCheckingPermissions = false }
-
-        let checker = PermissionChecker()
-
-        if checker.hasPromptedScreenRecording {
-            // Gate on CGPreflightScreenCaptureAccess before touching SCShareableContent.
-            // On macOS 26, SCShareableContent.current re-triggers the OS dialog when no TCC
-            // entry exists — i.e. while the user has been prompted but hasn't granted yet.
-            // CGPreflightScreenCaptureAccess returns true only when a valid TCC entry exists.
-            if CGPreflightScreenCaptureAccess() {
-                let granted = await PermissionChecker.checkScreenRecording()
-                if !granted {
-                    // Preflight passed but SCShareableContent failed — CDHash changed after
-                    // reinstall. Reset prompted flag so user re-grants via the button.
-                    PermissionChecker.resetPromptedFlag()
-                    Logger.setup.info("[Permissions] Screen recording access lost (CDHash changed?) — resetting prompt flag")
-                }
-                screenRecordingGranted = granted
-            }
-            // else: no TCC entry yet — user hasn't granted in System Settings, wait silently
-        }
-        microphoneGranted = checker.microphoneGranted
-
-        let allGranted = screenRecordingGranted && microphoneGranted
-
-        // Auto-start if permissions are ready, not paused, and not already recording
-        if allGranted && !pauseManager.isPaused && !isRecording {
-            if isTerminating {
-                Logger.general.info("[Permissions] auto-start skipped because app is terminating")
-            } else {
-                Logger.general.info("[Permissions] all granted, auto-starting observation")
-                await startRecording()
-            }
-        }
-
-        // Stop polling once recording is active — lifecycle manager handles recovery from there
-        if isRecording {
-            stopPermissionPolling()
-        }
-
-        initialPermissionCheckComplete = true
+        await capture.toggleRecording()
     }
 
     // MARK: - Bundled Journal Startup
@@ -1777,37 +1720,6 @@ public final class AppState {
             Logger.setup.info("journal-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
         }
         journalRestartLogSink?(event)
-    }
-
-    // MARK: - Private Methods
-
-    private func handleCaptureStateChange(_ state: CaptureManager.State) {
-        switch state {
-        case .idle:
-            isRecording = false
-            isPaused = false
-            // Resume polling so automatic retry and IPC .start can begin again
-            // when permissions or runtime readiness change.
-            if permissionPollTimer == nil {
-                startPermissionPolling()
-            }
-        case .recording:
-            isRecording = true
-            isPaused = false
-            errorMessage = nil
-            stopPermissionPolling()
-        case .paused:
-            isRecording = true
-            isPaused = true
-        case .error(let message):
-            isRecording = false
-            isPaused = false
-            errorMessage = message
-            // Resume polling to retry when permissions are restored
-            if permissionPollTimer == nil {
-                startPermissionPolling()
-            }
-        }
     }
 
     public func didOpenWindow(_ id: SolstoneSceneID) {

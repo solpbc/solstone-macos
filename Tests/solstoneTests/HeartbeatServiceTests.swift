@@ -325,6 +325,14 @@ struct HeartbeatServiceTests {
         #expect(await appState.heartbeatService.pausedForTesting() == true)
 
         appState.isPaused = false
+        #expect(await appState.heartbeatService.pausedForTesting() == false)
+
+        appState.capture.handleCaptureStateChange(.paused)
+        #expect(await appState.heartbeatService.pausedForTesting() == true)
+
+        appState.capture.handleCaptureStateChange(.recording)
+        #expect(await appState.heartbeatService.pausedForTesting() == false)
+
         appState.pauseManager.pause(for: .indefinite)
         #expect(await appState.heartbeatService.pausedForTesting() == true)
 

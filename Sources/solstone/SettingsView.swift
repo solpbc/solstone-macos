@@ -2042,7 +2042,7 @@ struct SettingsView: View {
                 appState.updateConfig(config)
 
                 Task {
-                    await appState.captureManager?.setDebugSegments(newValue)
+                    await appState.captureManager.setDebugSegments(newValue)
                 }
             }
         )
