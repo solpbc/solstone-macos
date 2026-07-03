@@ -149,7 +149,7 @@ public struct UploadClient: Sendable {
         if isLocalNetworkHost(host) {
             switch error.code {
             case .cannotConnectToHost, .notConnectedToInternet, .networkConnectionLost, .timedOut:
-                return "Can't reach local network. Open System Settings → Privacy & Security → Local Network and allow solstone."
+                return "Can't reach local network. Open System Settings → Privacy & Security → Local Network and allow sol."
             default:
                 break
             }
@@ -209,7 +209,7 @@ public struct UploadClient: Sendable {
                 // Check if response is JSON (not HTML login page)
                 if contentType.contains("text/html") || bodyPreview.contains("<!DOCTYPE") || bodyPreview.contains("<html") {
                     Logger.upload.info("testConnection: got HTML instead of JSON - endpoint may not exist")
-                    return "journal returned a login page (restart solstone?)"
+                    return "journal returned a login page (restart sol?)"
                 }
 
                 switch httpResponse.statusCode {
@@ -219,9 +219,9 @@ public struct UploadClient: Sendable {
                 case 401:
                     return "Invalid API key"
                 case 403:
-                    return "Observer disabled"
+                    return "this Mac is disabled"
                 case 404:
-                    return "journal endpoint not found (update solstone?)"
+                    return "journal endpoint not found (update sol?)"
                 default:
                     return "journal error (\(httpResponse.statusCode))"
                 }

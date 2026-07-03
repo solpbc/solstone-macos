@@ -62,7 +62,7 @@ internal func bundledStatusFooterText(permissionsGranted: Bool, microphoneCount:
 
 internal func externalStatusFooterText(serverURL: String?, permissionsGranted: Bool) -> String {
     let permissions = permissionsGranted ? "permissions granted" : "permissions need attention"
-    return "this Mac observes · your journal lives on \(journalHost(serverURL))\(encryptionClause(serverURL)) · \(permissions)"
+    return "sol is on · your journal lives on \(journalHost(serverURL))\(encryptionClause(serverURL)) · \(permissions)"
 }
 
 extension StatusHealthSummary {
@@ -86,14 +86,14 @@ extension StatusHealthSummary {
                 return .init(
                     severity: .attention,
                     title: "your journal needs attention",
-                    subtitle: "observing is still on — new memory is safe on this Mac until the journal is back",
+                    subtitle: "sol is still on — new memory is safe on this Mac until the journal is back",
                     axValue: "bundled_needs_attention"
                 )
             case .setupNeeded:
                 return .init(
                     severity: .warn,
                     title: "one step left to finish setup",
-                    subtitle: "observing is ready — your journal just needs to finish installing",
+                    subtitle: "sol is ready — your journal just needs to finish installing",
                     axValue: "bundled_setup_needed"
                 )
             case .stoppedByUser:
@@ -122,7 +122,7 @@ extension StatusHealthSummary {
                 }
                 return .init(
                     severity: .good,
-                    title: "all good — observing, journal healthy",
+                    title: "all good — on, journal healthy",
                     subtitle: "everything stays on this Mac",
                     axValue: "bundled_healthy"
                 )
@@ -236,7 +236,7 @@ extension StatusHealthSummary {
                 }
                 return .init(
                     severity: .good,
-                    title: "all good — observing, synced to \(host)",
+                    title: "all good — on, synced to \(host)",
                     subtitle: subtitle,
                     axValue: "external_synced"
                 )
@@ -254,10 +254,10 @@ extension StatusHealthSummary {
         if !isRecording {
             return StatusHealthSummary(
                 severity: .warn,
-                title: "observing is off",
+                title: "sol is off",
                 subtitle: isBundled
-                    ? "your journal is fine — turn observing back on to keep building memory"
-                    : "nothing is reaching \(host) while observing is off",
+                    ? "your journal is fine — turn sol back on to keep building memory"
+                    : "nothing is reaching \(host) while sol is off",
                 axValue: "observing_off"
             )
         }
@@ -267,7 +267,7 @@ extension StatusHealthSummary {
                 : (isSynced ? "synced to \(host)" : "paused — \(host)")
             return StatusHealthSummary(
                 severity: .warn,
-                title: "observing is paused",
+                title: "sol is paused",
                 subtitle: subtitle,
                 axValue: "observing_paused"
             )

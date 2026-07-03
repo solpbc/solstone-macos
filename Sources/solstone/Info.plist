@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>solstone</string>
+	<string>sol</string>
 	<key>CFBundleExecutable</key>
 	<string>solstone</string>
 	<key>CFBundleIconFile</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleIdentifier</key>
 	<string>app.solstone.observer</string>
 	<key>CFBundleName</key>
-	<string>solstone</string>
+	<string>sol</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -34,15 +34,15 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 sol pbc. all rights reserved.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>solstone observer connects to your journal on your local network so it can send your memories there.</string>
+	<string>sol connects to your journal on your local network so it can send your memories there.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>solstone observer hears conversations and meetings so you can find them later. audio stays on your device and goes only to your journal.</string>
+	<string>sol hears conversations and meetings so you can find them later. audio stays on your device and goes only to your journal.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>solstone observer takes in your screens along with you to build your personal memory. what it sees stays on your mac and goes only to your journal — nothing else.</string>
+	<string>sol takes in your screens along with you to build your personal memory. what it sees stays on your mac and goes only to your journal — nothing else.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>solstone observer uses on-device speech recognition to identify audio containing conversation, so only meaningful audio is kept.</string>
+	<string>sol uses on-device speech recognition to identify audio containing conversation, so only meaningful audio is kept.</string>
 	<key>NSSystemAudioRecordingUsageDescription</key>
-	<string>solstone observer hears system audio from calls and media to include it in your memory. this requires system audio permission.</string>
+	<string>sol hears system audio from calls and media to include it in your memory. this requires system audio permission.</string>
 	<key>SUAllowsAutomaticUpdates</key>
 	<true/>
 	<key>SUAutomaticallyUpdate</key>

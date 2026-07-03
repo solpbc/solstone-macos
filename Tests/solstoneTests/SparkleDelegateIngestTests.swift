@@ -632,7 +632,7 @@ struct SparkleDelegateIngestTests {
         #expect(controller.stagedVersion == "1.3.9")
         #expect(UpdatesCopy.stagedReadyTitle(version: "1.3.9") == "ready to install v1.3.9")
         #expect(UpdatesCopy.actionRelaunchToInstall == "relaunch to install")
-        #expect(UpdatesCopy.stagedReadySubtitle == "the update is downloaded and will install when solstone relaunches.")
+        #expect(UpdatesCopy.stagedReadySubtitle == "the update is downloaded and will install when sol relaunches.")
     }
 
     private func clearDefaults() {

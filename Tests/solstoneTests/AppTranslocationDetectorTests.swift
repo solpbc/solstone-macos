@@ -8,9 +8,9 @@ import Testing
 @Suite("AppTranslocationDetector")
 struct AppTranslocationDetectorTests {
     @Test @MainActor func translocationModalCopyIsLocked() {
-        #expect(AppTranslocationModal.translocationModalTitle == "solstone needs to be moved")
-        #expect(AppTranslocationModal.translocationModalBody == "solstone is running from a temporary location. Move solstone.app to /Applications and re-launch.")
-        #expect(AppTranslocationModal.translocationModalButton == "Quit solstone")
+        #expect(AppTranslocationModal.translocationModalTitle == "sol needs to be moved")
+        #expect(AppTranslocationModal.translocationModalBody == "sol is running from a temporary location. move solstone.app to /Applications and re-launch.")
+        #expect(AppTranslocationModal.translocationModalButton == "quit sol")
     }
 
     @Test func isTranslocatedReturnsBoolWithoutThrowing() {

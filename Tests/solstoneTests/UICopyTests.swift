@@ -12,11 +12,11 @@ struct UICopyTests {
     }
 
     @Test func journalModeThisMacTradeoffString() {
-        #expect(UICopy.JOURNAL_MODE_THIS_MAC_TRADEOFF == "solstone runs the full system on this Mac and your journal lives here. recommended if you\u{0027}re just getting started.")
+        #expect(UICopy.JOURNAL_MODE_THIS_MAC_TRADEOFF == "everything runs on this Mac and your journal lives here. recommended if you're just getting started.")
     }
 
     @Test func journalModeAnotherMachineTradeoffString() {
-        #expect(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF == "this Mac becomes an observer that syncs to a journal that lives on another device \u{2014} your other Mac, your home server, or a journal you\u{0027}ve been invited to.")
+        #expect(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF == "this Mac syncs to a journal that lives on another device — your other Mac, your home server, or a journal you've been invited to.")
         #expect(UICopy.PAIRING_NOTENTITLED_RECOVERY == "your journal is paired, but it isn\u{0027}t on the paid plan \u{2014} so it can\u{0027}t sync over the internet. on the same wi-fi as your journal, or over your own vpn, it connects directly without the plan.")
         #expect(UICopy.PAIRING_DISCONNECT_CONFIRM == "disconnect this Mac from your journal? your journal keeps everything \u{2014} you can pair again anytime.")
     }
@@ -55,7 +55,7 @@ struct UICopyTests {
     }
 
     @Test func settingsTabUpdatesDoneA11yString() {
-        #expect(UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y == "solstone is up to date")
+        #expect(UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y == "sol is up to date")
     }
 
     @Test func settingsAttentionPermissionsString() {
@@ -93,8 +93,8 @@ struct UICopyTests {
     }
 
     @Test func journalWaitingMenuStrings() {
-        #expect(UICopy.JOURNAL_WAITING_FOR_READINESS_MENU == "observing, waiting for journal")
-        #expect(UICopy.JOURNAL_WAITING_FOR_READINESS_MENU_BUTTON == "observing, waiting for journal \u{2192}")
+        #expect(UICopy.JOURNAL_WAITING_FOR_READINESS_MENU == "on, waiting for journal")
+        #expect(UICopy.JOURNAL_WAITING_FOR_READINESS_MENU_BUTTON == "on, waiting for journal →")
     }
 
     @Test func journalRestartAndSetupStrings() {
@@ -109,10 +109,10 @@ struct UICopyTests {
     }
 
     @Test func installerReadinessTimeoutString() {
-        #expect(UICopy.INSTALLER_READINESS_TIMEOUT == "solstone didn\u{0027}t become ready in time")
+        #expect(UICopy.INSTALLER_READINESS_TIMEOUT == "the journal didn't become ready in time")
     }
 
     @Test func installerReadinessGateFailedString() {
-        #expect(UICopy.INSTALLER_READINESS_GATE_FAILED == "couldn\u{0027}t get solstone ready for this observer")
+        #expect(UICopy.INSTALLER_READINESS_GATE_FAILED == "couldn't get the journal ready for this Mac")
     }
 }

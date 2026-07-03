@@ -10,7 +10,7 @@ import SolstoneCore
 struct UploadClientTests {
     private let store = ObserverURLProtocolStore()
     private let client = UploadClient()
-    private let localNetworkMessage = "Can't reach local network. Open System Settings → Privacy & Security → Local Network and allow solstone."
+    private let localNetworkMessage = "Can't reach local network. Open System Settings → Privacy & Security → Local Network and allow sol."
 
     @Test func stripSegmentPrefixMatchesAndStrips() {
         let result = client.stripSegmentPrefix("143022_300_audio.m4a", segment: "143022_300")

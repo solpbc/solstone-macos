@@ -40,7 +40,7 @@ struct BundledServiceCardTests {
     }
 
     @Test func installedCurrentUsesReadyCopy() {
-        #expect(installedServiceMessage(for: .installedCurrent(version: "0.3.2")) == "solstone 0.3.2 is ready")
+        #expect(installedServiceMessage(for: .installedCurrent(version: "0.3.2")) == "the journal 0.3.2 is ready")
     }
 
     @Test func firstLaunchPermissionPromptsNoteAvoidsForbiddenTokens() {
@@ -58,7 +58,7 @@ struct BundledServiceCardTests {
     }
 
     @Test func installedUnknownUsesVersionUnavailableCopy() {
-        #expect(installedServiceMessage(for: .installedUnknown) == "solstone is installed · couldn't read its version")
+        #expect(installedServiceMessage(for: .installedUnknown) == "the journal is installed · couldn't read its version")
     }
 
     @Test func externalManagedCopyAvoidsForbiddenTokens() {
@@ -125,11 +125,11 @@ struct BundledServiceCardTests {
     }
 
     @Test func upgradeFailedStatusMessageUsesSpecLiteral() {
-        #expect(upgradeFailedStatusMessage(installedVersion: "0.3.1", pinnedVersion: "0.4.0") == "couldn't upgrade solstone — still running 0.3.1")
+        #expect(upgradeFailedStatusMessage(installedVersion: "0.3.1", pinnedVersion: "0.4.0") == "couldn't upgrade the journal — still running 0.3.1")
     }
 
     @Test func upgradeFailedStatusMessageUsesConfirmedNewLiteral() {
-        #expect(upgradeFailedStatusMessage(installedVersion: "0.4.0", pinnedVersion: "0.4.0") == "upgraded solstone to 0.4.0 — couldn't register this observer")
+        #expect(upgradeFailedStatusMessage(installedVersion: "0.4.0", pinnedVersion: "0.4.0") == "upgraded the journal to 0.4.0 — couldn't register this Mac")
     }
 
     @Test func upgradeFailedStatusMessageUsesUnknownLiteral() {
@@ -171,7 +171,7 @@ struct BundledServiceCardTests {
 
     @Test func sanitizerKeepsUpgradeStatusSummary() {
         let summary = upgradeFailedStatusMessage(installedVersion: "0.4.7", pinnedVersion: "0.4.8")
-        #expect(sanitizedInlineFailureMessage(summary) == "couldn't upgrade solstone — still running 0.4.7")
+        #expect(sanitizedInlineFailureMessage(summary) == "couldn't upgrade the journal — still running 0.4.7")
     }
 
     @Test func sanitizerKeepsReadinessGateSummaries() {

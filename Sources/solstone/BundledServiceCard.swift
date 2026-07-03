@@ -117,7 +117,7 @@ struct BundledServiceCard: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Button("install solstone for me") {
+            Button("install the journal for me") {
                 installer.start(journalURL: journalURL, existingInstallChoice: .createFresh)
             }
             .disabled(isDetecting)
@@ -204,7 +204,7 @@ struct BundledServiceCard: View {
     }
 
     private var runtimeUnconfirmedContent: some View {
-        Text("solstone is running on this Mac")
+        Text("the journal is running on this Mac")
             .accessibilityIdentifier(AXID.Installer.installedMessageState)
             .accessibilityValue(InstallerCardState.runtimeUnconfirmed.axToken)
     }
@@ -741,13 +741,13 @@ struct BundledServiceCard: View {
         case .cleaningUp:
             return "preparing upgrade"
         case .installSolstone:
-            return "installing solstone"
+            return "installing the journal"
         case .solSetup:
             return "setting up your journal"
         case .verifyingIntegrity:
             return UICopy.INSTALLER_VERIFY_INTEGRITY_LABEL
         case .registering:
-            return "registering this observer"
+            return "registering this Mac"
         case .models:
             return "downloading the transcription model (this can take a few minutes)"
         }
@@ -769,7 +769,7 @@ struct BundledServiceCard: View {
 }
 
 let firstLaunchPermissionPromptsNote: String =
-    "macOS will ask permission for solstone's python runtime on first launch so sol can read transcripts and observations into your journal."
+    "macOS will ask permission for the journal's python runtime on first launch so sol can read your transcripts and memories into your journal."
 
 let upgradeFailedRetryButtonTitle = "try upgrade again"
 let registerAgainRetryButtonTitle = "try registering again"
@@ -786,9 +786,9 @@ func upgradeFailedStatusMessage(installedVersion: String?, pinnedVersion: String
         return "upgrade may be incomplete — couldn't confirm the running version"
     }
     if installedVersion == pinnedVersion {
-        return "upgraded solstone to \(pinnedVersion) — couldn't register this observer"
+        return "upgraded the journal to \(pinnedVersion) — couldn't register this Mac"
     }
-    return "couldn't upgrade solstone — still running \(installedVersion)"
+    return "couldn't upgrade the journal — still running \(installedVersion)"
 }
 
 func sanitizedInlineFailureMessage(_ message: String) -> String {
@@ -848,15 +848,15 @@ func bundledServiceCardState(appState: AppState, allowsLocalJournalActions: Bool
 func installedServiceMessage(for state: InstallerCardState) -> String {
     switch state {
     case .installedCurrent(let version):
-        return "solstone \(version) is ready"
+        return "the journal \(version) is ready"
     case .installedUnknown:
-        return "solstone is installed · couldn't read its version"
+        return "the journal is installed · couldn't read its version"
     default:
         return ""
     }
 }
 
-let externalManagedTitle = "solstone is managed outside this app"
+let externalManagedTitle = "the journal is managed outside this app"
 
 let externalManagedBody = "this Mac can connect in another-device mode, or keep using the local journal already set up here."
 
@@ -865,11 +865,11 @@ func externalManagedVersionLine(for probe: VersionProbeResult?) -> String {
     case nil:
         return "checking version..."
     case .current(let version):
-        return "found solstone \(version)"
+        return "found the journal \(version)"
     case .outdated(let installed, let pinned):
-        return "found solstone \(installed); this app includes \(pinned)"
+        return "found the journal \(installed); this app includes \(pinned)"
     case .unknown:
-        return "couldn't read the solstone version"
+        return "couldn't read the journal version"
     }
 }
 

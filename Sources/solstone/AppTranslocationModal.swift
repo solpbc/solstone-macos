@@ -7,9 +7,9 @@ import SolstoneCore
 
 @MainActor
 public enum AppTranslocationModal {
-    static let translocationModalTitle = "solstone needs to be moved"
-    static let translocationModalBody = "solstone is running from a temporary location. Move solstone.app to /Applications and re-launch."
-    static let translocationModalButton = "Quit solstone"
+    static let translocationModalTitle = "sol needs to be moved"
+    static let translocationModalBody = "sol is running from a temporary location. move solstone.app to /Applications and re-launch."
+    static let translocationModalButton = "quit sol"
 
     public static func presentAndQuit() {
         let alert = NSAlert()

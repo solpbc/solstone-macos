@@ -482,7 +482,7 @@ struct SettingsView: View {
 
     private var permissionsTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("solstone needs screen recording and microphone access to build your memory.")
+            Text("sol needs screen recording and microphone access to build your memory.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -502,7 +502,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("this is how you get searchable memory of every meeting, document, and idea. solstone observes your screen alongside you and keeps everything on your Mac, sent only to your journal.")
+                        Text("this is how you get searchable memory of every meeting, document, and idea. sol takes in your screen alongside you and keeps everything on your Mac, sent only to your journal.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
@@ -560,7 +560,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("to take in conversations and meetings, solstone needs mic access. same rules: stored locally, sent only to your journal. no third parties, no exceptions.")
+                        Text("to take in conversations and meetings, sol needs mic access. same rules: stored locally, sent only to your journal. no third parties, no exceptions.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
@@ -694,7 +694,7 @@ struct SettingsView: View {
             }
         } else if appState.notificationAuthorizationStatus == .denied {
             VStack(alignment: .leading, spacing: 4) {
-                Text("notifications are turned off for solstone")
+                Text("notifications are turned off for sol")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("macOS is blocking these. you can turn them back on anytime.")
@@ -707,7 +707,7 @@ struct SettingsView: View {
                 }
                 .font(.caption)
                 .buttonStyle(.link)
-                Text("System Settings → Notifications → solstone")
+                Text("System Settings → Notifications → sol")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -865,7 +865,7 @@ struct SettingsView: View {
                     }
                 ))
                 .disabled(!appState.config.isUploadConfigured)
-                .help("keeps observing locally but stops sending to your journal")
+                .help("keeps sol running locally but stops sending to your journal")
                 .accessibilityIdentifier(AXID.Settings.Status.pauseSync)
                 if let lastSynced = appState.uploadCoordinator.lastSyncedAt {
                     LabeledContent("last synced") {
@@ -1435,7 +1435,7 @@ struct SettingsView: View {
             }
             .padding(.vertical, 4)
         }
-        Text("observations are sent only to your configured journal. nothing else, nowhere else.")
+        Text("your memories are sent only to your configured journal. nothing else, nowhere else.")
             .font(.caption)
             .foregroundStyle(.secondary)
             .padding(.top, 4)
@@ -1885,7 +1885,7 @@ struct SettingsView: View {
     private var bundledVersionCaption: String {
         let state = appState.bundledJournalCardState
         if case .installedCurrent(let version) = state {
-            return "solstone \(version) · on this Mac"
+            return "the journal \(version) · on this Mac"
         }
         return "on this Mac"
     }
@@ -1927,7 +1927,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 20) {
             healthSummaryCard
 
-            GroupBox("observing") {
+            GroupBox("sol") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(renderedObservationText)
                         .font(.title2)
@@ -2175,7 +2175,7 @@ struct SettingsView: View {
 
     private var agentInstructions: String {
         """
-        this is solstone-macos, a screen and audio observer for solstone.
+        this is solstone-macos, a screen and audio observer for your journal.
         installed at: \(Bundle.main.bundlePath)
         captures: ~/Library/Application Support/Solstone/captures/
         logs: /usr/bin/log stream --predicate 'subsystem == "app.solstone.observer"' --level debug

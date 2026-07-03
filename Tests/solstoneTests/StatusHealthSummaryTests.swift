@@ -61,12 +61,12 @@ struct StatusHealthSummaryTests {
         let bundled = makeSummary(serviceMode: .bundled, isRecording: false)
         #expect(bundled.severity == .warn)
         #expect(bundled.axValue == "observing_off")
-        #expect(bundled.subtitle == "your journal is fine — turn observing back on to keep building memory")
+        #expect(bundled.subtitle == "your journal is fine — turn sol back on to keep building memory")
 
         let external = makeSummary(isRecording: false)
         #expect(external.severity == .warn)
         #expect(external.axValue == "observing_off")
-        #expect(external.subtitle == "nothing is reaching x.example while observing is off")
+        #expect(external.subtitle == "nothing is reaching x.example while sol is off")
     }
 
     @Test func pausedRowUsesModeAndSyncSpecificSubtitle() {

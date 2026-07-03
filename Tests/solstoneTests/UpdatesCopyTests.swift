@@ -9,7 +9,7 @@ struct UpdatesCopyTests {
     }
 
     @Test func updateAvailableSubtitleString() {
-        #expect(UpdatesCopy.updateAvailableSubtitle(version: "1.1.0") == "solstone 1.1.0 is ready to download.")
+        #expect(UpdatesCopy.updateAvailableSubtitle(version: "1.1.0") == "sol 1.1.0 is ready to download.")
     }
 
     @Test func downloadingTitleString() {
@@ -26,7 +26,7 @@ struct UpdatesCopyTests {
 
     @Test func stagedReadyStrings() {
         #expect(UpdatesCopy.stagedReadyTitle(version: "1.1.0") == "ready to install v1.1.0")
-        #expect(UpdatesCopy.stagedReadySubtitle == "the update is downloaded and will install when solstone relaunches.")
+        #expect(UpdatesCopy.stagedReadySubtitle == "the update is downloaded and will install when sol relaunches.")
         #expect(UpdatesCopy.actionRelaunchToInstall == "relaunch to install")
         #expect(
             UpdatesCopy.lastCheckedStaged(relative: "just now", version: "1.1.0")
@@ -39,7 +39,7 @@ struct UpdatesCopyTests {
     }
 
     @Test func installingSubtitleString() {
-        #expect(UpdatesCopy.installingSubtitle == "solstone is handing off to the installer.")
+        #expect(UpdatesCopy.installingSubtitle == "sol is handing off to the installer.")
     }
 
     @Test func extractingSubtitleString() {
@@ -66,7 +66,7 @@ struct UpdatesCopyTests {
     }
 
     @Test func lastCheckedUpToDateString() {
-        #expect(UpdatesCopy.lastCheckedUpToDate(relative: "just now") == "last checked just now — solstone is up to date")
+        #expect(UpdatesCopy.lastCheckedUpToDate(relative: "just now") == "last checked just now — sol is up to date")
     }
 
     @Test func deferredStrings() {
@@ -75,7 +75,7 @@ struct UpdatesCopyTests {
     }
 
     @Test func privacyFootnoteString() {
-        #expect(UpdatesCopy.privacyFootnote == "solstone never sends usage data. update checks only fetch the version manifest.")
+        #expect(UpdatesCopy.privacyFootnote == "sol never sends usage data. update checks only fetch the version manifest.")
     }
 
     @Test func releaseNotesOnlineLinkLabelString() {

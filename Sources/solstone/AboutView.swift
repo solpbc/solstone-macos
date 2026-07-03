@@ -20,7 +20,7 @@ struct AboutView: View {
                     .frame(width: 64, height: 64)
                     .accessibilityIdentifier(AXID.About.logo)
 
-                Text("solstone")
+                Text("sol")
                     .font(.title)
                     .fontWeight(.bold)
                     .accessibilityIdentifier(AXID.About.title)
@@ -38,6 +38,11 @@ struct AboutView: View {
                 Text("by sol pbc")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+
+                Text("sol is part of solstone — open source, local-first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
 
                 Text("a public benefit corporation. your data is never sold or shared — by binding legal covenant.")
                     .font(.caption)

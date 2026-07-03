@@ -132,7 +132,7 @@ struct SolstoneInstallerTests {
         runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
         let registrar = FakeObserverRegistrar(result: .failure(ObserverRegistrationFailure(
             category: .unknown,
-            message: "couldn't register this observer",
+            message: "couldn't register this Mac",
             logExcerpt: "observer failed"
         )))
         let installer = makeInstaller(
@@ -153,7 +153,7 @@ struct SolstoneInstallerTests {
 
         let record = try #require(store.load())
         #expect(record.installed == BundleConfig.solstonePinVersion)
-        #expect(upgradeFailedStatusMessage(installedVersion: record.installed, pinnedVersion: record.pinned) == "upgraded solstone to \(BundleConfig.solstonePinVersion) — couldn't register this observer")
+        #expect(upgradeFailedStatusMessage(installedVersion: record.installed, pinnedVersion: record.pinned) == "upgraded the journal to \(BundleConfig.solstonePinVersion) — couldn't register this Mac")
     }
 
     @Test func postActivationRegisteringFailurePersistsUnknownWhenReprobeNil() async throws {
@@ -168,7 +168,7 @@ struct SolstoneInstallerTests {
         runner.enqueue("--version", .success(exitCode: 1))
         let registrar = FakeObserverRegistrar(result: .failure(ObserverRegistrationFailure(
             category: .unknown,
-            message: "couldn't register this observer",
+            message: "couldn't register this Mac",
             logExcerpt: "observer failed"
         )))
         let installer = makeInstaller(
@@ -1004,7 +1004,7 @@ struct SolstoneInstallerTests {
         runner.enqueue("install-models", .success())
         let registrar = FakeObserverRegistrar(result: .failure(ObserverRegistrationFailure(
             category: .network,
-            message: "couldn't reach the journal to register this observer",
+            message: "couldn't reach the journal to register this Mac",
             logExcerpt: "network failed"
         )))
         let installer = makeInstaller(runner: runner, observerRegistrar: registrar.register)
@@ -1014,7 +1014,7 @@ struct SolstoneInstallerTests {
         try await waitForTerminal(installer)
 
         if case .failed(.registering(let message)) = installer.main {
-            #expect(message == "couldn't reach the journal to register this observer")
+            #expect(message == "couldn't reach the journal to register this Mac")
         } else {
             Issue.record("expected registering failure, got \(installer.main)")
         }
@@ -1815,7 +1815,7 @@ struct SolstoneInstallerTests {
     private func transientObserverRegistrationFailure(_ detail: String) -> ObserverRegistrationFailure {
         ObserverRegistrationFailure(
             category: .network,
-            message: "couldn't reach the journal to register this observer",
+            message: "couldn't reach the journal to register this Mac",
             logExcerpt: detail,
             retryableConnection: true
         )

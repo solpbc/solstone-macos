@@ -41,14 +41,14 @@ enum UpdatesCopy {
 
     static let lastCheckedNever = "never checked for updates"
     static let lastCheckedJustNow = "just now"
-    static let privacyFootnote = "solstone never sends usage data. update checks only fetch the version manifest."
+    static let privacyFootnote = "sol never sends usage data. update checks only fetch the version manifest."
 
     static func appHeader(version: String) -> String {
-        "solstone \(version)"
+        "sol \(version)"
     }
 
     static func lastCheckedUpToDate(relative: String) -> String {
-        "last checked \(relative) — solstone is up to date"
+        "last checked \(relative) — sol is up to date"
     }
 
     static func lastCheckedUpdateFound(relative: String, version: String) -> String {
@@ -82,7 +82,7 @@ enum UpdatesCopy {
     }
 
     static func updateAvailableSubtitle(version: String) -> String {
-        "solstone \(version) is ready to download."
+        "sol \(version) is ready to download."
     }
 
     static func deferredTitle(version: String) -> String {
@@ -113,7 +113,7 @@ enum UpdatesCopy {
         return "finishing up in the background…"
     }
 
-    static let backgroundDownloadSubtitle = "solstone will let you know when the update is ready to install."
+    static let backgroundDownloadSubtitle = "sol will let you know when the update is ready to install."
 
     static func extractingTitle(version: String) -> String {
         "downloading \(version)"
@@ -131,13 +131,13 @@ enum UpdatesCopy {
 
     static let readyToInstallSubtitle = "the update is downloaded and ready when you are."
 
-    static let stagedReadySubtitle = "the update is downloaded and will install when solstone relaunches."
+    static let stagedReadySubtitle = "the update is downloaded and will install when sol relaunches."
 
     static func installingTitle(version: String) -> String {
         "installing \(version)"
     }
 
-    static let installingSubtitle = "solstone is handing off to the installer."
+    static let installingSubtitle = "sol is handing off to the installer."
 
     static let actionReasonUpdatesUnavailable = "updates are unavailable in this build"
     static let actionReasonDownloadInProgress = "a download is already in progress"

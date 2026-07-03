@@ -719,7 +719,7 @@ public final class SolstoneInstaller {
         guard let url = URL(string: endpoint) else {
             return .failure(ObserverRegistrationFailure(
                 category: .unknown,
-                message: "couldn't build the observer registration request",
+                message: "couldn't build the registration request",
                 logExcerpt: "invalid observer registration URL: \(endpoint)"
             ))
         }
@@ -735,7 +735,7 @@ public final class SolstoneInstaller {
         } catch {
             return .failure(ObserverRegistrationFailure(
                 category: .unknown,
-                message: "couldn't build the observer registration request",
+                message: "couldn't build the registration request",
                 logExcerpt: "observer registration request encode failed: \(error)"
             ))
         }
@@ -749,14 +749,14 @@ public final class SolstoneInstaller {
         } catch let error as URLError {
             return .failure(ObserverRegistrationFailure(
                 category: .network,
-                message: "couldn't reach the journal to register this observer",
+                message: "couldn't reach the journal to register this Mac",
                 logExcerpt: "observer registration request failed: \(error)",
                 retryableConnection: Self.isRetryableObserverRegistrationError(error)
             ))
         } catch {
             return .failure(ObserverRegistrationFailure(
                 category: .network,
-                message: "couldn't reach the journal to register this observer",
+                message: "couldn't reach the journal to register this Mac",
                 logExcerpt: "observer registration request failed: \(error)",
                 retryableConnection: Self.isRetryableObserverRegistrationError(error)
             ))
@@ -765,7 +765,7 @@ public final class SolstoneInstaller {
         guard let httpResponse = response as? HTTPURLResponse else {
             return .failure(ObserverRegistrationFailure(
                 category: .unknown,
-                message: "journal returned an invalid observer registration",
+                message: "journal returned an invalid registration",
                 logExcerpt: "observer registration response was not HTTP"
             ))
         }
@@ -773,7 +773,7 @@ public final class SolstoneInstaller {
         guard (200...299).contains(httpResponse.statusCode) else {
             return .failure(ObserverRegistrationFailure(
                 category: .unknown,
-                message: "journal couldn't register this observer",
+                message: "journal couldn't register this Mac",
                 logExcerpt: "status \(httpResponse.statusCode): \(Self.shortBodyPreview(data))"
             ))
         }
@@ -784,7 +784,7 @@ public final class SolstoneInstaller {
         } catch {
             return .failure(ObserverRegistrationFailure(
                 category: .unknown,
-                message: "journal returned an invalid observer registration",
+                message: "journal returned an invalid registration",
                 logExcerpt: "observer registration response decode failed: \(error)"
             ))
         }
@@ -793,7 +793,7 @@ public final class SolstoneInstaller {
         guard !key.isEmpty else {
             return .failure(ObserverRegistrationFailure(
                 category: .unknown,
-                message: "journal returned an empty observer key",
+                message: "journal returned an empty registration key",
                 logExcerpt: "observer registration response key was empty"
             ))
         }

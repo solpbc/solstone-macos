@@ -234,13 +234,13 @@ struct SolstoneCaptureApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        Window("solstone observer settings", id: "settings") {
+        Window("sol settings", id: "settings") {
             SettingsSceneRoot(appState: appState, updateController: updateController)
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
 
-        Window("about solstone observer", id: "about") {
+        Window("about sol", id: "about") {
             AboutView()
         }
         .windowResizability(.contentSize)
