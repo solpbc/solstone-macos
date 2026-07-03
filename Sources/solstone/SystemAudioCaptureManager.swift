@@ -17,11 +17,18 @@ public final class SystemAudioCaptureManager {
         set { streamOutput?.onAudioBuffer = newValue }
     }
 
-    private var stream: SCStream?
+    private var stream: (any CaptureStreamControlling)?
     private var streamOutput: SystemAudioStreamOutput?
     private var streamDelegate: StreamDelegate?
     private var currentFilter: SCContentFilter?
+    private var streamGeneration: Int = 0
     private let verbose: Bool
+    private let streamFactory: CaptureStreamFactory
+#if DEBUG
+    internal private(set) var _restartDecisionTraceForTesting: [String] = []
+    internal var _restartParkHookForTesting: (@MainActor () async -> Void)?
+    internal var _streamGenerationForTesting: Int { streamGeneration }
+#endif
 
     /// Health check timer - monitors for missing audio buffers
     private var healthCheckTimer: Timer?
@@ -29,14 +36,22 @@ public final class SystemAudioCaptureManager {
     private var consecutiveEmptyChecks: Int = 0
     private let maxEmptyChecks: Int = 2  // Restart after 2 consecutive empty checks (60s of no audio)
 
-    public init(verbose: Bool = false) {
+    public convenience init(verbose: Bool = false) {
+        self.init(verbose: verbose, streamFactory: defaultCaptureStreamFactory)
+    }
+
+    internal init(verbose: Bool = false, streamFactory: @escaping CaptureStreamFactory) {
         self.verbose = verbose
+        self.streamFactory = streamFactory
     }
 
     /// Start the system audio capture stream
     /// - Parameter filter: The content filter to use
     /// - Throws: If stream fails to start
     public func start(filter: SCContentFilter) async throws {
+        streamGeneration += 1
+        let gen = streamGeneration
+
         // Already running - just update filter if needed
         if stream != nil {
             Logger.audio.info("[SystemAudio] Stream already running, updating filter only")
@@ -44,18 +59,17 @@ public final class SystemAudioCaptureManager {
             return
         }
 
-        try await startStream(filter: filter)
-        startHealthCheck()
+        if try await startStream(filter: filter, gen: gen, traceProceed: false) {
+            startHealthCheck()
+        }
     }
 
     /// Internal stream start - used for initial start and restarts
-    private func startStream(filter: SCContentFilter) async throws {
+    private func startStream(filter: SCContentFilter, gen: Int, traceProceed: Bool) async throws -> Bool {
         Logger.audio.info("[SystemAudio] Starting persistent SCStream...")
-        currentFilter = filter
 
         // Create stream output
         let output = SystemAudioStreamOutput(verbose: verbose)
-        self.streamOutput = output
 
         // Create delegate to handle stream errors
         let delegate = StreamDelegate { [weak self] error in
@@ -63,7 +77,6 @@ public final class SystemAudioCaptureManager {
                 await self?.handleStreamError(error)
             }
         }
-        self.streamDelegate = delegate
 
         // Configure audio stream for system audio only (minimize video overhead)
         let config = SCStreamConfiguration()
@@ -79,22 +92,41 @@ public final class SystemAudioCaptureManager {
 
         // Create and configure stream with delegate for error handling
         if verbose { Logger.audio.debug("[SystemAudio] Creating SCStream with config: 48kHz, 1ch, audio=true, mic=false") }
-        let newStream = SCStream(filter: filter, configuration: config, delegate: delegate)
+        guard streamGeneration == gen else {
+            Logger.audio.info("[SystemAudio] restart suppressed - stream generation changed")
+            appendRestartSuppressedTraceForTesting()
+            return false
+        }
+        if traceProceed {
+            appendRestartProceedTraceForTesting()
+        }
+        let newStream = streamFactory(filter, config, delegate)
         try newStream.addStreamOutput(output, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
 
         // Start capture
         if verbose { Logger.audio.debug("[SystemAudio] Calling startCapture()...") }
         try await newStream.startCapture()
+        guard streamGeneration == gen else {
+            Logger.audio.info("[SystemAudio] restart suppressed - stream generation changed")
+            appendRestartSuppressedTraceForTesting()
+            try? await newStream.stopCapture()
+            return false
+        }
+        currentFilter = filter
+        self.streamOutput = output
+        self.streamDelegate = delegate
         self.stream = newStream
 
         // Reset health check state
         consecutiveEmptyChecks = 0
 
         Logger.audio.info("[SystemAudio] Started persistent system audio capture successfully")
+        return true
     }
 
     /// Stop the system audio capture stream
     public func stop() async {
+        streamGeneration += 1
         stopHealthCheck()
 
         guard let stream = stream else {
@@ -173,17 +205,32 @@ public final class SystemAudioCaptureManager {
         }
 
         // Attempt to restart if we have a filter
-        guard let filter = currentFilter else {
+        guard currentFilter != nil else {
             Logger.audio.error("[SystemAudio] Cannot restart - no filter available")
             return
         }
+        let gen = streamGeneration
 
         Logger.audio.info("[SystemAudio] Attempting to restart stream after error...")
 
         do {
             // Small delay before restart to avoid rapid retry loops
-            try await Task.sleep(nanoseconds: 500_000_000)  // 500ms
-            try await startStream(filter: filter)
+            try await restartBackoff()
+            guard streamGeneration == gen else {
+                Logger.audio.info("[SystemAudio] restart suppressed - stream generation changed")
+                appendRestartSuppressedTraceForTesting()
+                return
+            }
+            guard let filter = currentFilter else {
+                Logger.audio.error("[SystemAudio] Cannot restart - no filter available")
+                return
+            }
+            guard try await startStream(filter: filter, gen: gen, traceProceed: true) else { return }
+            guard streamGeneration == gen else {
+                Logger.audio.info("[SystemAudio] restart suppressed - stream generation changed")
+                appendRestartSuppressedTraceForTesting()
+                return
+            }
             Logger.audio.info("[SystemAudio] Stream restarted successfully after error")
         } catch {
             if isPermissionError(error) {
@@ -243,10 +290,11 @@ public final class SystemAudioCaptureManager {
 
     /// Restart the stream (used by health check)
     private func restartStream() async {
-        guard let filter = currentFilter else {
+        guard currentFilter != nil else {
             Logger.audio.error("[SystemAudio] Cannot restart - no filter available")
             return
         }
+        let gen = streamGeneration
 
         // Save current callback
         let savedCallback = streamOutput?.onAudioBuffer
@@ -261,16 +309,35 @@ public final class SystemAudioCaptureManager {
                 if verbose { Logger.audio.debug("[SystemAudio] Error stopping stream for restart: \(error, privacy: .public)") }
             }
         }
+        guard streamGeneration == gen else {
+            Logger.audio.info("[SystemAudio] restart suppressed - stream generation changed")
+            appendRestartSuppressedTraceForTesting()
+            return
+        }
         stream = nil
         streamOutput = nil
         streamDelegate = nil
 
         // Small delay before restart
-        try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+        try? await restartBackoff()
+        guard streamGeneration == gen else {
+            Logger.audio.info("[SystemAudio] restart suppressed - stream generation changed")
+            appendRestartSuppressedTraceForTesting()
+            return
+        }
 
         // Start fresh stream
         do {
-            try await startStream(filter: filter)
+            guard let filter = currentFilter else {
+                Logger.audio.error("[SystemAudio] Cannot restart - no filter available")
+                return
+            }
+            guard try await startStream(filter: filter, gen: gen, traceProceed: true) else { return }
+            guard streamGeneration == gen else {
+                Logger.audio.info("[SystemAudio] restart suppressed - stream generation changed")
+                appendRestartSuppressedTraceForTesting()
+                return
+            }
 
             // Restore callback if we had one
             if let callback = savedCallback {
@@ -287,4 +354,36 @@ public final class SystemAudioCaptureManager {
             }
         }
     }
+
+    private func restartBackoff() async throws {
+#if DEBUG
+        if let hook = _restartParkHookForTesting {
+            await hook()
+            return
+        }
+#endif
+        try await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+    }
+
+    private func appendRestartSuppressedTraceForTesting() {
+#if DEBUG
+        _restartDecisionTraceForTesting.append("restart suppressed - stream generation changed")
+#endif
+    }
+
+    private func appendRestartProceedTraceForTesting() {
+#if DEBUG
+        _restartDecisionTraceForTesting.append("restart proceeding")
+#endif
+    }
+
+#if DEBUG
+    internal func _restartStreamForTesting() async {
+        await restartStream()
+    }
+
+    internal func _handleStreamErrorForTesting(_ error: Error) async {
+        await handleStreamError(error)
+    }
+#endif
 }

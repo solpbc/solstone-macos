@@ -18,11 +18,13 @@ public final class ScreenshotCapturer {
 
     private var contentFilter: SCContentFilter
     private let configuration: SCStreamConfiguration
-    private var stream: SCStream?
+    private var stream: (any CaptureStreamControlling)?
     private var streamOutput: VideoStreamOutput?
     private var streamDelegate: StreamDelegate?
     private var healthCheckTimer: Timer?
     private var isRunning = false
+    private var streamGeneration: Int = 0
+    private let streamFactory: CaptureStreamFactory
     private let captureStartTime: Date
     private var frameIndex: Int = 0
     private var skippedFrames: Int = 0
@@ -32,6 +34,9 @@ public final class ScreenshotCapturer {
     private var streamStartTime: Date?
 #if DEBUG
     internal private(set) var _teardownTraceForTesting: [String] = []
+    internal private(set) var _restartDecisionTraceForTesting: [String] = []
+    internal var _restartParkHookForTesting: (@MainActor () async -> Void)?
+    internal var _streamGenerationForTesting: Int { streamGeneration }
 #endif
 
     private let healthCheckInterval: TimeInterval = 30.0
@@ -48,7 +53,7 @@ public final class ScreenshotCapturer {
     ///   - contentFilter: Content filter for window exclusion
     ///   - verbose: Enable verbose logging
     /// - Throws: Error if writer creation fails
-    public init(
+    public convenience init(
         displayID: CGDirectDisplayID,
         videoURL: URL,
         width: Int,
@@ -58,9 +63,34 @@ public final class ScreenshotCapturer {
         contentFilter: SCContentFilter,
         verbose: Bool
     ) throws {
+        try self.init(
+            displayID: displayID,
+            videoURL: videoURL,
+            width: width,
+            height: height,
+            frameRate: frameRate,
+            duration: duration,
+            contentFilter: contentFilter,
+            verbose: verbose,
+            streamFactory: defaultCaptureStreamFactory
+        )
+    }
+
+    internal init(
+        displayID: CGDirectDisplayID,
+        videoURL: URL,
+        width: Int,
+        height: Int,
+        frameRate: Double,
+        duration: Double?,
+        contentFilter: SCContentFilter,
+        verbose: Bool,
+        streamFactory: @escaping CaptureStreamFactory
+    ) throws {
         self.displayID = displayID
         self.contentFilter = contentFilter
         self.verbose = verbose
+        self.streamFactory = streamFactory
         self.captureStartTime = Date()
 
         // Create video writer
@@ -104,6 +134,9 @@ public final class ScreenshotCapturer {
 
     /// Starts the persistent video capture stream
     public func start() async {
+        streamGeneration += 1
+        let gen = streamGeneration
+
         guard !isRunning else { return }
         isRunning = true
         firstFrameLogged = false
@@ -116,26 +149,39 @@ public final class ScreenshotCapturer {
                     self?.handleFrame(pixelBuffer, isIdle: isIdle)
                 }
             }
-            self.streamOutput = output
 
             let delegate = StreamDelegate { [weak self] error in
                 Task { @MainActor in
                     self?.handleStreamError(error)
                 }
             }
-            self.streamDelegate = delegate
 
             // Create and start the persistent stream
-            let newStream = SCStream(filter: contentFilter, configuration: configuration, delegate: delegate)
+            guard streamGeneration == gen else {
+                Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
+                appendRestartSuppressedTraceForTesting()
+                return
+            }
+            let newStream = streamFactory(contentFilter, configuration, delegate)
             try newStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
             try await newStream.startCapture()
+            guard streamGeneration == gen else {
+                Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
+                appendRestartSuppressedTraceForTesting()
+                try? await newStream.stopCapture()
+                return
+            }
+            self.streamOutput = output
+            self.streamDelegate = delegate
             self.stream = newStream
             startHealthCheck()
 
             Logger.capture.info("ScreenshotCapturer: Started persistent stream for display \(self.displayID, privacy: .public)")
         } catch {
             Logger.capture.error("ScreenshotCapturer: Failed to start stream for display \(self.displayID, privacy: .public): \(error, privacy: .public)")
-            isRunning = false
+            if streamGeneration == gen {
+                isRunning = false
+            }
         }
     }
 
@@ -176,6 +222,7 @@ public final class ScreenshotCapturer {
 
     /// Stops the capture stream
     public func stop() async {
+        streamGeneration += 1
         stopHealthCheck()
         isRunning = false
 
@@ -297,15 +344,26 @@ public final class ScreenshotCapturer {
             if verbose { Logger.capture.debug("ScreenshotCapturer: Restart requested for display \(self.displayID, privacy: .public) but stream is not running") }
             return
         }
+        let gen = streamGeneration
 
         Logger.capture.info("ScreenshotCapturer: Restarting stream for display \(self.displayID, privacy: .public)")
 
         await teardownStream()
+        guard streamGeneration == gen else {
+            Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
+            appendRestartSuppressedTraceForTesting()
+            return
+        }
 
         do {
-            try await Task.sleep(nanoseconds: 500_000_000)
+            try await restartBackoff()
         } catch {
             if verbose { Logger.capture.debug("ScreenshotCapturer: Restart sleep interrupted for display \(self.displayID, privacy: .public): \(error, privacy: .public)") }
+        }
+        guard streamGeneration == gen else {
+            Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
+            appendRestartSuppressedTraceForTesting()
+            return
         }
 
         let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
@@ -313,19 +371,31 @@ public final class ScreenshotCapturer {
                 self?.handleFrame(pixelBuffer, isIdle: isIdle)
             }
         }
-        self.streamOutput = output
 
         let delegate = StreamDelegate { [weak self] error in
             Task { @MainActor in
                 self?.handleStreamError(error)
             }
         }
-        self.streamDelegate = delegate
 
         do {
-            let newStream = SCStream(filter: self.contentFilter, configuration: self.configuration, delegate: delegate)
+            guard streamGeneration == gen else {
+                Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
+                appendRestartSuppressedTraceForTesting()
+                return
+            }
+            appendRestartProceedTraceForTesting()
+            let newStream = streamFactory(contentFilter, configuration, delegate)
             try newStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
             try await newStream.startCapture()
+            guard streamGeneration == gen else {
+                Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
+                appendRestartSuppressedTraceForTesting()
+                try? await newStream.stopCapture()
+                return
+            }
+            self.streamOutput = output
+            self.streamDelegate = delegate
             self.stream = newStream
             self.firstFrameLogged = false
             self.streamStartTime = Date()
@@ -357,6 +427,39 @@ public final class ScreenshotCapturer {
             await self?.restartStream()
         }
     }
+
+    private func restartBackoff() async throws {
+#if DEBUG
+        if let hook = _restartParkHookForTesting {
+            await hook()
+            return
+        }
+#endif
+        try await Task.sleep(nanoseconds: 500_000_000)
+    }
+
+    private func appendRestartSuppressedTraceForTesting() {
+#if DEBUG
+        _restartDecisionTraceForTesting.append("restart suppressed - stream generation changed")
+#endif
+    }
+
+    private func appendRestartProceedTraceForTesting() {
+#if DEBUG
+        _restartDecisionTraceForTesting.append("restart proceeding")
+#endif
+    }
+
+#if DEBUG
+    internal func _restartStreamForTesting() async {
+        await restartStream()
+    }
+
+    internal func _handleStreamErrorForTesting(_ error: Error) async {
+        handleStreamError(error)
+        await Task.yield()
+    }
+#endif
 }
 
 // MARK: - Video Stream Output
