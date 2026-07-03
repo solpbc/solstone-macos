@@ -237,9 +237,9 @@ struct UploadClientTests {
     }
 
     private func uploadResult(body: String) async throws -> UploadSuccessInfo {
-        ObserverURLProtocol.store.reset()
-        ObserverURLProtocol.store.enqueue(statusCode: 200, body: body)
-        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration())
+        UploadClientURLProtocol.store.reset()
+        UploadClientURLProtocol.store.enqueue(statusCode: 200, body: body)
+        let uploadClient = UploadClient(sessionConfiguration: uploadClientURLProtocolConfiguration())
         let root = try makeTempDirectory("upload-client-response")
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("120000_300_audio.m4a")
@@ -264,4 +264,41 @@ struct UploadClientTests {
 
 private enum UploadClientTestError: Error {
     case unexpectedResult
+}
+
+private final class UploadClientURLProtocol: URLProtocol {
+    static let store = ObserverURLProtocolStore()
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let next = Self.store.next(for: request)
+        if let error = next.error {
+            client?.urlProtocol(self, didFailWithError: error)
+            return
+        }
+
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: next.statusCode,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if !next.data.isEmpty {
+            client?.urlProtocol(self, didLoad: next.data)
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private func uploadClientURLProtocolConfiguration() -> URLSessionConfiguration {
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [UploadClientURLProtocol.self]
+    config.timeoutIntervalForRequest = 0
+    config.timeoutIntervalForResource = 0
+    return config
 }
