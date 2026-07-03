@@ -6,7 +6,7 @@ import Testing
 import SolstoneCore
 @testable import solstone
 
-@Suite("UploadCoordinator")
+@Suite("UploadCoordinator", .serialized)
 @MainActor
 struct UploadCoordinatorTests {
     @Test func bundledAvailableUploadSucceededRecordsLastIngestAt() throws {
@@ -255,6 +255,71 @@ struct UploadCoordinatorTests {
         #expect(!serialized.contains("/tmp/private"))
         #expect(!serialized.contains("token"))
         #expect(!serialized.contains("secret"))
+    }
+
+    @Test func syncOnStartupWaitsForInitialConfigurationBeforeSyncing() async throws {
+        resetSyncedDaysCache()
+        ObserverURLProtocol.store.reset()
+        let root = try makeTempDirectory("upload-coordinator-startup")
+        let segment = try makeSegment(root: root)
+        let sha = try #require(UploadClient().sha256(
+            of: segment.url.appendingPathComponent("\(segment.url.lastPathComponent)_audio.m4a")
+        ))
+        ObserverURLProtocol.store.enqueue(
+            statusCode: 200,
+            body: listingJSON(
+                key: segment.url.lastPathComponent,
+                submittedName: "\(segment.url.lastPathComponent)_audio.m4a",
+                sha: sha
+            )
+        )
+        let coordinator = UploadCoordinator(
+            storageManager: StorageManager(baseDirectory: root),
+            config: AppConfig(serverURL: "https://configured.example", serverKey: "secret"),
+            client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration()),
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24692") }
+        )
+
+        let syncTask = Task {
+            await coordinator.syncOnStartup()
+        }
+        await ObserverURLProtocol.store.waitForRequestCount(1)
+        await syncTask.value
+
+        let request = try #require(ObserverURLProtocol.store.snapshotRequests().first)
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.path == "/app/observer/ingest/segments/\(dayString(for: segment.date))")
+    }
+
+    private func makeSegment(
+        root: URL,
+        date: Date = Date(),
+        segmentName: String = "120000_300"
+    ) throws -> (url: URL, date: Date) {
+        let dayDir = root.appendingPathComponent(dateFolderString(for: date), isDirectory: true)
+        let segmentURL = dayDir.appendingPathComponent(segmentName, isDirectory: true)
+        try FileManager.default.createDirectory(at: segmentURL, withIntermediateDirectories: true)
+        let audioURL = segmentURL.appendingPathComponent("\(segmentName)_audio.m4a")
+        try Data("audio".utf8).write(to: audioURL)
+        return (segmentURL, date)
+    }
+
+    private func listingJSON(key: String, submittedName: String, sha: String) -> String {
+        #"[{"key":"\#(key)","files":[{"name":"audio.m4a","size":5,"submitted_name":"\#(submittedName)","sha256":"\#(sha)","status":"present"}]}]"#
+    }
+
+    private func dateFolderString(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    private func dayString(for date: Date) -> String {
+        dateFolderString(for: date).replacingOccurrences(of: "-", with: "")
+    }
+
+    private func resetSyncedDaysCache() {
+        UserDefaults.standard.removeObject(forKey: "syncedDays")
     }
 
     private func makeCoordinator(now: Date, isBundledAvailable: Bool) throws -> UploadCoordinator {

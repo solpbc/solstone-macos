@@ -253,6 +253,75 @@ struct SyncServiceTests {
         #expect(ObserverURLProtocol.store.snapshotRequests().filter { $0.url?.path == "/app/observer/ingest" }.count == 1)
     }
 
+    @Test(arguments: [401, 403, 500])
+    func dayQueryHTTPFailureYieldsOfflineAndRetainsLocalSegment(statusCode: Int) async throws {
+        try await assertDayQueryFailure(
+            testName: "sync-day-query-http-\(statusCode)",
+            statusCode: statusCode,
+            body: #"{"error":"sensitive"}"#,
+            expectedHealthReason: .httpStatus(statusCode)
+        )
+    }
+
+    @Test func dayQueryMalformedBodyYieldsInvalidResponseAndRetainsLocalSegment() async throws {
+        try await assertDayQueryFailure(
+            testName: "sync-day-query-invalid-response",
+            statusCode: 200,
+            body: "{}",
+            expectedHealthReason: .uploadInvalidResponse
+        )
+    }
+
+    @Test func emptyServerListingStillCompletesSuccessfulSync() async throws {
+        resetSyncedDaysCache()
+        ObserverURLProtocol.store.reset()
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "{}")
+        let root = try makeTempDirectory("sync-empty-listing-success")
+        _ = try makeSegment(root: root)
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24689") })
+        let recorder = SyncProgressRecorder()
+        let eventTask = await recordProgress(from: service, into: recorder)
+        defer { eventTask.cancel() }
+        await configure(service)
+
+        await service.sync()
+
+        try await waitUntil(timeout: .seconds(3), poll: .milliseconds(100)) {
+            await recorder.containsSyncComplete()
+        }
+        #expect(await recorder.journalContactPrecedesSyncComplete())
+        #expect(!(await recorder.containsOffline()))
+    }
+
+    @Test func retryExhaustionEndsOfflineInsteadOfSyncComplete() async throws {
+        resetSyncedDaysCache()
+        ObserverURLProtocol.store.reset()
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
+        for _ in 0..<10 {
+            ObserverURLProtocol.store.enqueue(statusCode: 500, body: "temporary")
+        }
+        let root = try makeTempDirectory("sync-retry-exhaustion")
+        _ = try makeSegment(root: root)
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24690") },
+            retryDelays: Array(repeating: 0, count: 10)
+        )
+        let recorder = SyncProgressRecorder()
+        let eventTask = await recordProgress(from: service, into: recorder)
+        defer { eventTask.cancel() }
+        await configure(service)
+
+        await service.sync()
+
+        try await waitUntil(timeout: .seconds(3), poll: .milliseconds(100)) {
+            await recorder.lastEventIsOffline(healthReason: .httpStatus(500))
+        }
+        #expect(await recorder.containsUploadFailed())
+        #expect(!(await recorder.containsSyncComplete()))
+    }
+
     private func makeService(
         root: URL,
         resolver: HomeBaseURLResolver,
@@ -334,6 +403,34 @@ struct SyncServiceTests {
         #expect(requests.filter { $0.url?.path.contains("/app/observer/ingest/segments/") == true }.count == 1)
     }
 
+    private func assertDayQueryFailure(
+        testName: String,
+        statusCode: Int,
+        body: String,
+        expectedHealthReason: ObserverHealthFailureReason
+    ) async throws {
+        resetSyncedDaysCache()
+        ObserverURLProtocol.store.reset()
+        ObserverURLProtocol.store.enqueue(statusCode: statusCode, body: body)
+        let root = try makeTempDirectory(testName)
+        let segment = try makeSegment(root: root, date: oldDateForRetention())
+        let day = dayString(for: segment.date)
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24691") })
+        let recorder = SyncProgressRecorder()
+        let eventTask = await recordProgress(from: service, into: recorder)
+        defer { eventTask.cancel() }
+        await configure(service)
+
+        await service.sync()
+
+        try await waitUntil(timeout: .seconds(3), poll: .milliseconds(100)) {
+            await recorder.containsOffline(healthReason: expectedHealthReason)
+        }
+        #expect(!(await recorder.containsSyncComplete()))
+        #expect(FileManager.default.fileExists(atPath: segment.url.path))
+        #expect(!syncedDays().contains(day))
+    }
+
     private func oldDateForRetention() -> Date {
         Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)
     }
@@ -364,6 +461,14 @@ struct SyncServiceTests {
 
     private func resetSyncedDaysCache() {
         UserDefaults.standard.removeObject(forKey: "syncedDays")
+    }
+
+    private func syncedDays() -> Set<String> {
+        guard let data = UserDefaults.standard.data(forKey: "syncedDays"),
+              let days = try? JSONDecoder().decode(Set<String>.self, from: data) else {
+            return []
+        }
+        return days
     }
 }
 
@@ -418,5 +523,64 @@ private actor SyncProgressRecorder {
             }
             return false
         }
+    }
+
+    func containsOffline(healthReason: ObserverHealthFailureReason) -> Bool {
+        events.contains { event in
+            if case .offline(_, let reason) = event {
+                return reason == healthReason
+            }
+            return false
+        }
+    }
+
+    func containsOffline() -> Bool {
+        events.contains { event in
+            if case .offline = event {
+                return true
+            }
+            return false
+        }
+    }
+
+    func containsSyncComplete() -> Bool {
+        events.contains { event in
+            if case .syncComplete = event {
+                return true
+            }
+            return false
+        }
+    }
+
+    func containsUploadFailed() -> Bool {
+        events.contains { event in
+            if case .uploadFailed = event {
+                return true
+            }
+            return false
+        }
+    }
+
+    func journalContactPrecedesSyncComplete() -> Bool {
+        var sawJournalContact = false
+        for event in events {
+            if case .journalContactSucceeded = event {
+                sawJournalContact = true
+            }
+            if case .syncComplete = event {
+                return sawJournalContact
+            }
+        }
+        return false
+    }
+
+    func lastEventIsOffline(healthReason: ObserverHealthFailureReason) -> Bool {
+        guard let last = events.last else {
+            return false
+        }
+        if case .offline(_, let reason) = last {
+            return reason == healthReason
+        }
+        return false
     }
 }

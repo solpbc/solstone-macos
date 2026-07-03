@@ -109,6 +109,7 @@ public final class UploadCoordinator {
     private let syncService: SyncService
     private var config: AppConfig
     private var eventTask: Task<Void, Never>?
+    private var configurationTask: Task<Void, Never>?
 
     // MARK: - Initialization
 
@@ -126,7 +127,7 @@ public final class UploadCoordinator {
         )
 
         // Configure sync service with initial settings
-        Task {
+        configurationTask = Task {
             await syncService.configure(
                 serverURL: config.serverURL,
                 serverKey: config.serverKey,
@@ -197,6 +198,7 @@ public final class UploadCoordinator {
             return
         }
 
+        await configurationTask?.value
         await syncService.sync()
     }
 

@@ -33,7 +33,8 @@ public actor SyncService {
     }
 
     private enum UploadRetryOutcome: Sendable {
-        case finished
+        case succeeded
+        case failed(error: String, healthReason: ObserverHealthFailureReason)
         case held
         case stopped
     }
@@ -191,6 +192,8 @@ public actor SyncService {
             return f.string(from: Date())
         }()
 
+        var terminalUploadFailure: (error: String, healthReason: ObserverHealthFailureReason)?
+
         // Walk days from newest to oldest
         for (day, localSegments) in segmentsByDay.sorted(by: { $0.key > $1.key }) {
             // Skip past days that are already fully synced (unless forcing)
@@ -204,7 +207,7 @@ public actor SyncService {
             progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
 
             // Query server for all segments on this day
-            let serverSegments: [ServerSegmentInfo]?
+            let serverSegments: [ServerSegmentInfo]
             do {
                 let serverURL: String
                 switch await resolver.resolve() {
@@ -227,11 +230,6 @@ public actor SyncService {
                     healthReason: healthReason
                 ))
                 return
-            }
-            guard let serverSegments else {
-                Logger.upload.info("Failed to query server for day \(day, privacy: .public), skipping")
-                checked += localSegments.count
-                continue
             }
             progressContinuation.yield(.journalContactSucceeded)
 
@@ -263,8 +261,10 @@ public actor SyncService {
                         metadataJSON: metadataJSON
                     )
                     switch outcome {
-                    case .finished:
+                    case .succeeded:
                         break
+                    case .failed(let error, let healthReason):
+                        terminalUploadFailure = (error, healthReason)
                     case .held:
                         progressContinuation.yield(.awaitingTunnel)
                         return
@@ -284,6 +284,12 @@ public actor SyncService {
         }
 
         guard await cleanupSyncedSegments(identity: journalIdentity, serverKey: serverKey) else {
+            return
+        }
+
+        if let failure = terminalUploadFailure {
+            Logger.upload.info("Sync finished with upload failures: \(sanitizedObserverHealthErrorReason(failure.healthReason), privacy: .public)")
+            progressContinuation.yield(.offline(error: failure.error, healthReason: failure.healthReason))
             return
         }
 
@@ -407,7 +413,7 @@ public actor SyncService {
                     error: "No files",
                     healthReason: .uploadNoFiles
                 ))
-                return .finished
+                return .failed(error: "No files", healthReason: .uploadNoFiles)
             }
 
             let result = await client.uploadSegment(
@@ -428,10 +434,10 @@ public actor SyncService {
                     ] = storedSegmentKey
                 }
                 progressContinuation.yield(.uploadSucceeded(segment: segment))
-                return .finished
+                return .succeeded
             case .skipped:
                 progressContinuation.yield(.uploadSucceeded(segment: segment))
-                return .finished
+                return .succeeded
             case .failure(let error):
                 let healthReason = observerHealthFailureReason(from: error)
                 Logger.upload.info("Attempt \(attempts, privacy: .public) failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
@@ -442,7 +448,7 @@ public actor SyncService {
                         error: error.localizedDescription,
                         healthReason: healthReason
                     ))
-                    return .finished
+                    return .failed(error: error.localizedDescription, healthReason: healthReason)
                 }
 
                 // Calculate delay with exponential backoff
@@ -461,10 +467,10 @@ public actor SyncService {
                     error: "Not configured",
                     healthReason: .notConfigured
                 ))
-                return .finished
+                return .failed(error: "Not configured", healthReason: .notConfigured)
             }
         }
-        return .finished
+        return .failed(error: "retry exhausted", healthReason: .uploadFailed)
     }
 
     // MARK: - File Selection
@@ -647,17 +653,14 @@ public actor SyncService {
                         progressContinuation.yield(.awaitingTunnel)
                         return false
                     }
-                    guard let serverSegments = try await client.getServerSegments(
+                    let serverSegments = try await client.getServerSegments(
                         serverURL: serverURL,
                         serverKey: serverKey,
                         day: day
-                    ) else {
-                        Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - server returned nil")
-                        continue
-                    }
+                    )
                     serverSegmentsCache[day] = buildServerByKey(serverSegments)
                 } catch {
-                    Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - server unreachable: \(error.localizedDescription, privacy: .public)")
+                    Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - server query failed: \(error.localizedDescription, privacy: .public)")
                     continue
                 }
             }

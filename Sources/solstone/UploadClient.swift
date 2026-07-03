@@ -239,15 +239,15 @@ public struct UploadClient: Sendable {
     // MARK: - Server Queries
 
     /// Get all segments with file info for a given day from the server
-    /// Returns nil on error, empty array if day has no segments
+    /// Throws on non-200 or unparseable responses; returns empty array if day legitimately has no segments.
     public func getServerSegments(
         serverURL: String,
         serverKey: String,
         day: String
-    ) async throws -> [ServerSegmentInfo]? {
+    ) async throws -> [ServerSegmentInfo] {
         let urlString = "\(serverURL)/app/observer/ingest/segments/\(day)"
         guard let url = URL(string: urlString) else {
-            return nil
+            throw UploadError.invalidURL
         }
 
         var request = URLRequest(url: url)
@@ -256,52 +256,56 @@ public struct UploadClient: Sendable {
 
         do {
             let (data, response) = try await session.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse,
-               httpResponse.statusCode == 200 {
-                // Parse JSON: [{"key": "...", "original_key": "...", "files": [...]}]
-                if let segments = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                    return segments.compactMap { seg -> ServerSegmentInfo? in
-                        guard let segmentKey = seg["key"] as? String,
-                              let files = seg["files"] as? [[String: Any]] else {
-                            return nil
-                        }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw UploadError.serverError(statusCode: -1, message: "segment listing")
+            }
+            guard httpResponse.statusCode == 200 else {
+                throw UploadError.serverError(statusCode: httpResponse.statusCode, message: "segment listing")
+            }
+            guard let segments = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                throw UploadError.invalidResponse
+            }
 
-                        let originalKey = seg["original_key"] as? String
-
-                        let fileInfos = files.compactMap { file -> ServerFileInfo? in
-                            guard let name = file["name"] as? String,
-                                  let size = file["size"] as? Int else {
-                                return nil
-                            }
-                            let submittedName = file["submitted_name"] as? String ?? name
-                            let sha256 = file["sha256"] as? String ?? ""
-                            let status = ServerFileStatus(rawValue: file["status"] as? String ?? "") ?? .unknown
-                            let currentPath = file["current_path"] as? String
-                            return ServerFileInfo(
-                                name: name,
-                                submittedName: submittedName,
-                                sha256: sha256,
-                                size: size,
-                                status: status,
-                                currentPath: currentPath
-                            )
-                        }
-
-                        return ServerSegmentInfo(
-                            key: segmentKey,
-                            originalKey: originalKey,
-                            files: fileInfos
-                        )
-                    }
+            // Parse JSON: [{"key": "...", "original_key": "...", "files": [...]}]
+            return segments.compactMap { seg -> ServerSegmentInfo? in
+                guard let segmentKey = seg["key"] as? String,
+                      let files = seg["files"] as? [[String: Any]] else {
+                    return nil
                 }
+
+                let originalKey = seg["original_key"] as? String
+
+                let fileInfos = files.compactMap { file -> ServerFileInfo? in
+                    guard let name = file["name"] as? String,
+                          let size = file["size"] as? Int else {
+                        return nil
+                    }
+                    let submittedName = file["submitted_name"] as? String ?? name
+                    let sha256 = file["sha256"] as? String ?? ""
+                    let status = ServerFileStatus(rawValue: file["status"] as? String ?? "") ?? .unknown
+                    let currentPath = file["current_path"] as? String
+                    return ServerFileInfo(
+                        name: name,
+                        submittedName: submittedName,
+                        sha256: sha256,
+                        size: size,
+                        status: status,
+                        currentPath: currentPath
+                    )
+                }
+
+                return ServerSegmentInfo(
+                    key: segmentKey,
+                    originalKey: originalKey,
+                    files: fileInfos
+                )
             }
         } catch let error as URLError {
             throw error
         } catch {
             Logger.upload.info("getServerSegments failed: \(error, privacy: .public)")
+            throw error
         }
-
-        return nil
     }
 
     func buildObserverStatusRequest(
