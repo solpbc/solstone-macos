@@ -328,6 +328,69 @@ struct RemixQueueTimeoutTests {
         #expect(FileManager.default.fileExists(atPath: finalDir.appendingPathComponent("\(segmentKey)_audio.m4a").path))
     }
 
+    @Test func carriedDurationControlsSegmentKey() async throws {
+        let root = try makeTempDirectory("remix-queue-carried-duration")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let queue = RemixQueue { _, _ in FakeRemixer(.success) }
+
+        await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000", capturedDurationSeconds: 7))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_7", isDirectory: true).path))
+    }
+
+    @Test func carriedDurationClampsOverCeiling() async throws {
+        let root = try makeTempDirectory("remix-queue-carried-duration-ceiling")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let queue = RemixQueue { _, _ in FakeRemixer(.success) }
+
+        await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000", capturedDurationSeconds: 999))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+    }
+
+    @Test func orphanWithSubsecondMP4ClampsToOne() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-subsecond")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try await makeTinyValidMP4(at: dir.appendingPathComponent("120000_display_42_screen.mp4"), seconds: 0.2)
+        let queue = RemixQueue { _, _ in FakeRemixer(.success) }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_1", isDirectory: true).path))
+    }
+
+    @Test func orphanDurationProbeTimeoutStampsCeilingAndFinalizes() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-duration-timeout")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+        let queue = RemixQueue(
+            durationProbeTimeoutSeconds: 0.01,
+            durationLoader: { _ in
+                try await Task.sleep(for: .seconds(60))
+                return CMTime(seconds: 1, preferredTimescale: 600)
+            }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+    }
+
     @Test func orphanWithoutMP4MarksFailedWithoutCompletionAndReleasesInFlight() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-no-mp4")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -356,18 +419,13 @@ struct RemixQueueTimeoutTests {
         let dir = try makeDir(root: root, name: "120000.incomplete")
         let mp4 = dir.appendingPathComponent("120000_display_42_screen.mp4")
         try Data("video".utf8).write(to: mp4)
-        do {
-            let duration = try await AVURLAsset(url: mp4).load(.duration)
-            if Int(CMTimeGetSeconds(duration)) > 0 {
-                // Keep this guard deterministic on OSes that can load the bogus bytes.
-                try await makeTinyValidMP4(at: mp4, seconds: 0.2)
-            }
-        } catch {
-            // On this OS, the bogus bytes throw while loading duration.
-        }
 
         let completionCount = LockedCounter()
-        let queue = RemixQueue { _, _ in FakeRemixer(.success) }
+        let queue = RemixQueue(
+            durationLoader: { _ in throw SyntheticRemixError() }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
         await queue.setOnSegmentComplete { _, _ in
             completionCount.increment()
         }
@@ -423,7 +481,6 @@ struct RemixQueueTimeoutTests {
         try await makeTinyValidM4A(at: dir.appendingPathComponent("120000_audio_BuiltInMicrophoneDevice.m4a"))
         try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
 
-        let captureStartTime = Date().addingTimeInterval(-5)
         let existingBytes = Data("existing audio".utf8)
         try existingBytes.write(to: dir.appendingPathComponent("120000_5_audio.m4a"))
 
@@ -434,7 +491,7 @@ struct RemixQueueTimeoutTests {
             completionCount.increment()
         }
 
-        await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000", captureStartTime: captureStartTime))
+        await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000", capturedDurationSeconds: 5))
 
         await queue.waitForCompletion()
         let maybeFinalDir = try finalizedSegmentDirectory(in: root, timePrefix: "120000")
@@ -556,7 +613,7 @@ struct RemixQueueTimeoutTests {
         RemixQueue.RemixJob(
             segmentDirectory: dir,
             timePrefix: timePrefix,
-            captureStartTime: Date().addingTimeInterval(-1),
+            capturedDurationSeconds: 1,
             audioInputs: [
                 AudioRemixerInput(
                     url: inputURL,
@@ -576,12 +633,12 @@ struct RemixQueueTimeoutTests {
     private func makeEmptyJob(
         dir: URL,
         timePrefix: String,
-        captureStartTime: Date? = Date().addingTimeInterval(-1)
+        capturedDurationSeconds: Int? = 1
     ) -> RemixQueue.RemixJob {
         RemixQueue.RemixJob(
             segmentDirectory: dir,
             timePrefix: timePrefix,
-            captureStartTime: captureStartTime,
+            capturedDurationSeconds: capturedDurationSeconds,
             audioInputs: [],
             debugKeepRejected: false,
             silenceMusic: true,
@@ -593,7 +650,7 @@ struct RemixQueueTimeoutTests {
         RemixQueue.RemixJob(
             segmentDirectory: dir,
             timePrefix: timePrefix,
-            captureStartTime: nil,
+            capturedDurationSeconds: nil,
             audioInputs: [],
             debugKeepRejected: false,
             silenceMusic: true,

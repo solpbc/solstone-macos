@@ -148,6 +148,111 @@ struct SyncServiceTests {
         #expect(ObserverURLProtocol.store.snapshotRequests().count == 2)
     }
 
+    @Test func missingStatusRetainsSegmentAndNeedsUpload() async throws {
+        try await assertUnprovenListingRetainsAndUploads(
+            testName: "sync-missing-status",
+            listingStatus: "missing",
+            shaOverride: nil
+        )
+    }
+
+    @Test func shaMismatchRetainsSegmentAndNeedsUpload() async throws {
+        try await assertUnprovenListingRetainsAndUploads(
+            testName: "sync-sha-mismatch",
+            listingStatus: "present",
+            shaOverride: "not-the-local-sha"
+        )
+    }
+
+    @Test func listingWithoutStatusRetainsSegmentAndNeedsUpload() async throws {
+        try await assertUnprovenListingRetainsAndUploads(
+            testName: "sync-missing-listing-status",
+            listingStatus: nil,
+            shaOverride: nil
+        )
+    }
+
+    @Test func provenListingAllowsCleanupDeletion() async throws {
+        resetSyncedDaysCache()
+        ObserverURLProtocol.store.reset()
+        let root = try makeTempDirectory("sync-proof-cleanup")
+        let segment = try makeSegment(root: root, date: oldDateForRetention())
+        let sha = try sha256(of: segment.url.appendingPathComponent("\(segment.url.lastPathComponent)_audio.m4a"))
+        let listing = listingJSON(
+            key: segment.url.lastPathComponent,
+            submittedName: "\(segment.url.lastPathComponent)_audio.m4a",
+            sha: sha,
+            status: "present"
+        )
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: listing)
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: listing)
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24685") })
+        await configure(service, cacheRetentionDays: 0)
+
+        await service.sync()
+
+        let requests = ObserverURLProtocol.store.snapshotRequests()
+        let uploadRequestCount = requests.filter { $0.url?.path == "/app/observer/ingest" }.count
+        let listingRequestCount = requests.filter {
+            $0.url?.path.contains("/app/observer/ingest/segments/") == true
+        }.count
+        #expect(!FileManager.default.fileExists(atPath: segment.url.path))
+        #expect(uploadRequestCount == 0)
+        #expect(listingRequestCount == 2)
+    }
+
+    @Test func duplicateAliasConfirmsWithinServiceAndFreshServiceFailsClosed() async throws {
+        resetSyncedDaysCache()
+        ObserverURLProtocol.store.reset()
+        let oldDate = oldDateForRetention()
+
+        let aliasRoot = try makeTempDirectory("sync-duplicate-alias")
+        let aliasSegment = try makeSegment(root: aliasRoot, date: oldDate)
+        let aliasSha = try sha256(of: aliasSegment.url.appendingPathComponent("\(aliasSegment.url.lastPathComponent)_audio.m4a"))
+        let storedKey = "120001_300"
+        let duplicateBody = #"{"status":"duplicate","existing_segment":{"key":"\#(storedKey)"}}"#
+        let heldListing = listingJSON(
+            key: storedKey,
+            submittedName: "\(aliasSegment.url.lastPathComponent)_audio.m4a",
+            sha: aliasSha,
+            status: "present"
+        )
+        let aliasService = makeService(root: aliasRoot, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24686") })
+        await configure(aliasService, cacheRetentionDays: 0)
+
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "[]")
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: duplicateBody)
+        await aliasService.sync()
+        #expect(FileManager.default.fileExists(atPath: aliasSegment.url.path))
+
+        ObserverURLProtocol.store.reset()
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: heldListing)
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: heldListing)
+        await aliasService.sync()
+        #expect(!FileManager.default.fileExists(atPath: aliasSegment.url.path))
+
+        resetSyncedDaysCache()
+        ObserverURLProtocol.store.reset()
+        let freshRoot = try makeTempDirectory("sync-duplicate-fresh")
+        let freshSegment = try makeSegment(root: freshRoot, date: oldDate)
+        let freshSha = try sha256(of: freshSegment.url.appendingPathComponent("\(freshSegment.url.lastPathComponent)_audio.m4a"))
+        let freshListing = listingJSON(
+            key: storedKey,
+            submittedName: "\(freshSegment.url.lastPathComponent)_audio.m4a",
+            sha: freshSha,
+            status: "present"
+        )
+        let freshService = makeService(root: freshRoot, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24687") })
+        await configure(freshService, cacheRetentionDays: 0)
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: freshListing)
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: duplicateBody)
+
+        await freshService.sync()
+
+        #expect(FileManager.default.fileExists(atPath: freshSegment.url.path))
+        #expect(ObserverURLProtocol.store.snapshotRequests().filter { $0.url?.path == "/app/observer/ingest" }.count == 1)
+    }
+
     private func makeService(
         root: URL,
         resolver: HomeBaseURLResolver,
@@ -164,12 +269,13 @@ struct SyncServiceTests {
     private func configure(
         _ service: SyncService,
         configuredServerURL: String = "https://configured.example",
-        serverKey: String = "secret"
+        serverKey: String = "secret",
+        cacheRetentionDays: Int = -1
     ) async {
         await service.configure(
             serverURL: configuredServerURL,
             serverKey: serverKey,
-            cacheRetentionDays: -1,
+            cacheRetentionDays: cacheRetentionDays,
             syncPaused: false
         )
     }
@@ -197,6 +303,53 @@ struct SyncServiceTests {
         let audioURL = segmentURL.appendingPathComponent("\(segmentName)_audio.m4a")
         try Data("audio".utf8).write(to: audioURL)
         return (segmentURL, date)
+    }
+
+    private func assertUnprovenListingRetainsAndUploads(
+        testName: String,
+        listingStatus: String?,
+        shaOverride: String?
+    ) async throws {
+        resetSyncedDaysCache()
+        ObserverURLProtocol.store.reset()
+        let root = try makeTempDirectory(testName)
+        let segment = try makeSegment(root: root, date: oldDateForRetention())
+        let localSha = try sha256(of: segment.url.appendingPathComponent("\(segment.url.lastPathComponent)_audio.m4a"))
+        let listing = listingJSON(
+            key: segment.url.lastPathComponent,
+            submittedName: "\(segment.url.lastPathComponent)_audio.m4a",
+            sha: shaOverride ?? localSha,
+            status: listingStatus
+        )
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: listing)
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: "{}")
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24688") })
+        await configure(service, cacheRetentionDays: 0)
+
+        await service.sync()
+
+        let requests = ObserverURLProtocol.store.snapshotRequests()
+        #expect(FileManager.default.fileExists(atPath: segment.url.path))
+        #expect(requests.filter { $0.url?.path == "/app/observer/ingest" }.count == 1)
+        #expect(requests.filter { $0.url?.path.contains("/app/observer/ingest/segments/") == true }.count == 1)
+    }
+
+    private func oldDateForRetention() -> Date {
+        Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)
+    }
+
+    private func sha256(of fileURL: URL) throws -> String {
+        try #require(UploadClient().sha256(of: fileURL))
+    }
+
+    private func listingJSON(
+        key: String,
+        submittedName: String,
+        sha: String,
+        status: String?
+    ) -> String {
+        let statusField = status.map { #","status":"\#($0)""# } ?? ""
+        return #"[{"key":"\#(key)","files":[{"name":"audio.m4a","size":5,"submitted_name":"\#(submittedName)","sha256":"\#(sha)"\#(statusField)}]}]"#
     }
 
     private func dateFolderString(for date: Date) -> String {

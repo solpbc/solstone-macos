@@ -244,7 +244,7 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
             return SegmentCaptureResult(
                 segmentDirectory: dir,
                 timePrefix: String(dir.lastPathComponent.prefix(6)),
-                captureStartTime: Date().addingTimeInterval(-1),
+                capturedDurationSeconds: 1,
                 audioInputs: [],
                 debugKeepRejected: false,
                 silenceMusic: true,

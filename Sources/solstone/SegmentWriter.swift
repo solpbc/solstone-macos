@@ -34,7 +34,7 @@ public struct DisplayInfo: Sendable {
 public struct SegmentCaptureResult: Sendable {
     public let segmentDirectory: URL
     public let timePrefix: String
-    public let captureStartTime: Date
+    public let capturedDurationSeconds: Int?
     public let audioInputs: [AudioRemixerInput]
     public let debugKeepRejected: Bool
     public let silenceMusic: Bool
@@ -323,6 +323,8 @@ public final class SegmentWriter {
     }
 
     private func performFinishCapture() async -> SegmentCaptureResult? {
+        let finishInstant = Date()
+
         // Stop all screenshot capturers first
         Logger.capture.info("Stopping \(self.screenshotCapturers.count, privacy: .public) screenshot capturer(s) for background remix...")
         for (displayID, capturer) in screenshotCapturers {
@@ -386,9 +388,12 @@ public final class SegmentWriter {
             }
         }
 
-        guard let startTime = captureStartTime else {
+        let capturedDurationSeconds: Int?
+        if let startTime = captureStartTime {
+            capturedDurationSeconds = clampedSegmentDurationSeconds(finishInstant.timeIntervalSince(startTime))
+        } else {
             Logger.capture.warning("No capture start time recorded")
-            return nil
+            capturedDurationSeconds = nil
         }
 
         Logger.capture.info("Capture finished, queued for background remix: \(self.outputDirectory.lastPathComponent, privacy: .public)")
@@ -396,7 +401,7 @@ public final class SegmentWriter {
         return SegmentCaptureResult(
             segmentDirectory: outputDirectory,
             timePrefix: timePrefix,
-            captureStartTime: startTime,
+            capturedDurationSeconds: capturedDurationSeconds,
             audioInputs: audioInputs,
             debugKeepRejected: debugKeepRejectedAudio,
             silenceMusic: silenceMusic,

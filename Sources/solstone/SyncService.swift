@@ -27,6 +27,11 @@ public actor SyncService {
         let serverKey: String
     }
 
+    private struct SegmentAliasKey: Hashable, Sendable {
+        let day: String
+        let submittedKey: String
+    }
+
     private enum UploadRetryOutcome: Sendable {
         case finished
         case held
@@ -50,6 +55,7 @@ public actor SyncService {
 
     private var isSyncing = false
     private var syncTask: Task<Void, Never>?
+    private var storedSegmentKeyBySubmittedKey: [SegmentAliasKey: String] = [:]
 
     // MARK: - Synced Days Cache
 
@@ -100,14 +106,19 @@ public actor SyncService {
         syncPaused: Bool
     ) {
         self.serverKey = serverKey
+        let newIdentity: SyncJournalIdentity?
         if let serverURL, let serverKey {
-            self.journalIdentity = SyncJournalIdentity(
+            newIdentity = SyncJournalIdentity(
                 configuredServerURL: serverURL,
                 serverKey: serverKey
             )
         } else {
-            self.journalIdentity = nil
+            newIdentity = nil
         }
+        if journalIdentity != newIdentity {
+            storedSegmentKeyBySubmittedKey.removeAll()
+        }
+        self.journalIdentity = newIdentity
         self.cacheRetentionDays = cacheRetentionDays
         self.syncPaused = syncPaused
     }
@@ -227,13 +238,7 @@ public actor SyncService {
             Logger.upload.info("Day \(day, privacy: .public): \(localSegments.count, privacy: .public) local, \(serverSegments.count, privacy: .public) on server")
 
             // Build lookup for server segments (by both key and original_key)
-            var serverByKey: [String: ServerSegmentInfo] = [:]
-            for seg in serverSegments {
-                serverByKey[seg.key] = seg
-                if let originalKey = seg.originalKey {
-                    serverByKey[originalKey] = seg
-                }
-            }
+            let serverByKey = buildServerByKey(serverSegments)
 
             // Track if any segments needed upload this day
             var anyNeededUpload = false
@@ -242,8 +247,8 @@ public actor SyncService {
             for segmentURL in localSegments {
                 let (_, segment) = convertSegmentPath(segmentURL)
 
-                // Check if segment exists on server (by key or original_key)
-                let serverSegment = serverByKey[segment]
+                // Check if segment exists on server (by key, original_key, or an in-session duplicate alias)
+                let serverSegment = serverSegmentForLocalKey(day: day, segment: segment, serverByKey: serverByKey)
 
                 if segmentNeedsUpload(segmentURL: segmentURL, segment: segment, serverSegment: serverSegment) {
                     anyNeededUpload = true
@@ -302,29 +307,56 @@ public actor SyncService {
             return false
         }
 
-        // If no server segment, definitely need upload
-        guard let serverSegment = serverSegment, !serverSegment.files.isEmpty else {
-            Logger.upload.info("Segment \(segment, privacy: .public): not on server")
+        guard let localSHAByFilename = localSHAByFilename(for: filesToUpload) else {
+            Logger.upload.info("Segment \(segment, privacy: .public): unable to hash local upload file")
             return true
         }
 
-        // Build map of server files by submitted name (original filename as uploaded)
-        var serverFileMap: [String: ServerFileInfo] = [:]
-        for file in serverSegment.files {
-            serverFileMap[file.submittedName] = file
-        }
-
-        // Check each file we would upload against server
-        for localFile in filesToUpload {
-            let localFilename = localFile.lastPathComponent
-
-            guard serverFileMap[localFilename] != nil else {
-                Logger.upload.info("Segment \(segment, privacy: .public): file \(localFilename, privacy: .public) not on server")
-                return true
-            }
+        // Unproven files must heal through upload, which prevents day-synced marking and cleanup.
+        let verdict = proveServerHoldsUploadFiles(localSHAByFilename: localSHAByFilename, serverSegment: serverSegment)
+        guard verdict.isHeld else {
+            Logger.upload.info("Segment \(segment, privacy: .public): \(verdict.reason, privacy: .public)")
+            return true
         }
 
         return false
+    }
+
+    private func buildServerByKey(_ serverSegments: [ServerSegmentInfo]) -> [String: ServerSegmentInfo] {
+        var serverByKey: [String: ServerSegmentInfo] = [:]
+        for seg in serverSegments {
+            serverByKey[seg.key] = seg
+            if let originalKey = seg.originalKey {
+                serverByKey[originalKey] = seg
+            }
+        }
+        return serverByKey
+    }
+
+    private func serverSegmentForLocalKey(
+        day: String,
+        segment: String,
+        serverByKey: [String: ServerSegmentInfo]
+    ) -> ServerSegmentInfo? {
+        if let direct = serverByKey[segment] {
+            return direct
+        }
+        let aliasKey = SegmentAliasKey(day: day, submittedKey: segment)
+        guard let storedSegmentKey = storedSegmentKeyBySubmittedKey[aliasKey] else {
+            return nil
+        }
+        return serverByKey[storedSegmentKey]
+    }
+
+    private func localSHAByFilename(for files: [URL]) -> [String: String]? {
+        var localSHAByFilename: [String: String] = [:]
+        for file in files {
+            guard let sha = client.sha256(of: file) else {
+                return nil
+            }
+            localSHAByFilename[file.lastPathComponent] = sha
+        }
+        return localSHAByFilename
     }
 
     // MARK: - Upload with Retry
@@ -389,7 +421,15 @@ public actor SyncService {
             )
 
             switch result {
-            case .success, .skipped:
+            case .success(let info):
+                if let storedSegmentKey = info.storedSegmentKey, storedSegmentKey != segment {
+                    storedSegmentKeyBySubmittedKey[
+                        SegmentAliasKey(day: day, submittedKey: segment)
+                    ] = storedSegmentKey
+                }
+                progressContinuation.yield(.uploadSucceeded(segment: segment))
+                return .finished
+            case .skipped:
                 progressContinuation.yield(.uploadSucceeded(segment: segment))
                 return .finished
             case .failure(let error):
@@ -615,14 +655,7 @@ public actor SyncService {
                         Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - server returned nil")
                         continue
                     }
-                    var byKey: [String: ServerSegmentInfo] = [:]
-                    for seg in serverSegments {
-                        byKey[seg.key] = seg
-                        if let originalKey = seg.originalKey {
-                            byKey[originalKey] = seg
-                        }
-                    }
-                    serverSegmentsCache[day] = byKey
+                    serverSegmentsCache[day] = buildServerByKey(serverSegments)
                 } catch {
                     Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - server unreachable: \(error.localizedDescription, privacy: .public)")
                     continue
@@ -634,8 +667,23 @@ public actor SyncService {
             for segmentURL in segments {
                 let (_, segment) = convertSegmentPath(segmentURL)
 
-                guard serverByKey[segment] != nil else {
+                guard let serverSegment = serverSegmentForLocalKey(day: day, segment: segment, serverByKey: serverByKey) else {
                     Logger.upload.info("Cleanup: keeping \(segment, privacy: .public) - not confirmed on server")
+                    continue
+                }
+
+                let filesToUpload = selectFilesForUpload(segmentDirectory: segmentURL)
+                guard let localSHAByFilename = localSHAByFilename(for: filesToUpload) else {
+                    Logger.upload.info("Cleanup: keeping \(segment, privacy: .public) - unable to hash local upload file")
+                    continue
+                }
+
+                let verdict = proveServerHoldsUploadFiles(
+                    localSHAByFilename: localSHAByFilename,
+                    serverSegment: serverSegment
+                )
+                guard verdict.isHeld else {
+                    Logger.upload.info("Cleanup: keeping \(segment, privacy: .public) - \(verdict.reason, privacy: .public)")
                     continue
                 }
 

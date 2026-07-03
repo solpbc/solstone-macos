@@ -203,4 +203,65 @@ struct UploadClientTests {
         #expect(payload["last_successful_sync"] == nil)
         #expect(payload["last_error_reason"] == nil)
     }
+
+    @Test func uploadSegmentParsesSuccessfulIngestBodies() async throws {
+        let ok = try await uploadResult(body: #"{"status":"ok","segment":{"key":"120000_300"}}"#)
+        #expect(ok == UploadSuccessInfo(status: .ok, storedSegmentKey: "120000_300"))
+
+        let collision = try await uploadResult(body: #"{"status":"collision","segment":{"key":"120000_300-1"}}"#)
+        #expect(collision == UploadSuccessInfo(status: .collision, storedSegmentKey: "120000_300-1"))
+
+        let duplicate = try await uploadResult(body: #"{"status":"duplicate","existing_segment":{"key":"115959_300"}}"#)
+        #expect(duplicate == UploadSuccessInfo(status: .duplicate, storedSegmentKey: "115959_300"))
+
+        let duplicateString = try await uploadResult(body: #"{"status":"duplicate","existing_segment":"115959_300"}"#)
+        #expect(duplicateString == UploadSuccessInfo(status: .duplicate, storedSegmentKey: "115959_300"))
+
+        let empty = try await uploadResult(body: "")
+        #expect(empty == UploadSuccessInfo(status: .ok, storedSegmentKey: nil))
+
+        let garbage = try await uploadResult(body: "not-json")
+        #expect(garbage == UploadSuccessInfo(status: .ok, storedSegmentKey: nil))
+
+        let noStatus = try await uploadResult(body: #"{"segment":{"key":"ignored"}}"#)
+        #expect(noStatus == UploadSuccessInfo(status: .ok, storedSegmentKey: nil))
+
+        let okMissingSegment = try await uploadResult(body: #"{"status":"ok"}"#)
+        #expect(okMissingSegment == UploadSuccessInfo(status: .ok, storedSegmentKey: nil))
+
+        let duplicateMissingExistingSegment = try await uploadResult(body: #"{"status":"duplicate"}"#)
+        #expect(duplicateMissingExistingSegment == UploadSuccessInfo(status: .duplicate, storedSegmentKey: nil))
+
+        let unknownMissingSegment = try await uploadResult(body: #"{"status":"surprise"}"#)
+        #expect(unknownMissingSegment == UploadSuccessInfo(status: .unknown("surprise"), storedSegmentKey: nil))
+    }
+
+    private func uploadResult(body: String) async throws -> UploadSuccessInfo {
+        ObserverURLProtocol.store.reset()
+        ObserverURLProtocol.store.enqueue(statusCode: 200, body: body)
+        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration())
+        let root = try makeTempDirectory("upload-client-response")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("120000_300_audio.m4a")
+        try Data("audio".utf8).write(to: file)
+
+        let result = await uploadClient.uploadSegment(
+            serverURL: "http://journal.example",
+            serverKey: "secret",
+            segmentURL: root,
+            day: "20260703",
+            segment: "120000_300",
+            mediaFiles: [file]
+        )
+
+        guard case .success(let info) = result else {
+            Issue.record("Expected successful upload result")
+            throw UploadClientTestError.unexpectedResult
+        }
+        return info
+    }
+}
+
+private enum UploadClientTestError: Error {
+    case unexpectedResult
 }

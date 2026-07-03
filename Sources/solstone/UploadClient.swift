@@ -12,6 +12,15 @@ public struct ServerFileInfo: Sendable {
     public let submittedName: String  // Original filename as uploaded
     public let sha256: String
     public let size: Int
+    public let status: ServerFileStatus
+    public let currentPath: String?
+}
+
+public enum ServerFileStatus: String, Sendable {
+    case present
+    case relocated
+    case missing
+    case unknown
 }
 
 /// Segment info from server including collision resolution
@@ -23,10 +32,22 @@ public struct ServerSegmentInfo: Sendable {
 
 /// Result of an upload attempt
 public enum UploadResult: Sendable {
-    case success
+    case success(UploadSuccessInfo)
     case failure(Error)
     case skipped
     case notConfigured
+}
+
+public struct UploadSuccessInfo: Sendable, Equatable {
+    public let status: IngestUploadStatus
+    public let storedSegmentKey: String?
+}
+
+public enum IngestUploadStatus: Sendable, Equatable {
+    case ok
+    case collision
+    case duplicate
+    case unknown(String)
 }
 
 /// Upload errors
@@ -254,7 +275,16 @@ public struct UploadClient: Sendable {
                             }
                             let submittedName = file["submitted_name"] as? String ?? name
                             let sha256 = file["sha256"] as? String ?? ""
-                            return ServerFileInfo(name: name, submittedName: submittedName, sha256: sha256, size: size)
+                            let status = ServerFileStatus(rawValue: file["status"] as? String ?? "") ?? .unknown
+                            let currentPath = file["current_path"] as? String
+                            return ServerFileInfo(
+                                name: name,
+                                submittedName: submittedName,
+                                sha256: sha256,
+                                size: size,
+                                status: status,
+                                currentPath: currentPath
+                            )
                         }
 
                         return ServerSegmentInfo(
@@ -452,7 +482,7 @@ public struct UploadClient: Sendable {
             Logger.upload.info("Response: HTTP \(httpResponse.statusCode, privacy: .public) - \(responseBody, privacy: .public)")
 
             if httpResponse.statusCode == 200 {
-                return .success
+                return .success(Self.parseUploadSuccessInfo(from: data))
             } else {
                 let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
                 return .failure(UploadError.serverError(statusCode: httpResponse.statusCode, message: errorMessage))
@@ -488,6 +518,52 @@ public struct UploadClient: Sendable {
         }
         let digest = hasher.finalize()
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func parseUploadSuccessInfo(from data: Data) -> UploadSuccessInfo {
+        guard !data.isEmpty,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return UploadSuccessInfo(status: .ok, storedSegmentKey: nil)
+        }
+
+        guard let rawStatus = object["status"] as? String else {
+            return UploadSuccessInfo(status: .ok, storedSegmentKey: nil)
+        }
+
+        switch rawStatus {
+        case "ok":
+            return UploadSuccessInfo(
+                status: .ok,
+                storedSegmentKey: extractSegmentKey(from: object["segment"])
+            )
+        case "collision":
+            return UploadSuccessInfo(
+                status: .collision,
+                storedSegmentKey: extractSegmentKey(from: object["segment"])
+            )
+        case "duplicate":
+            return UploadSuccessInfo(
+                status: .duplicate,
+                storedSegmentKey: extractSegmentKey(from: object["existing_segment"])
+            )
+        default:
+            return UploadSuccessInfo(
+                status: .unknown(rawStatus),
+                storedSegmentKey: extractSegmentKey(from: object["segment"]) ?? extractSegmentKey(from: object["existing_segment"])
+            )
+        }
+    }
+
+    private static func extractSegmentKey(from value: Any?) -> String? {
+        if let key = value as? String, !key.isEmpty {
+            return key
+        }
+        if let object = value as? [String: Any],
+           let key = object["key"] as? String,
+           !key.isEmpty {
+            return key
+        }
+        return nil
     }
 }
 

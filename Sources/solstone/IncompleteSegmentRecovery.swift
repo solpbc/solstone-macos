@@ -93,7 +93,7 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
                 let job = RemixQueue.RemixJob(
                     segmentDirectory: segmentDir,
                     timePrefix: timePrefix,
-                    captureStartTime: nil,
+                    capturedDurationSeconds: nil,
                     audioInputs: [],
                     debugKeepRejected: false,
                     silenceMusic: true,

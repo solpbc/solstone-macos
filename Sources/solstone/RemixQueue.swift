@@ -38,12 +38,13 @@ public enum SegmentReconciliation: Sendable {
 /// Processes jobs sequentially to avoid CPU contention
 public actor RemixQueue {
     public typealias RemixerFactory = @Sendable (_ verbose: Bool, _ debugKeepRejected: Bool) -> any AudioRemixing
+    public typealias DurationLoader = @Sendable (_ url: URL) async throws -> CMTime
 
     /// Data needed to process a remix in the background
     public struct RemixJob: Sendable {
         let segmentDirectory: URL
         let timePrefix: String
-        let captureStartTime: Date?
+        let capturedDurationSeconds: Int?
         let audioInputs: [AudioRemixerInput]
         let debugKeepRejected: Bool
         let silenceMusic: Bool
@@ -66,6 +67,8 @@ public actor RemixQueue {
     private var onSegmentComplete: (@Sendable (URL, SegmentReconciliation) async -> Void)?
 
     private let remixTimeoutSeconds: TimeInterval
+    private let durationProbeTimeoutSeconds: TimeInterval
+    private let durationLoader: DurationLoader
     private let remixerFactory: RemixerFactory
 
     /// Shared instance
@@ -73,12 +76,40 @@ public actor RemixQueue {
 
     init(
         remixTimeoutSeconds: TimeInterval = 60,
+        durationProbeTimeoutSeconds: TimeInterval = 3,
+        durationLoader: @escaping DurationLoader = { url in
+            try await AVURLAsset(url: url).load(.duration)
+        },
         remixerFactory: @escaping RemixerFactory = { verbose, debugKeepRejected in
             AudioRemixer(verbose: verbose, debugKeepRejected: debugKeepRejected)
         }
     ) {
         self.remixTimeoutSeconds = remixTimeoutSeconds
+        self.durationProbeTimeoutSeconds = durationProbeTimeoutSeconds
+        self.durationLoader = durationLoader
         self.remixerFactory = remixerFactory
+    }
+
+    init(remixerFactory: @escaping RemixerFactory) {
+        self.init(
+            durationLoader: { url in
+                try await AVURLAsset(url: url).load(.duration)
+            },
+            remixerFactory: remixerFactory
+        )
+    }
+
+    init(
+        remixTimeoutSeconds: TimeInterval,
+        remixerFactory: @escaping RemixerFactory
+    ) {
+        self.init(
+            remixTimeoutSeconds: remixTimeoutSeconds,
+            durationLoader: { url in
+                try await AVURLAsset(url: url).load(.duration)
+            },
+            remixerFactory: remixerFactory
+        )
     }
 
     /// Set the callback for when segments complete remixing
@@ -133,8 +164,8 @@ public actor RemixQueue {
 
         // Calculate actual duration and segment key
         let actualDuration: Int
-        if let start = job.captureStartTime {
-            actualDuration = Int(Date().timeIntervalSince(start))
+        if let capturedDurationSeconds = job.capturedDurationSeconds {
+            actualDuration = await clampedSegmentDurationSeconds(TimeInterval(capturedDurationSeconds))
         } else {
             do {
                 let primaryMP4 = try fm.contentsOfDirectory(at: job.segmentDirectory, includingPropertiesForKeys: nil)
@@ -147,11 +178,13 @@ public actor RemixQueue {
                     return
                 }
 
-                let duration = try await AVURLAsset(url: primaryMP4).load(.duration)
-                actualDuration = Int(CMTimeGetSeconds(duration))
-                guard actualDuration > 0 else {
-                    await markIncompleteSegmentAsFailed(job.segmentDirectory)
-                    return
+                do {
+                    let duration = try await withTimeout(seconds: durationProbeTimeoutSeconds) {
+                        try await self.durationLoader(primaryMP4)
+                    }
+                    actualDuration = await clampedSegmentDurationSeconds(CMTimeGetSeconds(duration))
+                } catch is TimeoutError {
+                    actualDuration = await clampedSegmentDurationSeconds(.infinity)
                 }
             } catch {
                 await markIncompleteSegmentAsFailed(job.segmentDirectory)

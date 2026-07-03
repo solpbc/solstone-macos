@@ -531,7 +531,7 @@ public final class CaptureManager {
         let job = RemixQueue.RemixJob(
             segmentDirectory: result.segmentDirectory,
             timePrefix: result.timePrefix,
-            captureStartTime: result.captureStartTime,
+            capturedDurationSeconds: result.capturedDurationSeconds,
             audioInputs: result.audioInputs,
             debugKeepRejected: result.debugKeepRejected,
             silenceMusic: result.silenceMusic,
