@@ -159,6 +159,7 @@ public final class AppState {
     public internal(set) var currentPolicy: NSApplication.ActivationPolicy = .accessory
     public internal(set) var loginLaunchSuppressionExpires: Date = .distantPast
     public internal(set) var isTerminating: Bool = false
+    public internal(set) var appKitTerminationBegan: Bool = false
     private var activationPolicyWorkItem: DispatchWorkItem?
     private let dockBehaviorDefaultsKey = "SolstoneDockBehavior"
     private let visitedSettingsTabsDefaultsKey = "SolstoneVisitedSettingsTabs"
@@ -338,6 +339,18 @@ public final class AppState {
                 launchReplacement: launchReplacement
             )
         )
+    }
+
+    internal func launchReplacementForSettingsRestart() {
+        let command = ReplacementLaunchGate.command(
+            predecessorPID: getpid(),
+            bundlePath: Bundle.main.bundlePath
+        )
+        do {
+            try replacementLaunchRunner(command)
+        } catch {
+            Logger.setup.error("replacement launch failed to spawn: \(String(describing: error), privacy: .public)")
+        }
     }
 
     internal func performQuitPreparation() async {
@@ -785,11 +798,7 @@ public final class AppState {
             },
             launchReplacement: { [weak self] in
                 guard let self else { return }
-                let command = ReplacementLaunchGate.command(
-                    predecessorPID: getpid(),
-                    bundlePath: Bundle.main.bundlePath
-                )
-                try? self.replacementLaunchRunner(command)
+                self.launchReplacementForSettingsRestart()
             }
         )
         uploadCoordinator.bundledAvailabilityProvider = { [weak self] in

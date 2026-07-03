@@ -144,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.audioDeviceMonitor.stopListening()
             state.installer.cancel()
             state.isTerminating = true
+            state.appKitTerminationBegan = true
             Task { await state.heartbeatService.stop() }
             Task { await state.solChatBridge.stop() }
             state.stopTunnelLifecycleOwner()
@@ -174,6 +175,9 @@ struct SolstoneCaptureApp: App {
             installFailureRecovery: { @MainActor in
                 appState.appQuitCoordinator.resetAfterFailedUpdaterInstall()
                 await appState.reestablishSupervisedJournalAfterFailedUpdate()
+            },
+            terminationBegan: { @MainActor in
+                appState.appKitTerminationBegan
             }
         ))
     }

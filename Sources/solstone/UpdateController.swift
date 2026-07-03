@@ -25,12 +25,15 @@ final class UpdateController {
     typealias PreInstallFinalizer = @MainActor () async -> Void
     typealias InstallFailureRecovery = @MainActor () async -> Void
     typealias PostInstallRecoveryScheduler = @MainActor (@escaping @MainActor () -> Void) -> Void
+    typealias TerminationBeganPredicate = @MainActor @Sendable () -> Bool
     typealias RunningVersionProvider = @MainActor () -> String
 
     private static let statusKey = "solstone.updates.status"
     private static let feedURLOverrideKey = "solstone.updates.feedURLOverride"
     private static let legacyLastCheckedAtKey = "solstone.updates.lastCheckedAt"
     private static let legacyLastCheckResultKey = "solstone.updates.lastCheckResult"
+    static let stagedInstallRecoveryDelay: Duration = .seconds(30)
+    static let stagedInstallRecoveryWarningText = "Sparkle staged install handoff did not terminate within 30 seconds; recovering update finalization"
 
     private(set) var activity: UpdateActivity = .idle
     private(set) var backgroundDownload: BackgroundDownloadPhase? = nil
@@ -50,6 +53,7 @@ final class UpdateController {
     private let preInstallFinalizer: PreInstallFinalizer?
     private let installFailureRecovery: InstallFailureRecovery?
     private let postInstallRecoveryScheduler: PostInstallRecoveryScheduler
+    private let terminationBegan: TerminationBeganPredicate
     private let defaults: UserDefaults
 
     private var updater: (any SparkleUpdating)?
@@ -149,6 +153,7 @@ final class UpdateController {
         preInstallFinalizer: PreInstallFinalizer? = nil,
         installFailureRecovery: InstallFailureRecovery? = nil,
         postInstallRecoveryScheduler: PostInstallRecoveryScheduler? = nil,
+        terminationBegan: TerminationBeganPredicate? = nil,
         defaults: UserDefaults = .standard,
         updaterFactory: @escaping UpdaterFactory
     ) {
@@ -161,6 +166,7 @@ final class UpdateController {
         self.preInstallFinalizer = preInstallFinalizer
         self.installFailureRecovery = installFailureRecovery
         self.postInstallRecoveryScheduler = postInstallRecoveryScheduler ?? Self.defaultPostInstallRecoveryScheduler
+        self.terminationBegan = terminationBegan ?? { false }
         self.defaults = defaults
         self.canCheckForUpdates = Self.validateSparkleConfig(
             feedURL: feedURL ?? info?["SUFeedURL"] as? String,
@@ -196,6 +202,7 @@ final class UpdateController {
         preInstallFinalizer: PreInstallFinalizer? = nil,
         installFailureRecovery: InstallFailureRecovery? = nil,
         postInstallRecoveryScheduler: PostInstallRecoveryScheduler? = nil,
+        terminationBegan: TerminationBeganPredicate? = nil,
         defaults: UserDefaults = .standard
     ) {
         self.init(
@@ -203,6 +210,7 @@ final class UpdateController {
             preInstallFinalizer: preInstallFinalizer,
             installFailureRecovery: installFailureRecovery,
             postInstallRecoveryScheduler: postInstallRecoveryScheduler,
+            terminationBegan: terminationBegan,
             defaults: defaults
         ) { userDriver, delegate in
             SPUUpdater(
@@ -298,7 +306,7 @@ final class UpdateController {
     }
 
     func suppressStagedBlock() {
-        guard updateIsStaged else { return }
+        guard updateIsStaged, !installFinalizationInFlight, !installFinalizationCommitted else { return }
         stagedBlockSuppressed = true
     }
 
@@ -404,7 +412,8 @@ final class UpdateController {
             immediateInstallHandler()
             postInstallRecoveryScheduler { [weak self] in
                 guard let self, self.installFinalizationCommitted else { return }
-                Logger.setup.warning("Sparkle staged install handoff did not terminate within 5 seconds; recovering update finalization")
+                guard !self.terminationBegan() else { return }
+                Logger.setup.warning("\(Self.stagedInstallRecoveryWarningText)")
                 self.recoverCommittedInstallFinalization()
             }
             installFinalizationInFlight = false
@@ -632,11 +641,12 @@ final class UpdateController {
     }
 
     func ingestCycleFinished(error: (any Error)?) {
+        backgroundDownload = nil
+
         guard let error else { return }
 
         let nsError = error as NSError
         guard nsError.domain == SUSparkleErrorDomain else {
-            backgroundDownload = nil
             recordFailedCheck()
             return
         }
@@ -648,7 +658,6 @@ final class UpdateController {
              Int(SUError.installationAuthorizeLaterError.rawValue):
             return
         default:
-            backgroundDownload = nil
             recordFailedCheck()
         }
     }
@@ -738,7 +747,7 @@ final class UpdateController {
 
     private static func defaultPostInstallRecoveryScheduler(_ check: @escaping @MainActor () -> Void) {
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: Self.stagedInstallRecoveryDelay)
             check()
         }
     }
@@ -787,6 +796,7 @@ final class UpdateController {
 
         installFinalizationCommitted = false
         immediateStagedInstallHandler = nil
+        stagedBlockSuppressed = false
         Task { @MainActor in await installFailureRecovery?() }
         return true
     }

@@ -299,6 +299,40 @@ struct SparkleDelegateIngestTests {
         #expect(abortedHarness.controller.statusAXToken == "error")
     }
 
+    @Test(arguments: [
+        "nil-success",
+        "non-sparkle-error",
+        "no-update",
+        "canceled",
+        "authorize-later",
+        "default-sparkle-error",
+    ])
+    func cycleFinishedClearsBackgroundDownloadForTerminalOutcomes(outcome: String) throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        let harness = try makeHarness()
+        harness.controller.ingestBackgroundDownloadStarted(version: "1.3.9")
+
+        switch outcome {
+        case "nil-success":
+            harness.controller.ingestCycleFinished(error: nil)
+        case "non-sparkle-error":
+            harness.controller.ingestCycleFinished(error: NSError(domain: "test", code: 1))
+        case "no-update":
+            harness.controller.ingestCycleFinished(error: sparkleError(.noUpdateError))
+        case "canceled":
+            harness.controller.ingestCycleFinished(error: sparkleError(.installationCanceledError))
+        case "authorize-later":
+            harness.controller.ingestCycleFinished(error: sparkleError(.installationAuthorizeLaterError))
+        case "default-sparkle-error":
+            harness.controller.ingestCycleFinished(error: sparkleError(.downloadError))
+        default:
+            #expect(Bool(false), "unhandled terminal outcome \(outcome)")
+        }
+
+        #expect(harness.controller.backgroundDownload == nil)
+    }
+
     @Test func userDriverFoundThenLateDelegateFoundKeepsLiveReadyToInstallState() throws {
         clearDefaults()
         defer { clearDefaults() }
