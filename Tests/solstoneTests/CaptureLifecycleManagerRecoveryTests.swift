@@ -654,6 +654,161 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(!delegate.events.contains(.transitionToError("user_failed")))
     }
 
+    @Test func startFromErrorResetsThenCommitsWithoutIdleCommit() async {
+        let delegate = FakeLifecycleDelegate(state: .error("permission denied"))
+        let executor = CaptureExecutor(
+            delegate: delegate,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+
+        let outcome = await executor.enqueue(.start(reason: .autoStart, disabledMicUIDs: [], enabledMicUIDs: []))
+
+        guard case .committed = outcome else {
+            Issue.record("expected start from error to commit")
+            return
+        }
+        #expect(delegate.events == [
+            .resetForRestartFromError,
+            .startStarted("autoStart"),
+            .startCompleted("autoStart")
+        ])
+        #expect(delegate.lifecycleCurrentState.isRecording)
+    }
+
+    @Test func startFromErrorFailureRearmsRecoveryForTransientError() async {
+        let scheduler = FakeRecoveryScheduler()
+        let delegate = FakeLifecycleDelegate(state: .error("transient"))
+        delegate.startFailure = TransitionFailure(message: "start failed", isPermissionError: false)
+        let manager = makeManager(scheduler: scheduler, delegate: delegate)
+        delegate.onStartFromErrorFailed = { failure in
+            manager.noteStartFromErrorFailed(isPermissionError: failure.isPermissionError)
+        }
+
+        let outcome = await manager.enqueue(.start(reason: .autoStart, disabledMicUIDs: [], enabledMicUIDs: []))
+
+        guard case .threw(let failure) = outcome else {
+            Issue.record("expected start from error failure to throw")
+            return
+        }
+        #expect(failure.message == "start failed")
+        #expect(scheduler.scheduledDelays == [5])
+        #expect(manager.isRecoveryScheduled)
+        #expect(manager.retryCountForTesting == 0)
+        #expect(delegate.startFromErrorFailurePermissionFlags == [false])
+    }
+
+    @Test func startFromErrorPermissionFailureDefersToPermissionPoll() async {
+        let scheduler = FakeRecoveryScheduler()
+        let delegate = FakeLifecycleDelegate(state: .error("permission denied"))
+        delegate.startFailure = TransitionFailure(message: "permission denied", isPermissionError: true)
+        let manager = makeManager(scheduler: scheduler, delegate: delegate)
+        delegate.onStartFromErrorFailed = { failure in
+            manager.noteStartFromErrorFailed(isPermissionError: failure.isPermissionError)
+        }
+
+        let outcome = await manager.enqueue(.start(reason: .autoStart, disabledMicUIDs: [], enabledMicUIDs: []))
+
+        guard case .threw(let failure) = outcome else {
+            Issue.record("expected permission start failure to throw")
+            return
+        }
+        #expect(failure.isPermissionError)
+        #expect(scheduler.scheduledDelays.isEmpty)
+        #expect(!manager.isRecoveryScheduled)
+        #expect(delegate.startFromErrorFailurePermissionFlags == [true])
+    }
+
+    @Test func exhaustedRecoveryStillAcceptsExplicitStartFromError() async {
+        let scheduler = FakeRecoveryScheduler()
+        let delegate = FakeLifecycleDelegate(state: .error("all displays disconnected"))
+        delegate.resumeBehavior = .fail
+        let manager = makeManager(scheduler: scheduler, delegate: delegate)
+
+        manager.startRecoveryIfNeeded(error: CaptureManager.CaptureError.noDisplaysAvailable)
+        for _ in 0..<20 {
+            await scheduler.fireNext()
+        }
+        #expect(manager.retryCountForTesting == 20)
+        #expect(!manager.isRecoveryScheduled)
+
+        delegate.startFailure = nil
+        let outcome = await manager.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+
+        guard case .committed = outcome else {
+            Issue.record("expected explicit start after exhaustion to commit")
+            return
+        }
+        #expect(delegate.events.contains(.resetForRestartFromError))
+        #expect(delegate.lifecycleCurrentState.isRecording)
+    }
+
+    @Test func startFromErrorTransientFailureAfterExhaustionRearmsFreshLadder() async {
+        let scheduler = FakeRecoveryScheduler()
+        let delegate = FakeLifecycleDelegate(state: .error("all displays disconnected"))
+        delegate.resumeBehavior = .fail
+        let manager = makeManager(scheduler: scheduler, delegate: delegate)
+
+        manager.startRecoveryIfNeeded(error: CaptureManager.CaptureError.noDisplaysAvailable)
+        for _ in 0..<20 {
+            await scheduler.fireNext()
+        }
+        #expect(manager.retryCountForTesting == 20)
+        #expect(!manager.isRecoveryScheduled)
+
+        delegate.startFailure = TransitionFailure(message: "new transient", isPermissionError: false)
+        delegate.onStartFromErrorFailed = { failure in
+            manager.noteStartFromErrorFailed(isPermissionError: failure.isPermissionError)
+        }
+        let outcome = await manager.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+
+        guard case .threw(let failure) = outcome else {
+            Issue.record("expected explicit start failure after exhaustion to throw")
+            return
+        }
+        #expect(failure.message == "new transient")
+        #expect(manager.retryCountForTesting == 0)
+        #expect(manager.isRecoveryScheduled)
+        #expect(scheduler.scheduledDelays.last == 5)
+    }
+
+    @Test func rotateTimeoutAndFailureReturnThrownOutcome() async {
+        let timeoutDelegate = FakeLifecycleDelegate(state: .recording)
+        timeoutDelegate.rotationResult = .timedOut
+        let timeoutExecutor = CaptureExecutor(
+            delegate: timeoutDelegate,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+
+        let timeoutOutcome = await timeoutExecutor.enqueue(.rotate(reason: .boundary))
+
+        guard case .threw(let timeoutFailure) = timeoutOutcome else {
+            Issue.record("expected timed-out rotate to throw")
+            return
+        }
+        #expect(timeoutFailure.message == "Segment rotation timed out")
+        #expect(!timeoutFailure.isPermissionError)
+
+        let failure = TransitionFailure(message: "rotate failed", isPermissionError: false)
+        let failedDelegate = FakeLifecycleDelegate(state: .recording)
+        failedDelegate.rotationResult = .failed(failure)
+        let failedExecutor = CaptureExecutor(
+            delegate: failedDelegate,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+
+        let failedOutcome = await failedExecutor.enqueue(.rotate(reason: .boundary))
+
+        guard case .threw(let returnedFailure) = failedOutcome else {
+            Issue.record("expected failed rotate to throw")
+            return
+        }
+        #expect(returnedFailure.message == "rotate failed")
+        #expect(!returnedFailure.isPermissionError)
+    }
+
     @Test func startFromPausedClearsSuspendedSoLaterUnlockResumeDrops() async {
         let delegate = FakeLifecycleDelegate(state: .paused(reasons: [.lock]))
         var executor: CaptureExecutor!
@@ -808,6 +963,7 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
     enum Event: Equatable {
         case startStarted(String)
         case startCompleted(String)
+        case resetForRestartFromError
         case stopStarted(String)
         case stopCompleted(String)
         case rotateStarted(String)
@@ -834,10 +990,12 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
     var rotationResult: RotationResult = .committed
     var onStart: (() -> Void)?
     var onStop: (() -> Void)?
+    var onStartFromErrorFailed: ((TransitionFailure) -> Void)?
     var pauseResultURL: URL?
     private(set) var resumeTriggers: [String] = []
     private(set) var events: [Event] = []
     private(set) var pauseCalls: [PauseCall] = []
+    private(set) var startFromErrorFailurePermissionFlags: [Bool] = []
     private var startGateArmed = false
     private var startReleaseContinuation: CheckedContinuation<Void, Never>?
     private var pauseReleased = false
@@ -871,6 +1029,15 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
             appendEvent(.startCompleted(reason.trigger))
         }
         return startResult
+    }
+
+    func lifecycleResetForRestartFromError() async {
+        appendEvent(.resetForRestartFromError)
+    }
+
+    func lifecycleStartFromErrorFailed(_ failure: TransitionFailure) {
+        startFromErrorFailurePermissionFlags.append(failure.isPermissionError)
+        onStartFromErrorFailed?(failure)
     }
 
     func lifecycleStopCapture(reason: StopReason) async {

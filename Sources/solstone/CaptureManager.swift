@@ -222,6 +222,10 @@ public final class CaptureManager {
         await lifecycleManager.enqueue(intent)
     }
 
+    internal var isRecoveryScheduled: Bool {
+        lifecycleManager.isRecoveryScheduled
+    }
+
     /// Handles audio device additions/removals
     /// Adds/removes mics from current segment dynamically (no rotation needed)
     public func handleDeviceChange(added: [AudioInputDevice], removed: [AudioInputDevice]) async {
@@ -495,16 +499,7 @@ public final class CaptureManager {
     }
 
     private func transitionFailure(for error: Error) -> TransitionFailure {
-        let permissionDenied: Bool
-        if let captureError = error as? CaptureError, case .permissionDenied = captureError {
-            permissionDenied = true
-        } else {
-            permissionDenied = isPermissionError(error)
-        }
-        return TransitionFailure(
-            message: error.localizedDescription,
-            isPermissionError: permissionDenied
-        )
+        TransitionFailure(message: error.localizedDescription, isPermissionError: isPermissionError(error))
     }
 
     /// Calculate seconds until the next 5-minute clock boundary
@@ -680,7 +675,6 @@ public final class CaptureManager {
     public enum CaptureError: Error, LocalizedError {
         case noDisplaysAvailable
         case notInitialized
-        case permissionDenied
 
         public var errorDescription: String? {
             switch self {
@@ -688,8 +682,6 @@ public final class CaptureManager {
                 return "No displays available for capture"
             case .notInitialized:
                 return "Capture manager not initialized"
-            case .permissionDenied:
-                return "The user declined TCCs for application, window, display capture"
             }
         }
     }
@@ -747,6 +739,33 @@ extension CaptureManager: CaptureLifecycleDelegate {
         return .committed
     }
 
+    func lifecycleResetForRestartFromError() async {
+        Logger.capture.info("[Executor] resetting for restart from error")
+        windowExclusionManager.stop()
+        stopDefaultMicMonitoring()
+
+        segmentTimer?.invalidate()
+        segmentTimer = nil
+        stopHeartbeat()
+        cancelPendingRotationRetry()
+        lifecycleManager.resetLifecyclePendingState(stopRecovery: true)
+
+        if let segment = currentSegment {
+            let result = await segment.finishCapture()
+            currentSegment = nil
+            if let result {
+                await enqueueRemix(result)
+            }
+        }
+
+        micCaptureManager.stopAll()
+        await systemAudioCaptureManager.stop()
+    }
+
+    func lifecycleStartFromErrorFailed(_ failure: TransitionFailure) {
+        lifecycleManager.noteStartFromErrorFailed(isPermissionError: failure.isPermissionError)
+    }
+
     func lifecycleStopCapture(reason: StopReason) async {
         windowExclusionManager.stop()
 
@@ -767,7 +786,6 @@ extension CaptureManager: CaptureLifecycleDelegate {
             if let result {
                 await enqueueRemix(result)
             }
-            await finalizer.waitForCompletion()
         }
 
         // Stop all persistent captures (only when fully stopping recording).

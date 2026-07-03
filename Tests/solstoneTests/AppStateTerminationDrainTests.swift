@@ -58,6 +58,47 @@ struct AppStateTerminationDrainTests {
             "drain:wait:end"
         ])
     }
+
+    @Test func stopEnqueuesLastSegmentBeforeTerminationDrainWaits() async throws {
+        let root = try makeTempDirectory("termination-last-segment")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let finalizerAndDrainer = RecordingTerminationFinalizerDrainer()
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                FakeCaptureSegment(outputDirectory: outputDirectory)
+            },
+            finalizer: finalizerAndDrainer,
+            allowsEmptyDisplayConfigurationForTesting: true
+        )
+        let segmentDirectory = root.appendingPathComponent("111118.incomplete", isDirectory: true)
+        let segment = FakeCaptureSegment(outputDirectory: segmentDirectory)
+        manager.seedRecordingForTesting(currentSegment: segment)
+
+        let outcome = await manager.enqueueTransition(.stop(reason: .quit))
+
+        guard case .committed = outcome else {
+            Issue.record("expected quit stop to commit")
+            return
+        }
+        #expect(await finalizerAndDrainer.events() == [.enqueue(segmentDirectory)])
+
+        await finalizerAndDrainer.setOnSegmentComplete(nil)
+        await finalizerAndDrainer.waitForCompletion()
+
+        #expect(await finalizerAndDrainer.events() == [
+            .enqueue(segmentDirectory),
+            .clearCallback,
+            .waitForCompletion
+        ])
+    }
+}
+
+private enum TerminationDrainEvent: Equatable, Sendable {
+    case enqueue(URL)
+    case clearCallback
+    case setCallback
+    case waitForCompletion
 }
 
 private actor TerminationDrainRecorder {
@@ -106,6 +147,30 @@ private actor DelayedTerminationDrainer: TerminationDraining {
         await recorder.append("drain:wait:start")
         try? await Task.sleep(for: .milliseconds(10))
         await recorder.append("drain:wait:end")
+    }
+}
+
+private actor RecordingTerminationFinalizerDrainer: SegmentFinalizing, TerminationDraining {
+    private var recordedEvents: [TerminationDrainEvent] = []
+
+    func enqueue(_ job: RemixQueue.RemixJob) async {
+        recordedEvents.append(.enqueue(job.segmentDirectory))
+    }
+
+    func inFlightPaths() async -> Set<String> {
+        []
+    }
+
+    func setOnSegmentComplete(_ callback: (@Sendable (URL, SegmentReconciliation) async -> Void)?) async {
+        recordedEvents.append(callback == nil ? .clearCallback : .setCallback)
+    }
+
+    func waitForCompletion() async {
+        recordedEvents.append(.waitForCompletion)
+    }
+
+    func events() -> [TerminationDrainEvent] {
+        recordedEvents
     }
 }
 

@@ -27,6 +27,7 @@ public final class SystemAudioCaptureManager {
 #if DEBUG
     internal private(set) var _restartDecisionTraceForTesting: [String] = []
     internal var _restartParkHookForTesting: (@MainActor () async -> Void)?
+    internal var _stopParkHookForTesting: (@MainActor () async -> Void)?
     internal var _streamGenerationForTesting: Int { streamGeneration }
 #endif
 
@@ -136,14 +137,27 @@ public final class SystemAudioCaptureManager {
 
         Logger.audio.info("[SystemAudio] Stopping persistent SCStream...")
 
+#if DEBUG
+        let stopParkHook = _stopParkHookForTesting
+#endif
         do {
-            try await stream.stopCapture()
+            try await withTimeout(seconds: 5) {
+#if DEBUG
+                if let hook = stopParkHook {
+                    await hook()
+                    try Task.checkCancellation()
+                }
+#endif
+                try await stream.stopCapture()
+            }
             if verbose { Logger.audio.debug("[SystemAudio] stopCapture() completed successfully") }
         } catch let error as NSError
             where error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && error.code == -3808
         {
             // Stream already stopped - ignore
             if verbose { Logger.audio.debug("[SystemAudio] Stream was already stopped (code -3808)") }
+        } catch is TimeoutError {
+            Logger.audio.warning("[SystemAudio] Timeout stopping stream; dropping local stream references")
         } catch {
             Logger.audio.warning("[SystemAudio] Error stopping stream: \(error, privacy: .public)")
         }

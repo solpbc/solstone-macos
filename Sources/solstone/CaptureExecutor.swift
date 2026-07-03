@@ -430,9 +430,14 @@ final class CaptureExecutor {
         }
 
         let state = delegate.lifecycleCurrentState
-        guard state.isIdle || state.isPaused else {
+        let restartingFromError = state.isError
+        guard state.isIdle || state.isPaused || restartingFromError else {
             Logger.capture.info("[Executor] drop start(\(reason.trigger, privacy: .public)) on \(state.label, privacy: .public)")
             return .dropped
+        }
+
+        if restartingFromError {
+            await delegate.lifecycleResetForRestartFromError()
         }
 
         do {
@@ -455,6 +460,9 @@ final class CaptureExecutor {
             }
         } catch let failure as TransitionFailure {
             Logger.capture.error("[Executor] start(\(reason.trigger, privacy: .public)) failed: \(failure.message, privacy: .public)")
+            if restartingFromError {
+                delegate.lifecycleStartFromErrorFailed(failure)
+            }
             return .threw(failure)
         } catch {
             let failure = TransitionFailure(
@@ -462,6 +470,9 @@ final class CaptureExecutor {
                 isPermissionError: isPermissionError(error)
             )
             Logger.capture.error("[Executor] start(\(reason.trigger, privacy: .public)) failed: \(failure.message, privacy: .public)")
+            if restartingFromError {
+                delegate.lifecycleStartFromErrorFailed(failure)
+            }
             return .threw(failure)
         }
     }
@@ -511,10 +522,10 @@ final class CaptureExecutor {
             return .vetoed
         case .timedOut:
             Logger.capture.info("[Executor] rotate(\(reason.trigger, privacy: .public)) timed out")
-            return .committed
+            return .threw(TransitionFailure(message: "Segment rotation timed out", isPermissionError: false))
         case .failed(let failure):
             Logger.capture.info("[Executor] rotate(\(reason.trigger, privacy: .public)) failed: \(failure.message, privacy: .public)")
-            return .committed
+            return .threw(failure)
         }
     }
 

@@ -14,6 +14,8 @@ protocol CaptureLifecycleDelegate: AnyObject {
         enabledMicUIDs: Set<String>,
         shouldVetoCommit: @escaping @MainActor () -> Bool
     ) async throws -> StartResult
+    func lifecycleResetForRestartFromError() async
+    func lifecycleStartFromErrorFailed(_ failure: TransitionFailure)
     func lifecycleStopCapture(reason: StopReason) async
     func lifecycleRotateSegment(
         reason: RotateReason,
@@ -114,6 +116,10 @@ final class CaptureLifecycleManager {
 
     internal var retryCountForTesting: Int {
         retryCount
+    }
+
+    internal var isRecoveryScheduled: Bool {
+        recoveryTimer != nil
     }
 
     internal var suspendedForRecovery: Bool {
@@ -227,6 +233,21 @@ final class CaptureLifecycleManager {
         } else {
             startRecoveryTimer()
         }
+    }
+
+    func noteStartFromErrorFailed(isPermissionError: Bool) {
+        guard delegate?.lifecycleCurrentState.isError == true else { return }
+
+        recoveryTimer?.invalidate()
+        recoveryTimer = nil
+
+        if isPermissionError {
+            Logger.capture.info("[Recovery] Skipping restart recovery: permission error requires permission polling")
+            return
+        }
+
+        retryCount = 0
+        startRecoveryTimer()
     }
 
     internal func noteDisplayChange() async {

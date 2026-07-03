@@ -201,36 +201,55 @@ public final class CaptureCoordinator {
         permissionPollTimer = nil
     }
 
-    private func checkPermissionsAndAutoStart() async {
+    internal func checkPermissionsAndAutoStartForTesting(
+        screenRecordingGranted: Bool,
+        microphoneGranted: Bool
+    ) async {
+        await checkPermissionsAndAutoStart(
+            permissionOverride: (
+                screenRecordingGranted: screenRecordingGranted,
+                microphoneGranted: microphoneGranted
+            )
+        )
+    }
+
+    private func checkPermissionsAndAutoStart(
+        permissionOverride: (screenRecordingGranted: Bool, microphoneGranted: Bool)? = nil
+    ) async {
         guard !isCheckingPermissions else { return }
         isCheckingPermissions = true
         defer { isCheckingPermissions = false }
 
-        let checker = PermissionChecker()
+        if let permissionOverride {
+            screenRecordingGranted = permissionOverride.screenRecordingGranted
+            microphoneGranted = permissionOverride.microphoneGranted
+        } else {
+            let checker = PermissionChecker()
 
-        if checker.hasPromptedScreenRecording {
-            // Gate on CGPreflightScreenCaptureAccess before touching SCShareableContent.
-            // On macOS 26, SCShareableContent.current re-triggers the OS dialog when no TCC
-            // entry exists — i.e. while the user has been prompted but hasn't granted yet.
-            // CGPreflightScreenCaptureAccess returns true only when a valid TCC entry exists.
-            if CGPreflightScreenCaptureAccess() {
-                let granted = await PermissionChecker.checkScreenRecording()
-                if !granted {
-                    // Preflight passed but SCShareableContent failed — CDHash changed after
-                    // reinstall. Reset prompted flag so user re-grants via the button.
-                    PermissionChecker.resetPromptedFlag()
-                    Logger.setup.info("[Permissions] Screen recording access lost (CDHash changed?) — resetting prompt flag")
+            if checker.hasPromptedScreenRecording {
+                // Gate on CGPreflightScreenCaptureAccess before touching SCShareableContent.
+                // On macOS 26, SCShareableContent.current re-triggers the OS dialog when no TCC
+                // entry exists — i.e. while the user has been prompted but hasn't granted yet.
+                // CGPreflightScreenCaptureAccess returns true only when a valid TCC entry exists.
+                if CGPreflightScreenCaptureAccess() {
+                    let granted = await PermissionChecker.checkScreenRecording()
+                    if !granted {
+                        // Preflight passed but SCShareableContent failed — CDHash changed after
+                        // reinstall. Reset prompted flag so user re-grants via the button.
+                        PermissionChecker.resetPromptedFlag()
+                        Logger.setup.info("[Permissions] Screen recording access lost (CDHash changed?) — resetting prompt flag")
+                    }
+                    screenRecordingGranted = granted
                 }
-                screenRecordingGranted = granted
+                // else: no TCC entry yet — user hasn't granted in System Settings, wait silently
             }
-            // else: no TCC entry yet — user hasn't granted in System Settings, wait silently
+            microphoneGranted = checker.microphoneGranted
         }
-        microphoneGranted = checker.microphoneGranted
 
         let allGranted = screenRecordingGranted && microphoneGranted
 
-        // Auto-start if permissions are ready, not paused, and not already recording
-        if allGranted && !isRecording && !isUserPaused {
+        // Auto-start if permissions are ready, not paused, not already recording, and recovery is not scheduled
+        if allGranted && !isRecording && !isUserPaused && !captureManager.isRecoveryScheduled {
             if isTerminating() {
                 Logger.general.info("[Permissions] auto-start skipped because app is terminating")
             } else {

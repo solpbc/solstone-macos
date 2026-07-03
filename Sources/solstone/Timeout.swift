@@ -3,6 +3,7 @@
 
 import Foundation
 import os
+@preconcurrency import ScreenCaptureKit
 
 public struct TimeoutError: Error {
     public let seconds: Double
@@ -11,11 +12,8 @@ public struct TimeoutError: Error {
 /// Check if an error indicates a permission/TCC denial that will never self-heal
 func isPermissionError(_ error: Error) -> Bool {
     let nsError = error as NSError
-    if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && nsError.code == -3801 {
-        return true
-    }
-    let lower = nsError.localizedDescription.lowercased()
-    return lower.contains("declined") || lower.contains("not authorized")
+    return nsError.domain == SCStreamErrorDomain
+        && nsError.code == SCStreamError.Code.userDeclined.rawValue
 }
 
 func withTimeout<T: Sendable>(

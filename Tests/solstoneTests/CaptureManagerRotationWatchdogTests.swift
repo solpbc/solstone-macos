@@ -39,12 +39,21 @@ struct CaptureManagerRotationWatchdogTests {
         )
         manager.seedRecordingForTesting(currentSegment: current)
 
-        _ = await rotate(manager)
+        let timeoutOutcome = await rotate(manager)
+        guard case .threw(let timeoutFailure) = timeoutOutcome else {
+            Issue.record("expected timed-out rotate to throw")
+            return
+        }
+        #expect(timeoutFailure.message == "Segment rotation timed out")
         #expect(current.finishCaptureCount.count == 1)
         await recovery.waitForRecoverAll(1)
 
         now.set(fixedDate(second: 1))
-        _ = await rotate(manager)
+        let followupOutcome = await rotate(manager)
+        guard case .committed = followupOutcome else {
+            Issue.record("expected follow-up rotate to commit")
+            return
+        }
 
         #expect(current.finishCaptureCount.count == 2)
         #expect(newStartCount.count >= 1)
@@ -474,8 +483,13 @@ struct CaptureManagerRotationWatchdogTests {
         )
         manager.seedRecordingForTesting(currentSegment: current)
 
-        _ = await rotate(manager)
+        let outcome = await rotate(manager)
 
+        guard case .threw(let failure) = outcome else {
+            Issue.record("expected failed rotate to throw")
+            return
+        }
+        #expect(failure.message == FakeCaptureError.startFailed.localizedDescription)
         #expect(manager.currentSegmentForTesting == nil)
         #expect(nextStartCount.count == 1)
         let failedDirs = try findDirs(root: root, suffix: ".failed")
@@ -514,7 +528,11 @@ struct CaptureManagerRotationWatchdogTests {
         )
         manager.seedRecordingForTesting(currentSegment: first)
 
-        _ = await rotate(manager)
+        let firstOutcome = await rotate(manager)
+        guard case .committed = firstOutcome else {
+            Issue.record("expected first rotate to commit")
+            return
+        }
         await RemixQueue.shared.waitForCompletion()
         #expect(try findDirs(root: root, prefix: "333331_").count == 1)
         let cycle2 = try #require(cycle2Segment.current)
@@ -523,14 +541,23 @@ struct CaptureManagerRotationWatchdogTests {
         let cycle2TimePrefix = String(cycle2.outputDirectory.lastPathComponent.prefix(6))
 
         now.set(fixedDate(second: 1))
-        _ = await rotate(manager)
+        let timeoutOutcome = await rotate(manager)
+        guard case .threw(let timeoutFailure) = timeoutOutcome else {
+            Issue.record("expected middle rotate timeout to throw")
+            return
+        }
+        #expect(timeoutFailure.message == "Segment rotation timed out")
         let currentAfterCycle2 = try #require(manager.currentSegmentForTesting)
         #expect(ObjectIdentifier(currentAfterCycle2) == ObjectIdentifier(cycle2))
         #expect(cycle2.finishCaptureCount.count == 1)
         await recovery.waitForRecoverAll(1)
 
         now.set(fixedDate(second: 2))
-        _ = await rotate(manager)
+        let finalOutcome = await rotate(manager)
+        guard case .committed = finalOutcome else {
+            Issue.record("expected final rotate to commit")
+            return
+        }
         #expect(cycle2.finishCaptureCount.count == 2)
         await RemixQueue.shared.waitForCompletion()
         #expect(try findDirs(root: root, prefix: "\(cycle2TimePrefix)_").count == 1)

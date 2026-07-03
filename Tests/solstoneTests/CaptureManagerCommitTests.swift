@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+@preconcurrency import ScreenCaptureKit
 import Testing
 @testable import solstone
 
@@ -24,7 +25,7 @@ struct CaptureManagerCommitTests {
         #expect(manager.state.isIdle)
     }
 
-    @Test func stopRecordingWaitsForFinalizerCompletion() async throws {
+    @Test func stopRecordingDoesNotWaitForFinalizerCompletion() async throws {
         let finalizer = FakeFinalizer()
         let (manager, root) = try makeManager(finalizer: finalizer)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -34,7 +35,8 @@ struct CaptureManagerCommitTests {
 
         _ = await manager.enqueueTransition(.stop(reason: .user))
 
-        #expect(finalizer.events.all == ["enqueue", "wait"])
+        #expect(finalizer.events.all == ["enqueue"])
+        #expect(manager.state.isIdle)
     }
 
     @Test func pauseRecordingFinishesAndEnqueuesActiveSegment() async throws {
@@ -136,6 +138,48 @@ struct CaptureManagerCommitTests {
         #expect(manager.isSystemAudioRunningForTesting == false)
         #expect(finalizer.enqueuedDirectories.all.isEmpty)
         #expect(executor.lastVetoReasonForTesting == .screenLocked)
+    }
+
+    @Test func startFromErrorCommitsRecordingWithSingleStateChange() async throws {
+        let finalizer = FakeFinalizer()
+        let (manager, root) = try makeManager(finalizer: finalizer)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldSegment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111117.incomplete", isDirectory: true))
+        manager.seedRecordingForTesting(currentSegment: oldSegment)
+        manager.lifecycleTransitionToError(
+            message: "permission denied",
+            error: NSError(domain: SCStreamErrorDomain, code: SCStreamError.Code.userDeclined.rawValue),
+            trigger: "test"
+        )
+
+        var states: [String] = []
+        manager.onStateChanged = { states.append($0.label) }
+        let executor = CaptureExecutor(
+            delegate: manager,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+
+        let outcome = await executor.enqueue(.start(reason: .autoStart, disabledMicUIDs: [], enabledMicUIDs: []))
+
+        guard case .committed = outcome else {
+            switch outcome {
+            case .threw(let failure):
+                Issue.record("expected start from error to commit, got failure: \(failure.message)")
+            case .vetoed:
+                Issue.record("expected start from error to commit, got vetoed")
+            case .dropped:
+                Issue.record("expected start from error to commit, got dropped")
+            case .committed:
+                break
+            }
+            return
+        }
+        #expect(states == ["recording"])
+        #expect(oldSegment.finishCaptureCount.count == 1)
+        #expect(finalizer.events.all == ["enqueue"])
+        #expect(manager.state.isRecording)
     }
 
     private func makeManager(finalizer: FakeFinalizer) throws -> (CaptureManager, URL) {

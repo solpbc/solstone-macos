@@ -115,6 +115,24 @@ struct CaptureCoordinatorTests {
         #expect(bannerMessages.isEmpty)
     }
 
+    @Test func permissionReturnWhileInErrorStartsThroughInjectedOperation() async throws {
+        let harness = StartOperationHarness()
+        let (coordinator, root) = try makeCoordinator(startOperation: harness.operation)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        harness.lifecycleCurrentState = .error("permission denied")
+        coordinator.handleCaptureStateChange(.error("permission denied"))
+        coordinator.screenRecordingGranted = true
+        coordinator.microphoneGranted = true
+
+        await coordinator.startRecording(reason: .autoStart)
+
+        #expect(harness.startCount == 1)
+        #expect(harness.resetForRestartCount == 1)
+        #expect(harness.lifecycleCurrentState.isRecording)
+        #expect(coordinator.screenRecordingGranted)
+    }
+
     @Test func captureStateIngestionControlsPermissionPollingAndBanner() throws {
         var bannerMessages: [String?] = []
         let (coordinator, root) = try makeCoordinator(bannerSink: { bannerMessages.append($0) })
@@ -212,11 +230,49 @@ struct CaptureCoordinatorTests {
         #expect(!pauseManager.pauseState.isPaused)
     }
 
-    @Test func autoStartGuardUsesUserPauseState() throws {
-        let source = try readWireUpSource("Sources/solstone/CaptureCoordinator.swift")
+    @Test func autoStartPollDefersToScheduledRecoveryAndFiresWhenUnscheduled() async throws {
+        let deferredStartCount = LockedCounter()
+        let (deferredCoordinator, deferredRoot) = try makeCoordinator(
+            startOperation: { _, _ in
+                deferredStartCount.increment()
+                return .committed
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: deferredRoot) }
+        deferredCoordinator.captureManager.lifecycleTransitionToError(
+            message: "transient",
+            error: CaptureManager.CaptureError.noDisplaysAvailable,
+            trigger: "test"
+        )
 
-        #expect(source.contains("if allGranted && !isRecording && !isUserPaused"))
-        #expect(!source.contains("pauseManager" + ".isPaused"))
+        #expect(deferredCoordinator.captureManager.isRecoveryScheduled)
+
+        await deferredCoordinator.checkPermissionsAndAutoStartForTesting(
+            screenRecordingGranted: true,
+            microphoneGranted: true
+        )
+
+        #expect(deferredStartCount.count == 0)
+        #expect(deferredCoordinator.initialPermissionCheckComplete)
+
+        let firedStartCount = LockedCounter()
+        let (firedCoordinator, firedRoot) = try makeCoordinator(
+            startOperation: { _, _ in
+                firedStartCount.increment()
+                return .committed
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: firedRoot) }
+
+        #expect(!firedCoordinator.captureManager.isRecoveryScheduled)
+
+        await firedCoordinator.checkPermissionsAndAutoStartForTesting(
+            screenRecordingGranted: true,
+            microphoneGranted: true
+        )
+
+        #expect(firedStartCount.count == 1)
+        #expect(firedCoordinator.initialPermissionCheckComplete)
     }
 
     private func makeCoordinator(
@@ -250,6 +306,7 @@ private final class StartOperationHarness: CaptureLifecycleDelegate {
     private let executor: CaptureExecutor
     private let startGate: OneShotContinuationGate?
     private let startCounter = LockedCounter()
+    private let resetForRestartCounter = LockedCounter()
 
     init(gateStarts: Bool = false) {
         self.startGate = gateStarts ? OneShotContinuationGate() : nil
@@ -262,6 +319,10 @@ private final class StartOperationHarness: CaptureLifecycleDelegate {
 
     var startCount: Int {
         startCounter.count
+    }
+
+    var resetForRestartCount: Int {
+        resetForRestartCounter.count
     }
 
     var queuedIntentSnapshot: [IntentSnapshot] {
@@ -297,6 +358,12 @@ private final class StartOperationHarness: CaptureLifecycleDelegate {
         lifecycleCurrentState = .recording
         return .committed
     }
+
+    func lifecycleResetForRestartFromError() async {
+        resetForRestartCounter.increment()
+    }
+
+    func lifecycleStartFromErrorFailed(_ failure: TransitionFailure) {}
 
     func lifecycleStopCapture(reason: StopReason) async {
         lifecycleCurrentState = .idle
