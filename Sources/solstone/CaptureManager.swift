@@ -41,10 +41,10 @@ public final class CaptureManager {
     ) -> any CaptureSegmentWriting
 
     /// Current state of the capture manager
-    public enum State: Sendable {
+    enum State: Sendable {
         case idle
         case recording
-        case paused
+        case paused(reasons: Set<PauseReason>)
         case error(String)
 
         /// Check if state matches a case (ignoring associated values)
@@ -61,6 +61,11 @@ public final class CaptureManager {
         var isPaused: Bool {
             if case .paused = self { return true }
             return false
+        }
+
+        var pausedReasons: Set<PauseReason> {
+            if case .paused(let reasons) = self { return reasons }
+            return []
         }
 
         var isError: Bool {
@@ -121,10 +126,10 @@ public final class CaptureManager {
     private var disabledMicUIDs: Set<String> = []
     private var enabledMicUIDs: Set<String> = []
 
-    public private(set) var state: State = .idle
+    private(set) var state: State = .idle
 
     /// Called when state changes
-    public var onStateChanged: ((State) -> Void)?
+    var onStateChanged: ((State) -> Void)?
 
     /// Time remaining in current segment
     public var segmentTimeRemaining: TimeInterval {
@@ -868,15 +873,31 @@ extension CaptureManager: CaptureLifecycleDelegate {
         return .committed
     }
 
-    func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL? {
+    func lifecyclePauseCapture(reason: PauseReason, stopAudio: Bool) async -> URL? {
         let completedURL = await finalizeActiveSegmentForTransition(stopAudio: stopAudio)
 
         let oldState = state.label
-        state = .paused
-        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: \(trigger, privacy: .public))")
+        let newReasons = state.pausedReasons.union([reason])
+        state = .paused(reasons: newReasons)
+        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) reasons=[\(renderPauseReasons(newReasons), privacy: .public)] (trigger: \(reason.trigger, privacy: .public))")
         onStateChanged?(state)
 
         return completedURL
+    }
+
+    func lifecycleApplyResumeReason(_ reason: ResumeReason) -> ResumeResolution {
+        let currentReasons = state.pausedReasons
+        let remainingReasons = currentReasons.subtracting(reason.clearsPauseReasons)
+
+        if remainingReasons.isEmpty {
+            return .readyToResume(restore: currentReasons)
+        }
+
+        let oldState = state.label
+        state = .paused(reasons: remainingReasons)
+        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) reasons=[\(renderPauseReasons(remainingReasons), privacy: .public)] (trigger: \(reason.trigger, privacy: .public))")
+        onStateChanged?(state)
+        return .stayedPaused
     }
 
     func lifecyclePrepareResume(trigger: String) async throws {
@@ -901,7 +922,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         startHeartbeat()
     }
 
-    func lifecycleAbortPreparedResume(trigger: String) async {
+    func lifecycleAbortPreparedResume(restore: Set<PauseReason>?, trigger: String) async {
         let abortedDirectory = await discardCurrentSegmentWithoutEnqueue(matching: nil)
         await stopPersistentAudioForDiscard()
         if let abortedDirectory {
@@ -913,8 +934,9 @@ extension CaptureManager: CaptureLifecycleDelegate {
         }
 
         let oldState = state.label
-        state = .paused
-        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: \(trigger, privacy: .public)_aborted)")
+        let reasons = restore?.isEmpty == false ? restore! : Set<PauseReason>([.lock])
+        state = .paused(reasons: reasons)
+        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) reasons=[\(renderPauseReasons(reasons), privacy: .public)] (trigger: \(trigger, privacy: .public)_aborted)")
         onStateChanged?(state)
     }
 

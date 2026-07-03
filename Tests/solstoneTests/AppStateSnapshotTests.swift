@@ -28,7 +28,7 @@ struct AppStateSnapshotTests {
         state.audioReconciledCount = 3
 
         #expect(state.capture.isRecording)
-        #expect(state.capture.capturePaused)
+        #expect(state.capture.isPaused)
         #expect(state.capture.screenRecordingGranted)
         #expect(state.capture.microphoneGranted)
         #expect(state.capture.initialPermissionCheckComplete)
@@ -51,7 +51,7 @@ struct AppStateSnapshotTests {
 
         state.isPaused = false
         state.pauseManager.pause(for: .indefinite)
-        #expect(await state.heartbeatService.pausedForTesting() == true)
+        #expect(await state.heartbeatService.pausedForTesting() == false)
         state.pauseManager.resume()
     }
 

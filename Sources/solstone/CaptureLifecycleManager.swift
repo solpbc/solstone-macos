@@ -19,12 +19,18 @@ protocol CaptureLifecycleDelegate: AnyObject {
         reason: RotateReason,
         shouldVetoCommit: @escaping @MainActor () -> Bool
     ) async -> RotationResult
-    func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL?
+    func lifecyclePauseCapture(reason: PauseReason, stopAudio: Bool) async -> URL?
+    func lifecycleApplyResumeReason(_ reason: ResumeReason) -> ResumeResolution
     func lifecyclePrepareResume(trigger: String) async throws
     func lifecycleCommitResume(trigger: String)
-    func lifecycleAbortPreparedResume(trigger: String) async
+    func lifecycleAbortPreparedResume(restore: Set<PauseReason>?, trigger: String) async
     func lifecycleTransitionToError(message: String, error: Error, trigger: String)
     func lifecycleProcessSegment(_ url: URL, useSleepActivity: Bool)
+}
+
+enum ResumeResolution: Sendable {
+    case stayedPaused
+    case readyToResume(restore: Set<PauseReason>)
 }
 
 @MainActor

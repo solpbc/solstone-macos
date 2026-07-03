@@ -15,9 +15,20 @@ struct CaptureCoordinatorTests {
         coordinator.handleCaptureStateChange(.recording)
 
         #expect(coordinator.isRecording)
-        #expect(!coordinator.capturePaused)
+        #expect(!coordinator.isPaused)
+        #expect(!coordinator.isUserPaused)
         #expect(coordinator.captureError == nil)
         #expect(bannerMessages.isEmpty)
+
+        coordinator.handleCaptureStateChange(.paused(reasons: [.user]))
+        #expect(coordinator.isRecording)
+        #expect(coordinator.isPaused)
+        #expect(coordinator.isUserPaused)
+
+        coordinator.handleCaptureStateChange(.paused(reasons: [.lock]))
+        #expect(coordinator.isRecording)
+        #expect(coordinator.isPaused)
+        #expect(!coordinator.isUserPaused)
 
         let (sinkCoordinator, sinkRoot) = try makeCoordinator(bannerSink: { bannerMessages.append($0) })
         defer { try? FileManager.default.removeItem(at: sinkRoot) }
@@ -128,7 +139,88 @@ struct CaptureCoordinatorTests {
         #expect(!coordinator.isPermissionPollingActiveForTesting)
     }
 
+    @Test func startWhileUserPausedClearsPausePolicyWithoutResumeCallback() async throws {
+        let pauseManager = PauseManager()
+        pauseManager.pause(for: .minutes(15))
+        let (coordinator, root) = try makeCoordinator(
+            pauseManager: pauseManager,
+            startOperation: { _, _ in .committed }
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        var resumeCallbackCount = 0
+        pauseManager.onResume = {
+            resumeCallbackCount += 1
+        }
+        coordinator.handleCaptureStateChange(.paused(reasons: [.user]))
+
+        await coordinator.startRecording()
+
+        #expect(!pauseManager.pauseState.isPaused)
+        #expect(pauseManager.pauseState.expirationDate == nil)
+        #expect(resumeCallbackCount == 0)
+    }
+
+    @Test func stopWhileUserPausedClearsPausePolicyWithoutResumeCallback() async throws {
+        let pauseManager = PauseManager()
+        pauseManager.pause(for: .minutes(15))
+        let (coordinator, root) = try makeCoordinator(pauseManager: pauseManager)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let segment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111116.incomplete", isDirectory: true))
+        coordinator.captureManager.seedRecordingForTesting(currentSegment: segment)
+        _ = await coordinator.captureManager.enqueueTransition(.pause(reason: .user, stopAudio: true))
+        var resumeCallbackCount = 0
+        pauseManager.onResume = {
+            resumeCallbackCount += 1
+        }
+        coordinator.handleCaptureStateChange(.paused(reasons: [.user]))
+
+        let outcome = await coordinator.stopRecording(reason: .user)
+
+        guard case .committed = outcome else {
+            Issue.record("expected stop from user pause to commit")
+            return
+        }
+        #expect(!pauseManager.pauseState.isPaused)
+        #expect(pauseManager.pauseState.expirationDate == nil)
+        #expect(resumeCallbackCount == 0)
+    }
+
+    @Test func toggleRecordingWhileUserPausedResumesWithoutStarting() async throws {
+        let pauseManager = PauseManager()
+        pauseManager.pause(for: .indefinite)
+        let startCount = LockedCounter()
+        let (coordinator, root) = try makeCoordinator(
+            pauseManager: pauseManager,
+            startOperation: { _, _ in
+                startCount.increment()
+                return .committed
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let resumeCallbackCount = LockedCounter()
+        pauseManager.onResume = {
+            resumeCallbackCount.increment()
+        }
+        coordinator.handleCaptureStateChange(.paused(reasons: [.user]))
+
+        await coordinator.toggleRecording()
+
+        try await withTimeout(seconds: 2) {
+            await resumeCallbackCount.waitUntilCount(1)
+        }
+        #expect(startCount.count == 0)
+        #expect(!pauseManager.pauseState.isPaused)
+    }
+
+    @Test func autoStartGuardUsesUserPauseState() throws {
+        let source = try readWireUpSource("Sources/solstone/CaptureCoordinator.swift")
+
+        #expect(source.contains("if allGranted && !isRecording && !isUserPaused"))
+        #expect(!source.contains("pauseManager" + ".isPaused"))
+    }
+
     private func makeCoordinator(
+        pauseManager: PauseManager = PauseManager(),
         isTerminating: @escaping CaptureCoordinator.IsTerminatingProvider = { false },
         configProvider: @escaping CaptureCoordinator.MicUIDConfigProvider = {
             (disabled: Set<String>(), enabled: Set<String>())
@@ -140,7 +232,7 @@ struct CaptureCoordinatorTests {
         let captureManager = CaptureManager(storageManager: StorageManager(baseDirectory: root))
         let coordinator = CaptureCoordinator(
             captureManager: captureManager,
-            pauseManager: PauseManager(),
+            pauseManager: pauseManager,
             audioDeviceMonitor: AudioDeviceMonitor(startListening: false),
             isTerminating: isTerminating,
             configProvider: configProvider,
@@ -217,9 +309,19 @@ private final class StartOperationHarness: CaptureLifecycleDelegate {
         .committed
     }
 
-    func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL? {
-        lifecycleCurrentState = .paused
+    func lifecyclePauseCapture(reason: PauseReason, stopAudio: Bool) async -> URL? {
+        lifecycleCurrentState = .paused(reasons: lifecycleCurrentState.pausedReasons.union([reason]))
         return nil
+    }
+
+    func lifecycleApplyResumeReason(_ reason: ResumeReason) -> ResumeResolution {
+        let current = lifecycleCurrentState.pausedReasons
+        let remaining = current.subtracting(reason.clearsPauseReasons)
+        if remaining.isEmpty {
+            return .readyToResume(restore: current)
+        }
+        lifecycleCurrentState = .paused(reasons: remaining)
+        return .stayedPaused
     }
 
     func lifecyclePrepareResume(trigger: String) async throws {}
@@ -228,8 +330,9 @@ private final class StartOperationHarness: CaptureLifecycleDelegate {
         lifecycleCurrentState = .recording
     }
 
-    func lifecycleAbortPreparedResume(trigger: String) async {
-        lifecycleCurrentState = .paused
+    func lifecycleAbortPreparedResume(restore: Set<PauseReason>?, trigger: String) async {
+        let reasons = restore?.isEmpty == false ? restore! : Set<PauseReason>([.lock])
+        lifecycleCurrentState = .paused(reasons: reasons)
     }
 
     func lifecycleTransitionToError(message: String, error: Error, trigger: String) {

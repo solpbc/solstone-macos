@@ -41,6 +41,57 @@ struct PauseManagerTests {
         #expect(manager.pauseState.expirationDate == nil)
     }
 
+    @Test func silentClearDoesNotFireResumeCallback() {
+        let manager = PauseManager()
+        var resumeCallbackCount = 0
+        manager.onResume = {
+            resumeCallbackCount += 1
+        }
+        manager.pause(for: .minutes(30))
+        #expect(manager.isPaused)
+
+        manager.clearPolicyStateSilently()
+
+        #expect(!manager.isPaused)
+        #expect(manager.pauseState.expirationDate == nil)
+        #expect(manager.refreshTick == 0)
+        #expect(resumeCallbackCount == 0)
+    }
+
+    @Test func timedPauseAutoResumesAtExpiry() async throws {
+        let manager = PauseManager()
+        let pauseCallbackCount = LockedCounter()
+        let resumeCallbackCount = LockedCounter()
+        manager.onPause = {
+            pauseCallbackCount.increment()
+        }
+        manager.onResume = {
+            resumeCallbackCount.increment()
+        }
+
+        manager.pause(for: .seconds(1))
+
+        try await withTimeout(seconds: 3) {
+            await resumeCallbackCount.waitUntilCount(1)
+        }
+        #expect(!manager.isPaused)
+        #expect(pauseCallbackCount.count == 1)
+    }
+
+    @Test func indefinitePauseDoesNotAutoResume() async throws {
+        let manager = PauseManager()
+        let resumeCallbackCount = LockedCounter()
+        manager.onResume = {
+            resumeCallbackCount.increment()
+        }
+
+        manager.pause(for: .indefinite)
+        try await Task.sleep(for: .milliseconds(250))
+
+        #expect(manager.isPaused)
+        #expect(resumeCallbackCount.count == 0)
+    }
+
     @Test func formatTimeRemainingShowsMinutes() {
         let manager = PauseManager()
         manager.pause(for: .minutes(15))

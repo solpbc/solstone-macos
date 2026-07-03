@@ -7,7 +7,6 @@ internal func classifyObservationRowState(
     initialPermissionCheckComplete: Bool,
     isRecording: Bool,
     isPaused: Bool,
-    pauseManagerIsPaused: Bool,
     captureQueuedForJournalReadiness: Bool,
     bundledJournalStatusAvailable: Bool,
     journalRuntimeStatus: JournalRuntimeStatus,
@@ -24,10 +23,10 @@ internal func classifyObservationRowState(
     if !initialPermissionCheckComplete {
         return .starting
     }
-    if !isRecording && !isPaused && !pauseManagerIsPaused {
+    if !isRecording && !isPaused {
         return .error
     }
-    if isPaused || pauseManagerIsPaused {
+    if isPaused {
         return .paused
     }
     if captureQueuedForJournalReadiness {
@@ -73,7 +72,6 @@ extension AppState {
             initialPermissionCheckComplete: initialPermissionCheckComplete,
             isRecording: isRecording,
             isPaused: isPaused,
-            pauseManagerIsPaused: pauseManager.isPaused,
             captureQueuedForJournalReadiness: captureQueuedForJournalReadiness,
             bundledJournalStatusAvailable: bundledJournalStatusAvailable,
             journalRuntimeStatus: journalRuntimeStatus,

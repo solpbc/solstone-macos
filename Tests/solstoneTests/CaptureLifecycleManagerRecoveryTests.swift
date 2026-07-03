@@ -402,6 +402,113 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(delegate.lifecycleCurrentState.isPaused)
     }
 
+    @Test func unlockDuringUserPauseClearsEnvironmentalReasonOnly() async throws {
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        let manager = makeManager(delegate: delegate, unlockResumeDelay: {})
+        delegate.releasePause()
+
+        let userPause = await manager.enqueue(.pause(reason: .user, stopAudio: true))
+        guard case .committed = userPause else {
+            Issue.record("expected user pause to commit")
+            return
+        }
+
+        await manager.handleScreenLocked()
+        #expect(delegate.lifecycleCurrentState.pausedReasons == [.user, .lock])
+
+        await manager.handleScreenUnlocked()
+        try await waitUntilMain(timeout: .seconds(5)) {
+            delegate.lifecycleCurrentState.pausedReasons == [.user]
+        }
+
+        #expect(!delegate.events.contains(.resumeStarted("unlock")))
+        #expect(manager.suspendedForRecovery)
+
+        let userResume = await manager.enqueue(.resume(reason: .user))
+        guard case .committed = userResume else {
+            Issue.record("expected user resume to commit")
+            return
+        }
+
+        #expect(delegate.events.contains(.resumeCompleted("user")))
+        #expect(delegate.lifecycleCurrentState.isRecording)
+        #expect(!manager.suspendedForRecovery)
+    }
+
+    @Test func environmentalClearRoundTripsCompositeReasons() async throws {
+        let sleepThenLock = FakeLifecycleDelegate(state: .recording)
+        let sleepThenLockManager = makeManager(delegate: sleepThenLock, unlockResumeDelay: {})
+        sleepThenLock.releasePause()
+
+        await sleepThenLockManager.handleWillSleep()
+        await sleepThenLockManager.handleScreenLocked()
+        #expect(sleepThenLock.lifecycleCurrentState.pausedReasons == [.sleep, .lock])
+
+        await sleepThenLockManager.handleScreenUnlocked()
+        await sleepThenLock.waitForEvent(.resumeCompleted("unlock"))
+        #expect(sleepThenLock.lifecycleCurrentState.isRecording)
+        #expect(!sleepThenLockManager.suspendedForRecovery)
+
+        let userThenSleep = FakeLifecycleDelegate(state: .recording)
+        let userThenSleepManager = makeManager(delegate: userThenSleep)
+        userThenSleep.releasePause()
+
+        _ = await userThenSleepManager.enqueue(.pause(reason: .user, stopAudio: true))
+        await userThenSleepManager.handleWillSleep()
+        #expect(userThenSleep.lifecycleCurrentState.pausedReasons == [.user, .sleep])
+
+        await userThenSleepManager.handleDidWake()
+        try await waitUntilMain(timeout: .seconds(5)) {
+            userThenSleep.lifecycleCurrentState.pausedReasons == [.user]
+        }
+        #expect(!userThenSleep.events.contains(.resumeStarted("wake")))
+        #expect(userThenSleepManager.suspendedForRecovery)
+
+        let lockThenSleep = FakeLifecycleDelegate(state: .recording)
+        let lockThenSleepManager = makeManager(delegate: lockThenSleep, unlockResumeDelay: {})
+        lockThenSleep.releasePause()
+
+        await lockThenSleepManager.handleScreenLocked()
+        await lockThenSleepManager.handleWillSleep()
+        #expect(lockThenSleep.lifecycleCurrentState.pausedReasons == [.lock, .sleep])
+
+        await lockThenSleepManager.handleScreenUnlocked()
+        await lockThenSleep.waitForEvent(.resumeCompleted("unlock"))
+        #expect(lockThenSleep.lifecycleCurrentState.isRecording)
+        #expect(!lockThenSleepManager.suspendedForRecovery)
+    }
+
+    @Test func abortedResumeRestoresPreRemovalReasons() async {
+        let locked = LockedValue<Bool>()
+        locked.set(false)
+        let delegate = FakeLifecycleDelegate(state: .paused(reasons: [.lock]))
+        let executor = CaptureExecutor(
+            delegate: delegate,
+            isScreenLocked: { locked.current ?? false },
+            unlockResumeDelay: {}
+        )
+        executor.markSuspendedForRecovery()
+        delegate.armResumeGate()
+
+        let resumeTask = Task { @MainActor in
+            await executor.enqueue(.resume(reason: .unlock))
+        }
+        await delegate.waitForEvent(.resumeStarted("unlock"))
+
+        locked.set(true)
+        delegate.releaseResume()
+
+        let outcome = await resumeTask.value
+        guard case .vetoed = outcome else {
+            Issue.record("expected unlock resume to be vetoed")
+            return
+        }
+
+        #expect(delegate.events.contains(.resumeAborted("unlock")))
+        #expect(delegate.lifecycleCurrentState.pausedReasons == [.lock])
+        #expect(delegate.lifecycleCurrentState.pausedReasons.isEmpty == false)
+    }
+
     @Test func lockThenUnlockDuringResumeSettlesToRecording() async throws {
         let locked = LockedValue<Bool>()
         locked.set(false)
@@ -548,7 +655,7 @@ struct CaptureLifecycleManagerRecoveryTests {
     }
 
     @Test func startFromPausedClearsSuspendedSoLaterUnlockResumeDrops() async {
-        let delegate = FakeLifecycleDelegate(state: .paused)
+        let delegate = FakeLifecycleDelegate(state: .paused(reasons: [.lock]))
         var executor: CaptureExecutor!
         executor = CaptureExecutor(
             delegate: delegate,
@@ -781,13 +888,23 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
         return rotationResult
     }
 
-    func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL? {
-        pauseCalls.append(PauseCall(trigger: trigger, stopAudio: stopAudio, stateLabel: lifecycleCurrentState.label))
-        appendEvent(.pauseStarted(trigger))
+    func lifecyclePauseCapture(reason: PauseReason, stopAudio: Bool) async -> URL? {
+        pauseCalls.append(PauseCall(trigger: reason.trigger, stopAudio: stopAudio, stateLabel: lifecycleCurrentState.label))
+        appendEvent(.pauseStarted(reason.trigger))
         await waitForPauseRelease()
-        lifecycleCurrentState = .paused
-        appendEvent(.pauseCompleted(trigger))
+        lifecycleCurrentState = .paused(reasons: lifecycleCurrentState.pausedReasons.union([reason]))
+        appendEvent(.pauseCompleted(reason.trigger))
         return pauseResultURL
+    }
+
+    func lifecycleApplyResumeReason(_ reason: ResumeReason) -> ResumeResolution {
+        let current = lifecycleCurrentState.pausedReasons
+        let remaining = current.subtracting(reason.clearsPauseReasons)
+        if remaining.isEmpty {
+            return .readyToResume(restore: current)
+        }
+        lifecycleCurrentState = .paused(reasons: remaining)
+        return .stayedPaused
     }
 
     func lifecyclePrepareResume(trigger: String) async throws {
@@ -810,8 +927,9 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
         appendEvent(.resumeCompleted(trigger))
     }
 
-    func lifecycleAbortPreparedResume(trigger: String) async {
-        lifecycleCurrentState = .paused
+    func lifecycleAbortPreparedResume(restore: Set<PauseReason>?, trigger: String) async {
+        let reasons = restore?.isEmpty == false ? restore! : Set<PauseReason>([.lock])
+        lifecycleCurrentState = .paused(reasons: reasons)
         appendEvent(.resumeAborted(trigger))
     }
 

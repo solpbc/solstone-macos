@@ -85,8 +85,8 @@ public final class AppState {
     }
 
     public internal(set) var isPaused: Bool {
-        get { capture.capturePaused }
-        set { capture.capturePaused = newValue }
+        get { capture.isPaused }
+        set { capture.isPaused = newValue }
     }
 
     public internal(set) var errorMessage: String?

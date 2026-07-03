@@ -17,7 +17,8 @@ public final class CaptureCoordinator {
     public typealias StartOperation = @MainActor (StartReason, MicUIDConfig) async -> TransitionOutcome
 
     public internal(set) var isRecording = false
-    public internal(set) var capturePaused = false
+    public internal(set) var isPaused = false
+    public internal(set) var isUserPaused = false
     public internal(set) var captureError: String?
     public internal(set) var screenRecordingGranted = false
     public internal(set) var microphoneGranted = false
@@ -36,10 +37,6 @@ public final class CaptureCoordinator {
 
     private var permissionPollTimer: Timer?
     private var isCheckingPermissions = false
-
-    public var isPausedIncludingUserPause: Bool {
-        pauseManager.isPaused || capturePaused
-    }
 
     public init(
         captureManager: CaptureManager,
@@ -76,7 +73,7 @@ public final class CaptureCoordinator {
     public func heartbeatIsPausedProvider() -> HeartbeatService.IsPausedProvider {
         {
             // Strong self is safe: CaptureCoordinator never holds a reference to HeartbeatService, so no retain cycle. Keep it that way.
-            self.isPausedIncludingUserPause
+            self.isPaused
         }
     }
 
@@ -92,36 +89,40 @@ public final class CaptureCoordinator {
         }
 
         pauseManager.onPause = { [weak self] in
-            await self?.stopRecording(reason: .pauseManagerPause)
+            _ = await self?.captureManager.enqueueTransition(.pause(reason: .user, stopAudio: true))
         }
         pauseManager.onResume = { [weak self] in
-            await self?.startRecording(reason: .pauseManagerResume)
+            _ = await self?.captureManager.enqueueTransition(.resume(reason: .user))
         }
 
         pauseManager.restorePauseState()
         startPermissionPolling()
     }
 
-    public func handleCaptureStateChange(_ state: CaptureManager.State) {
+    func handleCaptureStateChange(_ state: CaptureManager.State) {
         switch state {
         case .idle:
             isRecording = false
-            capturePaused = false
+            isPaused = false
+            isUserPaused = false
             if permissionPollTimer == nil {
                 startPermissionPolling()
             }
         case .recording:
             isRecording = true
-            capturePaused = false
+            isPaused = false
+            isUserPaused = false
             captureError = nil
             bannerSink(nil)
             stopPermissionPolling()
-        case .paused:
+        case .paused(let reasons):
             isRecording = true
-            capturePaused = true
+            isPaused = true
+            isUserPaused = reasons.contains(.user)
         case .error(let message):
             isRecording = false
-            capturePaused = false
+            isPaused = false
+            isUserPaused = false
             captureError = message
             bannerSink(message)
             if permissionPollTimer == nil {
@@ -136,11 +137,15 @@ public final class CaptureCoordinator {
             return
         }
 
+        let wasUserPaused = isUserPaused
         let config = configProvider()
         let outcome = await startOperation(reason, config)
         switch outcome {
         case .committed:
             screenRecordingGranted = true
+            if wasUserPaused {
+                pauseManager.clearPolicyStateSilently()
+            }
         case .threw(let failure):
             if failure.isPermissionError {
                 Logger.general.info("[Permissions] Recording denied — screen recording permission not granted")
@@ -159,11 +164,18 @@ public final class CaptureCoordinator {
 
     @discardableResult
     public func stopRecording(reason: StopReason = .user) async -> TransitionOutcome {
-        await captureManager.enqueueTransition(.stop(reason: reason))
+        let wasUserPaused = isUserPaused
+        let outcome = await captureManager.enqueueTransition(.stop(reason: reason))
+        if wasUserPaused, case .committed = outcome {
+            pauseManager.clearPolicyStateSilently()
+        }
+        return outcome
     }
 
     public func toggleRecording() async {
-        if isRecording && !capturePaused {
+        if isUserPaused {
+            pauseManager.resume()
+        } else if isRecording && !isPaused {
             await stopRecording(reason: .user)
         } else {
             await startRecording(reason: .user)
@@ -218,7 +230,7 @@ public final class CaptureCoordinator {
         let allGranted = screenRecordingGranted && microphoneGranted
 
         // Auto-start if permissions are ready, not paused, and not already recording
-        if allGranted && !pauseManager.isPaused && !isRecording {
+        if allGranted && !isRecording && !isUserPaused {
             if isTerminating() {
                 Logger.general.info("[Permissions] auto-start skipped because app is terminating")
             } else {

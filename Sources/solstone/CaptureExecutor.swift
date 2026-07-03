@@ -4,14 +4,16 @@
 import Foundation
 import os
 
-enum PauseReason: Sendable, Equatable {
+enum PauseReason: Sendable, Hashable {
     case sleep
     case lock
+    case user
 
     var trigger: String {
         switch self {
         case .sleep: "sleep"
         case .lock: "lock"
+        case .user: "user"
         }
     }
 }
@@ -19,13 +21,26 @@ enum PauseReason: Sendable, Equatable {
 enum ResumeReason: Sendable, Equatable {
     case wake
     case unlock
+    case user
     case recovery
 
     var trigger: String {
         switch self {
         case .wake: "wake"
         case .unlock: "unlock"
+        case .user: "user"
         case .recovery: "recovery"
+        }
+    }
+
+    var clearsPauseReasons: Set<PauseReason> {
+        switch self {
+        case .wake, .unlock:
+            [.sleep, .lock]
+        case .user:
+            [.user]
+        case .recovery:
+            []
         }
     }
 }
@@ -33,13 +48,11 @@ enum ResumeReason: Sendable, Equatable {
 public enum StartReason: Sendable, Equatable {
     case user
     case autoStart
-    case pauseManagerResume
 
     var trigger: String {
         switch self {
         case .user: "user"
         case .autoStart: "autoStart"
-        case .pauseManagerResume: "pauseManagerResume"
         }
     }
 }
@@ -48,16 +61,18 @@ public enum StopReason: Sendable, Equatable {
     case user
     case quit
     case update
-    case pauseManagerPause
 
     var trigger: String {
         switch self {
         case .user: "user"
         case .quit: "quit"
         case .update: "update"
-        case .pauseManagerPause: "pauseManagerPause"
         }
     }
+}
+
+func renderPauseReasons(_ reasons: Set<PauseReason>) -> String {
+    reasons.map(\.trigger).sorted().joined(separator: ",")
 }
 
 enum RotateReason: Sendable, Equatable {
@@ -517,14 +532,9 @@ final class CaptureExecutor {
         }
 
         let createdPause = state.isRecording
-        if state.isPaused && !stopAudio {
-            Logger.capture.info("[Executor] drop pause(\(reason.trigger, privacy: .public)) upgrade without audio stop")
-            return .dropped
-        }
-
         // Pause runs unbounded; withTimeout cancels while leaving the operation running.
         // Resume prepare is the hang risk.
-        let completedURL = await delegate.lifecyclePauseCapture(trigger: reason.trigger, stopAudio: stopAudio)
+        let completedURL = await delegate.lifecyclePauseCapture(reason: reason, stopAudio: stopAudio)
 
         // Already-paused upgrades intentionally re-emit .paused through the delegate;
         // coordinator state ingestion is idempotent. Only a newly finalized segment is processed.
@@ -554,11 +564,30 @@ final class CaptureExecutor {
                 Logger.capture.info("[Executor] drop resume(\(reason.trigger, privacy: .public)) because not suspended")
                 return .dropped
             }
+        case .user:
+            guard state.isPaused else {
+                lastVetoReason = .stateChanged
+                Logger.capture.info("[Executor] drop resume(\(reason.trigger, privacy: .public)) on \(state.label, privacy: .public)")
+                return .dropped
+            }
         case .recovery:
             guard state.isError else {
                 lastVetoReason = .stateChanged
                 Logger.capture.info("[Executor] drop resume(recovery) on \(state.label, privacy: .public)")
                 return .dropped
+            }
+        }
+
+        let restoreReasons: Set<PauseReason>?
+        if reason == .recovery {
+            restoreReasons = nil
+        } else {
+            switch delegate.lifecycleApplyResumeReason(reason) {
+            case .stayedPaused:
+                Logger.capture.info("[Executor] resume(\(reason.trigger, privacy: .public)) shrank reasons, staying paused")
+                return .committed
+            case .readyToResume(let restore):
+                restoreReasons = restore
             }
         }
 
@@ -573,13 +602,13 @@ final class CaptureExecutor {
             }
         } catch let error as TimeoutError {
             lastVetoReason = .timedOut
-            await shieldedAbort(reason.trigger)
+            await shieldedAbort(reason.trigger, restore: restoreReasons)
             Logger.capture.warning("[Executor] resume(\(reason.trigger, privacy: .public)) timed out")
             _ = error
             return .vetoed
         } catch is CancellationError {
             lastVetoReason = .reset
-            await shieldedAbort(reason.trigger)
+            await shieldedAbort(reason.trigger, restore: restoreReasons)
             Logger.capture.info("[Executor] resume(\(reason.trigger, privacy: .public)) cancelled")
             return .vetoed
         } catch {
@@ -598,20 +627,20 @@ final class CaptureExecutor {
 
         if Task.isCancelled {
             lastVetoReason = .reset
-            await shieldedAbort(reason.trigger)
+            await shieldedAbort(reason.trigger, restore: restoreReasons)
             return .vetoed
         }
 
         if queue.contains(where: { $0.intent.isPause }) {
             lastVetoReason = .queuedPause
-            await shieldedAbort(reason.trigger)
+            await shieldedAbort(reason.trigger, restore: restoreReasons)
             suspendedForRecovery = true
             return .vetoed
         }
 
         if isScreenLocked() {
             lastVetoReason = .screenLocked
-            await shieldedAbort(reason.trigger)
+            await shieldedAbort(reason.trigger, restore: restoreReasons)
             suspendedForRecovery = true
             return .vetoed
         }
@@ -620,12 +649,18 @@ final class CaptureExecutor {
         case .wake, .unlock:
             guard delegate.lifecycleCurrentState.isPaused else {
                 lastVetoReason = .stateChanged
-                await shieldedAbort(reason.trigger)
+                await shieldedAbort(reason.trigger, restore: restoreReasons)
                 return .vetoed
             }
             guard suspendedForRecovery else {
                 lastVetoReason = .notSuspended
-                await shieldedAbort(reason.trigger)
+                await shieldedAbort(reason.trigger, restore: restoreReasons)
+                return .vetoed
+            }
+        case .user:
+            guard delegate.lifecycleCurrentState.isPaused else {
+                lastVetoReason = .stateChanged
+                await shieldedAbort(reason.trigger, restore: restoreReasons)
                 return .vetoed
             }
         case .recovery:
@@ -638,9 +673,9 @@ final class CaptureExecutor {
         return .committed
     }
 
-    private func shieldedAbort(_ trigger: String) async {
+    private func shieldedAbort(_ trigger: String, restore: Set<PauseReason>?) async {
         await Task { @MainActor [weak self] in
-            await self?.delegate?.lifecycleAbortPreparedResume(trigger: trigger)
+            await self?.delegate?.lifecycleAbortPreparedResume(restore: restore, trigger: trigger)
         }.value
     }
 

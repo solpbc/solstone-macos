@@ -17,7 +17,7 @@ struct CaptureManagerStateTests {
     }
 
     @Test func pausedStateIsNotIdle() {
-        #expect(CaptureManager.State.paused.isIdle == false)
+        #expect(CaptureManager.State.paused(reasons: [.user]).isIdle == false)
     }
 
     @Test func errorStateIsNotIdle() {
@@ -37,7 +37,7 @@ struct CaptureManagerStateTests {
     // MARK: - isPaused
 
     @Test func pausedStateIsPaused() {
-        #expect(CaptureManager.State.paused.isPaused == true)
+        #expect(CaptureManager.State.paused(reasons: [.user]).isPaused == true)
     }
 
     @Test func idleStateIsNotPaused() {
@@ -65,7 +65,12 @@ struct CaptureManagerStateTests {
     }
 
     @Test func pausedLabel() {
-        #expect(CaptureManager.State.paused.label == "paused")
+        #expect(CaptureManager.State.paused(reasons: [.user]).label == "paused")
+    }
+
+    @Test func pausedReasonsExposeReasonSet() {
+        #expect(CaptureManager.State.paused(reasons: [.sleep, .lock]).pausedReasons == [.sleep, .lock])
+        #expect(CaptureManager.State.recording.pausedReasons.isEmpty)
     }
 
     @Test func errorLabel() {

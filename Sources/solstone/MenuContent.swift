@@ -217,11 +217,11 @@ struct MenuContent: View {
     // MARK: - Pause Controls
 
     private var hasPauseControl: Bool {
-        appState.isRecording && !appState.isPaused && !appState.pauseManager.isPaused
+        appState.isRecording && !appState.isPaused
     }
 
     private var hasResumeControl: Bool {
-        appState.pauseManager.isPaused
+        appState.capture.isUserPaused
     }
 
     var hasPauseResumeControl: Bool {

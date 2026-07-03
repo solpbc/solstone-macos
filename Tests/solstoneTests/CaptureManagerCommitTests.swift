@@ -64,7 +64,7 @@ struct CaptureManagerCommitTests {
         let segment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111114.incomplete", isDirectory: true))
         manager.seedRecordingForTesting(currentSegment: segment)
 
-        _ = await manager.lifecyclePauseCapture(trigger: "test", stopAudio: true)
+        _ = await manager.lifecyclePauseCapture(reason: .lock, stopAudio: true)
 
         #expect(finalizer.enqueuedDirectories.all.count == 1)
         #expect(finalizer.events.all == ["enqueue"])
@@ -79,7 +79,7 @@ struct CaptureManagerCommitTests {
         let segment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111115.incomplete", isDirectory: true))
         manager.seedRecordingForTesting(currentSegment: segment)
 
-        let dir = await manager.lifecyclePauseCapture(trigger: "sleep", stopAudio: true)
+        let dir = await manager.lifecyclePauseCapture(reason: .sleep, stopAudio: true)
         #expect(finalizer.events.all == ["enqueue"])
 
         manager.lifecycleProcessSegment(dir ?? root, useSleepActivity: true)

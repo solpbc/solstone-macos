@@ -16,9 +16,12 @@ struct MenuContentTests {
         #expect(MenuContent(appState: observing, updateController: updateController).hasPauseResumeControl)
 
         let paused = AppState.forSnapshot()
-        paused.isRecording = true
-        paused.pauseManager.pause(for: .indefinite)
+        paused.capture.handleCaptureStateChange(.paused(reasons: [.user]))
         #expect(MenuContent(appState: paused, updateController: updateController).hasPauseResumeControl)
+
+        let environmentPaused = AppState.forSnapshot()
+        environmentPaused.capture.handleCaptureStateChange(.paused(reasons: [.lock]))
+        #expect(!MenuContent(appState: environmentPaused, updateController: updateController).hasPauseResumeControl)
 
         let starting = AppState.forSnapshot()
         #expect(!MenuContent(appState: starting, updateController: updateController).hasPauseResumeControl)
@@ -92,7 +95,7 @@ struct MenuContentTests {
             ("error", classified(errorMessage: "boom")),
             ("starting", classified(initialPermissionCheckComplete: false)),
             ("wedge", classified(isRecording: false)),
-            ("paused", classified(pauseManagerIsPaused: true)),
+            ("paused", classified(isPaused: true)),
             ("journalWaiting", classified(captureQueuedForJournalReadiness: true)),
             ("journalSetupNeeded", classified(bundledJournalStatusAvailable: true, journalRuntimeStatus: .setupNeeded)),
             ("journalRestarting", classified(bundledJournalStatusAvailable: true, journalRuntimeStatus: .restarting)),
@@ -348,7 +351,6 @@ private func classified(
     initialPermissionCheckComplete: Bool = true,
     isRecording: Bool = true,
     isPaused: Bool = false,
-    pauseManagerIsPaused: Bool = false,
     captureQueuedForJournalReadiness: Bool = false,
     bundledJournalStatusAvailable: Bool = false,
     journalRuntimeStatus: JournalRuntimeStatus = .running,
@@ -362,7 +364,6 @@ private func classified(
         initialPermissionCheckComplete: initialPermissionCheckComplete,
         isRecording: isRecording,
         isPaused: isPaused,
-        pauseManagerIsPaused: pauseManagerIsPaused,
         captureQueuedForJournalReadiness: captureQueuedForJournalReadiness,
         bundledJournalStatusAvailable: bundledJournalStatusAvailable,
         journalRuntimeStatus: journalRuntimeStatus,

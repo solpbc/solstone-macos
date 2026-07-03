@@ -93,6 +93,15 @@ public final class PauseManager {
         }
     }
 
+    public func clearPolicyStateSilently() {
+        pauseTimer?.invalidate()
+        pauseTimer = nil
+        pauseState = PauseState()
+        refreshTick = 0
+
+        updateUIRefreshTimer()
+    }
+
     /// Clear any persisted pause state from previous sessions.
     /// Pause only applies to the running instance — on restart we always start fresh.
     public func restorePauseState() {
