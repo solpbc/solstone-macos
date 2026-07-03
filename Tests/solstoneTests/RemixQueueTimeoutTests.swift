@@ -56,10 +56,12 @@ struct RemixQueueTimeoutTests {
 
         let behaviors = LockedArray<FakeRemixer.Behavior>([.hang, .success])
         let completionCount = LockedCounter()
+        let outcomes = LockedArray<SegmentReconciliation>([])
         let queue = RemixQueue(remixTimeoutSeconds: 0.25) { _, _ in
             FakeRemixer(behaviors.removeFirst(default: .success))
         }
-        await queue.setOnSegmentComplete { _, _ in
+        await queue.setOnSegmentComplete { _, reconciliation in
+            outcomes.append(reconciliation)
             completionCount.increment()
         }
 
@@ -70,11 +72,15 @@ struct RemixQueueTimeoutTests {
 
         #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed").path))
         #expect(await queue.isProcessingForTesting == false)
-        #expect(completionCount.count == 1)
+        #expect(completionCount.count == 2)
+        #expect(outcomes.all.contains { reconciliation in
+            if case .failed = reconciliation { return true }
+            return false
+        })
         #expect(await queue.inFlightPaths().isEmpty)
     }
 
-    @Test func genericRemixFailureIsFailedAndQueueStopsWithoutUpload() async throws {
+    @Test func genericRemixFailureIsFailedAndReportsFailedOutcome() async throws {
         let root = try makeTempDirectory("remix-queue-generic-failure")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -84,10 +90,12 @@ struct RemixQueueTimeoutTests {
         try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
 
         let completionCount = LockedCounter()
+        let completedOutcome = LockedValue<SegmentReconciliation>()
         let queue = RemixQueue { _, _ in
             FakeRemixer(.throwing(SyntheticRemixError()))
         }
-        await queue.setOnSegmentComplete { _, _ in
+        await queue.setOnSegmentComplete { _, reconciliation in
+            completedOutcome.set(reconciliation)
             completionCount.increment()
         }
 
@@ -97,7 +105,12 @@ struct RemixQueueTimeoutTests {
 
         let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
         #expect(await queue.isProcessingForTesting == false)
-        #expect(completionCount.count == 0)
+        #expect(completionCount.count == 1)
+        let outcome = try #require(completedOutcome.current)
+        guard case .failed = outcome else {
+            Issue.record("Expected failed reconciliation outcome")
+            return
+        }
         #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("120000_audio_system.m4a").path))
         #expect(!FileManager.default.fileExists(atPath: dir.path))
         #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)

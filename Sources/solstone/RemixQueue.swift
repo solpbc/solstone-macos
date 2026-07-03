@@ -217,10 +217,12 @@ public actor RemixQueue {
             } catch is TimeoutError {
                 Logger.storage.error("Background remix timed out for \(job.segmentDirectory.lastPathComponent, privacy: .public); marking segment failed")
                 await markIncompleteSegmentAsFailed(job.segmentDirectory)
+                await onSegmentComplete?(job.segmentDirectory, .failed("audio remix timed out; segment preserved for recovery"))
                 return
             } catch {
                 Logger.storage.error("Background remix failed for \(job.segmentDirectory.lastPathComponent, privacy: .public): \(error, privacy: .public)")
                 await markIncompleteSegmentAsFailed(job.segmentDirectory)
+                await onSegmentComplete?(job.segmentDirectory, .failed("audio remix failed; segment preserved for recovery"))
                 return
             }
         } else {

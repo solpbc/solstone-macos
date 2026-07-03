@@ -60,8 +60,8 @@ func buildAudioInputs(from audioFiles: [URL], timePrefix: String, verbose: Bool)
 
     // Sort: system audio first, then mics by source ID
     inputs.sort { a, b in
-        let aIsSystem = a.timingInfo.trackType.sourceID == "system"
-        let bIsSystem = b.timingInfo.trackType.sourceID == "system"
+        let aIsSystem = a.timingInfo.trackType.sourceID == AudioTrackType.systemSourceID
+        let bIsSystem = b.timingInfo.trackType.sourceID == AudioTrackType.systemSourceID
 
         if aIsSystem && !bIsSystem { return true }
         if !aIsSystem && bIsSystem { return false }
@@ -118,7 +118,7 @@ func parseTrackType(from filename: String, timePrefix: String) -> AudioTrackType
 
     let deviceID = String(filename.dropFirst(prefix.count).dropLast(suffix.count))
 
-    if deviceID == "system" {
+    if deviceID == AudioTrackType.systemSourceID {
         return .systemAudio
     } else {
         // Use device ID as both name and UID (we don't have the original name)

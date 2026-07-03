@@ -33,6 +33,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// Completed track inputs for remix (populated during finishAll)
     private var completedInputs: [AudioRemixerInput] = []
 
+    /// In-flight mid-segment mic-removal finish tasks, awaited by finishAll before snapshot
+    private var pendingRemovalTasks: [Task<Void, Never>] = []
+
     /// Initialize with shared capture manager (preferred - keeps mics running across segments)
     public init(
         outputDirectory: URL,
@@ -74,7 +77,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        let sourceID = "system"
+        let sourceID = AudioTrackType.systemSourceID
 
         guard sourceWriters[sourceID] == nil else {
             return sourceID
@@ -99,7 +102,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// Append system audio sample buffer
     public func appendSystemAudio(_ sampleBuffer: CMSampleBuffer) {
         lock.lock()
-        guard let source = sourceWriters["system"], !source.finished else {
+        guard let source = sourceWriters[AudioTrackType.systemSourceID], !source.finished else {
             lock.unlock()
             return
         }
@@ -175,22 +178,24 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         sourceWriters[deviceUID] = source
 
         let writer = source.writer
-        lock.unlock()
 
-        // Clear callback and stop capture (device is disconnected)
-        if let captureManager = captureManager {
-            captureManager.setCallback(for: deviceUID, callback: nil)
-            captureManager.stopCapture(deviceUID: deviceUID)
-        }
-
-        // Finish writer asynchronously and store result
-        Task {
+        // Register the removal task before releasing the lock so finishAll()
+        // cannot observe a finished source without a task to await.
+        let task = Task {
             let timingInfo = await writer.finish()
             let input = AudioRemixerInput(url: writer.url, timingInfo: timingInfo)
 
             self.storeCompletedInput(input, deviceUID: deviceUID)
 
             Logger.audio.info("Removed mic mid-segment: \(timingInfo.trackType.displayName, privacy: .public)")
+        }
+        pendingRemovalTasks.append(task)
+        lock.unlock()
+
+        // Clear callback and stop capture (device is disconnected)
+        if let captureManager = captureManager {
+            captureManager.setCallback(for: deviceUID, callback: nil)
+            captureManager.stopCapture(deviceUID: deviceUID)
         }
     }
 
@@ -213,13 +218,18 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     public func activeMicrophoneUIDs() -> [String] {
         lock.lock()
         defer { lock.unlock() }
-        return sourceWriters.keys.filter { $0 != "system" }
+        return sourceWriters.keys.filter { $0 != AudioTrackType.systemSourceID }
     }
 
     /// Finish all writers and return their inputs for remix
     /// Note: Mic captures are NOT stopped here - they persist across segments
     /// - Returns: Array of remix inputs with timing info
     public func finishAll() async -> [AudioRemixerInput] {
+        // Await any in-flight mid-segment mic removals so their finished tracks are
+        // in completedInputs before we snapshot, and none can append after clearState().
+        let removals = takePendingRemovalTasks()
+        for task in removals { await task.value }
+
         let (writers, previousInputs) = extractWritersAndInputs()
 
         // Clear all mic callbacks (engines keep running, just no destination)
@@ -240,8 +250,8 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         // Sort by source ID to ensure consistent track order
         // System audio first, then mics alphabetically by UID
         inputs.sort { a, b in
-            let aIsSystem = a.timingInfo.trackType.sourceID == "system"
-            let bIsSystem = b.timingInfo.trackType.sourceID == "system"
+            let aIsSystem = a.timingInfo.trackType.sourceID == AudioTrackType.systemSourceID
+            let bIsSystem = b.timingInfo.trackType.sourceID == AudioTrackType.systemSourceID
 
             if aIsSystem && !bIsSystem { return true }
             if !aIsSystem && bIsSystem { return false }
@@ -251,6 +261,14 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         clearState()
 
         return inputs
+    }
+
+    private func takePendingRemovalTasks() -> [Task<Void, Never>] {
+        lock.lock()
+        let tasks = pendingRemovalTasks
+        pendingRemovalTasks.removeAll()
+        lock.unlock()
+        return tasks
     }
 
     /// Extract writers and completed inputs (thread-safe helper for async context)
@@ -267,6 +285,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         lock.lock()
         sourceWriters.removeAll()
         completedInputs.removeAll()
+        pendingRemovalTasks.removeAll()
         micMetadata.removeAll()
         lock.unlock()
     }
@@ -289,4 +308,15 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         let filename = "\(timePrefix)_audio_\(safeID).m4a"
         return outputDirectory.appendingPathComponent(filename)
     }
+
+#if DEBUG
+    /// Test-only: inject a pre-built source writer + device metadata directly into
+    /// segment state, bypassing addMicrophone's hardware capture. Not in release builds.
+    internal func _addSourceWriterForTesting(_ writer: SingleTrackAudioWriter, device: AudioInputDevice) {
+        lock.lock()
+        sourceWriters[device.uid] = SourceWriter(writer: writer)
+        micMetadata[device.uid] = device
+        lock.unlock()
+    }
+#endif
 }

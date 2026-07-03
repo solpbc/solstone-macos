@@ -12,6 +12,8 @@ public enum AudioTrackType: Sendable, Equatable {
     case systemAudio
     case microphone(name: String, deviceUID: String)
 
+    public static let systemSourceID = "system"
+
     public var displayName: String {
         switch self {
         case .systemAudio:
@@ -25,7 +27,7 @@ public enum AudioTrackType: Sendable, Equatable {
     public var sourceID: String {
         switch self {
         case .systemAudio:
-            return "system"
+            return Self.systemSourceID
         case let .microphone(_, deviceUID):
             return deviceUID
         }
@@ -282,7 +284,14 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             sampleRate: lastSilentBufferSampleRate
         ) {
             if input.isReadyForMoreMediaData {
-                input.append(silentBuffer)
+                // Same defense-in-depth ObjC barrier as the non-silent append path.
+                do {
+                    try ObjCExceptionCatcher.`try` {
+                        input.append(silentBuffer)
+                    }
+                } catch {
+                    Logger.audio.error("Silent-buffer append threw for \(self.trackType.displayName, privacy: .public), dropping silence: \(error.localizedDescription, privacy: .public)")
+                }
             }
         }
 
