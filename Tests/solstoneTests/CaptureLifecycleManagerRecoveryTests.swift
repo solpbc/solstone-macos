@@ -107,14 +107,16 @@ struct CaptureLifecycleManagerRecoveryTests {
         }
         await delegate.waitForEvent(.pauseStarted("lock"))
         #expect(delegate.lifecycleCurrentState.isRecording)
+        #expect(manager.inFlightIntentForTesting == IntentSnapshot(kind: .pause(.lock), stopAudio: true))
 
         await manager.handleScreenUnlocked()
         await delay.waitUntilCallCount(1)
         delay.releaseNext()
-        await Task.yield()
+        try await waitUntilMain(timeout: .seconds(5)) {
+            manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .resume(.unlock), stopAudio: false))
+        }
 
         #expect(!delegate.events.contains(.resumeStarted("unlock")))
-        #expect(manager.hasPendingResumeTaskForTesting)
 
         delegate.releasePause()
         await delegate.waitForEvent(.resumeCompleted("unlock"))
@@ -139,11 +141,14 @@ struct CaptureLifecycleManagerRecoveryTests {
         }
         await delegate.waitForEvent(.pauseStarted("sleep"))
         #expect(delegate.lifecycleCurrentState.isRecording)
+        #expect(manager.inFlightIntentForTesting == IntentSnapshot(kind: .pause(.sleep), stopAudio: false))
 
         let wakeTask = Task { @MainActor in
             await manager.handleDidWake()
         }
-        await Task.yield()
+        try await waitUntilMain(timeout: .seconds(5)) {
+            manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .resume(.wake), stopAudio: false))
+        }
 
         #expect(!delegate.events.contains(.resumeStarted("wake")))
 
@@ -178,10 +183,10 @@ struct CaptureLifecycleManagerRecoveryTests {
         let secondLockTask = Task { @MainActor in
             await manager.handleScreenLocked()
         }
-        await Task.yield()
-
-        #expect(delegate.count(.pauseStarted("lock")) == 1)
-        #expect(!manager.hasPendingResumeTaskForTesting)
+        try await waitUntilMain(timeout: .seconds(5)) {
+            manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .pause(.lock), stopAudio: true))
+        }
+        #expect(!manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .resume(.unlock), stopAudio: false)))
 
         delay.releaseNext()
         await Task.yield()
@@ -190,7 +195,9 @@ struct CaptureLifecycleManagerRecoveryTests {
         await manager.handleScreenUnlocked()
         await delay.waitUntilCallCount(2)
         delay.releaseNext()
-        await Task.yield()
+        try await waitUntilMain(timeout: .seconds(5)) {
+            manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .resume(.unlock), stopAudio: false))
+        }
         #expect(!delegate.events.contains(.resumeStarted("unlock")))
 
         delegate.releasePause()
@@ -201,7 +208,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         await firstLockTask.value
         await secondLockTask.value
 
-        #expect(delegate.count(.pauseStarted("lock")) == 1)
+        #expect(delegate.pauseCalls.contains { $0.trigger == "lock" && $0.stopAudio && $0.stateLabel == "paused" })
         #expect(delegate.count(.resumeStarted("unlock")) == 1)
         let pauseCompleted = try #require(delegate.index(of: .pauseCompleted("lock")))
         let resumeStarted = try #require(delegate.index(of: .resumeStarted("unlock")))
@@ -209,34 +216,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(!manager.suspendedForRecovery)
     }
 
-    @Test func pauseSettleTimeoutSkipsResumeAndReturns() async throws {
-        let delegate = FakeLifecycleDelegate(state: .recording)
-        let manager = makeManager(
-            delegate: delegate,
-            unlockResumeDelay: {},
-            pauseSettleTimeoutSeconds: 0.01
-        )
-
-        let lockTask = Task { @MainActor in
-            await manager.handleScreenLocked()
-        }
-        await delegate.waitForEvent(.pauseStarted("lock"))
-
-        await manager.handleScreenUnlocked()
-        try await waitUntilMain(timeout: .seconds(5)) {
-            !manager.hasPendingResumeTaskForTesting
-        }
-
-        #expect(!delegate.events.contains(.resumeStarted("unlock")))
-        #expect(manager.suspendedForRecovery)
-        #expect(delegate.lifecycleCurrentState.isRecording)
-        #expect(manager.hasInFlightPauseForTesting)
-
-        delegate.releasePause()
-        await lockTask.value
-    }
-
-    @Test func resetCancelsInFlightPauseAndPendingResume() async throws {
+    @Test func resetClearsQueuedAndInFlightTransitions() async throws {
         let delay = GatedUnlockResumeDelay()
         let delegate = FakeLifecycleDelegate(state: .recording)
         let manager = makeManager(
@@ -251,17 +231,16 @@ struct CaptureLifecycleManagerRecoveryTests {
 
         await manager.handleScreenUnlocked()
         await delay.waitUntilCallCount(1)
-
-        #expect(manager.hasPendingResumeTaskForTesting)
-        #expect(manager.hasInFlightPauseForTesting)
+        delay.releaseNext()
+        try await waitUntilMain(timeout: .seconds(5)) {
+            manager.queuedIntentCountForTesting == 1
+        }
 
         manager.reset(stopRecovery: true)
 
         #expect(!manager.suspendedForRecovery)
-        #expect(!manager.hasPendingResumeTaskForTesting)
-        #expect(!manager.hasInFlightPauseForTesting)
+        #expect(manager.queuedIntentCountForTesting == 0)
 
-        delay.releaseNext()
         delegate.releasePause()
         await lockTask.value
         await Task.yield()
@@ -277,12 +256,14 @@ struct CaptureLifecycleManagerRecoveryTests {
         delegate.armResumeGate()
         await manager.handleScreenUnlocked()
         await delegate.waitForEvent(.resumeStarted("unlock"))
-        #expect(manager.hasInFlightResumeForTesting)
+        #expect(manager.inFlightIntentForTesting == IntentSnapshot(kind: .resume(.unlock), stopAudio: false))
 
         let relockTask = Task { @MainActor in
             await manager.handleScreenLocked()
         }
-        await Task.yield()
+        try await waitUntilMain(timeout: .seconds(5)) {
+            manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .pause(.lock), stopAudio: true))
+        }
         delegate.releaseResume()
         await delegate.waitForEvent(.resumeAborted("unlock"))
         await relockTask.value
@@ -290,36 +271,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(!delegate.events.contains(.resumeCompleted("unlock")))
         #expect(delegate.lifecycleCurrentState.isPaused)
         #expect(manager.suspendedForRecovery)
-    }
-
-    @Test func screenLockDuringInFlightResumeTimeoutStillVetoesLateCommit() async throws {
-        let delegate = FakeLifecycleDelegate(state: .recording)
-        let manager = makeManager(
-            delegate: delegate,
-            unlockResumeDelay: {},
-            resumeSettleTimeoutSeconds: 0.05
-        )
-        await pauseForLock(manager: manager, delegate: delegate)
-
-        delegate.armResumeGate()
-        await manager.handleScreenUnlocked()
-        await delegate.waitForEvent(.resumeStarted("unlock"))
-        #expect(manager.hasInFlightResumeForTesting)
-
-        let relockTask = Task { @MainActor in
-            await manager.handleScreenLocked()
-        }
-        await relockTask.value
-
-        #expect(delegate.lifecycleCurrentState.isPaused)
-        #expect(manager.suspendedForRecovery)
-        #expect(!delegate.events.contains(.resumeCompleted("unlock")))
-
-        delegate.releaseResume()
-        await delegate.waitForEvent(.resumeAborted("unlock"))
-
-        #expect(delegate.lifecycleCurrentState.isPaused)
-        #expect(!delegate.events.contains(.resumeCompleted("unlock")))
+        #expect(manager.lastVetoReasonForTesting == .queuedPause)
     }
 
     @Test func willSleepDuringInFlightResumeVetoesCommit() async throws {
@@ -330,12 +282,14 @@ struct CaptureLifecycleManagerRecoveryTests {
         delegate.armResumeGate()
         await manager.handleScreenUnlocked()
         await delegate.waitForEvent(.resumeStarted("unlock"))
-        #expect(manager.hasInFlightResumeForTesting)
+        #expect(manager.inFlightIntentForTesting == IntentSnapshot(kind: .resume(.unlock), stopAudio: false))
 
         let sleepTask = Task { @MainActor in
             await manager.handleWillSleep()
         }
-        await Task.yield()
+        try await waitUntilMain(timeout: .seconds(5)) {
+            manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .pause(.sleep), stopAudio: false))
+        }
         delegate.releaseResume()
         await delegate.waitForEvent(.resumeAborted("unlock"))
         await sleepTask.value
@@ -343,6 +297,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(!delegate.events.contains(.resumeCompleted("unlock")))
         #expect(delegate.lifecycleCurrentState.isPaused)
         #expect(manager.suspendedForRecovery)
+        #expect(manager.lastVetoReasonForTesting == .queuedPause)
     }
 
     @Test func resumeThrowDuringLockSettlesToErrorWithoutPauseOverwrite() async throws {
@@ -358,7 +313,9 @@ struct CaptureLifecycleManagerRecoveryTests {
         let relockTask = Task { @MainActor in
             await manager.handleScreenLocked()
         }
-        await Task.yield()
+        try await waitUntilMain(timeout: .seconds(5)) {
+            manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .pause(.lock), stopAudio: true))
+        }
         delegate.releaseResume()
         await delegate.waitForEvent(.transitionToError("unlock_failed"))
         await relockTask.value
@@ -366,6 +323,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(delegate.lifecycleCurrentState.isError)
         #expect(!delegate.events.contains(.resumeCompleted("unlock")))
         #expect(!delegate.events.contains(.resumeAborted("unlock")))
+        #expect(delegate.count(.pauseStarted("lock")) == 1)
     }
 
     @Test func lockDuringRecoveryResumeUsesLiveLockVeto() async throws {
@@ -389,32 +347,184 @@ struct CaptureLifecycleManagerRecoveryTests {
 
         #expect(delegate.lifecycleCurrentState.isPaused)
         #expect(manager.suspendedForRecovery)
+        #expect(manager.retryCountForTesting == 0)
         #expect(!delegate.events.contains(.resumeCompleted("recovery")))
+        #expect(manager.lastVetoReasonForTesting == .screenLocked)
     }
 
-    @Test func resetCancelsInFlightResumeAndSupersedeMarker() async throws {
+    @Test func recoveryDoubleCommitProducesSingleCommit() async {
+        let delegate = FakeLifecycleDelegate(state: .error("all displays disconnected"))
+        let manager = makeManager(delegate: delegate)
+
+        delegate.armResumeGate()
+        let first = Task { @MainActor in
+            await manager.attemptRecovery()
+        }
+        await delegate.waitForEvent(.resumeStarted("recovery"))
+
+        let second = Task { @MainActor in
+            await manager.attemptRecovery()
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+
+        delegate.releaseResume()
+        await first.value
+        await second.value
+
+        #expect(delegate.count(.resumeCompleted("recovery")) == 1)
+        #expect(delegate.lifecycleCurrentState.isRecording)
+    }
+
+    @Test func stopAudioUpgradeStopsAudioAfterQueueDrain() async throws {
         let delegate = FakeLifecycleDelegate(state: .recording)
-        let manager = makeManager(delegate: delegate, unlockResumeDelay: {})
+        let manager = makeManager(delegate: delegate)
+
+        let sleepTask = Task { @MainActor in
+            await manager.handleWillSleep()
+        }
+        await delegate.waitForEvent(.pauseStarted("sleep"))
+
+        let lockTask = Task { @MainActor in
+            await manager.handleScreenLocked()
+        }
+        try await waitUntilMain(timeout: .seconds(5)) {
+            manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .pause(.lock), stopAudio: true))
+        }
+
+        delegate.releasePause()
+        try await waitUntilMain(timeout: .seconds(5)) {
+            delegate.pauseCalls.contains { $0.trigger == "lock" && $0.stopAudio && $0.stateLabel == "paused" }
+        }
+        await sleepTask.value
+        await lockTask.value
+
+        #expect(delegate.pauseCalls.contains { $0.trigger == "lock" && $0.stopAudio && $0.stateLabel == "paused" })
+        #expect(delegate.lifecycleCurrentState.isPaused)
+    }
+
+    @Test func lockThenUnlockDuringResumeSettlesToRecording() async throws {
+        let locked = LockedValue<Bool>()
+        locked.set(false)
+        let delay = GatedUnlockResumeDelay()
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        let manager = makeManager(
+            delegate: delegate,
+            isScreenLocked: { locked.current ?? false },
+            unlockResumeDelay: { try await delay.wait() }
+        )
         await pauseForLock(manager: manager, delegate: delegate)
 
         delegate.armResumeGate()
         await manager.handleScreenUnlocked()
+        await delay.waitUntilCallCount(1)
+        delay.releaseNext()
         await delegate.waitForEvent(.resumeStarted("unlock"))
-        #expect(manager.hasInFlightResumeForTesting)
 
-        let relockTask = Task { @MainActor in
+        locked.set(true)
+        let lockTask = Task { @MainActor in
             await manager.handleScreenLocked()
         }
-        await Task.yield()
+        try await waitUntilMain(timeout: .seconds(5)) {
+            manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .pause(.lock), stopAudio: true))
+        }
 
-        manager.reset(stopRecovery: true)
-        #expect(!manager.hasInFlightResumeForTesting)
+        await manager.handleScreenUnlocked()
+        await delay.waitUntilCallCount(2)
 
         delegate.releaseResume()
-        await relockTask.value
-        await Task.yield()
-
+        await delegate.waitForEvent(.resumeAborted("unlock"))
+        try await waitUntilMain(timeout: .seconds(5)) {
+            delegate.count(.pauseCompleted("lock")) >= 2
+        }
         #expect(!delegate.events.contains(.resumeCompleted("unlock")))
+
+        locked.set(false)
+        delay.releaseNext()
+        await delegate.waitForEvent(.resumeCompleted("unlock"))
+        await lockTask.value
+
+        #expect(delegate.count(.resumeAborted("unlock")) == 1)
+        #expect(delegate.count(.resumeCompleted("unlock")) == 1)
+        #expect(delegate.lifecycleCurrentState.isRecording)
+        #expect(!manager.suspendedForRecovery)
+    }
+
+    @Test func resetDuringResumeAbortsInFlightAndNeverCommits() async throws {
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        let manager = makeManager(delegate: delegate)
+        await pauseForLock(manager: manager, delegate: delegate)
+
+        delegate.armResumeGate()
+        let wakeTask = Task { @MainActor in
+            await manager.handleDidWake()
+        }
+        await delegate.waitForEvent(.resumeStarted("wake"))
+        #expect(manager.inFlightIntentForTesting == IntentSnapshot(kind: .resume(.wake), stopAudio: false))
+
+        manager.reset(stopRecovery: true)
+        delegate.releaseResume()
+        await delegate.waitForEvent(.resumeAborted("wake"))
+        await wakeTask.value
+
+        #expect(!delegate.events.contains(.resumeCompleted("wake")))
+        #expect(delegate.events.contains(.resumeAborted("wake")))
+        #expect(manager.queuedIntentCountForTesting == 0)
+        #expect(!manager.suspendedForRecovery)
+    }
+
+    @Test func hungResumeAbortsAndQueuedPauseRunsToCompletion() async throws {
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        let manager = makeManager(delegate: delegate, transitionTimeoutSeconds: 0.2)
+        await pauseForLock(manager: manager, delegate: delegate)
+
+        delegate.armResumeGate()
+        let wakeTask = Task { @MainActor in
+            await manager.handleDidWake()
+        }
+        await delegate.waitForEvent(.resumeStarted("wake"))
+
+        let lockTask = Task { @MainActor in
+            await manager.handleScreenLocked()
+        }
+
+        try await waitUntilMain(timeout: .seconds(5)) {
+            delegate.events.contains(.resumeAborted("wake"))
+                && delegate.count(.pauseCompleted("lock")) >= 2
+        }
+        await wakeTask.value
+        await lockTask.value
+
+        #expect(manager.lastVetoReasonForTesting == .timedOut)
+        #expect(delegate.events.contains(.resumeAborted("wake")))
+        #expect(delegate.count(.pauseCompleted("lock")) >= 2)
+        #expect(delegate.lifecycleCurrentState.isPaused)
+    }
+
+    @Test func entryPreconditionDropsQueuedPauseOnIdleAndResumeOnNonPaused() async {
+        let delegate = FakeLifecycleDelegate(state: .idle)
+        let executor = CaptureExecutor(
+            delegate: delegate,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+
+        delegate.releasePause()
+        let pauseOutcome = await executor.enqueue(.pause(reason: .lock, stopAudio: true))
+        guard case .dropped = pauseOutcome else {
+            Issue.record("expected pause on idle to drop")
+            return
+        }
+        #expect(!delegate.events.contains(.pauseStarted("lock")))
+        #expect(executor.queuedIntentCountForTesting == 0)
+
+        delegate.lifecycleCurrentState = .recording
+        let resumeOutcome = await executor.enqueue(.resume(reason: .wake))
+        guard case .dropped = resumeOutcome else {
+            Issue.record("expected resume on non-paused state to drop")
+            return
+        }
+        #expect(!delegate.events.contains(.resumeStarted("wake")))
+        #expect(executor.queuedIntentCountForTesting == 0)
     }
 
     private func makeManager(
@@ -422,8 +532,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         delegate: FakeLifecycleDelegate,
         isScreenLocked: @escaping @MainActor () -> Bool = { false },
         unlockResumeDelay: @escaping @MainActor @Sendable () async throws -> Void = {},
-        pauseSettleTimeoutSeconds: TimeInterval = 30,
-        resumeSettleTimeoutSeconds: TimeInterval = 30
+        transitionTimeoutSeconds: TimeInterval = 30
     ) -> CaptureLifecycleManager {
         let manager = CaptureLifecycleManager(
             recoveryScheduler: { delay, fire in
@@ -431,8 +540,7 @@ struct CaptureLifecycleManagerRecoveryTests {
             },
             isScreenLocked: isScreenLocked,
             unlockResumeDelay: unlockResumeDelay,
-            pauseSettleTimeoutSeconds: pauseSettleTimeoutSeconds,
-            resumeSettleTimeoutSeconds: resumeSettleTimeoutSeconds
+            transitionTimeoutSeconds: transitionTimeoutSeconds
         )
         manager.configure(delegate: delegate)
         return manager
@@ -481,12 +589,19 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
         case processSegment(String, Bool)
     }
 
+    struct PauseCall: Equatable {
+        let trigger: String
+        let stopAudio: Bool
+        let stateLabel: String
+    }
+
     var lifecycleCurrentState: CaptureManager.State
     var resumeBehavior: ResumeBehavior = .succeed
     var resumePrepareShouldThrow = false
     var pauseResultURL: URL?
     private(set) var resumeTriggers: [String] = []
     private(set) var events: [Event] = []
+    private(set) var pauseCalls: [PauseCall] = []
     private var pauseReleased = false
     private var pauseReleaseContinuation: CheckedContinuation<Void, Never>?
     private var resumeGateArmed = false
@@ -499,6 +614,7 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
     }
 
     func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL? {
+        pauseCalls.append(PauseCall(trigger: trigger, stopAudio: stopAudio, stateLabel: lifecycleCurrentState.label))
         appendEvent(.pauseStarted(trigger))
         await waitForPauseRelease()
         lifecycleCurrentState = .paused
