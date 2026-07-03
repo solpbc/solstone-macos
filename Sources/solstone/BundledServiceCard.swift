@@ -117,7 +117,7 @@ struct BundledServiceCard: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Button("install the journal for me") {
+            Button("create your journal on this Mac") {
                 installer.start(journalURL: journalURL, existingInstallChoice: .createFresh)
             }
             .disabled(isDetecting)
@@ -741,7 +741,7 @@ struct BundledServiceCard: View {
         case .cleaningUp:
             return "preparing upgrade"
         case .installSolstone:
-            return "installing the journal"
+            return "creating your journal"
         case .solSetup:
             return "setting up your journal"
         case .verifyingIntegrity:

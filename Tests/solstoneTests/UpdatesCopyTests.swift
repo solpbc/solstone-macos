@@ -75,7 +75,7 @@ struct UpdatesCopyTests {
     }
 
     @Test func privacyFootnoteString() {
-        #expect(UpdatesCopy.privacyFootnote == "sol never sends usage data. update checks only fetch the version manifest.")
+        #expect(UpdatesCopy.privacyFootnote == "no usage data is ever sent. update checks only fetch the version manifest.")
     }
 
     @Test func releaseNotesOnlineLinkLabelString() {

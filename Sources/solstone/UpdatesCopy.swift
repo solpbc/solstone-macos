@@ -41,7 +41,7 @@ enum UpdatesCopy {
 
     static let lastCheckedNever = "never checked for updates"
     static let lastCheckedJustNow = "just now"
-    static let privacyFootnote = "sol never sends usage data. update checks only fetch the version manifest."
+    static let privacyFootnote = "no usage data is ever sent. update checks only fetch the version manifest."
 
     static func appHeader(version: String) -> String {
         "sol \(version)"
