@@ -59,7 +59,7 @@ struct UpdatesWireUpTests {
         let methodStart = try #require(source.range(of: "internal func performUpdatePreparation() async"))
         let methodEnd = try #require(source[methodStart.upperBound...].range(of: "private func drainRemixQueueForTermination() async"))
         let methodBody = String(source[methodStart.lowerBound..<methodEnd.lowerBound])
-        let stopRecording = try #require(methodBody.range(of: "await stopRecording()"))
+        let stopRecording = try #require(methodBody.range(of: "await stopRecording(reason: .update)"))
         let stopJournal = try #require(methodBody.range(of: "await stopSupervisedJournalForUpdate()"))
         let drain = try #require(methodBody.range(of: "await drainRemixQueueForTermination()"))
 

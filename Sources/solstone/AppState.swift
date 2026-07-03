@@ -376,17 +376,13 @@ public final class AppState {
     }
 
     internal func performQuitPreparation() async {
-        if isRecording {
-            await stopRecording()
-        }
+        await stopRecording(reason: .quit)
         await stopSupervisedJournalForTermination()
         await drainRemixQueueForTermination()
     }
 
     internal func performUpdatePreparation() async {
-        if isRecording {
-            await stopRecording()
-        }
+        await stopRecording(reason: .update)
         await stopSupervisedJournalForUpdate()
         await drainRemixQueueForTermination()
     }
@@ -1133,12 +1129,12 @@ public final class AppState {
         return false
     }
 
-    public func startRecording() async {
-        await capture.startRecording()
+    public func startRecording(reason: StartReason = .user) async {
+        await capture.startRecording(reason: reason)
     }
 
-    public func stopRecording() async {
-        await capture.stopRecording()
+    public func stopRecording(reason: StopReason = .user) async {
+        await capture.stopRecording(reason: reason)
     }
 
     public func toggleRecording() async {

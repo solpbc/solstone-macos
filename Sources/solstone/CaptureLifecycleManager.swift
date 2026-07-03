@@ -8,6 +8,17 @@ import os
 @MainActor
 protocol CaptureLifecycleDelegate: AnyObject {
     var lifecycleCurrentState: CaptureManager.State { get }
+    func lifecycleStartCapture(
+        reason: StartReason,
+        disabledMicUIDs: Set<String>,
+        enabledMicUIDs: Set<String>,
+        shouldVetoCommit: @escaping @MainActor () -> Bool
+    ) async throws -> StartResult
+    func lifecycleStopCapture(reason: StopReason) async
+    func lifecycleRotateSegment(
+        reason: RotateReason,
+        shouldVetoCommit: @escaping @MainActor () -> Bool
+    ) async -> RotationResult
     func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL?
     func lifecyclePrepareResume(trigger: String) async throws
     func lifecycleCommitResume(trigger: String)
@@ -190,6 +201,18 @@ final class CaptureLifecycleManager {
         if stopRecovery {
             stopRecoveryTimer()
         }
+    }
+
+    func resetLifecyclePendingState(stopRecovery: Bool) {
+        executor.resetLifecyclePendingState()
+        if stopRecovery {
+            stopRecoveryTimer()
+        }
+    }
+
+    @discardableResult
+    func enqueue(_ intent: CaptureIntent) async -> TransitionOutcome {
+        await executor.enqueue(intent)
     }
 
     func startRecoveryIfNeeded(error: Error) {

@@ -527,6 +527,125 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(executor.queuedIntentCountForTesting == 0)
     }
 
+    @Test func startFailureReturnsThrownWithoutTransitioningToError() async {
+        let delegate = FakeLifecycleDelegate(state: .idle)
+        delegate.startFailure = TransitionFailure(message: "start failed", isPermissionError: false)
+        let executor = CaptureExecutor(
+            delegate: delegate,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+
+        let outcome = await executor.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+
+        guard case .threw(let failure) = outcome else {
+            Issue.record("expected start failure to return .threw")
+            return
+        }
+        #expect(failure.message == "start failed")
+        #expect(delegate.lifecycleCurrentState.isIdle)
+        #expect(!delegate.events.contains(.transitionToError("user_failed")))
+    }
+
+    @Test func startFromPausedClearsSuspendedSoLaterUnlockResumeDrops() async {
+        let delegate = FakeLifecycleDelegate(state: .paused)
+        var executor: CaptureExecutor!
+        executor = CaptureExecutor(
+            delegate: delegate,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+        delegate.onStart = {
+            executor.resetLifecyclePendingState()
+        }
+        executor.markSuspendedForRecovery()
+
+        let startOutcome = await executor.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+        guard case .committed = startOutcome else {
+            Issue.record("expected start from paused to commit")
+            return
+        }
+        #expect(delegate.lifecycleCurrentState.isRecording)
+        #expect(!executor.suspendedForRecovery)
+
+        let resumeOutcome = await executor.enqueue(.resume(reason: .unlock))
+        guard case .dropped = resumeOutcome else {
+            Issue.record("expected unlock resume to drop after start cleared suspension")
+            return
+        }
+        #expect(!delegate.events.contains(.resumeStarted("unlock")))
+    }
+
+    @Test func resetLifecyclePendingStateDuringStartKeepsQueuedStop() async throws {
+        let delegate = FakeLifecycleDelegate(state: .idle)
+        delegate.armStartGate()
+        var executor: CaptureExecutor!
+        executor = CaptureExecutor(
+            delegate: delegate,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+        delegate.onStart = {
+            executor.resetLifecyclePendingState()
+        }
+
+        let startTask = Task { @MainActor in
+            await executor.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+        }
+        await delegate.waitForEvent(.startStarted("user"))
+
+        let stopTask = Task { @MainActor in
+            await executor.enqueue(.stop(reason: .user))
+        }
+        try await waitUntilMain(timeout: .seconds(5)) {
+            executor.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .stop(.user), stopAudio: false))
+        }
+
+        delegate.releaseStart()
+        let startOutcome = await startTask.value
+        let stopOutcome = await stopTask.value
+
+        guard case .committed = startOutcome else {
+            Issue.record("expected start to commit")
+            return
+        }
+        guard case .committed = stopOutcome else {
+            Issue.record("expected queued stop to survive start reset")
+            return
+        }
+        #expect(delegate.events.contains(.stopCompleted("user")))
+        #expect(delegate.lifecycleCurrentState.isIdle)
+    }
+
+    @Test func stopResetClearsSuspendedSoLaterUnlockResumeDrops() async {
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        var executor: CaptureExecutor!
+        executor = CaptureExecutor(
+            delegate: delegate,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+        delegate.onStop = {
+            executor.resetLifecyclePendingState()
+        }
+        executor.markSuspendedForRecovery()
+
+        let stopOutcome = await executor.enqueue(.stop(reason: .user))
+        guard case .committed = stopOutcome else {
+            Issue.record("expected stop to commit")
+            return
+        }
+        #expect(delegate.lifecycleCurrentState.isIdle)
+        #expect(!executor.suspendedForRecovery)
+
+        let resumeOutcome = await executor.enqueue(.resume(reason: .unlock))
+        guard case .dropped = resumeOutcome else {
+            Issue.record("expected unlock resume to drop after stop cleared suspension")
+            return
+        }
+        #expect(!delegate.events.contains(.resumeStarted("unlock")))
+    }
+
     private func makeManager(
         scheduler: FakeRecoveryScheduler = FakeRecoveryScheduler(),
         delegate: FakeLifecycleDelegate,
@@ -580,6 +699,11 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
     }
 
     enum Event: Equatable {
+        case startStarted(String)
+        case startCompleted(String)
+        case stopStarted(String)
+        case stopCompleted(String)
+        case rotateStarted(String)
         case pauseStarted(String)
         case pauseCompleted(String)
         case resumeStarted(String)
@@ -598,10 +722,17 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
     var lifecycleCurrentState: CaptureManager.State
     var resumeBehavior: ResumeBehavior = .succeed
     var resumePrepareShouldThrow = false
+    var startFailure: TransitionFailure?
+    var startResult: StartResult = .committed
+    var rotationResult: RotationResult = .committed
+    var onStart: (() -> Void)?
+    var onStop: (() -> Void)?
     var pauseResultURL: URL?
     private(set) var resumeTriggers: [String] = []
     private(set) var events: [Event] = []
     private(set) var pauseCalls: [PauseCall] = []
+    private var startGateArmed = false
+    private var startReleaseContinuation: CheckedContinuation<Void, Never>?
     private var pauseReleased = false
     private var pauseReleaseContinuation: CheckedContinuation<Void, Never>?
     private var resumeGateArmed = false
@@ -611,6 +742,43 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
     init(state: CaptureManager.State, pauseResultURL: URL? = nil) {
         self.lifecycleCurrentState = state
         self.pauseResultURL = pauseResultURL
+    }
+
+    func lifecycleStartCapture(
+        reason: StartReason,
+        disabledMicUIDs: Set<String>,
+        enabledMicUIDs: Set<String>,
+        shouldVetoCommit: @escaping @MainActor () -> Bool
+    ) async throws -> StartResult {
+        appendEvent(.startStarted(reason.trigger))
+        await waitForStartRelease()
+        if let startFailure {
+            throw startFailure
+        }
+        onStart?()
+        switch startResult {
+        case .committed:
+            lifecycleCurrentState = .recording
+            appendEvent(.startCompleted(reason.trigger))
+        case .vetoedScreenLocked:
+            appendEvent(.startCompleted(reason.trigger))
+        }
+        return startResult
+    }
+
+    func lifecycleStopCapture(reason: StopReason) async {
+        appendEvent(.stopStarted(reason.trigger))
+        onStop?()
+        lifecycleCurrentState = .idle
+        appendEvent(.stopCompleted(reason.trigger))
+    }
+
+    func lifecycleRotateSegment(
+        reason: RotateReason,
+        shouldVetoCommit: @escaping @MainActor () -> Bool
+    ) async -> RotationResult {
+        appendEvent(.rotateStarted(reason.trigger))
+        return rotationResult
     }
 
     func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL? {
@@ -663,6 +831,17 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
         continuation?.resume()
     }
 
+    func armStartGate() {
+        startGateArmed = true
+    }
+
+    func releaseStart() {
+        startGateArmed = false
+        let continuation = startReleaseContinuation
+        startReleaseContinuation = nil
+        continuation?.resume()
+    }
+
     func armResumeGate() {
         resumeGateArmed = true
     }
@@ -703,6 +882,16 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
 
         await withCheckedContinuation { continuation in
             pauseReleaseContinuation = continuation
+        }
+    }
+
+    private func waitForStartRelease() async {
+        if !startGateArmed {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            startReleaseContinuation = continuation
         }
     }
 

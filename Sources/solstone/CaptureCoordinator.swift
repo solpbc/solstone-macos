@@ -14,7 +14,7 @@ public final class CaptureCoordinator {
     public typealias IsTerminatingProvider = @MainActor () -> Bool
     public typealias MicUIDConfigProvider = @MainActor () -> MicUIDConfig
     public typealias BannerSink = @MainActor (String?) -> Void
-    public typealias StartOperation = @MainActor (MicUIDConfig) async throws -> Void
+    public typealias StartOperation = @MainActor (StartReason, MicUIDConfig) async -> TransitionOutcome
 
     public internal(set) var isRecording = false
     public internal(set) var capturePaused = false
@@ -34,8 +34,6 @@ public final class CaptureCoordinator {
     private let bannerSink: BannerSink
     private let startOperation: StartOperation
 
-    // interim guard; a later phase replaces this with a transition queue
-    private var startTask: Task<Void, Never>?
     private var permissionPollTimer: Timer?
     private var isCheckingPermissions = false
 
@@ -58,10 +56,13 @@ public final class CaptureCoordinator {
         self.isTerminating = isTerminating
         self.configProvider = configProvider
         self.bannerSink = bannerSink
-        self.startOperation = startOperation ?? { [captureManager] config in
-            try await captureManager.startRecording(
-                disabledMicUIDs: config.disabled,
-                enabledMicUIDs: config.enabled
+        self.startOperation = startOperation ?? { [captureManager] reason, config in
+            await captureManager.enqueueTransition(
+                .start(
+                    reason: reason,
+                    disabledMicUIDs: config.disabled,
+                    enabledMicUIDs: config.enabled
+                )
             )
         }
     }
@@ -69,7 +70,6 @@ public final class CaptureCoordinator {
     deinit {
         MainActor.assumeIsolated {
             permissionPollTimer?.invalidate()
-            startTask?.cancel()
         }
     }
 
@@ -92,10 +92,10 @@ public final class CaptureCoordinator {
         }
 
         pauseManager.onPause = { [weak self] in
-            await self?.stopRecording()
+            await self?.stopRecording(reason: .pauseManagerPause)
         }
         pauseManager.onResume = { [weak self] in
-            await self?.startRecording()
+            await self?.startRecording(reason: .pauseManagerResume)
         }
 
         pauseManager.restorePauseState()
@@ -130,46 +130,43 @@ public final class CaptureCoordinator {
         }
     }
 
-    public func startRecording() async {
-        if let startTask {
-            await startTask.value
+    public func startRecording(reason: StartReason = .user) async {
+        guard !isTerminating() else {
+            Logger.general.info("startRecording() ignored because app is terminating")
             return
         }
 
-        let task = Task { @MainActor in
-            defer { self.startTask = nil }
-
-            guard !self.isTerminating() else {
-                Logger.general.info("startRecording() ignored because app is terminating")
-                return
-            }
-
-            do {
-                let config = self.configProvider()
-                try await self.startOperation(config)
-                self.screenRecordingGranted = true
-            } catch CaptureManager.CaptureError.permissionDenied {
+        let config = configProvider()
+        let outcome = await startOperation(reason, config)
+        switch outcome {
+        case .committed:
+            screenRecordingGranted = true
+        case .threw(let failure):
+            if failure.isPermissionError {
                 Logger.general.info("[Permissions] Recording denied — screen recording permission not granted")
-                self.screenRecordingGranted = false
-            } catch {
-                Logger.general.error("Recording failed to start: \(error.localizedDescription, privacy: .public)")
-                self.captureError = UICopy.ERROR_START_OBSERVING
-                self.bannerSink(UICopy.ERROR_START_OBSERVING)
+                screenRecordingGranted = false
+            } else {
+                Logger.general.error("Recording failed to start: \(failure.message, privacy: .public)")
+                captureError = UICopy.ERROR_START_OBSERVING
+                bannerSink(UICopy.ERROR_START_OBSERVING)
             }
+        case .vetoed:
+            Logger.general.info("startRecording() vetoed")
+        case .dropped:
+            Logger.general.info("startRecording() dropped")
         }
-        startTask = task
-        await task.value
     }
 
-    public func stopRecording() async {
-        await captureManager.stopRecording()
+    @discardableResult
+    public func stopRecording(reason: StopReason = .user) async -> TransitionOutcome {
+        await captureManager.enqueueTransition(.stop(reason: reason))
     }
 
     public func toggleRecording() async {
         if isRecording && !capturePaused {
-            await stopRecording()
+            await stopRecording(reason: .user)
         } else {
-            await startRecording()
+            await startRecording(reason: .user)
         }
     }
 
@@ -226,7 +223,7 @@ public final class CaptureCoordinator {
                 Logger.general.info("[Permissions] auto-start skipped because app is terminating")
             } else {
                 Logger.general.info("[Permissions] all granted, auto-starting observation")
-                await startRecording()
+                await startRecording(reason: .autoStart)
             }
         }
 

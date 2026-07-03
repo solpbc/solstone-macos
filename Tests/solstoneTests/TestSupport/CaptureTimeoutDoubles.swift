@@ -195,17 +195,23 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
     let outputDirectory: URL
     let finishBehaviors: LockedArray<FinishCaptureBehavior>
     let startBehavior: FakeSegmentStartBehavior
+    let startGate: OneShotContinuationGate?
+    let finishGate: OneShotContinuationGate?
     let startCount = LockedCounter()
     let finishCaptureCount = LockedCounter()
 
     init(
         outputDirectory: URL,
         finishBehaviors: [FinishCaptureBehavior] = [.normal(nil)],
-        startBehavior: FakeSegmentStartBehavior = .normal
+        startBehavior: FakeSegmentStartBehavior = .normal,
+        startGate: OneShotContinuationGate? = nil,
+        finishGate: OneShotContinuationGate? = nil
     ) {
         self.outputDirectory = outputDirectory
         self.finishBehaviors = LockedArray(finishBehaviors)
         self.startBehavior = startBehavior
+        self.startGate = startGate
+        self.finishGate = finishGate
     }
 
     func start(
@@ -217,6 +223,7 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         systemAudioCaptureManager: SystemAudioCaptureManager?
     ) async throws {
         startCount.increment()
+        await startGate?.wait()
         if case .throwPartway = startBehavior {
             throw FakeCaptureError.startFailed
         }
@@ -224,6 +231,7 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
 
     func finishCapture() async -> SegmentCaptureResult? {
         finishCaptureCount.increment()
+        await finishGate?.wait()
         let behavior = finishBehaviors.removeFirst(default: .normal(nil))
         switch behavior {
         case .hang:

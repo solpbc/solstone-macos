@@ -25,7 +25,16 @@ struct CaptureManagerDisplayRecoveryTests {
             allowsEmptyDisplayConfigurationForTesting: true
         )
 
-        try await manager.startRecording()
+        let executor = CaptureExecutor(
+            delegate: manager,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+        let startOutcome = await executor.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+        guard case .committed = startOutcome else {
+            Issue.record("expected start to commit")
+            return
+        }
         let segment = try #require(segmentBox.current)
         #expect(manager.hasSegmentTimerForTesting)
         #expect(manager.hasHeartbeatTimerForTesting)
@@ -41,6 +50,6 @@ struct CaptureManagerDisplayRecoveryTests {
         #expect(!manager.hasHeartbeatTimerForTesting)
         #expect(!manager.hasPendingRotationRetryForTesting)
 
-        await manager.stopRecording()
+        _ = await manager.enqueueTransition(.stop(reason: .user))
     }
 }

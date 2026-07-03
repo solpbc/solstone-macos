@@ -16,7 +16,7 @@ struct CaptureManagerCommitTests {
         let segment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111111.incomplete", isDirectory: true))
         manager.seedRecordingForTesting(currentSegment: segment)
 
-        await manager.stopRecording()
+        _ = await manager.enqueueTransition(.stop(reason: .user))
 
         #expect(segment.finishCaptureCount.count == 1)
         #expect(finalizer.enqueuedDirectories.all == [segment.outputDirectory])
@@ -32,7 +32,7 @@ struct CaptureManagerCommitTests {
         let segment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111112.incomplete", isDirectory: true))
         manager.seedRecordingForTesting(currentSegment: segment)
 
-        await manager.stopRecording()
+        _ = await manager.enqueueTransition(.stop(reason: .user))
 
         #expect(finalizer.events.all == ["enqueue", "wait"])
     }
@@ -45,13 +45,15 @@ struct CaptureManagerCommitTests {
         let segment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111113.incomplete", isDirectory: true))
         manager.seedRecordingForTesting(currentSegment: segment)
 
-        await manager.pauseRecording()
+        _ = await manager.enqueueTransition(.pause(reason: .lock, stopAudio: true))
 
         #expect(segment.finishCaptureCount.count == 1)
         #expect(finalizer.enqueuedDirectories.all == [segment.outputDirectory])
         #expect(manager.currentSegmentForTesting == nil)
         #expect(manager.state.isPaused)
-        #expect(finalizer.events.all == ["enqueue", "wait"])
+        try await waitUntil(timeout: .seconds(5)) {
+            finalizer.events.all == ["enqueue", "wait"]
+        }
     }
 
     @Test func lifecyclePauseCaptureEnqueuesButDoesNotWait() async throws {
@@ -92,11 +94,48 @@ struct CaptureManagerCommitTests {
         let (manager, root) = try makeManager(finalizer: finalizer)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        await manager.stopRecording()
+        _ = await manager.enqueueTransition(.stop(reason: .user))
 
         #expect(finalizer.enqueuedDirectories.all.isEmpty)
         #expect(finalizer.events.all.isEmpty)
         #expect(manager.state.isIdle)
+    }
+
+    @Test func startWhileLockedVetoesAfterPreparedSegmentAndStaysIdle() async throws {
+        let finalizer = FakeFinalizer()
+        let root = try makeTempDirectory("capture-start-locked")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let preparedSegment = LockedValue<FakeCaptureSegment>()
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                let segment = FakeCaptureSegment(outputDirectory: outputDirectory)
+                preparedSegment.set(segment)
+                return segment
+            },
+            finalizer: finalizer,
+            allowsEmptyDisplayConfigurationForTesting: true
+        )
+        let executor = CaptureExecutor(
+            delegate: manager,
+            isScreenLocked: { true },
+            unlockResumeDelay: {}
+        )
+
+        let outcome = await executor.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+
+        guard case .vetoed = outcome else {
+            Issue.record("expected start to be vetoed while locked")
+            return
+        }
+        let segment = try #require(preparedSegment.current)
+        #expect(segment.finishCaptureCount.count == 1)
+        #expect(manager.state.isIdle)
+        #expect(manager.currentSegmentForTesting == nil)
+        #expect(manager.isSystemAudioRunningForTesting == false)
+        #expect(finalizer.enqueuedDirectories.all.isEmpty)
+        #expect(executor.lastVetoReasonForTesting == .screenLocked)
     }
 
     private func makeManager(finalizer: FakeFinalizer) throws -> (CaptureManager, URL) {

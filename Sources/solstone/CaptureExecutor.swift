@@ -30,12 +30,67 @@ enum ResumeReason: Sendable, Equatable {
     }
 }
 
+public enum StartReason: Sendable, Equatable {
+    case user
+    case autoStart
+    case pauseManagerResume
+
+    var trigger: String {
+        switch self {
+        case .user: "user"
+        case .autoStart: "autoStart"
+        case .pauseManagerResume: "pauseManagerResume"
+        }
+    }
+}
+
+public enum StopReason: Sendable, Equatable {
+    case user
+    case quit
+    case update
+    case pauseManagerPause
+
+    var trigger: String {
+        switch self {
+        case .user: "user"
+        case .quit: "quit"
+        case .update: "update"
+        case .pauseManagerPause: "pauseManagerPause"
+        }
+    }
+}
+
+enum RotateReason: Sendable, Equatable {
+    case boundary
+    case displayChange
+    case debugToggle
+    case retry
+
+    var trigger: String {
+        switch self {
+        case .boundary: "boundary"
+        case .displayChange: "displayChange"
+        case .debugToggle: "debugToggle"
+        case .retry: "retry"
+        }
+    }
+}
+
 enum CaptureIntent: Sendable, Equatable {
+    case start(reason: StartReason, disabledMicUIDs: Set<String>, enabledMicUIDs: Set<String>)
+    case stop(reason: StopReason)
+    case rotate(reason: RotateReason)
     case pause(reason: PauseReason, stopAudio: Bool)
     case resume(reason: ResumeReason)
 
     var kind: IntentKind {
         switch self {
+        case .start(let reason, _, _):
+            .start(reason)
+        case .stop(let reason):
+            .stop(reason)
+        case .rotate(let reason):
+            .rotate(reason)
         case .pause(let reason, _):
             .pause(reason)
         case .resume(let reason):
@@ -53,8 +108,19 @@ enum CaptureIntent: Sendable, Equatable {
         return false
     }
 
+    var isStop: Bool {
+        if case .stop = self { return true }
+        return false
+    }
+
     var snapshot: IntentSnapshot {
         switch self {
+        case .start(let reason, _, _):
+            IntentSnapshot(kind: .start(reason), stopAudio: false)
+        case .stop(let reason):
+            IntentSnapshot(kind: .stop(reason), stopAudio: false)
+        case .rotate(let reason):
+            IntentSnapshot(kind: .rotate(reason), stopAudio: false)
         case .pause(let reason, let stopAudio):
             IntentSnapshot(kind: .pause(reason), stopAudio: stopAudio)
         case .resume(let reason):
@@ -64,6 +130,12 @@ enum CaptureIntent: Sendable, Equatable {
 
     var logDescription: String {
         switch self {
+        case .start(let reason, _, _):
+            "start(\(reason.trigger))"
+        case .stop(let reason):
+            "stop(\(reason.trigger))"
+        case .rotate(let reason):
+            "rotate(\(reason.trigger))"
         case .pause(let reason, let stopAudio):
             "pause(\(reason.trigger), stopAudio:\(stopAudio))"
         case .resume(let reason):
@@ -73,6 +145,12 @@ enum CaptureIntent: Sendable, Equatable {
 
     func hasSameKindAndReason(as other: CaptureIntent) -> Bool {
         switch (self, other) {
+        case (.start(let lhs, _, _), .start(let rhs, _, _)):
+            lhs == rhs
+        case (.stop(let lhs), .stop(let rhs)):
+            lhs == rhs
+        case (.rotate, .rotate):
+            true
         case (.pause(let lhs, _), .pause(let rhs, _)):
             lhs == rhs
         case (.resume(let lhs), .resume(let rhs)):
@@ -88,18 +166,27 @@ enum CaptureIntent: Sendable, Equatable {
            case .pause(_, let otherStopAudio) = other {
             self = .pause(reason: reason, stopAudio: stopAudio || otherStopAudio)
         }
+        if case .start(let reason, _, _) = self,
+           case .start(_, let disabledMicUIDs, let enabledMicUIDs) = other {
+            self = .start(reason: reason, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)
+        }
+        if case .rotate = self,
+           case .rotate(let reason) = other {
+            self = .rotate(reason: reason)
+        }
     }
 }
 
-enum TransitionOutcome: Sendable {
+public enum TransitionOutcome: Sendable {
     case committed
     case vetoed
-    case threw(ResumeFailure)
+    case threw(TransitionFailure)
     case dropped
 }
 
 enum VetoReason: Sendable, Equatable {
     case queuedPause
+    case queuedTerminalIntent
     case screenLocked
     case stateChanged
     case notSuspended
@@ -108,12 +195,27 @@ enum VetoReason: Sendable, Equatable {
     case aborted
 }
 
-struct ResumeFailure: Sendable {
-    let message: String
-    let isPermissionError: Bool
+public struct TransitionFailure: Error, Sendable {
+    public let message: String
+    public let isPermissionError: Bool
+}
+
+enum StartResult: Sendable {
+    case committed
+    case vetoedScreenLocked
+}
+
+enum RotationResult: Sendable {
+    case committed
+    case superseded
+    case timedOut
+    case failed(TransitionFailure)
 }
 
 enum IntentKind: Sendable, Equatable {
+    case start(StartReason)
+    case stop(StopReason)
+    case rotate(RotateReason)
     case pause(PauseReason)
     case resume(ResumeReason)
 }
@@ -142,6 +244,10 @@ final class CaptureExecutor {
     private let transitionTimeoutSeconds: TimeInterval
     private(set) var suspendedForRecovery = false
     private(set) var lastVetoReason: VetoReason?
+
+    private var hasQueuedTerminalIntent: Bool {
+        queue.contains { $0.intent.isStop || $0.intent.isPause }
+    }
 
     init(
         delegate: (any CaptureLifecycleDelegate)? = nil,
@@ -211,6 +317,22 @@ final class CaptureExecutor {
         suspendedForRecovery = false
     }
 
+    func resetLifecyclePendingState() {
+        delayedUnlockTask?.cancel()
+        delayedUnlockTask = nil
+
+        var kept: [QueuedIntent] = []
+        for entry in queue {
+            if entry.intent.isPause || entry.intent.isResume {
+                resume(entry.waiters, with: .dropped)
+            } else {
+                kept.append(entry)
+            }
+        }
+        queue = kept
+        suspendedForRecovery = false
+    }
+
     private func enqueue(
         _ intent: CaptureIntent,
         continuation: CheckedContinuation<TransitionOutcome, Never>
@@ -264,6 +386,12 @@ final class CaptureExecutor {
         let task = Task<TransitionOutcome, Never> { @MainActor [weak self] in
             guard let self else { return .dropped }
             switch intent {
+            case .start(let reason, let disabledMicUIDs, let enabledMicUIDs):
+                return await self.runStart(reason, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)
+            case .stop(let reason):
+                return await self.runStop(reason)
+            case .rotate(let reason):
+                return await self.runRotate(reason)
             case .pause(let reason, let stopAudio):
                 return await self.runPause(reason, stopAudio: stopAudio)
             case .resume(let reason):
@@ -274,6 +402,105 @@ final class CaptureExecutor {
         let outcome = await task.value
         inFlight = nil
         return outcome
+    }
+
+    private func runStart(
+        _ reason: StartReason,
+        disabledMicUIDs: Set<String>,
+        enabledMicUIDs: Set<String>
+    ) async -> TransitionOutcome {
+        guard let delegate else {
+            Logger.capture.info("[Executor] drop start(\(reason.trigger, privacy: .public)) with no delegate")
+            return .dropped
+        }
+
+        let state = delegate.lifecycleCurrentState
+        guard state.isIdle || state.isPaused else {
+            Logger.capture.info("[Executor] drop start(\(reason.trigger, privacy: .public)) on \(state.label, privacy: .public)")
+            return .dropped
+        }
+
+        do {
+            let result = try await delegate.lifecycleStartCapture(
+                reason: reason,
+                disabledMicUIDs: disabledMicUIDs,
+                enabledMicUIDs: enabledMicUIDs,
+                shouldVetoCommit: { @MainActor [weak self] in
+                    self?.isScreenLocked() ?? false
+                }
+            )
+            switch result {
+            case .committed:
+                Logger.capture.info("[Executor] start(\(reason.trigger, privacy: .public)) committed")
+                return .committed
+            case .vetoedScreenLocked:
+                lastVetoReason = .screenLocked
+                Logger.capture.info("[Executor] start(\(reason.trigger, privacy: .public)) vetoed because screen is locked")
+                return .vetoed
+            }
+        } catch let failure as TransitionFailure {
+            Logger.capture.error("[Executor] start(\(reason.trigger, privacy: .public)) failed: \(failure.message, privacy: .public)")
+            return .threw(failure)
+        } catch {
+            let failure = TransitionFailure(
+                message: error.localizedDescription,
+                isPermissionError: isPermissionError(error)
+            )
+            Logger.capture.error("[Executor] start(\(reason.trigger, privacy: .public)) failed: \(failure.message, privacy: .public)")
+            return .threw(failure)
+        }
+    }
+
+    private func runStop(_ reason: StopReason) async -> TransitionOutcome {
+        guard let delegate else {
+            Logger.capture.info("[Executor] drop stop(\(reason.trigger, privacy: .public)) with no delegate")
+            return .dropped
+        }
+
+        let state = delegate.lifecycleCurrentState
+        guard state.isRecording || state.isPaused || state.isError else {
+            Logger.capture.info("[Executor] drop stop(\(reason.trigger, privacy: .public)) on \(state.label, privacy: .public)")
+            return .dropped
+        }
+
+        await delegate.lifecycleStopCapture(reason: reason)
+        Logger.capture.info("[Executor] stop(\(reason.trigger, privacy: .public)) committed")
+        return .committed
+    }
+
+    private func runRotate(_ reason: RotateReason) async -> TransitionOutcome {
+        guard let delegate else {
+            Logger.capture.info("[Executor] drop rotate(\(reason.trigger, privacy: .public)) with no delegate")
+            return .dropped
+        }
+
+        let state = delegate.lifecycleCurrentState
+        guard state.isRecording else {
+            Logger.capture.info("[Executor] drop rotate(\(reason.trigger, privacy: .public)) on \(state.label, privacy: .public)")
+            return .dropped
+        }
+
+        let result = await delegate.lifecycleRotateSegment(
+            reason: reason,
+            shouldVetoCommit: { @MainActor [weak self] in
+                self?.hasQueuedTerminalIntent ?? false
+            }
+        )
+        switch result {
+        case .committed:
+            Logger.capture.info("[Executor] rotate(\(reason.trigger, privacy: .public)) committed")
+            return .committed
+        case .superseded:
+            lastVetoReason = .queuedTerminalIntent
+            Logger.capture.info("[Executor] rotate(\(reason.trigger, privacy: .public)) superseded by queued terminal intent")
+            return .vetoed
+        case .timedOut:
+            Logger.capture.info("[Executor] rotate(\(reason.trigger, privacy: .public)) timed out")
+            return .committed
+        case .failed(let failure):
+            Logger.capture.info("[Executor] rotate(\(reason.trigger, privacy: .public)) failed: \(failure.message, privacy: .public)")
+            return .committed
+        }
     }
 
     private func runPause(_ reason: PauseReason, stopAudio: Bool) async -> TransitionOutcome {
@@ -295,8 +522,8 @@ final class CaptureExecutor {
             return .dropped
         }
 
-        // Pause runs unbounded: lifecyclePauseCapture owns pauseTransitionActive across finalize,
-        // and withTimeout cancels while leaving the operation running. Resume prepare is the hang risk.
+        // Pause runs unbounded; withTimeout cancels while leaving the operation running.
+        // Resume prepare is the hang risk.
         let completedURL = await delegate.lifecyclePauseCapture(trigger: reason.trigger, stopAudio: stopAudio)
 
         // Already-paused upgrades intentionally re-emit .paused through the delegate;
@@ -356,7 +583,7 @@ final class CaptureExecutor {
             Logger.capture.info("[Executor] resume(\(reason.trigger, privacy: .public)) cancelled")
             return .vetoed
         } catch {
-            let failure = ResumeFailure(
+            let failure = TransitionFailure(
                 message: error.localizedDescription,
                 isPermissionError: isPermissionError(error)
             )

@@ -5,7 +5,7 @@ import Foundation
 import Testing
 @testable import solstone
 
-@Suite("CaptureManager rotation watchdog")
+@Suite("CaptureManager rotation watchdog", .serialized)
 @MainActor
 struct CaptureManagerRotationWatchdogTests {
     @Test func rotateSegmentTimeoutReleasesRotationAndAdmitsFollowup() async throws {
@@ -39,16 +39,13 @@ struct CaptureManagerRotationWatchdogTests {
         )
         manager.seedRecordingForTesting(currentSegment: current)
 
-        await manager.rotateSegmentForTesting()
-
-        #expect(manager.isRotatingSegmentForTesting == false)
+        _ = await rotate(manager)
         #expect(current.finishCaptureCount.count == 1)
         await recovery.waitForRecoverAll(1)
 
         now.set(fixedDate(second: 1))
-        await manager.rotateSegmentForTesting()
+        _ = await rotate(manager)
 
-        #expect(manager.isRotatingSegmentForTesting == false)
         #expect(current.finishCaptureCount.count == 2)
         #expect(newStartCount.count >= 1)
     }
@@ -58,7 +55,12 @@ struct CaptureManagerRotationWatchdogTests {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let oldDir = try makeSegmentDir(root: root, name: "444441.incomplete")
-        let current = FakeCaptureSegment(outputDirectory: oldDir, finishBehaviors: [.normal(oldDir)])
+        let finishGate = OneShotContinuationGate()
+        let current = FakeCaptureSegment(
+            outputDirectory: oldDir,
+            finishBehaviors: [.normal(oldDir)],
+            finishGate: finishGate
+        )
         let finalizer = FakeFinalizer()
         let recovery = CountingRecovery()
         let newStartCount = LockedCounter()
@@ -76,18 +78,38 @@ struct CaptureManagerRotationWatchdogTests {
             allowsEmptyDisplayConfigurationForTesting: true
         )
         manager.seedRecordingForTesting(currentSegment: current)
-        let pauseResult = makeResult(for: oldDir)
-        manager.onRotationAfterOldSegmentFinishedForTesting = {
-            await manager.simulateSettledPauseForTesting(enqueue: pauseResult)
+
+        let rotateTask = Task { @MainActor in
+            await rotate(manager)
+        }
+        await current.finishCaptureCount.waitUntilCount(1)
+
+        let pauseTask = Task { @MainActor in
+            await manager.enqueueTransition(.pause(reason: .lock, stopAudio: true))
+        }
+        try await waitUntil(timeout: .seconds(5)) {
+            await MainActor.run {
+                manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .pause(.lock), stopAudio: true))
+            }
         }
 
-        await manager.rotateSegmentForTesting()
+        finishGate.release()
+        let rotateOutcome = await rotateTask.value
+        let pauseOutcome = await pauseTask.value
 
+        guard case .vetoed = rotateOutcome else {
+            Issue.record("expected rotate to be vetoed by queued pause")
+            return
+        }
+        guard case .committed = pauseOutcome else {
+            Issue.record("expected queued pause to commit")
+            return
+        }
         #expect(newStartCount.count == 0)
         #expect(finalizer.enqueuedDirectories.all == [oldDir])
         #expect(manager.currentSegmentForTesting == nil)
         #expect(manager.state.isPaused)
-        #expect(manager.isRotatingSegmentForTesting == false)
+        #expect(manager.lastVetoReasonForTesting == .queuedTerminalIntent)
         #expect(manager.hasPendingRotationRetryForTesting == false)
         #expect(manager.isSystemAudioRunningForTesting == false)
         await recovery.waitForRecoverAll(1)
@@ -103,12 +125,17 @@ struct CaptureManagerRotationWatchdogTests {
         let finalizer = FakeFinalizer()
         let recovery = CountingRecovery()
         let newSegment = LockedValue<FakeCaptureSegment>()
+        let startGate = OneShotContinuationGate()
         let firstNow = fixedDate(second: 4)
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
             segmentFactory: { outputDirectory, _, _, _, _ in
-                let segment = FakeCaptureSegment(outputDirectory: outputDirectory, finishBehaviors: [.normal(outputDirectory)])
+                let segment = FakeCaptureSegment(
+                    outputDirectory: outputDirectory,
+                    finishBehaviors: [.normal(outputDirectory)],
+                    startGate: startGate
+                )
                 newSegment.set(segment)
                 return segment
             },
@@ -118,31 +145,58 @@ struct CaptureManagerRotationWatchdogTests {
             allowsEmptyDisplayConfigurationForTesting: true
         )
         manager.seedRecordingForTesting(currentSegment: current)
-        let pauseResult = makeResult(for: oldDir)
-        manager.onRotationAfterNewSegmentStartedForTesting = {
-            await manager.simulatePausedStateForTesting(enqueue: pauseResult)
+
+        let rotateTask = Task { @MainActor in
+            await rotate(manager)
+        }
+        try await waitUntil(timeout: .seconds(5)) {
+            await MainActor.run { newSegment.current?.startCount.count == 1 }
         }
 
-        await manager.rotateSegmentForTesting()
+        let pauseTask = Task { @MainActor in
+            await manager.enqueueTransition(.pause(reason: .lock, stopAudio: true))
+        }
+        try await waitUntil(timeout: .seconds(5)) {
+            await MainActor.run {
+                manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .pause(.lock), stopAudio: true))
+            }
+        }
+
+        startGate.release()
+        let rotateOutcome = await rotateTask.value
+        let pauseOutcome = await pauseTask.value
 
         let startedSegment = try #require(newSegment.current)
+        guard case .vetoed = rotateOutcome else {
+            Issue.record("expected rotate to be vetoed by queued pause")
+            return
+        }
+        guard case .committed = pauseOutcome else {
+            Issue.record("expected queued pause to commit")
+            return
+        }
         #expect(startedSegment.finishCaptureCount.count == 1)
-        #expect(finalizer.enqueuedDirectories.all == [oldDir])
+        #expect(finalizer.enqueuedDirectories.all == [])
         #expect(manager.currentSegmentForTesting == nil)
         #expect(manager.state.isPaused)
-        #expect(manager.isRotatingSegmentForTesting == false)
+        #expect(manager.lastVetoReasonForTesting == .queuedTerminalIntent)
         #expect(manager.hasPendingRotationRetryForTesting == false)
         #expect(manager.isSystemAudioRunningForTesting == false)
         await recovery.waitForRecoverAll(1)
         #expect(try findDirs(root: root, suffix: ".failed").count == 1)
     }
 
-    @Test func rotateSegmentSupersededByPauseTransitionMarkerBeforeStateFlip() async throws {
+    @Test func rotateSegmentSupersededByQueuedPauseBeforeFirstVeto() async throws {
         let root = try makeTempDirectory("capture-rotation-supersede-marker")
         defer { try? FileManager.default.removeItem(at: root) }
 
         let oldDir = try makeSegmentDir(root: root, name: "444443.incomplete")
-        let current = FakeCaptureSegment(outputDirectory: oldDir, finishBehaviors: [.normal(oldDir)])
+        let finishGate = OneShotContinuationGate()
+        let current = FakeCaptureSegment(
+            outputDirectory: oldDir,
+            finishBehaviors: [.normal(oldDir)],
+            finishGate: finishGate
+        )
         let finalizer = FakeFinalizer()
         let recovery = CountingRecovery()
         let newStartCount = LockedCounter()
@@ -160,21 +214,181 @@ struct CaptureManagerRotationWatchdogTests {
             allowsEmptyDisplayConfigurationForTesting: true
         )
         manager.seedRecordingForTesting(currentSegment: current)
-        let pauseResult = makeResult(for: oldDir)
-        manager.onRotationAfterOldSegmentFinishedForTesting = {
-            await manager.simulatePauseTransitionWindowForTesting(enqueue: pauseResult)
+
+        let rotateTask = Task { @MainActor in
+            await rotate(manager)
+        }
+        try await waitUntil(timeout: .seconds(5)) {
+            await MainActor.run {
+                manager.inFlightIntentForTesting == IntentSnapshot(kind: .rotate(.boundary), stopAudio: false)
+            }
         }
 
-        await manager.rotateSegmentForTesting()
-        manager.setPauseTransitionActiveForTesting(false)
+        // The deleted pause marker is now represented by a real queued terminal intent.
+        let pauseTask = Task { @MainActor in
+            await manager.enqueueTransition(.pause(reason: .lock, stopAudio: true))
+        }
+        try await waitUntil(timeout: .seconds(5)) {
+            await MainActor.run {
+                manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .pause(.lock), stopAudio: true))
+            }
+        }
 
+        finishGate.release()
+        let rotateOutcome = await rotateTask.value
+        let pauseOutcome = await pauseTask.value
+
+        guard case .vetoed = rotateOutcome else {
+            Issue.record("expected rotate to be vetoed by queued pause")
+            return
+        }
+        guard case .committed = pauseOutcome else {
+            Issue.record("expected queued pause to commit")
+            return
+        }
         #expect(newStartCount.count == 0)
         #expect(finalizer.enqueuedDirectories.all == [oldDir])
         #expect(manager.currentSegmentForTesting == nil)
-        #expect(manager.state.isRecording)
+        #expect(manager.state.isPaused)
+        #expect(manager.lastVetoReasonForTesting == .queuedTerminalIntent)
         #expect(manager.hasPendingRotationRetryForTesting == false)
         await recovery.waitForRecoverAll(1)
         #expect(try findDirs(root: root, suffix: ".failed").count == 1)
+    }
+
+    @Test func rotateSegmentSupersededByQueuedStopSettlesIdle() async throws {
+        let root = try makeTempDirectory("capture-rotation-stop-supersede")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "444444.incomplete")
+        let finishGate = OneShotContinuationGate()
+        let current = FakeCaptureSegment(
+            outputDirectory: oldDir,
+            finishBehaviors: [.normal(oldDir)],
+            finishGate: finishGate
+        )
+        let finalizer = FakeFinalizer()
+        let recovery = CountingRecovery()
+        let firstNow = fixedDate(second: 6)
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                FakeCaptureSegment(outputDirectory: outputDirectory)
+            },
+            recoveryCoordinator: IncompleteSegmentRecoveryCoordinator(recoveryFactory: { recovery }),
+            finalizer: finalizer,
+            now: { firstNow },
+            allowsEmptyDisplayConfigurationForTesting: true
+        )
+        manager.seedRecordingForTesting(currentSegment: current)
+
+        let rotateTask = Task { @MainActor in
+            await rotate(manager)
+        }
+        await current.finishCaptureCount.waitUntilCount(1)
+
+        let stopTask = Task { @MainActor in
+            await manager.enqueueTransition(.stop(reason: .user))
+        }
+        try await waitUntil(timeout: .seconds(5)) {
+            await MainActor.run {
+                manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .stop(.user), stopAudio: false))
+            }
+        }
+
+        finishGate.release()
+        let rotateOutcome = await rotateTask.value
+        let stopOutcome = await stopTask.value
+
+        guard case .vetoed = rotateOutcome else {
+            Issue.record("expected rotate to be vetoed by queued stop")
+            return
+        }
+        guard case .committed = stopOutcome else {
+            Issue.record("expected queued stop to commit")
+            return
+        }
+        #expect(manager.state.isIdle)
+        #expect(manager.currentSegmentForTesting == nil)
+        #expect(!manager.hasSegmentTimerForTesting)
+        #expect(!manager.hasPendingRotationRetryForTesting)
+        #expect(finalizer.enqueuedDirectories.all.filter { $0 == oldDir }.count <= 1)
+        #expect(manager.lastVetoReasonForTesting == .queuedTerminalIntent)
+        await recovery.waitForRecoverAll(1)
+        #expect(try findDirs(root: root, suffix: ".failed").count == 1)
+    }
+
+    @Test func debugRotateCoalescesBehindInFlightRotateAndUsesUpdatedDuration() async throws {
+        let root = try makeTempDirectory("capture-debug-rotate-coalesce")
+        defer {
+            SegmentWriter.segmentDuration = 300
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        SegmentWriter.segmentDuration = 300
+        let oldDir = try makeSegmentDir(root: root, name: "444445.incomplete")
+        let finishGate = OneShotContinuationGate()
+        let current = FakeCaptureSegment(
+            outputDirectory: oldDir,
+            finishBehaviors: [.normal(oldDir)],
+            finishGate: finishGate
+        )
+        let finalizer = FakeFinalizer()
+        let factoryCalls = LockedCounter()
+        let firstNow = fixedDate(second: 7)
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                factoryCalls.increment()
+                return FakeCaptureSegment(outputDirectory: outputDirectory)
+            },
+            finalizer: finalizer,
+            now: { firstNow },
+            allowsEmptyDisplayConfigurationForTesting: true
+        )
+        manager.seedRecordingForTesting(currentSegment: current)
+
+        let inFlightRotate = Task { @MainActor in
+            await rotate(manager)
+        }
+        await current.finishCaptureCount.waitUntilCount(1)
+
+        let queuedBoundary = Task { @MainActor in
+            await manager.enqueueTransition(.rotate(reason: .boundary))
+        }
+        try await waitUntil(timeout: .seconds(5)) {
+            await MainActor.run {
+                manager.queuedIntentSnapshotForTesting == [IntentSnapshot(kind: .rotate(.boundary), stopAudio: false)]
+            }
+        }
+
+        let debugToggle = Task { @MainActor in
+            await manager.setDebugSegments(true)
+        }
+        try await waitUntil(timeout: .seconds(5)) {
+            await MainActor.run {
+                manager.queuedIntentSnapshotForTesting == [IntentSnapshot(kind: .rotate(.debugToggle), stopAudio: false)]
+            }
+        }
+
+        finishGate.release()
+        let inFlightOutcome = await inFlightRotate.value
+        let queuedOutcome = await queuedBoundary.value
+        await debugToggle.value
+
+        guard case .committed = inFlightOutcome else {
+            Issue.record("expected in-flight rotate to commit")
+            return
+        }
+        guard case .committed = queuedOutcome else {
+            Issue.record("expected coalesced debug rotate to commit")
+            return
+        }
+        #expect(factoryCalls.count == 2)
+        #expect(SegmentWriter.segmentDuration == 60)
+        #expect(manager.segmentTimeRemaining <= 60)
+        #expect(manager.currentSegmentForTesting != nil)
+        #expect(finalizer.enqueuedDirectories.all.count >= 2)
     }
 
     @Test func heartbeatTickSchedulesRecovery() async throws {
@@ -209,10 +423,10 @@ struct CaptureManagerRotationWatchdogTests {
             allowsEmptyDisplayConfigurationForTesting: true
         )
 
-        try await manager.startRecording()
+        try await start(manager)
 
         await recovery.waitForRecoverAll(1)
-        await manager.stopRecording()
+        _ = await manager.enqueueTransition(.stop(reason: .user))
     }
 
     @Test func lifecycleResumeSchedulesRecovery() async throws {
@@ -234,7 +448,7 @@ struct CaptureManagerRotationWatchdogTests {
         manager.lifecycleCommitResume(trigger: "test")
 
         await recovery.waitForRecoverAll(1)
-        await manager.stopRecording()
+        _ = await manager.enqueueTransition(.stop(reason: .user))
     }
 
     @Test func startFailureClearsCurrentSegmentAndMarksNewDirectoryFailed() async throws {
@@ -260,7 +474,7 @@ struct CaptureManagerRotationWatchdogTests {
         )
         manager.seedRecordingForTesting(currentSegment: current)
 
-        await manager.rotateSegmentForTesting()
+        _ = await rotate(manager)
 
         #expect(manager.currentSegmentForTesting == nil)
         #expect(nextStartCount.count == 1)
@@ -300,8 +514,7 @@ struct CaptureManagerRotationWatchdogTests {
         )
         manager.seedRecordingForTesting(currentSegment: first)
 
-        await manager.rotateSegmentForTesting()
-        #expect(manager.isRotatingSegmentForTesting == false)
+        _ = await rotate(manager)
         await RemixQueue.shared.waitForCompletion()
         #expect(try findDirs(root: root, prefix: "333331_").count == 1)
         let cycle2 = try #require(cycle2Segment.current)
@@ -310,16 +523,14 @@ struct CaptureManagerRotationWatchdogTests {
         let cycle2TimePrefix = String(cycle2.outputDirectory.lastPathComponent.prefix(6))
 
         now.set(fixedDate(second: 1))
-        await manager.rotateSegmentForTesting()
-        #expect(manager.isRotatingSegmentForTesting == false)
+        _ = await rotate(manager)
         let currentAfterCycle2 = try #require(manager.currentSegmentForTesting)
         #expect(ObjectIdentifier(currentAfterCycle2) == ObjectIdentifier(cycle2))
         #expect(cycle2.finishCaptureCount.count == 1)
         await recovery.waitForRecoverAll(1)
 
         now.set(fixedDate(second: 2))
-        await manager.rotateSegmentForTesting()
-        #expect(manager.isRotatingSegmentForTesting == false)
+        _ = await rotate(manager)
         #expect(cycle2.finishCaptureCount.count == 2)
         await RemixQueue.shared.waitForCompletion()
         #expect(try findDirs(root: root, prefix: "\(cycle2TimePrefix)_").count == 1)
@@ -368,15 +579,20 @@ struct CaptureManagerRotationWatchdogTests {
         return calendar.date(from: components)!
     }
 
-    private func makeResult(for dir: URL) -> SegmentCaptureResult {
-        SegmentCaptureResult(
-            segmentDirectory: dir,
-            timePrefix: String(dir.lastPathComponent.prefix(6)),
-            captureStartTime: Date().addingTimeInterval(-1),
-            audioInputs: [],
-            debugKeepRejected: false,
-            silenceMusic: true,
-            micMetadataJSON: nil
+    private func start(_ manager: CaptureManager) async throws {
+        let executor = CaptureExecutor(
+            delegate: manager,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
         )
+        let outcome = await executor.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+        guard case .committed = outcome else {
+            Issue.record("expected start to commit")
+            return
+        }
+    }
+
+    private func rotate(_ manager: CaptureManager) async -> TransitionOutcome {
+        await manager.enqueueTransition(.rotate(reason: .boundary))
     }
 }

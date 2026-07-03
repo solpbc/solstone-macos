@@ -29,63 +29,52 @@ struct CaptureCoordinatorTests {
     }
 
     @Test func concurrentStartsEnterStartOperationOnce() async throws {
-        var callCount = 0
-        var continuation: CheckedContinuation<Void, Never>?
-        let (coordinator, root) = try makeCoordinator(startOperation: { _ in
-            callCount += 1
-            await withCheckedContinuation { pending in
-                continuation = pending
-            }
-        })
+        let harness = StartOperationHarness(gateStarts: true)
+        let (coordinator, root) = try makeCoordinator(startOperation: harness.operation)
         defer { try? FileManager.default.removeItem(at: root) }
 
         let first = Task { @MainActor in
             await coordinator.startRecording()
         }
-        for _ in 0..<100 where callCount == 0 {
-            await Task.yield()
-        }
-        #expect(callCount == 1)
+        await harness.waitForStartCount(1)
+        #expect(harness.startCount == 1)
 
         let second = Task { @MainActor in
             await coordinator.startRecording()
         }
-        for _ in 0..<10 {
-            await Task.yield()
+        try await waitUntil(timeout: .seconds(5)) {
+            await MainActor.run {
+                harness.queuedIntentSnapshot == [IntentSnapshot(kind: .start(.user), stopAudio: false)]
+            }
         }
 
-        #expect(callCount == 1)
-        let pending = try #require(continuation)
-        pending.resume()
+        #expect(harness.startCount == 1)
+        harness.releaseStart()
         await first.value
         await second.value
     }
 
     @Test func startLatchReleasesAfterSuccessAndThrow() async throws {
-        var successCount = 0
-        let (successCoordinator, successRoot) = try makeCoordinator(startOperation: { _ in
-            successCount += 1
-        })
+        let successHarness = StartOperationHarness()
+        let (successCoordinator, successRoot) = try makeCoordinator(startOperation: successHarness.operation)
         defer { try? FileManager.default.removeItem(at: successRoot) }
 
         await successCoordinator.startRecording()
+        successHarness.lifecycleCurrentState = .idle
         await successCoordinator.startRecording()
 
-        #expect(successCount == 2)
-
-        enum StartFailure: Error {
-            case failed
-        }
+        #expect(successHarness.startCount == 2)
 
         var throwCount = 0
         var bannerMessages: [String?] = []
         let (throwCoordinator, throwRoot) = try makeCoordinator(
             bannerSink: { bannerMessages.append($0) },
-            startOperation: { _ in
+            startOperation: { _, _ in
                 throwCount += 1
                 if throwCount == 1 {
-                    throw StartFailure.failed
+                    return .threw(TransitionFailure(message: "failed", isPermissionError: false))
                 }
+                return .committed
             }
         )
         defer { try? FileManager.default.removeItem(at: throwRoot) }
@@ -96,6 +85,23 @@ struct CaptureCoordinatorTests {
         #expect(throwCount == 2)
         #expect(throwCoordinator.captureError == UICopy.ERROR_START_OBSERVING)
         #expect(bannerMessages == [UICopy.ERROR_START_OBSERVING])
+    }
+
+    @Test func startPermissionFailureMapsToDeniedWithoutBanner() async throws {
+        var bannerMessages: [String?] = []
+        let (coordinator, root) = try makeCoordinator(
+            bannerSink: { bannerMessages.append($0) },
+            startOperation: { _, _ in
+                .threw(TransitionFailure(message: "permission denied", isPermissionError: true))
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        await coordinator.startRecording()
+
+        #expect(!coordinator.screenRecordingGranted)
+        #expect(coordinator.captureError == nil)
+        #expect(bannerMessages.isEmpty)
     }
 
     @Test func captureStateIngestionControlsPermissionPollingAndBanner() throws {
@@ -143,4 +149,92 @@ struct CaptureCoordinatorTests {
         )
         return (coordinator, root)
     }
+}
+
+@MainActor
+private final class StartOperationHarness: CaptureLifecycleDelegate {
+    var lifecycleCurrentState: CaptureManager.State = .idle
+
+    private let executor: CaptureExecutor
+    private let startGate: OneShotContinuationGate?
+    private let startCounter = LockedCounter()
+
+    init(gateStarts: Bool = false) {
+        self.startGate = gateStarts ? OneShotContinuationGate() : nil
+        self.executor = CaptureExecutor(
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+        executor.delegate = self
+    }
+
+    var startCount: Int {
+        startCounter.count
+    }
+
+    var queuedIntentSnapshot: [IntentSnapshot] {
+        executor.queuedIntentSnapshotForTesting
+    }
+
+    func waitForStartCount(_ target: Int) async {
+        await startCounter.waitUntilCount(target)
+    }
+
+    func releaseStart() {
+        startGate?.release()
+    }
+
+    func operation(reason: StartReason, config: CaptureCoordinator.MicUIDConfig) async -> TransitionOutcome {
+        await executor.enqueue(
+            .start(
+                reason: reason,
+                disabledMicUIDs: config.disabled,
+                enabledMicUIDs: config.enabled
+            )
+        )
+    }
+
+    func lifecycleStartCapture(
+        reason: StartReason,
+        disabledMicUIDs: Set<String>,
+        enabledMicUIDs: Set<String>,
+        shouldVetoCommit: @escaping @MainActor () -> Bool
+    ) async throws -> StartResult {
+        startCounter.increment()
+        await startGate?.wait()
+        lifecycleCurrentState = .recording
+        return .committed
+    }
+
+    func lifecycleStopCapture(reason: StopReason) async {
+        lifecycleCurrentState = .idle
+    }
+
+    func lifecycleRotateSegment(
+        reason: RotateReason,
+        shouldVetoCommit: @escaping @MainActor () -> Bool
+    ) async -> RotationResult {
+        .committed
+    }
+
+    func lifecyclePauseCapture(trigger: String, stopAudio: Bool) async -> URL? {
+        lifecycleCurrentState = .paused
+        return nil
+    }
+
+    func lifecyclePrepareResume(trigger: String) async throws {}
+
+    func lifecycleCommitResume(trigger: String) {
+        lifecycleCurrentState = .recording
+    }
+
+    func lifecycleAbortPreparedResume(trigger: String) async {
+        lifecycleCurrentState = .paused
+    }
+
+    func lifecycleTransitionToError(message: String, error: Error, trigger: String) {
+        lifecycleCurrentState = .error(message)
+    }
+
+    func lifecycleProcessSegment(_ url: URL, useSleepActivity: Bool) {}
 }
