@@ -12,6 +12,8 @@ final class FakeCaptureStream: CaptureStreamControlling, @unchecked Sendable {
     let updateCount = LockedCounter()
 
     private let lock = NSLock()
+    private let startError: Error?
+    private let addOutputError: Error?
     private var startGates: [OneShotContinuationGate]
     private var stopGates: [OneShotContinuationGate]
     private var updateGates: [OneShotContinuationGate]
@@ -19,8 +21,12 @@ final class FakeCaptureStream: CaptureStreamControlling, @unchecked Sendable {
     init(
         startGates: [OneShotContinuationGate] = [],
         stopGates: [OneShotContinuationGate] = [],
-        updateGates: [OneShotContinuationGate] = []
+        updateGates: [OneShotContinuationGate] = [],
+        startError: Error? = nil,
+        addOutputError: Error? = nil
     ) {
+        self.startError = startError
+        self.addOutputError = addOutputError
         self.startGates = startGates
         self.stopGates = stopGates
         self.updateGates = updateGates
@@ -32,11 +38,17 @@ final class FakeCaptureStream: CaptureStreamControlling, @unchecked Sendable {
         sampleHandlerQueue: DispatchQueue?
     ) throws {
         addStreamOutputCount.increment()
+        if let addOutputError {
+            throw addOutputError
+        }
     }
 
     func startCapture() async throws {
         startCount.increment()
         await popStartGate()?.wait()
+        if let startError {
+            throw startError
+        }
     }
 
     func stopCapture() async throws {

@@ -44,7 +44,7 @@ struct ScreenshotCapturerStreamGenerationFenceTests {
         let oldStream = FakeCaptureStream()
         let factory = FakeCaptureStreamFactory([oldStream, FakeCaptureStream()])
         let capturer = try makeScreenshotCapturer(root: root, factory: factory)
-        await capturer.start()
+        try await capturer.start()
 
         let parkGate = OneShotContinuationGate()
         let parkCount = LockedCounter()
@@ -110,7 +110,7 @@ struct ScreenshotCapturerStreamGenerationFenceTests {
         let staleStream = FakeCaptureStream()
         let factory = FakeCaptureStreamFactory([oldStream, newStream, staleStream])
         let capturer = try makeScreenshotCapturer(root: root, factory: factory)
-        await capturer.start()
+        try await capturer.start()
 
         let parkGate = OneShotContinuationGate()
         let parkCount = LockedCounter()
@@ -125,7 +125,7 @@ struct ScreenshotCapturerStreamGenerationFenceTests {
         await parkCount.waitUntilCount(1)
 
         await capturer.stop()
-        await capturer.start()
+        try await capturer.start()
         #expect(factory.createdStreams.count == 2)
 
         parkGate.release()
@@ -274,10 +274,14 @@ struct ScreenshotCapturerStreamGenerationFenceTests {
         let oldStream = FakeCaptureStream()
         let factory = FakeCaptureStreamFactory([oldStream, FakeCaptureStream()])
         let capturer = try makeScreenshotCapturer(root: root, factory: factory)
-        await capturer.start()
+        try await capturer.start()
 
         let parkGate = OneShotContinuationGate()
         let parkCount = LockedCounter()
+        let healthFailureCount = LockedCounter()
+        capturer.onHealthFailure = {
+            healthFailureCount.increment()
+        }
         capturer._restartParkHookForTesting = {
             parkCount.increment()
             await parkGate.wait()
@@ -297,6 +301,35 @@ struct ScreenshotCapturerStreamGenerationFenceTests {
         #expect(factory.createdStreams.count == 1)
         #expect(capturer._restartDecisionTraceForTesting.contains(suppressedTrace))
         #expect(capturer._restartDecisionTraceForTesting.filter { $0 == suppressedTrace }.count == 1)
+        #expect(healthFailureCount.count == 0)
+    }
+
+    @Test func screenshotRestartExhaustionFailsClosedAndEscalatesOnce() async throws {
+        let root = try makeTempDirectory("screenshot-restart-exhaustion")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let initialStream = FakeCaptureStream()
+        let firstFailure = FakeCaptureStream(startError: FakeCaptureError.startFailed)
+        let secondFailure = FakeCaptureStream(startError: FakeCaptureError.startFailed)
+        let thirdFailure = FakeCaptureStream(startError: FakeCaptureError.startFailed)
+        let factory = FakeCaptureStreamFactory([initialStream, firstFailure, secondFailure, thirdFailure])
+        let capturer = try makeScreenshotCapturer(root: root, factory: factory)
+        try await capturer.start()
+
+        capturer._restartParkHookForTesting = {}
+        let healthFailureCount = LockedCounter()
+        capturer.onHealthFailure = {
+            healthFailureCount.increment()
+        }
+
+        await capturer._restartStreamForTesting()
+
+        #expect(healthFailureCount.count == 1)
+        #expect(capturer._isRunningForTesting == false)
+        #expect(capturer._hasStreamForTesting == false)
+        #expect(capturer._isHealthCheckActiveForTesting == false)
+        #expect(capturer._restartDecisionTraceForTesting.filter { $0 == proceedingTrace }.count == 3)
+        #expect(factory.createdStreams.count == 4)
     }
 
     private func makeScreenshotCapturer(

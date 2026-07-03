@@ -37,10 +37,14 @@ public final class ScreenshotCapturer {
     internal private(set) var _restartDecisionTraceForTesting: [String] = []
     internal var _restartParkHookForTesting: (@MainActor () async -> Void)?
     internal var _streamGenerationForTesting: Int { streamGeneration }
+    internal var _isRunningForTesting: Bool { isRunning }
+    internal var _hasStreamForTesting: Bool { stream != nil }
+    internal var _isHealthCheckActiveForTesting: Bool { healthCheckTimer != nil }
 #endif
 
     private let healthCheckInterval: TimeInterval = 30.0
     private let maxEmptyChecks: Int = 2
+    private let maxRestartAttempts: Int = 3
 
     /// Creates a screenshot capturer for a single display
     /// - Parameters:
@@ -133,7 +137,7 @@ public final class ScreenshotCapturer {
     }
 
     /// Starts the persistent video capture stream
-    public func start() async {
+    public func start() async throws {
         streamGeneration += 1
         let gen = streamGeneration
 
@@ -179,9 +183,9 @@ public final class ScreenshotCapturer {
             Logger.capture.info("ScreenshotCapturer: Started persistent stream for display \(self.displayID, privacy: .public)")
         } catch {
             Logger.capture.error("ScreenshotCapturer: Failed to start stream for display \(self.displayID, privacy: .public): \(error, privacy: .public)")
-            if streamGeneration == gen {
-                isRunning = false
-            }
+            guard streamGeneration == gen else { return }
+            isRunning = false
+            throw error
         }
     }
 
@@ -334,7 +338,6 @@ public final class ScreenshotCapturer {
 
         if consecutiveEmptyChecks >= maxEmptyChecks {
             Logger.capture.error("ScreenshotCapturer: Health check failed for display \(self.displayID, privacy: .public), restarting stream")
-            onHealthFailure?()
             await restartStream()
         }
     }
@@ -355,60 +358,71 @@ public final class ScreenshotCapturer {
             return
         }
 
-        do {
-            try await restartBackoff()
-        } catch {
-            if verbose { Logger.capture.debug("ScreenshotCapturer: Restart sleep interrupted for display \(self.displayID, privacy: .public): \(error, privacy: .public)") }
-        }
-        guard streamGeneration == gen else {
-            Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
-            appendRestartSuppressedTraceForTesting()
-            return
-        }
+        var attempts = 0
+        while attempts < maxRestartAttempts {
+            attempts += 1
 
-        let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
-            Task { @MainActor in
-                self?.handleFrame(pixelBuffer, isIdle: isIdle)
-            }
-        }
+            do {
+                do {
+                    try await restartBackoff()
+                } catch {
+                    if verbose { Logger.capture.debug("ScreenshotCapturer: Restart sleep interrupted for display \(self.displayID, privacy: .public): \(error, privacy: .public)") }
+                }
+                guard streamGeneration == gen else {
+                    Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
+                    appendRestartSuppressedTraceForTesting()
+                    return
+                }
 
-        let delegate = StreamDelegate { [weak self] error in
-            Task { @MainActor in
-                self?.handleStreamError(error)
-            }
-        }
+                let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
+                    Task { @MainActor in
+                        self?.handleFrame(pixelBuffer, isIdle: isIdle)
+                    }
+                }
 
-        do {
-            guard streamGeneration == gen else {
-                Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
-                appendRestartSuppressedTraceForTesting()
+                let delegate = StreamDelegate { [weak self] error in
+                    Task { @MainActor in
+                        self?.handleStreamError(error)
+                    }
+                }
+
+                guard streamGeneration == gen else {
+                    Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
+                    appendRestartSuppressedTraceForTesting()
+                    return
+                }
+                appendRestartProceedTraceForTesting()
+                let newStream = streamFactory(contentFilter, configuration, delegate)
+                try newStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
+                try await newStream.startCapture()
+                guard streamGeneration == gen else {
+                    Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
+                    appendRestartSuppressedTraceForTesting()
+                    try? await newStream.stopCapture()
+                    return
+                }
+                self.streamOutput = output
+                self.streamDelegate = delegate
+                self.stream = newStream
+                self.firstFrameLogged = false
+                self.streamStartTime = Date()
+                self.consecutiveEmptyChecks = 0
+                self.healthCheckFrameCount = 0
+                Logger.capture.info("ScreenshotCapturer: Stream restarted successfully for display \(self.displayID, privacy: .public)")
                 return
-            }
-            appendRestartProceedTraceForTesting()
-            let newStream = streamFactory(contentFilter, configuration, delegate)
-            try newStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
-            try await newStream.startCapture()
-            guard streamGeneration == gen else {
-                Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
-                appendRestartSuppressedTraceForTesting()
-                try? await newStream.stopCapture()
-                return
-            }
-            self.streamOutput = output
-            self.streamDelegate = delegate
-            self.stream = newStream
-            self.firstFrameLogged = false
-            self.streamStartTime = Date()
-            self.consecutiveEmptyChecks = 0
-            self.healthCheckFrameCount = 0
-            Logger.capture.info("ScreenshotCapturer: Stream restarted successfully for display \(self.displayID, privacy: .public)")
-        } catch {
-            Logger.capture.error("ScreenshotCapturer: Failed to restart stream for display \(self.displayID, privacy: .public): \(error, privacy: .public)")
-            if isPermissionError(error) {
-                Logger.capture.info("ScreenshotCapturer: Permission error, stopping health check for display \(self.displayID, privacy: .public)")
-                stopHealthCheck()
+            } catch {
+                if isPermissionError(error) {
+                    stopHealthCheck()
+                    return
+                }
+                Logger.capture.error("ScreenshotCapturer: Failed restart attempt \(attempts, privacy: .public)/\(self.maxRestartAttempts, privacy: .public) for display \(self.displayID, privacy: .public): \(error, privacy: .public)")
             }
         }
+
+        Logger.capture.error("ScreenshotCapturer: terminal capture failure for display \(self.displayID, privacy: .public) - restart policy exhausted")
+        onHealthFailure?()
+        isRunning = false
+        stopHealthCheck()
     }
 
     private func handleStreamError(_ error: Error) {
@@ -422,7 +436,6 @@ public final class ScreenshotCapturer {
             return
         }
 
-        onHealthFailure?()
         Task { @MainActor [weak self] in
             await self?.restartStream()
         }

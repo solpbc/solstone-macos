@@ -19,6 +19,7 @@ public final class VideoWriter: @unchecked Sendable {
     private var captureStartTime: CMTime?
     private var lastPresentationTime: CMTime?
     private var frameCount: Int = 0
+    private var startFailed = false
     private var lock = NSLock()
 
     /// Creates a video writer instance
@@ -131,10 +132,24 @@ public final class VideoWriter: @unchecked Sendable {
         if !started {
             started = true
             captureStartTime = pts
-            writer.startWriting()
-            writer.startSession(atSourceTime: pts)
+            guard writer.startWriting() else {
+                Logger.capture.error("VideoWriter: startWriting failed for \(self.writer.outputURL.path, privacy: .public), status=\(self.writer.status.rawValue, privacy: .public), error=\(String(describing: self.writer.error), privacy: .public)")
+                startFailed = true
+                return
+            }
+            do {
+                try ObjCExceptionCatcher.`try` {
+                    writer.startSession(atSourceTime: pts)
+                }
+            } catch {
+                Logger.capture.error("VideoWriter: startSession threw for \(self.writer.outputURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                startFailed = true
+                return
+            }
             Logger.capture.info("Started video recording to \(self.writer.outputURL.path, privacy: .public)")
         }
+
+        guard !startFailed else { return }
 
         // Check duration limit if specified
         if let duration = captureDuration, let startTime = captureStartTime {
@@ -178,7 +193,13 @@ public final class VideoWriter: @unchecked Sendable {
         lock.lock()
         let shouldFinish = started
         let finalFrameCount = frameCount
+        let didStartFail = startFailed
         lock.unlock()
+
+        if didStartFail {
+            completion(.failure(NSError(domain: "VideoWriter", code: -5, userInfo: [NSLocalizedDescriptionKey: "Video writer failed to start (first-frame session start failed)"])))
+            return
+        }
 
         guard shouldFinish else {
             completion(.failure(NSError(domain: "VideoWriter", code: -2, userInfo: [NSLocalizedDescriptionKey: "No frames written"])))
