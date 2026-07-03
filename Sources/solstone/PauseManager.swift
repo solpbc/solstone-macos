@@ -3,6 +3,16 @@
 
 import Foundation
 
+/// A handle to an armed pause-expiry timer that can be invalidated on resume.
+public protocol PauseExpiryTimer: AnyObject {
+    func invalidate()
+}
+
+extension Timer: PauseExpiryTimer {}
+
+/// Arms a one-shot expiry timer; returns a handle the manager invalidates on resume.
+public typealias PauseExpiryScheduler = (_ interval: TimeInterval, _ onExpire: @escaping @Sendable @MainActor () -> Void) -> PauseExpiryTimer
+
 /// Manages user-initiated pause state for capture
 @MainActor
 @Observable
@@ -53,15 +63,25 @@ public final class PauseManager {
 
     // MARK: - Timers
 
-    private var pauseTimer: Timer?
+    private var pauseTimer: (any PauseExpiryTimer)?
     private var uiRefreshTimer: Timer?
+    private let expiryScheduler: PauseExpiryScheduler
 
     /// Triggers UI refresh for time remaining display (incremented every second when paused)
     public private(set) var refreshTick: Int = 0
 
     // MARK: - Public Methods
 
-    public init() {}
+    public init(
+        expiryScheduler: @escaping PauseExpiryScheduler = { interval, onExpire in
+            let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { _ in
+                Task { @MainActor in onExpire() }
+            }
+            return timer
+        }
+    ) {
+        self.expiryScheduler = expiryScheduler
+    }
 
     /// Pause capture for a specified duration
     public func pause(for duration: PauseDuration) {
@@ -182,11 +202,11 @@ public final class PauseManager {
         }
 
         pauseTimer?.invalidate()
-        pauseTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.resume()
-            }
+        pauseTimer = expiryScheduler(interval) { [weak self] in
+            self?.resume()
         }
     }
+
+    var expirySchedulerForTesting: PauseExpiryScheduler { expiryScheduler }
 
 }

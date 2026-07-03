@@ -34,4 +34,11 @@ struct TimeoutInjectionDefaultsTests {
         #expect(observed >= before)
         #expect(observed <= after)
     }
+
+    @Test func pauseManagerDefaultSchedulerArmsRealTimer() {
+        let manager = PauseManager()
+        let timer = manager.expirySchedulerForTesting(3600) { }
+        #expect(timer is Timer)
+        timer.invalidate()
+    }
 }

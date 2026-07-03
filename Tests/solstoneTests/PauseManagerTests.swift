@@ -5,6 +5,27 @@ import Foundation
 import Testing
 @testable import solstone
 
+@MainActor
+final class FakePauseExpiryScheduler {
+    private var onExpire: (@MainActor @Sendable () -> Void)?
+
+    var scheduler: PauseExpiryScheduler {
+        { [weak self] _, onExpire in
+            self?.onExpire = onExpire
+            return FakePauseExpiryTimer { [weak self] in self?.onExpire = nil }
+        }
+    }
+
+    /// Deterministically fire the armed expiry.
+    func fire() { onExpire?() }
+}
+
+final class FakePauseExpiryTimer: PauseExpiryTimer {
+    private let onInvalidate: () -> Void
+    init(onInvalidate: @escaping () -> Void) { self.onInvalidate = onInvalidate }
+    func invalidate() { onInvalidate() }
+}
+
 @Suite("PauseManager")
 @MainActor
 struct PauseManagerTests {
@@ -59,7 +80,8 @@ struct PauseManagerTests {
     }
 
     @Test func timedPauseAutoResumesAtExpiry() async throws {
-        let manager = PauseManager()
+        let scheduler = FakePauseExpiryScheduler()
+        let manager = PauseManager(expiryScheduler: scheduler.scheduler)
         let pauseCallbackCount = LockedCounter()
         let resumeCallbackCount = LockedCounter()
         manager.onPause = {
@@ -70,6 +92,7 @@ struct PauseManagerTests {
         }
 
         manager.pause(for: .seconds(1))
+        scheduler.fire()
 
         try await withTimeout(seconds: 3) {
             await resumeCallbackCount.waitUntilCount(1)
