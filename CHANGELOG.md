@@ -5,10 +5,20 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.30] - 2026-07-03
+
+### Changed
+- your pairing to your journal now carries over across app updates without a keychain prompt. previously, each update could ask for keychain permission again before solstone could reach your saved pairing.
+- while an update downloads in the background, solstone now shows real progress, instead of a screen that could look stuck.
+updated the bundled solstone journal to 0.6.22 →
+
+### Fixed
+- an update downloading in the background no longer stops solstone from observing along with you. previously it could go quiet until you reopened the app; now it keeps observing through the download and only pauses as the update installs.
+- solstone now quits promptly. previously, if it was finishing saving the latest stretch of what it observed with you, closing the app could take up to half a minute.
+- if solstone can't read your saved pairing when it starts, it now shows a clear error and a retry button. previously that could leave it looking like it was simply not paired, with no sign that anything had gone wrong.
 
 ### Removed
-- removed the sol-mac CLI, its auto-installed `~/.local/bin/sol-mac` symlink, and the app's IPC socket.
+- the sol-mac command-line tool is no longer part of solstone. pairing, connecting to your journal, and setup checks now all live in the app itself, in settings and the menu.
 
 ## [1.3.29] - 2026-07-02
 
