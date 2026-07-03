@@ -15,7 +15,7 @@ extension SCDisplay: DisplayIDProvider {}
 final class WindowExclusionManager {
     private var windowExclusionDetector: WindowExclusionDetector?
     private var windowExclusionTimer: Timer?
-    private var currentExcludedWindowIDs: Set<CGWindowID> = []
+    var currentExcludedWindowIDs: Set<CGWindowID> = []
     private var isStreamReady: Bool = false
     nonisolated(unsafe) private var activateObserver: NSObjectProtocol?
     nonisolated(unsafe) private var deactivateObserver: NSObjectProtocol?
@@ -127,6 +127,21 @@ final class WindowExclusionManager {
         Set(displays.map(\.displayID))
     }
 
+    /// Commits `newIDs` as the excluded set only if the filter update succeeds.
+    /// A failed `apply` leaves `currentExcludedWindowIDs` unchanged so the next
+    /// timer tick re-attempts — the manager never reports windows hidden that the
+    /// stream is still capturing. The no-change guard lives here so a non-committed
+    /// set correctly re-runs `apply` on the following tick.
+    func reconcile(newIDs: Set<CGWindowID>, apply: () async throws -> Void) async {
+        guard newIDs != currentExcludedWindowIDs else { return }
+        do {
+            try await apply()
+            currentExcludedWindowIDs = newIDs
+        } catch {
+            Logger.capture.warning("Failed to update content filter: \(error, privacy: .public)")
+        }
+    }
+
     /// Starts a timer to periodically check for window exclusions
     private func startWindowExclusionTimer() {
         windowExclusionTimer?.invalidate()
@@ -151,24 +166,16 @@ final class WindowExclusionManager {
         let excludedWindows = await detector.detectExcludedWindows()
         let newExcludedIDs = Set(excludedWindows.map { $0.windowID })
 
-        // Only update if exclusions changed
-        guard newExcludedIDs != currentExcludedWindowIDs else { return }
-
-        currentExcludedWindowIDs = newExcludedIDs
-
-        let filters = Dictionary(
-            uniqueKeysWithValues: displays.map { display in
-                (display.displayID, SCContentFilter(display: display, excludingWindows: excludedWindows))
-            }
-        )
-
-        do {
+        await reconcile(newIDs: newExcludedIDs) { [self] in
+            let filters = Dictionary(
+                uniqueKeysWithValues: displays.map { display in
+                    (display.displayID, SCContentFilter(display: display, excludingWindows: excludedWindows))
+                }
+            )
             try await onFiltersChanged?(filters)
-            if !excludedWindows.isEmpty {
-                if verbose { Logger.capture.debug("Updated filter to exclude \(excludedWindows.count, privacy: .public) window(s)") }
+            if !excludedWindows.isEmpty, verbose {
+                Logger.capture.debug("Updated filter to exclude \(excludedWindows.count, privacy: .public) window(s)")
             }
-        } catch {
-            Logger.capture.warning("Failed to update content filter: \(error, privacy: .public)")
         }
     }
 }
