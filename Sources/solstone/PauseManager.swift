@@ -124,7 +124,7 @@ public final class PauseManager {
 
     /// Clear any persisted pause state from previous sessions.
     /// Pause only applies to the running instance — on restart we always start fresh.
-    public func restorePauseState() {
+    public func clearPersistedPauseState() {
         let defaults = UserDefaults.standard
 
         defaults.removeObject(forKey: "audioMuteExpiration")

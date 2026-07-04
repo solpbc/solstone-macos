@@ -95,7 +95,7 @@ public final class CaptureCoordinator {
             _ = await self?.captureManager.enqueueTransition(.resume(reason: .user))
         }
 
-        pauseManager.restorePauseState()
+        pauseManager.clearPersistedPauseState()
         startPermissionPolling()
     }
 
