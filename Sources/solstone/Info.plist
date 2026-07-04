@@ -36,13 +36,13 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>sol connects to your journal on your local network so it can send your memories there.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>sol hears conversations and meetings so you can find them later. audio stays on your device and goes only to your journal.</string>
+	<string>sol hears what you hear — conversations and meetings — so you can find them later. audio stays on your Mac and goes only to your journal.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>sol takes in your screens along with you to build your personal memory. what it sees stays on your mac and goes only to your journal — nothing else.</string>
+	<string>sol takes in what's on your screen along with you to build your personal memory. it stays on your Mac and goes only to your journal — nothing else.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>sol uses on-device speech recognition to identify audio containing conversation, so only meaningful audio is kept.</string>
 	<key>NSSystemAudioRecordingUsageDescription</key>
-	<string>sol hears system audio from calls and media to include it in your memory. this requires system audio permission.</string>
+	<string>sol takes in system audio from calls and media to include it in your memory. this requires system audio permission.</string>
 	<key>SUAllowsAutomaticUpdates</key>
 	<true/>
 	<key>SUAutomaticallyUpdate</key>
