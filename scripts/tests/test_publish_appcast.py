@@ -94,6 +94,78 @@ class PreflightWranglerTest(unittest.TestCase):
         self._assert_dies(missing)
 
 
+class PreflightR2Test(unittest.TestCase):
+    def fake_modules(self, fake_client):
+        class FakeConfig:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        fake_boto3 = types.ModuleType("boto3")
+        fake_boto3.client = fake_client
+        fake_config_module = types.ModuleType("botocore.config")
+        fake_config_module.Config = FakeConfig
+        fake_botocore = types.ModuleType("botocore")
+        fake_botocore.config = fake_config_module
+        return {
+            "boto3": fake_boto3,
+            "botocore": fake_botocore,
+            "botocore.config": fake_config_module,
+        }
+
+    def test_preflight_r2_lists_bucket_with_upload_client_kwargs(self):
+        module = load_publish_appcast()
+        client_calls = []
+        list_calls = []
+
+        class FakeClient:
+            def list_objects_v2(self, **kwargs):
+                list_calls.append(kwargs)
+                return {}
+
+        def fake_client(service, **kwargs):
+            client_calls.append((service, kwargs))
+            return FakeClient()
+
+        with mock.patch.dict(sys.modules, self.fake_modules(fake_client)), \
+             mock.patch.object(module, "load_r2_credentials", return_value={
+                 "endpoint": "https://r2.example",
+                 "access_key_id": "access",
+                 "secret_access_key": "secret",
+             }):
+            module.preflight_r2()
+
+        self.assertEqual(len(client_calls), 1)
+        service, kwargs = client_calls[0]
+        self.assertEqual(service, "s3")
+        self.assertEqual(kwargs["endpoint_url"], "https://r2.example")
+        self.assertEqual(kwargs["aws_access_key_id"], "access")
+        self.assertEqual(kwargs["aws_secret_access_key"], "secret")
+        self.assertEqual(kwargs["region_name"], "auto")
+        self.assertEqual(kwargs["config"].kwargs, {"signature_version": "s3v4"})
+        self.assertEqual(list_calls, [{"Bucket": module.R2_BUCKET, "MaxKeys": 1}])
+
+    def test_preflight_r2_client_error_dies(self):
+        module = load_publish_appcast()
+
+        class FakeClient:
+            def list_objects_v2(self, **kwargs):
+                raise RuntimeError("denied")
+
+        def fake_client(service, **kwargs):
+            return FakeClient()
+
+        with mock.patch.dict(sys.modules, self.fake_modules(fake_client)), \
+             mock.patch.object(module, "load_r2_credentials", return_value={
+                 "endpoint": "https://r2.example",
+                 "access_key_id": "access",
+                 "secret_access_key": "secret",
+             }):
+            with self.assertRaises(SystemExit) as ctx:
+                module.preflight_r2()
+
+        self.assertEqual(ctx.exception.code, 1)
+
+
 class UploadRoutingTest(unittest.TestCase):
     def test_small_upload_uses_wrangler(self):
         module = load_publish_appcast()
@@ -134,6 +206,7 @@ class Appcast404Test(unittest.TestCase):
 
         with mock.patch.object(sys, "argv", ["publish-appcast.py", "1.3.31"]), \
              mock.patch.object(module, "preflight_wrangler"), \
+             mock.patch.object(module, "preflight_r2"), \
              mock.patch.object(module, "load_private_key", return_value=object()), \
              mock.patch.object(module, "sign_dmg", return_value=("signature", 123)), \
              mock.patch.object(module, "read_info_plist", return_value=31), \
@@ -156,6 +229,7 @@ class Appcast404Test(unittest.TestCase):
 
         with mock.patch.object(sys, "argv", ["publish-appcast.py", "1.3.31", "--first-publish"]), \
              mock.patch.object(module, "preflight_wrangler"), \
+             mock.patch.object(module, "preflight_r2"), \
              mock.patch.object(module, "load_private_key", return_value=object()), \
              mock.patch.object(module, "sign_dmg", return_value=("signature", 123)), \
              mock.patch.object(module, "read_info_plist", return_value=31), \

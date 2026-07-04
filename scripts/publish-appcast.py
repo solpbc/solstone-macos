@@ -202,6 +202,28 @@ def load_r2_credentials() -> dict[str, str]:
         die(f"{path}: missing R2 credential fields: {', '.join(missing)}")
     return {key: str(raw[key]) for key in required}
 
+def preflight_r2() -> None:
+    """Fail fast if the R2-S3 credential path used for large DMG uploads is broken."""
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError as exc:
+        die(f"boto3/botocore unavailable for R2 preflight: {exc}")
+
+    creds = load_r2_credentials()
+    try:
+        client = boto3.client(
+            "s3",
+            endpoint_url=creds["endpoint"],
+            aws_access_key_id=creds["access_key_id"],
+            aws_secret_access_key=creds["secret_access_key"],
+            region_name="auto",
+            config=Config(signature_version="s3v4"),
+        )
+        client.list_objects_v2(Bucket=R2_BUCKET, MaxKeys=1)
+    except Exception as exc:
+        die(f"R2 credential preflight failed for bucket {R2_BUCKET}: {exc}")
+
 def upload_r2_s3(local_path: str, r2_key: str, content_type: str) -> None:
     try:
         import boto3
@@ -268,6 +290,7 @@ def main() -> None:
     parser.add_argument("--first-publish", action="store_true", help="Seed a new appcast feed if none exists")
     args = parser.parse_args()
     preflight_wrangler()  # catch degraded wrangler auth before signing/uploading anything
+    preflight_r2()  # catch broken R2-S3 credentials before signing/uploading large DMGs
     prefix = STAGING_PREFIX if args.staging else PROD_PREFIX
     key_path = os.environ.get("SOLSTONE_SPARKLE_KEY_PATH", DEFAULT_KEY_PATH)
     dmg_name = f"solstone-{args.version}.dmg"
