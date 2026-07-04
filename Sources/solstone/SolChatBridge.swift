@@ -189,6 +189,7 @@ public actor SolChatBridge {
     private let resolver: HomeBaseURLResolver
 
     private var task: Task<Void, Never>?
+    private var subscribeGeneration = 0
     private var watchdog: Task<Void, Never>?
     private var currentKey: String?
     private var lastAuthStatus: Int?
@@ -262,9 +263,7 @@ public actor SolChatBridge {
         watchdog = Task { [weak self] in
             await self?.watchdogLoop()
         }
-        task = Task { [weak self] in
-            await self?.subscribeLoop(serverKey: serverKey)
-        }
+        launchSubscribeTask(serverKey: serverKey)
     }
 
     public func stop() async {
@@ -447,10 +446,44 @@ public actor SolChatBridge {
                 continue
             }
 
+            let staleSubscribeGeneration = subscribeGeneration
             staleFlag = true
             Logger.callosum.info("Callosum heartbeat stale")
             await setStale(true)
+            await relaunchStaleSubscribeTask(expectedGeneration: staleSubscribeGeneration)
         }
+    }
+
+    private func launchSubscribeTask(serverKey: String) {
+        subscribeGeneration &+= 1
+        task = Task { [weak self] in
+            await self?.subscribeLoop(serverKey: serverKey)
+        }
+    }
+
+    private func relaunchStaleSubscribeTask(expectedGeneration: Int) async {
+        guard staleFlag,
+              let serverKey = currentKey,
+              let pendingTask = task,
+              subscribeGeneration == expectedGeneration
+        else {
+            return
+        }
+
+        pendingTask.cancel()
+        task = nil
+        await pendingTask.value
+
+        guard currentKey == serverKey,
+              staleFlag,
+              task == nil,
+              subscribeGeneration == expectedGeneration
+        else {
+            return
+        }
+
+        Logger.callosum.info("Callosum stale subscription relaunching")
+        launchSubscribeTask(serverKey: serverKey)
     }
 
     private func publishMostRecentPending() async {
@@ -470,6 +503,7 @@ public actor SolChatBridge {
         pendingTask?.cancel()
         pendingWatchdog?.cancel()
         task = nil
+        subscribeGeneration &+= 1
         watchdog = nil
 
         if clearConnection {

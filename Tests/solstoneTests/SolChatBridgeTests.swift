@@ -11,23 +11,38 @@ private final class SolChatURLProtocolStore: @unchecked Sendable {
         var statusCode: Int
         var data: Data
         var error: URLError?
+        var finishes: Bool
     }
 
     private let lock = NSLock()
     private var responses: [Response] = []
+    private var stopLoadingEvents = 0
     private(set) var requests: [URLRequest] = []
     private(set) var requestBodies: [String?] = []
+
+    var requestCount: Int {
+        lock.withLock {
+            requests.count
+        }
+    }
+
+    var stopLoadingCount: Int {
+        lock.withLock {
+            stopLoadingEvents
+        }
+    }
 
     func reset() {
         lock.withLock {
             responses.removeAll()
+            stopLoadingEvents = 0
             requests.removeAll()
             requestBodies.removeAll()
         }
     }
 
-    func enqueue(statusCode: Int = 200, body: String = "", error: URLError? = nil) {
-        let response = Response(statusCode: statusCode, data: Data(body.utf8), error: error)
+    func enqueue(statusCode: Int = 200, body: String = "", error: URLError? = nil, finishes: Bool = true) {
+        let response = Response(statusCode: statusCode, data: Data(body.utf8), error: error, finishes: finishes)
         lock.withLock {
             responses.append(response)
         }
@@ -38,9 +53,15 @@ private final class SolChatURLProtocolStore: @unchecked Sendable {
             requests.append(request)
             requestBodies.append(Self.bodyString(from: request))
             if responses.isEmpty {
-                return Response(statusCode: 500, data: Data(), error: URLError(.badServerResponse))
+                return Response(statusCode: 500, data: Data(), error: URLError(.badServerResponse), finishes: true)
             }
             return responses.removeFirst()
+        }
+    }
+
+    func recordStopLoading() {
+        lock.withLock {
+            stopLoadingEvents += 1
         }
     }
 
@@ -88,10 +109,14 @@ private final class SolChatURLProtocol: URLProtocol {
         if !next.data.isEmpty {
             client?.urlProtocol(self, didLoad: next.data)
         }
-        client?.urlProtocolDidFinishLoading(self)
+        if next.finishes {
+            client?.urlProtocolDidFinishLoading(self)
+        }
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        Self.store.recordStopLoading()
+    }
 }
 
 private actor SolChatTestNotifier: SolChatNotifying {
@@ -458,6 +483,54 @@ struct SolChatBridgeTests {
 
         #expect(state.staleValues.contains(true))
         #expect(state.staleValues.contains(false))
+    }
+
+    @Test func staleWatchdogRelaunchesWedgedSubscriptionOncePerEpisode() async {
+        SolChatURLProtocol.store.reset()
+        SolChatURLProtocol.store.enqueue(body: "", finishes: false)
+        SolChatURLProtocol.store.enqueue(body: ": heartbeat\n", finishes: false)
+        SolChatURLProtocol.store.enqueue(body: "", finishes: false)
+        let state = SolChatStateBox()
+        let bridge = makeBridge(
+            state: state,
+            staleThresholdSeconds: 0.03,
+            watchdogIntervalSeconds: 0.01,
+            backoffSeconds: [0.01]
+        )
+
+        await bridge.configure(serverKey: "secret")
+        try? await waitUntil(timeout: .seconds(2)) {
+            let requestCount = SolChatURLProtocol.store.requestCount
+            let stopLoadingCount = SolChatURLProtocol.store.stopLoadingCount
+            let staleValues = await MainActor.run { state.staleValues }
+            return requestCount >= 2
+                && stopLoadingCount >= 1
+                && staleValues.contains(true)
+        }
+        try? await waitUntil(timeout: .seconds(2)) {
+            let requestCount = SolChatURLProtocol.store.requestCount
+            let stopLoadingCount = SolChatURLProtocol.store.stopLoadingCount
+            let staleValues = await MainActor.run { state.staleValues }
+            return requestCount >= 3
+                && stopLoadingCount >= 2
+                && staleValues.contains(false)
+                && staleValues.filter { $0 }.count >= 2
+        }
+        let requestCountAfterSecondEpisode = SolChatURLProtocol.store.requestCount
+        let stopLoadingCountAfterSecondEpisode = SolChatURLProtocol.store.stopLoadingCount
+        try? await Task.sleep(for: .milliseconds(120))
+        let boundedRequestCount = SolChatURLProtocol.store.requestCount
+        let boundedStopLoadingCount = SolChatURLProtocol.store.stopLoadingCount
+        let staleValues = state.staleValues
+        await bridge.stop()
+
+        #expect(requestCountAfterSecondEpisode == 3)
+        #expect(stopLoadingCountAfterSecondEpisode == 2)
+        #expect(boundedRequestCount == requestCountAfterSecondEpisode)
+        #expect(boundedStopLoadingCount == stopLoadingCountAfterSecondEpisode)
+        #expect(staleValues.contains(true))
+        #expect(staleValues.contains(false))
+        #expect(staleValues.filter { $0 }.count == 2)
     }
 
     @Test func reconnectTransportErrorUsesBackoffSequence() async {
