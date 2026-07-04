@@ -280,9 +280,6 @@ updated the bundled solstone journal to 0.6.17 →
 - some of sol's background work running through google could fail silently on the default configuration. a request-budget calculation was landing one over the supported maximum, rejecting every call; the calculation is corrected.
 - sidebar labels for apps like "transcripts," "activities," and "settings" no longer truncate when the sidebar is expanded.
 
-
-## [Unreleased]
-
 ## [1.3.2] - 2026-05-26
 
 ### Fixed
