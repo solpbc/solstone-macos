@@ -2,7 +2,7 @@
 
 solstone observer redistributes the following third-party software. license texts are reproduced verbatim from upstream.
 
-note: sparkle / swift-crypto versions below are the manifest `from:` floors in `Package.swift`. `Package.resolved` is intentionally gitignored, so exact resolved versions vary per build host.
+note: sparkle / swift-crypto resolved versions are recorded in the committed `Package.resolved`, so dependency builds are deterministic across hosts. dependency updates are deliberate commits that regenerate and commit `Package.resolved`.
 
 ---
 
