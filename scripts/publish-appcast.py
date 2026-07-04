@@ -265,6 +265,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Publish a Sparkle 2 appcast release.")
     parser.add_argument("version", help='CFBundleShortVersionString, e.g. "1.1.0"')
     parser.add_argument("--staging", action="store_true", help="Publish to the staging feed")
+    parser.add_argument("--first-publish", action="store_true", help="Seed a new appcast feed if none exists")
     args = parser.parse_args()
     preflight_wrangler()  # catch degraded wrangler auth before signing/uploading anything
     prefix = STAGING_PREFIX if args.staging else PROD_PREFIX
@@ -281,6 +282,8 @@ def main() -> None:
     notes = extract_release_notes(args.version)
     tree = fetch_appcast(appcast_url)
     if tree is None:
+        if not args.first_publish:
+            die(f"{appcast_url}: appcast not found (HTTP 404); pass --first-publish only when intentionally creating a new feed")
         tree = seed_appcast(prefix)
     item = build_item(args.version, bundle_version, signature, length, enclosure_url, notes)
     merge_item(tree, item, bundle_version)

@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import pathlib
+import sys
 import tempfile
 import types
 import unittest
@@ -122,6 +123,51 @@ class UploadRoutingTest(unittest.TestCase):
 
         self.assertFalse(run.called)
         s3.assert_called_once_with(tmp.name, "path/object.dmg", "application/x-apple-diskimage")
+
+
+class Appcast404Test(unittest.TestCase):
+    def test_404_without_first_publish_dies(self):
+        module = load_publish_appcast()
+
+        def fake_run(cmd, **kwargs):
+            return types.SimpleNamespace(returncode=0, stdout="404", stderr="")
+
+        with mock.patch.object(sys, "argv", ["publish-appcast.py", "1.3.31"]), \
+             mock.patch.object(module, "preflight_wrangler"), \
+             mock.patch.object(module, "load_private_key", return_value=object()), \
+             mock.patch.object(module, "sign_dmg", return_value=("signature", 123)), \
+             mock.patch.object(module, "read_info_plist", return_value=31), \
+             mock.patch.object(module, "extract_release_notes", return_value="notes"), \
+             mock.patch.object(module, "run", fake_run), \
+             mock.patch.object(module, "seed_appcast", wraps=module.seed_appcast) as seed, \
+             mock.patch.object(module, "upload") as upload:
+            with self.assertRaises(SystemExit) as ctx:
+                module.main()
+
+        self.assertEqual(ctx.exception.code, 1)
+        seed.assert_not_called()
+        upload.assert_not_called()
+
+    def test_404_with_first_publish_seeds(self):
+        module = load_publish_appcast()
+
+        def fake_run(cmd, **kwargs):
+            return types.SimpleNamespace(returncode=0, stdout="404", stderr="")
+
+        with mock.patch.object(sys, "argv", ["publish-appcast.py", "1.3.31", "--first-publish"]), \
+             mock.patch.object(module, "preflight_wrangler"), \
+             mock.patch.object(module, "load_private_key", return_value=object()), \
+             mock.patch.object(module, "sign_dmg", return_value=("signature", 123)), \
+             mock.patch.object(module, "read_info_plist", return_value=31), \
+             mock.patch.object(module, "extract_release_notes", return_value="notes"), \
+             mock.patch.object(module, "run", fake_run), \
+             mock.patch.object(module, "seed_appcast", wraps=module.seed_appcast) as seed, \
+             mock.patch.object(module, "upload") as upload, \
+             mock.patch.object(module, "head_check"):
+            module.main()
+
+        seed.assert_called_once_with(module.PROD_PREFIX)
+        self.assertEqual(upload.call_count, 2)
 
 
 if __name__ == "__main__":
