@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from email.utils import format_datetime
 from typing import NoReturn, Optional, Tuple
 
-R2_BUCKET = "solstone-updates"  # TODO-VPE: confirm this matches the real Cloudflare R2 bucket.
+R2_BUCKET = "solstone-updates"
 BASE_URL = "https://updates.solstone.app"
 PROD_PREFIX = "solstone-macos"
 STAGING_PREFIX = "solstone-macos/_staging"
