@@ -39,21 +39,6 @@ struct ReleaseNotesViewModel {
         }
     }
 
-    static func containsOnlySupportedPresentationIntents(markdown: String) -> Bool {
-        guard let attributed = try? AttributedString(markdown: markdown) else {
-            return false
-        }
-
-        for (intent, _) in attributed.runs[\.presentationIntent] {
-            guard let intent else { continue }
-            for component in intent.components where !component.hasSupportedReleaseNotesKind {
-                return false
-            }
-        }
-
-        return true
-    }
-
     private static func blocks(from attributed: AttributedString) -> [Block] {
         var groups: [BlockGroup] = []
         var currentGroup: BlockGroup?

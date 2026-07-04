@@ -67,10 +67,6 @@ struct ReleaseNotesViewModelTests {
         #expect(ReleaseNotesViewModel(markdown: "```swift\nlet x = 1\n```").blocks == nil)
     }
 
-    @Test func live130FixtureContainsNoUnsupportedIntents() throws {
-        #expect(ReleaseNotesViewModel.containsOnlySupportedPresentationIntents(markdown: try fixture()))
-    }
-
     @Test func wrapsOnlyWhenMoreThanThreeBlocks() throws {
         #expect(ReleaseNotesViewModel(markdown: try fixture()).wrapsInScrollView)
 
