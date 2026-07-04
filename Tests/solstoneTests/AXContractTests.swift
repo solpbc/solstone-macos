@@ -56,6 +56,23 @@ struct AXContractTests {
         #expect(extra.isEmpty)
     }
 
+    @Test func staticAXIDLeavesAreRegisteredInContract() throws {
+        let root = URL(fileURLWithPath: "Sources/solstone", isDirectory: true)
+        let axidURL = root.appendingPathComponent("AXID.swift")
+        let source = try String(contentsOf: axidURL, encoding: .utf8)
+        let registered = Set(AXContract.enumerableIDs)
+        let missing = staticAXIDLeaves(in: source)
+            .filter { !registered.contains($0.literal) }
+
+        if !missing.isEmpty {
+            let message = missing
+                .map { "\($0.literal) (\($0.name))" }
+                .joined(separator: ", ")
+            Issue.record("AXID static identifiers missing from AXContract.enumerableIDs: \(message)")
+        }
+        #expect(missing.isEmpty)
+    }
+
     @Test func enumStateVocabulariesExist() {
         let vocabularyNames = Set(AXContract.vocabularies.keys)
         var missing: [String] = []
@@ -74,6 +91,24 @@ struct AXContractTests {
             Issue.record("missing vocabularies: \(missing.joined(separator: ", "))")
         }
         #expect(missing.isEmpty)
+    }
+
+    private func staticAXIDLeaves(in source: String) -> [(name: String, literal: String)] {
+        let pattern = #"static\s+let\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]+)""#
+        let regex = try! NSRegularExpression(pattern: pattern)
+        let range = NSRange(source.startIndex..<source.endIndex, in: source)
+        return regex.matches(in: source, range: range).compactMap { match in
+            guard let nameRange = Range(match.range(at: 1), in: source),
+                  let literalRange = Range(match.range(at: 2), in: source)
+            else {
+                return nil
+            }
+            let literal = String(source[literalRange])
+            guard literal.range(of: AXContract.idPattern, options: .regularExpression) != nil else {
+                return nil
+            }
+            return (name: String(source[nameRange]), literal: literal)
+        }
     }
 
     @Test func updateStatusCompositeTokensAreBranchExhaustive() {

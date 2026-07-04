@@ -206,6 +206,8 @@
       "settings.help.iconState.offline",
       "settings.help.iconState.paused",
       "settings.help.iconState.recording",
+      "settings.help.support.email",
+      "settings.help.support.site",
       "settings.help.version.state",
       "settings.microphones.audioProcessing.silenceMusic",
       "settings.microphones.gain.picker",
@@ -248,6 +250,8 @@
       "settings.service.next.checkStatus",
       "settings.service.pairing.connect",
       "settings.service.pairing.connection.state",
+      "settings.service.pairing.disconnectCancel",
+      "settings.service.pairing.disconnectConfirm",
       "settings.service.pairing.failure.state",
       "settings.service.pairing.flow.state",
       "settings.service.pairing.link",
@@ -255,6 +259,7 @@
       "settings.service.pairing.markMismatch",
       "settings.service.pairing.mismatchFreshLink",
       "settings.service.pairing.mismatchSupport",
+      "settings.service.pairing.paidPlanLink",
       "settings.service.pairing.retry",
       "settings.service.pairing.switchCancel",
       "settings.service.pairing.switchConfirm",
@@ -267,6 +272,7 @@
       "settings.status.health.summary.state",
       "settings.status.journal.lastActivity.state",
       "settings.status.journal.manageJournal",
+      "settings.status.journal.readinessQueue.state",
       "settings.status.journal.runtime.state",
       "settings.status.observing.nextSegment.state",
       "settings.status.observing.state",
@@ -435,6 +441,10 @@
     },
     "settings.status.journal.lastActivity.state" : {
       "kind" : "freeform"
+    },
+    "settings.status.journal.readinessQueue.state" : {
+      "kind" : "enum",
+      "vocabulary" : "MenubarStatusRowState"
     },
     "settings.status.journal.runtime.state" : {
       "kind" : "enum",
