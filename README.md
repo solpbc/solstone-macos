@@ -60,7 +60,7 @@ make run             # launch solstone.app from the source tree + stream logs
 
 ## Architecture
 
-This is a two-package Swift Package Manager repository. **SolstoneCapture** is the app layer with the SwiftUI menu bar interface, application state, capture orchestration, segment management, upload flow, and pause controls. **SolstoneCaptureCore** is the recording layer with H.264 video encoding, per-source audio capture, multi-track audio remixing, microphone monitoring, and window filtering.
+This is one Swift Package Manager repository. Production targets are `SolstoneCore`, `SPLTunnel`, `solstone` (the executable app and recording layer in `Sources/solstone/`), `solstone-watchdog`, and `ObjCHelpers`. Test targets are `solstoneTests` and `SPLTunnelTests`.
 
 ## File Storage
 
