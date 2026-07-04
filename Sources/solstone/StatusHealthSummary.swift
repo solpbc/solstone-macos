@@ -82,6 +82,13 @@ extension StatusHealthSummary {
 
         if isBundled {
             switch journalRuntimeStatus {
+            case .unobserved:
+                return .init(
+                    severity: .warn,
+                    title: "checking journal…",
+                    subtitle: nil,
+                    axValue: MenubarStatusRowState.starting.axToken
+                )
             case .stopped, .unknown:
                 return .init(
                     severity: .attention,

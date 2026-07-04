@@ -83,6 +83,18 @@ internal func parsePsOrphanRows(_ output: String) -> [pid_t] {
     }
 }
 
+internal func countParsedPsRows(_ output: String) -> Int {
+    output.split(separator: "\n").reduce(0) { count, line in
+        let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        guard parts.count == 3,
+              Int32(parts[0]) != nil,
+              Int32(parts[1]) != nil else {
+            return count
+        }
+        return count + 1
+    }
+}
+
 internal func moveAsideStaleStateFiles(
     journalRoot: URL,
     fileManager: FileManager = .default
@@ -284,7 +296,7 @@ internal struct JournalRestartRunner: @unchecked Sendable {
         do {
             let result = try await runner.run(
                 executable: URL(fileURLWithPath: "/bin/ps"),
-                arguments: ["-axo", "pid=,ppid=,comm="],
+                arguments: ["-axo", "pid=,ppid=,command="],
                 environment: nil,
                 stdoutHandler: { data in output.append(data) },
                 stderrHandler: { _ in }
@@ -293,15 +305,17 @@ internal struct JournalRestartRunner: @unchecked Sendable {
                 emit(step: .orphanSweep, outcome: "error", detail: "exit=\(result.exitCode)")
                 return
             }
-            let pids = parsePsOrphanRows(output.string)
+            let psOutput = output.string
+            let rowCount = countParsedPsRows(psOutput)
+            let pids = parsePsOrphanRows(psOutput)
             guard !pids.isEmpty else {
-                emit(step: .orphanSweep, outcome: "noop", detail: "no-orphans")
+                emit(step: .orphanSweep, outcome: "noop", detail: "rows=\(rowCount) matched=0 terminated=0")
                 return
             }
             for pid in pids {
                 terminate(pid)
             }
-            emit(step: .orphanSweep, outcome: "success", detail: "terminated=\(pids.count)")
+            emit(step: .orphanSweep, outcome: "success", detail: "rows=\(rowCount) matched=\(pids.count) terminated=\(pids.count)")
         } catch {
             emit(step: .orphanSweep, outcome: "error", detail: error.localizedDescription)
         }
@@ -324,6 +338,8 @@ internal struct JournalRestartRunner: @unchecked Sendable {
         let detailSuffix = detail.map { " detail=\($0)" } ?? ""
         if outcome == "error" {
             Logger.setup.warning("journal-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
+        } else if step == .orphanSweep {
+            Logger.setup.notice("journal-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
         } else {
             Logger.setup.info("journal-restart step=\(step.rawValue, privacy: .public) outcome=\(outcome, privacy: .public)\(detailSuffix, privacy: .public)")
         }

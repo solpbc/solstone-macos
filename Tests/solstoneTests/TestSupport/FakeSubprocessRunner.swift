@@ -45,6 +45,7 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
     private var recordedInvocations: [SubprocessInvocation] = []
     private var materializedToolBinariesSideEffect: (@Sendable () -> Void)?
     var forcePrimaryOnlyExposure = false
+    var preferQueuedVersionResponses = false
 
     var invocations: [SubprocessInvocation] {
         lock.lock()
@@ -118,18 +119,29 @@ final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable {
         defer { lock.unlock() }
 
         recordedInvocations.append(SubprocessInvocation(executable: executable, arguments: arguments, environment: environment, timeout: timeout))
+        let keys = responseKeys(for: executable, arguments: arguments)
+        if preferQueuedVersionResponses, arguments == ["--version"],
+           let response = dequeueResponse(for: keys) {
+            return response
+        }
         if arguments == ["--version"],
            environment?["UV_TOOL_DIR"] != nil,
            ["journal", "sol"].contains(executable.lastPathComponent) {
             return .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8))
         }
-        let keys = responseKeys(for: executable, arguments: arguments)
-        guard let key = keys.first(where: { responses[$0]?.isEmpty == false }),
-              var values = responses[key], !values.isEmpty else {
+        guard let response = dequeueResponse(for: keys) else {
             if arguments == ["-c", "print(1)"] {
                 return .success(stdout: Data("1\n".utf8))
             }
             return .success()
+        }
+        return response
+    }
+
+    private func dequeueResponse(for keys: [String]) -> Response? {
+        guard let key = keys.first(where: { responses[$0]?.isEmpty == false }),
+              var values = responses[key], !values.isEmpty else {
+            return nil
         }
         let response = values.removeFirst()
         responses[key] = values

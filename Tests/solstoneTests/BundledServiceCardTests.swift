@@ -223,7 +223,7 @@ struct BundledServiceCardTests {
         let appState = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         appState.installer.main = .done
         appState.installer.probedVersion = .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion)
-        appState.journalRuntimeStatus = .running
+        appState.journalRuntimeStatus = .unobserved
 
         #expect(
             bundledServiceCardState(appState: appState, allowsLocalJournalActions: false)

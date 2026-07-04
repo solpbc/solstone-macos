@@ -21,6 +21,7 @@ public struct JournalDiagnostic: Equatable, Sendable {
 }
 
 public enum JournalRuntimeStatus: Equatable, Sendable {
+    case unobserved
     case running
     case stopped(JournalDiagnostic)
     case stoppedByUser
@@ -32,7 +33,7 @@ public enum JournalRuntimeStatus: Equatable, Sendable {
         switch self {
         case .stopped(let diagnostic), .unknown(let diagnostic):
             return diagnostic
-        case .running, .stoppedByUser, .restarting, .setupNeeded:
+        case .unobserved, .running, .stoppedByUser, .restarting, .setupNeeded:
             return nil
         }
     }
@@ -150,7 +151,7 @@ enum JournalHealthCheck {
         journalBinary: URL,
         runner: SubprocessRunning = SubprocessRunner(),
         environment: [String: String]? = nil,
-        timeout: Duration? = nil
+        timeout: Duration? = .seconds(5)
     ) async -> String? {
         let output = LockedHealthOutput()
         do {

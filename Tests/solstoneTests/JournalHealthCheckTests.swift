@@ -45,6 +45,27 @@ struct JournalHealthCheckTests {
         ])
     }
 
+    @Test func versionUsesDefaultTimeout() async {
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(stdout: Data("solstone 1.2.3\n".utf8)))
+
+        let version = await JournalHealthCheck.version(journalBinary: journalBinary, runner: runner)
+
+        #expect(version == "1.2.3")
+        #expect(runner.invocations.first?.timeout == .seconds(5))
+    }
+
+    @Test func versionTimeoutReturnsNil() async {
+        let timeout: Duration = .milliseconds(20)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(delay: timeout))
+
+        let version = await JournalHealthCheck.version(journalBinary: journalBinary, runner: runner, timeout: timeout)
+
+        #expect(version == nil)
+        #expect(runner.invocations.first?.timeout == timeout)
+    }
+
     @Test func doctorDecodesFixtureChecks() async throws {
         let runner = FakeDoctorRunner(stdout: fixture("sol_doctor_ok"))
 

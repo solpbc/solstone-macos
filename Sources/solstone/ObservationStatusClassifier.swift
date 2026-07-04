@@ -34,6 +34,8 @@ internal func classifyObservationRowState(
     }
     if bundledJournalStatusAvailable {
         switch journalRuntimeStatus {
+        case .unobserved:
+            return .starting
         case .running:
             return .observing
         case .setupNeeded:

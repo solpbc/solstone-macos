@@ -23,6 +23,8 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
     private let wrapperDirURL: URL
     private let runner: SubprocessRunning
     private let fileManager: FileManager
+    private let installTimeout: Duration
+    private let verifyTimeout: Duration
 
     internal init(
         runtimeRootURL: URL = SolstoneRuntimeLayout.defaultRootURL,
@@ -30,6 +32,8 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
         bundledPythonURL: URL = SolstoneRuntimeLayout.bundledPythonURL(),
         wheelhouseURL: URL = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/wheelhouse", isDirectory: true),
         wrapperDirURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin", isDirectory: true),
+        installTimeout: Duration = .seconds(180),
+        verifyTimeout: Duration = .seconds(120),
         runner: SubprocessRunning = SubprocessRunner(),
         fileManager: FileManager = .default
     ) {
@@ -40,6 +44,8 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
         self.wrapperDirURL = wrapperDirURL
         self.runner = runner
         self.fileManager = fileManager
+        self.installTimeout = installTimeout
+        self.verifyTimeout = verifyTimeout
     }
 
     internal func materialize(excludingLiveKey liveKey: String?) async throws -> MaterializedRuntime {
@@ -145,9 +151,13 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
                 "--force"
             ],
             environment: layout.uvEnvironment(),
+            timeout: installTimeout,
             stdoutHandler: { data in output.append(data) },
             stderrHandler: { data in output.append(data) }
         )
+        if result.terminationReason == .uncaughtSignal {
+            throw RuntimeMaterializerError.installFailed("journal runtime install timed out after \(installTimeout)")
+        }
         guard result.exitCode == 0 else {
             throw RuntimeMaterializerError.installFailed(sanitizeJournalDiagnosticOutput(output.string()) ?? output.string())
         }
@@ -199,9 +209,13 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
             executable: layout.journalBinary,
             arguments: ["--version"],
             environment: layout.uvEnvironment(),
+            timeout: verifyTimeout,
             stdoutHandler: { data in output.append(data) },
             stderrHandler: { _ in }
         )
+        if result.terminationReason == .uncaughtSignal {
+            throw RuntimeMaterializerError.verificationFailed("journal runtime version check timed out after \(verifyTimeout)")
+        }
         guard result.exitCode == 0,
               let version = SolVersionParser.parse(output.string()) else {
             return false
@@ -217,9 +231,13 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
             executable: venvPython,
             arguments: ["-c", "import frontmatter"],
             environment: layout.uvEnvironment(),
+            timeout: verifyTimeout,
             stdoutHandler: { _ in },
             stderrHandler: { data in output.append(data) }
         )
+        if result.terminationReason == .uncaughtSignal {
+            throw RuntimeMaterializerError.verificationFailed("journal runtime host import check timed out after \(verifyTimeout)")
+        }
         if result.exitCode != 0 {
             Logger.setup.warning("runtime materializer: journal host import check failed: \(output.string(), privacy: .public)")
         }
@@ -232,9 +250,13 @@ internal final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Senda
             executable: url,
             arguments: ["-c", "print(1)"],
             environment: nil,
+            timeout: verifyTimeout,
             stdoutHandler: { data in output.append(data) },
             stderrHandler: { data in output.append(data) }
         )
+        if result.terminationReason == .uncaughtSignal {
+            throw RuntimeMaterializerError.verificationFailed("journal runtime python check timed out after \(verifyTimeout) at \(url.path)")
+        }
         return result.exitCode == 0 && output.string().contains("1")
     }
 

@@ -561,6 +561,7 @@
       "failed"
     ],
     "JournalRuntimeStatus" : [
+      "starting",
       "running",
       "journal_restarting",
       "journal_setup_needed",

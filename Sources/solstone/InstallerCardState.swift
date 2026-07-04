@@ -138,7 +138,7 @@ func bundledJournalCardState(
             return .installedCurrent(version: BundleConfig.solstonePinVersion)
         }
         switch runtimeStatus {
-        case .running:
+        case .unobserved, .running:
             return .runtimeUnconfirmed
         case .restarting:
             return .runtimeStarting

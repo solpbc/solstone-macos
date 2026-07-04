@@ -12,6 +12,26 @@ struct BundledJournalCardStateTests {
     @Test func ac9ReachableMatrix() {
         let cases: [AC9Case] = [
             AC9Case(
+                name: "unobserved-unconfirmed-idle",
+                runtimeStatus: .unobserved,
+                startInFlight: false,
+                confirmedAtPin: false,
+                expectedCardState: .runtimeUnconfirmed,
+                serviceNeedsAttention: false,
+                serviceIsDone: false,
+                available: true
+            ),
+            AC9Case(
+                name: "unobserved-starting",
+                runtimeStatus: .unobserved,
+                startInFlight: true,
+                confirmedAtPin: false,
+                expectedCardState: .runtimeStarting,
+                serviceNeedsAttention: false,
+                serviceIsDone: false,
+                available: true
+            ),
+            AC9Case(
                 name: "running-unconfirmed-idle",
                 runtimeStatus: .running,
                 startInFlight: false,
@@ -233,7 +253,7 @@ struct BundledJournalCardStateTests {
         bundledJournalCardState(
             main: main,
             failureRecord: failureRecord,
-            runtimeStatus: .running,
+            runtimeStatus: .unobserved,
             startInFlight: false,
             confirmedAtPin: false
         )

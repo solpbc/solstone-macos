@@ -97,6 +97,7 @@ struct MenuContentTests {
             ("wedge", classified(isRecording: false)),
             ("paused", classified(isPaused: true)),
             ("journalWaiting", classified(captureQueuedForJournalReadiness: true)),
+            ("journalUnobserved", classified(bundledJournalStatusAvailable: true, journalRuntimeStatus: .unobserved)),
             ("journalSetupNeeded", classified(bundledJournalStatusAvailable: true, journalRuntimeStatus: .setupNeeded)),
             ("journalRestarting", classified(bundledJournalStatusAvailable: true, journalRuntimeStatus: .restarting)),
             (
@@ -127,6 +128,7 @@ struct MenuContentTests {
             "wedge": .error,
             "paused": .paused,
             "journalWaiting": .journalWaiting,
+            "journalUnobserved": .starting,
             "journalSetupNeeded": .journalSetupNeeded,
             "journalRestarting": .journalRestarting,
             "journalStopped": .journalStopped,
@@ -321,6 +323,13 @@ struct MenuContentTests {
         #expect(unknownStatus.settingsPresentation.severity == .attention)
         #expect(unknownStatus.settingsPresentation.reason == "unclear")
         #expect(unknownStatus.canOfferRestart)
+
+        #expect(JournalRuntimeStatus.unobserved.menuRowPresentation == nil)
+        #expect(JournalRuntimeStatus.unobserved.settingsPresentation.shortText == UICopy.SETTINGS_OBSERVATION_STARTING)
+        #expect(JournalRuntimeStatus.unobserved.settingsPresentation.axValue == MenubarStatusRowState.starting.axToken)
+        #expect(JournalRuntimeStatus.unobserved.settingsPresentation.severity == .neutral)
+        #expect(JournalRuntimeStatus.unobserved.settingsPresentation.reason == nil)
+        #expect(!JournalRuntimeStatus.unobserved.canOfferRestart)
 
         #expect(JournalRuntimeStatus.running.menuRowPresentation == nil)
         #expect(JournalRuntimeStatus.running.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_RUNNING)

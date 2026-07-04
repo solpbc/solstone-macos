@@ -299,6 +299,7 @@ struct AXIDTests {
 
     private var journalRuntimeStatusRepresentatives: [JournalRuntimeStatus] {
         [
+            .unobserved,
             .running,
             .restarting,
             .setupNeeded,

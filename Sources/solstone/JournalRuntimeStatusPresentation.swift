@@ -35,14 +35,14 @@ extension JournalRuntimeStatus {
         switch self {
         case .stopped, .unknown:
             return true
-        case .running, .stoppedByUser, .restarting, .setupNeeded:
+        case .unobserved, .running, .stoppedByUser, .restarting, .setupNeeded:
             return false
         }
     }
 
     var menuRowPresentation: JournalRuntimeMenuRowPresentation? {
         switch self {
-        case .running:
+        case .unobserved, .running:
             return nil
         case .stoppedByUser:
             return JournalRuntimeMenuRowPresentation(
@@ -79,6 +79,13 @@ extension JournalRuntimeStatus {
 
     var settingsPresentation: JournalRuntimeSettingsPresentation {
         switch self {
+        case .unobserved:
+            return JournalRuntimeSettingsPresentation(
+                shortText: UICopy.SETTINGS_OBSERVATION_STARTING,
+                axValue: MenubarStatusRowState.starting.axToken,
+                severity: .neutral,
+                reason: nil
+            )
         case .running:
             return JournalRuntimeSettingsPresentation(
                 shortText: UICopy.JOURNAL_STATUS_RUNNING,

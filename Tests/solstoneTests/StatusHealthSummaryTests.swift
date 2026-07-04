@@ -55,6 +55,12 @@ struct StatusHealthSummaryTests {
         #expect(restarting.severity == .warn)
         #expect(restarting.axValue == "bundled_restarting")
         #expect(restarting.subtitle == nil)
+
+        let unobserved = makeSummary(serviceMode: .bundled, journalRuntimeStatus: .unobserved)
+        #expect(unobserved.severity == .warn)
+        #expect(unobserved.axValue == MenubarStatusRowState.starting.axToken)
+        #expect(unobserved.title == "checking journal…")
+        #expect(unobserved.subtitle == nil)
     }
 
     @Test func observingOffRowUsesModeSpecificSubtitle() {

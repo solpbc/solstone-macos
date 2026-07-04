@@ -230,6 +230,107 @@ struct RuntimeMaterializerTests {
         #expect(install.arguments.contains("--find-links"))
     }
 
+    @Test func materializeInstallTimeoutSurfacesDistinctReasonQuickly() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let timeout: Duration = .milliseconds(20)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("tool", .success(delay: timeout))
+        let materializer = makeMaterializer(fixture: fixture, runner: runner, installTimeout: timeout)
+
+        let started = Date()
+        do {
+            _ = try await materializer.materialize(excludingLiveKey: nil)
+            Issue.record("expected materialize to fail on install timeout")
+        } catch let error as RuntimeMaterializerError {
+            guard case .installFailed(let message) = error else {
+                Issue.record("expected installFailed, got \(error)")
+                return
+            }
+            #expect(message.hasPrefix("journal runtime install timed out"))
+        } catch {
+            Issue.record("expected RuntimeMaterializerError, got \(error)")
+        }
+        #expect(Date().timeIntervalSince(started) < 1.0)
+    }
+
+    @Test func materializeVersionTimeoutSurfacesDistinctReasonQuickly() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let timeout: Duration = .milliseconds(20)
+        let runner = FakeSubprocessRunner()
+        runner.preferQueuedVersionResponses = true
+        runner.enqueue("tool", .success())
+        runner.enqueue("--version", .success(delay: timeout))
+        let materializer = makeMaterializer(fixture: fixture, runner: runner, verifyTimeout: timeout)
+
+        let started = Date()
+        do {
+            _ = try await materializer.materialize(excludingLiveKey: nil)
+            Issue.record("expected materialize to fail on version timeout")
+        } catch let error as RuntimeMaterializerError {
+            guard case .verificationFailed(let message) = error else {
+                Issue.record("expected verificationFailed, got \(error)")
+                return
+            }
+            #expect(message.hasPrefix("journal runtime version check timed out"))
+        } catch {
+            Issue.record("expected RuntimeMaterializerError, got \(error)")
+        }
+        #expect(Date().timeIntervalSince(started) < 1.0)
+    }
+
+    @Test func materializeHostImportTimeoutSurfacesDistinctReasonQuickly() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let timeout: Duration = .milliseconds(20)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("tool", .success())
+        runner.enqueue("-c", .success(delay: timeout))
+        let materializer = makeMaterializer(fixture: fixture, runner: runner, verifyTimeout: timeout)
+
+        let started = Date()
+        do {
+            _ = try await materializer.materialize(excludingLiveKey: nil)
+            Issue.record("expected materialize to fail on host import timeout")
+        } catch let error as RuntimeMaterializerError {
+            guard case .verificationFailed(let message) = error else {
+                Issue.record("expected verificationFailed, got \(error)")
+                return
+            }
+            #expect(message.hasPrefix("journal runtime host import check timed out"))
+        } catch {
+            Issue.record("expected RuntimeMaterializerError, got \(error)")
+        }
+        #expect(Date().timeIntervalSince(started) < 1.0)
+    }
+
+    @Test func materializePythonTimeoutSurfacesDistinctReasonQuickly() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let timeout: Duration = .milliseconds(20)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("tool", .success())
+        runner.enqueue("-c", .success())
+        runner.enqueue("-c", .success(delay: timeout))
+        let materializer = makeMaterializer(fixture: fixture, runner: runner, verifyTimeout: timeout)
+
+        let started = Date()
+        do {
+            _ = try await materializer.materialize(excludingLiveKey: nil)
+            Issue.record("expected materialize to fail on python timeout")
+        } catch let error as RuntimeMaterializerError {
+            guard case .verificationFailed(let message) = error else {
+                Issue.record("expected verificationFailed, got \(error)")
+                return
+            }
+            #expect(message.hasPrefix("journal runtime python check timed out"))
+        } catch {
+            Issue.record("expected RuntimeMaterializerError, got \(error)")
+        }
+        #expect(Date().timeIntervalSince(started) < 1.0)
+    }
+
     @Test func materializeSurfacesSpecificReasonWhenJournalExecutableMissing() async throws {
         let fixture = try makeMaterializerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.workspace) }
@@ -304,7 +405,9 @@ struct RuntimeMaterializerTests {
             wrapperDir: URL,
             bundledPython: URL
         ),
-        runner: FakeSubprocessRunner
+        runner: FakeSubprocessRunner,
+        installTimeout: Duration = .seconds(180),
+        verifyTimeout: Duration = .seconds(120)
     ) -> RuntimeMaterializer {
         RuntimeMaterializer(
             runtimeRootURL: fixture.runtimeRoot,
@@ -312,6 +415,8 @@ struct RuntimeMaterializerTests {
             bundledPythonURL: fixture.bundledPython,
             wheelhouseURL: fixture.wheelhouse,
             wrapperDirURL: fixture.wrapperDir,
+            installTimeout: installTimeout,
+            verifyTimeout: verifyTimeout,
             runner: runner
         )
     }

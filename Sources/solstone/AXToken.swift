@@ -408,6 +408,7 @@ extension UpdateActivity {
 
 extension JournalRuntimeStatus {
     static let axTokens = [
+        "starting",
         "running",
         "journal_restarting",
         "journal_setup_needed",

@@ -401,6 +401,7 @@ struct AppStateAttentionTests {
 
     @Test func bundledLifecycleCardStatesDriveAttentionDoneAndAvailability() {
         let cases: [(String, JournalRuntimeStatus, Bool, Bool, Bool)] = [
+            ("runtimeUnconfirmedUnobserved", .unobserved, false, false, true),
             ("runtimeUnconfirmed", .running, false, false, true),
             ("runtimeStarting", .restarting, false, false, true),
             (

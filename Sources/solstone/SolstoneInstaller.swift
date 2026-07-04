@@ -69,6 +69,8 @@ public final class SolstoneInstaller {
     private let pidWaitTimeout: Duration
     private let pidWaitPollInterval: Duration
     private let orphanGracePeriod: Duration
+    private let journalSetupTimeout: Duration
+    private let journalWarmTimeout: Duration
     private let clock: any MonotonicClock
     private let sleep: @Sendable (Duration) async throws -> Void
     private var detectionInFlight = false
@@ -87,6 +89,8 @@ public final class SolstoneInstaller {
         wheelhouseURL: URL? = nil,
         runtimeRootURL: URL? = nil,
         subprocessTimeoutGracePeriod: Duration = .seconds(2),
+        journalSetupTimeout: Duration = .seconds(180),
+        journalWarmTimeout: Duration = .seconds(120),
         wrapperDirURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin", isDirectory: true)
     ) {
         self.init(
@@ -95,7 +99,9 @@ public final class SolstoneInstaller {
             wheelhouseURL: wheelhouseURL,
             runtimeRootURL: runtimeRootURL,
             subprocessRunner: SubprocessRunner(timeoutGracePeriod: subprocessTimeoutGracePeriod),
-            wrapperDirURL: wrapperDirURL
+            wrapperDirURL: wrapperDirURL,
+            journalSetupTimeout: journalSetupTimeout,
+            journalWarmTimeout: journalWarmTimeout
         )
     }
 
@@ -126,6 +132,8 @@ public final class SolstoneInstaller {
         pidWaitTimeout: Duration = pidWaitTimeoutDefault,
         pidWaitPollInterval: Duration = pidWaitPollIntervalDefault,
         orphanGracePeriod: Duration = orphanGracePeriodDefault,
+        journalSetupTimeout: Duration = .seconds(180),
+        journalWarmTimeout: Duration = .seconds(120),
         clock: any MonotonicClock = SystemMonotonicClock(),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { duration in
             try await Task.sleep(for: duration)
@@ -163,6 +171,8 @@ public final class SolstoneInstaller {
         self.pidWaitTimeout = pidWaitTimeout
         self.pidWaitPollInterval = pidWaitPollInterval
         self.orphanGracePeriod = orphanGracePeriod
+        self.journalSetupTimeout = journalSetupTimeout
+        self.journalWarmTimeout = journalWarmTimeout
         self.clock = clock
         self.sleep = sleep
         self.upgradeFailureRecord = failureRecordStore.load()
@@ -541,6 +551,7 @@ public final class SolstoneInstaller {
                 executable: journalBinary,
                 arguments: arguments,
                 environment: environment,
+                timeout: journalSetupTimeout,
                 stdoutHandler: { [weak self, output] data in
                     Self.append(data, to: output, stream: .stdout)
                     Task { @MainActor in
@@ -560,6 +571,16 @@ public final class SolstoneInstaller {
         let stderr = output.stderrString()
         let parsed = parseSetupOutput(stdout, phase: phase)
         setMain(.runningSolSetup(parsed.progress))
+
+        if result.terminationReason == .uncaughtSignal {
+            let message = "journal setup timed out after \(journalSetupTimeout)"
+            failMain(
+                .solSetup(errorCode: "setup-timeout", message: message),
+                category: .subprocessLaunch,
+                logExcerpt: parsed.progress.renderedLog
+            )
+            return false
+        }
 
         if let duplicateMessage = parsed.duplicateSetupCompletedMessage {
             failMain(.solSetup(errorCode: nil, message: duplicateMessage), category: .unknown, logExcerpt: parsed.progress.renderedLog)
@@ -624,6 +645,7 @@ public final class SolstoneInstaller {
                 executable: runtime.layout.journalBinary,
                 arguments: ["warm"],
                 environment: runtime.layout.uvEnvironment(),
+                timeout: journalWarmTimeout,
                 stdoutHandler: { [weak self, output] data in
                     Self.append(data, to: output, stream: .stdout)
                     Task { @MainActor in
@@ -639,6 +661,13 @@ public final class SolstoneInstaller {
             )
         } catch {
             recordWarmWarning(stdout: "", stderr: error.localizedDescription)
+            return
+        }
+
+        if result.terminationReason == .uncaughtSignal {
+            let reason = "warm-timeout: journal warm timed out after \(journalWarmTimeout)"
+            Logger.setup.notice("installer: journal warm timeout; continuing detail=\(reason, privacy: .public)")
+            recordWarmWarning(stdout: output.stdoutString(), stderr: reason)
             return
         }
 

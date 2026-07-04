@@ -55,7 +55,7 @@ internal func runJournalOrphanSweep(
     do {
         result = try await runner.run(
             executable: URL(fileURLWithPath: "/bin/ps"),
-            arguments: ["-axo", "pid=,ppid=,comm="],
+            arguments: ["-axo", "pid=,ppid=,command="],
             environment: nil,
             stdoutHandler: { data in
                 output.append(data)
@@ -70,7 +70,9 @@ internal func runJournalOrphanSweep(
         return CleanupFailure(step: .orphanSweep, message: "ps exited \(result.exitCode)")
     }
 
-    let pids = parsePsOrphanRows(output.string())
+    let psOutput = output.string()
+    let rowCount = countParsedPsRows(psOutput)
+    let pids = parsePsOrphanRows(psOutput)
     var termCount = 0
     for pid in pids {
         _ = terminate(pid, SIGTERM)
@@ -84,7 +86,7 @@ internal func runJournalOrphanSweep(
         _ = terminate(pid, SIGKILL)
     }
 
-    Logger.setup.info("journal orphan sweep parsed=\(pids.count, privacy: .public) term=\(termCount, privacy: .public) survivors=\(survivors.count, privacy: .public)")
+    Logger.setup.notice("journal orphan sweep outcome=success rows=\(rowCount, privacy: .public) matched=\(pids.count, privacy: .public) terminated=\(termCount, privacy: .public) survivors=\(survivors.count, privacy: .public)")
     return nil
 }
 

@@ -396,6 +396,7 @@ struct AppOwnedJournalTests {
     @Test func requestJournalStopStopsBundledChildAndMarksStoppedByUser() async throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         let runner = MockSupervisedChildRunner()
+        state.journalRuntimeStatus = .running
         state.supervisedJournalRunner = runner
 
         state.requestJournalStop()
@@ -413,7 +414,7 @@ struct AppOwnedJournalTests {
         state.requestJournalStop()
 
         #expect(runner.stopCalls == 0)
-        #expect(state.journalRuntimeStatus == .running)
+        #expect(state.journalRuntimeStatus == .unobserved)
     }
 
     @Test func requestJournalStartExternalModeIsNoOp() async throws {
@@ -469,6 +470,7 @@ struct AppOwnedJournalTests {
     @Test func requestJournalStartAfterCleanStopRunsBundledStartup() async throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         let runner = MockSupervisedChildRunner()
+        state.journalRuntimeStatus = .running
         state.supervisedJournalRunner = runner
 
         state.requestJournalStop()
@@ -489,6 +491,7 @@ struct AppOwnedJournalTests {
     @Test func requestJournalStopIsReentrantNoOpWhileInFlight() async throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         let runner = MockSupervisedChildRunner()
+        state.journalRuntimeStatus = .running
         state.supervisedJournalRunner = runner
 
         state.requestJournalStop()
@@ -788,7 +791,7 @@ struct AppOwnedJournalTests {
             Issue.record("expected blocked gate")
         }
         #expect(runner.invocations.map(\.arguments) == [
-            ["-axo", "pid=,ppid=,comm="],
+            ["-axo", "pid=,ppid=,command="],
             ["-nP", "-iTCP:7657", "-sTCP:LISTEN", "-F"],
             ["-nP", "-iTCP:7657", "-sTCP:LISTEN", "-F"],
             ["-nP", "-iTCP:7657", "-sTCP:LISTEN", "-F"]

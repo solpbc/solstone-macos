@@ -222,6 +222,42 @@ struct FirstLaunchRoutingTests {
         #expect(!openedService)
     }
 
+    @Test func firstLaunch_versionTimeoutIsNotOutdatedAndDoesNotOpenService() async {
+        let binary = URL(fileURLWithPath: "/runtime/bin/journal")
+        let timeout: Duration = .milliseconds(20)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("--version", .success(delay: timeout))
+        var healthCheckBinary: URL?
+        var openedService = false
+
+        await FirstLaunchRouting.route(
+            config: AppConfig(serverURL: "http://localhost:5015", serverKey: "key", serviceMode: .bundled),
+            waitForPermissionCheck: {},
+            permissionsMissing: { false },
+            openPermissions: {},
+            openService: { openedService = true },
+            journalBinary: { binary },
+            healthCheck: {
+                healthCheckBinary = $0
+                return true
+            },
+            bundledOutdated: { binary in
+                guard let installed = await JournalHealthCheck.version(
+                    journalBinary: binary,
+                    runner: runner,
+                    timeout: timeout
+                ) else {
+                    return false
+                }
+                return installed.compare(BundleConfig.solstonePinVersion, options: .numeric) == .orderedAscending
+            }
+        )
+
+        #expect(healthCheckBinary == binary)
+        #expect(!openedService)
+        #expect(runner.invocations.first?.timeout == timeout)
+    }
+
     @Test func firstLaunch_externalOutdated_noops() async {
         var openedService = false
 

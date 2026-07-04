@@ -51,6 +51,49 @@ struct SolstoneInstallerTests {
         }
     }
 
+    @Test func runningSolSetup_timeoutFailsWithSetupTimeoutCode() async throws {
+        let timeout: Duration = .milliseconds(20)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(delay: timeout))
+        let installer = makeInstaller(runner: runner, journalSetupTimeout: timeout)
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitForTerminal(installer)
+
+        if case .failed(.solSetup(let errorCode, let message)) = installer.main {
+            #expect(errorCode == "setup-timeout")
+            #expect(message.hasPrefix("journal setup timed out"))
+        } else {
+            Issue.record("expected setup-timeout solSetup failure")
+        }
+        let setup = try #require(runner.invocations.first { $0.arguments.first == "setup" })
+        #expect(setup.timeout == timeout)
+    }
+
+    @Test func journalWarm_timeoutRecordsWarningAndContinues() async throws {
+        let timeout: Duration = .milliseconds(20)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("setup", .success(stdout: fixture("golden_ok")))
+        runner.enqueue("warm", .success(delay: timeout))
+        runner.enqueue("install-models", .success())
+        let registrar = FakeObserverRegistrar()
+        let installer = makeInstaller(
+            runner: runner,
+            observerRegistrar: registrar.register,
+            journalWarmTimeout: timeout
+        )
+        defer { installer.cancel() }
+
+        installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
+        try await waitForTerminal(installer)
+
+        #expect(installer.main == .done)
+        #expect(installer.integrityWarningMessage?.contains("continuing") == true)
+        let warm = try #require(runner.invocations.first { $0.arguments == ["warm"] })
+        #expect(warm.timeout == timeout)
+    }
+
     @Test func solSetupArgv_includesIdempotencyFlags() async throws {
         for choice in [ExistingInstallChoice.createFresh, .acceptExisting] {
             let runner = FakeSubprocessRunner()
@@ -524,6 +567,7 @@ struct SolstoneInstallerTests {
 
         let installModels = try #require(runner.invocations.first { $0.arguments.first == "install-models" })
         #expect(installModels.executable.lastPathComponent == "journal")
+        #expect(installModels.timeout == nil)
         let materializedRoot = installModels.executable
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -698,6 +742,7 @@ struct SolstoneInstallerTests {
           111     1 journal:foo
           222     2 journal:bar
           333     1 other-process
+          444     1 journal:argv-title /usr/local/bin/python
         """)
         let signals = LockedSignalRecorder()
         let installer = makeInstaller(
@@ -712,7 +757,10 @@ struct SolstoneInstallerTests {
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .createFresh)
         try await waitUntil { installer.main == .done }
 
-        #expect(signals.values == [SignalRecord(pid: 111, signal: SIGTERM)])
+        #expect(signals.values == [
+            SignalRecord(pid: 111, signal: SIGTERM),
+            SignalRecord(pid: 444, signal: SIGTERM)
+        ])
     }
 
     @Test func precleanOrphanSweepSIGKILLsSurvivors() async throws {
@@ -910,7 +958,7 @@ struct SolstoneInstallerTests {
             "--no-python-downloads",
             "--force"
         ])
-        #expect(install.timeout == nil)
+        #expect(install.timeout == .seconds(180))
         #expect(!install.arguments.contains("--reinstall"))
         let environment = try #require(install.environment)
         #expect(environment["UV_TOOL_DIR"]?.contains("\(fixtureURLs.runtimeRoot.path)/.tmp-") == true)
@@ -1844,6 +1892,8 @@ struct SolstoneInstallerTests {
         connectionTester: @escaping @Sendable (String, String) async -> String? = { _, _ in nil },
         observerRegistrar: @escaping ObserverRegistrar = { _ in .success(ObserverRegistration(key: "observer-key", name: "observer-name")) },
         fileExists: @escaping @Sendable (String) -> Bool = defaultTestFileExists,
+        journalSetupTimeout: Duration = .seconds(180),
+        journalWarmTimeout: Duration = .seconds(120),
         clock: any MonotonicClock = SystemMonotonicClock(),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in }
     ) -> SolstoneInstaller {
@@ -1860,6 +1910,8 @@ struct SolstoneInstallerTests {
             connectionTester: connectionTester,
             observerRegistrar: observerRegistrar,
             fileExists: fileExists,
+            journalSetupTimeout: journalSetupTimeout,
+            journalWarmTimeout: journalWarmTimeout,
             clock: clock,
             sleep: sleep
         )
@@ -1883,6 +1935,8 @@ struct SolstoneInstallerTests {
         pidWaitTimeout: Duration = .seconds(1),
         pidWaitPollInterval: Duration = .milliseconds(1),
         orphanGracePeriod: Duration = .milliseconds(1),
+        journalSetupTimeout: Duration = .seconds(180),
+        journalWarmTimeout: Duration = .seconds(120),
         clock: any MonotonicClock = SystemMonotonicClock(),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in }
     ) -> SolstoneInstaller {
@@ -1904,6 +1958,8 @@ struct SolstoneInstallerTests {
             pidWaitTimeout: pidWaitTimeout,
             pidWaitPollInterval: pidWaitPollInterval,
             orphanGracePeriod: orphanGracePeriod,
+            journalSetupTimeout: journalSetupTimeout,
+            journalWarmTimeout: journalWarmTimeout,
             clock: clock,
             sleep: sleep
         )

@@ -57,31 +57,39 @@ struct JournalRuntimeProbeTests {
         defer { try? FileManager.default.removeItem(at: temp) }
         let runner = FakeSubprocessRunner()
         runner.enqueue("ps", .success(stdout: Data("""
-          PID  PPID COMM
+          PID  PPID COMMAND
           111     1 journal:supervisor
           222     2 journal:worker
           333     1 bash
           444     1 sol:service
           555     1 journal:service
           666     1 journal: foo bar
+          777     1 journal:argv-title /usr/local/bin/python
          -777     1 journal:negative-pid
           888    -1 journal:negative-ppid
           not-a-pid 1 journal:bad
         """.utf8)))
         runner.enqueue("service", .success())
         let terminated = LockedPIDRecorder()
+        let events = LockedEventRecorder()
         let restart = JournalRestartRunner(
             runner: runner,
             journalPathProvider: { _ in temp.path },
             terminate: { pid in terminated.append(pid) },
             reprobe: { .reachable },
+            logSink: { event in events.append(event) },
             journalBinary: journalBinary
         )
 
         let outcome = await restart.run()
 
         #expect(outcome == .success)
-        #expect(terminated.values == [111, 555, 666])
+        #expect(terminated.values == [111, 555, 666, 777])
+        #expect(events.values.contains {
+            $0.step == .orphanSweep
+                && $0.outcome == "success"
+                && $0.detail == "rows=9 matched=4 terminated=4"
+        })
     }
 
     @Test func staleStateMoveAsideSkipsMissingAndOverwritesBak() throws {
@@ -174,7 +182,7 @@ struct JournalRuntimeProbeTests {
 
         state.updateConfig(AppConfig(serviceMode: .external))
 
-        #expect(state.journalRuntimeStatus == .running)
+        #expect(state.journalRuntimeStatus == .unobserved)
     }
 
     @Test func notifyUpgradeStartedClearsJournalProbeState() {
@@ -183,7 +191,7 @@ struct JournalRuntimeProbeTests {
 
         state.notifyUpgradeStarted()
 
-        #expect(state.journalRuntimeStatus == .running)
+        #expect(state.journalRuntimeStatus == .unobserved)
     }
 
     @Test func externalModeRunsJournalRestartRunner() async throws {

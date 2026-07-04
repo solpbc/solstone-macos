@@ -95,7 +95,7 @@ public final class AppState {
         set { capture.audioReconciledCount = newValue }
     }
 
-    public internal(set) var journalRuntimeStatus: JournalRuntimeStatus = .running
+    public internal(set) var journalRuntimeStatus: JournalRuntimeStatus = .unobserved
     public internal(set) var captureQueuedForJournalReadiness: Bool {
         get { capture.captureQueuedForJournalReadiness }
         set { capture.captureQueuedForJournalReadiness = newValue }
@@ -1410,7 +1410,7 @@ public final class AppState {
     }
 
     private func clearJournalProbeState() {
-        journalRuntimeStatus = .running
+        journalRuntimeStatus = .unobserved
     }
 
     internal func notifyUpgradeStarted() {
