@@ -20,17 +20,20 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
     private let loserGrace: Duration
     private let budget: Duration
     private let dial: @Sendable (TransportEndpoint) async throws -> Value
+    private let discard: @Sendable (Value) async -> Void
 
     init(
         stagger: Duration = .milliseconds(50),
         loserGrace: Duration = .milliseconds(250),
         budget: Duration = .seconds(8),
-        dial: @escaping @Sendable (TransportEndpoint) async throws -> Value
+        dial: @escaping @Sendable (TransportEndpoint) async throws -> Value,
+        discard: @escaping @Sendable (Value) async -> Void = { _ in }
     ) {
         self.stagger = stagger
         self.loserGrace = loserGrace
         self.budget = budget
         self.dial = dial
+        self.discard = discard
     }
 
     func connect(endpoints: [TransportEndpoint]) async throws -> RaceResult<Value> {
@@ -113,6 +116,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                     }
                     if failures == sorted.count, successes.isEmpty {
                         group.cancelAll()
+                        await drainDiscarding(&group)
                         throw Self.aggregateFailure(
                             sawRevocation: sawRevocation,
                             sawNotEntitled: sawNotEntitled,
@@ -123,6 +127,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                 case .budgetExpired:
                     if successes.isEmpty {
                         group.cancelAll()
+                        await drainDiscarding(&group)
                         throw Self.aggregateFailure(
                             sawRevocation: sawRevocation,
                             sawNotEntitled: sawNotEntitled,
@@ -133,6 +138,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                 case .graceExpired:
                     guard let winner = successes.min(by: { $0.order < $1.order }) else {
                         group.cancelAll()
+                        await drainDiscarding(&group)
                         throw Self.aggregateFailure(
                             sawRevocation: sawRevocation,
                             sawNotEntitled: sawNotEntitled,
@@ -140,6 +146,8 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                         )
                     }
                     group.cancelAll()
+                    await discardCollectedLosers(successes, winnerOrder: winner.order)
+                    await drainDiscarding(&group)
                     return RaceResult(endpoint: winner.endpoint, value: winner.value)
                 }
             }
@@ -151,7 +159,25 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                     sawTokenExpired: sawTokenExpired
                 )
             }
+            await discardCollectedLosers(successes, winnerOrder: winner.order)
             return RaceResult(endpoint: winner.endpoint, value: winner.value)
+        }
+    }
+
+    private func drainDiscarding(_ group: inout ThrowingTaskGroup<Event, any Error>) async {
+        while let event = try? await group.next() {
+            if case .success(_, _, let value) = event {
+                await discard(value)
+            }
+        }
+    }
+
+    private func discardCollectedLosers(
+        _ successes: [(order: Int, endpoint: TransportEndpoint, value: Value)],
+        winnerOrder: Int
+    ) async {
+        for success in successes where success.order != winnerOrder {
+            await discard(success.value)
         }
     }
 

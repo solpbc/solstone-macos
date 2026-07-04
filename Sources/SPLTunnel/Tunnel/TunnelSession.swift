@@ -20,6 +20,7 @@ public enum SessionError: Error, Equatable, Sendable {
     case notConnected
     case unreachable
     case directKeepaliveMissed
+    case relayKeepaliveMissed
     case invalidRelayURL(String)
     case transportFailed(String)
     case tlsFailed(String)
@@ -194,9 +195,10 @@ public actor TunnelSession: TunnelSessioning {
         }
 
         do {
-            let result = try await RaceCoordinator<ConnectedAttempt> { endpoint in
-                try await self.connectEndpoint(endpoint, attempt: attempt)
-            }.connect(endpoints: endpoints)
+            let result = try await RaceCoordinator<ConnectedAttempt>(
+                dial: { endpoint in try await self.connectEndpoint(endpoint, attempt: attempt) },
+                discard: { attempt in await attempt.tls.close() }
+            ).connect(endpoints: endpoints)
             publishConnected(result.value, endpoint: result.endpoint)
             return result.value
         } catch let error as SessionError {
@@ -268,13 +270,11 @@ public actor TunnelSession: TunnelSessioning {
         }
         inboundPumpTask = pump
 
-        if case .lanDirect = connected.via {
-            await mux.startKeepalive()
-            keepaliveWatchTask = Task { [mux] in
-                for await _ in mux.keepaliveLost {
-                    await self.handleDirectKeepaliveLost()
-                    break
-                }
+        await mux.startKeepalive()
+        keepaliveWatchTask = Task { [mux] in
+            for await _ in mux.keepaliveLost {
+                await self.handleKeepaliveLost()
+                break
             }
         }
     }
@@ -291,15 +291,20 @@ public actor TunnelSession: TunnelSessioning {
         setConnectionMode(nil)
     }
 
-    private func handleDirectKeepaliveLost() async {
-        guard connectionMode == .plDirect else {
+    private func handleKeepaliveLost() async {
+        switch connectionMode {
+        case .plDirect:
+            relayOnlyNextReconnect = true
+            lastTrustedDirectEndpoint = nil
+            trustDirectUntil = nil
+            publish(.failed(.directKeepaliveMissed))
+            await tearDownCurrent(reason: .transportFailure)
+        case .plViaSpl:
+            publish(.failed(.relayKeepaliveMissed))
+            await tearDownCurrent(reason: .transportFailure)
+        case nil:
             return
         }
-        relayOnlyNextReconnect = true
-        lastTrustedDirectEndpoint = nil
-        trustDirectUntil = nil
-        publish(.failed(.directKeepaliveMissed))
-        await tearDownCurrent(reason: .transportFailure)
     }
 
     private func reconnectCandidates(from endpoints: [TransportEndpoint]) -> [TransportEndpoint] {

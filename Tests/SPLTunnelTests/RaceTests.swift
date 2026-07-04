@@ -72,6 +72,65 @@ struct RaceTests {
         #expect(result.endpoint == direct)
     }
 
+    @Test func loserDiscardedExactlyOnce() async throws {
+        let winner = TransportEndpoint.lan(host: "fd12:3456::1", port: 443, scope: "ula")
+        let loser = TransportEndpoint.lan(host: "192.168.1.10", port: 443, scope: "local")
+        let log = DiscardLog()
+        let coordinator = RaceCoordinator<DiscardValue>(
+            stagger: .milliseconds(1),
+            loserGrace: .milliseconds(50),
+            budget: .seconds(2),
+            dial: { endpoint in
+                if endpoint == winner {
+                    return DiscardValue(id: 1)
+                }
+                return DiscardValue(id: 2)
+            },
+            discard: { value in
+                await log.record(value.id)
+            }
+        )
+
+        let result = try await coordinator.connect(endpoints: [loser, winner])
+
+        #expect(result.endpoint == winner)
+        #expect(result.value.id == 1)
+        #expect(await log.count(1) == 0)
+        #expect(await log.count(2) == 1)
+    }
+
+    @Test func lateSuccessDiscardedExactlyOnce() async throws {
+        let winner = TransportEndpoint.lan(host: "fd12:3456::1", port: 443, scope: "ula")
+        let loser = TransportEndpoint.lan(host: "192.168.1.10", port: 443, scope: "local")
+        let log = DiscardLog()
+        let coordinator = RaceCoordinator<DiscardValue>(
+            stagger: .milliseconds(1),
+            loserGrace: .milliseconds(20),
+            budget: .seconds(2),
+            dial: { endpoint in
+                if endpoint == winner {
+                    return DiscardValue(id: 1)
+                }
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                }
+                return DiscardValue(id: 2)
+            },
+            discard: { value in
+                await log.record(value.id)
+            }
+        )
+
+        let result = try await coordinator.connect(endpoints: [loser, winner])
+
+        #expect(result.endpoint == winner)
+        #expect(result.value.id == 1)
+        try await waitForDiscardCount(1, id: 2, log: log)
+        #expect(await log.count(1) == 0)
+        #expect(await log.count(2) == 1)
+    }
+
     @Test func budgetAbortThrowsUnreachable() async {
         let coordinator = RaceCoordinator<Int>(
             stagger: .milliseconds(1),
@@ -290,5 +349,32 @@ struct RaceTests {
         } catch {
             Issue.record("Expected \(expected), got \(error)")
         }
+    }
+
+    private func waitForDiscardCount(_ expected: Int, id: Int, log: DiscardLog) async throws {
+        let deadline = ContinuousClock.now + .seconds(1)
+        while ContinuousClock.now < deadline {
+            if await log.count(id) == expected {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw SessionError.transportFailed("discard timeout")
+    }
+}
+
+private struct DiscardValue: Sendable, Equatable {
+    let id: Int
+}
+
+private actor DiscardLog {
+    private var counts: [Int: Int] = [:]
+
+    func record(_ id: Int) {
+        counts[id, default: 0] += 1
+    }
+
+    func count(_ id: Int) -> Int {
+        counts[id, default: 0]
     }
 }

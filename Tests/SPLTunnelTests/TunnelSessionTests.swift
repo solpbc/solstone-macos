@@ -123,6 +123,33 @@ struct TunnelSessionTests {
         #expect(await recorder.states.contains(.connected(via: .relay(endpoint: relayURL))))
     }
 
+    @Test func relayKeepaliveMissLeavesConnectedFast() async throws {
+        let fixture = try TestCA.make()
+        let tlsServer = TLSEchoServer(bundle: fixture, mode: .muxDropControl)
+        try await tlsServer.start()
+        let tlsPort = await tlsServer.port
+        let relay = RelayBridgeServer(tlsPort: tlsPort)
+        try await relay.start()
+        let relayPort = await relay.port
+        let pairing = pairing(from: fixture, relayPort: relayPort, localEndpoints: [])
+        let session = TunnelSession(pairing: pairing)
+        let recorder = StateRecorder()
+        let observation = observe(session: session, recorder: recorder)
+        let relayURL = try #require(URL(string: "ws://127.0.0.1:\(relayPort)"))
+
+        try await session.connect(endpoints: TransportEndpoint.candidates(for: pairing))
+        try await waitForConnected(recorder, via: .relay(endpoint: relayURL), minimumCount: 1)
+        try await waitForState(recorder, .failed(.relayKeepaliveMissed))
+
+        await session.disconnect()
+        observation.cancel()
+        await relay.stop()
+        await tlsServer.stop()
+
+        #expect(await recorder.states.contains(.connected(via: .relay(endpoint: relayURL))))
+        #expect(await recorder.states.contains(.failed(.relayKeepaliveMissed)))
+    }
+
     @Test func trustDirectUntilAttemptsCachedDirectEndpointFirst() async throws {
         let fixture = try TestCA.make()
         let server = TLSEchoServer(bundle: fixture, mode: .mux)
@@ -247,6 +274,12 @@ struct TunnelSessionTests {
     private func waitForConnected(_ recorder: StateRecorder, via: ConnectedVia, minimumCount: Int) async throws {
         try await waitUntil {
             await recorder.states.filter { $0 == .connected(via: via) }.count >= minimumCount
+        }
+    }
+
+    private func waitForState(_ recorder: StateRecorder, _ expected: TunnelState) async throws {
+        try await waitUntil {
+            await recorder.states.contains(expected)
         }
     }
 
