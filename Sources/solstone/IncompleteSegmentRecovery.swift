@@ -35,8 +35,7 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
     /// - Returns: Number of segments enqueued for finalize.
     public func recoverAll(excludingActiveSegment activeSegmentPath: String? = nil) async -> Int {
         let fm = FileManager.default
-        let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let capturesDir = capturesDirectory ?? appSupport.appendingPathComponent("Solstone/captures", isDirectory: true)
+        let capturesDir = capturesDirectory ?? StorageManager.defaultBaseDirectory
 
         guard fm.fileExists(atPath: capturesDir.path) else {
             return 0

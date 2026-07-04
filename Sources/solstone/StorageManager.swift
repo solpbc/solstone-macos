@@ -8,6 +8,11 @@ public final class StorageManager: Sendable {
     /// Base directory for all captures
     public let baseDirectory: URL
 
+    public static var defaultBaseDirectory: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("Solstone/captures", isDirectory: true)
+    }
+
     /// Date formatter for directory names (YYYY-MM-DD)
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -29,8 +34,7 @@ public final class StorageManager: Sendable {
         }
 
         // ~/Library/Application Support/Solstone/captures/
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        self.baseDirectory = appSupport.appendingPathComponent("Solstone/captures", isDirectory: true)
+        self.baseDirectory = Self.defaultBaseDirectory
     }
 
     /// Creates the base directory if it doesn't exist
