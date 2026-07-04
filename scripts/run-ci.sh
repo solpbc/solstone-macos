@@ -37,7 +37,8 @@ security set-keychain-settings -lut 7200 "$TEST_KC"
 security unlock-keychain -p "$TEST_PASS" "$TEST_KC"
 
 PRIOR_LIST=$(security list-keychains -d user | tr -d '"' | xargs)
-PRIOR_DEFAULT=$(security default-keychain -d user | tr -d '"' | xargs)
+PRIOR_DEFAULT=$(security default-keychain -d user | tr -d '"' | xargs || true)
+PRIOR_DEFAULT="${PRIOR_DEFAULT:-$HOME/Library/Keychains/login.keychain-db}"
 
 security list-keychains -d user -s "$TEST_KC" $PRIOR_LIST
 security default-keychain -d user -s "$TEST_KC"
