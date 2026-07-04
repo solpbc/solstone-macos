@@ -48,7 +48,7 @@ final class SparkleUserDriver: NSObject, SPUUserDriver {
     }
 
     func showUpdateNotFoundWithError(_ error: Error, acknowledgement: @escaping () -> Void) {
-        Logger.setup.error("Sparkle no-update result: \(String(describing: error), privacy: .public)")
+        Logger.setup.info("Sparkle no-update result: \(String(describing: error), privacy: .public)")
         controller.presentNoUpdateFound()
         acknowledgement()
     }
