@@ -511,7 +511,7 @@ extension MenubarStatusRowState {
         case .paused:
             return "paused"
         case .observing:
-            return "observing"
+            return "on"
         }
     }
 }
@@ -520,7 +520,7 @@ extension SettingsObservationAXState {
     var axToken: String {
         switch self {
         case .observing:
-            return "observing"
+            return "on"
         case .paused:
             return "paused"
         case .starting:

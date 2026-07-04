@@ -66,29 +66,29 @@ struct StatusHealthSummaryTests {
     @Test func observingOffRowUsesModeSpecificSubtitle() {
         let bundled = makeSummary(serviceMode: .bundled, isRecording: false)
         #expect(bundled.severity == .warn)
-        #expect(bundled.axValue == "observing_off")
+        #expect(bundled.axValue == "off")
         #expect(bundled.subtitle == "your journal is fine — turn sol back on to keep building memory")
 
         let external = makeSummary(isRecording: false)
         #expect(external.severity == .warn)
-        #expect(external.axValue == "observing_off")
+        #expect(external.axValue == "off")
         #expect(external.subtitle == "nothing is reaching x.example while sol is off")
     }
 
     @Test func pausedRowUsesModeAndSyncSpecificSubtitle() {
         let bundled = makeSummary(serviceMode: .bundled, isPaused: true)
         #expect(bundled.severity == .warn)
-        #expect(bundled.axValue == "observing_paused")
+        #expect(bundled.axValue == "paused")
         #expect(bundled.subtitle == "journal healthy on this Mac")
 
         let synced = makeSummary(isPaused: true, uploadStatus: .synced)
         #expect(synced.severity == .warn)
-        #expect(synced.axValue == "observing_paused")
+        #expect(synced.axValue == "paused")
         #expect(synced.subtitle == "synced to x.example")
 
         let connecting = makeSummary(isPaused: true, uploadStatus: .notSynced)
         #expect(connecting.severity == .warn)
-        #expect(connecting.axValue == "observing_paused")
+        #expect(connecting.axValue == "paused")
         #expect(connecting.subtitle == "paused — x.example")
     }
 
@@ -147,13 +147,13 @@ struct StatusHealthSummaryTests {
 
     @Test func captureFlagsLoseToRedRowsAndTableOrderedBundledRows() {
         let uploadingOff = makeSummary(isRecording: false, uploadStatus: .uploading(segment: "s1"))
-        #expect(uploadingOff.axValue == "observing_off")
+        #expect(uploadingOff.axValue == "off")
 
         let bundledOff = makeSummary(serviceMode: .bundled, isRecording: false)
-        #expect(bundledOff.axValue == "observing_off")
+        #expect(bundledOff.axValue == "off")
 
         let syncedPaused = makeSummary(isPaused: true, uploadStatus: .synced)
-        #expect(syncedPaused.axValue == "observing_paused")
+        #expect(syncedPaused.axValue == "paused")
 
         let stoppedPaused = makeSummary(
             serviceMode: .bundled,

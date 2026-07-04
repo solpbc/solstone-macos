@@ -265,7 +265,7 @@ extension StatusHealthSummary {
                 subtitle: isBundled
                     ? "your journal is fine — turn sol back on to keep building memory"
                     : "nothing is reaching \(host) while sol is off",
-                axValue: "observing_off"
+                axValue: "off"
             )
         }
         if isPaused {
@@ -276,7 +276,7 @@ extension StatusHealthSummary {
                 severity: .warn,
                 title: "sol is paused",
                 subtitle: subtitle,
-                axValue: "observing_paused"
+                axValue: "paused"
             )
         }
         return nil

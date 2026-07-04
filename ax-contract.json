@@ -589,7 +589,7 @@
       "sync_paused",
       "offline",
       "paused",
-      "observing"
+      "on"
     ],
     "PairingConnectionAXState" : [
       "disconnected",
@@ -631,7 +631,7 @@
       "external"
     ],
     "SettingsObservationAXState" : [
-      "observing",
+      "on",
       "paused",
       "starting",
       "error"
