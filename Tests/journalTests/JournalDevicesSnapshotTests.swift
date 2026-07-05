@@ -63,16 +63,16 @@ struct JournalDevicesSnapshotTests {
     }
 
     @Test func paneMatrix() async throws {
-        try renderDevicesList()
-        try renderDevicesEmpty()
-        try renderDevicesNotRunning()
-        try renderDevicesNotReady()
-        try renderPairingOpen()
-        try renderPairingPairedDismissed()
-        try renderPairingExpired()
+        try await renderDevicesList()
+        try await renderDevicesEmpty()
+        try await renderDevicesNotRunning()
+        try await renderDevicesNotReady()
+        try await renderPairingOpen()
+        try await renderPairingPairedDismissed()
+        try await renderPairingExpired()
     }
 
-    private func renderDevicesList() throws {
+    private func renderDevicesList() async throws {
         let model = paneModel(
             state: .loaded,
             devices: [
@@ -89,26 +89,26 @@ struct JournalDevicesSnapshotTests {
                 ),
             ]
         )
-        try renderPane(model, to: "journal-devices-list.png")
+        try await renderPane(model, to: "journal-devices-list.png")
     }
 
-    private func renderDevicesEmpty() throws {
+    private func renderDevicesEmpty() async throws {
         let model = paneModel(state: .empty)
-        try renderPane(model, to: "journal-devices-empty.png")
+        try await renderPane(model, to: "journal-devices-empty.png")
     }
 
-    private func renderDevicesNotRunning() throws {
+    private func renderDevicesNotRunning() async throws {
         let model = paneModel(state: .notRunning)
-        try renderPane(model, to: "journal-devices-not-running.png")
+        try await renderPane(model, to: "journal-devices-not-running.png")
     }
 
-    private func renderDevicesNotReady() throws {
+    private func renderDevicesNotReady() async throws {
         let model = paneModel(state: .notReady)
         model.loadErrorDetail = "pairing routes are still starting"
-        try renderPane(model, to: "journal-devices-not-ready.png")
+        try await renderPane(model, to: "journal-devices-not-ready.png")
     }
 
-    private func renderPairingOpen() throws {
+    private func renderPairingOpen() async throws {
         let model = pairingModel()
         let link = "https://journal.example/pair/abc123"
         model.pairingNow = .seconds(40)
@@ -118,10 +118,10 @@ struct JournalDevicesSnapshotTests {
             deadline: .seconds(125),
             nonce: "nonce-a"
         )
-        try renderSheet(model, to: "journal-devices-pairing-open.png")
+        try await renderSheet(model, to: "journal-devices-pairing-open.png")
     }
 
-    private func renderPairingPairedDismissed() throws {
+    private func renderPairingPairedDismissed() async throws {
         let model = paneModel(
             state: .loaded,
             devices: [
@@ -135,13 +135,13 @@ struct JournalDevicesSnapshotTests {
         )
         model.pairingState = .paired
         model.isPairingPresented = false
-        try renderPane(model, to: "journal-devices-pairing-paired-dismissed.png")
+        try await renderPane(model, to: "journal-devices-pairing-paired-dismissed.png")
     }
 
-    private func renderPairingExpired() throws {
+    private func renderPairingExpired() async throws {
         let model = pairingModel()
         model.pairingState = .expired(previousLink: "https://journal.example/pair/expired")
-        try renderSheet(model, to: "journal-devices-pairing-expired.png")
+        try await renderSheet(model, to: "journal-devices-pairing-expired.png")
     }
 
     private func paneModel(
@@ -163,8 +163,8 @@ struct JournalDevicesSnapshotTests {
         return model
     }
 
-    private func renderPane(_ model: JournalDevicesModel, to filename: String) throws {
-        try render(
+    private func renderPane(_ model: JournalDevicesModel, to filename: String) async throws {
+        try await render(
             JournalDevicesPane(model: model)
                 .frame(width: paneSize.width, height: paneSize.height)
                 .padding(24)
@@ -174,8 +174,8 @@ struct JournalDevicesSnapshotTests {
         )
     }
 
-    private func renderSheet(_ model: JournalDevicesModel, to filename: String) throws {
-        try render(
+    private func renderSheet(_ model: JournalDevicesModel, to filename: String) async throws {
+        try await render(
             JournalPairingWindow(model: model)
                 .frame(width: sheetSize.width, height: sheetSize.height)
                 .background(Color(nsColor: .windowBackgroundColor)),
@@ -184,7 +184,7 @@ struct JournalDevicesSnapshotTests {
         )
     }
 
-    private func render<V: View>(_ view: V, size: CGSize, to filename: String) throws {
+    private func render<V: View>(_ view: V, size: CGSize, to filename: String) async throws {
         let hostingView = NSHostingView(rootView: view)
         hostingView.frame = NSRect(origin: .zero, size: size)
         hostingView.layoutSubtreeIfNeeded()
@@ -199,39 +199,34 @@ struct JournalDevicesSnapshotTests {
         }
 
         let url = try outputDir.appendingPathComponent(filename)
-        try pngData.write(to: url)
-
-        guard let bitmapData = bitmapRep.bitmapData else { return }
         let bytesPerPixel = bitmapRep.bitsPerPixel / 8
         let bytesPerRow = bitmapRep.bytesPerRow
         let width = bitmapRep.pixelsWide
         let height = bitmapRep.pixelsHigh
-        guard bytesPerPixel >= 3, width > 0, height > 0 else { return }
 
-        let backgroundPixel = bitmapData
-        let epsilon = 8
-        let minimumContentPixels = 400
-        var contentPixelCount = 0
-        for y in 0..<height {
-            for x in 0..<width {
-                let pixel = bitmapData.advanced(by: y * bytesPerRow + x * bytesPerPixel)
-                if abs(Int(pixel[0]) - Int(backgroundPixel[0])) > epsilon ||
-                    abs(Int(pixel[1]) - Int(backgroundPixel[1])) > epsilon ||
-                    abs(Int(pixel[2]) - Int(backgroundPixel[2])) > epsilon {
-                    contentPixelCount += 1
-                }
-            }
-        }
-        if contentPixelCount < minimumContentPixels {
-            throw RenderError.emptyContent(
-                filename: filename,
-                contentPixelCount: contentPixelCount,
-                minimum: minimumContentPixels
+        let bitmap: SnapshotBitmap?
+        if let bitmapData = bitmapRep.bitmapData {
+            bitmap = SnapshotBitmap(
+                bytes: Array(UnsafeBufferPointer(start: bitmapData, count: bytesPerRow * height)),
+                bytesPerPixel: bytesPerPixel,
+                bytesPerRow: bytesPerRow,
+                width: width,
+                height: height
             )
+        } else {
+            bitmap = nil
         }
+
+        try await SnapshotRenderPostProcessor.writePNGAndValidateContent(
+            pngData: pngData,
+            outputURL: url,
+            filename: filename,
+            bitmap: bitmap,
+            emptyContent: RenderError.emptyContent
+        )
     }
 
-    private enum RenderError: Error, CustomStringConvertible {
+    private enum RenderError: Error, Sendable, CustomStringConvertible {
         case noBitmap
         case noPNG
         case emptyContent(filename: String, contentPixelCount: Int, minimum: Int)

@@ -167,6 +167,8 @@ struct JournalDevicesModelTests {
         let model = JournalDevicesModel(client: client, clock: clock)
 
         model.openPairing()
+        // Pairing tests own the product polling task; close it on every exit path.
+        defer { model.closePairing() }
         try await waitUntil { if case .open = model.pairingState { return true }; return false }
         try await waitUntil { clock.sleepCallCount() >= 1 }
         clock.advance(by: .seconds(1))
@@ -183,6 +185,7 @@ struct JournalDevicesModelTests {
         let model = JournalDevicesModel(client: client, clock: ManualDevicesClock())
 
         model.openPairing()
+        defer { model.closePairing() }
         try await waitUntil { if case .openFailed = model.pairingState { return true }; return false }
 
         #expect(model.pairingState == .openFailed(detail: "not ready"))
@@ -198,6 +201,7 @@ struct JournalDevicesModelTests {
         let model = JournalDevicesModel(client: client, clock: clock)
 
         model.openPairing()
+        defer { model.closePairing() }
         try await waitUntil { if case .open = model.pairingState { return true }; return false }
         try await waitUntil { clock.sleepCallCount() >= 1 }
         clock.advance(by: .seconds(1))
@@ -225,6 +229,7 @@ struct JournalDevicesModelTests {
         let model = JournalDevicesModel(client: client, clock: clock)
 
         model.openPairing()
+        defer { model.closePairing() }
         try await waitUntil { if case let .open(link, _, _, _) = model.pairingState { return link.hasSuffix("old") }; return false }
         try await waitUntil { clock.sleepCallCount() >= 1 }
         clock.advance(by: .seconds(1))
@@ -254,6 +259,7 @@ struct JournalDevicesModelTests {
         let model = JournalDevicesModel(client: client, clock: clock)
 
         model.openPairing()
+        defer { model.closePairing() }
         try await waitUntil { if case .open = model.pairingState { return true }; return false }
         try await waitUntil { clock.sleepCallCount() >= 1 }
         model.closePairing()
@@ -428,16 +434,24 @@ private final class ManualDevicesClock: MonotonicClock, @unchecked Sendable {
     }
 }
 
+/// Pumps the MainActor until `condition` holds, measuring progress in cooperative
+/// scheduling turns rather than wall-clock time.
+///
+/// The pairing tests drive all time deterministically through `ManualDevicesClock`,
+/// so a wait only needs to let the ready product `pairingTask` reach its next
+/// suspension. Counting turns (not seconds) keeps these waits immune to MainActor
+/// saturation from concurrently-running `@MainActor` suites (e.g. snapshot rendering):
+/// a wall-clock deadline would elapse during such a freeze and time out spuriously,
+/// even though no test progress was pending. Suites that exercise real product
+/// `Task.sleep` timers (Tunnel/Mark) correctly use the wall-clock `waitUntil` instead.
 @MainActor
 private func waitUntil(
-    timeout: Duration = .seconds(30),
+    maxTurns: Int = 2000,
     _ condition: @escaping @MainActor () async -> Bool
 ) async throws {
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: timeout)
-    while clock.now < deadline {
+    for _ in 0..<max(1, maxTurns) {
         if await condition() { return }
-        try await Task.sleep(for: .milliseconds(10))
+        await Task.yield()
     }
     Issue.record("timed out waiting for condition")
 }

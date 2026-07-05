@@ -68,28 +68,28 @@ struct JournalSnapshotTests {
     @Test func paneMatrix() async throws {
         try await renderHomeConfiguredRunning()
         try await renderHomeConfiguredStopped()
-        try renderHomeUnconfiguredInterim()
-        try renderHomeHostnameFallback()
-        try renderJournalNameAndDiskUsage()
+        try await renderHomeUnconfiguredInterim()
+        try await renderHomeHostnameFallback()
+        try await renderJournalNameAndDiskUsage()
         try await renderRunStateRunning()
-        try renderRunStateStopped()
+        try await renderRunStateStopped()
         try await renderRunStateBlocked()
         try await renderRunStateUnknownHealth()
-        try renderBackupStatic()
-        try renderStartup(enabled: true)
-        try renderStartup(enabled: false)
-        try renderFirstRunNameEntry()
-        try renderFirstRunSetupProgress()
-        try renderFirstRunMarkReveal()
-        try renderFirstRunLockedHome()
-        try renderFirstRunAdoptLanding()
+        try await renderBackupStatic()
+        try await renderStartup(enabled: true)
+        try await renderStartup(enabled: false)
+        try await renderFirstRunNameEntry()
+        try await renderFirstRunSetupProgress()
+        try await renderFirstRunMarkReveal()
+        try await renderFirstRunLockedHome()
+        try await renderFirstRunAdoptLanding()
     }
 
     private func renderHomeConfiguredRunning() async throws {
         let supervisor = try await runningSupervisor()
         let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample, name: "home base")
         model.selectedPane = .home
-        try renderWindow(model, to: "journal-home-configured-running.png")
+        try await renderWindow(model, to: "journal-home-configured-running.png")
     }
 
     private func renderHomeConfiguredStopped() async throws {
@@ -98,26 +98,26 @@ struct JournalSnapshotTests {
         supervisor.applyRuntimeStatus(.stoppedByUser)
         let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
         model.selectedPane = .home
-        try renderWindow(model, to: "journal-home-configured-stopped.png")
+        try await renderWindow(model, to: "journal-home-configured-stopped.png")
     }
 
-    private func renderHomeUnconfiguredInterim() throws {
+    private func renderHomeUnconfiguredInterim() async throws {
         let model = unconfiguredModel()
         model.selectedPane = .home
-        try renderWindow(model, to: "journal-home-unconfigured-interim.png")
+        try await renderWindow(model, to: "journal-home-unconfigured-interim.png")
     }
 
-    private func renderHomeHostnameFallback() throws {
+    private func renderHomeHostnameFallback() async throws {
         let model = try configuredModel(mark: nil, name: "", machineName: "machine-name")
         model.selectedPane = .home
-        try renderWindow(model, to: "journal-home-hostname-fallback.png")
+        try await renderWindow(model, to: "journal-home-hostname-fallback.png")
     }
 
-    private func renderJournalNameAndDiskUsage() throws {
+    private func renderJournalNameAndDiskUsage() async throws {
         let model = try configuredModel(mark: .uiTestSample, name: "home base")
         model.selectedPane = .journal
         model.diskUsageBytes = 1_234_567
-        try renderWindow(model, to: "journal-journal-name-diskusage.png")
+        try await renderWindow(model, to: "journal-journal-name-diskusage.png")
     }
 
     private func renderRunStateRunning() async throws {
@@ -126,10 +126,10 @@ struct JournalSnapshotTests {
         model.selectedPane = .runState
         model.healthDisplay = .healthy
         model.runtimeVersion = "1.2.3"
-        try renderWindow(model, to: "journal-run-state-running.png")
+        try await renderWindow(model, to: "journal-run-state-running.png")
     }
 
-    private func renderRunStateStopped() throws {
+    private func renderRunStateStopped() async throws {
         let fixture = try makeConfiguredFixture()
         let supervisor = JournalSupervisor()
         supervisor.applyRuntimeStatus(.stoppedByUser)
@@ -137,7 +137,7 @@ struct JournalSnapshotTests {
         model.selectedPane = .runState
         model.healthDisplay = .stopped
         model.runtimeVersion = "unknown"
-        try renderWindow(model, to: "journal-run-state-stopped.png")
+        try await renderWindow(model, to: "journal-run-state-stopped.png")
     }
 
     private func renderRunStateBlocked() async throws {
@@ -152,7 +152,7 @@ struct JournalSnapshotTests {
         _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
         let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
         model.selectedPane = .runState
-        try renderWindow(model, to: "journal-run-state-blocked.png")
+        try await renderWindow(model, to: "journal-run-state-blocked.png")
     }
 
     private func renderRunStateUnknownHealth() async throws {
@@ -161,56 +161,56 @@ struct JournalSnapshotTests {
         model.selectedPane = .runState
         model.healthDisplay = .unknown
         model.runtimeVersion = "unknown"
-        try renderWindow(model, to: "journal-run-state-unknown-health.png")
+        try await renderWindow(model, to: "journal-run-state-unknown-health.png")
     }
 
-    private func renderBackupStatic() throws {
+    private func renderBackupStatic() async throws {
         let model = try configuredModel(mark: .uiTestSample, name: "home base")
         model.selectedPane = .backup
-        try renderWindow(model, to: "journal-backup-static.png")
+        try await renderWindow(model, to: "journal-backup-static.png")
     }
 
-    private func renderStartup(enabled: Bool) throws {
+    private func renderStartup(enabled: Bool) async throws {
         let fixture = try makeConfiguredFixture()
         fixture.config.setLaunchAtLoginEnabled(enabled)
         let model = configuredModel(fixture: fixture, supervisor: JournalSupervisor(), mark: .uiTestSample, name: "home base")
         model.selectedPane = .startup
-        try renderWindow(model, to: enabled ? "journal-startup-enabled.png" : "journal-startup-disabled.png")
+        try await renderWindow(model, to: enabled ? "journal-startup-enabled.png" : "journal-startup-disabled.png")
     }
 
-    private func renderFirstRunNameEntry() throws {
+    private func renderFirstRunNameEntry() async throws {
         let fixture = makeModel(startResults: [], probeResults: [])
         fixture.model.route = .ritual(.nameLocation)
-        try renderFirstRun(fixture.model, to: "journal-first-run-name-entry.png")
+        try await renderFirstRun(fixture.model, to: "journal-first-run-name-entry.png")
     }
 
-    private func renderFirstRunSetupProgress() throws {
+    private func renderFirstRunSetupProgress() async throws {
         let fixture = makeModel(startResults: [], probeResults: [])
         fixture.model.route = .ritual(.setupProgress)
         fixture.model.currentStep = "prepare"
         fixture.model.setupRenderedLog = "prepare ok\ncreate journal"
-        try renderFirstRun(fixture.model, to: "journal-first-run-setup-progress.png")
+        try await renderFirstRun(fixture.model, to: "journal-first-run-setup-progress.png")
     }
 
-    private func renderFirstRunMarkReveal() throws {
+    private func renderFirstRunMarkReveal() async throws {
         let fixture = makeModel(startResults: [], probeResults: [])
         fixture.model.route = .ritual(.markReveal)
         fixture.model.currentMark = .uiTestSample
         fixture.model.markRenderGeneration = 1
-        try renderFirstRun(fixture.model, to: "journal-first-run-mark-reveal.png")
+        try await renderFirstRun(fixture.model, to: "journal-first-run-mark-reveal.png")
     }
 
-    private func renderFirstRunLockedHome() throws {
+    private func renderFirstRunLockedHome() async throws {
         let model = try configuredModel(mark: .uiTestSample, name: "")
         model.selectedPane = .home
-        try renderWindow(model, to: "journal-first-run-locked-home.png")
+        try await renderWindow(model, to: "journal-first-run-locked-home.png")
     }
 
-    private func renderFirstRunAdoptLanding() throws {
+    private func renderFirstRunAdoptLanding() async throws {
         let fixture = makeModel(startResults: [], probeResults: [])
         fixture.model.route = .adopting
         fixture.model.adoptMessage = JournalFirstRunCopy.adoptLandingLine
-        try renderFirstRun(fixture.model, to: "journal-first-run-adopt-landing.png")
+        try await renderFirstRun(fixture.model, to: "journal-first-run-adopt-landing.png")
     }
 
     private func runningSupervisor() async throws -> JournalSupervisor {
@@ -304,8 +304,8 @@ struct JournalSnapshotTests {
         return url
     }
 
-    private func renderWindow(_ model: JournalWindowModel, to filename: String) throws {
-        try render(
+    private func renderWindow(_ model: JournalWindowModel, to filename: String) async throws {
+        try await render(
             JournalSettingsWindow(model: model, updateController: makeUpdateController(), openURL: { _ in })
                 .frame(width: size.width, height: size.height)
                 .background(Color(nsColor: .windowBackgroundColor)),
@@ -314,8 +314,8 @@ struct JournalSnapshotTests {
         )
     }
 
-    private func renderFirstRun(_ model: JournalFirstRunModel, to filename: String) throws {
-        try render(
+    private func renderFirstRun(_ model: JournalFirstRunModel, to filename: String) async throws {
+        try await render(
             JournalFirstRunView(model: model)
                 .frame(width: size.width, height: size.height)
                 .background(Color(nsColor: .windowBackgroundColor)),
@@ -333,7 +333,7 @@ struct JournalSnapshotTests {
         ) { _, _ in nil }
     }
 
-    private func render<V: View>(_ view: V, size: CGSize, to filename: String) throws {
+    private func render<V: View>(_ view: V, size: CGSize, to filename: String) async throws {
         let hostingView = NSHostingView(rootView: view)
         hostingView.frame = NSRect(origin: .zero, size: size)
         hostingView.layoutSubtreeIfNeeded()
@@ -348,39 +348,34 @@ struct JournalSnapshotTests {
         }
 
         let url = try outputDir.appendingPathComponent(filename)
-        try pngData.write(to: url)
-
-        guard let bitmapData = bitmapRep.bitmapData else { return }
         let bytesPerPixel = bitmapRep.bitsPerPixel / 8
         let bytesPerRow = bitmapRep.bytesPerRow
         let width = bitmapRep.pixelsWide
         let height = bitmapRep.pixelsHigh
-        guard bytesPerPixel >= 3, width > 0, height > 0 else { return }
 
-        let backgroundPixel = bitmapData
-        let epsilon = 8
-        let minimumContentPixels = 400
-        var contentPixelCount = 0
-        for y in 0..<height {
-            for x in 0..<width {
-                let pixel = bitmapData.advanced(by: y * bytesPerRow + x * bytesPerPixel)
-                if abs(Int(pixel[0]) - Int(backgroundPixel[0])) > epsilon ||
-                    abs(Int(pixel[1]) - Int(backgroundPixel[1])) > epsilon ||
-                    abs(Int(pixel[2]) - Int(backgroundPixel[2])) > epsilon {
-                    contentPixelCount += 1
-                }
-            }
-        }
-        if contentPixelCount < minimumContentPixels {
-            throw RenderError.emptyContent(
-                filename: filename,
-                contentPixelCount: contentPixelCount,
-                minimum: minimumContentPixels
+        let bitmap: SnapshotBitmap?
+        if let bitmapData = bitmapRep.bitmapData {
+            bitmap = SnapshotBitmap(
+                bytes: Array(UnsafeBufferPointer(start: bitmapData, count: bytesPerRow * height)),
+                bytesPerPixel: bytesPerPixel,
+                bytesPerRow: bytesPerRow,
+                width: width,
+                height: height
             )
+        } else {
+            bitmap = nil
         }
+
+        try await SnapshotRenderPostProcessor.writePNGAndValidateContent(
+            pngData: pngData,
+            outputURL: url,
+            filename: filename,
+            bitmap: bitmap,
+            emptyContent: RenderError.emptyContent
+        )
     }
 
-    private enum RenderError: Error, CustomStringConvertible {
+    private enum RenderError: Error, Sendable, CustomStringConvertible {
         case noBitmap
         case noPNG
         case emptyContent(filename: String, contentPixelCount: Int, minimum: Int)

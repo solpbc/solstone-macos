@@ -33,7 +33,7 @@ struct JournalMarkConfirmationDriverTests {
     @Test func retriesNilFetchUntilValidWithinDeadline() async throws {
         let baseURL = "http://127.0.0.1:7071"
         let fetcher = MarkFetchScript([nil, .uiTestSample])
-        let driver = makeDriver(deadlineSeconds: 10)
+        let driver = makeDriver(deadlineSeconds: 1)
 
         driver.startIfNeeded(
             for: .paired,
@@ -139,7 +139,7 @@ struct JournalMarkConfirmationDriverTests {
     }
 
     private func validDriver() async throws -> JournalMarkConfirmationDriver {
-        let driver = makeDriver(deadlineSeconds: 10)
+        let driver = makeDriver(deadlineSeconds: 1)
 
         driver.startIfNeeded(
             for: .paired,

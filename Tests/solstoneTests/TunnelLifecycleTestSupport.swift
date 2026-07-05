@@ -365,7 +365,7 @@ func pairing(
 }
 
 func waitUntil(
-    timeout: Duration = .seconds(60),
+    timeout: Duration = .seconds(10),
     _ condition: @escaping @MainActor @Sendable () async -> Bool
 ) async throws {
     let deadline = ContinuousClock.now + timeout
@@ -376,6 +376,19 @@ func waitUntil(
         try await Task.sleep(for: .milliseconds(20))
     }
     throw CancellationError()
+}
+
+@MainActor
+func currentPathSignature(of owner: TunnelLifecycleOwner) -> NetworkPathSignature? {
+    for child in Mirror(reflecting: owner).children where child.label == "currentPathSignature" {
+        if let signature = child.value as? NetworkPathSignature {
+            return signature
+        }
+        let optional = Mirror(reflecting: child.value)
+        return optional.children.first?.value as? NetworkPathSignature
+    }
+    Issue.record("TunnelLifecycleOwner.currentPathSignature missing - product rename broke the test seam")
+    return nil
 }
 
 func expectDuration(_ duration: Duration, inMilliseconds range: ClosedRange<Int>) {

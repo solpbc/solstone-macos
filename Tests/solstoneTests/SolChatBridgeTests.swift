@@ -14,6 +14,12 @@ private final class SolChatURLProtocolStore: @unchecked Sendable {
         var finishes: Bool
     }
 
+    let serverKey = "secret-\(UUID().uuidString)"
+
+    var authorizationHeader: String {
+        "Bearer \(serverKey)"
+    }
+
     private let lock = NSLock()
     private var responses: [Response] = []
     private var stopLoadingEvents = 0
@@ -29,15 +35,6 @@ private final class SolChatURLProtocolStore: @unchecked Sendable {
     var stopLoadingCount: Int {
         lock.withLock {
             stopLoadingEvents
-        }
-    }
-
-    func reset() {
-        lock.withLock {
-            responses.removeAll()
-            stopLoadingEvents = 0
-            requests.removeAll()
-            requestBodies.removeAll()
         }
     }
 
@@ -86,14 +83,36 @@ private final class SolChatURLProtocolStore: @unchecked Sendable {
     }
 }
 
-private final class SolChatURLProtocol: URLProtocol {
-    static let store = SolChatURLProtocolStore()
+private final class SolChatURLProtocolStoreRegistry: @unchecked Sendable {
+    static let shared = SolChatURLProtocolStoreRegistry()
 
+    private let lock = NSLock()
+    private var stores: [String: SolChatURLProtocolStore] = [:]
+
+    func register(_ store: SolChatURLProtocolStore) {
+        // Keep entries for the process lifetime so late URLProtocol callbacks stay routed to their originating test.
+        lock.withLock { stores[store.authorizationHeader] = store }
+    }
+
+    func store(for request: URLRequest) -> SolChatURLProtocolStore? {
+        guard let authorization = request.value(forHTTPHeaderField: "Authorization") else {
+            return nil
+        }
+        return lock.withLock { stores[authorization] }
+    }
+}
+
+private final class SolChatURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        let next = Self.store.next(for: request)
+        guard let store = SolChatURLProtocolStoreRegistry.shared.store(for: request) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unknown))
+            return
+        }
+
+        let next = store.next(for: request)
         if let error = next.error {
             client?.urlProtocol(self, didFailWithError: error)
             return
@@ -115,7 +134,7 @@ private final class SolChatURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {
-        Self.store.recordStopLoading()
+        SolChatURLProtocolStoreRegistry.shared.store(for: request)?.recordStopLoading()
     }
 }
 
@@ -166,7 +185,8 @@ private final class SolChatStateBox {
 @Suite("SolChatBridge", .serialized)
 @MainActor
 struct SolChatBridgeTests {
-    private func makeConfiguration() -> URLSessionConfiguration {
+    private func makeConfiguration(store: SolChatURLProtocolStore) -> URLSessionConfiguration {
+        SolChatURLProtocolStoreRegistry.shared.register(store)
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [SolChatURLProtocol.self]
         config.timeoutIntervalForRequest = 0
@@ -178,6 +198,7 @@ struct SolChatBridgeTests {
         notificationsEnabled: Bool = false,
         resolver: HomeBaseURLResolver = HomeBaseURLResolver { .url("https://example.com") },
         state: SolChatStateBox,
+        store: SolChatURLProtocolStore,
         notifier: SolChatTestNotifier = SolChatTestNotifier(),
         staleThresholdSeconds: TimeInterval = 60,
         watchdogIntervalSeconds: TimeInterval = 5,
@@ -197,7 +218,7 @@ struct SolChatBridgeTests {
                 }
             },
             notifier: notifier,
-            sessionConfiguration: makeConfiguration(),
+            sessionConfiguration: makeConfiguration(store: store),
             staleThresholdSeconds: staleThresholdSeconds,
             watchdogIntervalSeconds: watchdogIntervalSeconds,
             backoffSeconds: backoffSeconds,
@@ -229,25 +250,25 @@ struct SolChatBridgeTests {
     }
 
     @Test func parserSingleLineDataFrameEmitsRequest() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: requestFrame())
+        let store = SolChatURLProtocolStore()
+        store.enqueue(body: requestFrame())
         let state = SolChatStateBox()
-        let bridge = makeBridge(state: state)
+        let bridge = makeBridge(state: state, store: store)
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         let pending = await waitForPending(state)
         await bridge.stop()
 
         #expect(pending?.id == "req-1")
         #expect(pending?.summary == "open the journal")
-        let request = SolChatURLProtocol.store.requests.first
+        let request = store.requests.first
         #expect(request?.url?.absoluteString == "https://example.com/app/observer/callosum")
-        #expect(request?.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
+        #expect(request?.value(forHTTPHeaderField: "Authorization") == store.authorizationHeader)
     }
 
     @Test func parserMultiLineDataIsNewlineJoined() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: """
+        let store = SolChatURLProtocolStore()
+        store.enqueue(body: """
         data: {
         data: "kind":"sol_chat_request",
         data: "request_id":"req-2",
@@ -258,9 +279,9 @@ struct SolChatBridgeTests {
 
         """)
         let state = SolChatStateBox()
-        let bridge = makeBridge(state: state)
+        let bridge = makeBridge(state: state, store: store)
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         let pending = await waitForPending(state)
         await bridge.stop()
 
@@ -269,12 +290,12 @@ struct SolChatBridgeTests {
     }
 
     @Test func parserCommentLineIsSkippedAndFrameStillEmits() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: ": heartbeat\n\(requestFrame(id: "req-3"))")
+        let store = SolChatURLProtocolStore()
+        store.enqueue(body: ": heartbeat\n\(requestFrame(id: "req-3"))")
         let state = SolChatStateBox()
-        let bridge = makeBridge(state: state)
+        let bridge = makeBridge(state: state, store: store)
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         let pending = await waitForPending(state)
         await bridge.stop()
 
@@ -282,56 +303,59 @@ struct SolChatBridgeTests {
     }
 
     @Test func subscribeUsesResolverLoopbackTarget() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: "")
+        let store = SolChatURLProtocolStore()
+        store.enqueue(body: "")
         let state = SolChatStateBox()
         let bridge = makeBridge(
             resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24681") },
             state: state,
+            store: store,
             backoffSeconds: [0.01]
         )
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         try? await waitUntil(timeout: .seconds(2)) {
-            SolChatURLProtocol.store.requests.count >= 1
+            store.requests.count >= 1
         }
         await bridge.stop()
 
-        let request = SolChatURLProtocol.store.requests.first
+        let request = store.requests.first
         #expect(request?.url?.host == "127.0.0.1")
         #expect(request?.url?.port == 24681)
         #expect(request?.url?.path == "/app/observer/callosum")
     }
 
     @Test func subscribeUsesResolverStaticTarget() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: "")
+        let store = SolChatURLProtocolStore()
+        store.enqueue(body: "")
         let state = SolChatStateBox()
         let bridge = makeBridge(
             resolver: HomeBaseURLResolver { .url("https://journal.example:9443") },
             state: state,
+            store: store,
             backoffSeconds: [0.01]
         )
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         try? await waitUntil(timeout: .seconds(2)) {
-            SolChatURLProtocol.store.requests.count >= 1
+            store.requests.count >= 1
         }
         await bridge.stop()
 
-        let request = SolChatURLProtocol.store.requests.first
+        let request = store.requests.first
         #expect(request?.url?.host == "journal.example")
         #expect(request?.url?.port == 9443)
         #expect(request?.url?.path == "/app/observer/callosum")
     }
 
     @Test func heldResolverBacksOffWithoutCallosumRequest() async {
-        SolChatURLProtocol.store.reset()
+        let store = SolChatURLProtocolStore()
         let state = SolChatStateBox()
         let sleepRecorder = SleepRecorder()
         let bridge = makeBridge(
             resolver: HomeBaseURLResolver { .held },
             state: state,
+            store: store,
             watchdogIntervalSeconds: 999,
             backoffSeconds: [0.01],
             sleep: { seconds in
@@ -340,29 +364,30 @@ struct SolChatBridgeTests {
             }
         )
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         try? await waitUntil(timeout: .seconds(2)) {
             await !sleepRecorder.values.isEmpty
         }
         await bridge.stop()
 
-        #expect(SolChatURLProtocol.store.requests.isEmpty)
+        #expect(store.requests.isEmpty)
     }
 
     @Test func dispatchSupersededClearsKnownPendingAndNotification() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: requestFrame(id: "req-4"))
-        SolChatURLProtocol.store.enqueue(body: "data: {\"kind\":\"sol_chat_request_superseded\",\"request_id\":\"req-4\"}\n\n")
+        let store = SolChatURLProtocolStore()
+        store.enqueue(body: requestFrame(id: "req-4"))
+        store.enqueue(body: "data: {\"kind\":\"sol_chat_request_superseded\",\"request_id\":\"req-4\"}\n\n")
         let state = SolChatStateBox()
         let notifier = SolChatTestNotifier()
         let bridge = makeBridge(
             notificationsEnabled: true,
             state: state,
+            store: store,
             notifier: notifier,
             backoffSeconds: [0.01]
         )
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         for _ in 0..<120 where !state.pendingValues.contains(where: { $0?.id == "req-4" }) || state.pending != nil {
             try? await Task.sleep(for: .milliseconds(25))
         }
@@ -375,19 +400,20 @@ struct SolChatBridgeTests {
     }
 
     @Test func dispatchOwnerChatOpenClearsPendingAndRemovesNotification() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: requestFrame(id: "req-open"))
-        SolChatURLProtocol.store.enqueue(body: "data: {\"kind\":\"owner_chat_open\",\"request_id\":\"req-open\"}\n\n")
+        let store = SolChatURLProtocolStore()
+        store.enqueue(body: requestFrame(id: "req-open"))
+        store.enqueue(body: "data: {\"kind\":\"owner_chat_open\",\"request_id\":\"req-open\"}\n\n")
         let state = SolChatStateBox()
         let notifier = SolChatTestNotifier()
         let bridge = makeBridge(
             notificationsEnabled: true,
             state: state,
+            store: store,
             notifier: notifier,
             backoffSeconds: [0.01]
         )
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         for _ in 0..<120 where !state.pendingValues.contains(where: { $0?.id == "req-open" }) || state.pending != nil {
             try? await Task.sleep(for: .milliseconds(25))
         }
@@ -400,19 +426,20 @@ struct SolChatBridgeTests {
     }
 
     @Test func dispatchOwnerChatDismissedClearsPending() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: requestFrame(id: "req-dismissed"))
-        SolChatURLProtocol.store.enqueue(body: "data: {\"kind\":\"owner_chat_dismissed\",\"request_id\":\"req-dismissed\"}\n\n")
+        let store = SolChatURLProtocolStore()
+        store.enqueue(body: requestFrame(id: "req-dismissed"))
+        store.enqueue(body: "data: {\"kind\":\"owner_chat_dismissed\",\"request_id\":\"req-dismissed\"}\n\n")
         let state = SolChatStateBox()
         let notifier = SolChatTestNotifier()
         let bridge = makeBridge(
             notificationsEnabled: true,
             state: state,
+            store: store,
             notifier: notifier,
             backoffSeconds: [0.01]
         )
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         for _ in 0..<120 where !state.pendingValues.contains(where: { $0?.id == "req-dismissed" }) || state.pending != nil {
             try? await Task.sleep(for: .milliseconds(25))
         }
@@ -425,57 +452,73 @@ struct SolChatBridgeTests {
     }
 
     @Test func notificationsRespectOptInAndStaleFlags() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: requestFrame(id: "req-5"))
+        let enabledStore = SolChatURLProtocolStore()
+        enabledStore.enqueue(body: requestFrame(id: "req-5"))
         let enabledState = SolChatStateBox()
         let enabledNotifier = SolChatTestNotifier()
-        let enabledBridge = makeBridge(notificationsEnabled: true, state: enabledState, notifier: enabledNotifier)
+        let enabledBridge = makeBridge(
+            notificationsEnabled: true,
+            state: enabledState,
+            store: enabledStore,
+            notifier: enabledNotifier
+        )
 
-        await enabledBridge.configure(serverKey: "secret")
+        await enabledBridge.configure(serverKey: enabledStore.serverKey)
         _ = await waitForPending(enabledState)
         await enabledBridge.stop()
         #expect(await enabledNotifier.posts.count == 1)
 
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: requestFrame(id: "req-6", isStale: true))
+        let staleStore = SolChatURLProtocolStore()
+        staleStore.enqueue(body: requestFrame(id: "req-6", isStale: true))
         let staleState = SolChatStateBox()
         let staleNotifier = SolChatTestNotifier()
-        let staleBridge = makeBridge(notificationsEnabled: true, state: staleState, notifier: staleNotifier)
+        let staleBridge = makeBridge(
+            notificationsEnabled: true,
+            state: staleState,
+            store: staleStore,
+            notifier: staleNotifier
+        )
 
-        await staleBridge.configure(serverKey: "secret")
+        await staleBridge.configure(serverKey: staleStore.serverKey)
         try? await Task.sleep(for: .milliseconds(100))
         await staleBridge.stop()
         #expect(await staleNotifier.posts.isEmpty)
         #expect(staleState.pending == nil)
 
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: requestFrame(id: "req-7"))
+        let disabledStore = SolChatURLProtocolStore()
+        disabledStore.enqueue(body: requestFrame(id: "req-7"))
         let disabledState = SolChatStateBox()
         let disabledNotifier = SolChatTestNotifier()
-        let disabledBridge = makeBridge(notificationsEnabled: false, state: disabledState, notifier: disabledNotifier)
+        let disabledBridge = makeBridge(
+            notificationsEnabled: false,
+            state: disabledState,
+            store: disabledStore,
+            notifier: disabledNotifier
+        )
 
-        await disabledBridge.configure(serverKey: "secret")
+        await disabledBridge.configure(serverKey: disabledStore.serverKey)
         _ = await waitForPending(disabledState)
         await disabledBridge.stop()
         #expect(await disabledNotifier.posts.isEmpty)
     }
 
     @Test func heartbeatStalenessFlipsAndNextFrameClears() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: "")
+        let store = SolChatURLProtocolStore()
+        store.enqueue(body: "")
         let state = SolChatStateBox()
         let bridge = makeBridge(
             state: state,
+            store: store,
             staleThresholdSeconds: 0.03,
             watchdogIntervalSeconds: 0.01,
             backoffSeconds: [0.01]
         )
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         for _ in 0..<20 where !state.staleValues.contains(true) {
             try? await Task.sleep(for: .milliseconds(10))
         }
-        SolChatURLProtocol.store.enqueue(body: ": heartbeat\n\n")
+        store.enqueue(body: ": heartbeat\n\n")
         for _ in 0..<40 where state.staleValues.last != false {
             try? await Task.sleep(for: .milliseconds(10))
         }
@@ -486,41 +529,42 @@ struct SolChatBridgeTests {
     }
 
     @Test func staleWatchdogRelaunchesWedgedSubscriptionOncePerEpisode() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: "", finishes: false)
-        SolChatURLProtocol.store.enqueue(body: ": heartbeat\n", finishes: false)
-        SolChatURLProtocol.store.enqueue(body: "", finishes: false)
+        let store = SolChatURLProtocolStore()
+        store.enqueue(body: "", finishes: false)
+        store.enqueue(body: ": heartbeat\n", finishes: false)
+        store.enqueue(body: "", finishes: false)
         let state = SolChatStateBox()
         let bridge = makeBridge(
             state: state,
+            store: store,
             staleThresholdSeconds: 0.03,
             watchdogIntervalSeconds: 0.01,
             backoffSeconds: [0.01]
         )
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         try? await waitUntil(timeout: .seconds(2)) {
-            let requestCount = SolChatURLProtocol.store.requestCount
-            let stopLoadingCount = SolChatURLProtocol.store.stopLoadingCount
+            let requestCount = store.requestCount
+            let stopLoadingCount = store.stopLoadingCount
             let staleValues = await MainActor.run { state.staleValues }
             return requestCount >= 2
                 && stopLoadingCount >= 1
                 && staleValues.contains(true)
         }
         try? await waitUntil(timeout: .seconds(2)) {
-            let requestCount = SolChatURLProtocol.store.requestCount
-            let stopLoadingCount = SolChatURLProtocol.store.stopLoadingCount
+            let requestCount = store.requestCount
+            let stopLoadingCount = store.stopLoadingCount
             let staleValues = await MainActor.run { state.staleValues }
             return requestCount >= 3
                 && stopLoadingCount >= 2
                 && staleValues.contains(false)
                 && staleValues.filter { $0 }.count >= 2
         }
-        let requestCountAfterSecondEpisode = SolChatURLProtocol.store.requestCount
-        let stopLoadingCountAfterSecondEpisode = SolChatURLProtocol.store.stopLoadingCount
+        let requestCountAfterSecondEpisode = store.requestCount
+        let stopLoadingCountAfterSecondEpisode = store.stopLoadingCount
         try? await Task.sleep(for: .milliseconds(120))
-        let boundedRequestCount = SolChatURLProtocol.store.requestCount
-        let boundedStopLoadingCount = SolChatURLProtocol.store.stopLoadingCount
+        let boundedRequestCount = store.requestCount
+        let boundedStopLoadingCount = store.stopLoadingCount
         let staleValues = state.staleValues
         await bridge.stop()
 
@@ -534,12 +578,13 @@ struct SolChatBridgeTests {
     }
 
     @Test func reconnectTransportErrorUsesBackoffSequence() async {
-        SolChatURLProtocol.store.reset()
+        let store = SolChatURLProtocolStore()
         let state = SolChatStateBox()
         let sleepRecorder = SleepRecorder()
         let bridge = makeBridge(
             resolver: HomeBaseURLResolver { .url("not a valid url") },
             state: state,
+            store: store,
             watchdogIntervalSeconds: 999,
             backoffSeconds: [1, 2, 4],
             sleep: { seconds in
@@ -548,7 +593,7 @@ struct SolChatBridgeTests {
             }
         )
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         for _ in 0..<80 where await sleepRecorder.values.filter({ $0 != 999 }).isEmpty {
             try? await Task.sleep(for: .milliseconds(25))
         }
@@ -560,51 +605,51 @@ struct SolChatBridgeTests {
     }
 
     @Test func terminal401DoesNotRetry() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(statusCode: 401)
+        let store = SolChatURLProtocolStore()
+        store.enqueue(statusCode: 401)
         let state = SolChatStateBox()
-        let bridge = makeBridge(state: state, backoffSeconds: [0.01])
+        let bridge = makeBridge(state: state, store: store, backoffSeconds: [0.01])
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         try? await Task.sleep(for: .milliseconds(150))
         await bridge.stop()
 
-        #expect(SolChatURLProtocol.store.requests.count == 1)
+        #expect(store.requests.count == 1)
     }
 
     @Test func terminal403DoesNotRetry() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(statusCode: 403)
+        let store = SolChatURLProtocolStore()
+        store.enqueue(statusCode: 403)
         let state = SolChatStateBox()
-        let bridge = makeBridge(state: state, backoffSeconds: [0.01])
+        let bridge = makeBridge(state: state, store: store, backoffSeconds: [0.01])
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         try? await Task.sleep(for: .milliseconds(150))
         await bridge.stop()
 
-        #expect(SolChatURLProtocol.store.requests.count == 1)
+        #expect(store.requests.count == 1)
     }
 
     @Test func handleClickPostsOpensAndClearsPendingEvenOnServerError() async {
-        SolChatURLProtocol.store.reset()
-        SolChatURLProtocol.store.enqueue(body: requestFrame(id: "req-8", day: "2026-05-09", eventIndex: 99))
-        SolChatURLProtocol.store.enqueue(statusCode: 500, body: "boom")
+        let store = SolChatURLProtocolStore()
+        store.enqueue(body: requestFrame(id: "req-8", day: "2026-05-09", eventIndex: 99))
+        store.enqueue(statusCode: 500, body: "boom")
         let state = SolChatStateBox()
-        let bridge = makeBridge(state: state)
+        let bridge = makeBridge(state: state, store: store)
 
-        await bridge.configure(serverKey: "secret")
+        await bridge.configure(serverKey: store.serverKey)
         _ = await waitForPending(state)
         await bridge.handleClick(requestID: "req-8")
         await bridge.stop()
 
         #expect(state.openedURLs.last?.absoluteString == "https://example.com/app/chat/2026-05-09#event-99")
         #expect(state.pending == nil)
-        let post = SolChatURLProtocol.store.requests.first { $0.httpMethod == "POST" }
-        let postIndex = SolChatURLProtocol.store.requests.firstIndex { $0.httpMethod == "POST" }
+        let post = store.requests.first { $0.httpMethod == "POST" }
+        let postIndex = store.requests.firstIndex { $0.httpMethod == "POST" }
         #expect(post?.url?.absoluteString == "https://example.com/api/chat/sol_chat_request/open")
         #expect(post?.httpMethod == "POST")
-        #expect(post?.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
-        #expect(postIndex.map { SolChatURLProtocol.store.requestBodies[$0] } == "{\"request_id\":\"req-8\"}")
+        #expect(post?.value(forHTTPHeaderField: "Authorization") == store.authorizationHeader)
+        #expect(postIndex.map { store.requestBodies[$0] } == "{\"request_id\":\"req-8\"}")
     }
 }
 

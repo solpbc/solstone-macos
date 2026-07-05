@@ -451,20 +451,28 @@ struct TunnelLifecycleOwnerTests {
 
         owner.start()
         try await waitUntil { owner.state == .connected(localPort: 8080, via: .relay) }
-        pathSource.emit(NetworkPathStatus(bucket: .wifi, isSatisfied: true, isExpensive: false, isConstrained: false))
-        try await Task.sleep(for: .milliseconds(350))
+        let wifiStatus = NetworkPathStatus(bucket: .wifi, isSatisfied: true, isExpensive: false, isConstrained: false)
+        let wiredStatus = NetworkPathStatus(bucket: .wired, isSatisfied: true, isExpensive: false, isConstrained: false)
+        let cellularUnsatisfiedStatus = NetworkPathStatus(
+            bucket: .cellular,
+            isSatisfied: false,
+            isExpensive: false,
+            isConstrained: false
+        )
+
+        pathSource.emit(wifiStatus)
+        try await waitUntil { currentPathSignature(of: owner) == wifiStatus.signature }
         #expect(transport.requestReconnectCount == 0)
 
-        pathSource.emit(NetworkPathStatus(bucket: .wired, isSatisfied: true, isExpensive: false, isConstrained: false))
+        pathSource.emit(wiredStatus)
         try await waitUntil { transport.requestReconnectCount == 1 }
         #expect(transport.requestReconnectCount == 1)
 
-        pathSource.emit(NetworkPathStatus(bucket: .wired, isSatisfied: true, isExpensive: false, isConstrained: false))
-        try await Task.sleep(for: .milliseconds(350))
+        pathSource.emit(wiredStatus)
         #expect(transport.requestReconnectCount == 1)
 
-        pathSource.emit(NetworkPathStatus(bucket: .cellular, isSatisfied: false, isExpensive: false, isConstrained: false))
-        try await Task.sleep(for: .milliseconds(350))
+        pathSource.emit(cellularUnsatisfiedStatus)
+        try await waitUntil { currentPathSignature(of: owner) == cellularUnsatisfiedStatus.signature }
         await owner.stop()
 
         #expect(transport.requestReconnectCount == 1)
