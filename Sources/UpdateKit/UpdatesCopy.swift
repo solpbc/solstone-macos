@@ -65,6 +65,7 @@ public struct UpdatesCopy: Sendable {
     public var actionCancel: String { "cancel" }
     public var actionDismiss: String { "dismiss" }
     public var actionRetry: String { "retry" }
+    public var actionRetrying: String { "retrying…" }
 
     public var autoUpdateGroupTitle: String { "automatic updates" }
     public var autoCheckToggleLabel: String { "check for updates automatically" }
@@ -77,6 +78,7 @@ public struct UpdatesCopy: Sendable {
     public var lastCheckedNever: String { "never checked for updates" }
     public var lastCheckedJustNow: String { "just now" }
     public var privacyFootnote: String { "no usage data is ever sent. update checks only fetch the version manifest." }
+    public var updateChecksNotRunningTitle: String { "update checks aren't running right now" }
 
     public func appHeader(version: String) -> String {
         "\(provider.appDisplayName) \(version)"

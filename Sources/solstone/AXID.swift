@@ -87,6 +87,7 @@ enum AXID {
             static let pairingFlowState = "settings.service.pairing.flow.state"
             static let pairingFailureState = "settings.service.pairing.failure.state"
             static let pairingConnectionState = "settings.service.pairing.connection.state"
+            static let pairingRelayAccessState = "settings.service.pairing.relayAccess.state"
             static let pairingPaidPlanLink = "settings.service.pairing.paidPlanLink"
             static let pairingDisconnectConfirm = "settings.service.pairing.disconnectConfirm"
             static let pairingDisconnectCancel = "settings.service.pairing.disconnectCancel"

@@ -86,6 +86,7 @@ struct AXIDTests {
         expectTokensMatchGrammar(MenubarStatusRowState.allCases.map(\.axToken))
         expectTokensMatchGrammar(SettingsObservationAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(PairingConnectionAXState.allCases.map(\.axToken))
+        expectTokensMatchGrammar(PairingRelayAccessAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(JournalHandoffAXState.allCases.map(\.axToken))
     }
 

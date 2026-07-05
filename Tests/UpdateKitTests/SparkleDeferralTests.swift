@@ -1235,7 +1235,7 @@ struct SparkleDeferralTests {
         installFailureRecovery: UpdateController.InstallFailureRecovery? = nil,
         postInstallRecoveryScheduler: UpdateController.PostInstallRecoveryScheduler? = nil,
         terminationBegan: UpdateController.TerminationBeganPredicate? = { false },
-        updater: (any SparkleUpdating)? = nil
+        updater: (any SparkleUpdating)? = SpyUpdater()
     ) -> UpdateController {
         clearDefaults()
         return UpdateController(

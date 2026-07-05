@@ -12,6 +12,9 @@ struct UpdatesWireUpTests {
         let references = [
             "UpdatesAXID.statusState",
             "UpdatesAXID.unavailable",
+            "UpdatesAXID.notRunning",
+            "UpdatesAXID.notRunningRetry",
+            "UpdatesAXID.notRunningReason",
             "UpdatesAXID.debugStatePicker",
             "UpdatesAXID.cancel",
             "UpdatesAXID.check",
@@ -44,6 +47,14 @@ struct UpdatesWireUpTests {
 
         #expect(wireUpContains(body, "controller.installStagedUpdate()"))
         #expect(!wireUpContains(body, "NSApplication.shared.terminate(nil)"))
+    }
+
+    @Test func unavailableBranchPrecedesNotRunningBranch() throws {
+        let source = try readWireUpSource("Sources/UpdateKit/UpdatesTabView.swift")
+        let unavailable = try #require(source.range(of: "if !controller.canCheckForUpdates"))
+        let notRunning = try #require(source.range(of: "updatesNotRunningPresentation"))
+
+        #expect(unavailable.lowerBound < notRunning.lowerBound)
     }
 }
 

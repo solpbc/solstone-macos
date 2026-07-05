@@ -161,6 +161,7 @@
       "settings.service.pairing.mismatchFreshLink",
       "settings.service.pairing.mismatchSupport",
       "settings.service.pairing.paidPlanLink",
+      "settings.service.pairing.relayAccess.state",
       "settings.service.pairing.retry",
       "settings.service.pairing.switchCancel",
       "settings.service.pairing.switchConfirm",
@@ -205,6 +206,9 @@
       "updates.preferences.frequency.state",
       "updates.releaseNotes.content",
       "updates.releaseNotes.online",
+      "updates.status.notrunning",
+      "updates.status.notrunning.reason",
+      "updates.status.notrunning.retry",
       "updates.status.state",
       "updates.status.unavailable"
     ]
@@ -283,6 +287,10 @@
     "settings.service.pairing.flow.state" : {
       "kind" : "enum",
       "vocabulary" : "PairingFlowState"
+    },
+    "settings.service.pairing.relayAccess.state" : {
+      "kind" : "enum",
+      "vocabulary" : "PairingRelayAccessAXState"
     },
     "settings.sidebar.tab.{tab}.state" : {
       "kind" : "enum",
@@ -441,6 +449,9 @@
       "save_failed",
       "failed"
     ],
+    "PairingRelayAccessAXState" : [
+      "unavailable"
+    ],
     "SettingsObservationAXState" : [
       "on",
       "paused",
@@ -472,7 +483,8 @@
       "update_available",
       "up_to_date",
       "error",
-      "staged_ready"
+      "staged_ready",
+      "not_running"
     ],
     "UploadCoordinator.Status" : [
       "not_synced",

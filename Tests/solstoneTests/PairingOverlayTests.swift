@@ -18,6 +18,20 @@ struct PairingOverlayTests {
         #expect(presentation.axToken == PairingConnectionAXState.notEntitled.axToken)
     }
 
+    @Test func relayAccessUnavailableRendersDistinctLineAndCaption() throws {
+        let presentation = try #require(makePairingRelayAccessPresentation(for: .unavailable))
+
+        #expect(presentation.message == "paired · remote access unavailable")
+        #expect(presentation.caption == "on the same wi-fi or over your own vpn, sol connects to your journal directly.")
+        #expect(presentation.severity == .warn)
+        #expect(presentation.axToken == PairingRelayAccessAXState.unavailable.axToken)
+    }
+
+    @Test func relayAccessAvailableAndNoPairingRenderNothing() {
+        #expect(makePairingRelayAccessPresentation(for: .available) == nil)
+        #expect(makePairingRelayAccessPresentation(for: .noPairing) == nil)
+    }
+
     @Test func localJournalConnectionPresentationIsUploadStatusDriven() {
         let synced = makeLocalJournalConnectionPresentation(for: .synced)
         #expect(synced.message == "connected to your journal on this mac")
@@ -93,6 +107,15 @@ struct PairingOverlayTests {
         #expect(owner.isTunnelManaged)
         #expect(await resolver.resolve() == .url("http://127.0.0.1:24681"))
         await owner.stop()
+    }
+
+    @Test func relayAccessStatusLoadsOnRelaunchWhilePairingFlowIdle() {
+        let store = PairingStore(pairing: pairing(relayEnrollment: .unavailable))
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([FakeTunnelTransport()]))
+        let coordinator = makeCoordinator(store: store, owner: owner)
+
+        #expect(coordinator.state == .idle)
+        #expect(owner.relayAccessStatus == .unavailable)
     }
 
     @Test func pairingSectionIsInertWhenSettingsSceneNotRendered() async {

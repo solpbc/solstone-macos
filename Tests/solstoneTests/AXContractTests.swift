@@ -123,6 +123,13 @@ struct AXContractTests {
             log: Logger.setup,
             errorDomain: "app.solstone.observer.updates",
             defaults: isolatedDefaults.defaults
+        ) { _, _ in AXContractStartedUpdater() }
+        let failedArmController = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            log: Logger.setup,
+            errorDomain: "app.solstone.observer.updates",
+            defaults: isolatedDefaults.defaults
         ) { _, _ in nil }
         let now = Date()
 
@@ -166,7 +173,8 @@ struct AXContractTests {
                 activity: .idle,
                 availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil),
                 lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .staged)
-            )
+            ),
+            statusToken(failedArmController, activity: .idle)
         ]
 
         #expect(emitted == UpdateStatus.axTokens)
@@ -194,4 +202,15 @@ struct AXContractTests {
     private func clearUpdateDefaults() {
         isolatedDefaults.clear()
     }
+}
+
+@MainActor
+private final class AXContractStartedUpdater: SparkleUpdating {
+    var automaticallyChecksForUpdates = true
+    var updateCheckInterval: TimeInterval = 86_400
+    var automaticallyDownloadsUpdates = false
+    var sessionInProgress = false
+
+    func checkForUpdates() {}
+    func start() throws {}
 }

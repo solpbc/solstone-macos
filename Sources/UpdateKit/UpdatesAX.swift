@@ -1,6 +1,9 @@
 public enum UpdatesAXID {
     public static let statusState = "updates.status.state"
     public static let unavailable = "updates.status.unavailable"
+    public static let notRunning = "updates.status.notrunning"
+    public static let notRunningRetry = "updates.status.notrunning.retry"
+    public static let notRunningReason = "updates.status.notrunning.reason"
     public static let check = "updates.action.check"
     public static let checkState = "updates.action.check.state"
     public static let cancel = "updates.action.cancel"
@@ -59,6 +62,7 @@ public enum UpdateStatus {
         "update_available",
         "up_to_date",
         "error",
-        "staged_ready"
+        "staged_ready",
+        "not_running"
     ]
 }

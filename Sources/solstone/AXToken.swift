@@ -83,6 +83,10 @@ internal enum PairingConnectionAXState: CaseIterable {
     case keychainUnavailable
 }
 
+internal enum PairingRelayAccessAXState: CaseIterable {
+    case unavailable
+}
+
 internal enum JournalHandoffAXState: CaseIterable {
     case idle
     case acquiring
@@ -244,6 +248,19 @@ extension PairingConnectionAXState {
             return "loopback_unavailable"
         case .keychainUnavailable:
             return "keychain_unavailable"
+        }
+    }
+}
+
+extension PairingRelayAccessAXState {
+    static let axTokens = [
+        "unavailable"
+    ]
+
+    var axToken: String {
+        switch self {
+        case .unavailable:
+            return "unavailable"
         }
     }
 }

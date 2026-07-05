@@ -155,6 +155,9 @@
       "updates.preferences.frequency.state",
       "updates.releaseNotes.content",
       "updates.releaseNotes.online",
+      "updates.status.notrunning",
+      "updates.status.notrunning.reason",
+      "updates.status.notrunning.retry",
       "updates.status.state",
       "updates.status.unavailable"
     ]
@@ -411,7 +414,8 @@
       "update_available",
       "up_to_date",
       "error",
-      "staged_ready"
+      "staged_ready",
+      "not_running"
     ]
   }
 }

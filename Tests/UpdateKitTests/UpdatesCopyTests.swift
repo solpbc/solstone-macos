@@ -65,6 +65,13 @@ struct UpdatesCopyTests {
         )
     }
 
+    @Test func notRunningStringsAreProviderIndependent() {
+        #expect(UpdatesCopy(provider: .solstone).actionRetrying == "retrying…")
+        #expect(UpdatesCopy(provider: .journal).actionRetrying == "retrying…")
+        #expect(UpdatesCopy(provider: .solstone).updateChecksNotRunningTitle == "update checks aren't running right now")
+        #expect(UpdatesCopy(provider: .journal).updateChecksNotRunningTitle == "update checks aren't running right now")
+    }
+
     @Test func lastCheckedUpToDateString() {
         #expect(UpdatesCopy(provider: .solstone).lastCheckedUpToDate(relative: "just now") == "last checked just now — sol is up to date")
     }

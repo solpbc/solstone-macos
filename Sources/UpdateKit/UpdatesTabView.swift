@@ -27,6 +27,11 @@ public struct UpdatesTabView: View {
                     subtitle: copy.unavailableSubtitle
                 )
                 .accessibilityIdentifier(UpdatesAXID.unavailable)
+            } else if let presentation = updatesNotRunningPresentation(
+                liveness: controller.updatesPaneLiveness,
+                copy: copy
+            ) {
+                notRunningBlock(presentation)
             } else {
                 header
                 transientBlock
@@ -199,6 +204,27 @@ public struct UpdatesTabView: View {
             }
         case .empty:
             EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func notRunningBlock(_ presentation: UpdatesNotRunningPresentation) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(presentation.title)
+                .font(.title3)
+                .fontWeight(.semibold)
+                .accessibilityIdentifier(UpdatesAXID.notRunning)
+
+            Button(presentation.retryTitle) {
+                controller.retryStartingUpdater()
+            }
+            .disabled(presentation.retryDisabled)
+            .accessibilityIdentifier(UpdatesAXID.notRunningRetry)
+
+            Text(presentation.reason)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier(UpdatesAXID.notRunningReason)
         }
     }
 
@@ -618,6 +644,8 @@ public func updatesPaneBlock(
 
 public struct UpdatesPaneLiveness: Equatable, Sendable {
     public var canCheckForUpdates: Bool
+    public var updaterArmFailureReason: String?
+    public var isRearmingUpdater: Bool
     public var sparkleSessionInProgress: Bool
     public var activity: UpdateActivity
     public var hasPendingChoiceReply: Bool
@@ -627,6 +655,8 @@ public struct UpdatesPaneLiveness: Equatable, Sendable {
 
     public init(
         canCheckForUpdates: Bool,
+        updaterArmFailureReason: String?,
+        isRearmingUpdater: Bool,
         sparkleSessionInProgress: Bool,
         activity: UpdateActivity,
         hasPendingChoiceReply: Bool,
@@ -635,6 +665,8 @@ public struct UpdatesPaneLiveness: Equatable, Sendable {
         installFinalizationCommitted: Bool
     ) {
         self.canCheckForUpdates = canCheckForUpdates
+        self.updaterArmFailureReason = updaterArmFailureReason
+        self.isRearmingUpdater = isRearmingUpdater
         self.sparkleSessionInProgress = sparkleSessionInProgress
         self.activity = activity
         self.hasPendingChoiceReply = hasPendingChoiceReply
@@ -653,8 +685,33 @@ public struct UpdatesPaneLiveness: Equatable, Sendable {
     }
 
     public var canDriveManualCheck: Bool {
-        canCheckForUpdates && !hasLiveSparkleSessionOrReply
+        canCheckForUpdates && updaterArmFailureReason == nil && !hasLiveSparkleSessionOrReply
     }
+}
+
+public struct UpdatesNotRunningPresentation: Equatable, Sendable {
+    public let title: String
+    public let retryTitle: String
+    public let retryDisabled: Bool
+    public let reason: String
+}
+
+public func updatesNotRunningPresentation(
+    liveness: UpdatesPaneLiveness,
+    copy: UpdatesCopy
+) -> UpdatesNotRunningPresentation? {
+    guard liveness.canCheckForUpdates,
+          let reason = liveness.updaterArmFailureReason
+    else {
+        return nil
+    }
+
+    return UpdatesNotRunningPresentation(
+        title: copy.updateChecksNotRunningTitle,
+        retryTitle: liveness.isRearmingUpdater ? copy.actionRetrying : copy.actionRetry,
+        retryDisabled: liveness.isRearmingUpdater,
+        reason: reason
+    )
 }
 
 public func updatesPaneReason(
@@ -665,6 +722,9 @@ public func updatesPaneReason(
 ) -> String? {
     guard !isEnabled else { return nil }
     guard liveness.canCheckForUpdates else { return copy.actionReasonUpdatesUnavailable }
+    if let reason = liveness.updaterArmFailureReason {
+        return reason
+    }
 
     switch backgroundDownload {
     case .downloading:

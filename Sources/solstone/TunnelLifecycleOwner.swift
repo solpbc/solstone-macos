@@ -28,6 +28,12 @@ enum TunnelHealth: Sendable, Equatable {
     case degraded
 }
 
+enum PairingRelayAccessStatus: Sendable, Equatable {
+    case noPairing
+    case available
+    case unavailable
+}
+
 struct TunnelDeviceTokenRefreshing: Sendable {
     let refreshIfNeeded: @Sendable (StoredPairing, Date) async -> DeviceTokenRefreshResult
     let refreshNow: @Sendable (StoredPairing) async -> DeviceTokenRefreshResult
@@ -55,6 +61,7 @@ final class TunnelLifecycleOwner {
     private(set) var state: TunnelLifecycleState = .disconnected
     private(set) var health: TunnelHealth = .unknown
     private(set) var isTunnelManaged = false
+    private(set) var relayAccessStatus: PairingRelayAccessStatus = .noPairing
 
     var localPort: Int? {
         guard case .connected(let localPort, _) = state else {
@@ -206,7 +213,7 @@ final class TunnelLifecycleOwner {
                 await failWithKeychainUnavailable()
                 return
             }
-            cachedPairingOutcome = .loaded(updated)
+            setCachedPairingOutcome(.loaded(updated))
             await connect()
 
         case .notNeeded, .transientFailure:
@@ -435,7 +442,7 @@ final class TunnelLifecycleOwner {
                 await failWithKeychainUnavailable()
                 return
             }
-            cachedPairingOutcome = .loaded(updated)
+            setCachedPairingOutcome(.loaded(updated))
             await disconnectCurrentTransport()
             await connect()
 
@@ -554,8 +561,36 @@ final class TunnelLifecycleOwner {
             splOwnerLog.debug("pairing load unavailable: \(String(describing: type(of: error)), privacy: .public)")
             outcome = .failed
         }
-        cachedPairingOutcome = outcome
+        setCachedPairingOutcome(outcome)
         return outcome
+    }
+
+    private func setCachedPairingOutcome(_ outcome: PairingLoadOutcome) {
+        cachedPairingOutcome = outcome
+        relayAccessStatus = Self.relayAccessStatus(for: outcome, preserving: relayAccessStatus)
+    }
+
+    private static func relayAccessStatus(
+        for outcome: PairingLoadOutcome,
+        preserving current: PairingRelayAccessStatus
+    ) -> PairingRelayAccessStatus {
+        switch outcome {
+        case .loaded(let pairing):
+            return relayAccessStatus(for: pairing)
+        case .absent:
+            return .noPairing
+        case .failed:
+            return current
+        }
+    }
+
+    private static func relayAccessStatus(for pairing: StoredPairing) -> PairingRelayAccessStatus {
+        switch pairing.relayEnrollment {
+        case .enrolled:
+            return .available
+        case .unavailable:
+            return .unavailable
+        }
     }
 
     private func invalidatePairingCache() {
@@ -586,7 +621,7 @@ final class TunnelLifecycleOwner {
         } catch {
             splOwnerLog.error("pairing delete failed: \(String(describing: type(of: error)), privacy: .public)")
         }
-        cachedPairingOutcome = .absent
+        setCachedPairingOutcome(.absent)
         isTunnelManaged = false
         await disconnectCurrentTransport()
         state = .error(.revoked)

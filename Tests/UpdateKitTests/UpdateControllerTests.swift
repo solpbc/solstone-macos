@@ -204,6 +204,170 @@ struct UpdateControllerTests {
         #expect(!controller.automaticDownloadsEnabled)
     }
 
+    @Test func updaterArmStateRecordsFactoryNilFailure() {
+        clearDefaults()
+        defer { clearDefaults() }
+
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            nil
+        }
+
+        #expect(controller.updaterArmState == .failedToArm(reason: "the update system couldn't be prepared."))
+        #expect(!controller.isRearmingUpdater)
+    }
+
+    @Test func updaterArmStateRecordsStartFailure() {
+        clearDefaults()
+        defer { clearDefaults() }
+        let spy = SpyUpdater()
+        spy.startError = NSError(domain: "tests", code: 1)
+
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            spy
+        }
+
+        #expect(spy.startCallCount == 1)
+        #expect(controller.updaterArmState == .failedToArm(reason: "the updater couldn't start."))
+        #expect(!controller.isRearmingUpdater)
+    }
+
+    @Test func retryStartingUpdaterRecoversAfterFactoryNilThenSuccess() async throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        let spy = SpyUpdater()
+        var attempts = 0
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            attempts += 1
+            return attempts == 1 ? nil : spy
+        }
+        #expect(controller.updaterArmState == .failedToArm(reason: "the update system couldn't be prepared."))
+
+        controller.retryStartingUpdater()
+
+        #expect(controller.isRearmingUpdater)
+        let retrying = try #require(updatesNotRunningPresentation(
+            liveness: controller.updatesPaneLiveness,
+            copy: UpdatesCopy(provider: .solstone)
+        ))
+        #expect(retrying.retryTitle == "retrying…")
+        #expect(retrying.retryDisabled)
+        try await waitUntil(timeout: .seconds(2)) {
+            await MainActor.run {
+                controller.updaterArmState == .armed && !controller.isRearmingUpdater
+            }
+        }
+        #expect(attempts == 2)
+        #expect(spy.startCallCount == 1)
+        #expect(updatesNotRunningPresentation(
+            liveness: controller.updatesPaneLiveness,
+            copy: UpdatesCopy(provider: .solstone)
+        ) == nil)
+    }
+
+    @Test func retryStartingUpdaterKeepsFailureWhenFactoryStillNil() async throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        var attempts = 0
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            attempts += 1
+            return nil
+        }
+
+        controller.retryStartingUpdater()
+
+        #expect(controller.isRearmingUpdater)
+        try await waitUntil(timeout: .seconds(2)) {
+            await MainActor.run {
+                controller.updaterArmState == .failedToArm(reason: "the update system couldn't be prepared.") &&
+                    !controller.isRearmingUpdater
+            }
+        }
+        #expect(attempts == 2)
+        let presentation = try #require(updatesNotRunningPresentation(
+            liveness: controller.updatesPaneLiveness,
+            copy: UpdatesCopy(provider: .solstone)
+        ))
+        #expect(presentation.retryTitle == "retry")
+        #expect(!presentation.retryDisabled)
+    }
+
+    @Test func retryStartingUpdaterRetriesCachedUpdaterAfterStartFailure() async throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        let spy = SpyUpdater()
+        spy.startError = NSError(domain: "tests", code: 1)
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            spy
+        }
+        #expect(controller.updaterArmState == .failedToArm(reason: "the updater couldn't start."))
+        spy.startError = nil
+
+        controller.retryStartingUpdater()
+
+        try await waitUntil(timeout: .seconds(2)) {
+            await MainActor.run {
+                controller.updaterArmState == .armed && !controller.isRearmingUpdater
+            }
+        }
+        #expect(spy.startCallCount == 2)
+    }
+
+    @Test func updatesNotRunningPresentationWinsWhenUpdaterFailedToArm() {
+        clearDefaults()
+        defer { clearDefaults() }
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            nil
+        }
+
+        let presentation = updatesNotRunningPresentation(
+            liveness: controller.updatesPaneLiveness,
+            copy: UpdatesCopy(provider: .solstone)
+        )
+
+        #expect(presentation == UpdatesNotRunningPresentation(
+            title: "update checks aren't running right now",
+            retryTitle: "retry",
+            retryDisabled: false,
+            reason: "the update system couldn't be prepared."
+        ))
+    }
+
     @Test func checkForUpdatesRoutesThroughSpyAndHonorsSessionGuard() {
         clearDefaults()
         defer { clearDefaults() }
@@ -564,6 +728,29 @@ struct UpdateControllerTests {
         #expect(controller.statusAXToken == "checking")
     }
 
+    @Test func statusAXTokenReportsNotRunningWhenUpdaterFailedToArm() {
+        clearDefaults()
+        defer { clearDefaults() }
+        let now = Date()
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            nil
+        }
+
+        #expect(controller.statusAXToken == "not_running")
+
+        controller.applyDebugFixture(
+            activity: .idle,
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .upToDate)
+        )
+        #expect(controller.statusAXToken == "not_running")
+    }
+
     @Test func statusAXTokenReportsBackgroundDownloadOnlyWhenIdle() {
         let controller = makeController()
         let now = Date()
@@ -615,6 +802,8 @@ struct UpdateControllerTests {
     @Test func updatesPaneReasonsCoverDisabledPrimaryActions() {
         let idle = UpdatesPaneLiveness(
             canCheckForUpdates: true,
+            updaterArmFailureReason: nil,
+            isRearmingUpdater: false,
             sparkleSessionInProgress: false,
             activity: .idle,
             hasPendingChoiceReply: false,
@@ -624,6 +813,8 @@ struct UpdateControllerTests {
         )
         let unavailable = UpdatesPaneLiveness(
             canCheckForUpdates: false,
+            updaterArmFailureReason: nil,
+            isRearmingUpdater: false,
             sparkleSessionInProgress: false,
             activity: .idle,
             hasPendingChoiceReply: false,
@@ -633,7 +824,20 @@ struct UpdateControllerTests {
         )
         let liveSessionNoReply = UpdatesPaneLiveness(
             canCheckForUpdates: true,
+            updaterArmFailureReason: nil,
+            isRearmingUpdater: false,
             sparkleSessionInProgress: true,
+            activity: .idle,
+            hasPendingChoiceReply: false,
+            hasPendingCancellation: false,
+            installFinalizationInFlight: false,
+            installFinalizationCommitted: false
+        )
+        let notRunning = UpdatesPaneLiveness(
+            canCheckForUpdates: true,
+            updaterArmFailureReason: "the update system couldn't be prepared.",
+            isRearmingUpdater: false,
+            sparkleSessionInProgress: false,
             activity: .idle,
             hasPendingChoiceReply: false,
             hasPendingCancellation: false,
@@ -642,6 +846,8 @@ struct UpdateControllerTests {
         )
         let pendingReply = UpdatesPaneLiveness(
             canCheckForUpdates: true,
+            updaterArmFailureReason: nil,
+            isRearmingUpdater: false,
             sparkleSessionInProgress: false,
             activity: .idle,
             hasPendingChoiceReply: true,
@@ -651,6 +857,8 @@ struct UpdateControllerTests {
         )
         let pendingCancellation = UpdatesPaneLiveness(
             canCheckForUpdates: true,
+            updaterArmFailureReason: nil,
+            isRearmingUpdater: false,
             sparkleSessionInProgress: false,
             activity: .idle,
             hasPendingChoiceReply: false,
@@ -660,6 +868,8 @@ struct UpdateControllerTests {
         )
         let checking = UpdatesPaneLiveness(
             canCheckForUpdates: true,
+            updaterArmFailureReason: nil,
+            isRearmingUpdater: false,
             sparkleSessionInProgress: false,
             activity: .checking,
             hasPendingChoiceReply: false,
@@ -669,6 +879,8 @@ struct UpdateControllerTests {
         )
         let finalizing = UpdatesPaneLiveness(
             canCheckForUpdates: true,
+            updaterArmFailureReason: nil,
+            isRearmingUpdater: false,
             sparkleSessionInProgress: false,
             activity: .idle,
             hasPendingChoiceReply: false,
@@ -678,6 +890,8 @@ struct UpdateControllerTests {
         )
         let committed = UpdatesPaneLiveness(
             canCheckForUpdates: true,
+            updaterArmFailureReason: nil,
+            isRearmingUpdater: false,
             sparkleSessionInProgress: false,
             activity: .idle,
             hasPendingChoiceReply: false,
@@ -688,6 +902,7 @@ struct UpdateControllerTests {
 
         let disabledCases: [(String, BackgroundDownloadPhase?, UpdatesPaneLiveness)] = [
             ("updates unavailable", nil, unavailable),
+            ("updates not running", nil, notRunning),
             ("found-to-willDownload live session", nil, liveSessionNoReply),
             ("background downloading", .downloading(version: "1.3.9"), liveSessionNoReply),
             ("background finishing", .finishingUp(version: "1.3.9"), liveSessionNoReply),
@@ -824,13 +1039,14 @@ struct UpdateControllerTests {
 
     private func makeController() -> UpdateController {
         clearDefaults()
+        let spy = SpyUpdater()
         return UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
             log: updateKitTestLog,
             errorDomain: updateKitTestErrorDomain,
             defaults: isolatedDefaults.defaults
-        ) { _, _ in nil }
+        ) { _, _ in spy }
     }
 
     private func clearDefaults() {

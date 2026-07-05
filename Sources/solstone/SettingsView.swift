@@ -43,6 +43,13 @@ struct PairingConnectionPresentation {
     let axToken: String
 }
 
+struct PairingRelayAccessPresentation: Equatable {
+    let message: String
+    let caption: String
+    let severity: StatusDotSeverity
+    let axToken: String
+}
+
 func makePairingConnectionPresentation(
     for state: TunnelLifecycleState,
     hasPairing: Bool
@@ -89,6 +96,22 @@ func makePairingConnectionPresentation(
             message: "paired, but this Mac couldn't read the pairing",
             severity: .attention,
             axToken: PairingConnectionAXState.keychainUnavailable.axToken
+        )
+    }
+}
+
+func makePairingRelayAccessPresentation(
+    for status: PairingRelayAccessStatus
+) -> PairingRelayAccessPresentation? {
+    switch status {
+    case .noPairing, .available:
+        return nil
+    case .unavailable:
+        return PairingRelayAccessPresentation(
+            message: "paired · remote access unavailable",
+            caption: "on the same wi-fi or over your own vpn, sol connects to your journal directly.",
+            severity: .warn,
+            axToken: PairingRelayAccessAXState.unavailable.axToken
         )
     }
 }
@@ -1222,6 +1245,8 @@ struct SettingsView: View {
 
                 pairingConnectionTruthRow
 
+                pairingRelayAccessTruthRow
+
                 if pairingMismatch {
                     pairingMismatchPane
                 }
@@ -1381,6 +1406,28 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private var pairingRelayAccessTruthRow: some View {
+        if let presentation = pairingRelayAccessPresentation {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(presentation.severity.color)
+                        .frame(width: 8, height: 8)
+                    Text(presentation.message)
+                        .foregroundStyle(presentation.severity.color)
+                }
+                Text(presentation.caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                AXStateCompanion(
+                    id: AXID.Settings.Service.pairingRelayAccessState,
+                    value: presentation.axToken
+                )
+            }
+        }
+    }
+
     private var pairingDisconnectConfirmText: String {
         if let mark = appState.confirmedMark {
             return "disconnect this Mac from \(mark.words.joined(separator: " · "))? your journal keeps everything — you can pair again anytime."
@@ -1474,6 +1521,10 @@ struct SettingsView: View {
             for: appState.pairingCoordinator.tunnelState,
             hasPairing: pairingCanUnpair
         )
+    }
+
+    private var pairingRelayAccessPresentation: PairingRelayAccessPresentation? {
+        makePairingRelayAccessPresentation(for: appState.tunnelLifecycleOwner.relayAccessStatus)
     }
 
     private func submitPairingLink() {
@@ -1953,10 +2004,15 @@ struct SettingsView: View {
             }
 
             GroupBox("private browsing") {
-                Toggle("exclude private/incognito browser windows", isOn: excludePrivateBrowsingBinding)
-                    .help("automatically excludes safari private, chrome incognito, and firefox private browsing windows")
-                    .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsing)
-                    .padding(.vertical, 4)
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("exclude private/incognito browser windows", isOn: excludePrivateBrowsingBinding)
+                        .help("automatically excludes safari private, chrome incognito, and firefox private browsing windows")
+                        .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsing)
+                    Text("private windows are detected for Safari, Chrome, and Firefox. a just-opened private window can take a few seconds to be excluded.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
             }
         }
         .padding(.vertical, 4)

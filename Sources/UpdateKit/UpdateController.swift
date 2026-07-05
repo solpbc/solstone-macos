@@ -16,6 +16,12 @@ public protocol SparkleUpdating: AnyObject {
 
 extension SPUUpdater: SparkleUpdating {}
 
+public enum UpdaterArmState: Equatable, Sendable {
+    case notAttempted
+    case armed
+    case failedToArm(reason: String)
+}
+
 @MainActor
 @Observable
 public final class UpdateController {
@@ -44,6 +50,8 @@ public final class UpdateController {
     public private(set) var stagedBlockSuppressed = false
 
     public private(set) var canCheckForUpdates: Bool
+    public private(set) var updaterArmState: UpdaterArmState = .notAttempted
+    public private(set) var isRearmingUpdater = false
 
     private let updaterFactory: UpdaterFactory
     private let userDriver: SparkleUserDriver
@@ -79,6 +87,20 @@ public final class UpdateController {
         get { updater?.automaticallyChecksForUpdates ?? true }
         set {
             updater?.automaticallyChecksForUpdates = newValue
+        }
+    }
+
+    public func retryStartingUpdater() {
+        guard canCheckForUpdates, !isRearmingUpdater else {
+            return
+        }
+
+        isRearmingUpdater = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await Task.yield()
+            _ = self.ensureUpdaterStarted()
+            self.isRearmingUpdater = false
         }
     }
 
@@ -514,7 +536,7 @@ public final class UpdateController {
     }
 
     var canStartManualCheck: Bool {
-        canCheckForUpdates && !hasLiveSparkleSessionOrReply
+        canCheckForUpdates && updaterArmFailureReason == nil && !hasLiveSparkleSessionOrReply
     }
 
     var canRetry: Bool {
@@ -536,6 +558,8 @@ public final class UpdateController {
     private var currentUpdatesPaneLiveness: UpdatesPaneLiveness {
         UpdatesPaneLiveness(
             canCheckForUpdates: canCheckForUpdates,
+            updaterArmFailureReason: updaterArmFailureReason,
+            isRearmingUpdater: isRearmingUpdater,
             sparkleSessionInProgress: sparkleSessionInProgress,
             activity: activity,
             hasPendingChoiceReply: pendingChoiceReply != nil,
@@ -543,6 +567,13 @@ public final class UpdateController {
             installFinalizationInFlight: installFinalizationInFlight,
             installFinalizationCommitted: installFinalizationCommitted
         )
+    }
+
+    private var updaterArmFailureReason: String? {
+        if case .failedToArm(let reason) = updaterArmState {
+            return reason
+        }
+        return nil
     }
 
     public var durableUpdateStatus: DurableUpdateStatus {
@@ -573,6 +604,10 @@ public final class UpdateController {
     }
 
     var statusAXToken: String {
+        if case .failedToArm = updaterArmState {
+            return "not_running"
+        }
+
         switch activity {
         case .idle:
             if backgroundDownload != nil {
@@ -881,10 +916,12 @@ public final class UpdateController {
 
     private func ensureUpdaterStarted() -> Bool {
         if updaterStarted {
+            updaterArmState = .armed
             return true
         }
 
         guard let updater = updater ?? updaterFactory(userDriver, updaterDelegate) else {
+            updaterArmState = .failedToArm(reason: Self.updaterFactoryNilReason)
             log.error("Sparkle updater factory returned nil")
             return false
         }
@@ -894,6 +931,7 @@ public final class UpdateController {
         do {
             try updater.start()
             updaterStarted = true
+            updaterArmState = .armed
 
             if defaults.string(forKey: Self.feedURLOverrideKey) == nil {
                 log.info("Sparkle feed URL: using bundled Info.plist feed (no override set)")
@@ -905,10 +943,14 @@ public final class UpdateController {
 
             return true
         } catch {
+            updaterArmState = .failedToArm(reason: Self.updaterStartFailedReason)
             log.error("Sparkle updater start failed: \(String(describing: error), privacy: .public)")
             return false
         }
     }
+
+    private static let updaterFactoryNilReason = "the update system couldn't be prepared."
+    private static let updaterStartFailedReason = "the updater couldn't start."
 
     private static func loadPersistedStatus(from defaults: UserDefaults) -> (status: ReconciledUpdateStatus, migrated: Bool) {
         if let data = defaults.data(forKey: statusKey),
