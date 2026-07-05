@@ -642,10 +642,14 @@ final class JournalHandoffOrchestrator {
                 }
             } catch JournalInitClientError.serverError(401) {
                 throw JournalHandoffFailure.authenticationFailed("Invalid API key")
-            } catch let error as JournalInitClientError {
-                throw JournalHandoffFailure.initProbeFailed(String(describing: error))
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
-                throw JournalHandoffFailure.initProbeFailed(String(describing: error))
+                // The journal child is not accepting yet (still materializing or
+                // starting) — connection errors and odd statuses here are normal
+                // transients of the adoption window, not failures. The deadline
+                // bounds the wait; only a definitive 401 is terminal above.
+                Logger.setup.info("journal handoff: adoption probe not ready yet: \(String(describing: error))")
             }
 
             if !dependencies.fileManager.fileExists(atPath: dependencies.handoffFileURL.path) {

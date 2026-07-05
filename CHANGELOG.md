@@ -5,6 +5,12 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-07-05
+
+### Fixed
+- during the migration handoff, sol no longer gives up when the journal app is still starting up — it now waits patiently while your journal gets ready, instead of stopping at the first unanswered check.
+
+
 ## [1.4.2] - 2026-07-05
 
 ### Fixed
