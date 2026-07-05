@@ -78,6 +78,11 @@ struct JournalSnapshotTests {
         try renderBackupStatic()
         try renderStartup(enabled: true)
         try renderStartup(enabled: false)
+        try renderFirstRunNameEntry()
+        try renderFirstRunSetupProgress()
+        try renderFirstRunMarkReveal()
+        try renderFirstRunLockedHome()
+        try renderFirstRunAdoptLanding()
     }
 
     private func renderHomeConfiguredRunning() async throws {
@@ -171,6 +176,41 @@ struct JournalSnapshotTests {
         let model = configuredModel(fixture: fixture, supervisor: JournalSupervisor(), mark: .uiTestSample, name: "home base")
         model.selectedPane = .startup
         try renderWindow(model, to: enabled ? "journal-startup-enabled.png" : "journal-startup-disabled.png")
+    }
+
+    private func renderFirstRunNameEntry() throws {
+        let fixture = makeModel(startResults: [], probeResults: [])
+        fixture.model.route = .ritual(.nameLocation)
+        try renderFirstRun(fixture.model, to: "journal-first-run-name-entry.png")
+    }
+
+    private func renderFirstRunSetupProgress() throws {
+        let fixture = makeModel(startResults: [], probeResults: [])
+        fixture.model.route = .ritual(.setupProgress)
+        fixture.model.currentStep = "prepare"
+        fixture.model.setupRenderedLog = "prepare ok\ncreate journal"
+        try renderFirstRun(fixture.model, to: "journal-first-run-setup-progress.png")
+    }
+
+    private func renderFirstRunMarkReveal() throws {
+        let fixture = makeModel(startResults: [], probeResults: [])
+        fixture.model.route = .ritual(.markReveal)
+        fixture.model.currentMark = .uiTestSample
+        fixture.model.markRenderGeneration = 1
+        try renderFirstRun(fixture.model, to: "journal-first-run-mark-reveal.png")
+    }
+
+    private func renderFirstRunLockedHome() throws {
+        let model = try configuredModel(mark: .uiTestSample, name: "")
+        model.selectedPane = .home
+        try renderWindow(model, to: "journal-first-run-locked-home.png")
+    }
+
+    private func renderFirstRunAdoptLanding() throws {
+        let fixture = makeModel(startResults: [], probeResults: [])
+        fixture.model.route = .adopting
+        fixture.model.adoptMessage = JournalFirstRunCopy.adoptLandingLine
+        try renderFirstRun(fixture.model, to: "journal-first-run-adopt-landing.png")
     }
 
     private func runningSupervisor() async throws -> JournalSupervisor {
@@ -267,6 +307,16 @@ struct JournalSnapshotTests {
     private func renderWindow(_ model: JournalWindowModel, to filename: String) throws {
         try render(
             JournalSettingsWindow(model: model, updateController: makeUpdateController(), openURL: { _ in })
+                .frame(width: size.width, height: size.height)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: size,
+            to: filename
+        )
+    }
+
+    private func renderFirstRun(_ model: JournalFirstRunModel, to filename: String) throws {
+        try render(
+            JournalFirstRunView(model: model)
                 .frame(width: size.width, height: size.height)
                 .background(Color(nsColor: .windowBackgroundColor)),
             size: size,

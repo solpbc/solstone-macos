@@ -23,6 +23,40 @@ enum AXID {
             static let unconfiguredMessageState = "journal.home.unconfigured.message.state"
         }
 
+        enum Ritual {
+            static let root = "journal.ritual.root"
+            static let routeState = "journal.ritual.route.state"
+            static let nameField = "journal.ritual.name.field"
+            static let locationField = "journal.ritual.location.field"
+            static let locationChoose = "journal.ritual.location.choose"
+            static let nameLocationContinue = "journal.ritual.nameLocation.continue"
+            static let nameLocationErrorState = "journal.ritual.nameLocation.error.state"
+            static let setupProgress = "journal.ritual.setup.progress"
+            static let setupStepState = "journal.ritual.setup.step.state"
+            static let setupLogState = "journal.ritual.setup.log.state"
+            static let setupErrorState = "journal.ritual.setup.error.state"
+            static let setupRetry = "journal.ritual.setup.retry"
+            static let markCard = "journal.ritual.mark.card"
+            static let markTryAnother = "journal.ritual.mark.tryAnother"
+            static let markLock = "journal.ritual.mark.lock"
+            static let markLoadingState = "journal.ritual.mark.loading.state"
+            static let markLockedState = "journal.ritual.mark.locked.state"
+            static let markErrorState = "journal.ritual.mark.error.state"
+            static let finalizeProgressState = "journal.ritual.finalize.progress.state"
+            static let finalizeWarningsState = "journal.ritual.finalize.warnings.state"
+            static let finalizeErrorState = "journal.ritual.finalize.error.state"
+            static let finalizeRetry = "journal.ritual.finalize.retry"
+        }
+
+        enum Adopt {
+            static let root = "journal.adopt.root"
+            static let statusState = "journal.adopt.status.state"
+            static let messageState = "journal.adopt.message.state"
+            static let locationPathState = "journal.adopt.location.path.state"
+            static let continueButton = "journal.adopt.continue"
+            static let errorState = "journal.adopt.error.state"
+        }
+
         enum Pane {
             static let nameField = "journal.journal.name.field"
             static let nameSave = "journal.journal.name.save"

@@ -540,10 +540,7 @@ public final class SolstoneInstaller {
 
         let output = InstallerOutput()
         let result: SubprocessResult
-        var arguments = ["setup", "--jsonl", "--yes", "--skip-models", "--accept-existing-journal", "--journal", journalURL.path]
-        if skipService {
-            arguments.append("--skip-service")
-        }
+        let arguments = JournalSetupCommand.setupArguments(journalURL: journalURL, skipService: skipService)
         do {
             result = try await subprocessRunner.run(
                 executable: journalBinary,

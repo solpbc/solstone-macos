@@ -18,6 +18,37 @@ enum JournalDevicesCopiedState: CaseIterable {
     case copied
 }
 
+enum JournalFirstRunRouteState: CaseIterable {
+    case deciding
+    case nameLocation
+    case setupProgress
+    case markReveal
+    case finalizing
+    case adopting
+    case home
+}
+
+enum JournalFirstRunBusyState: CaseIterable {
+    case idle
+    case running
+    case failed
+}
+
+enum JournalFirstRunMarkState: CaseIterable {
+    case unlocked
+    case trying
+    case locked
+    case hidden
+}
+
+enum JournalAdoptState: CaseIterable {
+    case idle
+    case opening
+    case landed
+    case blocked
+    case failed
+}
+
 extension JournalSidebarTabState {
     static let axTokens = ["selected", "unselected"]
 
@@ -87,5 +118,97 @@ extension JournalDevicesCopiedState {
         case .idle: return "idle"
         case .copied: return "copied"
         }
+    }
+}
+
+extension JournalFirstRunRouteState {
+    static let axTokens = ["deciding", "name_location", "setup_progress", "mark_reveal", "finalizing", "adopting", "home"]
+
+    var axToken: String {
+        switch self {
+        case .deciding: return "deciding"
+        case .nameLocation: return "name_location"
+        case .setupProgress: return "setup_progress"
+        case .markReveal: return "mark_reveal"
+        case .finalizing: return "finalizing"
+        case .adopting: return "adopting"
+        case .home: return "home"
+        }
+    }
+}
+
+extension JournalFirstRunBusyState {
+    static let axTokens = ["idle", "running", "failed"]
+
+    var axToken: String {
+        switch self {
+        case .idle: return "idle"
+        case .running: return "running"
+        case .failed: return "failed"
+        }
+    }
+}
+
+extension JournalFirstRunMarkState {
+    static let axTokens = ["unlocked", "trying", "locked", "hidden"]
+
+    var axToken: String {
+        switch self {
+        case .unlocked: return "unlocked"
+        case .trying: return "trying"
+        case .locked: return "locked"
+        case .hidden: return "hidden"
+        }
+    }
+}
+
+extension JournalAdoptState {
+    static let axTokens = ["idle", "opening", "landed", "blocked", "failed"]
+
+    var axToken: String {
+        switch self {
+        case .idle: return "idle"
+        case .opening: return "opening"
+        case .landed: return "landed"
+        case .blocked: return "blocked"
+        case .failed: return "failed"
+        }
+    }
+}
+
+extension JournalFirstRunRoute {
+    var axToken: String {
+        switch self {
+        case .deciding:
+            return JournalFirstRunRouteState.deciding.axToken
+        case .ritual(.nameLocation):
+            return JournalFirstRunRouteState.nameLocation.axToken
+        case .ritual(.setupProgress):
+            return JournalFirstRunRouteState.setupProgress.axToken
+        case .ritual(.markReveal):
+            return JournalFirstRunRouteState.markReveal.axToken
+        case .ritual(.finalizing):
+            return JournalFirstRunRouteState.finalizing.axToken
+        case .adopting:
+            return JournalFirstRunRouteState.adopting.axToken
+        case .home:
+            return JournalFirstRunRouteState.home.axToken
+        }
+    }
+}
+
+extension JournalFirstRunModel {
+    var markState: JournalFirstRunMarkState {
+        if currentMark == nil { return .hidden }
+        if isTryingAnotherMark { return .trying }
+        return markLocked ? .locked : .unlocked
+    }
+
+    var adoptState: JournalAdoptState {
+        if adoptMessage == JournalFirstRunCopy.adoptLandingLine { return .landed }
+        if route == .home { return .landed }
+        if errorMessage != nil { return .failed }
+        if route == .adopting { return .opening }
+        return .idle
     }
 }

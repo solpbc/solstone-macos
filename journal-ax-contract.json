@@ -64,6 +64,12 @@
       }
     ],
     "static" : [
+      "journal.adopt.continue",
+      "journal.adopt.error.state",
+      "journal.adopt.location.path.state",
+      "journal.adopt.message.state",
+      "journal.adopt.root",
+      "journal.adopt.status.state",
       "journal.backup.message.state",
       "journal.backup.open",
       "journal.devices.addDevice",
@@ -96,6 +102,28 @@
       "journal.journal.location.path.state",
       "journal.journal.name.field",
       "journal.journal.name.save",
+      "journal.ritual.finalize.error.state",
+      "journal.ritual.finalize.progress.state",
+      "journal.ritual.finalize.retry",
+      "journal.ritual.finalize.warnings.state",
+      "journal.ritual.location.choose",
+      "journal.ritual.location.field",
+      "journal.ritual.mark.card",
+      "journal.ritual.mark.error.state",
+      "journal.ritual.mark.loading.state",
+      "journal.ritual.mark.lock",
+      "journal.ritual.mark.locked.state",
+      "journal.ritual.mark.tryAnother",
+      "journal.ritual.name.field",
+      "journal.ritual.nameLocation.continue",
+      "journal.ritual.nameLocation.error.state",
+      "journal.ritual.root",
+      "journal.ritual.route.state",
+      "journal.ritual.setup.error.state",
+      "journal.ritual.setup.log.state",
+      "journal.ritual.setup.progress",
+      "journal.ritual.setup.retry",
+      "journal.ritual.setup.step.state",
       "journal.runState.appVersion.state",
       "journal.runState.blockedReason.state",
       "journal.runState.display.state",
@@ -132,6 +160,19 @@
     ]
   },
   "states" : {
+    "journal.adopt.error.state" : {
+      "kind" : "freeform"
+    },
+    "journal.adopt.location.path.state" : {
+      "kind" : "freeform"
+    },
+    "journal.adopt.message.state" : {
+      "kind" : "freeform"
+    },
+    "journal.adopt.status.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalAdoptState"
+    },
     "journal.backup.message.state" : {
       "kind" : "freeform"
     },
@@ -176,6 +217,43 @@
       "kind" : "numeric"
     },
     "journal.journal.location.path.state" : {
+      "kind" : "freeform"
+    },
+    "journal.ritual.finalize.error.state" : {
+      "kind" : "freeform"
+    },
+    "journal.ritual.finalize.progress.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalFirstRunBusyState"
+    },
+    "journal.ritual.finalize.warnings.state" : {
+      "kind" : "freeform"
+    },
+    "journal.ritual.mark.error.state" : {
+      "kind" : "freeform"
+    },
+    "journal.ritual.mark.loading.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalFirstRunBusyState"
+    },
+    "journal.ritual.mark.locked.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalFirstRunMarkState"
+    },
+    "journal.ritual.nameLocation.error.state" : {
+      "kind" : "freeform"
+    },
+    "journal.ritual.route.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalFirstRunRouteState"
+    },
+    "journal.ritual.setup.error.state" : {
+      "kind" : "freeform"
+    },
+    "journal.ritual.setup.log.state" : {
+      "kind" : "freeform"
+    },
+    "journal.ritual.setup.step.state" : {
       "kind" : "freeform"
     },
     "journal.runState.appVersion.state" : {
@@ -247,6 +325,13 @@
       "week",
       "month"
     ],
+    "JournalAdoptState" : [
+      "idle",
+      "opening",
+      "landed",
+      "blocked",
+      "failed"
+    ],
     "JournalDevicesCopiedState" : [
       "idle",
       "copied"
@@ -269,6 +354,26 @@
     "JournalEnabledState" : [
       "enabled",
       "disabled"
+    ],
+    "JournalFirstRunBusyState" : [
+      "idle",
+      "running",
+      "failed"
+    ],
+    "JournalFirstRunMarkState" : [
+      "unlocked",
+      "trying",
+      "locked",
+      "hidden"
+    ],
+    "JournalFirstRunRouteState" : [
+      "deciding",
+      "name_location",
+      "setup_progress",
+      "mark_reveal",
+      "finalizing",
+      "adopting",
+      "home"
     ],
     "JournalHealthDisplay" : [
       "healthy",

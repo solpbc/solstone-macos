@@ -255,6 +255,19 @@ final class JournalWindowModel {
         await loadConfigIfNeeded()
     }
 
+    func applyFirstRunLanding(identityMark: JournalMark?, draftName: String, nameError: String?) {
+        self.identityMark = identityMark
+        identityFetchStarted = true
+
+        let trimmedDraftName = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedDraftName.isEmpty, draftJournalName.isEmpty {
+            draftJournalName = trimmedDraftName
+        }
+        if let nameError {
+            self.nameError = nameError
+        }
+    }
+
     func handlePaneOpen(_ pane: JournalPane) {
         switch pane {
         case .journal:

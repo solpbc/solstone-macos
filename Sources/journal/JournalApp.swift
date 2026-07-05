@@ -14,6 +14,7 @@ final class JournalAppModel {
     let config: JournalAppConfig
     let supervisor: JournalSupervisor
     let windowModel: JournalWindowModel
+    let firstRunModel: JournalFirstRunModel
     private var startupTask: Task<Void, Never>?
     private(set) var terminationPrepared = false
     private(set) var appKitTerminationBegan = false
@@ -26,25 +27,29 @@ final class JournalAppModel {
     ) {
         self.config = config
         self.supervisor = supervisor
-        self.windowModel = JournalWindowModel(config: config, supervisor: supervisor)
+        let windowModel = JournalWindowModel(config: config, supervisor: supervisor)
+        self.windowModel = windowModel
+        self.firstRunModel = JournalFirstRunModel(
+            config: config,
+            startSupervisor: { [supervisor] root in
+                await supervisor.start(journalRoot: root)
+            },
+            windowModel: windowModel
+        )
     }
 
     func launch() {
         JournalMarkFont.register()
         config.applyLaunchAtLoginPreference()
         windowModel.prepareForWindowOpen()
-        guard let root = config.journalRoot else {
-            return
-        }
-        startupTask = Task { @MainActor [supervisor, windowModel] in
-            _ = await supervisor.start(journalRoot: root)
-            await windowModel.loadForWindowOpen()
+        startupTask = Task { @MainActor [firstRunModel] in
+            await firstRunModel.decideLaunchRoute()
         }
     }
 
     func prepareWindowOpen(load: Bool = true) {
         windowModel.prepareForWindowOpen()
-        if load {
+        if load, firstRunModel.route == .home {
             Task { @MainActor [windowModel] in
                 await windowModel.loadForWindowOpen()
             }
@@ -155,7 +160,11 @@ struct JournalApp: App {
 
     var body: some Scene {
         Window("journal", id: "journal") {
-            JournalWindowSceneRoot(model: model.windowModel, updateController: model.updateController)
+            JournalWindowSceneRoot(
+                model: model.windowModel,
+                firstRunModel: model.firstRunModel,
+                updateController: model.updateController
+            )
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
@@ -164,22 +173,42 @@ struct JournalApp: App {
 
 private struct JournalWindowSceneRoot: View {
     let model: JournalWindowModel
+    @Bindable var firstRunModel: JournalFirstRunModel
     @Bindable var updateController: UpdateController
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        JournalSettingsWindow(model: model, updateController: updateController)
-            .task {
-                await model.loadForWindowOpen()
+        Group {
+            if firstRunModel.route == .home {
+                ZStack(alignment: .top) {
+                    JournalSettingsWindow(model: model, updateController: updateController)
+                        .task {
+                            await model.loadForWindowOpen()
+                        }
+
+                    if firstRunModel.adoptMessage == JournalFirstRunCopy.adoptLandingLine {
+                        Text(JournalFirstRunCopy.adoptLandingLine)
+                            .font(.callout)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .padding(.top, 12)
+                    }
+                }
+            } else {
+                JournalFirstRunView(model: firstRunModel)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .openJournalWindow)) { _ in
-                model.prepareForWindowOpen()
-                openWindow(id: "journal")
-                NSApp.activate(ignoringOtherApps: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openJournalWindow)) { _ in
+            model.prepareForWindowOpen()
+            openWindow(id: "journal")
+            NSApp.activate(ignoringOtherApps: true)
+            if firstRunModel.route == .home {
                 Task {
                     await model.loadForWindowOpen()
                 }
             }
+        }
     }
 }
 
