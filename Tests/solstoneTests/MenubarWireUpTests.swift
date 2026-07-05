@@ -18,6 +18,7 @@ struct MenubarWireUpTests {
             "AXID.Menubar.permissionsButton",
             "AXID.Menubar.errorButton",
             "AXID.Menubar.journalState",
+            "AXID.Menubar.journalMigrationNeededButton",
             "AXID.Menubar.localOnlyButton",
             "AXID.Menubar.offlineButton",
             "AXID.Menubar.pauseFifteenMinutes",
@@ -33,7 +34,8 @@ struct MenubarWireUpTests {
             "UICopy.MENUBAR_OBSERVATION_WEDGE_OPEN_SETTINGS",
             "UICopy.MENUBAR_LOCAL_ONLY_SETUP_JOURNAL",
             "UICopy.MENUBAR_SYNC_PAUSED",
-            "UICopy.MENUBAR_JOURNAL_WAITING",
+            "case .journalMigrationNeeded:",
+            "case .connectionWaiting:",
             "UICopy.MENUBAR_OBSERVING_OFFLINE_SAVED_LOCALLY"
         ]
 

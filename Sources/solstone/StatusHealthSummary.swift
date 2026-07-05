@@ -1,5 +1,4 @@
 import Foundation
-import JournalRuntime
 import SwiftUI
 import SolstoneCore
 
@@ -71,7 +70,6 @@ extension StatusHealthSummary {
         serviceMode: ServiceMode?,
         isRecording: Bool,
         isPaused: Bool,
-        journalRuntimeStatus: JournalRuntimeStatus,
         uploadStatus: UploadCoordinator.Status,
         pendingCount: Int,
         lastSyncedAt: Date?,
@@ -82,59 +80,12 @@ extension StatusHealthSummary {
         let isBundled = serviceMode == .bundled
 
         if isBundled {
-            switch journalRuntimeStatus {
-            case .unobserved:
-                return .init(
-                    severity: .warn,
-                    title: "checking journal…",
-                    subtitle: nil,
-                    axValue: MenubarStatusRowState.starting.axToken
-                )
-            case .stopped, .unknown:
-                return .init(
-                    severity: .attention,
-                    title: "your journal needs attention",
-                    subtitle: "sol is still on — new memory is safe on this Mac until the journal is back",
-                    axValue: "bundled_needs_attention"
-                )
-            case .setupNeeded:
-                return .init(
-                    severity: .warn,
-                    title: "one step left to finish setup",
-                    subtitle: "sol is ready — your journal just needs to finish installing",
-                    axValue: "bundled_setup_needed"
-                )
-            case .stoppedByUser:
-                return .init(
-                    severity: .warn,
-                    title: "journal stopped",
-                    subtitle: "you stopped the journal — start it again to resume",
-                    axValue: "bundled_stopped_by_user"
-                )
-            case .restarting:
-                return .init(
-                    severity: .warn,
-                    title: "journal restarting…",
-                    subtitle: nil,
-                    axValue: "bundled_restarting"
-                )
-            case .running:
-                if let summary = captureFlagSummary(
-                    isRecording: isRecording,
-                    isPaused: isPaused,
-                    isBundled: true,
-                    host: host,
-                    isSynced: false
-                ) {
-                    return summary
-                }
-                return .init(
-                    severity: .good,
-                    title: "all good — on, journal healthy",
-                    subtitle: "everything stays on this Mac",
-                    axValue: "bundled_healthy"
-                )
-            }
+            return .init(
+                severity: .attention,
+                title: "your journal needs a new link",
+                subtitle: "open your journal panel to connect this Mac again",
+                axValue: MenubarStatusRowState.journalMigrationNeeded.axToken
+            )
         } else {
             switch uploadStatus {
             case .awaitingTunnel:

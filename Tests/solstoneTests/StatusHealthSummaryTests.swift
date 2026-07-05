@@ -1,5 +1,4 @@
 import Foundation
-import JournalRuntime
 import Testing
 import SolstoneCore
 @testable import solstone
@@ -10,17 +9,13 @@ private let statusSummaryServerURL = "https://x.example:5015"
 
 @Suite("StatusHealthSummary")
 struct StatusHealthSummaryTests {
-    @Test func bundledAttentionRowsMapStoppedAndUnknown() {
-        for status in [
-            JournalRuntimeStatus.stopped(diagnostic("down")),
-            .unknown(diagnostic("unclear"))
-        ] {
-            let summary = makeSummary(serviceMode: .bundled, journalRuntimeStatus: status)
+    @Test func bundledModeAlwaysReportsMigrationNeeded() {
+        let summary = makeSummary(serviceMode: .bundled, isRecording: false, isPaused: true, uploadStatus: .synced)
 
-            #expect(summary.severity == .attention)
-            #expect(summary.axValue == "bundled_needs_attention")
-            #expect(summary.subtitle?.contains("new memory is safe on this Mac") == true)
-        }
+        #expect(summary.severity == .attention)
+        #expect(summary.title == "your journal needs a new link")
+        #expect(summary.subtitle == "open your journal panel to connect this Mac again")
+        #expect(summary.axValue == MenubarStatusRowState.journalMigrationNeeded.axToken)
     }
 
     @Test func externalOfflineRowReportsBacklogWithoutBytes() {
@@ -41,47 +36,23 @@ struct StatusHealthSummaryTests {
         #expect(empty.subtitle?.contains("bytes") == false)
     }
 
-    @Test func bundledSetupStoppedAndRestartingRowsMapBeforeCaptureFlags() {
-        let setup = makeSummary(serviceMode: .bundled, journalRuntimeStatus: .setupNeeded)
-        #expect(setup.severity == .warn)
-        #expect(setup.axValue == "bundled_setup_needed")
-        #expect(setup.subtitle?.contains("finish installing") == true)
+    @Test func externalAwaitingTunnelReportsConnectionWait() {
+        let waiting = makeSummary(uploadStatus: .awaitingTunnel, pendingCount: 2)
 
-        let stopped = makeSummary(serviceMode: .bundled, journalRuntimeStatus: .stoppedByUser)
-        #expect(stopped.severity == .warn)
-        #expect(stopped.axValue == "bundled_stopped_by_user")
-        #expect(stopped.subtitle?.contains("start it again") == true)
-
-        let restarting = makeSummary(serviceMode: .bundled, journalRuntimeStatus: .restarting)
-        #expect(restarting.severity == .warn)
-        #expect(restarting.axValue == "bundled_restarting")
-        #expect(restarting.subtitle == nil)
-
-        let unobserved = makeSummary(serviceMode: .bundled, journalRuntimeStatus: .unobserved)
-        #expect(unobserved.severity == .warn)
-        #expect(unobserved.axValue == MenubarStatusRowState.starting.axToken)
-        #expect(unobserved.title == "checking journal…")
-        #expect(unobserved.subtitle == nil)
+        #expect(waiting.severity == .warn)
+        #expect(waiting.axValue == "external_awaiting_tunnel")
+        #expect(waiting.title == "connecting to your journal…")
+        #expect(waiting.subtitle == "2 segments waiting here")
     }
 
-    @Test func observingOffRowUsesModeSpecificSubtitle() {
-        let bundled = makeSummary(serviceMode: .bundled, isRecording: false)
-        #expect(bundled.severity == .warn)
-        #expect(bundled.axValue == "off")
-        #expect(bundled.subtitle == "your journal is fine — turn sol back on to keep building memory")
-
+    @Test func observingOffRowUsesExternalSubtitle() {
         let external = makeSummary(isRecording: false)
         #expect(external.severity == .warn)
         #expect(external.axValue == "off")
         #expect(external.subtitle == "nothing is reaching x.example while sol is off")
     }
 
-    @Test func pausedRowUsesModeAndSyncSpecificSubtitle() {
-        let bundled = makeSummary(serviceMode: .bundled, isPaused: true)
-        #expect(bundled.severity == .warn)
-        #expect(bundled.axValue == "paused")
-        #expect(bundled.subtitle == "journal healthy on this Mac")
-
+    @Test func pausedRowUsesSyncSpecificSubtitle() {
         let synced = makeSummary(isPaused: true, uploadStatus: .synced)
         #expect(synced.severity == .warn)
         #expect(synced.axValue == "paused")
@@ -116,18 +87,6 @@ struct StatusHealthSummaryTests {
         #expect(connecting.subtitle == "reaching x.example")
     }
 
-    @Test func healthyRowsMapToGoodStates() {
-        let bundled = makeSummary(serviceMode: .bundled)
-        #expect(bundled.severity == .good)
-        #expect(bundled.axValue == "bundled_healthy")
-        #expect(bundled.subtitle == "everything stays on this Mac")
-
-        let external = makeSummary(uploadStatus: .synced, lastSyncedAt: statusSummaryRecentSync)
-        #expect(external.severity == .good)
-        #expect(external.axValue == "external_synced")
-        #expect(external.subtitle?.contains("last synced 2m ago") == true)
-    }
-
     @Test func externalSyncedOnlyComesFromSyncedUploadStatus() {
         let synced = makeSummary(uploadStatus: .synced)
         #expect(synced.severity == .good)
@@ -146,34 +105,6 @@ struct StatusHealthSummaryTests {
         #expect(retrying.axValue == "external_retrying")
     }
 
-    @Test func captureFlagsLoseToRedRowsAndTableOrderedBundledRows() {
-        let uploadingOff = makeSummary(isRecording: false, uploadStatus: .uploading(segment: "s1"))
-        #expect(uploadingOff.axValue == "off")
-
-        let bundledOff = makeSummary(serviceMode: .bundled, isRecording: false)
-        #expect(bundledOff.axValue == "off")
-
-        let syncedPaused = makeSummary(isPaused: true, uploadStatus: .synced)
-        #expect(syncedPaused.axValue == "paused")
-
-        let stoppedPaused = makeSummary(
-            serviceMode: .bundled,
-            isPaused: true,
-            journalRuntimeStatus: .stopped(diagnostic("down"))
-        )
-        #expect(stoppedPaused.axValue == "bundled_needs_attention")
-
-        let offlinePaused = makeSummary(isPaused: true, uploadStatus: .offline("offline"))
-        #expect(offlinePaused.axValue == "external_offline")
-
-        // Journal rows 3-5 precede capture flags in the table.
-        let setupOff = makeSummary(serviceMode: .bundled, isRecording: false, journalRuntimeStatus: .setupNeeded)
-        #expect(setupOff.axValue == "bundled_setup_needed")
-
-        let restartingOff = makeSummary(serviceMode: .bundled, isRecording: false, journalRuntimeStatus: .restarting)
-        #expect(restartingOff.axValue == "bundled_restarting")
-    }
-
     @Test func externalHealthySubtitleDoesNotFabricateTimeOrBytes() {
         let justConnected = makeSummary(uploadStatus: .synced, lastSyncedAt: nil)
         #expect(justConnected.subtitle == "just connected to x.example")
@@ -183,6 +114,17 @@ struct StatusHealthSummaryTests {
 
         let waiting = makeSummary(uploadStatus: .synced, pendingCount: 5, lastSyncedAt: statusSummaryRecentSync)
         #expect(waiting.subtitle?.contains(" · 5 waiting") == true)
+    }
+
+    @Test func captureFlagsLoseToRedRowsAndPrecedeExternalProgressRows() {
+        let uploadingOff = makeSummary(isRecording: false, uploadStatus: .uploading(segment: "s1"))
+        #expect(uploadingOff.axValue == "off")
+
+        let syncedPaused = makeSummary(isPaused: true, uploadStatus: .synced)
+        #expect(syncedPaused.axValue == "paused")
+
+        let offlinePaused = makeSummary(isPaused: true, uploadStatus: .offline("offline"))
+        #expect(offlinePaused.axValue == "external_offline")
     }
 
     @Test func footerEncryptionClauseRequiresHttpsScheme() {
@@ -210,7 +152,6 @@ struct StatusHealthSummaryTests {
         serviceMode: ServiceMode? = .external,
         isRecording: Bool = true,
         isPaused: Bool = false,
-        journalRuntimeStatus: JournalRuntimeStatus = .running,
         uploadStatus: UploadCoordinator.Status = .synced,
         pendingCount: Int = 0,
         lastSyncedAt: Date? = nil,
@@ -221,16 +162,11 @@ struct StatusHealthSummaryTests {
             serviceMode: serviceMode,
             isRecording: isRecording,
             isPaused: isPaused,
-            journalRuntimeStatus: journalRuntimeStatus,
             uploadStatus: uploadStatus,
             pendingCount: pendingCount,
             lastSyncedAt: lastSyncedAt,
             serverURL: serverURL,
             now: now
         )
-    }
-
-    private func diagnostic(_ message: String) -> JournalDiagnostic {
-        JournalDiagnostic(commandLabel: "journal health", outputExcerpt: message)
     }
 }

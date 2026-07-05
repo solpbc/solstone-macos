@@ -1,92 +1,11 @@
 {
   "_generated" : "DO NOT EDIT. Generated from AXID.swift + AXToken.swift. Run `make ax-contract` to regenerate; `make ci` fails on drift.",
   "grammar" : {
-    "identifier" : "^(menubar|settings|installer|updates|about)(\\.[a-z][a-zA-Z0-9-]*)+$",
+    "identifier" : "^(menubar|settings|updates|about)(\\.[a-z][a-zA-Z0-9-]*)+$",
     "token" : "^[a-z][a-z_]*$"
   },
   "identifiers" : {
     "parameterized" : [
-      {
-        "expansions" : [
-          "resolve-journal",
-          "service-uninstall",
-          "wait-for-death",
-          "orphan-sweep",
-          "ports"
-        ],
-        "key" : "CleanupStep.rawValue",
-        "template" : "installer.cleanup.{cleanupStep}.state"
-      },
-      {
-        "key" : "DoctorCheck.name (slugged)",
-        "runtime" : true,
-        "template" : "installer.doctor.check.{slug}"
-      },
-      {
-        "expansions" : [
-          "checkingSystem",
-          "cleaningUp",
-          "installSolstone",
-          "solSetup",
-          "verifyingIntegrity",
-          "registering",
-          "models"
-        ],
-        "key" : "InstallerRow.axKey",
-        "template" : "installer.step.{row}"
-      },
-      {
-        "expansions" : [
-          "checkingSystem",
-          "cleaningUp",
-          "installSolstone",
-          "solSetup",
-          "verifyingIntegrity",
-          "registering",
-          "models"
-        ],
-        "key" : "InstallerRow.axKey",
-        "template" : "installer.step.{row}.currentStep.state"
-      },
-      {
-        "expansions" : [
-          "checkingSystem",
-          "cleaningUp",
-          "installSolstone",
-          "solSetup",
-          "verifyingIntegrity",
-          "registering",
-          "models"
-        ],
-        "key" : "InstallerRow.axKey",
-        "template" : "installer.step.{row}.details"
-      },
-      {
-        "expansions" : [
-          "checkingSystem",
-          "cleaningUp",
-          "installSolstone",
-          "solSetup",
-          "verifyingIntegrity",
-          "registering",
-          "models"
-        ],
-        "key" : "InstallerRow.axKey",
-        "template" : "installer.step.{row}.log"
-      },
-      {
-        "expansions" : [
-          "checkingSystem",
-          "cleaningUp",
-          "installSolstone",
-          "solSetup",
-          "verifyingIntegrity",
-          "registering",
-          "models"
-        ],
-        "key" : "InstallerRow.axKey",
-        "template" : "installer.step.{row}.state"
-      },
       {
         "key" : "CoreAudio device UID",
         "runtime" : true,
@@ -157,31 +76,6 @@
       "about.identity.version.state",
       "about.link.sourceCode",
       "about.link.website",
-      "installer.absent.install",
-      "installer.autoTest.retry",
-      "installer.autoTest.state",
-      "installer.doctor.checklist",
-      "installer.doctor.disclosure",
-      "installer.doctor.error.state",
-      "installer.doctor.progress.state",
-      "installer.doctor.refresh",
-      "installer.doctor.retry",
-      "installer.externalManaged.path.state",
-      "installer.externalManaged.state",
-      "installer.failure.details",
-      "installer.failure.diagnostic.copied.state",
-      "installer.failure.diagnostic.copy",
-      "installer.failure.diagnostic.help",
-      "installer.failure.log",
-      "installer.failure.retry",
-      "installer.failure.summary.state",
-      "installer.installed.message.state",
-      "installer.installed.openDashboard",
-      "installer.journal.change",
-      "installer.journal.path.state",
-      "installer.journal.tccRestricted.state",
-      "installer.modelDownload.state",
-      "installer.terminalState.state",
       "menubar.app.quit",
       "menubar.chat.pending",
       "menubar.navigation.about",
@@ -196,6 +90,7 @@
       "menubar.status.error",
       "menubar.status.icon.state",
       "menubar.status.journal.state",
+      "menubar.status.journalMigrationNeeded",
       "menubar.status.localOnly",
       "menubar.status.offline",
       "menubar.status.permissions",
@@ -242,11 +137,16 @@
       "settings.service.external.setupGuide",
       "settings.service.external.testConnection",
       "settings.service.external.viewStatus",
-      "settings.service.journal.restart",
-      "settings.service.journal.start",
-      "settings.service.journal.stop",
-      "settings.service.journalMode.picker",
-      "settings.service.journalMode.state",
+      "settings.service.journal.connection.state",
+      "settings.service.journal.createThisMac",
+      "settings.service.journal.mark.state",
+      "settings.service.journal.migration.action",
+      "settings.service.journal.migration.banner",
+      "settings.service.journal.name.state",
+      "settings.service.journal.pairAnotherDevice",
+      "settings.service.journal.relink",
+      "settings.service.localJournal.confirm",
+      "settings.service.localJournal.discovery.state",
       "settings.service.next.checkStatus",
       "settings.service.pairing.connect",
       "settings.service.pairing.connection.state",
@@ -265,15 +165,11 @@
       "settings.service.pairing.switchConfirm",
       "settings.service.pairing.unpair",
       "settings.service.prereq.permissions",
-      "settings.service.restartRequired.banner",
       "settings.status.app.version.state",
       "settings.status.debug.keepRejectedAudio",
       "settings.status.debug.oneMinuteSegments",
       "settings.status.health.summary.state",
-      "settings.status.journal.lastActivity.state",
       "settings.status.journal.manageJournal",
-      "settings.status.journal.readinessQueue.state",
-      "settings.status.journal.runtime.state",
       "settings.status.observing.nextSegment.state",
       "settings.status.observing.state",
       "settings.status.storage.settings",
@@ -314,62 +210,6 @@
   "states" : {
     "about.identity.version.state" : {
       "kind" : "freeform"
-    },
-    "installer.autoTest.state" : {
-      "kind" : "enum",
-      "vocabulary" : "AutoTestState"
-    },
-    "installer.cleanup.{cleanupStep}.state" : {
-      "kind" : "enum",
-      "vocabulary" : "RowStatus"
-    },
-    "installer.doctor.check.{slug}" : {
-      "kind" : "enum",
-      "vocabulary" : "DoctorStatus"
-    },
-    "installer.doctor.error.state" : {
-      "kind" : "freeform"
-    },
-    "installer.doctor.progress.state" : {
-      "kind" : "enum",
-      "vocabulary" : "DoctorProgress"
-    },
-    "installer.externalManaged.path.state" : {
-      "kind" : "freeform"
-    },
-    "installer.externalManaged.state" : {
-      "kind" : "enum",
-      "vocabulary" : "InstallerCardState"
-    },
-    "installer.failure.diagnostic.copied.state" : {
-      "kind" : "freeform"
-    },
-    "installer.failure.summary.state" : {
-      "kind" : "freeform"
-    },
-    "installer.installed.message.state" : {
-      "kind" : "enum",
-      "vocabulary" : "InstallerCardState"
-    },
-    "installer.journal.path.state" : {
-      "kind" : "freeform"
-    },
-    "installer.journal.tccRestricted.state" : {
-      "kind" : "freeform"
-    },
-    "installer.modelDownload.state" : {
-      "kind" : "numeric"
-    },
-    "installer.step.{row}.currentStep.state" : {
-      "kind" : "freeform"
-    },
-    "installer.step.{row}.state" : {
-      "kind" : "enum",
-      "vocabulary" : "RowStatus"
-    },
-    "installer.terminalState.state" : {
-      "kind" : "enum",
-      "vocabulary" : "InstallerCardState"
     },
     "menubar.status.icon.state" : {
       "kind" : "enum",
@@ -413,9 +253,18 @@
       "kind" : "enum",
       "vocabulary" : "ConnectionTestState"
     },
-    "settings.service.journalMode.state" : {
+    "settings.service.journal.connection.state" : {
       "kind" : "enum",
-      "vocabulary" : "ServiceMode"
+      "vocabulary" : "PairingConnectionAXState"
+    },
+    "settings.service.journal.mark.state" : {
+      "kind" : "freeform"
+    },
+    "settings.service.journal.name.state" : {
+      "kind" : "freeform"
+    },
+    "settings.service.localJournal.discovery.state" : {
+      "kind" : "freeform"
     },
     "settings.service.pairing.connection.state" : {
       "kind" : "enum",
@@ -438,17 +287,6 @@
     },
     "settings.status.health.summary.state" : {
       "kind" : "freeform"
-    },
-    "settings.status.journal.lastActivity.state" : {
-      "kind" : "freeform"
-    },
-    "settings.status.journal.readinessQueue.state" : {
-      "kind" : "enum",
-      "vocabulary" : "MenubarStatusRowState"
-    },
-    "settings.status.journal.runtime.state" : {
-      "kind" : "enum",
-      "vocabulary" : "JournalRuntimeStatus"
     },
     "settings.status.observing.nextSegment.state" : {
       "kind" : "numeric"
@@ -514,7 +352,6 @@
   },
   "surfaces" : [
     "about",
-    "installer",
     "menubar",
     "settings",
     "updates"
@@ -526,58 +363,16 @@
       "denied",
       "waiting"
     ],
-    "AutoTestState" : [
-      "verifying",
-      "success",
-      "failure"
-    ],
     "ConnectionTestState" : [
       "idle",
       "testing",
       "success",
       "failure"
     ],
-    "DoctorProgress" : [
-      "running",
-      "done",
-      "error"
-    ],
-    "DoctorStatus" : [
-      "ok",
-      "warn",
-      "fail",
-      "skip",
-      "unknown"
-    ],
     "FrequencyOption" : [
       "day",
       "week",
       "month"
-    ],
-    "InstallerCardState" : [
-      "detecting",
-      "absent",
-      "installing",
-      "installed_placeholder",
-      "done",
-      "installed_current",
-      "installed_unknown",
-      "externally_managed",
-      "runtime_starting",
-      "runtime_failed",
-      "runtime_unconfirmed",
-      "runtime_stopped_by_user",
-      "upgrade_failed",
-      "failed"
-    ],
-    "JournalRuntimeStatus" : [
-      "starting",
-      "running",
-      "journal_restarting",
-      "journal_setup_needed",
-      "journal_stopped",
-      "journal_unknown",
-      "journal_stopped_by_user"
     ],
     "MenubarIconState" : [
       "recording",
@@ -589,12 +384,8 @@
       "permissions",
       "error",
       "starting",
-      "journal_setup_needed",
-      "journal_restarting",
-      "journal_stopped",
-      "journal_unknown",
-      "journal_stopped_by_user",
-      "journal_waiting",
+      "journal_migration_needed",
+      "connection_waiting",
       "local_only",
       "sync_paused",
       "offline",
@@ -628,17 +419,6 @@
       "switched",
       "save_failed",
       "failed"
-    ],
-    "RowStatus" : [
-      "pending",
-      "running",
-      "ok",
-      "warning",
-      "failed"
-    ],
-    "ServiceMode" : [
-      "bundled",
-      "external"
     ],
     "SettingsObservationAXState" : [
       "on",

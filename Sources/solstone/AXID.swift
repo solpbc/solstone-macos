@@ -2,7 +2,6 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
-import JournalRuntime
 
 enum AXID {
     enum Menubar {
@@ -12,6 +11,7 @@ enum AXID {
         static let permissionsButton = "menubar.status.permissions"
         static let errorButton = "menubar.status.error"
         static let journalState = "menubar.status.journal.state"
+        static let journalMigrationNeededButton = "menubar.status.journalMigrationNeeded"
         static let localOnlyButton = "menubar.status.localOnly"
         static let offlineButton = "menubar.status.offline"
         static let pauseMenu = "menubar.pause.menu"
@@ -59,13 +59,17 @@ enum AXID {
         }
 
         enum Service {
-            static let restartRequiredBanner = "settings.service.restartRequired.banner"
-            static let restartJournalButton = "settings.service.journal.restart"
-            static let stopJournalButton = "settings.service.journal.stop"
-            static let startJournalButton = "settings.service.journal.start"
             static let prereqPermissions = "settings.service.prereq.permissions"
-            static let journalModePicker = "settings.service.journalMode.picker"
-            static let journalModeState = "settings.service.journalMode.state"
+            static let journalNameState = "settings.service.journal.name.state"
+            static let journalMarkState = "settings.service.journal.mark.state"
+            static let journalConnectionState = "settings.service.journal.connection.state"
+            static let journalRelink = "settings.service.journal.relink"
+            static let localJournalDiscoveryState = "settings.service.localJournal.discovery.state"
+            static let localJournalConfirm = "settings.service.localJournal.confirm"
+            static let createJournalThisMac = "settings.service.journal.createThisMac"
+            static let pairJournalAnotherDevice = "settings.service.journal.pairAnotherDevice"
+            static let journalMigrationBanner = "settings.service.journal.migration.banner"
+            static let journalMigrationAction = "settings.service.journal.migration.action"
             static let externalSetupGuide = "settings.service.external.setupGuide"
             static let externalAddress = "settings.service.external.address"
             static let externalKey = "settings.service.external.key"
@@ -142,8 +146,6 @@ enum AXID {
             static let observingState = "settings.status.observing.state"
             static let nextSegmentSeconds = "settings.status.observing.nextSegment.state"
             static let uploadJournalState = "settings.status.upload.journal.state"
-            static let journalRuntimeState = "settings.status.journal.runtime.state"
-            static let journalReadinessQueueState = "settings.status.journal.readinessQueue.state"
             static let uploadState = "settings.status.upload.state"
             static let uploadChecked = "settings.status.upload.checked.state"
             static let uploadTotal = "settings.status.upload.total.state"
@@ -153,7 +155,6 @@ enum AXID {
             static let lastErrorState = "settings.status.upload.lastError.state"
             static let resyncAll = "settings.status.upload.resyncAll"
             static let manageJournal = "settings.status.journal.manageJournal"
-            static let bundledLastActivity = "settings.status.journal.lastActivity.state"
             static let storageSettings = "settings.status.storage.settings"
             static let debugOneMinuteSegments = "settings.status.debug.oneMinuteSegments"
             static let debugKeepRejectedAudio = "settings.status.debug.keepRejectedAudio"
@@ -173,91 +174,11 @@ enum AXID {
         }
     }
 
-    enum Installer {
-        static let terminalState = "installer.terminalState.state"
-        static let journalPathState = "installer.journal.path.state"
-        static let journalTCCRestrictedState = "installer.journal.tccRestricted.state"
-        static let journalChange = "installer.journal.change"
-        static let install = "installer.absent.install"
-        static let installedMessageState = "installer.installed.message.state"
-        static let openDashboard = "installer.installed.openDashboard"
-        static let externalManagedState = "installer.externalManaged.state"
-        static let externalManagedPathState = "installer.externalManaged.path.state"
-        static let autoTestState = "installer.autoTest.state"
-        static let autoTestRetry = "installer.autoTest.retry"
-        static let doctorDisclosure = "installer.doctor.disclosure"
-        static let doctorRefresh = "installer.doctor.refresh"
-        static let doctorProgressState = "installer.doctor.progress.state"
-        static let doctorChecklist = "installer.doctor.checklist"
-        static let doctorErrorState = "installer.doctor.error.state"
-        static let doctorRetry = "installer.doctor.retry"
-        static let modelDownloadProgress = "installer.modelDownload.state"
-        static let failureSummaryState = "installer.failure.summary.state"
-        static let failureRetry = "installer.failure.retry"
-        static let failureDetails = "installer.failure.details"
-        static let failureLog = "installer.failure.log"
-        static let diagnosticCopy = "installer.failure.diagnostic.copy"
-        static let diagnosticCopiedState = "installer.failure.diagnostic.copied.state"
-        static let diagnosticHelp = "installer.failure.diagnostic.help"
-
-        static func doctorCheck(_ name: String) -> String {
-            "installer.doctor.check.\(slug(from: name))"
-        }
-
-        static func step(_ row: InstallerRow) -> String {
-            "installer.step.\(row.axKey)"
-        }
-
-        static func stepState(_ row: InstallerRow) -> String {
-            "installer.step.\(row.axKey).state"
-        }
-
-        static func stepCurrentStep(_ row: InstallerRow) -> String {
-            "installer.step.\(row.axKey).currentStep.state"
-        }
-
-        static func stepDetails(_ row: InstallerRow) -> String {
-            "installer.step.\(row.axKey).details"
-        }
-
-        static func stepLog(_ row: InstallerRow) -> String {
-            "installer.step.\(row.axKey).log"
-        }
-
-        static func cleanupStep(_ step: CleanupStep) -> String {
-            "installer.cleanup.\(step.rawValue).state"
-        }
-
-        static func slug(from name: String) -> String {
-            let lowercased = name.lowercased()
-            var result = ""
-            var lastWasSeparator = false
-
-            for scalar in lowercased.unicodeScalars {
-                if CharacterSet.alphanumerics.contains(scalar) {
-                    result.unicodeScalars.append(scalar)
-                    lastWasSeparator = false
-                } else if !lastWasSeparator {
-                    result.append("-")
-                    lastWasSeparator = true
-                }
-            }
-
-            return result.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        }
-    }
-
     enum About {
         static let logo = "about.identity.logo"
         static let title = "about.identity.title"
         static let versionState = "about.identity.version.state"
         static let sourceCode = "about.link.sourceCode"
         static let website = "about.link.website"
-    }
-}
-
-extension InstallerRow {
-    var axKey: String {
-        rawValue.replacingOccurrences(of: "row.", with: "")
     }
 }

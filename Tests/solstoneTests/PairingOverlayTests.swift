@@ -18,6 +18,30 @@ struct PairingOverlayTests {
         #expect(presentation.axToken == PairingConnectionAXState.notEntitled.axToken)
     }
 
+    @Test func localJournalConnectionPresentationIsUploadStatusDriven() {
+        let synced = makeLocalJournalConnectionPresentation(for: .synced)
+        #expect(synced.message == "connected to your journal on this mac")
+        #expect(synced.severity == .good)
+        #expect(synced.axToken == PairingConnectionAXState.connected.axToken)
+
+        for status in [
+            UploadCoordinator.Status.notSynced,
+            .syncing(checked: 1, total: 3),
+            .uploading(segment: "segment-1"),
+            .awaitingTunnel,
+            .retrying(segment: "segment-1", attempts: 2)
+        ] {
+            let presentation = makeLocalJournalConnectionPresentation(for: status)
+            #expect(presentation.severity == .warn)
+            #expect(presentation.axToken == PairingConnectionAXState.connecting.axToken)
+        }
+
+        let offline = makeLocalJournalConnectionPresentation(for: .offline("network"))
+        #expect(offline.message == "can't reach your journal on this mac")
+        #expect(offline.severity == .attention)
+        #expect(offline.axToken == PairingConnectionAXState.loopbackUnavailable.axToken)
+    }
+
     @Test func unpairLeavesConfigByteIdentical() async throws {
         let config = AppConfig(
             serverURL: "https://journal.example",

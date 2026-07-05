@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-import JournalRuntime
 import os
+import SolstoneCore
 import Testing
 import UpdateKit
 @testable import solstone
@@ -53,12 +53,8 @@ struct MenuContentTests {
             (.permissions, .error),
             (.error, .error),
             (.starting, .offline),
-            (.journalSetupNeeded, .offline),
-            (.journalRestarting, .offline),
-            (.journalStopped, .offline),
-            (.journalUnknown, .offline),
-            (.journalStoppedByUser, .offline),
-            (.journalWaiting, .offline),
+            (.journalMigrationNeeded, .offline),
+            (.connectionWaiting, .offline),
             (.localOnly, .offline),
             (.syncPaused, .offline),
             (.offline, .offline),
@@ -77,12 +73,8 @@ struct MenuContentTests {
             (.permissions, .error),
             (.error, .error),
             (.starting, .starting),
-            (.journalSetupNeeded, .observing),
-            (.journalRestarting, .observing),
-            (.journalStopped, .observing),
-            (.journalUnknown, .observing),
-            (.journalStoppedByUser, .observing),
-            (.journalWaiting, .observing),
+            (.journalMigrationNeeded, .observing),
+            (.connectionWaiting, .observing),
             (.localOnly, .observing),
             (.syncPaused, .observing),
             (.offline, .observing),
@@ -103,25 +95,8 @@ struct MenuContentTests {
             ("starting", classified(initialPermissionCheckComplete: false)),
             ("wedge", classified(isRecording: false)),
             ("paused", classified(isPaused: true)),
-            ("journalWaiting", classified(captureQueuedForJournalReadiness: true)),
-            ("journalUnobserved", classified(bundledJournalStatusAvailable: true, journalRuntimeStatus: .unobserved)),
-            ("journalSetupNeeded", classified(bundledJournalStatusAvailable: true, journalRuntimeStatus: .setupNeeded)),
-            ("journalRestarting", classified(bundledJournalStatusAvailable: true, journalRuntimeStatus: .restarting)),
-            (
-                "journalStopped",
-                classified(
-                    bundledJournalStatusAvailable: true,
-                    journalRuntimeStatus: .stopped(JournalDiagnostic(commandLabel: "journal health"))
-                )
-            ),
-            (
-                "journalUnknown",
-                classified(
-                    bundledJournalStatusAvailable: true,
-                    journalRuntimeStatus: .unknown(JournalDiagnostic(commandLabel: "journal health"))
-                )
-            ),
-            ("journalStoppedByUser", classified(bundledJournalStatusAvailable: true, journalRuntimeStatus: .stoppedByUser)),
+            ("journalMigrationNeeded", classified(serviceMode: .bundled, uploadStatus: .synced)),
+            ("connectionWaiting", classified(uploadStatus: .awaitingTunnel)),
             ("syncPaused", classified(syncPaused: true, isUploadConfigured: false)),
             ("localOnly", classified(isUploadConfigured: false)),
             ("offline", classified(uploadStatus: .notSynced)),
@@ -134,13 +109,8 @@ struct MenuContentTests {
             "starting": .starting,
             "wedge": .error,
             "paused": .paused,
-            "journalWaiting": .journalWaiting,
-            "journalUnobserved": .starting,
-            "journalSetupNeeded": .journalSetupNeeded,
-            "journalRestarting": .journalRestarting,
-            "journalStopped": .journalStopped,
-            "journalUnknown": .journalUnknown,
-            "journalStoppedByUser": .journalStoppedByUser,
+            "journalMigrationNeeded": .journalMigrationNeeded,
+            "connectionWaiting": .connectionWaiting,
             "syncPaused": .syncPaused,
             "localOnly": .localOnly,
             "offline": .offline,
@@ -155,6 +125,9 @@ struct MenuContentTests {
         #expect(classified(uploadStatus: .offline("offline")) == .offline)
         #expect(classified(uploadStatus: .syncing(checked: 1, total: 2)) == .observing)
         #expect(classified(uploadStatus: .uploading(segment: "s1")) == .observing)
+        #expect(classified(serviceMode: .bundled, uploadStatus: .awaitingTunnel) == .journalMigrationNeeded)
+        #expect(classified(isRecording: false, serviceMode: .bundled) == .journalMigrationNeeded)
+        #expect(classified(isPaused: true, serviceMode: .bundled) == .journalMigrationNeeded)
     }
 
     @Test func pausedHeaderShowsAutoResumeCountdown() {
@@ -287,87 +260,9 @@ struct MenuContentTests {
         ) == nil)
     }
 
-    @Test func journalRuntimeStatusPresentationTruthTable() {
-        let setupNeeded = JournalRuntimeStatus.setupNeeded.menuRowPresentation
-        #expect(setupNeeded?.text == UICopy.JOURNAL_SETUP_NEEDED_OPEN_SETTINGS)
-        #expect(setupNeeded?.isEnabled == true)
-        #expect(setupNeeded?.state == .journalSetupNeeded)
-        #expect(JournalRuntimeStatus.setupNeeded.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_SETUP_NEEDED)
-        #expect(JournalRuntimeStatus.setupNeeded.settingsPresentation.axValue == MenubarStatusRowState.journalSetupNeeded.axToken)
-        #expect(JournalRuntimeStatus.setupNeeded.settingsPresentation.severity == .attention)
-        #expect(!JournalRuntimeStatus.setupNeeded.canOfferRestart)
-
-        let restarting = JournalRuntimeStatus.restarting.menuRowPresentation
-        #expect(restarting?.text == UICopy.JOURNAL_RESTARTING)
-        #expect(restarting?.isEnabled == false)
-        #expect(restarting?.state == .journalRestarting)
-        #expect(JournalRuntimeStatus.restarting.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_RESTARTING)
-        #expect(JournalRuntimeStatus.restarting.settingsPresentation.axValue == MenubarStatusRowState.journalRestarting.axToken)
-        #expect(JournalRuntimeStatus.restarting.settingsPresentation.severity == .warning)
-        #expect(!JournalRuntimeStatus.restarting.canOfferRestart)
-
-        let stoppedStatus = JournalRuntimeStatus.stopped(JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "down"))
-        let stopped = stoppedStatus.menuRowPresentation
-        #expect(stopped?.text == UICopy.JOURNAL_NEEDS_ATTENTION_OPEN_SETTINGS)
-        #expect(stopped?.isEnabled == true)
-        #expect(stopped?.state == .journalStopped)
-        #expect(stoppedStatus.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_NEEDS_ATTENTION)
-        #expect(stoppedStatus.settingsPresentation.axValue == MenubarStatusRowState.journalStopped.axToken)
-        #expect(stoppedStatus.settingsPresentation.severity == .attention)
-        #expect(stoppedStatus.settingsPresentation.reason == "down")
-        #expect(stoppedStatus.canOfferRestart)
-
-        let stoppedByUserStatus = JournalRuntimeStatus.stoppedByUser
-        let stoppedByUser = stoppedByUserStatus.menuRowPresentation
-        #expect(stoppedByUser?.text == UICopy.MENUBAR_JOURNAL_STOPPED_BY_USER)
-        #expect(stoppedByUser?.isEnabled == true)
-        #expect(stoppedByUser?.state == .journalStoppedByUser)
-        #expect(stoppedByUserStatus.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_STOPPED)
-        #expect(stoppedByUserStatus.settingsPresentation.axValue == MenubarStatusRowState.journalStoppedByUser.axToken)
-        #expect(stoppedByUserStatus.settingsPresentation.severity == .neutral)
-        #expect(stoppedByUserStatus.settingsPresentation.reason == nil)
-        #expect(!stoppedByUserStatus.canOfferRestart)
-        #expect(stoppedByUserStatus.settingsPresentation.severity != .attention)
-        #expect(stoppedByUserStatus.settingsPresentation.shortText != UICopy.JOURNAL_STATUS_NEEDS_ATTENTION)
-
-        let unknownStatus = JournalRuntimeStatus.unknown(JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "unclear"))
-        let unknown = unknownStatus.menuRowPresentation
-        #expect(unknown?.text == UICopy.JOURNAL_NEEDS_ATTENTION_OPEN_SETTINGS)
-        #expect(unknown?.isEnabled == true)
-        #expect(unknown?.state == .journalUnknown)
-        #expect(unknownStatus.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_NEEDS_ATTENTION)
-        #expect(unknownStatus.settingsPresentation.axValue == MenubarStatusRowState.journalUnknown.axToken)
-        #expect(unknownStatus.settingsPresentation.severity == .attention)
-        #expect(unknownStatus.settingsPresentation.reason == "unclear")
-        #expect(unknownStatus.canOfferRestart)
-
-        #expect(JournalRuntimeStatus.unobserved.menuRowPresentation == nil)
-        #expect(JournalRuntimeStatus.unobserved.settingsPresentation.shortText == UICopy.SETTINGS_OBSERVATION_STARTING)
-        #expect(JournalRuntimeStatus.unobserved.settingsPresentation.axValue == MenubarStatusRowState.starting.axToken)
-        #expect(JournalRuntimeStatus.unobserved.settingsPresentation.severity == .neutral)
-        #expect(JournalRuntimeStatus.unobserved.settingsPresentation.reason == nil)
-        #expect(!JournalRuntimeStatus.unobserved.canOfferRestart)
-
-        #expect(JournalRuntimeStatus.running.menuRowPresentation == nil)
-        #expect(JournalRuntimeStatus.running.settingsPresentation.shortText == UICopy.JOURNAL_STATUS_RUNNING)
-        #expect(JournalRuntimeStatus.running.settingsPresentation.axValue == "running")
-        #expect(JournalRuntimeStatus.running.settingsPresentation.severity == .neutral)
-        #expect(!JournalRuntimeStatus.running.canOfferRestart)
-    }
-
-    @Test func journalRuntimeStatusMenuAndSettingsShareAXState() throws {
-        let statuses: [JournalRuntimeStatus] = [
-            .setupNeeded,
-            .restarting,
-            .stopped(JournalDiagnostic(commandLabel: "journal health")),
-            .unknown(JournalDiagnostic(commandLabel: "journal health")),
-            .stoppedByUser,
-        ]
-
-        for status in statuses {
-            let menu = try #require(status.menuRowPresentation)
-            #expect(menu.state.axToken == status.settingsPresentation.axValue)
-        }
+    @Test func journalClientRowsUseExpectedAXTokens() {
+        #expect(MenubarStatusRowState.journalMigrationNeeded.axToken == "journal_migration_needed")
+        #expect(MenubarStatusRowState.connectionWaiting.axToken == "connection_waiting")
     }
 }
 
@@ -377,9 +272,7 @@ private func classified(
     initialPermissionCheckComplete: Bool = true,
     isRecording: Bool = true,
     isPaused: Bool = false,
-    captureQueuedForJournalReadiness: Bool = false,
-    bundledJournalStatusAvailable: Bool = false,
-    journalRuntimeStatus: JournalRuntimeStatus = .running,
+    serviceMode: ServiceMode? = .external,
     syncPaused: Bool = false,
     isUploadConfigured: Bool = true,
     uploadStatus: UploadCoordinator.Status = .synced
@@ -390,9 +283,7 @@ private func classified(
         initialPermissionCheckComplete: initialPermissionCheckComplete,
         isRecording: isRecording,
         isPaused: isPaused,
-        captureQueuedForJournalReadiness: captureQueuedForJournalReadiness,
-        bundledJournalStatusAvailable: bundledJournalStatusAvailable,
-        journalRuntimeStatus: journalRuntimeStatus,
+        serviceMode: serviceMode,
         syncPaused: syncPaused,
         isUploadConfigured: isUploadConfigured,
         uploadStatus: uploadStatus

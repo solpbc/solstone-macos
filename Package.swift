@@ -76,7 +76,6 @@ let package = Package(
             name: "solstone",
             dependencies: [
                 .target(name: "SolstoneCore"),
-                .target(name: "JournalRuntime"),
                 .target(name: "JournalMarkKit"),
                 .target(name: "UpdateKit"),
                 .target(name: "SPLTunnel"),

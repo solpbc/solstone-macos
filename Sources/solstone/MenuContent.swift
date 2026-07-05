@@ -96,7 +96,7 @@ struct MenuContent: View {
                 durableUpdateStatus: updateController.durableUpdateStatus
             ),
             statusRowCarriesPermissions: appState.permissionsNeedAttention,
-            statusRowCarriesJournal: appState.bundledJournalStatusAvailable && appState.journalRuntimeStatus.menuRowPresentation != nil
+            statusRowCarriesJournal: appState.observationRowState == .journalMigrationNeeded
         )
     }
 
@@ -139,15 +139,15 @@ struct MenuContent: View {
                 .accessibilityValue(rowState.axToken)
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
 
-        case .journalSetupNeeded,
-             .journalRestarting,
-             .journalStopped,
-             .journalUnknown,
-             .journalStoppedByUser:
-            journalRuntimeRow(rowState: rowState)
+        case .journalMigrationNeeded:
+            Button("your journal needs a new link →") {
+                openSettings(tab: "journal")
+            }
+            .accessibilityIdentifier(AXID.Menubar.journalMigrationNeededButton)
+            .accessibilityValue(rowState.axToken)
 
-        case .journalWaiting:
-            Button(UICopy.MENUBAR_JOURNAL_WAITING) {
+        case .connectionWaiting:
+            Button("connecting to your journal…") {
                 openSettings(tab: "status")
             }
             .accessibilityIdentifier(AXID.Menubar.journalState)
@@ -177,34 +177,10 @@ struct MenuContent: View {
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
 
         case .observing:
-            Text(appState.bundledJournalStatusAvailable ? UICopy.MENUBAR_OBSERVING_BUNDLED : UICopy.MENUBAR_OBSERVING_CONNECTED)
+            Text(UICopy.MENUBAR_OBSERVING_CONNECTED)
                 .accessibilityValue(rowState.axToken)
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
         }
-    }
-
-    @ViewBuilder
-    private func journalRuntimeRow(rowState: MenubarStatusRowState) -> some View {
-        if let journalRow = appState.journalRuntimeStatus.menuRowPresentation {
-            if journalRow.isEnabled {
-                Button(journalRow.text) {
-                    openSettings(tab: "journal")
-                }
-                .accessibilityIdentifier(AXID.Menubar.journalState)
-                .accessibilityValue(rowState.axToken)
-            } else {
-                Text(journalRow.text)
-                    .accessibilityIdentifier(AXID.Menubar.journalState)
-                    .accessibilityValue(rowState.axToken)
-            }
-        } else {
-            missingJournalRuntimeRow(rowState: rowState)
-        }
-    }
-
-    private func missingJournalRuntimeRow(rowState: MenubarStatusRowState) -> EmptyView {
-        assertionFailure("Journal runtime row state \(rowState.axToken) requires a menuRowPresentation")
-        return EmptyView()
     }
 
     private var statusRowAXValue: String {

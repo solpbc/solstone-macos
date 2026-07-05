@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-import JournalRuntime
+import SolstoneCore
 
 internal func classifyObservationRowState(
     permissionsNeedAttention: Bool,
@@ -9,9 +9,7 @@ internal func classifyObservationRowState(
     initialPermissionCheckComplete: Bool,
     isRecording: Bool,
     isPaused: Bool,
-    captureQueuedForJournalReadiness: Bool,
-    bundledJournalStatusAvailable: Bool,
-    journalRuntimeStatus: JournalRuntimeStatus,
+    serviceMode: ServiceMode?,
     syncPaused: Bool,
     isUploadConfigured: Bool,
     uploadStatus: UploadCoordinator.Status
@@ -25,32 +23,14 @@ internal func classifyObservationRowState(
     if !initialPermissionCheckComplete {
         return .starting
     }
+    if serviceMode == .bundled {
+        return .journalMigrationNeeded
+    }
     if !isRecording && !isPaused {
         return .error
     }
     if isPaused {
         return .paused
-    }
-    if captureQueuedForJournalReadiness {
-        return .journalWaiting
-    }
-    if bundledJournalStatusAvailable {
-        switch journalRuntimeStatus {
-        case .unobserved:
-            return .starting
-        case .running:
-            return .observing
-        case .setupNeeded:
-            return .journalSetupNeeded
-        case .restarting:
-            return .journalRestarting
-        case .stopped:
-            return .journalStopped
-        case .unknown:
-            return .journalUnknown
-        case .stoppedByUser:
-            return .journalStoppedByUser
-        }
     }
     if syncPaused {
         return .syncPaused
@@ -62,7 +42,7 @@ internal func classifyObservationRowState(
     case .synced, .syncing, .uploading:
         return .observing
     case .awaitingTunnel:
-        return .journalWaiting
+        return .connectionWaiting
     case .notSynced, .retrying, .offline:
         return .offline
     }
@@ -76,9 +56,7 @@ extension AppState {
             initialPermissionCheckComplete: initialPermissionCheckComplete,
             isRecording: isRecording,
             isPaused: isPaused,
-            captureQueuedForJournalReadiness: captureQueuedForJournalReadiness,
-            bundledJournalStatusAvailable: bundledJournalStatusAvailable,
-            journalRuntimeStatus: journalRuntimeStatus,
+            serviceMode: config.serviceMode,
             syncPaused: config.syncPaused,
             isUploadConfigured: config.isUploadConfigured,
             uploadStatus: uploadCoordinator.status

@@ -8,12 +8,11 @@ public enum ReloadSemantic: String, Sendable {
 
 public enum SettingsReloadSemantics {
     public static let semantic: [String: ReloadSemantic] = [
-        // restart-required: bundled-mode supervisor must restart to pick these up
-        "serverURL": .restartRequired,
-        "serverKey": .restartRequired,
-        "serviceMode": .restartRequired,
-        "journalPath": .restartRequired,
-        // live: applied to running captureManager via AppState.updateConfig
+        // live: applied through AppState.updateConfig / handleExternalDefaultsChange
+        "serverURL": .live,
+        "serverKey": .live,
+        "serviceMode": .live,
+        "journalPath": .live,
         "cacheRetentionDays": .live,
         "microphoneGain": .live,
         "silenceMusic": .live,

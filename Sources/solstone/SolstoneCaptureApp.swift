@@ -5,7 +5,6 @@ import SwiftUI
 import UserNotifications
 import os
 import JournalMarkKit
-import JournalRuntime
 import SolstoneCore
 import UpdateKit
 
@@ -101,7 +100,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await state.bootstrapNotificationAuthorization() }
 
             state.reevaluateActivationPolicy(debounced: false)
-            Task { await state.startBundledJournalDetectionIfNeeded() }
             state.startTunnelLifecycleOwner()
         } else {
             Logger.general.error("AppState.shared nil in applicationDidFinishLaunching")
@@ -145,7 +143,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         if let state = AppState.shared {
             state.audioDeviceMonitor.stopListening()
-            state.installer.cancel()
             state.isTerminating = true
             state.appKitTerminationBegan = true
             Task { await state.heartbeatService.stop() }
@@ -173,13 +170,12 @@ struct SolstoneCaptureApp: App {
         _updateController = State(initialValue: UpdateController(
             log: Logger.setup,
             errorDomain: "app.solstone.observer.updates",
-            exclusivity: { appState.installer.exclusiveOperationInProgress },
+            exclusivity: nil,
             preInstallFinalizer: { @MainActor in
                 await appState.appQuitCoordinator.prepareForUpdaterInstall()
             },
             installFailureRecovery: { @MainActor in
                 appState.appQuitCoordinator.resetAfterFailedUpdaterInstall()
-                await appState.reestablishSupervisedJournalAfterFailedUpdate()
             },
             terminationBegan: { @MainActor in
                 appState.appKitTerminationBegan
@@ -197,15 +193,9 @@ struct SolstoneCaptureApp: App {
                 : UICopy.MENUBAR_A11Y_ERROR
         case .starting:
             UICopy.MENUBAR_A11Y_STARTING
-        case .journalSetupNeeded:
-            UICopy.MENUBAR_A11Y_JOURNAL_SETUP_NEEDED
-        case .journalRestarting:
-            UICopy.MENUBAR_A11Y_JOURNAL_RESTARTING
-        case .journalStopped, .journalUnknown:
-            UICopy.MENUBAR_A11Y_JOURNAL_NEEDS_ATTENTION
-        case .journalStoppedByUser:
-            UICopy.MENUBAR_A11Y_JOURNAL_NOT_RUNNING
-        case .journalWaiting:
+        case .journalMigrationNeeded:
+            "sol — journal link needs attention"
+        case .connectionWaiting:
             UICopy.MENUBAR_A11Y_WAITING_FOR_JOURNAL
         case .localOnly:
             UICopy.MENUBAR_A11Y_JOURNAL_SETUP_NEEDED
@@ -216,9 +206,7 @@ struct SolstoneCaptureApp: App {
         case .paused:
             UICopy.MENUBAR_A11Y_PAUSED
         case .observing:
-            appState.bundledJournalStatusAvailable
-                ? UICopy.MENUBAR_A11Y_OBSERVING_BUNDLED
-                : UICopy.MENUBAR_A11Y_OBSERVING_CONNECTED
+            UICopy.MENUBAR_A11Y_OBSERVING_CONNECTED
         }
 
         if appState.solChatStale {
@@ -299,10 +287,7 @@ enum FirstLaunchRouting {
         waitForPermissionCheck: @escaping @MainActor () async -> Void,
         permissionsMissing: @escaping @MainActor () -> Bool,
         openPermissions: @escaping @MainActor () -> Void,
-        openService: @escaping @MainActor () -> Void,
-        journalBinary: @escaping @MainActor () -> URL?,
-        healthCheck: @escaping @MainActor (URL) async -> Bool,
-        bundledOutdated: @escaping @MainActor (URL) async -> Bool
+        openService: @escaping @MainActor () -> Void
     ) async {
         await waitForPermissionCheck()
         if permissionsMissing() {
@@ -310,19 +295,7 @@ enum FirstLaunchRouting {
             return
         }
 
-        if !config.isUploadConfigured {
-            openService()
-            return
-        }
-
-        guard config.serviceMode != .external else { return }
-        guard let binary = journalBinary() else { return }
-        if config.serviceMode == .bundled, await bundledOutdated(binary) {
-            openService()
-            return
-        }
-        guard BundledJournalEndpoint.isBundledServiceURL(config.serverURL) else { return }
-        guard await healthCheck(binary) else {
+        if !config.isUploadConfigured || config.serviceMode == .bundled {
             openService()
             return
         }
@@ -372,17 +345,7 @@ private struct StatusIcon: View {
                     waitForPermissionCheck: waitForInitialPermissionCheck,
                     permissionsMissing: permissionsMissing,
                     openPermissions: openPermissions,
-                    openService: openService,
-                    journalBinary: { appState.journalBinaryProvider() },
-                    healthCheck: {
-                        await JournalRuntimeProbe.run(journalBinary: $0) == .reachable
-                    },
-                    bundledOutdated: { binary in
-                        guard let installed = await JournalHealthCheck.version(journalBinary: binary) else {
-                            return false
-                        }
-                        return installed.compare(BundleConfig.solstonePinVersion, options: .numeric) == .orderedAscending
-                    }
+                    openService: openService
                 )
             }
             .onReceive(NotificationCenter.default.publisher(for: .openSettingsWindow)) { _ in

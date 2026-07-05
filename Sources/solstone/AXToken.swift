@@ -7,7 +7,6 @@
 // of hardcoding identifiers or token lists.
 
 import SwiftUI
-import JournalRuntime
 import SolstoneCore
 
 internal enum AXPermissionState: CaseIterable {
@@ -40,12 +39,8 @@ internal enum MenubarStatusRowState: CaseIterable {
     case permissions
     case error
     case starting
-    case journalSetupNeeded
-    case journalRestarting
-    case journalStopped
-    case journalUnknown
-    case journalStoppedByUser
-    case journalWaiting
+    case journalMigrationNeeded
+    case connectionWaiting
     case localOnly
     case syncPaused
     case offline
@@ -78,12 +73,6 @@ internal enum SettingsObservationAXState: CaseIterable {
     }
 }
 
-internal enum DoctorProgress: CaseIterable {
-    case running
-    case done
-    case error
-}
-
 internal enum PairingConnectionAXState: CaseIterable {
     case disconnected
     case connecting
@@ -92,127 +81,6 @@ internal enum PairingConnectionAXState: CaseIterable {
     case revoked
     case loopbackUnavailable
     case keychainUnavailable
-}
-
-extension RowStatus {
-    static let axTokens = [
-        "pending",
-        "running",
-        "ok",
-        "warning",
-        "failed"
-    ]
-
-    var axToken: String {
-        switch self {
-        case .pending:
-            return "pending"
-        case .running:
-            return "running"
-        case .ok:
-            return "ok"
-        case .warning:
-            return "warning"
-        case .failed:
-            return "failed"
-        }
-    }
-}
-
-extension InstallerCardState {
-    static let axTokens = [
-        "detecting",
-        "absent",
-        "installing",
-        "installed_placeholder",
-        "done",
-        "installed_current",
-        "installed_unknown",
-        "externally_managed",
-        "runtime_starting",
-        "runtime_failed",
-        "runtime_unconfirmed",
-        "runtime_stopped_by_user",
-        "upgrade_failed",
-        "failed"
-    ]
-
-    var axToken: String {
-        switch self {
-        case .detecting:
-            return "detecting"
-        case .absent:
-            return "absent"
-        case .installing:
-            return "installing"
-        case .installedPlaceholder:
-            return "installed_placeholder"
-        case .done:
-            return "done"
-        case .installedCurrent:
-            return "installed_current"
-        case .installedUnknown:
-            return "installed_unknown"
-        case .externallyManaged:
-            return "externally_managed"
-        case .runtimeStarting:
-            return "runtime_starting"
-        case .runtimeFailed:
-            return "runtime_failed"
-        case .runtimeUnconfirmed:
-            return "runtime_unconfirmed"
-        case .runtimeStoppedByUser:
-            return "runtime_stopped_by_user"
-        case .upgradeFailed:
-            return "upgrade_failed"
-        case .failed:
-            return "failed"
-        }
-    }
-}
-
-extension AutoTestState {
-    public static let axTokens = [
-        "verifying",
-        "success",
-        "failure"
-    ]
-
-    var axToken: String {
-        switch self {
-        case .verifying:
-            return "verifying"
-        case .success:
-            return "success"
-        case .failure:
-            return "failure"
-        }
-    }
-}
-
-extension DoctorStatus {
-    static let axTokens = [
-        "ok",
-        "warn",
-        "fail",
-        "skip",
-        "unknown"
-    ]
-
-    var axToken: String {
-        switch self {
-        case .ok:
-            return "ok"
-        case .warn:
-            return "warn"
-        case .fail:
-            return "fail"
-        case .skip:
-            return "skip"
-        case .unknown:
-            return "unknown"
-        }
-    }
 }
 
 extension UploadCoordinator.Status {
@@ -364,18 +232,6 @@ extension PairingConnectionAXState {
     }
 }
 
-extension JournalRuntimeStatus {
-    static let axTokens = [
-        "starting",
-        "running",
-        "journal_restarting",
-        "journal_setup_needed",
-        "journal_stopped",
-        "journal_unknown",
-        "journal_stopped_by_user"
-    ]
-}
-
 extension AXPermissionState {
     var axToken: String {
         switch self {
@@ -410,12 +266,8 @@ extension MenubarStatusRowState {
         case .permissions, .error:
             return .error
         case .starting,
-             .journalSetupNeeded,
-             .journalRestarting,
-             .journalStopped,
-             .journalUnknown,
-             .journalStoppedByUser,
-             .journalWaiting,
+             .journalMigrationNeeded,
+             .connectionWaiting,
              .localOnly,
              .syncPaused,
              .offline:
@@ -437,18 +289,10 @@ extension MenubarStatusRowState {
             return "error"
         case .starting:
             return "starting"
-        case .journalSetupNeeded:
-            return "journal_setup_needed"
-        case .journalRestarting:
-            return "journal_restarting"
-        case .journalStopped:
-            return "journal_stopped"
-        case .journalUnknown:
-            return "journal_unknown"
-        case .journalStoppedByUser:
-            return "journal_stopped_by_user"
-        case .journalWaiting:
-            return "journal_waiting"
+        case .journalMigrationNeeded:
+            return "journal_migration_needed"
+        case .connectionWaiting:
+            return "connection_waiting"
         case .localOnly:
             return "local_only"
         case .syncPaused:
@@ -491,48 +335,6 @@ extension SettingsView.SidebarBadgeState {
     }
 }
 
-extension DoctorProgress {
-    var axToken: String {
-        switch self {
-        case .running:
-            return "running"
-        case .done:
-            return "done"
-        case .error:
-            return "error"
-        }
-    }
-}
-
-func doctorProgressAXToken(for result: JournalDoctorResult?) -> String {
-    switch result {
-    case nil:
-        return DoctorProgress.running.axToken
-    case .report:
-        return DoctorProgress.done.axToken
-    case .setupNeeded, .stopped, .unknown:
-        return DoctorProgress.error.axToken
-    }
-}
-
 func axIntegerString(_ value: Int) -> String {
     String(value)
-}
-
-func axModelDownloadPercentString(_ progress: ModelsProgress) -> String {
-    switch progress {
-    case .idle:
-        return "0"
-    case .running(let subprocessProgress):
-        guard let stepIndex = subprocessProgress.stepIndex,
-              let stepTotal = subprocessProgress.stepTotal,
-              stepTotal > 0 else {
-            return "0"
-        }
-        return axPercentString(Double(stepIndex) / Double(stepTotal))
-    case .done:
-        return "100"
-    case .failed:
-        return "0"
-    }
 }

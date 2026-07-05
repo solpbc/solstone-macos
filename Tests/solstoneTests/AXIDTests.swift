@@ -2,7 +2,6 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
-import JournalRuntime
 import SolstoneCore
 import Testing
 import UpdateKit
@@ -34,6 +33,20 @@ struct AXIDTests {
         #expect(AXID.Settings.Service.pairingMismatchSupport == "settings.service.pairing.mismatchSupport")
     }
 
+    @Test func journalClientPanelIDsAreStable() {
+        #expect(AXID.Menubar.journalMigrationNeededButton == "menubar.status.journalMigrationNeeded")
+        #expect(AXID.Settings.Service.journalNameState == "settings.service.journal.name.state")
+        #expect(AXID.Settings.Service.journalMarkState == "settings.service.journal.mark.state")
+        #expect(AXID.Settings.Service.journalConnectionState == "settings.service.journal.connection.state")
+        #expect(AXID.Settings.Service.journalRelink == "settings.service.journal.relink")
+        #expect(AXID.Settings.Service.localJournalDiscoveryState == "settings.service.localJournal.discovery.state")
+        #expect(AXID.Settings.Service.localJournalConfirm == "settings.service.localJournal.confirm")
+        #expect(AXID.Settings.Service.createJournalThisMac == "settings.service.journal.createThisMac")
+        #expect(AXID.Settings.Service.pairJournalAnotherDevice == "settings.service.journal.pairAnotherDevice")
+        #expect(AXID.Settings.Service.journalMigrationBanner == "settings.service.journal.migration.banner")
+        #expect(AXID.Settings.Service.journalMigrationAction == "settings.service.journal.migration.action")
+    }
+
     @Test func runtimeKeysArePrefixStableAndInjective() {
         let firstUID = "AppleHDAEngineInput:1B,0,1,0:1"
         let secondUID = "com.EXAMPLE.Device.2"
@@ -59,55 +72,19 @@ struct AXIDTests {
         #expect(AXID.Settings.Privacy.titlePatternRemove(firstPattern) != AXID.Settings.Privacy.titlePatternRemove(secondPattern))
     }
 
-    @Test func doctorSluggingIsStableForRepresentativeNames() {
-        let expected = [
-            "installer.doctor.check.python-version",
-            "installer.doctor.check.journal-path-exists",
-            "installer.doctor.check.sol-doctor-gpu-metal"
-        ]
-
-        for (name, expectedID) in zip(AXContract.doctorCheckSampleNames, expected) {
-            #expect(AXID.Installer.doctorCheck(name) == expectedID)
-        }
-    }
-
     @Test func enumTokensAreExactAndMatchTokenGrammar() {
-        expectTokens(rowStatusRepresentatives.map(\.axToken), RowStatus.axTokens)
-        expectTokens(installerCardStateRepresentatives.map(\.axToken), InstallerCardState.axTokens)
-        expectTokens(autoTestStateRepresentatives.map(\.axToken), AutoTestState.axTokens)
-        expectTokens(doctorStatusRepresentatives.map(\.axToken), DoctorStatus.axTokens)
         expectTokens(uploadStatusRepresentatives.map(\.axToken), UploadCoordinator.Status.axTokens)
         expectTokens(connectionTestStateRepresentatives.map(\.axToken), ConnectionTestState.axTokens)
         expectTokens(pairingFlowStateRepresentatives.map(\.axToken), PairingFlowState.axTokens)
         expectTokens(pairingFailureRepresentatives.map(\.axToken), PairingFailure.axTokens)
         expectTokens(updateActivityRepresentatives.map(\.axToken), UpdateActivity.axTokens)
-        expectTokens(journalRuntimeStatusRepresentatives.map(\.settingsPresentation.axValue), JournalRuntimeStatus.axTokens)
 
         expectTokensMatchGrammar(SettingsView.SidebarBadgeState.allCases.map(\.axToken))
         expectTokensMatchGrammar(AXPermissionState.allCases.map(\.axToken))
         expectTokensMatchGrammar(MenubarIconState.allCases.map(\.axToken))
         expectTokensMatchGrammar(MenubarStatusRowState.allCases.map(\.axToken))
         expectTokensMatchGrammar(SettingsObservationAXState.allCases.map(\.axToken))
-        expectTokensMatchGrammar(DoctorProgress.allCases.map(\.axToken))
         expectTokensMatchGrammar(PairingConnectionAXState.allCases.map(\.axToken))
-    }
-
-    @Test func doctorProgressAXTokenMapsDoctorResult() {
-        #expect(doctorProgressAXToken(for: nil) == DoctorProgress.running.axToken)
-        #expect(doctorProgressAXToken(for: .report(DoctorReport(checks: [], summary: nil))) == DoctorProgress.done.axToken)
-        #expect(
-            doctorProgressAXToken(for: .setupNeeded) == DoctorProgress.error.axToken
-        )
-        #expect(
-            doctorProgressAXToken(
-                for: .stopped(JournalDiagnostic(commandLabel: "journal health"))
-            ) == DoctorProgress.error.axToken
-        )
-        #expect(
-            doctorProgressAXToken(
-                for: .unknown(JournalDiagnostic(commandLabel: "journal health"))
-            ) == DoctorProgress.error.axToken
-        )
     }
 
     @Test func menubarIconStateOwnsIconNames() {
@@ -124,17 +101,6 @@ struct AXIDTests {
         #expect(axPercentString(1.5) == "100")
         #expect(axDownloadPercentString(receivedBytes: 25, totalBytes: 100) == "25")
         #expect(axDownloadPercentString(receivedBytes: 25, totalBytes: nil) == "0")
-        #expect(
-            axModelDownloadPercentString(
-                .running(SubprocessProgress(phase: "models", stepIndex: 2, stepTotal: 4))
-            ) == "50"
-        )
-        #expect(
-            axModelDownloadPercentString(
-                .running(SubprocessProgress(phase: "models", stepIndex: 8, stepTotal: 4))
-            ) == "100"
-        )
-        #expect(axModelDownloadPercentString(.done) == "100")
     }
 
     @Test func viewsDoNotUseInlineIdentifierOrValueLiterals() throws {
@@ -196,53 +162,6 @@ struct AXIDTests {
     }
 
     // Associated-value representatives are the one hand-maintained AX token surface.
-    private var rowStatusRepresentatives: [RowStatus] {
-        [
-            .pending,
-            .running,
-            .ok,
-            .warning(message: "careful"),
-            .failed(message: "boom")
-        ]
-    }
-
-    private var installerCardStateRepresentatives: [InstallerCardState] {
-        [
-            .detecting,
-            .absent,
-            .installing,
-            .installedPlaceholder,
-            .done,
-            .installedCurrent(version: "1.2.3"),
-            .installedUnknown,
-            .externallyManaged(solPath: "/usr/local/bin/sol", probe: nil),
-            .runtimeStarting,
-            .runtimeFailed(.stopped(JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "down"))),
-            .runtimeUnconfirmed,
-            .runtimeStoppedByUser,
-            .upgradeFailed(installed: "1.0.0", pinned: "2.0.0", errorDetails: "boom"),
-            .failed(.installSolstone(message: "boom"))
-        ]
-    }
-
-    private var autoTestStateRepresentatives: [AutoTestState] {
-        [
-            .verifying,
-            .success,
-            .failure("boom")
-        ]
-    }
-
-    private var doctorStatusRepresentatives: [DoctorStatus] {
-        [
-            .ok,
-            .warn,
-            .fail,
-            .skip,
-            .unknown("unexpected")
-        ]
-    }
-
     private var uploadStatusRepresentatives: [UploadCoordinator.Status] {
         [
             .notSynced,
@@ -300,15 +219,4 @@ struct AXIDTests {
         ]
     }
 
-    private var journalRuntimeStatusRepresentatives: [JournalRuntimeStatus] {
-        [
-            .unobserved,
-            .running,
-            .restarting,
-            .setupNeeded,
-            .stopped(JournalDiagnostic(commandLabel: "journal health")),
-            .unknown(JournalDiagnostic(commandLabel: "journal health")),
-            .stoppedByUser
-        ]
-    }
 }

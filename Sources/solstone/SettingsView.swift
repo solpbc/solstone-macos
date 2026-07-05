@@ -3,13 +3,14 @@
 
 import AppKit
 import JournalMarkKit
-import JournalRuntime
 @preconcurrency import ScreenCaptureKit
 import SwiftUI
 import UserNotifications
 import os
 import SolstoneCore
 import UpdateKit
+
+private let failureDiagnosticSupportURL = URL(string: "https://support.solstone.app")!
 
 /// Display entry for microphone priority list
 struct MicrophoneDisplayEntry: Identifiable {
@@ -34,14 +35,6 @@ func isConnectButtonDisabled(observerURL: String, observerKey: String, connectio
 
 func shouldApplyConnectionTestCompletion(inFlightTestID: UUID?, testGeneration: UUID) -> Bool {
     inFlightTestID == testGeneration
-}
-
-func serviceTabHeadingText(for mode: ServiceMode?) -> String? {
-    mode == nil ? "set up your journal" : nil
-}
-
-func initialServiceMode(for config: AppConfig) -> ServiceMode {
-    config.serviceMode ?? .bundled
 }
 
 struct PairingConnectionPresentation {
@@ -100,6 +93,43 @@ func makePairingConnectionPresentation(
     }
 }
 
+func makeLocalJournalConnectionPresentation(
+    for uploadStatus: UploadCoordinator.Status
+) -> PairingConnectionPresentation {
+    switch uploadStatus {
+    case .synced:
+        return PairingConnectionPresentation(
+            message: "connected to your journal on this mac",
+            severity: .good,
+            axToken: PairingConnectionAXState.connected.axToken
+        )
+    case .syncing, .uploading:
+        return PairingConnectionPresentation(
+            message: "syncing to your journal on this mac",
+            severity: .warn,
+            axToken: PairingConnectionAXState.connecting.axToken
+        )
+    case .notSynced, .awaitingTunnel:
+        return PairingConnectionPresentation(
+            message: "connecting to your journal on this mac",
+            severity: .warn,
+            axToken: PairingConnectionAXState.connecting.axToken
+        )
+    case .retrying:
+        return PairingConnectionPresentation(
+            message: "trouble reaching your journal on this mac; retrying",
+            severity: .warn,
+            axToken: PairingConnectionAXState.connecting.axToken
+        )
+    case .offline:
+        return PairingConnectionPresentation(
+            message: "can't reach your journal on this mac",
+            severity: .attention,
+            axToken: PairingConnectionAXState.loopbackUnavailable.axToken
+        )
+    }
+}
+
 func shouldShowPairingRetry(for state: TunnelLifecycleState) -> Bool {
     state == .error(.keychainUnavailable)
 }
@@ -151,7 +181,6 @@ struct SettingsView: View {
     @State private var observerURL = ""
     @State private var observerKey = ""
     @State private var pairingLink = ""
-    @State private var serviceMode: ServiceMode
     @State private var preserveNextServiceFieldChange = false
     @State private var inFlightTestID: UUID?
     @State private var disconnectConfirmPending = false
@@ -160,18 +189,66 @@ struct SettingsView: View {
     @State private var journalMarkRederiveEligible = false
     @State private var journalMarkRederiveStarted = false
     @State private var journalMarkRederiveTask: Task<Void, Never>?
+    @State private var journalName: String?
+    @State private var journalNameFetchTask: Task<Void, Never>?
+    @State private var localJournalMark: JournalMark?
+    @State private var localDiscoveryCompleted = false
+    @State private var localDiscoveryTask: Task<Void, Never>?
+    @State private var localLinkInProgress = false
+    @State private var localLinkError: String?
+    @State private var showPairingFlow = false
+
+    private let journalAppLauncher: any JournalAppLaunching
+    private let migrationBannerAction: any JournalMigrationBannerActioning
+    private let journalNameFetch: @MainActor @Sendable (String) async -> String?
+    private let localIdentityFetch: @MainActor @Sendable (String) async -> JournalMark?
+    private let observerRegister: @MainActor @Sendable (
+        _ baseURL: String,
+        _ descriptor: ObserverRegistrationDescriptor
+    ) async -> Result<ObserverRegistration, ObserverRegistrationFailure>
+    private let markFetch: @MainActor @Sendable (String) async -> JournalMark?
 
     init(
         appState: AppState,
         updateController: UpdateController,
         selectedTab: Tab = .observer,
-        initialStorageUsedMB: Int? = nil
+        initialStorageUsedMB: Int? = nil,
+        initialJournalName: String? = nil,
+        initialLocalJournalMark: JournalMark? = nil,
+        initialLocalDiscoveryCompleted: Bool = false,
+        initialShowPairingFlow: Bool = false,
+        journalAppLauncher: any JournalAppLaunching = LiveJournalAppLauncher(),
+        migrationBannerAction: any JournalMigrationBannerActioning = InertJournalMigrationBannerAction(),
+        journalNameFetch: @escaping @MainActor @Sendable (String) async -> String? = { baseURL in
+            await JournalNameFetcher().fetch(baseURL: baseURL)
+        },
+        localIdentityFetch: @escaping @MainActor @Sendable (String) async -> JournalMark? = { baseURL in
+            await JournalIdentityFetcher().fetch(baseURL: baseURL)
+        },
+        observerRegister: @escaping @MainActor @Sendable (
+            _ baseURL: String,
+            _ descriptor: ObserverRegistrationDescriptor
+        ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> = { baseURL, descriptor in
+            await ObserverRegistrationClient().register(baseURL: baseURL, descriptor: descriptor)
+        },
+        markFetch: @escaping @MainActor @Sendable (String) async -> JournalMark? = { baseURL in
+            await JournalIdentityFetcher().fetch(baseURL: baseURL)
+        }
     ) {
         self.appState = appState
         self.updateController = updateController
+        self.journalAppLauncher = journalAppLauncher
+        self.migrationBannerAction = migrationBannerAction
+        self.journalNameFetch = journalNameFetch
+        self.localIdentityFetch = localIdentityFetch
+        self.observerRegister = observerRegister
+        self.markFetch = markFetch
         self._selectedTab = State(initialValue: selectedTab)
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
-        self._serviceMode = State(initialValue: initialServiceMode(for: appState.config))
+        self._journalName = State(initialValue: initialJournalName)
+        self._localJournalMark = State(initialValue: initialLocalJournalMark)
+        self._localDiscoveryCompleted = State(initialValue: initialLocalDiscoveryCompleted)
+        self._showPairingFlow = State(initialValue: initialShowPairingFlow)
     }
 
     // MARK: - Auto-saving Bindings
@@ -397,10 +474,9 @@ struct SettingsView: View {
         journalMarkRederiveStarted = true
         journalMarkRederiveTask?.cancel()
         journalMarkRederiveTask = Task { @MainActor in
-            let fetcher = JournalIdentityFetcher()
             switch await appState.resolveHomeBase() {
             case .url(let baseURL):
-                if let mark = await fetcher.fetch(baseURL: baseURL) {
+                if let mark = await markFetch(baseURL) {
                     appState.setConfirmedMark(mark)
                 }
             case .held:
@@ -736,14 +812,28 @@ struct SettingsView: View {
         .onAppear {
             if observerURL.isEmpty { observerURL = appState.config.serverURL ?? "" }
             if observerKey.isEmpty { observerKey = appState.config.serverKey ?? "" }
+            refreshJournalName()
+            refreshLocalJournalDiscoveryIfNeeded()
+        }
+        .onChange(of: appState.config.serverURL) { _, _ in
+            observerURL = appState.config.serverURL ?? ""
+            refreshJournalName()
+            refreshLocalJournalDiscoveryIfNeeded()
+        }
+        .onChange(of: appState.config.serverKey) { _, _ in
+            observerKey = appState.config.serverKey ?? ""
+            refreshJournalName()
+            refreshLocalJournalDiscoveryIfNeeded()
+        }
+        .onDisappear {
+            journalNameFetchTask?.cancel()
+            localDiscoveryTask?.cancel()
         }
     }
 
     @ViewBuilder
     private var serviceSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            restartRequiredBanner
-
             if appState.permissionsNeedAttention {
                 navRow(UICopy.SETTINGS_PREREQ_PERMISSIONS) {
                     selectedTab = .permissions
@@ -751,102 +841,213 @@ struct SettingsView: View {
                 .accessibilityIdentifier(AXID.Settings.Service.prereqPermissions)
             }
 
-            if let heading = serviceTabHeadingText(for: appState.config.serviceMode) {
-                Text(heading)
-                    .font(.headline)
+            Text("your journal")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            if appState.config.serviceMode == .bundled {
+                journalMigrationBanner
             }
 
-            Picker("journal mode", selection: $serviceMode) {
-                Text(UICopy.JOURNAL_MODE_THIS_MAC_LABEL).tag(ServiceMode.bundled)
-                Text(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL).tag(ServiceMode.external)
+            if appState.config.isUploadConfigured {
+                configuredJournalPanel
+            } else {
+                unconfiguredJournalPanel
             }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier(AXID.Settings.Service.journalModePicker)
+        }
+    }
 
-            AXStateCompanion(
-                id: AXID.Settings.Service.journalModeState,
-                value: serviceMode.rawValue
-            )
+    @ViewBuilder
+    private var configuredJournalPanel: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                LabeledContent("name") {
+                    Text(resolvedJournalName)
+                        .accessibilityIdentifier(AXID.Settings.Service.journalNameState)
+                        .accessibilityValue(resolvedJournalName)
+                }
 
-            VStack(alignment: .leading, spacing: 6) {
-                tradeoffLine(
-                    label: UICopy.JOURNAL_MODE_THIS_MAC_LABEL,
-                    text: UICopy.JOURNAL_MODE_THIS_MAC_TRADEOFF
-                )
-                tradeoffLine(
-                    label: UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL,
-                    text: UICopy.JOURNAL_MODE_ANOTHER_MACHINE_TRADEOFF
-                )
-            }
+                if let mark = appState.confirmedMark {
+                    JournalMarkView(mark: mark, isConfirmed: true)
+                    AXStateCompanion(
+                        id: AXID.Settings.Service.journalMarkState,
+                        value: mark.words.joined(separator: " ")
+                    )
+                } else {
+                    AXStateCompanion(
+                        id: AXID.Settings.Service.journalMarkState,
+                        value: ""
+                    )
+                }
 
-            switch serviceMode {
-            case .bundled:
-                BundledServiceCard(appState: appState, allowsLocalJournalActions: true)
-                bundledJournalStatusSection
-                if bundledTroubleshootingVisible {
-                    DisclosureGroup("troubleshooting") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            journalRestartControl
-                            journalStopControl
-                            journalStartControl
-                        }
+                LabeledContent("where") {
+                    Text(journalLocationLabel)
+                }
+
+                LabeledContent("connection") {
+                    let presentation = journalConnectionPresentation
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(presentation.severity.color)
+                            .frame(width: 8, height: 8)
+                        Text(presentation.message)
+                            .foregroundStyle(presentation.severity.color)
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Service.journalConnectionState)
+                    .accessibilityValue(presentation.axToken)
+                }
+
+                uploadStatusView
+
+                HStack {
+                    Button("re-link") {
+                        relinkJournal()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Service.journalRelink)
+                    .disabled(localLinkInProgress || pairingIsBusy)
+
+                    if localLinkInProgress {
+                        ProgressView()
+                            .scaleEffect(0.5)
                     }
                 }
-            case .external:
-                let cardState = terminalCardState(
-                    main: appState.installer.main,
-                    probe: appState.installer.probedVersion,
-                    failureRecord: appState.installer.upgradeFailureRecord
-                )
-                if shouldShowBundledStatusSurface(cardState: cardState) {
-                    BundledServiceCard(appState: appState, allowsLocalJournalActions: false)
-                }
-                pairingSection
-                externalServiceSection
-                externalJournalSyncSection
-                externalJournalStorageSection
-            }
-        }
-    }
 
-    @ViewBuilder
-    private var bundledJournalStatusSection: some View {
-        if appState.bundledJournalStatusAvailable {
-            GroupBox("journal status") {
-                VStack(alignment: .leading, spacing: 8) {
-                    bundledJournalStatusRows
-                }
-                .padding(.vertical, 4)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var bundledJournalStatusRows: some View {
-        LabeledContent("journal") {
-            let presentation = appState.journalRuntimeStatus.settingsPresentation
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(presentation.shortText)
-                    .foregroundStyle(presentation.severity.color)
-                    .accessibilityIdentifier(AXID.Settings.Status.journalRuntimeState)
-                    .accessibilityValue(presentation.axValue)
-                if let reason = presentation.reason {
-                    Text(reason)
+                if let localLinkError {
+                    Text(localLinkError)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.trailing)
+                        .foregroundStyle(.red)
+                }
+
+                if showPairingFlow {
+                    pairingSection
                 }
             }
+            .padding(.vertical, 4)
         }
-        if appState.captureQueuedForJournalReadiness {
-            LabeledContent("journal") {
-                Text(UICopy.JOURNAL_WAITING_FOR_READINESS)
-                    .foregroundStyle(.orange)
-                    .accessibilityIdentifier(AXID.Settings.Status.journalReadinessQueueState)
-                    .accessibilityValue(MenubarStatusRowState.journalWaiting.axToken)
+
+        DisclosureGroup("advanced") {
+            externalServiceSection
+        }
+
+        externalJournalSyncSection
+        externalJournalStorageSection
+    }
+
+    @ViewBuilder
+    private var unconfiguredJournalPanel: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                if !localDiscoveryCompleted {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                        Text("looking for your journal on this mac")
+                            .foregroundStyle(.secondary)
+                    }
+                    AXStateCompanion(
+                        id: AXID.Settings.Service.localJournalDiscoveryState,
+                        value: "searching"
+                    )
+                } else if let localJournalMark {
+                    Text("found your journal on this mac")
+                        .font(.headline)
+                    JournalMarkView(mark: localJournalMark)
+                    AXStateCompanion(
+                        id: AXID.Settings.Service.localJournalDiscoveryState,
+                        value: "found"
+                    )
+                    HStack {
+                        Button("confirm") {
+                            confirmLocalJournalLink()
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Service.localJournalConfirm)
+                        .disabled(localLinkInProgress)
+
+                        if localLinkInProgress {
+                            ProgressView()
+                                .scaleEffect(0.5)
+                        }
+                    }
+                } else {
+                    AXStateCompanion(
+                        id: AXID.Settings.Service.localJournalDiscoveryState,
+                        value: "not_found"
+                    )
+                    Button("create your journal on this mac") {
+                        journalAppLauncher.launchOrDownload()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Service.createJournalThisMac)
+
+                    Button("pair to a journal on another device") {
+                        showPairingFlow = true
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Service.pairJournalAnotherDevice)
+                }
+
+                if let localLinkError {
+                    Text(localLinkError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
+            .padding(.vertical, 4)
         }
+
+        if showPairingFlow {
+            pairingSection
+        }
+
+        DisclosureGroup("advanced") {
+            externalServiceSection
+        }
+    }
+
+    private var journalMigrationBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text("your journal needs a new link; sol keeps using the saved connection for now.")
+                .font(.callout)
+                .foregroundStyle(.primary)
+            Spacer(minLength: 0)
+            Button("not now") {
+                acknowledgeJournalMigrationBanner(action: migrationBannerAction)
+            }
+            .accessibilityIdentifier(AXID.Settings.Service.journalMigrationAction)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.orange.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+        )
+        .accessibilityIdentifier(AXID.Settings.Service.journalMigrationBanner)
+    }
+
+    private var resolvedJournalName: String {
+        resolvedJournalDisplayName(
+            fetchedName: journalName,
+            confirmedMark: appState.confirmedMark,
+            serverURL: appState.config.serverURL
+        )
+    }
+
+    private var journalLocationLabel: String {
+        BundledJournalEndpoint.isBundledServiceURL(appState.config.serverURL)
+            ? UICopy.JOURNAL_MODE_THIS_MAC_LABEL
+            : UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL
+    }
+
+    private var journalConnectionPresentation: PairingConnectionPresentation {
+        if BundledJournalEndpoint.isBundledServiceURL(appState.config.serverURL),
+           appState.config.isUploadConfigured {
+            return makeLocalJournalConnectionPresentation(for: appState.uploadCoordinator.status)
+        }
+        return pairingConnectionPresentation
     }
 
     private var externalJournalSyncSection: some View {
@@ -944,116 +1145,6 @@ struct SettingsView: View {
                     .padding(.top, 4)
             }
         }
-    }
-
-    @ViewBuilder
-    private var restartRequiredBanner: some View {
-        if appState.restartRequiredBannerVisible
-            && appState.config.serviceMode == .bundled
-            && appState.bundledJournalRestartAvailable {
-            Button {
-                appState.requestJournalRestart()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.clockwise.circle.fill")
-                        .foregroundStyle(.orange)
-                    Text(UICopy.SETTINGS_RESTART_REQUIRED_BANNER)
-                        .font(.callout)
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.orange.opacity(0.12))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(Color.orange.opacity(0.35), lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
-            .disabled(appState.journalRuntimeStatus.isRestarting)
-            .accessibilityIdentifier(AXID.Settings.Service.restartRequiredBanner)
-            .accessibilityHint(Text("restart the bundled journal supervisor so the saved change takes effect"))
-        }
-    }
-
-    @ViewBuilder
-    private var journalRestartControl: some View {
-        if appState.config.serviceMode == .bundled
-            && appState.bundledJournalRestartAvailable
-            && !appState.restartRequiredBannerVisible
-            && journalRestartControlVisible {
-            Button {
-                appState.requestJournalRestart()
-            } label: {
-                Label(UICopy.RESTART_JOURNAL, systemImage: "arrow.clockwise")
-            }
-            .disabled(appState.journalRuntimeStatus.isRestarting)
-            .accessibilityIdentifier(AXID.Settings.Service.restartJournalButton)
-        }
-    }
-
-    private var journalRestartControlVisible: Bool {
-        appState.journalRuntimeStatus.canOfferRestart
-    }
-
-    @ViewBuilder
-    private var journalStopControl: some View {
-        if appState.config.serviceMode == .bundled
-            && appState.bundledJournalRestartAvailable
-            && !appState.restartRequiredBannerVisible
-            && journalStopControlVisible {
-            Button {
-                appState.requestJournalStop()
-            } label: {
-                Label(UICopy.STOP_JOURNAL, systemImage: "stop.circle")
-            }
-            .accessibilityIdentifier(AXID.Settings.Service.stopJournalButton)
-        }
-    }
-
-    @ViewBuilder
-    private var journalStartControl: some View {
-        if appState.config.serviceMode == .bundled
-            && appState.bundledJournalRestartAvailable
-            && !appState.restartRequiredBannerVisible
-            && journalStartControlVisible {
-            Button {
-                appState.requestJournalStart()
-            } label: {
-                Label(UICopy.START_JOURNAL, systemImage: "play.circle")
-            }
-            .accessibilityIdentifier(AXID.Settings.Service.startJournalButton)
-        }
-    }
-
-    private var journalStopControlVisible: Bool {
-        if case .running = appState.journalRuntimeStatus { return true }
-        return false
-    }
-
-    private var journalStartControlVisible: Bool {
-        appState.journalRuntimeStatus.isStoppedByUser
-    }
-
-    private var bundledTroubleshootingVisible: Bool {
-        appState.bundledJournalRestartAvailable
-            && !appState.restartRequiredBannerVisible
-            && (journalRestartControlVisible || journalStopControlVisible || journalStartControlVisible)
-    }
-
-    private func tradeoffLine(label: String, text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text("\(label):")
-                .fontWeight(.semibold)
-            Text(text)
-                .foregroundStyle(.secondary)
-        }
-        .font(.caption)
     }
 
     private func navRow(_ text: String, action: @escaping () -> Void) -> some View {
@@ -1384,7 +1475,7 @@ struct SettingsView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("address").font(.caption).foregroundStyle(.secondary)
-                    TextField("localhost, host:port, or https://...", text: $observerURL)
+                    TextField("local address, name:port, or https://...", text: $observerURL)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier(AXID.Settings.Service.externalAddress)
                 }
@@ -1446,8 +1537,8 @@ struct SettingsView: View {
             .onChange(of: observerKey) { _, _ in invalidateConnectionTestState() }
     }
 
-    /// Normalizes flexible host input to a full URL.
-    /// Accepts: "localhost", "myhost:5015", "https://myhost", full URLs.
+    /// Normalizes flexible journal address input to a full URL.
+    /// Accepts: local names, name:port pairs, https:// addresses, and full URLs.
     private func normalizeServerURL(_ input: String) -> String {
         let trimmed = input.trimmingCharacters(in: .whitespaces)
         if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
@@ -1505,9 +1596,83 @@ struct SettingsView: View {
         if appState.microphoneGranted {
             Task {
                 await appState.startRecording()
-                if mode != .bundled || appState.journalDependentServicesReady {
-                    Task.detached { await appState.uploadCoordinator?.syncOnStartup() }
-                }
+                Task.detached { await appState.uploadCoordinator?.syncOnStartup() }
+            }
+        }
+    }
+
+    private func refreshJournalName() {
+        journalNameFetchTask?.cancel()
+        journalNameFetchTask = Task { @MainActor in
+            switch await appState.resolveHomeBase() {
+            case .held:
+                journalName = nil
+            case .url(let baseURL):
+                journalName = await journalNameFetch(baseURL)
+            }
+        }
+    }
+
+    private func refreshLocalJournalDiscoveryIfNeeded() {
+        guard !appState.config.isUploadConfigured else { return }
+        guard !localDiscoveryCompleted else { return }
+        localDiscoveryTask?.cancel()
+        localDiscoveryCompleted = false
+        localJournalMark = nil
+        localLinkError = nil
+        localDiscoveryTask = Task { @MainActor in
+            let result = await discoverLocalJournal(fetchIdentity: localIdentityFetch)
+            guard !Task.isCancelled else { return }
+            if case .found(let mark) = result {
+                localJournalMark = mark
+            }
+            localDiscoveryCompleted = true
+        }
+    }
+
+    private func relinkJournal() {
+        resetForJournalRelink(appState: appState, journalMarkDriver: journalMarkDriver)
+        localLinkError = nil
+        if BundledJournalEndpoint.isBundledServiceURL(appState.config.serverURL) ||
+            appState.config.serviceMode == .bundled {
+            confirmLocalJournalLink()
+        } else {
+            showPairingFlow = true
+        }
+    }
+
+    private func confirmLocalJournalLink() {
+        localLinkInProgress = true
+        localLinkError = nil
+        resetForJournalRelink(appState: appState, journalMarkDriver: journalMarkDriver)
+
+        Task { @MainActor in
+            let result = await performLocalObserverRegistration(
+                appState: appState,
+                register: observerRegister
+            )
+
+            switch result {
+            case .success(let registration):
+                observerURL = ServiceMode.bundledServiceURL
+                observerKey = registration.key
+                localLinkInProgress = false
+                localDiscoveryCompleted = true
+                showPairingFlow = false
+
+                journalMarkDriver.resetForNewPairAttempt()
+                journalMarkDriver.startIfNeeded(
+                    for: "local-link:\(registration.key)",
+                    resolveHomeBase: {
+                        .url(ServiceMode.bundledServiceURL)
+                    },
+                    fetchMark: { baseURL in
+                        await markFetch(baseURL)
+                    }
+                )
+            case .failure:
+                localLinkInProgress = false
+                localLinkError = "couldn't connect to your journal. try again."
             }
         }
     }
@@ -1876,21 +2041,12 @@ struct SettingsView: View {
             serviceMode: appState.config.serviceMode,
             isRecording: appState.isRecording,
             isPaused: appState.isPaused,
-            journalRuntimeStatus: appState.journalRuntimeStatus,
             uploadStatus: appState.uploadCoordinator.status,
             pendingCount: appState.uploadCoordinator.pendingCount,
             lastSyncedAt: appState.uploadCoordinator.lastSyncedAt,
             serverURL: appState.config.serverURL,
             now: Date()
         )
-    }
-
-    private var bundledVersionCaption: String {
-        let state = appState.bundledJournalCardState
-        if case .installedCurrent(let version) = state {
-            return "the journal \(version) · on this Mac"
-        }
-        return "on this Mac"
     }
 
     @ViewBuilder
@@ -1957,35 +2113,24 @@ struct SettingsView: View {
 
             GroupBox("journal") {
                 VStack(alignment: .leading, spacing: 8) {
+                    Text(syncTargetText)
+                        .foregroundStyle(.secondary)
+                    uploadStatusView
                     if appState.config.serviceMode == .bundled {
-                        bundledJournalStatusRows
-                        Text(bundledVersionCaption)
+                        Text("your journal needs a new link")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else if let lastSyncedAt = appState.uploadCoordinator.lastSyncedAt {
+                        Text("last synced \(coarseRelativeTime(lastSyncedAt, now: Date()))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        if let lastIngestAt = appState.bundledJournalLastIngestAt {
-                            let relative = coarseRelativeTime(lastIngestAt, now: Date())
-                            Text("last activity \(relative)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .accessibilityIdentifier(AXID.Settings.Status.bundledLastActivity)
-                                .accessibilityValue(relative)
-                        }
-                    } else {
-                        Text(syncTargetText)
-                            .foregroundStyle(.secondary)
-                        uploadStatusView
-                        if let lastSyncedAt = appState.uploadCoordinator.lastSyncedAt {
-                            Text("last synced \(coarseRelativeTime(lastSyncedAt, now: Date()))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
                     }
                     Text("app version \(AppVersion.short)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier(AXID.Settings.Status.appVersionState)
                         .accessibilityValue(AppVersion.short)
-                    Button(appState.config.serviceMode == .bundled ? "manage journal →" : "manage connection →") {
+                    Button("manage journal →") {
                         selectedTab = .service
                     }
                     .font(.caption)
@@ -1995,7 +2140,7 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            if appState.config.serviceMode == .external {
+            if resolvedServiceMode(for: appState.config) == .external {
                 GroupBox("kept on this Mac") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(storageGlanceText)

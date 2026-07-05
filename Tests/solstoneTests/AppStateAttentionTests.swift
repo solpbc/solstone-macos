@@ -2,12 +2,8 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
-import JournalRuntime
-import JournalRuntimeTestSupport
-import os
 import Testing
 import SolstoneCore
-import UpdateKit
 @testable import solstone
 
 @Suite("AppState attention")
@@ -49,172 +45,68 @@ struct AppStateAttentionTests {
         #expect(!state.permissionsNeedAttention)
     }
 
-    @Test func serviceNeedsAttentionTrueWhenModeUnset() {
+    @Test func serviceNeedsAttentionTrueWhenModeUnsetBecauseUploadConfigMissing() {
         let state = makeState(config: AppConfig(serviceMode: nil))
 
         #expect(state.serviceNeedsAttention)
+        #expect(!state.serviceIsDone)
     }
 
-    @Test func serviceNeedsAttentionBundledTrueWhenInstallerAbsent() {
-        let state = makeState(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .awaitingChoice(existingInstall: false)
+    @Test func serviceNeedsAttentionTrueWhenExternalUploadConfigMissing() {
+        let state = makeState(config: AppConfig(serviceMode: .external))
 
         #expect(state.serviceNeedsAttention)
+        #expect(!state.serviceIsDone)
     }
 
-    @Test func serviceNeedsAttentionBundledFalseWhenDetecting() {
-        let state = makeState(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .detecting
+    @Test func serviceNeedsAttentionFalseWhenExternalUploadConfigPresent() {
+        let state = makeState(config: configuredExternal())
 
         #expect(!state.serviceNeedsAttention)
+        #expect(state.serviceIsDone)
     }
 
-    @Test func serviceNeedsAttentionBundledFalseWhenInstalling() {
-        let state = makeState(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .installingSolstone(SubprocessProgress(phase: "phase"))
+    @Test func configuredNilModeUsesExternalFallbackForServiceDone() {
+        let state = makeState(config: AppConfig(
+            serverURL: "https://example.com",
+            serverKey: "key",
+            serviceMode: nil
+        ))
 
         #expect(!state.serviceNeedsAttention)
+        #expect(state.serviceIsDone)
     }
 
-    @Test func serviceNeedsAttentionBundledFalseDuringUpgradeWithOutdatedProbe() {
-        let state = makeState(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .cleaningUp(SubprocessProgress(phase: "upgrade pre-clean"))
-        state.installer.probedVersion = .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion)
-        state.installer.upgradeInProgress = true
+    @Test func loopbackExternalUploadConfigIsDone() {
+        let state = makeState(config: AppConfig(
+            serverURL: ServiceMode.bundledServiceURL,
+            serverKey: "key",
+            serviceMode: .external
+        ))
 
         #expect(!state.serviceNeedsAttention)
+        #expect(state.serviceIsDone)
     }
 
-    @Test func serviceNeedsAttentionBundledTrueWhenFailed() {
-        let state = makeState(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .failed(.installSolstone(message: "failed"))
+    @Test func bundledModeAlwaysNeedsMigrationAttentionAndIsNotDone() {
+        let state = makeState(config: AppConfig(
+            serverURL: ServiceMode.bundledServiceURL,
+            serverKey: "key",
+            serviceMode: .bundled
+        ))
 
         #expect(state.serviceNeedsAttention)
+        #expect(!state.serviceIsDone)
     }
 
-    @Test func serviceNeedsAttentionBundledFalseWhenInstalledCurrent() {
-        let state = makeState(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .done
-        state.installer.probedVersion = .current(version: "0.3.2")
+    @Test func externalConnectionTestStateNoLongerDrivesServiceAttention() {
+        for connectionTestState in [ConnectionTestState.idle, .testing, .failure("offline"), .success] {
+            let state = makeState(config: configuredExternal())
+            state.connectionTestState = connectionTestState
 
-        #expect(!state.serviceNeedsAttention)
-    }
-
-    @Test func serviceNeedsAttentionBundledFalseWhenInstalledOutdatedWithoutRecord() {
-        let state = makeState(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .done
-        state.installer.probedVersion = .outdated(installed: "0.3.1", pinned: "0.3.2")
-
-        #expect(!state.serviceNeedsAttention)
-    }
-
-    @Test func serviceNeedsAttentionBundledTrueWhenUpgradeFailed() {
-        let state = makeState(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .failed(.installSolstone(message: "failed"))
-        state.installer.upgradeFailureRecord = UpgradeFailureRecord(
-            installed: "0.3.1",
-            pinned: BundleConfig.solstonePinVersion,
-            errorDetails: "details"
-        )
-
-        #expect(state.serviceNeedsAttention)
-    }
-
-    @Test func serviceNeedsAttentionBundledTrueWhenPostInstallAutoTestFails() {
-        let state = makeState(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .done
-        state.installer.probedVersion = .current(version: BundleConfig.solstonePinVersion)
-        state.installer.postInstallAutoTest = .failure("offline")
-
-        #expect(state.serviceNeedsAttention)
-    }
-
-    @Test func serviceNeedsAttentionBundledFalseWhenInstalledUnknown() {
-        let state = makeState(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .done
-        state.installer.probedVersion = .unknown
-
-        #expect(!state.serviceNeedsAttention)
-    }
-
-    @Test func serviceNeedsAttentionBundledFalseWhenDoneOrPlaceholder() {
-        let done = makeState(config: AppConfig(serviceMode: .bundled))
-        done.installer.main = .done
-        done.installer.probedVersion = nil
-
-        let placeholder = makeState(config: AppConfig(serviceMode: .bundled))
-        placeholder.installer.main = .awaitingChoice(existingInstall: true)
-        placeholder.installer.probedVersion = nil
-
-        #expect(!done.serviceNeedsAttention)
-        #expect(!placeholder.serviceNeedsAttention)
-    }
-
-    @Test func serviceNeedsAttentionExternalTrueWhenIdle() {
-        let state = makeState(config: AppConfig(serviceMode: .external))
-        state.connectionTestState = .idle
-
-        #expect(state.serviceNeedsAttention)
-    }
-
-    @Test func serviceNeedsAttentionExternalTrueWhenTesting() {
-        let state = makeState(config: AppConfig(serviceMode: .external))
-        state.connectionTestState = .testing
-
-        #expect(state.serviceNeedsAttention)
-    }
-
-    @Test func serviceNeedsAttentionExternalTrueWhenFailure() {
-        let state = makeState(config: AppConfig(serviceMode: .external))
-        state.connectionTestState = .failure("offline")
-
-        #expect(state.serviceNeedsAttention)
-    }
-
-    @Test func serviceNeedsAttentionExternalFalseWhenSuccess() {
-        let state = makeState(config: AppConfig(serviceMode: .external))
-        state.connectionTestState = .success
-
-        #expect(!state.serviceNeedsAttention)
-    }
-
-    @Test func externalURLFieldEditResetsSuccessfulConnectionTestToIdle() {
-        let state = makeState(config: AppConfig(serviceMode: .external))
-        state.connectionTestState = .success
-
-        state.connectionTestState = .idle
-
-        #expect(state.connectionTestState == .idle)
-    }
-
-    @Test func externalKeyFieldEditResetsFailedConnectionTestToIdle() {
-        let state = makeState(config: AppConfig(serviceMode: .external))
-        state.connectionTestState = .failure("offline")
-
-        state.connectionTestState = .idle
-
-        #expect(state.connectionTestState == .idle)
-    }
-
-    @Test func externalSuccessClearsServiceAttention() {
-        let state = makeState(config: AppConfig(serviceMode: .external))
-        state.connectionTestState = .success
-
-        #expect(!state.serviceNeedsAttention)
-    }
-
-    @Test func externalFailureSetsServiceAttention() {
-        let state = makeState(config: AppConfig(serviceMode: .external))
-        state.connectionTestState = .failure("offline")
-
-        #expect(state.serviceNeedsAttention)
-    }
-
-    @Test func externalIdleSetsServiceAttention() {
-        let state = makeState(config: AppConfig(serviceMode: .external))
-        state.connectionTestState = .idle
-
-        #expect(state.serviceNeedsAttention)
+            #expect(!state.serviceNeedsAttention)
+            #expect(state.serviceIsDone)
+        }
     }
 
     @Test func connectButtonDisabledUntilConnectionTestSucceeds() {
@@ -238,46 +130,16 @@ struct AppStateAttentionTests {
         #expect(state == .idle)
     }
 
-    @Test func serviceTabHeadingPresentWhenServiceModeNil() {
-        #expect(serviceTabHeadingText(for: nil) == "set up your journal")
+    @Test func resolvedServiceModeDefaultsToExternalWhenConfigModeUnset() {
+        #expect(resolvedServiceMode(for: AppConfig(serviceMode: nil)) == .external)
     }
 
-    @Test func serviceTabHeadingAbsentWhenServiceModeSet() {
-        #expect(serviceTabHeadingText(for: .bundled) == nil)
-        #expect(serviceTabHeadingText(for: .external) == nil)
+    @Test func resolvedServiceModeUsesBundledConfigMode() {
+        #expect(resolvedServiceMode(for: AppConfig(serviceMode: .bundled)) == .bundled)
     }
 
-    @Test func initialServiceModeDefaultsToBundledWhenConfigModeUnset() {
-        #expect(initialServiceMode(for: AppConfig(serviceMode: nil)) == .bundled)
-    }
-
-    @Test func initialServiceModeUsesBundledConfigMode() {
-        #expect(initialServiceMode(for: AppConfig(serviceMode: .bundled)) == .bundled)
-    }
-
-    @Test func initialServiceModeUsesExternalConfigMode() {
-        #expect(initialServiceMode(for: AppConfig(serviceMode: .external)) == .external)
-    }
-
-    @Test func settingsViewInitializationDoesNotPersistInitialServiceMode() {
-        let state = makeState(config: AppConfig(serviceMode: nil))
-        _ = SettingsView(
-            appState: state,
-            updateController: UpdateController(
-                log: Logger.setup,
-                errorDomain: "app.solstone.observer.updates"
-            )
-        )
-
-        #expect(state.config.serviceMode == nil)
-    }
-
-    @Test func serviceAttentionUsesPersistedBundledModeNotSelectorState() {
-        let state = makeState(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .done
-        state.installer.probedVersion = .current(version: "0.3.2")
-
-        #expect(!state.serviceNeedsAttention)
+    @Test func resolvedServiceModeUsesExternalConfigMode() {
+        #expect(resolvedServiceMode(for: AppConfig(serviceMode: .external)) == .external)
     }
 
     @Test func permissionsAreDoneRequiresAllPermissionInputs() {
@@ -322,240 +184,11 @@ struct AppStateAttentionTests {
         #expect(restored.visitedSettingsTabs == ["service"])
     }
 
-    @Test func serviceIsDoneMatchesTruthfulDoneMatrixAcrossServiceStateSurface() {
-        let cases = serviceAttentionCases()
-        #expect(cases.count == 125)
-
-        for testCase in cases {
-            let state = makeState(config: AppConfig(serviceMode: testCase.serviceMode))
-            if let main = testCase.main {
-                state.installer.main = main
-            }
-            state.installer.probedVersion = testCase.probe
-            state.installer.upgradeFailureRecord = testCase.record
-            if let connectionTestState = testCase.connectionTestState {
-                state.connectionTestState = connectionTestState
-            }
-
-            #expect(state.serviceIsDone == expectedServiceIsDone(for: testCase, state: state), "failed case: \(testCase.name)")
-        }
-    }
-
-    @Test func serviceIsDoneBundledNeutralStatesAreNotDoneAndNeedNoAttention() {
-        let progress = SubprocessProgress(phase: "phase")
-        let cases: [(String, MainState, VersionProbeResult?)] = [
-            ("detecting", .detecting, nil),
-            ("installing", .installingSolstone(progress), nil),
-            ("installedPlaceholder", .awaitingChoice(existingInstall: true), nil),
-            ("installedUnknown", .done, .unknown),
-            ("outdatedPendingUpgrade", .done, .outdated(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion)),
-        ]
-
-        for (name, main, probe) in cases {
-            let state = makeState(config: AppConfig(serviceMode: .bundled))
-            state.installer.main = main
-            state.installer.probedVersion = probe
-
-            #expect(!state.serviceNeedsAttention, "attention failed case: \(name)")
-            #expect(!state.serviceIsDone, "done failed case: \(name)")
-        }
-    }
-
-    @Test func serviceIsDoneBundledReadyStatesAreDone() {
-        let cases: [(String, MainState, VersionProbeResult?, JournalRuntimeStatus)] = [
-            ("externallyManaged", .externallyManaged(solPath: "/opt/sol"), nil, .running),
-            ("runtimeStoppedByUser", .done, nil, .stoppedByUser),
-        ]
-
-        for (name, main, probe, runtimeStatus) in cases {
-            let state = makeState(config: AppConfig(serviceMode: .bundled))
-            state.installer.main = main
-            state.installer.probedVersion = probe
-            state.journalRuntimeStatus = runtimeStatus
-
-            #expect(!state.serviceNeedsAttention, "attention failed case: \(name)")
-            #expect(state.serviceIsDone, "done failed case: \(name)")
-        }
-    }
-
-    @Test func serviceIsDoneBundledAttentionStatesAreNotDone() {
-        let matchingRecord = UpgradeFailureRecord(
-            installed: "0.3.1",
-            pinned: BundleConfig.solstonePinVersion,
-            errorDetails: "details"
-        )
-        let cases: [(String, MainState, VersionProbeResult?, UpgradeFailureRecord?, JournalRuntimeStatus)] = [
-            ("absent", .awaitingChoice(existingInstall: false), nil, nil, .running),
-            ("failed", .failed(.installSolstone(message: "failed")), nil, nil, .running),
-            ("upgradeFailed", .failed(.installSolstone(message: "failed")), nil, matchingRecord, .running),
-            (
-                "runtimeFailed",
-                .done,
-                nil,
-                nil,
-                .stopped(JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "down"))
-            ),
-        ]
-
-        for (name, main, probe, record, runtimeStatus) in cases {
-            let state = makeState(config: AppConfig(serviceMode: .bundled))
-            state.installer.main = main
-            state.installer.probedVersion = probe
-            state.installer.upgradeFailureRecord = record
-            state.journalRuntimeStatus = runtimeStatus
-
-            #expect(state.serviceNeedsAttention, "attention failed case: \(name)")
-            #expect(!state.serviceIsDone, "done failed case: \(name)")
-        }
-    }
-
-    @Test func bundledLifecycleCardStatesDriveAttentionDoneAndAvailability() {
-        let cases: [(String, JournalRuntimeStatus, Bool, Bool, Bool)] = [
-            ("runtimeUnconfirmedUnobserved", .unobserved, false, false, true),
-            ("runtimeUnconfirmed", .running, false, false, true),
-            ("runtimeStarting", .restarting, false, false, true),
-            (
-                "runtimeFailed",
-                .unknown(JournalDiagnostic(commandLabel: "journal readiness", outputExcerpt: "timeout")),
-                true,
-                false,
-                true
-            ),
-            ("runtimeStoppedByUser", .stoppedByUser, false, true, true),
-        ]
-
-        for (name, runtimeStatus, expectedAttention, expectedDone, expectedAvailable) in cases {
-            let state = makeState(config: AppConfig(serviceMode: .bundled))
-            state.installer.main = .done
-            state.journalRuntimeStatus = runtimeStatus
-
-            #expect(state.serviceNeedsAttention == expectedAttention, "attention failed case: \(name)")
-            #expect(state.serviceIsDone == expectedDone, "done failed case: \(name)")
-            #expect(state.bundledJournalStatusAvailable == expectedAvailable, "availability failed case: \(name)")
-        }
-    }
-
-    @Test func serviceIsDoneExternalBehaviorIsUnchanged() {
-        let cases: [(String, ConnectionTestState, Bool)] = [
-            ("idle", .idle, false),
-            ("testing", .testing, false),
-            ("failure", .failure("offline"), false),
-            ("success", .success, true),
-        ]
-
-        for (name, connectionState, expectedDone) in cases {
-            let state = makeState(config: AppConfig(serviceMode: .external))
-            state.connectionTestState = connectionState
-
-            #expect(state.serviceIsDone == expectedDone, "failed case: \(name)")
-            #expect(state.serviceIsDone == !state.serviceNeedsAttention, "attention parity failed case: \(name)")
-        }
-    }
-
     private func makeState(config: AppConfig = AppConfig()) -> AppState {
         AppState.forSnapshot(config: config)
     }
 
-    private struct ServiceAttentionCase {
-        let name: String
-        let serviceMode: ServiceMode?
-        let main: MainState?
-        let probe: VersionProbeResult?
-        let record: UpgradeFailureRecord?
-        let connectionTestState: ConnectionTestState?
-    }
-
-    private func serviceAttentionCases() -> [ServiceAttentionCase] {
-        let progress = SubprocessProgress(phase: "phase")
-        let mainStates: [(String, MainState)] = [
-            ("detecting", .detecting),
-            ("awaitingChoiceFalse", .awaitingChoice(existingInstall: false)),
-            ("awaitingChoiceTrue", .awaitingChoice(existingInstall: true)),
-            ("cleaningUp", .cleaningUp(progress)),
-            ("installingSolstone", .installingSolstone(progress)),
-            ("runningSolSetup", .runningSolSetup(progress)),
-            ("verifyingIntegrity", .verifyingIntegrity(progress)),
-            ("registering", .registering(progress)),
-            ("done", .done),
-            ("failed", .failed(.installSolstone(message: "failed")))
-        ]
-        let probes: [(String, VersionProbeResult?)] = [
-            ("nilProbe", nil),
-            ("current", .current(version: "0.3.2")),
-            ("outdated", .outdated(installed: "0.3.1", pinned: "0.3.2")),
-            ("unknown", .unknown)
-        ]
-        let records: [(String, UpgradeFailureRecord?)] = [
-            ("nilRecord", nil),
-            ("matchingRecord", UpgradeFailureRecord(installed: "0.3.1", pinned: BundleConfig.solstonePinVersion, errorDetails: "details")),
-            ("staleRecord", UpgradeFailureRecord(installed: "0.3.1", pinned: "0.3.7", errorDetails: "details"))
-        ]
-
-        let bundled = mainStates.flatMap { mainName, main in
-            probes.flatMap { probeName, probe in
-                records.map { recordName, record in
-                    ServiceAttentionCase(
-                        name: "bundled-\(mainName)-\(probeName)-\(recordName)",
-                        serviceMode: .bundled,
-                        main: main,
-                        probe: probe,
-                        record: record,
-                        connectionTestState: nil
-                    )
-                }
-            }
-        }
-
-        let externalStates: [(String, ConnectionTestState)] = [
-            ("idle", .idle),
-            ("testing", .testing),
-            ("success", .success),
-            ("failure", .failure("offline"))
-        ]
-        let external = externalStates.map { name, state in
-            ServiceAttentionCase(
-                name: "external-\(name)",
-                serviceMode: .external,
-                main: nil,
-                probe: nil,
-                record: nil,
-                connectionTestState: state
-            )
-        }
-
-        return [
-            ServiceAttentionCase(
-                name: "nil-mode",
-                serviceMode: nil,
-                main: nil,
-                probe: nil,
-                record: nil,
-                connectionTestState: nil
-            )
-        ] + external + bundled
-    }
-
-    private func expectedServiceIsDone(for testCase: ServiceAttentionCase, state: AppState) -> Bool {
-        guard let serviceMode = testCase.serviceMode else { return false }
-        switch serviceMode {
-        case .external:
-            return !state.serviceNeedsAttention
-        case .bundled:
-            guard let main = testCase.main else { return false }
-            switch main {
-            case .externallyManaged:
-                return true
-            case .detecting,
-                 .awaitingChoice,
-                 .cleaningUp,
-                 .installingSolstone,
-                 .runningSolSetup,
-                 .verifyingIntegrity,
-                 .registering,
-                 .done,
-                 .failed:
-                return false
-            }
-        }
+    private func configuredExternal() -> AppConfig {
+        AppConfig(serverURL: "https://example.com", serverKey: "key", serviceMode: .external)
     }
 }

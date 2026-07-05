@@ -4,13 +4,16 @@ import Testing
 
 @Suite("SettingsView UI copy wire-up")
 struct SettingsViewUICopyWireUpTests {
-    @Test func journalModePickerUsesUICopyLabelSymbols() throws {
+    @Test func journalPanelUsesApprovedLowercaseCopy() throws {
         #expect(UICopy.JOURNAL_MODE_THIS_MAC_LABEL == "this Mac")
         #expect(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL == "another device")
 
         let source = try String(contentsOfFile: "Sources/solstone/SettingsView.swift", encoding: .utf8)
-        #expect(source.contains("Text(UICopy.JOURNAL_MODE_THIS_MAC_LABEL).tag(ServiceMode.bundled)"))
-        #expect(source.contains("Text(UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL).tag(ServiceMode.external)"))
+        #expect(source.contains(#"Text("your journal")"#))
+        #expect(source.contains(#"Text("found your journal on this mac")"#))
+        #expect(source.contains(#"Button("create your journal on this mac")"#))
+        #expect(source.contains(#"Button("pair to a journal on another device")"#))
+        #expect(!source.contains("journalModePicker"))
     }
 
     @Test func journalMarkSheetUsesUICopySymbols() throws {

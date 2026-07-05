@@ -16,12 +16,11 @@ struct UpdatesWireUpTests {
         #expect(wireUpContains(source, """
             installFailureRecovery: { @MainActor in
                 appState.appQuitCoordinator.resetAfterFailedUpdaterInstall()
-                await appState.reestablishSupervisedJournalAfterFailedUpdate()
             }
         """))
     }
 
-    @Test func appQuitCoordinatorUpdatePreparationStopsRecordingBeforeJournal() throws {
+    @Test func appQuitCoordinatorUpdatePreparationStopsRecordingBeforeDrain() throws {
         let source = try readWireUpSource("Sources/solstone/AppState.swift")
         let prepareStart = try #require(source.range(of: "prepareForUpdate: { [weak self] in"))
         let prepareEnd = try #require(source[prepareStart.upperBound...].range(of: "terminate: terminate"))
@@ -30,11 +29,10 @@ struct UpdatesWireUpTests {
         let methodEnd = try #require(source[methodStart.upperBound...].range(of: "private func drainRemixQueueForTermination() async"))
         let methodBody = String(source[methodStart.lowerBound..<methodEnd.lowerBound])
         let stopRecording = try #require(methodBody.range(of: "await stopRecording(reason: .update)"))
-        let stopJournal = try #require(methodBody.range(of: "await stopSupervisedJournalForUpdate()"))
         let drain = try #require(methodBody.range(of: "await drainRemixQueueForTermination()"))
 
         #expect(wireUpContains(prepareBody, "await self?.performUpdatePreparation()"))
-        #expect(stopRecording.lowerBound < stopJournal.lowerBound)
-        #expect(stopJournal.lowerBound < drain.lowerBound)
+        #expect(!methodBody.contains("stopSupervisedJournalForUpdate"))
+        #expect(stopRecording.lowerBound < drain.lowerBound)
     }
 }

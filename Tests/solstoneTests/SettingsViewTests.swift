@@ -14,29 +14,34 @@ struct SettingsViewTests {
         #expect(SettingsView.Tab.help.rawValue == "help")
     }
 
-    @Test func journalPaneKeepsCacheControlsInExternalModeBranch() throws {
+    @Test func journalPaneRendersClientPanelBranches() throws {
         let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
         let serviceSection = try extract(
             from: source,
             start: "private var serviceSection: some View",
-            end: "    @ViewBuilder\n    private var bundledJournalStatusSection"
-        )
-        let bundledBranch = try extract(
-            from: serviceSection,
-            start: "case .bundled:",
-            end: "case .external:"
-        )
-        let externalBranch = try extract(
-            from: serviceSection,
-            start: "case .external:",
-            end: "        }\n    }"
+            end: "    @ViewBuilder\n    private var configuredJournalPanel"
         )
 
-        #expect(bundledBranch.contains("bundledJournalStatusSection"))
-        #expect(!bundledBranch.contains("externalJournalSyncSection"))
-        #expect(!bundledBranch.contains("externalJournalStorageSection"))
-        #expect(externalBranch.contains("externalJournalSyncSection"))
-        #expect(externalBranch.contains("externalJournalStorageSection"))
+        #expect(serviceSection.contains(#"Text("your journal")"#))
+        #expect(serviceSection.contains("journalMigrationBanner"))
+        #expect(serviceSection.contains("configuredJournalPanel"))
+        #expect(serviceSection.contains("unconfiguredJournalPanel"))
+        #expect(!serviceSection.contains("journalModePicker"))
+        #expect(!serviceSection.contains("bundledJournalStatusSection"))
+    }
+
+    @Test func configuredJournalPanelKeepsAdvancedAndCacheControls() throws {
+        let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
+        let configuredPanel = try extract(
+            from: source,
+            start: "private var configuredJournalPanel: some View",
+            end: "    @ViewBuilder\n    private var unconfiguredJournalPanel"
+        )
+
+        #expect(configuredPanel.contains("DisclosureGroup(\"advanced\")"))
+        #expect(configuredPanel.contains("externalServiceSection"))
+        #expect(configuredPanel.contains("externalJournalSyncSection"))
+        #expect(configuredPanel.contains("externalJournalStorageSection"))
     }
 
     @Test func statusPaneHidesStorageControlsInBundledMode() throws {
@@ -49,11 +54,11 @@ struct SettingsViewTests {
         let beforeExternalStorageGate = try extract(
             from: statusTab,
             start: "GroupBox(\"journal\")",
-            end: "if appState.config.serviceMode == .external"
+            end: "if resolvedServiceMode(for: appState.config) == .external"
         )
         let externalStorageGate = try extract(
             from: statusTab,
-            start: "if appState.config.serviceMode == .external",
+            start: "if resolvedServiceMode(for: appState.config) == .external",
             end: "Text(statusFooterText)"
         )
 

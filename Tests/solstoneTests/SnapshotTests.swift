@@ -3,7 +3,6 @@
 
 import AppKit
 import CoreAudio
-import JournalRuntime
 import os
 import SwiftUI
 import Testing
@@ -135,11 +134,6 @@ struct SnapshotTests {
         state.microphoneGranted = true
     }
 
-    private func markBundledStatusAvailable(_ state: AppState) {
-        state.installer.main = .done
-        state.installer.probedVersion = .current(version: "0.3.2")
-    }
-
     @Test func menuStarting() throws {
         let state = AppState.forSnapshot()
         let updateController = makeSnapshotUpdateController()
@@ -172,7 +166,6 @@ struct SnapshotTests {
     @Test func menuObservingFullBundled() throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         markPermissionsReady(state)
-        markBundledStatusAvailable(state)
         state.isRecording = true
         let updateController = makeSnapshotUpdateController()
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-observing-full-bundled.png")
@@ -212,9 +205,7 @@ struct SnapshotTests {
     @Test func menuObservingHalfBundledUnhealthy() throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         markPermissionsReady(state)
-        markBundledStatusAvailable(state)
         state.isRecording = true
-        state.journalRuntimeStatus = .setupNeeded
         let updateController = makeSnapshotUpdateController()
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-observing-half-bundled-unhealthy.png")
     }
@@ -222,9 +213,7 @@ struct SnapshotTests {
     @Test func menuObservingHalfStoppedByUser() throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         markPermissionsReady(state)
-        markBundledStatusAvailable(state)
         state.isRecording = true
-        state.journalRuntimeStatus = .stoppedByUser
         let updateController = makeSnapshotUpdateController()
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-observing-half-stopped-by-user.png")
     }
@@ -364,27 +353,97 @@ struct SnapshotTests {
         )
     }
 
-    @Test func settingsServiceUpgradeFailed() throws {
-        let rawMessage = "'observer' moved to 'journal observer' — run that instead."
-        let rawLog = """
-        uv tool install /bundle/wheelhouse/solstone_journal-\(BundleConfig.solstonePinVersion)-py3-none-any.whl --find-links /bundle/wheelhouse --no-index --offline
-        error: \(rawMessage)
-        """
-        #expect(rawLog.contains("solstone_journal-\(BundleConfig.solstonePinVersion)-py3-none-any.whl --find-links"))
-        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .failed(.registering(message: rawMessage))
-        state.installer.modelsProgress = .done
-        state.installer.lastFailureLog = rawLog
-        state.installer.upgradeFailureRecord = UpgradeFailureRecord(
-            installed: BundleConfig.solstonePinVersion,
-            pinned: BundleConfig.solstonePinVersion,
-            errorDetails: rawLog
+    @Test func settingsServiceYourJournalConfigured() throws {
+        let config = AppConfig(
+            serverURL: ServiceMode.bundledServiceURL,
+            serverKey: "sk-test-key-1234",
+            serviceMode: .external
         )
+        let state = AppState.forSnapshot(config: config)
+        state.setConfirmedMark(.uiTestSample)
+        state.uploadCoordinator.status = .synced
         let updateController = makeSnapshotUpdateController()
         try render(
-            SettingsView(appState: state, updateController: updateController, selectedTab: .service, initialStorageUsedMB: 42),
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .service,
+                initialStorageUsedMB: 42,
+                initialJournalName: "field journal"
+            ),
             size: settingsSize,
-            to: "settings-service-upgrade-failed.png"
+            to: "settings-service-your-journal-configured.png"
+        )
+    }
+
+    @Test func settingsServiceYourJournalUnconfigured() throws {
+        let state = AppState.forSnapshot()
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .service,
+                initialStorageUsedMB: 42,
+                initialLocalDiscoveryCompleted: false,
+                localIdentityFetch: { _ in nil }
+            ),
+            size: settingsSize,
+            to: "settings-service-your-journal-unconfigured.png"
+        )
+    }
+
+    @Test func settingsServiceYourJournalFork() throws {
+        let state = AppState.forSnapshot()
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .service,
+                initialStorageUsedMB: 42,
+                initialLocalDiscoveryCompleted: true
+            ),
+            size: settingsSize,
+            to: "settings-service-your-journal-fork.png"
+        )
+    }
+
+    @Test func settingsServiceFoundLocalJournal() throws {
+        let state = AppState.forSnapshot()
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .service,
+                initialStorageUsedMB: 42,
+                initialLocalJournalMark: .uiTestSample,
+                initialLocalDiscoveryCompleted: true
+            ),
+            size: settingsSize,
+            to: "settings-service-found-local-journal.png"
+        )
+    }
+
+    @Test func settingsServiceMigrationBanner() throws {
+        let config = AppConfig(
+            serverURL: ServiceMode.bundledServiceURL,
+            serverKey: "sk-test-key-1234",
+            serviceMode: .bundled
+        )
+        let state = AppState.forSnapshot(config: config)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .service,
+                initialStorageUsedMB: 42,
+                initialJournalName: "field journal"
+            ),
+            size: settingsSize,
+            to: "settings-service-migration-banner.png"
         )
     }
 
@@ -461,8 +520,6 @@ struct SnapshotTests {
 
     @Test func settingsStatusStarting() throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .done
-        state.installer.probedVersion = .current(version: "0.3.2")
         let updateController = makeSnapshotUpdateController()
         state.uploadCoordinator.status = .synced
         try render(
@@ -474,8 +531,6 @@ struct SnapshotTests {
 
     @Test func settingsStatusRecording() throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
-        state.installer.main = .done
-        state.installer.probedVersion = .current(version: "0.3.2")
         let updateController = makeSnapshotUpdateController()
         markPermissionsReady(state)
         state.isRecording = true

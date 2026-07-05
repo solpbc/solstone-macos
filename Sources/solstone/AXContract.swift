@@ -2,18 +2,15 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
-import JournalRuntime
 import SolstoneCore
 import UpdateKit
 
 enum AXContract {
-    static let idPattern = #"^(menubar|settings|installer|updates|about)(\.[a-z][a-zA-Z0-9-]*)+$"#
+    static let idPattern = #"^(menubar|settings|updates|about)(\.[a-z][a-zA-Z0-9-]*)+$"#
     static let tokenPattern = #"^[a-z][a-z_]*$"#
 
     private static let generatedMarker =
         "DO NOT EDIT. Generated from AXID.swift + AXToken.swift. Run `make ax-contract` to regenerate; `make ci` fails on drift."
-
-    static let doctorCheckTemplate = "installer.doctor.check.{slug}"
 
     static let staticIDs: [String] = [
         AXID.Menubar.pendingChatButton,
@@ -22,6 +19,7 @@ enum AXContract {
         AXID.Menubar.permissionsButton,
         AXID.Menubar.errorButton,
         AXID.Menubar.journalState,
+        AXID.Menubar.journalMigrationNeededButton,
         AXID.Menubar.localOnlyButton,
         AXID.Menubar.offlineButton,
         AXID.Menubar.pauseMenu,
@@ -49,13 +47,17 @@ enum AXContract {
         AXID.Settings.Observer.cacheRetentionPicker,
         AXID.Settings.Observer.cacheRetentionState,
         AXID.Settings.Observer.cacheFolderOpen,
-        AXID.Settings.Service.restartRequiredBanner,
-        AXID.Settings.Service.restartJournalButton,
-        AXID.Settings.Service.stopJournalButton,
-        AXID.Settings.Service.startJournalButton,
         AXID.Settings.Service.prereqPermissions,
-        AXID.Settings.Service.journalModePicker,
-        AXID.Settings.Service.journalModeState,
+        AXID.Settings.Service.journalNameState,
+        AXID.Settings.Service.journalMarkState,
+        AXID.Settings.Service.journalConnectionState,
+        AXID.Settings.Service.journalRelink,
+        AXID.Settings.Service.localJournalDiscoveryState,
+        AXID.Settings.Service.localJournalConfirm,
+        AXID.Settings.Service.createJournalThisMac,
+        AXID.Settings.Service.pairJournalAnotherDevice,
+        AXID.Settings.Service.journalMigrationBanner,
+        AXID.Settings.Service.journalMigrationAction,
         AXID.Settings.Service.externalSetupGuide,
         AXID.Settings.Service.externalAddress,
         AXID.Settings.Service.externalKey,
@@ -95,8 +97,6 @@ enum AXContract {
         AXID.Settings.Status.observingState,
         AXID.Settings.Status.nextSegmentSeconds,
         AXID.Settings.Status.uploadJournalState,
-        AXID.Settings.Status.journalRuntimeState,
-        AXID.Settings.Status.journalReadinessQueueState,
         AXID.Settings.Status.uploadState,
         AXID.Settings.Status.uploadChecked,
         AXID.Settings.Status.uploadTotal,
@@ -106,7 +106,6 @@ enum AXContract {
         AXID.Settings.Status.lastErrorState,
         AXID.Settings.Status.resyncAll,
         AXID.Settings.Status.manageJournal,
-        AXID.Settings.Status.bundledLastActivity,
         AXID.Settings.Status.storageSettings,
         AXID.Settings.Status.debugOneMinuteSegments,
         AXID.Settings.Status.debugKeepRejectedAudio,
@@ -120,31 +119,6 @@ enum AXContract {
         AXID.Settings.Help.supportSite,
         AXID.Settings.Help.supportEmail,
         AXID.Settings.Help.versionState,
-        AXID.Installer.terminalState,
-        AXID.Installer.journalPathState,
-        AXID.Installer.journalTCCRestrictedState,
-        AXID.Installer.journalChange,
-        AXID.Installer.install,
-        AXID.Installer.installedMessageState,
-        AXID.Installer.openDashboard,
-        AXID.Installer.externalManagedState,
-        AXID.Installer.externalManagedPathState,
-        AXID.Installer.autoTestState,
-        AXID.Installer.autoTestRetry,
-        AXID.Installer.doctorDisclosure,
-        AXID.Installer.doctorRefresh,
-        AXID.Installer.doctorProgressState,
-        AXID.Installer.doctorChecklist,
-        AXID.Installer.doctorErrorState,
-        AXID.Installer.doctorRetry,
-        AXID.Installer.modelDownloadProgress,
-        AXID.Installer.failureSummaryState,
-        AXID.Installer.failureRetry,
-        AXID.Installer.failureDetails,
-        AXID.Installer.failureLog,
-        AXID.Installer.diagnosticCopy,
-        AXID.Installer.diagnosticCopiedState,
-        AXID.Installer.diagnosticHelp,
         UpdatesAXID.statusState,
         UpdatesAXID.unavailable,
         UpdatesAXID.check,
@@ -183,30 +157,8 @@ enum AXContract {
             ids.append(AXID.Settings.Sidebar.tabState(tab))
         }
 
-        for row in InstallerRow.allCases {
-            ids.append(AXID.Installer.step(row))
-            ids.append(AXID.Installer.stepState(row))
-            ids.append(AXID.Installer.stepCurrentStep(row))
-            ids.append(AXID.Installer.stepDetails(row))
-            ids.append(AXID.Installer.stepLog(row))
-        }
-
-        for step in CleanupStep.allCases {
-            ids.append(AXID.Installer.cleanupStep(step))
-        }
-
-        for name in doctorCheckSampleNames {
-            ids.append(AXID.Installer.doctorCheck(name))
-        }
-
         return ids
     }
-
-    static let doctorCheckSampleNames = [
-        "Python Version",
-        "journal: path / exists",
-        "Sol Doctor -- GPU/Metal?"
-    ]
 
     static var parameterizedTemplates: [ParameterizedIdentifier] {
         [
@@ -219,41 +171,6 @@ enum AXContract {
                 template: "settings.sidebar.tab.{tab}.state",
                 key: "SettingsView.Tab.rawValue",
                 expansions: SettingsView.Tab.allCases.map(\.rawValue)
-            ),
-            ParameterizedIdentifier(
-                template: "installer.step.{row}",
-                key: "InstallerRow.axKey",
-                expansions: InstallerRow.allCases.map(\.axKey)
-            ),
-            ParameterizedIdentifier(
-                template: "installer.step.{row}.state",
-                key: "InstallerRow.axKey",
-                expansions: InstallerRow.allCases.map(\.axKey)
-            ),
-            ParameterizedIdentifier(
-                template: "installer.step.{row}.currentStep.state",
-                key: "InstallerRow.axKey",
-                expansions: InstallerRow.allCases.map(\.axKey)
-            ),
-            ParameterizedIdentifier(
-                template: "installer.step.{row}.details",
-                key: "InstallerRow.axKey",
-                expansions: InstallerRow.allCases.map(\.axKey)
-            ),
-            ParameterizedIdentifier(
-                template: "installer.step.{row}.log",
-                key: "InstallerRow.axKey",
-                expansions: InstallerRow.allCases.map(\.axKey)
-            ),
-            ParameterizedIdentifier(
-                template: "installer.cleanup.{cleanupStep}.state",
-                key: "CleanupStep.rawValue",
-                expansions: CleanupStep.allCases.map(\.rawValue)
-            ),
-            ParameterizedIdentifier(
-                template: doctorCheckTemplate,
-                key: "DoctorCheck.name (slugged)",
-                runtime: true
             ),
             ParameterizedIdentifier(
                 template: "settings.microphones.priority.device.{uid}",
@@ -300,20 +217,13 @@ enum AXContract {
             "MenubarStatusRowState": MenubarStatusRowState.allCases.map(\.axToken),
             "SettingsObservationAXState": SettingsObservationAXState.allCases.map(\.axToken),
             "SidebarBadgeState": SettingsView.SidebarBadgeState.allCases.map(\.axToken),
-            "RowStatus": RowStatus.axTokens,
-            "InstallerCardState": InstallerCardState.axTokens,
-            "AutoTestState": AutoTestState.axTokens,
-            "DoctorStatus": DoctorStatus.axTokens,
             "UploadCoordinator.Status": UploadCoordinator.Status.axTokens,
             "ConnectionTestState": ConnectionTestState.axTokens,
             "PairingFlowState": PairingFlowState.axTokens,
             "PairingFailure": PairingFailure.axTokens,
             "PairingConnectionAXState": PairingConnectionAXState.axTokens,
             "UpdateActivity": UpdateActivity.axTokens,
-            "JournalRuntimeStatus": JournalRuntimeStatus.axTokens,
-            "ServiceMode": ServiceMode.allCases.map(\.rawValue),
             "FrequencyOption": FrequencyOption.allCases.map(\.rawValue),
-            "DoctorProgress": DoctorProgress.allCases.map(\.axToken),
             "UpdateStatus": UpdateStatus.axTokens
         ]
     }
@@ -330,7 +240,10 @@ enum AXContract {
             AXID.Settings.Observer.notificationDeniedState: .freeform,
             AXID.Settings.Observer.storageUsedState: .numeric,
             AXID.Settings.Observer.cacheRetentionState: .numeric,
-            AXID.Settings.Service.journalModeState: .enum("ServiceMode"),
+            AXID.Settings.Service.journalNameState: .freeform,
+            AXID.Settings.Service.journalMarkState: .freeform,
+            AXID.Settings.Service.journalConnectionState: .enum("PairingConnectionAXState"),
+            AXID.Settings.Service.localJournalDiscoveryState: .freeform,
             AXID.Settings.Service.externalConnectionTestState: .enum("ConnectionTestState"),
             AXID.Settings.Service.pairingFlowState: .enum("PairingFlowState"),
             AXID.Settings.Service.pairingFailureState: .enum("PairingFailure"),
@@ -340,33 +253,14 @@ enum AXContract {
             AXID.Settings.Status.observingState: .enum("SettingsObservationAXState"),
             AXID.Settings.Status.nextSegmentSeconds: .numeric,
             AXID.Settings.Status.uploadJournalState: .freeform,
-            AXID.Settings.Status.journalRuntimeState: .enum("JournalRuntimeStatus"),
-            AXID.Settings.Status.journalReadinessQueueState: .enum("MenubarStatusRowState"),
             AXID.Settings.Status.uploadState: .enum("UploadCoordinator.Status"),
             AXID.Settings.Status.uploadChecked: .numeric,
             AXID.Settings.Status.uploadTotal: .numeric,
             AXID.Settings.Status.uploadPending: .numeric,
             AXID.Settings.Status.lastSyncedState: .numeric,
             AXID.Settings.Status.lastErrorState: .freeform,
-            AXID.Settings.Status.bundledLastActivity: .freeform,
             AXID.Settings.Status.appVersionState: .freeform,
             AXID.Settings.Help.versionState: .freeform,
-            AXID.Installer.terminalState: .enum("InstallerCardState"),
-            AXID.Installer.journalPathState: .freeform,
-            AXID.Installer.journalTCCRestrictedState: .freeform,
-            AXID.Installer.installedMessageState: .enum("InstallerCardState"),
-            AXID.Installer.externalManagedState: .enum("InstallerCardState"),
-            AXID.Installer.externalManagedPathState: .freeform,
-            AXID.Installer.autoTestState: .enum("AutoTestState"),
-            AXID.Installer.doctorProgressState: .enum("DoctorProgress"),
-            AXID.Installer.doctorErrorState: .freeform,
-            AXID.Installer.modelDownloadProgress: .numeric,
-            AXID.Installer.failureSummaryState: .freeform,
-            AXID.Installer.diagnosticCopiedState: .freeform,
-            "installer.step.{row}.state": .enum("RowStatus"),
-            "installer.step.{row}.currentStep.state": .freeform,
-            "installer.cleanup.{cleanupStep}.state": .enum("RowStatus"),
-            doctorCheckTemplate: .enum("DoctorStatus"),
             UpdatesAXID.statusState: .enum("UpdateStatus"),
             UpdatesAXID.checkState: .freeform,
             UpdatesAXID.downloadState: .freeform,
@@ -383,30 +277,17 @@ enum AXContract {
     }
 
     static var requiredStateKeys: Set<String> {
-        var keys = Set(
+        let keys = Set(
             enumerableIDs
                 .filter { $0.hasSuffix(".state") }
                 .map(stateKey(for:))
         )
-        keys.insert(doctorCheckTemplate)
         return keys
     }
 
     static func stateKey(for id: String) -> String {
         if id.hasPrefix("settings.sidebar.tab."), id.hasSuffix(".state") {
             return "settings.sidebar.tab.{tab}.state"
-        }
-        if id.hasPrefix("installer.step."), id.hasSuffix(".currentStep.state") {
-            return "installer.step.{row}.currentStep.state"
-        }
-        if id.hasPrefix("installer.step."), id.hasSuffix(".state") {
-            return "installer.step.{row}.state"
-        }
-        if id.hasPrefix("installer.cleanup."), id.hasSuffix(".state") {
-            return "installer.cleanup.{cleanupStep}.state"
-        }
-        if id.hasPrefix("installer.doctor.check.") {
-            return doctorCheckTemplate
         }
         return id
     }
@@ -416,7 +297,7 @@ enum AXContract {
             generated: generatedMarker,
             version: 1,
             grammar: Grammar(identifier: idPattern, token: tokenPattern),
-            surfaces: ["about", "installer", "menubar", "settings", "updates"],
+            surfaces: ["about", "menubar", "settings", "updates"],
             vocabularies: vocabularies,
             identifiers: IdentifierSet(
                 staticIDs: staticIDs.sorted(),

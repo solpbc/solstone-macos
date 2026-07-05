@@ -80,44 +80,4 @@ struct AppStateSnapshotTests {
         #expect(coordinatorSource.contains("private var isCheckingPermissions = false"))
     }
 
-    @Test func launchBundledDetectionRunsOnceWhenExplicitlyStarted() async {
-        let counter = LockedCounter()
-        let state = AppState.forLaunchDetectionTest(
-            config: AppConfig(serviceMode: .bundled),
-            detectionRunner: {
-                counter.increment()
-                return true
-            }
-        )
-
-        await state.startBundledJournalDetectionIfNeeded()
-        await state.startBundledJournalDetectionIfNeeded()
-
-        #expect(counter.count == 1)
-    }
-
-    @Test func launchBundledDetectionSkipsSnapshotsAndNonBundledMode() async {
-        let snapshotCounter = LockedCounter()
-        let snapshot = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
-        snapshot.bundledJournalDetectionRunner = {
-            snapshotCounter.increment()
-            return true
-        }
-
-        await snapshot.startBundledJournalDetectionIfNeeded()
-
-        let externalCounter = LockedCounter()
-        let external = AppState.forLaunchDetectionTest(
-            config: AppConfig(serviceMode: .external),
-            detectionRunner: {
-                externalCounter.increment()
-                return true
-            }
-        )
-
-        await external.startBundledJournalDetectionIfNeeded()
-
-        #expect(snapshotCounter.count == 0)
-        #expect(externalCounter.count == 0)
-    }
 }
