@@ -48,6 +48,29 @@ internal func classifyObservationRowState(
     }
 }
 
+internal struct ObservationRecoveryPresentation: Equatable {
+    let reason: String
+    let buttonLabel: String
+    let buttonDisabled: Bool
+}
+
+/// Presentation for the Settings status-tab recovery affordance.
+/// Returns nil when no "try again" affordance should render.
+/// Gated on the raw 10-case `.error` (NOT the collapsed AX state) so
+/// steady-state permission faults (which classify to `.permissions`) never show it.
+internal func observationRecoveryPresentation(
+    observationRowState: MenubarStatusRowState,
+    errorMessage: String?,
+    tryAgainInFlight: Bool
+) -> ObservationRecoveryPresentation? {
+    guard observationRowState == .error else { return nil }
+    return ObservationRecoveryPresentation(
+        reason: errorMessage ?? UICopy.SETTINGS_OBSERVATION_RECOVERY_FALLBACK,
+        buttonLabel: tryAgainInFlight ? UICopy.SETTINGS_TRY_AGAIN_IN_FLIGHT : UICopy.SETTINGS_TRY_AGAIN,
+        buttonDisabled: tryAgainInFlight
+    )
+}
+
 extension AppState {
     internal var observationRowState: MenubarStatusRowState {
         classifyObservationRowState(

@@ -97,6 +97,7 @@ enum AXContract {
         AXID.Settings.Status.healthSummary,
         AXID.Settings.Status.observingState,
         AXID.Settings.Status.nextSegmentSeconds,
+        AXID.Settings.Status.tryAgain,
         AXID.Settings.Status.uploadJournalState,
         AXID.Settings.Status.uploadState,
         AXID.Settings.Status.uploadChecked,

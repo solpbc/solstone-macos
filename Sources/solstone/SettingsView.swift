@@ -168,6 +168,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var storageUsedMB: Int?
+    @State private var tryAgainInFlight = false
 
     // Permissions tab state
     @State private var screenRecordingPrompted = false
@@ -2141,6 +2142,26 @@ struct SettingsView: View {
                                 value: axIntegerString(Int(remaining))
                             )
                         }
+                    }
+
+                    if let recovery = observationRecoveryPresentation(
+                        observationRowState: appState.observationRowState,
+                        errorMessage: appState.errorMessage,
+                        tryAgainInFlight: tryAgainInFlight
+                    ) {
+                        Text(recovery.reason)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+
+                        Button(recovery.buttonLabel) {
+                            tryAgainInFlight = true
+                            Task {
+                                await appState.startRecording(reason: .user)
+                                tryAgainInFlight = false
+                            }
+                        }
+                        .disabled(recovery.buttonDisabled)
+                        .accessibilityIdentifier(AXID.Settings.Status.tryAgain)
                     }
                 }
                 .padding(.vertical, 4)

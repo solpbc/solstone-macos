@@ -78,6 +78,7 @@ struct SettingsWireUpTests {
             "AXID.Settings.Privacy.privateBrowsing",
             "AXID.Settings.Status.observingState",
             "AXID.Settings.Status.nextSegmentSeconds",
+            "AXID.Settings.Status.tryAgain",
             "AXID.Settings.Status.uploadJournalState",
             "AXID.Settings.Status.pauseSync",
             "AXID.Settings.Status.lastSyncedState",
@@ -102,5 +103,6 @@ struct SettingsWireUpTests {
         for reference in references {
             #expect(wireUpContains(source, reference))
         }
+        #expect(wireUpContains(source, "await appState.startRecording(reason: .user)"))
     }
 }
