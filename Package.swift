@@ -61,12 +61,24 @@ let package = Package(
                 .swiftLanguageMode(.v6)
             ]
         ),
+        .target(
+            name: "UpdateKit",
+            dependencies: [
+                .target(name: "SolstoneCore"),
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
+            path: "Sources/UpdateKit",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
         .executableTarget(
             name: "solstone",
             dependencies: [
                 .target(name: "SolstoneCore"),
                 .target(name: "JournalRuntime"),
                 .target(name: "JournalMarkKit"),
+                .target(name: "UpdateKit"),
                 .target(name: "SPLTunnel"),
                 .target(name: "ObjCHelpers"),
                 .product(name: "Sparkle", package: "Sparkle")
@@ -111,6 +123,7 @@ let package = Package(
                 .target(name: "SolstoneCore"),
                 .target(name: "JournalRuntime"),
                 .target(name: "JournalMarkKit"),
+                .target(name: "UpdateKit"),
                 .product(name: "Sparkle", package: "Sparkle")
             ],
             path: "Sources/journal",
@@ -173,12 +186,28 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "UpdateKitTests",
+            dependencies: [
+                .target(name: "UpdateKit"),
+                .target(name: "SolstoneCore"),
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
+            path: "Tests/UpdateKitTests",
+            resources: [
+                .copy("Fixtures")
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .testTarget(
             name: "solstoneTests",
             dependencies: [
                 .target(name: "solstone"),
                 .target(name: "SolstoneCore"),
                 .target(name: "JournalRuntime"),
                 .target(name: "JournalMarkKit"),
+                .target(name: "UpdateKit"),
                 .target(name: "JournalRuntimeTestSupport"),
                 .target(name: "solstone-watchdog")
             ],
@@ -197,7 +226,8 @@ let package = Package(
                 .target(name: "JournalMarkKit"),
                 .target(name: "JournalRuntime"),
                 .target(name: "JournalRuntimeTestSupport"),
-                .target(name: "SolstoneCore")
+                .target(name: "SolstoneCore"),
+                .target(name: "UpdateKit")
             ],
             path: "Tests/journalTests",
             swiftSettings: [
