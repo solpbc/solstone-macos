@@ -6,8 +6,10 @@ import Foundation
 import JournalMarkKit
 import JournalRuntime
 import JournalRuntimeTestSupport
+import os
 import SwiftUI
 import Testing
+import UpdateKit
 @testable import journal
 
 private func runGit(_ args: String...) throws -> String {
@@ -264,12 +266,21 @@ struct JournalSnapshotTests {
 
     private func renderWindow(_ model: JournalWindowModel, to filename: String) throws {
         try render(
-            JournalSettingsWindow(model: model, openURL: { _ in })
+            JournalSettingsWindow(model: model, updateController: makeUpdateController(), openURL: { _ in })
                 .frame(width: size.width, height: size.height)
                 .background(Color(nsColor: .windowBackgroundColor)),
             size: size,
             to: filename
         )
+    }
+
+    private func makeUpdateController() -> UpdateController {
+        UpdateController(
+            feedURL: nil,
+            publicKey: nil,
+            log: Logger.updates,
+            errorDomain: "app.solstone.journal.updates"
+        ) { _, _ in nil }
     }
 
     private func render<V: View>(_ view: V, size: CGSize, to filename: String) throws {

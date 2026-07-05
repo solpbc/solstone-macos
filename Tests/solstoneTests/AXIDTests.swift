@@ -3,7 +3,9 @@
 
 import Foundation
 import JournalRuntime
+import SolstoneCore
 import Testing
+import UpdateKit
 @testable import solstone
 
 @Suite("AXID registry")

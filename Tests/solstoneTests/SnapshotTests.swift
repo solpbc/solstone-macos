@@ -4,10 +4,12 @@
 import AppKit
 import CoreAudio
 import JournalRuntime
+import os
 import SwiftUI
 import Testing
 import UserNotifications
 import SolstoneCore
+import UpdateKit
 @testable import solstone
 
 private func runGit(_ args: String...) throws -> String {
@@ -64,7 +66,13 @@ struct SnapshotTests {
     }
 
     private func makeSnapshotUpdateController() -> UpdateController {
-        UpdateController(feedURL: nil, publicKey: nil, defaults: isolatedDefaults.defaults) { _, _ in nil }
+        UpdateController(
+            feedURL: nil,
+            publicKey: nil,
+            log: Logger.setup,
+            errorDomain: "app.solstone.observer.updates",
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in nil }
     }
 
     private func render<V: View>(_ view: V, size: CGSize, to filename: String) throws {

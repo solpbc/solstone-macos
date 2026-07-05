@@ -2,7 +2,9 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
 import Testing
+@testable import UpdateKit
 @testable import solstone
 
 @Suite("AXContract", .serialized)
@@ -118,6 +120,8 @@ struct AXContractTests {
         let controller = UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
+            log: Logger.setup,
+            errorDomain: "app.solstone.observer.updates",
             defaults: isolatedDefaults.defaults
         ) { _, _ in nil }
         let now = Date()

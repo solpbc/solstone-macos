@@ -6,7 +6,7 @@ import Testing
 @Suite("AXStateCompanion WireUp")
 struct AXStateCompanionWireUpTests {
     @Test func companionUsesValueBearingLabeledCarrier() throws {
-        let source = try readWireUpSource("Sources/solstone/AXToken.swift")
+        let source = try readWireUpSource("Sources/SolstoneCore/AXSupport.swift")
         let references = [
             "Text(value)",
             ".accessibilityLabel(id)",

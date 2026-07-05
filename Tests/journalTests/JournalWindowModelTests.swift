@@ -217,7 +217,7 @@ struct JournalWindowModelTests {
             runner: MockSupervisedChildRunner(),
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
-        let appModel = JournalAppModel(config: fixture.config, supervisor: supervisor, startsUpdater: false)
+        let appModel = JournalAppModel(config: fixture.config, supervisor: supervisor)
 
         appModel.launch()
         try await Task.sleep(for: .milliseconds(25))

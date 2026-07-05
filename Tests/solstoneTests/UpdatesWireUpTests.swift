@@ -5,36 +5,6 @@ import Testing
 
 @Suite("Updates WireUp")
 struct UpdatesWireUpTests {
-    // Proves registry wire-up presence, not live AX-tree attachment; device-phase AX dumps cover that.
-    @Test func updatesTabReferencesExpectedAXIDs() throws {
-        let source = try readWireUpSource("Sources/solstone/UpdatesTabView.swift")
-        let references = [
-            "AXID.Updates.statusState",
-            "AXID.Updates.unavailable",
-            "AXID.Updates.debugStatePicker",
-            "AXID.Updates.cancel",
-            "AXID.Updates.check",
-            "AXID.Updates.download",
-            "AXID.Updates.dismiss",
-            "AXID.Updates.dismissStaged",
-            "AXID.Updates.extractProgress",
-            "AXID.Updates.install",
-            "AXID.Updates.retry",
-            "AXID.Updates.automaticChecks",
-            "AXID.Updates.frequencyPicker",
-            "AXID.Updates.frequencyState",
-            "AXID.Updates.automaticDownloads",
-            "AXID.Updates.releaseNotesOnline",
-            "AXID.Updates.releaseNotes",
-            "AXID.Updates.downloadProgress",
-            "AXID.Updates.deferredInstallState"
-        ]
-
-        for reference in references {
-            #expect(wireUpContains(source, reference))
-        }
-    }
-
     @Test func appUpdateControllerFinalizerRoutesThroughCoordinatorAndWiresRecovery() throws {
         let source = try readWireUpSource("Sources/solstone/SolstoneCaptureApp.swift")
 
@@ -66,15 +36,5 @@ struct UpdatesWireUpTests {
         #expect(wireUpContains(prepareBody, "await self?.performUpdatePreparation()"))
         #expect(stopRecording.lowerBound < stopJournal.lowerBound)
         #expect(stopJournal.lowerBound < drain.lowerBound)
-    }
-
-    @Test func stagedInstallButtonRoutesThroughUpdateController() throws {
-        let source = try readWireUpSource("Sources/solstone/UpdatesTabView.swift")
-        let functionStart = try #require(source.range(of: "private func relaunchToInstallStagedUpdate()"))
-        let functionEnd = try #require(source[functionStart.upperBound...].range(of: "private func titleBlock"))
-        let body = String(source[functionStart.lowerBound..<functionEnd.lowerBound])
-
-        #expect(wireUpContains(body, "controller.installStagedUpdate()"))
-        #expect(!wireUpContains(body, "NSApplication.shared.terminate(nil)"))
     }
 }

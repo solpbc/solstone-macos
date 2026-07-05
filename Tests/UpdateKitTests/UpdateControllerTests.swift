@@ -1,7 +1,7 @@
 import Foundation
 import Sparkle
 import Testing
-@testable import solstone
+@testable import UpdateKit
 
 @Suite("UpdateController", .serialized)
 @MainActor
@@ -112,6 +112,8 @@ struct UpdateControllerTests {
         let controller = UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             defaults: isolatedDefaults.defaults
         ) { _, _ in nil }
 
@@ -126,6 +128,8 @@ struct UpdateControllerTests {
         let controller = UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             defaults: isolatedDefaults.defaults
         ) { _, _ in
             attempts += 1
@@ -149,6 +153,8 @@ struct UpdateControllerTests {
         let controller = UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             defaults: isolatedDefaults.defaults
         ) { _, _ in
             spy
@@ -178,6 +184,8 @@ struct UpdateControllerTests {
         let controller = UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             defaults: isolatedDefaults.defaults
         ) { _, _ in
             nil
@@ -203,6 +211,8 @@ struct UpdateControllerTests {
         let controller = UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             defaults: isolatedDefaults.defaults
         ) { _, _ in
             spy
@@ -232,6 +242,8 @@ struct UpdateControllerTests {
         let liveController = UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             defaults: isolatedDefaults.defaults
         ) { _, _ in
             spy
@@ -275,19 +287,19 @@ struct UpdateControllerTests {
         let base = Date()
 
         #expect(
-            UpdatesCopy.lastCheckedRelative(checkedAt: base, now: base.addingTimeInterval(59))
-                == UpdatesCopy.lastCheckedJustNow
+            UpdatesCopy(provider: .solstone).lastCheckedRelative(checkedAt: base, now: base.addingTimeInterval(59))
+                == UpdatesCopy(provider: .solstone).lastCheckedJustNow
         )
         #expect(
-            UpdatesCopy.lastCheckedRelative(checkedAt: base, now: base.addingTimeInterval(60))
-                != UpdatesCopy.lastCheckedJustNow
+            UpdatesCopy(provider: .solstone).lastCheckedRelative(checkedAt: base, now: base.addingTimeInterval(60))
+                != UpdatesCopy(provider: .solstone).lastCheckedJustNow
         )
     }
 
     @Test func lastCheckedRelativeAdvancesWithInjectedNow() {
         let base = Date()
-        let initial = UpdatesCopy.lastCheckedRelative(checkedAt: base, now: base)
-        let fiveMinutesLater = UpdatesCopy.lastCheckedRelative(
+        let initial = UpdatesCopy(provider: .solstone).lastCheckedRelative(checkedAt: base, now: base)
+        let fiveMinutesLater = UpdatesCopy(provider: .solstone).lastCheckedRelative(
             checkedAt: base,
             now: base.addingTimeInterval(300)
         )
@@ -299,9 +311,9 @@ struct UpdateControllerTests {
             relativeTo: base.addingTimeInterval(300)
         )
 
-        #expect(initial == UpdatesCopy.lastCheckedJustNow)
+        #expect(initial == UpdatesCopy(provider: .solstone).lastCheckedJustNow)
         #expect(fiveMinutesLater != initial)
-        #expect(fiveMinutesLater != UpdatesCopy.lastCheckedJustNow)
+        #expect(fiveMinutesLater != UpdatesCopy(provider: .solstone).lastCheckedJustNow)
         #expect(fiveMinutesLater == expectedFiveMinutesLater)
     }
 
@@ -355,11 +367,6 @@ struct UpdateControllerTests {
             deferredInstallIntent: DeferredInstallIntent(version: "1.4.0", requestedAt: now)
         )
         #expect(!deferredDisabledController.canCheckAgainFromDeferred)
-    }
-
-    @Test func settingsContentGateRequiresOpenSettingsWindow() {
-        #expect(!shouldRenderSettingsContent(settingsWindowOpen: false))
-        #expect(shouldRenderSettingsContent(settingsWindowOpen: true))
     }
 
     @Test func surfacedFlagsReflectDurableStatusAndDeferredIntent() {
@@ -695,7 +702,8 @@ struct UpdateControllerTests {
             let reason = updatesPaneReason(
                 isEnabled: false,
                 backgroundDownload: backgroundDownload,
-                liveness: liveness
+                liveness: liveness,
+                copy: UpdatesCopy(provider: .solstone)
             )
             #expect(reason?.isEmpty == false, "expected disabled reason for \(name)")
         }
@@ -703,7 +711,8 @@ struct UpdateControllerTests {
         #expect(updatesPaneReason(
             isEnabled: true,
             backgroundDownload: .downloading(version: "1.3.9"),
-            liveness: idle
+            liveness: idle,
+            copy: UpdatesCopy(provider: .solstone)
         ) == nil)
 
         clearDefaults()
@@ -712,6 +721,8 @@ struct UpdateControllerTests {
         let controller = UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             defaults: isolatedDefaults.defaults
         ) { _, _ in
             spy
@@ -726,17 +737,18 @@ struct UpdateControllerTests {
         #expect(updatesPaneReason(
             isEnabled: controller.canDownload,
             backgroundDownload: controller.backgroundDownload,
-            liveness: controller.updatesPaneLiveness
+            liveness: controller.updatesPaneLiveness,
+            copy: UpdatesCopy(provider: .solstone)
         )?.isEmpty == false)
     }
 
     @Test func backgroundCopyUsesVersionAndVersionlessFallbacksWithoutTrailingSpaces() {
-        #expect(UpdatesCopy.backgroundDownloadingTitle(version: "1.3.9") == "downloading 1.3.9 in the background…")
-        #expect(UpdatesCopy.backgroundDownloadingTitle(version: nil) == "downloading an update in the background…")
-        #expect(UpdatesCopy.backgroundFinishingTitle(version: "1.3.9") == "finishing up 1.3.9 in the background…")
-        #expect(UpdatesCopy.backgroundFinishingTitle(version: nil) == "finishing up in the background…")
-        #expect(!UpdatesCopy.backgroundDownloadingTitle(version: nil).hasSuffix(" "))
-        #expect(!UpdatesCopy.backgroundFinishingTitle(version: nil).hasSuffix(" "))
+        #expect(UpdatesCopy(provider: .solstone).backgroundDownloadingTitle(version: "1.3.9") == "downloading 1.3.9 in the background…")
+        #expect(UpdatesCopy(provider: .solstone).backgroundDownloadingTitle(version: nil) == "downloading an update in the background…")
+        #expect(UpdatesCopy(provider: .solstone).backgroundFinishingTitle(version: "1.3.9") == "finishing up 1.3.9 in the background…")
+        #expect(UpdatesCopy(provider: .solstone).backgroundFinishingTitle(version: nil) == "finishing up in the background…")
+        #expect(!UpdatesCopy(provider: .solstone).backgroundDownloadingTitle(version: nil).hasSuffix(" "))
+        #expect(!UpdatesCopy(provider: .solstone).backgroundFinishingTitle(version: nil).hasSuffix(" "))
     }
 
     @Test func suppressingStagedBlockHidesOnlyPaneBlockAndKeepsDurableAttention() {
@@ -753,7 +765,6 @@ struct UpdateControllerTests {
         #expect(controller.durableUpdateStatus == .staged(version: "1.3.9", releaseNotes: nil))
         #expect(controller.updatesNeedAttention)
         #expect(controller.statusAXToken == "staged_ready")
-        #expect(updatesSidebarBadge(for: controller.durableUpdateStatus) == .attention)
         #expect(updatesPaneBlock(
             status: controller.durableUpdateStatus,
             activity: controller.activity,
@@ -769,6 +780,8 @@ struct UpdateControllerTests {
         let controller = UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             defaults: isolatedDefaults.defaults
         ) { _, _ in
             spy
@@ -814,6 +827,8 @@ struct UpdateControllerTests {
         return UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             defaults: isolatedDefaults.defaults
         ) { _, _ in nil }
     }

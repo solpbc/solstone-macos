@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import solstone
+@testable import UpdateKit
 
 @Suite("UpdateState", .serialized)
 @MainActor
@@ -193,6 +193,8 @@ struct UpdateStateTests {
             feedURL: validFeedURL,
             publicKey: validPublicKey,
             runningVersion: { runningVersion },
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             defaults: isolatedDefaults.defaults
         ) { _, _ in
             nil

@@ -1,5 +1,37 @@
 import Foundation
-@testable import solstone
+import os
+import Testing
+@testable import UpdateKit
+
+let updateKitTestLog = Logger(subsystem: "app.solstone.tests", category: "updates")
+let updateKitTestErrorDomain = "app.solstone.tests.updates"
+
+final class LockedValue<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Value?
+
+    func set(_ value: Value) {
+        lock.withLock { self.value = value }
+    }
+
+    var current: Value? {
+        lock.withLock { value }
+    }
+}
+
+func waitUntil(
+    timeout: Duration,
+    poll: Duration = .milliseconds(50),
+    _ predicate: @escaping @Sendable () async -> Bool
+) async throws {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: timeout)
+    while clock.now < deadline {
+        if await predicate() { return }
+        try await Task.sleep(for: poll)
+    }
+    #expect(await predicate())
+}
 
 struct IsolatedUserDefaults {
     let suiteName: String

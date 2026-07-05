@@ -1,7 +1,7 @@
 import Foundation
 import Sparkle
 import Testing
-@testable import solstone
+@testable import UpdateKit
 
 @Suite("SparkleDelegateIngest", .serialized)
 @MainActor
@@ -68,14 +68,6 @@ struct SparkleDelegateIngestTests {
         #expect(harness.controller.statusAXToken == "staged_ready")
 
         assertUpdatesPaneStagedOutput(for: harness.controller)
-        #expect(
-            firstSettingsAttention(
-                permissionsNeedAttention: false,
-                journalNeedsAttention: false,
-                durableUpdateStatus: harness.controller.durableUpdateStatus
-            ) == .updateAvailable
-        )
-        #expect(settingsUpdatesBadgeAXToken(for: harness.controller) == SettingsView.SidebarBadgeState.attention.axToken)
     }
 
     @Test func silentBackgroundDownloadLifecycleTracksPhaseUntilStagedOrFailure() throws {
@@ -464,17 +456,17 @@ struct SparkleDelegateIngestTests {
         let harness = try makeHarness()
         let controller = harness.controller
 
-        let cases: [(DurableUpdateStatus, String, UpdatesPaneBlock, SettingsAttentionReason?, SettingsView.SidebarBadgeState)] = [
-            (.deferred(version: "1.3.9"), "deferred_install", .deferred, .updateAvailable, .attention),
-            (.staged(version: "1.3.9", releaseNotes: "release notes"), "staged_ready", .stagedReady, .updateAvailable, .attention),
-            (.failedWithAvailable(version: "1.3.9"), "error", .failed, .updateAvailable, .attention),
-            (.available(version: "1.3.9", releaseNotes: "release notes"), "update_available", .available, .updateAvailable, .attention),
-            (.failed, "error", .failed, .updateCheckFailed, .attention),
-            (.upToDate, "up_to_date", .empty, nil, .done),
-            (.idle, "idle", .empty, nil, .blank)
+        let cases: [(DurableUpdateStatus, String, UpdatesPaneBlock)] = [
+            (.deferred(version: "1.3.9"), "deferred_install", .deferred),
+            (.staged(version: "1.3.9", releaseNotes: "release notes"), "staged_ready", .stagedReady),
+            (.failedWithAvailable(version: "1.3.9"), "error", .failed),
+            (.available(version: "1.3.9", releaseNotes: "release notes"), "update_available", .available),
+            (.failed, "error", .failed),
+            (.upToDate, "up_to_date", .empty),
+            (.idle, "idle", .empty)
         ]
 
-        for (status, axToken, paneBlock, menuReason, badge) in cases {
+        for (status, axToken, paneBlock) in cases {
             applyDurableStatus(status, to: controller)
             #expect(controller.statusAXToken == axToken)
             #expect(updatesPaneBlock(
@@ -483,12 +475,6 @@ struct SparkleDelegateIngestTests {
                 backgroundDownload: controller.backgroundDownload,
                 stagedBlockSuppressed: controller.stagedBlockSuppressed
             ) == paneBlock)
-            #expect(firstSettingsAttention(
-                permissionsNeedAttention: false,
-                journalNeedsAttention: false,
-                durableUpdateStatus: controller.durableUpdateStatus
-            ) == menuReason)
-            #expect(updatesSidebarBadge(for: controller.durableUpdateStatus) == badge)
         }
     }
 
@@ -505,12 +491,6 @@ struct SparkleDelegateIngestTests {
         )
         #expect(controller.statusAXToken == "downloading")
         #expect(controller.durableUpdateStatus == .available(version: "1.3.9", releaseNotes: nil))
-        #expect(firstSettingsAttention(
-            permissionsNeedAttention: false,
-            journalNeedsAttention: false,
-            durableUpdateStatus: controller.durableUpdateStatus
-        ) == .updateAvailable)
-        #expect(updatesSidebarBadge(for: controller.durableUpdateStatus) == .attention)
 
         controller.applyDebugFixture(
             activity: .checking,
@@ -518,12 +498,6 @@ struct SparkleDelegateIngestTests {
         )
         #expect(controller.statusAXToken == "checking")
         #expect(controller.durableUpdateStatus == .upToDate)
-        #expect(firstSettingsAttention(
-            permissionsNeedAttention: false,
-            journalNeedsAttention: false,
-            durableUpdateStatus: controller.durableUpdateStatus
-        ) == nil)
-        #expect(updatesSidebarBadge(for: controller.durableUpdateStatus) == .done)
     }
 
     @Test func failedCheckAfterStagedUpdateKeepsCompositeAvailableFailure() throws {
@@ -557,12 +531,6 @@ struct SparkleDelegateIngestTests {
             backgroundDownload: harness.controller.backgroundDownload,
             stagedBlockSuppressed: harness.controller.stagedBlockSuppressed
         ) == .failed)
-        #expect(firstSettingsAttention(
-            permissionsNeedAttention: false,
-            journalNeedsAttention: false,
-            durableUpdateStatus: harness.controller.durableUpdateStatus
-        ) == .updateAvailable)
-        #expect(updatesSidebarBadge(for: harness.controller.durableUpdateStatus) == .attention)
     }
 
     private func makeHarness(
@@ -623,16 +591,12 @@ struct SparkleDelegateIngestTests {
         NSError(domain: SUSparkleErrorDomain, code: Int(code.rawValue))
     }
 
-    private func settingsUpdatesBadgeAXToken(for controller: UpdateController) -> String {
-        updatesSidebarBadge(for: controller.durableUpdateStatus).axToken
-    }
-
     private func assertUpdatesPaneStagedOutput(for controller: UpdateController) {
         #expect(controller.updateIsStaged)
         #expect(controller.stagedVersion == "1.3.9")
-        #expect(UpdatesCopy.stagedReadyTitle(version: "1.3.9") == "ready to install v1.3.9")
-        #expect(UpdatesCopy.actionRelaunchToInstall == "relaunch to install")
-        #expect(UpdatesCopy.stagedReadySubtitle == "the update is downloaded and will install when sol relaunches.")
+        #expect(UpdatesCopy(provider: .solstone).stagedReadyTitle(version: "1.3.9") == "ready to install v1.3.9")
+        #expect(UpdatesCopy(provider: .solstone).actionRelaunchToInstall == "relaunch to install")
+        #expect(UpdatesCopy(provider: .solstone).stagedReadySubtitle == "the update is downloaded and will install when sol relaunches.")
     }
 
     private func clearDefaults() {
@@ -718,6 +682,8 @@ private final class DelegateHarness {
             feedURL: feedURL,
             publicKey: publicKey,
             runningVersion: runningVersion,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             postInstallRecoveryScheduler: postInstallRecoveryScheduler,
             defaults: defaults
         ) { userDriver, delegate in

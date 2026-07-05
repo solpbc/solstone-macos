@@ -4,8 +4,10 @@
 import Foundation
 import JournalRuntime
 import JournalRuntimeTestSupport
+import os
 import Testing
 import SolstoneCore
+import UpdateKit
 @testable import solstone
 
 @Suite("AppState attention")
@@ -259,7 +261,13 @@ struct AppStateAttentionTests {
 
     @Test func settingsViewInitializationDoesNotPersistInitialServiceMode() {
         let state = makeState(config: AppConfig(serviceMode: nil))
-        _ = SettingsView(appState: state, updateController: UpdateController())
+        _ = SettingsView(
+            appState: state,
+            updateController: UpdateController(
+                log: Logger.setup,
+                errorDomain: "app.solstone.observer.updates"
+            )
+        )
 
         #expect(state.config.serviceMode == nil)
     }

@@ -1,11 +1,13 @@
 import Foundation
 import Testing
-@testable import solstone
+@testable import UpdateKit
 
 @Suite("ReleaseNotesViewModel")
 struct ReleaseNotesViewModelTests {
+    private let copy = UpdatesCopy(provider: .solstone)
+
     @Test func live130FixtureProducesExpectedBlocks() throws {
-        let model = ReleaseNotesViewModel(markdown: try fixture())
+        let model = ReleaseNotesViewModel(markdown: try fixture(), copy: copy)
         let blocks = try #require(model.blocks)
 
         #expect(blocks.map(blockKind) == [
@@ -21,7 +23,10 @@ struct ReleaseNotesViewModelTests {
     }
 
     @Test func inlineStylingPreservedInListItem() throws {
-        let model = ReleaseNotesViewModel(markdown: "- before **bold** middle [label](https://example.com) after")
+        let model = ReleaseNotesViewModel(
+            markdown: "- before **bold** middle [label](https://example.com) after",
+            copy: copy
+        )
         let blocks = try #require(model.blocks)
         guard case .listItem(let text) = try #require(blocks.first) else {
             Issue.record("expected a list item block")
@@ -40,13 +45,13 @@ struct ReleaseNotesViewModelTests {
     }
 
     @Test func emptyInputFallsBack() {
-        #expect(ReleaseNotesViewModel(markdown: "").blocks == nil)
-        #expect(ReleaseNotesViewModel(markdown: "   \n  ").blocks == nil)
+        #expect(ReleaseNotesViewModel(markdown: "", copy: copy).blocks == nil)
+        #expect(ReleaseNotesViewModel(markdown: "   \n  ", copy: copy).blocks == nil)
     }
 
     @Test func parseFailureFallsBack() {
         // Foundation's markdown parser is lenient for malformed strings, so inject a throwing parser to cover the catch path.
-        let model = ReleaseNotesViewModel(markdown: "### ok") { _ in
+        let model = ReleaseNotesViewModel(markdown: "### ok", copy: copy) { _ in
             throw TestParseError.failure
         }
 
@@ -54,7 +59,7 @@ struct ReleaseNotesViewModelTests {
     }
 
     @Test func zeroBlocksFallsBack() {
-        let model = ReleaseNotesViewModel(markdown: "plain") { _ in
+        let model = ReleaseNotesViewModel(markdown: "plain", copy: copy) { _ in
             AttributedString("plain")
         }
 
@@ -62,25 +67,25 @@ struct ReleaseNotesViewModelTests {
     }
 
     @Test func unsupportedIntentFallsBack() {
-        #expect(ReleaseNotesViewModel(markdown: "1. one").blocks == nil)
-        #expect(ReleaseNotesViewModel(markdown: "> quote").blocks == nil)
-        #expect(ReleaseNotesViewModel(markdown: "```swift\nlet x = 1\n```").blocks == nil)
+        #expect(ReleaseNotesViewModel(markdown: "1. one", copy: copy).blocks == nil)
+        #expect(ReleaseNotesViewModel(markdown: "> quote", copy: copy).blocks == nil)
+        #expect(ReleaseNotesViewModel(markdown: "```swift\nlet x = 1\n```", copy: copy).blocks == nil)
     }
 
     @Test func wrapsOnlyWhenMoreThanThreeBlocks() throws {
-        #expect(ReleaseNotesViewModel(markdown: try fixture()).wrapsInScrollView)
+        #expect(ReleaseNotesViewModel(markdown: try fixture(), copy: copy).wrapsInScrollView)
 
         let fortyBlocks = (1...40).map { "- item \($0)" }.joined(separator: "\n")
-        #expect(ReleaseNotesViewModel(markdown: fortyBlocks).wrapsInScrollView)
+        #expect(ReleaseNotesViewModel(markdown: fortyBlocks, copy: copy).wrapsInScrollView)
 
-        #expect(!ReleaseNotesViewModel(markdown: "### one").wrapsInScrollView)
+        #expect(!ReleaseNotesViewModel(markdown: "### one", copy: copy).wrapsInScrollView)
     }
 
     @Test func onlineLinkUsesUpdatesCopyConstants() {
-        let model = ReleaseNotesViewModel(markdown: "### one")
+        let model = ReleaseNotesViewModel(markdown: "### one", copy: copy)
 
-        #expect(model.onlineLinkLabel == UpdatesCopy.releaseNotesOnlineLinkLabel)
-        #expect(model.onlineLinkURL == UpdatesCopy.releaseNotesOnlineURL)
+        #expect(model.onlineLinkLabel == UpdatesCopy(provider: .solstone).releaseNotesOnlineLinkLabel)
+        #expect(model.onlineLinkURL == UpdatesCopy(provider: .solstone).releaseNotesOnlineURL)
         #expect(model.onlineLinkURL == URL(string: "https://solstone.app/releases/macos")!)
     }
 

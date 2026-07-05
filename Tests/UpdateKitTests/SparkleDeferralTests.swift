@@ -1,7 +1,7 @@
 import Foundation
 import Sparkle
 import Testing
-@testable import solstone
+@testable import UpdateKit
 
 @Suite("Sparkle deferral", .serialized)
 @MainActor
@@ -1117,6 +1117,8 @@ struct SparkleDeferralTests {
         let controller = UpdateController(
             feedURL: "not-a-url",
             publicKey: "not-a-key",
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             exclusivity: { signal.value },
             defaults: isolatedDefaults.defaults
         ) { _, _ in
@@ -1239,6 +1241,8 @@ struct SparkleDeferralTests {
         return UpdateController(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
             exclusivity: { signal.value },
             sessionInProgress: sessionInProgress,
             preInstallFinalizer: preInstallFinalizer,

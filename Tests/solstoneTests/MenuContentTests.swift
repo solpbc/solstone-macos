@@ -2,7 +2,9 @@
 // Copyright (c) 2026 sol pbc
 
 import JournalRuntime
+import os
 import Testing
+import UpdateKit
 @testable import solstone
 
 @Suite("MenuContent")
@@ -10,7 +12,11 @@ struct MenuContentTests {
     private let isolatedDefaults = IsolatedUserDefaults()
 
     @Test @MainActor func hasPauseResumeControlTruthTable() {
-        let updateController = UpdateController(defaults: isolatedDefaults.defaults)
+        let updateController = UpdateController(
+            log: Logger.setup,
+            errorDomain: "app.solstone.observer.updates",
+            defaults: isolatedDefaults.defaults
+        )
 
         let observing = AppState.forSnapshot()
         observing.isRecording = true
@@ -228,6 +234,16 @@ struct MenuContentTests {
             journalNeedsAttention: false,
             durableUpdateStatus: .failedWithAvailable(version: "1.3.9")
         ) == .updateAvailable)
+    }
+
+    @Test func updatesSidebarBadgeTruthTable() {
+        #expect(updatesSidebarBadge(for: .deferred(version: "1.3.9")) == .attention)
+        #expect(updatesSidebarBadge(for: .staged(version: "1.3.9", releaseNotes: nil)) == .attention)
+        #expect(updatesSidebarBadge(for: .failedWithAvailable(version: "1.3.9")) == .attention)
+        #expect(updatesSidebarBadge(for: .available(version: "1.3.9", releaseNotes: nil)) == .attention)
+        #expect(updatesSidebarBadge(for: .failed) == .attention)
+        #expect(updatesSidebarBadge(for: .upToDate) == .done)
+        #expect(updatesSidebarBadge(for: .idle) == .blank)
     }
 
     @Test func settingsAttentionSuffixToShowTruthTable() {
