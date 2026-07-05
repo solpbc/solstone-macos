@@ -30,7 +30,7 @@ The health beacon carries operational sync state only. It intentionally excludes
 
 ## Install
 
-end users: install the signed + notarized DMG from <https://solstone.app/download/macos/>. it installs the native observer and journal, opens the first-run wizard, and updates over a signed channel.
+end users: install the signed + notarized DMG from <https://solstone.app/download/macos>. it installs the native observer and journal, opens the first-run wizard, and updates over a signed channel.
 
 Source build (requires sol pbc Apple Developer Program identities in the local keychain):
 
