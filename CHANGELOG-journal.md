@@ -10,9 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2026-07-05
 
 ### Added
-- journal is now its own macOS app for the keeper side of the owner model. it lives with and tends the owner's journal while observers send their experience there.
-- the first standalone journal.app release includes the local runtime material needed to install and verify the journal command line without mutating the app bundle.
-- journal ships its own signed update feed, changelog, disk image, and release path separate from sol.
+- the journal has its own app now. your journal — the memory sol keeps — is a visible, deliberately installed thing: a dock app with a native window for its name, its mark, and its run state.
+- creating a journal is a short ritual: name it, choose where it lives, then meet your journal's mark — lock it in, and the app's own icon becomes it.
+- the devices pane shows every device that keeps to this journal, opens a pairing window for a new one, and can rename or revoke.
+- the journal app updates itself, separately from sol.
 
 ### Changed
-- journal setup and update plumbing now belongs to journal.app instead of riding inside sol.app.
+- if sol was keeping your journal on this mac, the journal app adopts it in place — same journal, nothing moves.
+

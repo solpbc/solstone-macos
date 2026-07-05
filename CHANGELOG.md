@@ -5,6 +5,18 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-07-05
+
+### Changed
+- sol is now just the app for this device. the journal — the memory sol keeps — has its own app, with its own updates.
+- if sol was keeping your journal on this mac, a guided handoff sets up the journal app and hands your journal to it. nothing moves: same journal, same permissions, same pairing. segments are kept on this mac until your journal is back.
+- settings show "your journal" — which journal this sol keeps to, its mark, and the connection — in place of the old service tab.
+- on first run, sol looks before it asks: a journal on this mac links in one guided step, ending with your journal's mark.
+
+### Removed
+- sol no longer carries the journal runtime in the bundle — the download shrinks from about 450 MB to a few MB.
+
+
 ## [1.3.31] - 2026-07-04
 
 ### Changed
