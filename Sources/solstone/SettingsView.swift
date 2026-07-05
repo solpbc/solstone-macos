@@ -9,6 +9,7 @@ import SwiftUI
 import UserNotifications
 import os
 import SolstoneCore
+import UpdateKit
 
 /// Display entry for microphone priority list
 struct MicrophoneDisplayEntry: Identifiable {
@@ -220,7 +221,7 @@ struct SettingsView: View {
                 Section {
                     sidebarPlainLabel("general", tab: .observer, systemImage: "gearshape").tag(Tab.observer)
                     sidebarLabel(
-                        UpdatesCopy.tabTitle,
+                        UpdatesCopy(provider: .solstone).tabTitle,
                         tab: .updates,
                         systemImage: "arrow.down.circle",
                         badge: updatesSidebarBadge(for: updateController.durableUpdateStatus),
@@ -304,7 +305,7 @@ struct SettingsView: View {
         case .permissions:
             permissionsTab.onAppear { appState.markSettingsTabVisited(.permissions) }
         case .updates:
-            UpdatesTabView(controller: updateController)
+            UpdatesTabView(controller: updateController, copy: UpdatesCopy(provider: .solstone))
                 .onAppear { appState.markSettingsTabVisited(.updates) }
         case .help:
             helpTab.onAppear { appState.markSettingsTabVisited(.help) }

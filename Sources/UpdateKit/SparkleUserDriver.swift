@@ -3,10 +3,12 @@ import Sparkle
 import os
 
 @MainActor
-final class SparkleUserDriver: NSObject, SPUUserDriver {
+public final class SparkleUserDriver: NSObject, SPUUserDriver {
     private unowned var controller: UpdateController!
+    private let log: Logger
 
-    override init() {
+    init(log: Logger) {
+        self.log = log
         super.init()
     }
 
@@ -14,7 +16,7 @@ final class SparkleUserDriver: NSObject, SPUUserDriver {
         self.controller = controller
     }
 
-    func show(_ request: SPUUpdatePermissionRequest, reply: @escaping (SUUpdatePermissionResponse) -> Void) {
+    public func show(_ request: SPUUpdatePermissionRequest, reply: @escaping (SUUpdatePermissionResponse) -> Void) {
         reply(
             SUUpdatePermissionResponse(
                 automaticUpdateChecks: true,
@@ -24,11 +26,11 @@ final class SparkleUserDriver: NSObject, SPUUserDriver {
         )
     }
 
-    func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) {
+    public func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) {
         controller.beginUserInitiatedCheck(cancellation: cancellation)
     }
 
-    func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
+    public func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
         controller.presentUpdateFound(
             version: appcastItem.displayVersionString,
             releaseNotes: appcastItem.itemDescription,
@@ -37,89 +39,89 @@ final class SparkleUserDriver: NSObject, SPUUserDriver {
         )
     }
 
-    func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {
+    public func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {
         let releaseNotes = String(data: downloadData.data as Data, encoding: .utf8)
             ?? String(decoding: downloadData.data as Data, as: UTF8.self)
         controller.updateReleaseNotes(releaseNotes)
     }
 
-    func showUpdateReleaseNotesFailedToDownloadWithError(_ error: Error) {
-        Logger.setup.error("Sparkle release notes download failed: \(String(describing: error), privacy: .public)")
+    public func showUpdateReleaseNotesFailedToDownloadWithError(_ error: Error) {
+        log.error("Sparkle release notes download failed: \(String(describing: error), privacy: .public)")
     }
 
-    func showUpdateNotFoundWithError(_ error: Error, acknowledgement: @escaping () -> Void) {
-        Logger.setup.info("Sparkle no-update result: \(String(describing: error), privacy: .public)")
+    public func showUpdateNotFoundWithError(_ error: Error, acknowledgement: @escaping () -> Void) {
+        log.info("Sparkle no-update result: \(String(describing: error), privacy: .public)")
         controller.presentNoUpdateFound()
         acknowledgement()
     }
 
-    func showUpdaterError(_ error: Error, acknowledgement: @escaping () -> Void) {
+    public func showUpdaterError(_ error: Error, acknowledgement: @escaping () -> Void) {
         controller.presentUpdaterError(error)
         acknowledgement()
     }
 
-    func showDownloadInitiated(cancellation: @escaping () -> Void) {
+    public func showDownloadInitiated(cancellation: @escaping () -> Void) {
         controller.beginDownload(cancellation: cancellation)
     }
 
-    func showDownloadDidReceiveExpectedContentLength(_ expectedContentLength: UInt64) {
+    public func showDownloadDidReceiveExpectedContentLength(_ expectedContentLength: UInt64) {
         controller.recordExpectedContentLength(expectedContentLength)
     }
 
-    func showDownloadDidReceiveData(ofLength length: UInt64) {
+    public func showDownloadDidReceiveData(ofLength length: UInt64) {
         controller.appendDownloadedBytes(length)
     }
 
-    func showDownloadDidStartExtractingUpdate() {
+    public func showDownloadDidStartExtractingUpdate() {
         controller.beginExtracting()
     }
 
-    func showExtractionReceivedProgress(_ progress: Double) {
+    public func showExtractionReceivedProgress(_ progress: Double) {
         controller.updateExtractionProgress(progress)
     }
 
-    func showReady(toInstallAndRelaunch reply: @escaping (SPUUserUpdateChoice) -> Void) {
+    public func showReady(toInstallAndRelaunch reply: @escaping (SPUUserUpdateChoice) -> Void) {
         controller.readyToInstall(reply: reply)
     }
 
-    func showInstallingUpdate(withApplicationTerminated applicationTerminated: Bool, retryTerminatingApplication: @escaping () -> Void) {
+    public func showInstallingUpdate(withApplicationTerminated applicationTerminated: Bool, retryTerminatingApplication: @escaping () -> Void) {
         controller.installingUpdate()
     }
 
-    func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) {
+    public func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) {
         controller.updateInstalledAndRelaunched()
         acknowledgement()
     }
 
-    func dismissUpdateInstallation() {
+    public func dismissUpdateInstallation() {
         controller.dismissUpdateInstallation()
     }
 
-    func showUpdateInFocus() {
+    public func showUpdateInFocus() {
         // SPUUserDriver protocol: no-op by design because the user is already in the Updates tab and we do not retarget focus from the settings window.
     }
 
-    func showUpdateNotFound(acknowledgement: @escaping () -> Void) {
+    public func showUpdateNotFound(acknowledgement: @escaping () -> Void) {
         // SPUUserDriver protocol: no-op by design because this is deprecated Sparkle 1.x compatibility; modern Sparkle 2 flow uses the non-deprecated variant we already implement.
     }
 
-    func showUpdateInstallationDidFinish(acknowledgement: @escaping () -> Void) {
+    public func showUpdateInstallationDidFinish(acknowledgement: @escaping () -> Void) {
         // SPUUserDriver protocol: no-op by design because this is deprecated Sparkle 1.x compatibility; modern Sparkle 2 flow uses the non-deprecated variant we already implement.
     }
 
-    func dismissUserInitiatedUpdateCheck() {
+    public func dismissUserInitiatedUpdateCheck() {
         // SPUUserDriver protocol: no-op by design because this is deprecated Sparkle 1.x compatibility; modern Sparkle 2 flow uses the non-deprecated variant we already implement.
     }
 
-    func showInstallingUpdate() {
+    public func showInstallingUpdate() {
         // SPUUserDriver protocol: no-op by design because this is deprecated Sparkle 1.x compatibility; modern Sparkle 2 flow uses the non-deprecated variant we already implement.
     }
 
-    func showSendingTerminationSignal() {
+    public func showSendingTerminationSignal() {
         // SPUUserDriver protocol: no-op by design because this is deprecated Sparkle 1.x compatibility; modern Sparkle 2 flow uses the non-deprecated variant we already implement.
     }
 
-    func showInstallingUpdate(withApplicationTerminated applicationTerminated: Bool) {
+    public func showInstallingUpdate(withApplicationTerminated applicationTerminated: Bool) {
         // SPUUserDriver protocol: no-op by design because this is deprecated Sparkle 1.x compatibility; modern Sparkle 2 flow uses the non-deprecated variant we already implement.
     }
 }

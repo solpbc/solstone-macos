@@ -8,6 +8,7 @@
 
 import SwiftUI
 import JournalRuntime
+import SolstoneCore
 
 internal enum AXPermissionState: CaseIterable {
     case granted
@@ -91,22 +92,6 @@ internal enum PairingConnectionAXState: CaseIterable {
     case revoked
     case loopbackUnavailable
     case keychainUnavailable
-}
-
-struct AXStateCompanion: View {
-    let id: String
-    let value: String
-
-    var body: some View {
-        Text(value)
-            .font(.system(size: 1))
-            .frame(width: 1, height: 1)
-            .opacity(0.001)
-            .clipped()
-            .accessibilityIdentifier(id)
-            .accessibilityLabel(id)
-            .accessibilityValue(value)
-    }
 }
 
 extension RowStatus {
@@ -379,34 +364,6 @@ extension PairingConnectionAXState {
     }
 }
 
-extension UpdateActivity {
-    static let axTokens = [
-        "idle",
-        "checking",
-        "downloading",
-        "extracting",
-        "ready_to_install",
-        "installing"
-    ]
-
-    var axToken: String {
-        switch self {
-        case .idle:
-            return "idle"
-        case .checking:
-            return "checking"
-        case .downloading:
-            return "downloading"
-        case .extracting:
-            return "extracting"
-        case .readyToInstall:
-            return "ready_to_install"
-        case .installing:
-            return "installing"
-        }
-    }
-}
-
 extension JournalRuntimeStatus {
     static let axTokens = [
         "starting",
@@ -416,17 +373,6 @@ extension JournalRuntimeStatus {
         "journal_stopped",
         "journal_unknown",
         "journal_stopped_by_user"
-    ]
-}
-
-enum UpdateStatus {
-    static let axTokens = UpdateActivity.axTokens + [
-        "downloading_background",
-        "deferred_install",
-        "update_available",
-        "up_to_date",
-        "error",
-        "staged_ready"
     ]
 }
 
@@ -571,20 +517,6 @@ func doctorProgressAXToken(for result: JournalDoctorResult?) -> String {
 
 func axIntegerString(_ value: Int) -> String {
     String(value)
-}
-
-func axEnabledString(_ enabled: Bool) -> String {
-    enabled ? "enabled" : "disabled"
-}
-
-func axPercentString(_ fraction: Double) -> String {
-    let percent = Int((fraction * 100).rounded())
-    return String(min(max(percent, 0), 100))
-}
-
-func axDownloadPercentString(receivedBytes: UInt64, totalBytes: UInt64?) -> String {
-    guard let totalBytes, totalBytes > 0 else { return "0" }
-    return axPercentString(Double(receivedBytes) / Double(totalBytes))
 }
 
 func axModelDownloadPercentString(_ progress: ModelsProgress) -> String {

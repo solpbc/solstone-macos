@@ -16,12 +16,17 @@ import Foundation
 /// remains available and is surfaced with a download affordance; if no live
 /// Sparkle reply exists, the download starts a user-initiated check to rehydrate
 /// the callback and then auto-continues with the install.
-struct AvailableUpdate: Equatable, Sendable {
-    var version: String
-    var releaseNotes: String?
+public struct AvailableUpdate: Equatable, Sendable {
+    public var version: String
+    public var releaseNotes: String?
+
+    public init(version: String, releaseNotes: String?) {
+        self.version = version
+        self.releaseNotes = releaseNotes
+    }
 }
 
-enum UpdateActivity: Equatable, Sendable {
+public enum UpdateActivity: Equatable, Sendable {
     case idle
     case checking
     case downloading(version: String, receivedBytes: UInt64, totalBytes: UInt64?)
@@ -30,12 +35,12 @@ enum UpdateActivity: Equatable, Sendable {
     case installing(version: String)
 }
 
-enum BackgroundDownloadPhase: Equatable, Sendable {
+public enum BackgroundDownloadPhase: Equatable, Sendable {
     case downloading(version: String?)
     case finishingUp(version: String?)
 }
 
-enum DurableUpdateStatus: Equatable, Sendable {
+public enum DurableUpdateStatus: Equatable, Sendable {
     case deferred(version: String)
     case staged(version: String, releaseNotes: String?)
     case failedWithAvailable(version: String)
@@ -45,26 +50,26 @@ enum DurableUpdateStatus: Equatable, Sendable {
     case idle
 }
 
-struct ReconciledUpdateStatus: Codable, Equatable, Sendable {
-    var availableVersion: String?
-    var lastCheck: LastCheck?
+public struct ReconciledUpdateStatus: Codable, Equatable, Sendable {
+    public var availableVersion: String?
+    public var lastCheck: LastCheck?
 
-    init(availableVersion: String? = nil, lastCheck: LastCheck? = nil) {
+    public init(availableVersion: String? = nil, lastCheck: LastCheck? = nil) {
         self.availableVersion = availableVersion
         self.lastCheck = lastCheck
     }
 
-    struct LastCheck: Codable, Equatable, Sendable {
-        var checkedAt: Date
-        var outcome: Outcome
+    public struct LastCheck: Codable, Equatable, Sendable {
+        public var checkedAt: Date
+        public var outcome: Outcome
 
-        init(checkedAt: Date, outcome: Outcome) {
+        public init(checkedAt: Date, outcome: Outcome) {
             self.checkedAt = checkedAt
             self.outcome = outcome
         }
     }
 
-    enum Outcome: String, Codable, Equatable, Sendable {
+    public enum Outcome: String, Codable, Equatable, Sendable {
         case upToDate
         case found
         case staged
@@ -72,7 +77,12 @@ struct ReconciledUpdateStatus: Codable, Equatable, Sendable {
     }
 }
 
-struct DeferredInstallIntent: Equatable, Sendable {
-    var version: String
-    var requestedAt: Date
+public struct DeferredInstallIntent: Equatable, Sendable {
+    public var version: String
+    public var requestedAt: Date
+
+    public init(version: String, requestedAt: Date) {
+        self.version = version
+        self.requestedAt = requestedAt
+    }
 }

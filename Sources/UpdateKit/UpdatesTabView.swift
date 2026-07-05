@@ -1,25 +1,32 @@
 import AppKit
+import SolstoneCore
 import SwiftUI
 
-struct UpdatesTabView: View {
-    @Bindable var controller: UpdateController
+public struct UpdatesTabView: View {
+    @Bindable private var controller: UpdateController
+    private let copy: UpdatesCopy
 
     #if DEBUG
     @State private var debugFixture: DebugFixture = .idle
     #endif
 
-    var body: some View {
+    public init(controller: UpdateController, copy: UpdatesCopy) {
+        self.controller = controller
+        self.copy = copy
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             AXStateCompanion(
-                id: AXID.Updates.statusState,
+                id: UpdatesAXID.statusState,
                 value: controller.statusAXToken
             )
             if !controller.canCheckForUpdates {
                 titleBlock(
-                    title: UpdatesCopy.unavailableTitle,
-                    subtitle: UpdatesCopy.unavailableSubtitle
+                    title: copy.unavailableTitle,
+                    subtitle: copy.unavailableSubtitle
                 )
-                .accessibilityIdentifier(AXID.Updates.unavailable)
+                .accessibilityIdentifier(UpdatesAXID.unavailable)
             } else {
                 header
                 transientBlock
@@ -30,7 +37,7 @@ struct UpdatesTabView: View {
 
             Divider()
 
-            Text(UpdatesCopy.privacyFootnote)
+            Text(copy.privacyFootnote)
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -42,7 +49,7 @@ struct UpdatesTabView: View {
                     Text(fixture.rawValue).tag(fixture)
                 }
             }
-            .accessibilityIdentifier(AXID.Updates.debugStatePicker)
+            .accessibilityIdentifier(UpdatesAXID.debugStatePicker)
             .onChange(of: debugFixture) { _, fixture in
                 fixture.apply(to: controller)
             }
@@ -58,7 +65,7 @@ struct UpdatesTabView: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(UpdatesCopy.appHeader(version: appVersion))
+                Text(copy.appHeader(version: appVersion))
                     .font(.title3)
                     .fontWeight(.semibold)
 
@@ -83,22 +90,22 @@ struct UpdatesTabView: View {
             HStack(spacing: 8) {
                 ProgressView()
                     .scaleEffect(0.6)
-                Text(UpdatesCopy.checkingInline)
+                Text(copy.checkingInline)
                     .foregroundStyle(.secondary)
-                Button(UpdatesCopy.actionCancel, action: controller.cancel)
-                    .accessibilityIdentifier(AXID.Updates.cancel)
+                Button(copy.actionCancel, action: controller.cancel)
+                    .accessibilityIdentifier(UpdatesAXID.cancel)
             }
         default:
             VStack(alignment: .trailing, spacing: 4) {
                 HStack(spacing: 8) {
                     Button(
-                        controller.lastCheckedAt == nil ? UpdatesCopy.actionCheckNow : UpdatesCopy.actionCheckAgain,
+                        controller.lastCheckedAt == nil ? copy.actionCheckNow : copy.actionCheckAgain,
                         action: controller.checkForUpdates
                     )
                     .disabled(!controller.canStartManualCheck)
-                    .accessibilityIdentifier(AXID.Updates.check)
+                    .accessibilityIdentifier(UpdatesAXID.check)
                     AXStateCompanion(
-                        id: AXID.Updates.checkState,
+                        id: UpdatesAXID.checkState,
                         value: axEnabledString(controller.canStartManualCheck)
                     )
                 }
@@ -121,25 +128,25 @@ struct UpdatesTabView: View {
         case .downloading:
             if case .downloading(let version, let receivedBytes, let totalBytes) = controller.activity {
                 titleBlock(
-                    title: UpdatesCopy.downloadingTitle(version: version),
-                    subtitle: UpdatesCopy.downloadingSubtitle(receivedBytes: receivedBytes, totalBytes: totalBytes)
+                    title: copy.downloadingTitle(version: version),
+                    subtitle: copy.downloadingSubtitle(receivedBytes: receivedBytes, totalBytes: totalBytes)
                 )
                 progressView(receivedBytes: receivedBytes, totalBytes: totalBytes)
                 actionRow(
-                    primaryTitle: UpdatesCopy.actionCancel,
+                    primaryTitle: copy.actionCancel,
                     primaryAction: controller.cancel,
-                    primaryID: AXID.Updates.cancel
+                    primaryID: UpdatesAXID.cancel
                 )
             }
         case .extracting:
             if case .extracting(let version, let progress) = controller.activity {
                 titleBlock(
-                    title: UpdatesCopy.extractingTitle(version: version),
-                    subtitle: UpdatesCopy.extractingSubtitle
+                    title: copy.extractingTitle(version: version),
+                    subtitle: copy.extractingSubtitle
                 )
                 ProgressView(value: min(max(0.9 + (progress * 0.1), 0.9), 1.0))
                 AXStateCompanion(
-                    id: AXID.Updates.extractProgress,
+                    id: UpdatesAXID.extractProgress,
                     value: axPercentString(progress)
                 )
                 actionRow(primaryTitle: nil, primaryAction: nil)
@@ -147,24 +154,24 @@ struct UpdatesTabView: View {
         case .readyToInstall:
             if case .readyToInstall(let version, let releaseNotes) = controller.activity {
                 titleBlock(
-                    title: UpdatesCopy.readyToInstallTitle(version: version),
-                    subtitle: UpdatesCopy.readyToInstallSubtitle
+                    title: copy.readyToInstallTitle(version: version),
+                    subtitle: copy.readyToInstallSubtitle
                 )
                 releaseNotesSection(releaseNotes)
                 actionRow(
-                    primaryTitle: UpdatesCopy.actionInstall,
+                    primaryTitle: copy.actionInstall,
                     primaryAction: controller.install,
-                    primaryID: AXID.Updates.install,
-                    secondaryTitle: UpdatesCopy.actionDismiss,
+                    primaryID: UpdatesAXID.install,
+                    secondaryTitle: copy.actionDismiss,
                     secondaryAction: controller.dismiss,
-                    secondaryID: AXID.Updates.dismiss
+                    secondaryID: UpdatesAXID.dismiss
                 )
             }
         case .installing:
             if case .installing(let version) = controller.activity {
                 titleBlock(
-                    title: UpdatesCopy.installingTitle(version: version),
-                    subtitle: UpdatesCopy.installingSubtitle
+                    title: copy.installingTitle(version: version),
+                    subtitle: copy.installingSubtitle
                 )
                 ProgressView()
             }
@@ -199,7 +206,7 @@ struct UpdatesTabView: View {
     private func backgroundDownloadBlock(_ phase: BackgroundDownloadPhase) -> some View {
         titleBlock(
             title: backgroundDownloadTitle(for: phase),
-            subtitle: UpdatesCopy.backgroundDownloadSubtitle
+            subtitle: copy.backgroundDownloadSubtitle
         )
         ProgressView()
     }
@@ -207,22 +214,22 @@ struct UpdatesTabView: View {
     @ViewBuilder
     private func deferredBlock(version: String) -> some View {
         titleBlock(
-            title: UpdatesCopy.deferredTitle(version: version),
-            subtitle: UpdatesCopy.deferredSubtitle
+            title: copy.deferredTitle(version: version),
+            subtitle: copy.deferredSubtitle
         )
         AXStateCompanion(
-            id: AXID.Updates.deferredInstallState,
+            id: UpdatesAXID.deferredInstallState,
             value: "deferred"
         )
         actionRow(
-            primaryTitle: UpdatesCopy.actionCheckAgain,
+            primaryTitle: copy.actionCheckAgain,
             primaryAction: controller.checkForUpdates,
-            primaryID: AXID.Updates.check,
+            primaryID: UpdatesAXID.check,
             primaryDisabled: !controller.canCheckAgainFromDeferred
         )
         actionReasonText(isEnabled: controller.canCheckAgainFromDeferred)
         AXStateCompanion(
-            id: AXID.Updates.checkAgainState,
+            id: UpdatesAXID.checkAgainState,
             value: axEnabledString(controller.canCheckAgainFromDeferred)
         )
     }
@@ -230,47 +237,47 @@ struct UpdatesTabView: View {
     @ViewBuilder
     private func stagedReadyBlock(_ update: AvailableUpdate) -> some View {
         titleBlock(
-            title: UpdatesCopy.stagedReadyTitle(version: update.version),
-            subtitle: UpdatesCopy.stagedReadySubtitle
+            title: copy.stagedReadyTitle(version: update.version),
+            subtitle: copy.stagedReadySubtitle
         )
         releaseNotesSection(update.releaseNotes)
         actionRow(
-            primaryTitle: UpdatesCopy.actionRelaunchToInstall,
+            primaryTitle: copy.actionRelaunchToInstall,
             primaryAction: relaunchToInstallStagedUpdate,
-            primaryID: AXID.Updates.install,
-            secondaryTitle: UpdatesCopy.actionDismiss,
+            primaryID: UpdatesAXID.install,
+            secondaryTitle: copy.actionDismiss,
             secondaryAction: controller.suppressStagedBlock,
-            secondaryID: AXID.Updates.dismissStaged
+            secondaryID: UpdatesAXID.dismissStaged
         )
     }
 
     @ViewBuilder
     private func failedBlock(availableVersion: String?) -> some View {
         titleBlock(
-            title: UpdatesCopy.errorTitle,
+            title: copy.errorTitle,
             subtitle: failedSubtitle(availableVersion: availableVersion)
         )
         if controller.hasLiveUpdateReply {
             actionRow(
-                primaryTitle: UpdatesCopy.actionRetry,
+                primaryTitle: copy.actionRetry,
                 primaryAction: controller.checkForUpdates,
-                primaryID: AXID.Updates.retry,
+                primaryID: UpdatesAXID.retry,
                 primaryDisabled: !controller.canRetry,
-                secondaryTitle: UpdatesCopy.actionDismiss,
+                secondaryTitle: copy.actionDismiss,
                 secondaryAction: controller.dismiss,
-                secondaryID: AXID.Updates.dismiss
+                secondaryID: UpdatesAXID.dismiss
             )
         } else {
             actionRow(
-                primaryTitle: UpdatesCopy.actionRetry,
+                primaryTitle: copy.actionRetry,
                 primaryAction: controller.checkForUpdates,
-                primaryID: AXID.Updates.retry,
+                primaryID: UpdatesAXID.retry,
                 primaryDisabled: !controller.canRetry
             )
         }
         actionReasonText(isEnabled: controller.canRetry)
         AXStateCompanion(
-            id: AXID.Updates.retryState,
+            id: UpdatesAXID.retryState,
             value: axEnabledString(controller.canRetry)
         )
     }
@@ -278,49 +285,49 @@ struct UpdatesTabView: View {
     @ViewBuilder
     private func availableBlock(_ update: AvailableUpdate) -> some View {
         titleBlock(
-            title: UpdatesCopy.updateAvailableTitle(version: update.version),
-            subtitle: UpdatesCopy.updateAvailableSubtitle(version: update.version)
+            title: copy.updateAvailableTitle(version: update.version),
+            subtitle: copy.updateAvailableSubtitle(version: update.version)
         )
         releaseNotesSection(update.releaseNotes)
         if controller.hasLiveUpdateReply {
             actionRow(
-                primaryTitle: UpdatesCopy.actionDownload,
+                primaryTitle: copy.actionDownload,
                 primaryAction: controller.download,
-                primaryID: AXID.Updates.download,
+                primaryID: UpdatesAXID.download,
                 primaryDisabled: !controller.canDownload,
-                secondaryTitle: UpdatesCopy.actionDismiss,
+                secondaryTitle: copy.actionDismiss,
                 secondaryAction: controller.dismiss,
-                secondaryID: AXID.Updates.dismiss
+                secondaryID: UpdatesAXID.dismiss
             )
         } else {
             actionRow(
-                primaryTitle: UpdatesCopy.actionDownload,
+                primaryTitle: copy.actionDownload,
                 primaryAction: controller.download,
-                primaryID: AXID.Updates.download,
+                primaryID: UpdatesAXID.download,
                 primaryDisabled: !controller.canDownload
             )
         }
         actionReasonText(isEnabled: controller.canDownload)
         AXStateCompanion(
-            id: AXID.Updates.downloadState,
+            id: UpdatesAXID.downloadState,
             value: axEnabledString(controller.canDownload)
         )
     }
 
     private func failedSubtitle(availableVersion: String?) -> String {
         if let version = availableVersion {
-            return UpdatesCopy.errorWithAvailableMessage(version: version)
+            return copy.errorWithAvailableMessage(version: version)
         }
 
-        return UpdatesCopy.errorMessage()
+        return copy.errorMessage()
     }
 
     private func backgroundDownloadTitle(for phase: BackgroundDownloadPhase) -> String {
         switch phase {
         case .downloading(let version):
-            return UpdatesCopy.backgroundDownloadingTitle(version: version)
+            return copy.backgroundDownloadingTitle(version: version)
         case .finishingUp(let version):
-            return UpdatesCopy.backgroundFinishingTitle(version: version)
+            return copy.backgroundFinishingTitle(version: version)
         }
     }
 
@@ -329,7 +336,8 @@ struct UpdatesTabView: View {
         if let reason = updatesPaneReason(
             isEnabled: isEnabled,
             backgroundDownload: controller.backgroundDownload,
-            liveness: controller.updatesPaneLiveness
+            liveness: controller.updatesPaneLiveness,
+            copy: copy
         ) {
             Text(reason)
                 .font(.caption)
@@ -339,25 +347,25 @@ struct UpdatesTabView: View {
     }
 
     private var autoUpdateGroupBox: some View {
-        GroupBox(label: Text(UpdatesCopy.autoUpdateGroupTitle).font(.headline)) {
+        GroupBox(label: Text(copy.autoUpdateGroupTitle).font(.headline)) {
             VStack(alignment: .leading, spacing: 12) {
-                Toggle(UpdatesCopy.autoCheckToggleLabel, isOn: $controller.automaticChecksEnabled)
-                    .accessibilityIdentifier(AXID.Updates.automaticChecks)
+                Toggle(copy.autoCheckToggleLabel, isOn: $controller.automaticChecksEnabled)
+                    .accessibilityIdentifier(UpdatesAXID.automaticChecks)
 
-                Picker(UpdatesCopy.frequencyPickerLabel, selection: frequencyBinding) {
+                Picker(copy.frequencyPickerLabel, selection: frequencyBinding) {
                     ForEach(FrequencyOption.allCases) { option in
-                        Text(option.label).tag(option)
+                        Text(option.label(copy: copy)).tag(option)
                     }
                 }
                 .disabled(!controller.automaticChecksEnabled)
-                .accessibilityIdentifier(AXID.Updates.frequencyPicker)
+                .accessibilityIdentifier(UpdatesAXID.frequencyPicker)
                 AXStateCompanion(
-                    id: AXID.Updates.frequencyState,
+                    id: UpdatesAXID.frequencyState,
                     value: frequencyBinding.wrappedValue.rawValue
                 )
 
-                Toggle(UpdatesCopy.autoDownloadToggleLabel, isOn: $controller.automaticDownloadsEnabled)
-                    .accessibilityIdentifier(AXID.Updates.automaticDownloads)
+                Toggle(copy.autoDownloadToggleLabel, isOn: $controller.automaticDownloadsEnabled)
+                    .accessibilityIdentifier(UpdatesAXID.automaticDownloads)
             }
             .padding(.vertical, 4)
         }
@@ -372,28 +380,28 @@ struct UpdatesTabView: View {
 
     private func lastCheckedSubtitle(now: Date) -> String {
         guard let date = controller.lastCheckedAt else {
-            return UpdatesCopy.lastCheckedNever
+            return copy.lastCheckedNever
         }
 
-        let relative = UpdatesCopy.lastCheckedRelative(checkedAt: date, now: now)
+        let relative = copy.lastCheckedRelative(checkedAt: date, now: now)
 
         switch controller.reconciledStatus.lastCheck?.outcome {
         case .upToDate:
-            return UpdatesCopy.lastCheckedUpToDate(relative: relative)
+            return copy.lastCheckedUpToDate(relative: relative)
         case .found:
             guard let version = controller.reconciledStatus.availableVersion else {
-                return UpdatesCopy.lastCheckedGeneric(relative: relative)
+                return copy.lastCheckedGeneric(relative: relative)
             }
-            return UpdatesCopy.lastCheckedUpdateFound(relative: relative, version: version)
+            return copy.lastCheckedUpdateFound(relative: relative, version: version)
         case .staged:
             guard let version = controller.reconciledStatus.availableVersion else {
-                return UpdatesCopy.lastCheckedGeneric(relative: relative)
+                return copy.lastCheckedGeneric(relative: relative)
             }
-            return UpdatesCopy.lastCheckedStaged(relative: relative, version: version)
+            return copy.lastCheckedStaged(relative: relative, version: version)
         case .failed:
-            return UpdatesCopy.lastCheckedFailed(relative: relative)
+            return copy.lastCheckedFailed(relative: relative)
         case .none:
-            return UpdatesCopy.lastCheckedGeneric(relative: relative)
+            return copy.lastCheckedGeneric(relative: relative)
         }
     }
 
@@ -415,9 +423,9 @@ struct UpdatesTabView: View {
     @ViewBuilder
     private func releaseNotesSection(_ releaseNotes: String?) -> some View {
         if let releaseNotes, !releaseNotes.isEmpty {
-            let model = ReleaseNotesViewModel(markdown: releaseNotes)
+            let model = ReleaseNotesViewModel(markdown: releaseNotes, copy: copy)
             VStack(alignment: .leading, spacing: 8) {
-                Text(UpdatesCopy.releaseNotesTitle)
+                Text(copy.releaseNotesTitle)
                     .font(.headline)
 
                 if let blocks = model.blocks {
@@ -435,9 +443,9 @@ struct UpdatesTabView: View {
 
                 Link(model.onlineLinkLabel, destination: model.onlineLinkURL)
                     .font(.callout)
-                    .accessibilityIdentifier(AXID.Updates.releaseNotesOnline)
+                    .accessibilityIdentifier(UpdatesAXID.releaseNotesOnline)
             }
-            .accessibilityIdentifier(AXID.Updates.releaseNotes)
+            .accessibilityIdentifier(UpdatesAXID.releaseNotes)
         }
     }
 
@@ -473,7 +481,7 @@ struct UpdatesTabView: View {
                 ProgressView()
             }
             AXStateCompanion(
-                id: AXID.Updates.downloadProgress,
+                id: UpdatesAXID.downloadProgress,
                 value: axDownloadPercentString(receivedBytes: receivedBytes, totalBytes: totalBytes)
             )
         }
@@ -520,14 +528,14 @@ struct UpdatesTabView: View {
     }
 }
 
-enum FrequencyOption: String, CaseIterable, Identifiable {
+public enum FrequencyOption: String, CaseIterable, Identifiable {
     case day
     case week
     case month
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var seconds: TimeInterval {
+    public var seconds: TimeInterval {
         switch self {
         case .day:
             return 86_400
@@ -538,24 +546,24 @@ enum FrequencyOption: String, CaseIterable, Identifiable {
         }
     }
 
-    var label: String {
+    public func label(copy: UpdatesCopy) -> String {
         switch self {
         case .day:
-            return UpdatesCopy.frequencyDay
+            return copy.frequencyDay
         case .week:
-            return UpdatesCopy.frequencyWeek
+            return copy.frequencyWeek
         case .month:
-            return UpdatesCopy.frequencyMonth
+            return copy.frequencyMonth
         }
     }
 
-    static func nearest(to interval: TimeInterval) -> FrequencyOption {
+    public static func nearest(to interval: TimeInterval) -> FrequencyOption {
         guard interval > 0 else { return .week }
         return Self.allCases.min { abs($0.seconds - interval) < abs($1.seconds - interval) } ?? .week
     }
 }
 
-enum UpdatesPaneBlock: Equatable {
+public enum UpdatesPaneBlock: Equatable {
     case checking
     case downloading
     case extracting
@@ -569,7 +577,7 @@ enum UpdatesPaneBlock: Equatable {
     case empty
 }
 
-func updatesPaneBlock(
+public func updatesPaneBlock(
     status: DurableUpdateStatus,
     activity: UpdateActivity,
     backgroundDownload: BackgroundDownloadPhase?,
@@ -608,16 +616,34 @@ func updatesPaneBlock(
     }
 }
 
-struct UpdatesPaneLiveness: Equatable, Sendable {
-    var canCheckForUpdates: Bool
-    var sparkleSessionInProgress: Bool
-    var activity: UpdateActivity
-    var hasPendingChoiceReply: Bool
-    var hasPendingCancellation: Bool
-    var installFinalizationInFlight: Bool
-    var installFinalizationCommitted: Bool
+public struct UpdatesPaneLiveness: Equatable, Sendable {
+    public var canCheckForUpdates: Bool
+    public var sparkleSessionInProgress: Bool
+    public var activity: UpdateActivity
+    public var hasPendingChoiceReply: Bool
+    public var hasPendingCancellation: Bool
+    public var installFinalizationInFlight: Bool
+    public var installFinalizationCommitted: Bool
 
-    var hasLiveSparkleSessionOrReply: Bool {
+    public init(
+        canCheckForUpdates: Bool,
+        sparkleSessionInProgress: Bool,
+        activity: UpdateActivity,
+        hasPendingChoiceReply: Bool,
+        hasPendingCancellation: Bool,
+        installFinalizationInFlight: Bool,
+        installFinalizationCommitted: Bool
+    ) {
+        self.canCheckForUpdates = canCheckForUpdates
+        self.sparkleSessionInProgress = sparkleSessionInProgress
+        self.activity = activity
+        self.hasPendingChoiceReply = hasPendingChoiceReply
+        self.hasPendingCancellation = hasPendingCancellation
+        self.installFinalizationInFlight = installFinalizationInFlight
+        self.installFinalizationCommitted = installFinalizationCommitted
+    }
+
+    public var hasLiveSparkleSessionOrReply: Bool {
         sparkleSessionInProgress
             || activity != .idle
             || hasPendingChoiceReply
@@ -626,37 +652,38 @@ struct UpdatesPaneLiveness: Equatable, Sendable {
             || installFinalizationCommitted
     }
 
-    var canDriveManualCheck: Bool {
+    public var canDriveManualCheck: Bool {
         canCheckForUpdates && !hasLiveSparkleSessionOrReply
     }
 }
 
-func updatesPaneReason(
+public func updatesPaneReason(
     isEnabled: Bool,
     backgroundDownload: BackgroundDownloadPhase?,
-    liveness: UpdatesPaneLiveness
+    liveness: UpdatesPaneLiveness,
+    copy: UpdatesCopy
 ) -> String? {
     guard !isEnabled else { return nil }
-    guard liveness.canCheckForUpdates else { return UpdatesCopy.actionReasonUpdatesUnavailable }
+    guard liveness.canCheckForUpdates else { return copy.actionReasonUpdatesUnavailable }
 
     switch backgroundDownload {
     case .downloading:
-        return UpdatesCopy.actionReasonDownloadInProgress
+        return copy.actionReasonDownloadInProgress
     case .finishingUp:
-        return UpdatesCopy.actionReasonDownloadFinishing
+        return copy.actionReasonDownloadFinishing
     case .none:
         break
     }
 
     if liveness.installFinalizationInFlight || liveness.installFinalizationCommitted {
-        return UpdatesCopy.actionReasonInstallHandoff
+        return copy.actionReasonInstallHandoff
     }
 
     if liveness.hasPendingChoiceReply {
-        return UpdatesCopy.actionReasonUpdateChoicePending
+        return copy.actionReasonUpdateChoicePending
     }
 
-    return UpdatesCopy.actionReasonUpdateInProgress
+    return copy.actionReasonUpdateInProgress
 }
 
 #if DEBUG

@@ -13,22 +13,6 @@ enum JournalEnabledState: CaseIterable {
     case disabled
 }
 
-struct AXStateCompanion: View {
-    let id: String
-    let value: String
-
-    var body: some View {
-        Text(value)
-            .font(.system(size: 1))
-            .frame(width: 1, height: 1)
-            .opacity(0.001)
-            .clipped()
-            .accessibilityIdentifier(id)
-            .accessibilityLabel(id)
-            .accessibilityValue(value)
-    }
-}
-
 extension JournalSidebarTabState {
     static let axTokens = ["selected", "unselected"]
 

@@ -247,32 +247,6 @@ enum AXID {
         }
     }
 
-    enum Updates {
-        static let statusState = "updates.status.state"
-        static let unavailable = "updates.status.unavailable"
-        static let check = "updates.action.check"
-        static let checkState = "updates.action.check.state"
-        static let cancel = "updates.action.cancel"
-        static let download = "updates.action.download"
-        static let downloadState = "updates.action.download.state"
-        static let install = "updates.action.install"
-        static let dismiss = "updates.action.dismiss"
-        static let dismissStaged = "updates.action.dismissStaged"
-        static let retry = "updates.action.retry"
-        static let retryState = "updates.action.retry.state"
-        static let checkAgainState = "updates.action.checkAgain.state"
-        static let releaseNotes = "updates.releaseNotes.content"
-        static let releaseNotesOnline = "updates.releaseNotes.online"
-        static let downloadProgress = "updates.downloadProgress.state"
-        static let extractProgress = "updates.extractProgress.state"
-        static let deferredInstallState = "updates.deferredInstall.state"
-        static let automaticChecks = "updates.preferences.automaticChecks"
-        static let frequencyPicker = "updates.preferences.frequency"
-        static let frequencyState = "updates.preferences.frequency.state"
-        static let automaticDownloads = "updates.preferences.automaticDownloads"
-        static let debugStatePicker = "updates.debug.state"
-    }
-
     enum About {
         static let logo = "about.identity.logo"
         static let title = "about.identity.title"

@@ -1,73 +1,108 @@
 import Foundation
 
-enum UpdatesCopy {
-    static let tabTitle = "updates"
+public struct UpdatesCopyProvider: Sendable {
+    public let appDisplayName: String
+    public let releaseNotesURL: URL
+    public let deferralLine: String
 
-    static let checkingTitle = "checking for updates"
-    static let checkingSubtitle = "looking for the latest version now."
-    static let checkingInline = "checking…"
+    public init(appDisplayName: String, releaseNotesURL: URL, deferralLine: String) {
+        self.appDisplayName = appDisplayName
+        self.releaseNotesURL = releaseNotesURL
+        self.deferralLine = deferralLine
+    }
+}
 
-    static let errorTitle = "update check failed"
-    static func errorMessage() -> String { "we couldn't check right now." }
+public extension UpdatesCopyProvider {
+    static let solstone = UpdatesCopyProvider(
+        appDisplayName: "sol",
+        releaseNotesURL: URL(string: "https://solstone.app/releases/macos")!,
+        deferralLine: "deferred — will continue after journal setup."
+    )
 
-    static func errorWithAvailableMessage(version: String) -> String {
+    static let journal = UpdatesCopyProvider(
+        appDisplayName: "journal",
+        releaseNotesURL: URL(string: "https://solstone.app/releases/macos")!,
+        deferralLine: "deferred — will continue after your journal is ready."
+    )
+}
+
+public struct UpdatesCopy: Sendable {
+    public let provider: UpdatesCopyProvider
+
+    public init(provider: UpdatesCopyProvider) {
+        self.provider = provider
+    }
+
+    public var tabTitle: String { "updates" }
+
+    public var checkingTitle: String { "checking for updates" }
+    public var checkingSubtitle: String { "looking for the latest version now." }
+    public var checkingInline: String { "checking…" }
+
+    public var errorTitle: String { "update check failed" }
+    public func errorMessage() -> String { "we couldn't check right now." }
+
+    public func errorWithAvailableMessage(version: String) -> String {
         "we couldn't check right now. version \(version) was found earlier."
     }
 
-    static let unavailableTitle = "updates unavailable"
-    static let unavailableSubtitle = "this build can't check for updates on its own. download the latest from solstone.app."
-
-    static let releaseNotesTitle = "what's new"
-    static let releaseNotesOnlineLinkLabel = "read the full notes online"
-    static let releaseNotesOnlineURL = URL(string: "https://solstone.app/releases/macos")!
-    static let finalizingSuffix = "finalizing"
-
-    static let actionCheckNow = "check now"
-    static let actionCheckAgain = "check again"
-    static let actionDownload = "download"
-    static let actionInstall = "install"
-    static let actionRelaunchToInstall = "relaunch to install"
-    static let actionCancel = "cancel"
-    static let actionDismiss = "dismiss"
-    static let actionRetry = "retry"
-
-    static let autoUpdateGroupTitle = "automatic updates"
-    static let autoCheckToggleLabel = "check for updates automatically"
-    static let autoDownloadToggleLabel = "download updates in the background"
-    static let frequencyPickerLabel = "how often"
-    static let frequencyDay = "every day"
-    static let frequencyWeek = "every week"
-    static let frequencyMonth = "every month"
-
-    static let lastCheckedNever = "never checked for updates"
-    static let lastCheckedJustNow = "just now"
-    static let privacyFootnote = "no usage data is ever sent. update checks only fetch the version manifest."
-
-    static func appHeader(version: String) -> String {
-        "sol \(version)"
+    public var unavailableTitle: String { "updates unavailable" }
+    public var unavailableSubtitle: String {
+        let host = provider.releaseNotesURL.host ?? "solstone.app"
+        return "this build can't check for updates on its own. download the latest from \(host)."
     }
 
-    static func lastCheckedUpToDate(relative: String) -> String {
-        "last checked \(relative) — sol is up to date"
+    public var releaseNotesTitle: String { "what's new" }
+    public var releaseNotesOnlineLinkLabel: String { "read the full notes online" }
+    public var releaseNotesOnlineURL: URL { provider.releaseNotesURL }
+    public var finalizingSuffix: String { "finalizing" }
+
+    public var actionCheckNow: String { "check now" }
+    public var actionCheckAgain: String { "check again" }
+    public var actionDownload: String { "download" }
+    public var actionInstall: String { "install" }
+    public var actionRelaunchToInstall: String { "relaunch to install" }
+    public var actionCancel: String { "cancel" }
+    public var actionDismiss: String { "dismiss" }
+    public var actionRetry: String { "retry" }
+
+    public var autoUpdateGroupTitle: String { "automatic updates" }
+    public var autoCheckToggleLabel: String { "check for updates automatically" }
+    public var autoDownloadToggleLabel: String { "download updates in the background" }
+    public var frequencyPickerLabel: String { "how often" }
+    public var frequencyDay: String { "every day" }
+    public var frequencyWeek: String { "every week" }
+    public var frequencyMonth: String { "every month" }
+
+    public var lastCheckedNever: String { "never checked for updates" }
+    public var lastCheckedJustNow: String { "just now" }
+    public var privacyFootnote: String { "no usage data is ever sent. update checks only fetch the version manifest." }
+
+    public func appHeader(version: String) -> String {
+        "\(provider.appDisplayName) \(version)"
     }
 
-    static func lastCheckedUpdateFound(relative: String, version: String) -> String {
+    public func lastCheckedUpToDate(relative: String) -> String {
+        "last checked \(relative) — \(provider.appDisplayName) is up to date"
+    }
+
+    public func lastCheckedUpdateFound(relative: String, version: String) -> String {
         "last checked \(relative) — version \(version) found"
     }
 
-    static func lastCheckedStaged(relative: String, version: String) -> String {
+    public func lastCheckedStaged(relative: String, version: String) -> String {
         "last checked \(relative) — version \(version) ready to install"
     }
 
-    static func lastCheckedFailed(relative: String) -> String {
+    public func lastCheckedFailed(relative: String) -> String {
         "last checked \(relative) — check failed"
     }
 
-    static func lastCheckedGeneric(relative: String) -> String {
+    public func lastCheckedGeneric(relative: String) -> String {
         "last checked \(relative)"
     }
 
-    static func lastCheckedRelative(checkedAt: Date, now: Date) -> String {
+    public func lastCheckedRelative(checkedAt: Date, now: Date) -> String {
         if now.timeIntervalSince(checkedAt) < 60 {
             return lastCheckedJustNow
         }
@@ -77,76 +112,84 @@ enum UpdatesCopy {
         return formatter.localizedString(for: checkedAt, relativeTo: now)
     }
 
-    static func updateAvailableTitle(version: String) -> String {
+    public func updateAvailableTitle(version: String) -> String {
         "version \(version) is available"
     }
 
-    static func updateAvailableSubtitle(version: String) -> String {
-        "sol \(version) is ready to download."
+    public func updateAvailableSubtitle(version: String) -> String {
+        "\(provider.appDisplayName) \(version) is ready to download."
     }
 
-    static func deferredTitle(version: String) -> String {
+    public func deferredTitle(version: String) -> String {
         version.isEmpty ? "deferred update" : "deferred update \(version)"
     }
 
-    static let deferredSubtitle = "deferred — will continue after journal setup."
+    public var deferredSubtitle: String { provider.deferralLine }
 
-    static func downloadingTitle(version: String) -> String {
+    public func downloadingTitle(version: String) -> String {
         "downloading \(version)"
     }
 
-    static func downloadingSubtitle(receivedBytes: UInt64, totalBytes: UInt64?) -> String {
+    public func downloadingSubtitle(receivedBytes: UInt64, totalBytes: UInt64?) -> String {
         byteProgress(receivedBytes: receivedBytes, totalBytes: totalBytes)
     }
 
-    static func backgroundDownloadingTitle(version: String?) -> String {
+    public func backgroundDownloadingTitle(version: String?) -> String {
         if let version, !version.isEmpty {
             return "downloading \(version) in the background…"
         }
         return "downloading an update in the background…"
     }
 
-    static func backgroundFinishingTitle(version: String?) -> String {
+    public func backgroundFinishingTitle(version: String?) -> String {
         if let version, !version.isEmpty {
             return "finishing up \(version) in the background…"
         }
         return "finishing up in the background…"
     }
 
-    static let backgroundDownloadSubtitle = "sol will let you know when the update is ready to install."
+    public var backgroundDownloadSubtitle: String {
+        "\(provider.appDisplayName) will let you know when the update is ready to install."
+    }
 
-    static func extractingTitle(version: String) -> String {
+    public func extractingTitle(version: String) -> String {
         "downloading \(version)"
     }
 
-    static let extractingSubtitle = "download complete — \(finalizingSuffix)."
+    public var extractingSubtitle: String {
+        "download complete — \(finalizingSuffix)."
+    }
 
-    static func readyToInstallTitle(version: String) -> String {
+    public func readyToInstallTitle(version: String) -> String {
         "ready to install \(version)"
     }
 
-    static func stagedReadyTitle(version: String) -> String {
+    public func stagedReadyTitle(version: String) -> String {
         "ready to install v\(version)"
     }
 
-    static let readyToInstallSubtitle = "the update is downloaded and ready when you are."
+    public var readyToInstallSubtitle: String { "the update is downloaded and ready when you are." }
 
-    static let stagedReadySubtitle = "the update is downloaded and will install when sol relaunches."
+    public var stagedReadySubtitle: String {
+        "the update is downloaded and will install when \(provider.appDisplayName) relaunches."
+    }
 
-    static func installingTitle(version: String) -> String {
+    public func installingTitle(version: String) -> String {
         "installing \(version)"
     }
 
-    static let installingSubtitle = "sol is handing off to the installer."
+    public var installingSubtitle: String {
+        "\(provider.appDisplayName) is handing off to the installer."
+    }
 
-    static let actionReasonUpdatesUnavailable = "updates are unavailable in this build"
-    static let actionReasonDownloadInProgress = "a download is already in progress"
-    static let actionReasonDownloadFinishing = "a download is finishing up"
-    static let actionReasonInstallHandoff = "an install handoff is already in progress"
-    static let actionReasonUpdateChoicePending = "an update needs a choice first"
-    static let actionReasonUpdateInProgress = "an update is already in progress"
+    public var actionReasonUpdatesUnavailable: String { "updates are unavailable in this build" }
+    public var actionReasonDownloadInProgress: String { "a download is already in progress" }
+    public var actionReasonDownloadFinishing: String { "a download is finishing up" }
+    public var actionReasonInstallHandoff: String { "an install handoff is already in progress" }
+    public var actionReasonUpdateChoicePending: String { "an update needs a choice first" }
+    public var actionReasonUpdateInProgress: String { "an update is already in progress" }
 
-    static func byteProgress(receivedBytes: UInt64, totalBytes: UInt64?) -> String {
+    public func byteProgress(receivedBytes: UInt64, totalBytes: UInt64?) -> String {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useKB, .useMB, .useGB]
         formatter.countStyle = .file

@@ -7,6 +7,7 @@ import os
 import JournalMarkKit
 import JournalRuntime
 import SolstoneCore
+import UpdateKit
 
 /// Single source of truth for tracked SwiftUI `Window` scenes.
 /// Any new `Window` scene added to the app MUST add a case here, and all
@@ -170,6 +171,8 @@ struct SolstoneCaptureApp: App {
         let appState = AppState()
         _appState = State(initialValue: appState)
         _updateController = State(initialValue: UpdateController(
+            log: Logger.setup,
+            errorDomain: "app.solstone.observer.updates",
             exclusivity: { appState.installer.exclusiveOperationInProgress },
             preInstallFinalizer: { @MainActor in
                 await appState.appQuitCoordinator.prepareForUpdaterInstall()

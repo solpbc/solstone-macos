@@ -12,15 +12,15 @@ struct ReleaseNotesViewModel {
     let onlineLinkLabel: String
     let onlineLinkURL: URL
 
-    init(markdown: String) {
-        self.init(markdown: markdown) { input in
+    init(markdown: String, copy: UpdatesCopy) {
+        self.init(markdown: markdown, copy: copy) { input in
             try AttributedString(markdown: input)
         }
     }
 
-    init(markdown: String, parser: (String) throws -> AttributedString) {
-        onlineLinkLabel = UpdatesCopy.releaseNotesOnlineLinkLabel
-        onlineLinkURL = UpdatesCopy.releaseNotesOnlineURL
+    init(markdown: String, copy: UpdatesCopy, parser: (String) throws -> AttributedString) {
+        onlineLinkLabel = copy.releaseNotesOnlineLinkLabel
+        onlineLinkURL = copy.releaseNotesOnlineURL
 
         guard !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             blocks = nil

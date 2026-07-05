@@ -5,7 +5,7 @@ import Sparkle
 import os
 
 @MainActor
-protocol SparkleUpdating: AnyObject {
+public protocol SparkleUpdating: AnyObject {
     var automaticallyChecksForUpdates: Bool { get set }
     var updateCheckInterval: TimeInterval { get set }
     var automaticallyDownloadsUpdates: Bool { get set }
@@ -18,36 +18,37 @@ extension SPUUpdater: SparkleUpdating {}
 
 @MainActor
 @Observable
-final class UpdateController {
-    typealias UpdaterFactory = @MainActor (SparkleUserDriver, any SPUUpdaterDelegate) -> (any SparkleUpdating)?
-    typealias ExclusivityProvider = @MainActor () -> Bool
-    typealias SessionLivenessProvider = @MainActor () -> Bool
-    typealias PreInstallFinalizer = @MainActor () async -> Void
-    typealias InstallFailureRecovery = @MainActor () async -> Void
-    typealias PostInstallRecoveryScheduler = @MainActor (@escaping @MainActor () -> Void) -> Void
-    typealias TerminationBeganPredicate = @MainActor @Sendable () -> Bool
-    typealias RunningVersionProvider = @MainActor () -> String
+public final class UpdateController {
+    public typealias UpdaterFactory = @MainActor (SparkleUserDriver, any SPUUpdaterDelegate) -> (any SparkleUpdating)?
+    public typealias ExclusivityProvider = @MainActor () -> Bool
+    public typealias SessionLivenessProvider = @MainActor () -> Bool
+    public typealias PreInstallFinalizer = @MainActor () async -> Void
+    public typealias InstallFailureRecovery = @MainActor () async -> Void
+    public typealias PostInstallRecoveryScheduler = @MainActor (@escaping @MainActor () -> Void) -> Void
+    public typealias TerminationBeganPredicate = @MainActor @Sendable () -> Bool
+    public typealias RunningVersionProvider = @MainActor () -> String
 
     private static let statusKey = "solstone.updates.status"
     private static let feedURLOverrideKey = "solstone.updates.feedURLOverride"
     private static let legacyLastCheckedAtKey = "solstone.updates.lastCheckedAt"
     private static let legacyLastCheckResultKey = "solstone.updates.lastCheckResult"
-    static let stagedInstallRecoveryDelay: Duration = .seconds(30)
-    static let stagedInstallRecoveryWarningText = "Sparkle staged install handoff did not terminate within 30 seconds; recovering update finalization"
+    public static let stagedInstallRecoveryDelay: Duration = .seconds(30)
+    public static let stagedInstallRecoveryWarningText = "Sparkle staged install handoff did not terminate within 30 seconds; recovering update finalization"
 
-    private(set) var activity: UpdateActivity = .idle
-    private(set) var backgroundDownload: BackgroundDownloadPhase? = nil
-    private(set) var reconciledStatus: ReconciledUpdateStatus
-    private(set) var availableUpdate: AvailableUpdate?
-    private(set) var deferredInstallIntent: DeferredInstallIntent?
-    private(set) var exclusiveOperationInProgress = false
-    private(set) var stagedBlockSuppressed = false
+    public private(set) var activity: UpdateActivity = .idle
+    public private(set) var backgroundDownload: BackgroundDownloadPhase? = nil
+    public private(set) var reconciledStatus: ReconciledUpdateStatus
+    public private(set) var availableUpdate: AvailableUpdate?
+    public private(set) var deferredInstallIntent: DeferredInstallIntent?
+    public private(set) var exclusiveOperationInProgress = false
+    public private(set) var stagedBlockSuppressed = false
 
-    private(set) var canCheckForUpdates: Bool
+    public private(set) var canCheckForUpdates: Bool
 
     private let updaterFactory: UpdaterFactory
     private let userDriver: SparkleUserDriver
     private let updaterDelegate: SparkleUpdaterDelegateAdapter
+    private let log: Logger
     private let exclusivityProvider: ExclusivityProvider?
     private let sessionLivenessProvider: SessionLivenessProvider?
     private let preInstallFinalizer: PreInstallFinalizer?
@@ -74,40 +75,40 @@ final class UpdateController {
     internal var checkForUpdatesInterceptor: (() -> Void)?
     #endif
 
-    var automaticChecksEnabled: Bool {
+    public var automaticChecksEnabled: Bool {
         get { updater?.automaticallyChecksForUpdates ?? true }
         set {
             updater?.automaticallyChecksForUpdates = newValue
         }
     }
 
-    var updateCheckInterval: TimeInterval {
+    public var updateCheckInterval: TimeInterval {
         get { updater?.updateCheckInterval ?? 86_400 }
         set {
             updater?.updateCheckInterval = newValue
         }
     }
 
-    var automaticDownloadsEnabled: Bool {
+    public var automaticDownloadsEnabled: Bool {
         get { updater?.automaticallyDownloadsUpdates ?? false }
         set {
             updater?.automaticallyDownloadsUpdates = newValue
         }
     }
 
-    var lastCheckedAt: Date? {
+    public var lastCheckedAt: Date? {
         reconciledStatus.lastCheck?.checkedAt
     }
 
-    var hasLiveUpdateReply: Bool {
+    public var hasLiveUpdateReply: Bool {
         pendingChoiceReply != nil
     }
 
-    var canActOnAvailableUpdateDirectly: Bool {
+    public var canActOnAvailableUpdateDirectly: Bool {
         activity == .idle && pendingChoiceReply != nil && availableUpdate != nil
     }
 
-    static var hasValidSparkleConfig: Bool {
+    public static var hasValidSparkleConfig: Bool {
         let info = Bundle.main.infoDictionary
         return validateSparkleConfig(
             feedURL: info?["SUFeedURL"] as? String,
@@ -115,7 +116,7 @@ final class UpdateController {
         )
     }
 
-    static func validateSparkleConfig(feedURL: String?, publicKey: String?) -> Bool {
+    public static func validateSparkleConfig(feedURL: String?, publicKey: String?) -> Bool {
         guard
             let feedURL,
             let publicKey,
@@ -129,7 +130,7 @@ final class UpdateController {
         return true
     }
 
-    static func feedURLOverride(from defaults: UserDefaults) -> String? {
+    public static func feedURLOverride(from defaults: UserDefaults) -> String? {
         guard let raw = defaults.string(forKey: feedURLOverrideKey) else { return nil }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard
@@ -142,12 +143,14 @@ final class UpdateController {
         return trimmed
     }
 
-    init(
+    public init(
         feedURL: String? = nil,
         publicKey: String? = nil,
         runningVersion: @escaping RunningVersionProvider = {
             Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
         },
+        log: Logger,
+        errorDomain: String,
         exclusivity: ExclusivityProvider? = nil,
         sessionInProgress: SessionLivenessProvider? = nil,
         preInstallFinalizer: PreInstallFinalizer? = nil,
@@ -159,8 +162,9 @@ final class UpdateController {
     ) {
         let info = Bundle.main.infoDictionary
         self.updaterFactory = updaterFactory
-        self.userDriver = SparkleUserDriver()
-        self.updaterDelegate = SparkleUpdaterDelegateAdapter()
+        self.userDriver = SparkleUserDriver(log: log)
+        self.updaterDelegate = SparkleUpdaterDelegateAdapter(log: log, errorDomain: errorDomain)
+        self.log = log
         self.exclusivityProvider = exclusivity
         self.sessionLivenessProvider = sessionInProgress
         self.preInstallFinalizer = preInstallFinalizer
@@ -191,13 +195,15 @@ final class UpdateController {
         if canCheckForUpdates {
             _ = ensureUpdaterStarted()
         } else {
-            Logger.setup.warning("Sparkle disabled: missing or invalid SUFeedURL / SUPublicEDKey")
+            log.warning("Sparkle disabled: missing or invalid SUFeedURL / SUPublicEDKey")
         }
 
         observeExclusivity()
     }
 
-    convenience init(
+    public convenience init(
+        log: Logger,
+        errorDomain: String,
         exclusivity: ExclusivityProvider? = nil,
         preInstallFinalizer: PreInstallFinalizer? = nil,
         installFailureRecovery: InstallFailureRecovery? = nil,
@@ -206,6 +212,8 @@ final class UpdateController {
         defaults: UserDefaults = .standard
     ) {
         self.init(
+            log: log,
+            errorDomain: errorDomain,
             exclusivity: exclusivity,
             preInstallFinalizer: preInstallFinalizer,
             installFailureRecovery: installFailureRecovery,
@@ -224,12 +232,12 @@ final class UpdateController {
 
     func checkForUpdates() {
         guard canCheckForUpdates else {
-            Logger.setup.warning("checkForUpdates() ignored because Sparkle config gate failed")
+            log.warning("checkForUpdates() ignored because Sparkle config gate failed")
             return
         }
 
         guard !hasLiveSparkleSessionOrReply else {
-            Logger.setup.info("checkForUpdates() ignored because a Sparkle update session is already active")
+            log.info("checkForUpdates() ignored because a Sparkle update session is already active")
             return
         }
 
@@ -242,7 +250,7 @@ final class UpdateController {
         #endif
 
         guard ensureUpdaterStarted(), let updater else {
-            Logger.setup.error("checkForUpdates() ignored because Sparkle updater failed to start")
+            log.error("checkForUpdates() ignored because Sparkle updater failed to start")
             activity = .idle
             recordFailedCheck()
             return
@@ -269,7 +277,7 @@ final class UpdateController {
         }
 
         guard !hasLiveSparkleSessionOrReply else {
-            Logger.setup.info("download() ignored because a Sparkle update session is already active")
+            log.info("download() ignored because a Sparkle update session is already active")
             return
         }
 
@@ -385,7 +393,7 @@ final class UpdateController {
 
     func presentUpdaterError(_ error: Error) {
         recoverCommittedInstallFinalization()
-        Logger.setup.error("Sparkle error: \(String(describing: error), privacy: .public)")
+        log.error("Sparkle error: \(String(describing: error), privacy: .public)")
         clearPendingInteractions()
         pendingDownloadIntent = false
         activity = .idle
@@ -413,7 +421,7 @@ final class UpdateController {
             postInstallRecoveryScheduler { [weak self] in
                 guard let self, self.installFinalizationCommitted else { return }
                 guard !self.terminationBegan() else { return }
-                Logger.setup.warning("\(Self.stagedInstallRecoveryWarningText)")
+                log.warning("\(Self.stagedInstallRecoveryWarningText)")
                 self.recoverCommittedInstallFinalization()
             }
             installFinalizationInFlight = false
@@ -537,7 +545,7 @@ final class UpdateController {
         )
     }
 
-    var durableUpdateStatus: DurableUpdateStatus {
+    public var durableUpdateStatus: DurableUpdateStatus {
         if let deferredInstallIntent {
             return .deferred(version: deferredInstallIntent.version)
         }
@@ -775,12 +783,12 @@ final class UpdateController {
 
     private func resumeStagedInstall() {
         guard canCheckForUpdates else {
-            Logger.setup.warning("installStagedUpdate() ignored because Sparkle config gate failed")
+            log.warning("installStagedUpdate() ignored because Sparkle config gate failed")
             return
         }
 
         guard ensureUpdaterStarted(), let updater else {
-            Logger.setup.error("installStagedUpdate() ignored because Sparkle updater failed to start")
+            log.error("installStagedUpdate() ignored because Sparkle updater failed to start")
             activity = .idle
             recordFailedCheck()
             return
@@ -867,7 +875,7 @@ final class UpdateController {
             let data = try JSONEncoder().encode(reconciledStatus)
             defaults.set(data, forKey: Self.statusKey)
         } catch {
-            Logger.setup.error("Failed to persist update status: \(String(describing: error), privacy: .public)")
+            log.error("Failed to persist update status: \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -877,7 +885,7 @@ final class UpdateController {
         }
 
         guard let updater = updater ?? updaterFactory(userDriver, updaterDelegate) else {
-            Logger.setup.error("Sparkle updater factory returned nil")
+            log.error("Sparkle updater factory returned nil")
             return false
         }
 
@@ -888,16 +896,16 @@ final class UpdateController {
             updaterStarted = true
 
             if defaults.string(forKey: Self.feedURLOverrideKey) == nil {
-                Logger.setup.info("Sparkle feed URL: using bundled Info.plist feed (no override set)")
+                log.info("Sparkle feed URL: using bundled Info.plist feed (no override set)")
             } else if let override = Self.feedURLOverride(from: defaults) {
-                Logger.setup.info("Sparkle feed URL override applied from \(Self.feedURLOverrideKey, privacy: .public): \(override, privacy: .public)")
+                log.info("Sparkle feed URL override applied from \(Self.feedURLOverrideKey, privacy: .public): \(override, privacy: .public)")
             } else {
-                Logger.setup.info("Sparkle feed URL override in \(Self.feedURLOverrideKey, privacy: .public) was rejected (not a valid https URL); falling back to bundled Info.plist feed")
+                log.info("Sparkle feed URL override in \(Self.feedURLOverrideKey, privacy: .public) was rejected (not a valid https URL); falling back to bundled Info.plist feed")
             }
 
             return true
         } catch {
-            Logger.setup.error("Sparkle updater start failed: \(String(describing: error), privacy: .public)")
+            log.error("Sparkle updater start failed: \(String(describing: error), privacy: .public)")
             return false
         }
     }
@@ -979,6 +987,14 @@ private extension ReconciledUpdateStatus {
 @MainActor
 private final class SparkleUpdaterDelegateAdapter: NSObject, SPUUpdaterDelegate {
     private weak var controller: UpdateController?
+    private let log: Logger
+    private let errorDomain: String
+
+    init(log: Logger, errorDomain: String) {
+        self.log = log
+        self.errorDomain = errorDomain
+        super.init()
+    }
 
     func attach(to controller: UpdateController) {
         self.controller = controller
@@ -987,7 +1003,7 @@ private final class SparkleUpdaterDelegateAdapter: NSObject, SPUUpdaterDelegate 
     func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
         guard controller?.shouldAllowSparkleUpdateCheck(updateCheck) == false else { return }
         throw NSError(
-            domain: "app.solstone.observer.updates",
+            domain: errorDomain,
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "update check deferred during journal setup"]
         )
@@ -1014,12 +1030,12 @@ private final class SparkleUpdaterDelegateAdapter: NSObject, SPUUpdaterDelegate 
     }
 
     func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
-        Logger.setup.debug("Sparkle downloaded update \(item.displayVersionString, privacy: .public)")
+        log.debug("Sparkle downloaded update \(item.displayVersionString, privacy: .public)")
         controller?.ingestBackgroundDownloadFinished(version: backgroundVersion(from: item))
     }
 
     func updater(_ updater: SPUUpdater, didExtractUpdate item: SUAppcastItem) {
-        Logger.setup.debug("Sparkle extracted update \(item.displayVersionString, privacy: .public)")
+        log.debug("Sparkle extracted update \(item.displayVersionString, privacy: .public)")
     }
 
     func updater(

@@ -3,6 +3,7 @@
 
 import SwiftUI
 import SolstoneCore
+import UpdateKit
 
 /// The content of the status bar menu
 struct MenuContent: View {
