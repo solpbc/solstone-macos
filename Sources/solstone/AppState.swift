@@ -735,7 +735,8 @@ public final class AppState {
     public static func forSnapshot(
         config: AppConfig = AppConfig(),
         notificationStatus: UNAuthorizationStatus = .authorized,
-        notifier: (any SolChatNotifying)? = nil
+        notifier: (any SolChatNotifying)? = nil,
+        initialTunnelPairing: StoredPairing? = nil
     ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
@@ -743,7 +744,8 @@ public final class AppState {
             snapshotConfig: config,
             notificationStatus: notificationStatus,
             isSnapshot: true,
-            notifier: notifier ?? NoopSolChatNotifier()
+            notifier: notifier ?? NoopSolChatNotifier(),
+            initialTunnelPairing: initialTunnelPairing
         )
     }
 
@@ -769,6 +771,7 @@ public final class AppState {
         notificationStatus: UNAuthorizationStatus,
         isSnapshot: Bool,
         notifier: any SolChatNotifying,
+        initialTunnelPairing: StoredPairing? = nil,
         loginService: any LoginItemService = LiveLoginItemService()
     ) {
         let pauseManager = PauseManager()
@@ -832,7 +835,9 @@ public final class AppState {
             postOpenChat: { _ in },
             notifier: notifier
         )
-        let tunnelLifecycleOwner = TunnelLifecycleOwner.dormantForSnapshot()
+        let tunnelLifecycleOwner = initialTunnelPairing
+            .map { pairing in TunnelLifecycleOwner.dormantForSnapshot(loadPairing: { pairing }) }
+            ?? TunnelLifecycleOwner.dormantForSnapshot()
         self.tunnelLifecycleOwner = tunnelLifecycleOwner
         self.pairingCoordinator = PairingCoordinator(
             loadPairing: { nil },

@@ -133,8 +133,10 @@ final class TunnelLifecycleOwner {
         refreshTunnelManagedFromStoredPairing()
     }
 
-    static func dormantForSnapshot() -> TunnelLifecycleOwner {
-        TunnelLifecycleOwner(pathMonitoringSource: NoopPathMonitoringSource())
+    static func dormantForSnapshot(
+        loadPairing: @escaping @Sendable () throws -> StoredPairing? = { try SPLKeychain.load() }
+    ) -> TunnelLifecycleOwner {
+        TunnelLifecycleOwner(loadPairing: loadPairing, pathMonitoringSource: NoopPathMonitoringSource())
     }
 
     func start() {

@@ -376,6 +376,35 @@ struct SnapshotTests {
         )
     }
 
+    @Test func settingsServiceRelayUnavailable() throws {
+        let config = AppConfig(
+            serverURL: ServiceMode.bundledServiceURL,
+            serverKey: "sk-test-key-1234",
+            serviceMode: .external
+        )
+        let state = AppState.forSnapshot(
+            config: config,
+            initialTunnelPairing: pairing(relayEnrollment: .unavailable)
+        )
+        state.setConfirmedMark(.uiTestSample)
+        state.uploadCoordinator.status = .synced
+        #expect(state.tunnelLifecycleOwner.relayAccessStatus == .unavailable)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .service,
+                initialStorageUsedMB: 42,
+                initialJournalName: "field journal",
+                initialShowPairingFlow: true
+            ),
+            // This paired relay state repeats the journal mark inside pairing, so it needs a taller canvas.
+            size: CGSize(width: settingsSize.width, height: 780),
+            to: "settings-service-relay-unavailable.png"
+        )
+    }
+
     @Test func settingsServiceYourJournalUnconfigured() throws {
         let state = AppState.forSnapshot()
         let updateController = makeSnapshotUpdateController()
@@ -539,6 +568,40 @@ struct SnapshotTests {
             SettingsView(appState: state, updateController: updateController, selectedTab: .status, initialStorageUsedMB: 42),
             size: settingsSize,
             to: "settings-status-recording.png"
+        )
+    }
+
+    @Test func settingsStatusError() throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        let updateController = makeSnapshotUpdateController()
+        state.errorMessage = "observation stopped unexpectedly — try again to resume."
+        #expect(state.observationRowState == .error)
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .status, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "settings-status-error.png"
+        )
+    }
+
+    // Intentionally no settings-status-error-inflight.png snapshot: tryAgainInFlight
+    // is view-local SettingsView @State with no init hook, and statusTab is private.
+    // Exercising it would require a production seam; this task only permits the
+    // tunnel pairing injection seam above.
+
+    @Test func settingsUpdatesFailedArm() throws {
+        let controller = UpdateController(
+            feedURL: "https://updates.solstone.app/solstone-macos/appcast.xml",
+            publicKey: "11qYAYKxCrfVS/7TyWQHOg7hcvPa9jIlrwIaaPcHUho=",
+            log: Logger.setup,
+            errorDomain: "app.solstone.observer.updates",
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in nil }
+        #expect(controller.canCheckForUpdates)
+        #expect(controller.updaterArmState == .failedToArm(reason: "the update system couldn't be prepared."))
+        try render(
+            SettingsView(appState: AppState.forSnapshot(), updateController: controller, selectedTab: .updates),
+            size: settingsSize,
+            to: "settings-updates-failed-arm.png"
         )
     }
 
