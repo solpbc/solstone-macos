@@ -1,7 +1,7 @@
 {
   "_generated" : "DO NOT EDIT. Generated from Sources/journal/AXID.swift + AXToken.swift. Run `make ax-contract` to regenerate; `make ci` fails on drift.",
   "grammar" : {
-    "identifier" : "^(journal)(\\.[a-z][a-zA-Z0-9-]*)+$",
+    "identifier" : "^(journal|updates)(\\.[a-z][a-zA-Z0-9-]*)+$",
     "token" : "^[a-z][a-z_]*$"
   },
   "identifiers" : {
@@ -12,7 +12,8 @@
           "journal",
           "runState",
           "backup",
-          "startup"
+          "startup",
+          "updates"
         ],
         "key" : "JournalPane.rawValue",
         "template" : "journal.sidebar.tab.{pane}"
@@ -23,7 +24,8 @@
           "journal",
           "runState",
           "backup",
-          "startup"
+          "startup",
+          "updates"
         ],
         "key" : "JournalPane.rawValue",
         "template" : "journal.sidebar.tab.{pane}.state"
@@ -50,7 +52,30 @@
       "journal.runState.start",
       "journal.runState.stop",
       "journal.startup.launchAtLogin",
-      "journal.startup.launchAtLogin.state"
+      "journal.startup.launchAtLogin.state",
+      "updates.action.cancel",
+      "updates.action.check",
+      "updates.action.check.state",
+      "updates.action.checkAgain.state",
+      "updates.action.dismiss",
+      "updates.action.dismissStaged",
+      "updates.action.download",
+      "updates.action.download.state",
+      "updates.action.install",
+      "updates.action.retry",
+      "updates.action.retry.state",
+      "updates.debug.state",
+      "updates.deferredInstall.state",
+      "updates.downloadProgress.state",
+      "updates.extractProgress.state",
+      "updates.preferences.automaticChecks",
+      "updates.preferences.automaticDownloads",
+      "updates.preferences.frequency",
+      "updates.preferences.frequency.state",
+      "updates.releaseNotes.content",
+      "updates.releaseNotes.online",
+      "updates.status.state",
+      "updates.status.unavailable"
     ]
   },
   "states" : {
@@ -97,13 +122,51 @@
     "journal.startup.launchAtLogin.state" : {
       "kind" : "enum",
       "vocabulary" : "JournalEnabledState"
+    },
+    "updates.action.check.state" : {
+      "kind" : "freeform"
+    },
+    "updates.action.checkAgain.state" : {
+      "kind" : "freeform"
+    },
+    "updates.action.download.state" : {
+      "kind" : "freeform"
+    },
+    "updates.action.retry.state" : {
+      "kind" : "freeform"
+    },
+    "updates.debug.state" : {
+      "kind" : "freeform"
+    },
+    "updates.deferredInstall.state" : {
+      "kind" : "freeform"
+    },
+    "updates.downloadProgress.state" : {
+      "kind" : "numeric"
+    },
+    "updates.extractProgress.state" : {
+      "kind" : "numeric"
+    },
+    "updates.preferences.frequency.state" : {
+      "kind" : "enum",
+      "vocabulary" : "FrequencyOption"
+    },
+    "updates.status.state" : {
+      "kind" : "enum",
+      "vocabulary" : "UpdateStatus"
     }
   },
   "surfaces" : [
-    "journal"
+    "journal",
+    "updates"
   ],
   "version" : 1,
   "vocabularies" : {
+    "FrequencyOption" : [
+      "day",
+      "week",
+      "month"
+    ],
     "JournalEnabledState" : [
       "enabled",
       "disabled"
@@ -123,6 +186,28 @@
     "JournalSidebarTabState" : [
       "selected",
       "unselected"
+    ],
+    "UpdateActivity" : [
+      "idle",
+      "checking",
+      "downloading",
+      "extracting",
+      "ready_to_install",
+      "installing"
+    ],
+    "UpdateStatus" : [
+      "idle",
+      "checking",
+      "downloading",
+      "extracting",
+      "ready_to_install",
+      "installing",
+      "downloading_background",
+      "deferred_install",
+      "update_available",
+      "up_to_date",
+      "error",
+      "staged_ready"
     ]
   }
 }

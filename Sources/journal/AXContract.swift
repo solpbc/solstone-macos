@@ -2,9 +2,10 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import UpdateKit
 
 enum AXContract {
-    static let idPattern = #"^(journal)(\.[a-z][a-zA-Z0-9-]*)+$"#
+    static let idPattern = #"^(journal|updates)(\.[a-z][a-zA-Z0-9-]*)+$"#
     static let tokenPattern = #"^[a-z][a-z_]*$"#
 
     private static let generatedMarker =
@@ -31,7 +32,30 @@ enum AXContract {
         AXID.Journal.Backup.openBackup,
         AXID.Journal.Backup.messageState,
         AXID.Journal.Startup.launchAtLogin,
-        AXID.Journal.Startup.launchAtLoginState
+        AXID.Journal.Startup.launchAtLoginState,
+        UpdatesAXID.statusState,
+        UpdatesAXID.unavailable,
+        UpdatesAXID.check,
+        UpdatesAXID.checkState,
+        UpdatesAXID.cancel,
+        UpdatesAXID.download,
+        UpdatesAXID.downloadState,
+        UpdatesAXID.install,
+        UpdatesAXID.dismiss,
+        UpdatesAXID.dismissStaged,
+        UpdatesAXID.retry,
+        UpdatesAXID.retryState,
+        UpdatesAXID.checkAgainState,
+        UpdatesAXID.releaseNotes,
+        UpdatesAXID.releaseNotesOnline,
+        UpdatesAXID.downloadProgress,
+        UpdatesAXID.extractProgress,
+        UpdatesAXID.deferredInstallState,
+        UpdatesAXID.automaticChecks,
+        UpdatesAXID.frequencyPicker,
+        UpdatesAXID.frequencyState,
+        UpdatesAXID.automaticDownloads,
+        UpdatesAXID.debugStatePicker
     ]
 
     static var enumerableIDs: [String] {
@@ -63,7 +87,10 @@ enum AXContract {
             "JournalSidebarTabState": JournalSidebarTabState.axTokens,
             "JournalRunDisplay": JournalRunDisplay.axTokens,
             "JournalHealthDisplay": JournalHealthDisplay.axTokens,
-            "JournalEnabledState": JournalEnabledState.axTokens
+            "JournalEnabledState": JournalEnabledState.axTokens,
+            "UpdateActivity": UpdateActivity.axTokens,
+            "FrequencyOption": FrequencyOption.allCases.map(\.rawValue),
+            "UpdateStatus": UpdateStatus.axTokens
         ]
     }
 
@@ -81,7 +108,18 @@ enum AXContract {
             AXID.Journal.RunState.runtimeVersionState: .freeform,
             AXID.Journal.RunState.appVersionState: .freeform,
             AXID.Journal.Backup.messageState: .freeform,
-            AXID.Journal.Startup.launchAtLoginState: .enum("JournalEnabledState")
+            AXID.Journal.Startup.launchAtLoginState: .enum("JournalEnabledState"),
+            UpdatesAXID.statusState: .enum("UpdateStatus"),
+            UpdatesAXID.checkState: .freeform,
+            UpdatesAXID.downloadState: .freeform,
+            UpdatesAXID.retryState: .freeform,
+            UpdatesAXID.checkAgainState: .freeform,
+            UpdatesAXID.downloadProgress: .numeric,
+            UpdatesAXID.extractProgress: .numeric,
+            UpdatesAXID.deferredInstallState: .freeform,
+            UpdatesAXID.frequencyState: .enum("FrequencyOption"),
+            // updates.debug.state is a DEBUG picker control, not a product state-value companion.
+            UpdatesAXID.debugStatePicker: .freeform
         ]
     }
 
@@ -105,7 +143,7 @@ enum AXContract {
             generated: generatedMarker,
             version: 1,
             grammar: Grammar(identifier: idPattern, token: tokenPattern),
-            surfaces: ["journal"],
+            surfaces: ["journal", "updates"],
             vocabularies: vocabularies,
             identifiers: IdentifierSet(
                 staticIDs: staticIDs.sorted(),

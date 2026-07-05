@@ -13,6 +13,7 @@ enum JournalPane: String, CaseIterable, Hashable, Identifiable {
     case runState
     case backup
     case startup
+    case updates
 
     var id: String { rawValue }
 
@@ -23,6 +24,7 @@ enum JournalPane: String, CaseIterable, Hashable, Identifiable {
         case .runState: return "run state"
         case .backup: return "backup"
         case .startup: return "startup"
+        case .updates: return "updates"
         }
     }
 
@@ -33,6 +35,7 @@ enum JournalPane: String, CaseIterable, Hashable, Identifiable {
         case .runState: return "waveform.path.ecg"
         case .backup: return "externaldrive"
         case .startup: return "power"
+        case .updates: return "arrow.down.circle"
         }
     }
 }
@@ -251,7 +254,7 @@ final class JournalWindowModel {
             Task { await loadDiskUsageIfNeeded() }
         case .runState:
             Task { await refreshRunState() }
-        case .home, .backup, .startup:
+        case .home, .backup, .startup, .updates:
             break
         }
     }

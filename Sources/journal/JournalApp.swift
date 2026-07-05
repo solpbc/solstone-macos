@@ -4,8 +4,8 @@
 import AppKit
 import JournalMarkKit
 import os
-import Sparkle
 import SwiftUI
+import UpdateKit
 
 @MainActor
 final class JournalAppModel {
@@ -14,23 +14,19 @@ final class JournalAppModel {
     let config: JournalAppConfig
     let supervisor: JournalSupervisor
     let windowModel: JournalWindowModel
-    private let updaterController: SPUStandardUpdaterController
     private var startupTask: Task<Void, Never>?
     private(set) var terminationPrepared = false
+    private(set) var appKitTerminationBegan = false
+
+    lazy var updateController: UpdateController = makeUpdateController()
 
     init(
         config: JournalAppConfig = JournalAppConfig(),
-        supervisor: JournalSupervisor = JournalSupervisor(),
-        startsUpdater: Bool = true
+        supervisor: JournalSupervisor = JournalSupervisor()
     ) {
         self.config = config
         self.supervisor = supervisor
         self.windowModel = JournalWindowModel(config: config, supervisor: supervisor)
-        self.updaterController = SPUStandardUpdaterController(
-            startingUpdater: startsUpdater,
-            updaterDelegate: nil,
-            userDriverDelegate: nil
-        )
     }
 
     func launch() {
@@ -56,10 +52,51 @@ final class JournalAppModel {
     }
 
     func prepareForTermination() async {
+        noteAppKitTerminationBegan()
         guard !terminationPrepared else { return }
         terminationPrepared = true
         startupTask?.cancel()
         await supervisor.terminate(reason: "ordinary-quit")
+    }
+
+    func noteAppKitTerminationBegan() {
+        appKitTerminationBegan = true
+    }
+
+    func resetAfterFailedUpdaterInstall() {
+        terminationPrepared = false
+        appKitTerminationBegan = false
+    }
+
+    func reestablishSupervisionAfterFailedUpdate() async {
+        guard let root = config.journalRoot else { return }
+        _ = await supervisor.start(journalRoot: root)
+    }
+
+    private func makeUpdateController() -> UpdateController {
+        UpdateController(
+            log: Logger.updates,
+            errorDomain: "app.solstone.journal.updates",
+            exclusivity: { [weak supervisor] in
+                guard let supervisor else { return false }
+                switch supervisor.state {
+                case .materializing, .starting, .waitingForReadiness:
+                    return true
+                default:
+                    return false
+                }
+            },
+            preInstallFinalizer: { [weak supervisor] in
+                await supervisor?.terminate(reason: "updater-install")
+            },
+            installFailureRecovery: { [weak self] in
+                self?.resetAfterFailedUpdaterInstall()
+                await self?.reestablishSupervisionAfterFailedUpdate()
+            },
+            terminationBegan: { [weak self] in
+                self?.appKitTerminationBegan ?? false
+            }
+        )
     }
 }
 
@@ -93,6 +130,7 @@ final class JournalAppDelegate: NSObject, NSApplicationDelegate {
         guard let model = JournalAppModel.shared else {
             return .terminateNow
         }
+        model.noteAppKitTerminationBegan()
         if model.terminationPrepared {
             return .terminateNow
         }
@@ -117,7 +155,7 @@ struct JournalApp: App {
 
     var body: some Scene {
         Window("journal", id: "journal") {
-            JournalWindowSceneRoot(model: model.windowModel)
+            JournalWindowSceneRoot(model: model.windowModel, updateController: model.updateController)
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
@@ -126,10 +164,11 @@ struct JournalApp: App {
 
 private struct JournalWindowSceneRoot: View {
     let model: JournalWindowModel
+    @Bindable var updateController: UpdateController
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        JournalSettingsWindow(model: model)
+        JournalSettingsWindow(model: model, updateController: updateController)
             .task {
                 await model.loadForWindowOpen()
             }

@@ -3,17 +3,22 @@
 
 import AppKit
 import JournalMarkKit
+import SolstoneCore
 import SwiftUI
+import UpdateKit
 
 struct JournalSettingsWindow: View {
     @Bindable var model: JournalWindowModel
+    @Bindable var updateController: UpdateController
     var openURL: (URL) -> Void
 
     init(
         model: JournalWindowModel,
+        updateController: UpdateController,
         openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }
     ) {
         self.model = model
+        self.updateController = updateController
         self.openURL = openURL
     }
 
@@ -63,6 +68,8 @@ struct JournalSettingsWindow: View {
             backupPane
         case .startup:
             startupPane
+        case .updates:
+            UpdatesTabView(controller: updateController, copy: UpdatesCopy(provider: .journal))
         }
     }
 

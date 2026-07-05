@@ -8,4 +8,5 @@ extension Logger {
 
     static let journalApp = Logger(subsystem: journalSubsystem, category: "app")
     static let journalSupervisor = Logger(subsystem: journalSubsystem, category: "supervisor")
+    static let updates = Logger(subsystem: journalSubsystem, category: "updates")
 }
