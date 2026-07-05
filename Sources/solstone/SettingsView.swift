@@ -1048,6 +1048,7 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(Color.orange.opacity(0.35), lineWidth: 1)
         )
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AXID.Settings.Service.journalHandoffBanner)
     }
 
