@@ -5,6 +5,7 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
 
@@ -24,7 +25,15 @@ class ImportWithoutPyNaClTest(unittest.TestCase):
 class BuildItemMarkdownFormatTest(unittest.TestCase):
     def test_description_has_sparkle_format_markdown(self):
         module = load_publish_appcast()
-        item = module.build_item("1.3.0", 9, "signature", 123, "https://example.com/app.dmg", "### test\n- one")
+        item = module.build_item(
+            module.APP_CONFIG["sol"],
+            "1.3.0",
+            9,
+            "signature",
+            123,
+            "https://example.com/app.dmg",
+            "### test\n- one",
+        )
         description = item.find("description")
 
         self.assertIsNotNone(description)
@@ -33,11 +42,60 @@ class BuildItemMarkdownFormatTest(unittest.TestCase):
     def test_description_text_is_byte_identical_to_notes_argument(self):
         module = load_publish_appcast()
         notes = "### test\n- one"
-        item = module.build_item("1.3.0", 9, "signature", 123, "https://example.com/app.dmg", notes)
+        item = module.build_item(
+            module.APP_CONFIG["sol"],
+            "1.3.0",
+            9,
+            "signature",
+            123,
+            "https://example.com/app.dmg",
+            notes,
+        )
         description = item.find("description")
 
         self.assertIsNotNone(description)
         self.assertEqual(description.text, notes)
+
+    def test_sol_pubdate_can_be_frozen_and_dmg_name_is_sol_prefixed(self):
+        module = load_publish_appcast()
+        config = module.APP_CONFIG["sol"]
+        dmg_name = config["dmg_name"].format(version="1.2.3")
+        item = module.build_item(
+            config,
+            "1.2.3",
+            9,
+            "signature",
+            123,
+            f"https://example.com/{dmg_name}",
+            "notes",
+            now=datetime(2026, 7, 5, 12, 34, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(dmg_name, "sol-1.2.3.dmg")
+        self.assertEqual(item.find("pubDate").text, "Sun, 05 Jul 2026 12:34:00 GMT")
+        self.assertTrue(item.find("enclosure").get("url").endswith("/sol-1.2.3.dmg"))
+
+
+class AppConfigTest(unittest.TestCase):
+    def test_per_app_mapping_isolated(self):
+        module = load_publish_appcast()
+        sol = module.APP_CONFIG["sol"]
+        journal = module.APP_CONFIG["journal"]
+
+        self.assertEqual(sol["prod_prefix"], "solstone-macos")
+        self.assertEqual(sol["staging_prefix"], "solstone-macos/_staging")
+        self.assertEqual(sol["plist_path"], "Sources/solstone/Info.plist")
+        self.assertEqual(sol["changelog_path"], "CHANGELOG.md")
+        self.assertEqual(sol["dmg_name"].format(version="1.2.3"), "sol-1.2.3.dmg")
+        self.assertEqual(sol["item_title"].format(version="1.2.3"), "Solstone 1.2.3")
+
+        self.assertEqual(journal["prod_prefix"], "journal-macos")
+        self.assertEqual(journal["staging_prefix"], "journal-macos/_staging")
+        self.assertEqual(journal["plist_path"], "Sources/journal/Info.plist")
+        self.assertEqual(journal["changelog_path"], "CHANGELOG-journal.md")
+        self.assertEqual(journal["dmg_name"].format(version="1.0.0"), "journal-1.0.0.dmg")
+        self.assertEqual(journal["item_title"].format(version="1.0.0"), "journal 1.0.0")
+        self.assertNotEqual(journal["plist_path"], sol["plist_path"])
 
 
 class PreflightWranglerTest(unittest.TestCase):
@@ -204,7 +262,7 @@ class Appcast404Test(unittest.TestCase):
         def fake_run(cmd, **kwargs):
             return types.SimpleNamespace(returncode=0, stdout="404", stderr="")
 
-        with mock.patch.object(sys, "argv", ["publish-appcast.py", "1.3.31"]), \
+        with mock.patch.object(sys, "argv", ["publish-appcast.py", "1.3.31", "--app", "sol"]), \
              mock.patch.object(module, "preflight_wrangler"), \
              mock.patch.object(module, "preflight_r2"), \
              mock.patch.object(module, "load_private_key", return_value=object()), \
@@ -227,7 +285,7 @@ class Appcast404Test(unittest.TestCase):
         def fake_run(cmd, **kwargs):
             return types.SimpleNamespace(returncode=0, stdout="404", stderr="")
 
-        with mock.patch.object(sys, "argv", ["publish-appcast.py", "1.3.31", "--first-publish"]), \
+        with mock.patch.object(sys, "argv", ["publish-appcast.py", "1.3.31", "--app", "sol", "--first-publish"]), \
              mock.patch.object(module, "preflight_wrangler"), \
              mock.patch.object(module, "preflight_r2"), \
              mock.patch.object(module, "load_private_key", return_value=object()), \
@@ -240,8 +298,44 @@ class Appcast404Test(unittest.TestCase):
              mock.patch.object(module, "head_check"):
             module.main()
 
-        seed.assert_called_once_with(module.PROD_PREFIX)
+        seed.assert_called_once_with(module.APP_CONFIG["sol"], module.APP_CONFIG["sol"]["prod_prefix"])
         self.assertEqual(upload.call_count, 2)
+
+    def test_journal_staging_first_publish_uses_journal_paths(self):
+        module = load_publish_appcast()
+        plist_paths = []
+
+        def fake_run(cmd, **kwargs):
+            return types.SimpleNamespace(returncode=0, stdout="404", stderr="")
+
+        def fake_read_info(version, plist_path):
+            plist_paths.append(plist_path)
+            return 1
+
+        with mock.patch.object(sys, "argv", [
+            "publish-appcast.py",
+            "1.0.0",
+            "--app",
+            "journal",
+            "--staging",
+            "--first-publish",
+        ]), \
+             mock.patch.object(module, "preflight_wrangler"), \
+             mock.patch.object(module, "preflight_r2"), \
+             mock.patch.object(module, "load_private_key", return_value=object()), \
+             mock.patch.object(module, "sign_dmg", return_value=("signature", 123)), \
+             mock.patch.object(module, "read_info_plist", side_effect=fake_read_info), \
+             mock.patch.object(module, "extract_release_notes", return_value="notes"), \
+             mock.patch.object(module, "run", fake_run), \
+             mock.patch.object(module, "seed_appcast", wraps=module.seed_appcast) as seed, \
+             mock.patch.object(module, "upload") as upload, \
+             mock.patch.object(module, "head_check"):
+            module.main()
+
+        self.assertEqual(plist_paths, ["Sources/journal/Info.plist"])
+        seed.assert_called_once_with(module.APP_CONFIG["journal"], module.APP_CONFIG["journal"]["staging_prefix"])
+        self.assertEqual(upload.call_args_list[0].args[1], "journal-macos/_staging/releases/v1.0.0/journal-1.0.0.dmg")
+        self.assertEqual(upload.call_args_list[1].args[1], "journal-macos/_staging/appcast.xml")
 
 
 if __name__ == "__main__":

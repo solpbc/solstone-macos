@@ -38,7 +38,8 @@ Source build (requires sol pbc Apple Developer Program identities in the local k
 git clone https://github.com/solpbc/solstone-macos.git
 cd solstone-macos
 make install         # dev dependencies (Xcode check, optional librsvg)
-make bundle-dist     # produce signed solstone.app with bundled uv + python
+make bundle-dist     # produce signed solstone.app without the journal runtime
+make bundle-dist-journal # produce signed journal.app with bundled runtime
 make run             # launch solstone.app from the source tree + stream logs
 ```
 
@@ -48,7 +49,8 @@ make run             # launch solstone.app from the source tree + stream logs
 
 - `make build` - Build both packages (debug)
 - `make release` - Build both packages (release)
-- `make bundle-dist` - Build the signed .app bundle (Developer ID + hardened runtime)
+- `make bundle-dist` - Build the signed sol .app bundle without the journal runtime (Developer ID + hardened runtime)
+- `make bundle-dist-journal` - Build the signed journal .app bundle with bundled runtime
 - `make run` - Launch `solstone.app` from the source tree and stream logs
 - `make test` - Run tests
 - `make ci` - Run terminology + Swift tests + Python tests
@@ -56,7 +58,9 @@ make run             # launch solstone.app from the source tree + stream logs
 - `make setup` - Alias for `make install`
 - `make clean` - Clean all build artifacts
 - `make reset` - Reset TCC permissions for testing
-- `make release-dmg` - Build signed + notarized + stapled DMG
+- `make release-dmg` - Build signed + notarized + stapled sol DMG (`sol-<version>.dmg`)
+- `make release-dmg-journal` - Build signed + notarized + stapled journal DMG
+- `make release-dmg-both` - Build signed + notarized + stapled sol + journal DMGs
 
 ## Architecture
 

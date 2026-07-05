@@ -2,14 +2,14 @@
 """
 Publish a Sparkle 2 auto-update release.
 Usage:
-  publish-appcast.py <version> [--staging]
+  publish-appcast.py <version> --app {sol,journal} [--staging]
 Inputs:
-  - ./solstone-<version>.dmg in CWD
-  - Sources/solstone/Info.plist (CFBundleVersion int, CFBundleShortVersionString must equal <version>)
-  - CHANGELOG.md (## [<version>] block)
+  - ./sol-<version>.dmg or ./journal-<version>.dmg in CWD
+  - app Info.plist (CFBundleVersion int, CFBundleShortVersionString must equal <version>)
+  - app changelog (## [<version>] block)
   - $SOLSTONE_SPARKLE_KEY_PATH (default /tmp/sparkle-priv.key), mode 600, 44-byte base64 Ed25519 seed
 Side effects:
-  - R2 put of DMG to <bucket>/<prefix>/releases/v<version>/solstone-<version>.dmg
+  - R2 put of DMG to <bucket>/<prefix>/releases/v<version>/<app>-<version>.dmg
   - R2 put of updated appcast.xml to <bucket>/<prefix>/appcast.xml
   - curl HEAD sanity checks
 RELEASE-HOST ONLY. Requires: wrangler, curl, PyNaCl.
@@ -32,19 +32,41 @@ from typing import NoReturn, Optional, Tuple
 
 R2_BUCKET = "solstone-updates"
 BASE_URL = "https://updates.solstone.app"
-PROD_PREFIX = "solstone-macos"
-STAGING_PREFIX = "solstone-macos/_staging"
 SPARKLE_NS = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 MIN_SYSTEM = "15.0"
 # Standard Sparkle "full release notes" hook — points the updater's full-notes
 # link at the branded, appcast-driven macOS release history page.
-FULL_RELEASE_NOTES_LINK = "https://solstone.app/releases/macos"
 DEFAULT_KEY_PATH = "/tmp/sparkle-priv.key"
 DEFAULT_R2_CREDENTIALS_PATH = "/home/jer/projects/extro/cso/vault/credentials/cloudflare-r2.json"
 WRANGLER_MAX_UPLOAD_BYTES = 300 * 1024 * 1024
 # Cloudflare account id (account "jer"). wrangler whoami must list this — used by
 # preflight_wrangler() to catch a silently-degraded OAuth token before any upload.
 CF_ACCOUNT_ID = "3f2c1528c7d4d9685819ea9e9e307c92"
+
+APP_CONFIG = {
+    "sol": {
+        "prod_prefix": "solstone-macos",
+        "staging_prefix": "solstone-macos/_staging",
+        "plist_path": "Sources/solstone/Info.plist",
+        "changelog_path": "CHANGELOG.md",
+        "dmg_name": "sol-{version}.dmg",
+        "item_title": "Solstone {version}",
+        "seed_title": "solstone",
+        "seed_description": "solstone observer updates",
+        "full_release_notes_link": "https://solstone.app/releases/macos",
+    },
+    "journal": {
+        "prod_prefix": "journal-macos",
+        "staging_prefix": "journal-macos/_staging",
+        "plist_path": "Sources/journal/Info.plist",
+        "changelog_path": "CHANGELOG-journal.md",
+        "dmg_name": "journal-{version}.dmg",
+        "item_title": "journal {version}",
+        "seed_title": "journal",
+        "seed_description": "journal updates",
+        "full_release_notes_link": "https://solstone.app/releases/journal-macos",
+    },
+}
 
 ET.register_namespace("sparkle", SPARKLE_NS)
 
@@ -101,8 +123,7 @@ def sign_dmg(key: nacl.signing.SigningKey, dmg_path: str) -> Tuple[str, int]:
     signature = key.sign(payload).signature
     return base64.b64encode(signature).decode("ascii"), len(payload)
 
-def read_info_plist(version: str) -> int:
-    plist_path = "Sources/solstone/Info.plist"
+def read_info_plist(version: str, plist_path: str) -> int:
     try:
         with open(plist_path, "rb") as f:
             plist = plistlib.load(f)
@@ -117,16 +138,16 @@ def read_info_plist(version: str) -> int:
     except ValueError:
         die(f"{plist_path}: CFBundleVersion is not an integer: {bundle_version_raw}")
 
-def extract_release_notes(version: str) -> str:
+def extract_release_notes(version: str, changelog_path: str) -> str:
     try:
-        changelog = open("CHANGELOG.md", "r", encoding="utf-8").read()
+        changelog = open(changelog_path, "r", encoding="utf-8").read()
     except OSError as exc:
-        die(f"CHANGELOG.md: {exc}")
+        die(f"{changelog_path}: {exc}")
     header_re = re.compile(rf"^## \[{re.escape(version)}\](?: .*)?$", re.MULTILINE)
     next_header_re = re.compile(r"^## \[", re.MULTILINE)
     header_match = header_re.search(changelog)
     if not header_match:
-        die(f"CHANGELOG.md: no entry for version {version}")
+        die(f"{changelog_path}: no entry for version {version}")
     body_start = header_match.end()
     next_match = next_header_re.search(changelog, body_start)
     body_end = next_match.start() if next_match else len(changelog)
@@ -150,23 +171,33 @@ def fetch_appcast(url: str) -> Optional[ET.ElementTree]:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
-def seed_appcast(prefix: str) -> ET.ElementTree:
+def seed_appcast(config: dict[str, str], prefix: str) -> ET.ElementTree:
     rss = ET.Element("rss", {"version": "2.0"})
     channel = ET.SubElement(rss, "channel")
-    ET.SubElement(channel, "title").text = "solstone"
+    ET.SubElement(channel, "title").text = config["seed_title"]
     ET.SubElement(channel, "link").text = f"{BASE_URL}/{prefix}/appcast.xml"
-    ET.SubElement(channel, "description").text = "solstone observer updates"
+    ET.SubElement(channel, "description").text = config["seed_description"]
     ET.SubElement(channel, "language").text = "en"
     return ET.ElementTree(rss)
 
-def build_item(version: str, bundle_version: int, signature: str, length: int, enclosure_url: str, notes: str) -> ET.Element:
+def build_item(
+    config: dict[str, str],
+    version: str,
+    bundle_version: int,
+    signature: str,
+    length: int,
+    enclosure_url: str,
+    notes: str,
+    now: Optional[datetime] = None,
+) -> ET.Element:
     item = ET.Element("item")
-    ET.SubElement(item, "title").text = f"Solstone {version}"
-    ET.SubElement(item, "pubDate").text = format_datetime(datetime.now(timezone.utc), usegmt=True)
+    ET.SubElement(item, "title").text = config["item_title"].format(version=version)
+    pubdate = now if now is not None else datetime.now(timezone.utc)
+    ET.SubElement(item, "pubDate").text = format_datetime(pubdate, usegmt=True)
     ET.SubElement(item, f"{{{SPARKLE_NS}}}version").text = str(bundle_version)
     ET.SubElement(item, f"{{{SPARKLE_NS}}}shortVersionString").text = version
     ET.SubElement(item, f"{{{SPARKLE_NS}}}minimumSystemVersion").text = MIN_SYSTEM
-    ET.SubElement(item, f"{{{SPARKLE_NS}}}fullReleaseNotesLink").text = FULL_RELEASE_NOTES_LINK
+    ET.SubElement(item, f"{{{SPARKLE_NS}}}fullReleaseNotesLink").text = config["full_release_notes_link"]
     ET.SubElement(item, "description", {f"{{{SPARKLE_NS}}}format": "markdown"}).text = notes
     ET.SubElement(item, "enclosure", {"url": enclosure_url, "length": str(length), "type": "application/x-apple-diskimage", f"{{{SPARKLE_NS}}}edSignature": signature})
     return item
@@ -286,14 +317,16 @@ def preflight_wrangler() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Publish a Sparkle 2 appcast release.")
     parser.add_argument("version", help='CFBundleShortVersionString, e.g. "1.1.0"')
+    parser.add_argument("--app", choices=sorted(APP_CONFIG), required=True, help="App feed to publish")
     parser.add_argument("--staging", action="store_true", help="Publish to the staging feed")
     parser.add_argument("--first-publish", action="store_true", help="Seed a new appcast feed if none exists")
     args = parser.parse_args()
     preflight_wrangler()  # catch degraded wrangler auth before signing/uploading anything
     preflight_r2()  # catch broken R2-S3 credentials before signing/uploading large DMGs
-    prefix = STAGING_PREFIX if args.staging else PROD_PREFIX
+    config = APP_CONFIG[args.app]
+    prefix = config["staging_prefix"] if args.staging else config["prod_prefix"]
     key_path = os.environ.get("SOLSTONE_SPARKLE_KEY_PATH", DEFAULT_KEY_PATH)
-    dmg_name = f"solstone-{args.version}.dmg"
+    dmg_name = config["dmg_name"].format(version=args.version)
     dmg_path = os.path.abspath(dmg_name)
     appcast_url = f"{BASE_URL}/{prefix}/appcast.xml"
     enclosure_url = f"{BASE_URL}/{prefix}/releases/v{args.version}/{dmg_name}"
@@ -301,14 +334,14 @@ def main() -> None:
     dmg_key = f"{prefix}/releases/v{args.version}/{dmg_name}"
     key = load_private_key(key_path)
     signature, length = sign_dmg(key, dmg_path)
-    bundle_version = read_info_plist(args.version)
-    notes = extract_release_notes(args.version)
+    bundle_version = read_info_plist(args.version, config["plist_path"])
+    notes = extract_release_notes(args.version, config["changelog_path"])
     tree = fetch_appcast(appcast_url)
     if tree is None:
         if not args.first_publish:
             die(f"{appcast_url}: appcast not found (HTTP 404); pass --first-publish only when intentionally creating a new feed")
-        tree = seed_appcast(prefix)
-    item = build_item(args.version, bundle_version, signature, length, enclosure_url, notes)
+        tree = seed_appcast(config, prefix)
+    item = build_item(config, args.version, bundle_version, signature, length, enclosure_url, notes)
     merge_item(tree, item, bundle_version)
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         tmp.write(serialize_appcast(tree))

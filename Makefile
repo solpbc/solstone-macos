@@ -1,7 +1,7 @@
-.PHONY: build release release-universal run clean test ax-contract integration-test snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
-        signing-check notary-restore unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg \
-        vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke brand-sync \
-        release-preflight bump-release journal-app-dev run-journal
+.PHONY: build release release-universal release-universal-journal run clean test ax-contract integration-test snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
+        signing-check notary-restore unlock-signing bundle-dist bundle-dist-journal dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
+        vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-materialize-smoke brand-sync \
+        release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
 
 # Default goal when running bare `make` — build the project. brand-sync is
 # opt-in (run it manually when the brand spec updates).
@@ -33,7 +33,14 @@ ASC_API_KEY_ID         ?= SNP7CMKMZ5
 ASC_API_ISSUER         ?= 0fe42f6d-2c46-4f09-a9c2-152b20b3ea19
 DIST_VERSION           := $(shell python3 -c "import plistlib; print(plistlib.load(open('Sources/solstone/Info.plist','rb'))['CFBundleShortVersionString'])" 2>/dev/null || echo 0.0.0)
 DIST_BUILD             := $(shell python3 -c "import plistlib; print(plistlib.load(open('Sources/solstone/Info.plist','rb'))['CFBundleVersion'])" 2>/dev/null || echo 0)
-DMG_NAME               ?= solstone-$(DIST_VERSION).dmg
+DMG_NAME               ?= sol-$(DIST_VERSION).dmg
+JOURNAL_DIST_VERSION   := $(shell python3 -c "import plistlib; print(plistlib.load(open('Sources/journal/Info.plist','rb'))['CFBundleShortVersionString'])" 2>/dev/null || echo 0.0.0)
+JOURNAL_DIST_BUILD     := $(shell python3 -c "import plistlib; print(plistlib.load(open('Sources/journal/Info.plist','rb'))['CFBundleVersion'])" 2>/dev/null || echo 0)
+JOURNAL_DMG_NAME       ?= journal-$(JOURNAL_DIST_VERSION).dmg
+BOTH_DMG_NAME          ?= sol-journal-$(DIST_VERSION).dmg
+DMG_VOLNAME            ?= sol
+DMG_APP                ?= solstone.app
+DMG_ICON               ?= solstone.app
 SPARKLE_ARTIFACT_DIR   ?= .build/artifacts/sparkle/Sparkle
 SPARKLE_FRAMEWORK      ?= $(SPARKLE_ARTIFACT_DIR)/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
 ENTITLEMENTS_PLIST     := Sources/solstone/entitlements.plist
@@ -223,7 +230,11 @@ release:
 
 # Build universal binary (arm64 + x86_64)
 release-universal:
-	swift build -c release --arch arm64 --arch x86_64
+	swift build -c release --arch arm64 --arch x86_64 --product solstone
+	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
+
+release-universal-journal:
+	swift build -c release --arch arm64 --arch x86_64 --product journal
 	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
 
 # Run the built app from the source tree and stream all logs to a timestamped
@@ -272,10 +283,11 @@ check-dev-deps:
 # =======================================================================
 # Distribution pipeline: Developer ID signed + notarized DMG
 #
-# Use `make release-dmg` to produce a signed, notarized, stapled DMG ready
-# to hand out for ad-hoc install. `make bundle-dist` is the single bundle
-# entry point — produces solstone.app signed under Developer ID Application
-# with hardened runtime + bundled uv + bundled python at Contents/Resources.
+# Use `make release-dmg`, `make release-dmg-journal`, or `make release-dmg-both`
+# to produce signed, notarized, stapled DMGs ready to hand out for ad-hoc install.
+# `make bundle-dist` signs solstone.app without the journal runtime plane; `make
+# bundle-dist-journal` signs journal.app with bundled uv, Python, and wheelhouse
+# runtime material.
 # All signing runs headless over SSH using the sol-signing keychain (see
 # header).
 # =======================================================================
@@ -339,40 +351,26 @@ release-preflight: signing-check
 		[ "$$AHEAD" = "0" ] || { echo "warn: $$AHEAD local commit(s) ahead of upstream — push before release"; }
 	@echo "✓ release pre-flight clean: tree clean, no stale processes, signing ready"
 
-# Bump the .app's user-visible version + the bundled-solstone pin in one
-# shot. Sole entry point for "what changes for a new release" — keeps
-# Info.plist, Makefile pins, BundleConfig, and CHANGELOG.md in sync so
-# no piece gets forgotten.
+# Bump sol.app's user-visible version and root changelog only. Journal runtime
+# pins move through bump-release-journal so sol releases do not touch
+# BundleConfig or backend material.
 #
-# Usage: make bump-release VERSION=1.1.4 BUILD=6 SOLSTONE=0.3.3
+# Usage: make bump-release VERSION=1.1.4 BUILD=6
 #   VERSION  required, semver — sets CFBundleShortVersionString
 #   BUILD    required, integer — sets CFBundleVersion (must be > current)
-#   SOLSTONE optional — sets SOLSTONE_PIN_VERSION + SOLSTONE_MIN_VERSION
-#            + SOLSTONE_REF (as the vX.Y.Z tag, so wheelhouse vendoring
-#            archives the matching journal source); omit to keep all three.
 #
-# Side effects: Info.plist updated via plutil, Makefile pins updated via
-# sed, BundleConfig.swift regenerated, CHANGELOG.md scaffold prepended
-# for the new version (date defaults to today). Does NOT commit — review
-# the diff, fill in the CHANGELOG body, then commit + push.
+# Side effects: sol Info.plist updated via plutil and CHANGELOG.md scaffold
+# prepended for the new version (date defaults to today). Does NOT commit.
 bump-release:
 	@test -n "$(VERSION)" || { echo "error: VERSION=... required (e.g. VERSION=1.1.4)"; exit 1; }
 	@test -n "$(BUILD)"   || { echo "error: BUILD=... required (e.g. BUILD=6)"; exit 1; }
+	@test -z "$(SOLSTONE)" || { echo "error: SOLSTONE= belongs to bump-release-journal"; exit 1; }
 	@CURRENT_BUILD="$(DIST_BUILD)"; \
 		python3 -c "import sys; sys.exit(0 if int('$(BUILD)') > int('$$CURRENT_BUILD') else 1)" || \
 		{ echo "error: BUILD=$(BUILD) must be strictly greater than current $$CURRENT_BUILD (Sparkle uses CFBundleVersion for 'is newer?')"; exit 1; }
 	@/usr/bin/plutil -replace CFBundleShortVersionString -string "$(VERSION)" Sources/solstone/Info.plist
 	@/usr/bin/plutil -replace CFBundleVersion -string "$(BUILD)" Sources/solstone/Info.plist
 	@echo "✓ Info.plist: CFBundleShortVersionString=$(VERSION), CFBundleVersion=$(BUILD)"
-	@if [ -n "$(SOLSTONE)" ]; then \
-		sed -i '' "s/^SOLSTONE_PIN_VERSION ?= .*/SOLSTONE_PIN_VERSION ?= $(SOLSTONE)/" Makefile; \
-		sed -i '' "s/^SOLSTONE_MIN_VERSION ?= .*/SOLSTONE_MIN_VERSION ?= $(SOLSTONE)/" Makefile; \
-		sed -i '' "s/^SOLSTONE_REF ?= .*/SOLSTONE_REF ?= v$(SOLSTONE)/" Makefile; \
-		echo "✓ Makefile pins: SOLSTONE_PIN_VERSION = $(SOLSTONE), SOLSTONE_REF = v$(SOLSTONE)"; \
-		$(MAKE) -s SOLSTONE_PIN_VERSION="$(SOLSTONE)" SOLSTONE_MIN_VERSION="$(SOLSTONE)" generate-bundle-config; \
-	else \
-		$(MAKE) -s generate-bundle-config; \
-	fi
 	@if grep -q "^## \[$(VERSION)\]" CHANGELOG.md; then \
 		echo "note: CHANGELOG.md already has an entry for $(VERSION); leaving it alone"; \
 	else \
@@ -384,10 +382,41 @@ bump-release:
 	@echo "next steps:"
 	@echo "  1. edit CHANGELOG.md — replace scaffold bullets with real release notes"
 	@echo "  2. git diff to review"
-	@echo "  3. git add Sources/solstone/Info.plist Makefile Sources/JournalRuntime/BundleConfig.swift CHANGELOG.md"
+	@echo "  3. git add Sources/solstone/Info.plist Makefile CHANGELOG.md"
 	@echo "  4. git commit -m 'release: bump to $(VERSION) (build $(BUILD))'"
 	@echo "  5. git push origin main"
 	@echo "  6. make release-preflight && make release-dmg"
+
+bump-release-journal:
+	@test -n "$(VERSION)" || { echo "error: VERSION=... required (e.g. VERSION=1.0.1)"; exit 1; }
+	@test -n "$(BUILD)"   || { echo "error: BUILD=... required (e.g. BUILD=2)"; exit 1; }
+	@test -n "$(SOLSTONE)" || { echo "error: SOLSTONE=... required for journal runtime pin"; exit 1; }
+	@CURRENT_BUILD="$(JOURNAL_DIST_BUILD)"; \
+		python3 -c "import sys; sys.exit(0 if int('$(BUILD)') > int('$$CURRENT_BUILD') else 1)" || \
+		{ echo "error: BUILD=$(BUILD) must be strictly greater than current journal build $$CURRENT_BUILD"; exit 1; }
+	@/usr/bin/plutil -replace CFBundleShortVersionString -string "$(VERSION)" Sources/journal/Info.plist
+	@/usr/bin/plutil -replace CFBundleVersion -string "$(BUILD)" Sources/journal/Info.plist
+	@echo "✓ journal Info.plist: CFBundleShortVersionString=$(VERSION), CFBundleVersion=$(BUILD)"
+	@sed -i '' "s/^SOLSTONE_PIN_VERSION ?= .*/SOLSTONE_PIN_VERSION ?= $(SOLSTONE)/" Makefile
+	@sed -i '' "s/^SOLSTONE_MIN_VERSION ?= .*/SOLSTONE_MIN_VERSION ?= $(SOLSTONE)/" Makefile
+	@sed -i '' "s/^SOLSTONE_REF ?= .*/SOLSTONE_REF ?= v$(SOLSTONE)/" Makefile
+	@echo "✓ Makefile pins: SOLSTONE_PIN_VERSION = $(SOLSTONE), SOLSTONE_REF = v$(SOLSTONE)"
+	@$(MAKE) -s SOLSTONE_PIN_VERSION="$(SOLSTONE)" SOLSTONE_MIN_VERSION="$(SOLSTONE)" generate-bundle-config
+	@if grep -q "^## \[$(VERSION)\]" CHANGELOG-journal.md; then \
+		echo "note: CHANGELOG-journal.md already has an entry for $(VERSION); leaving it alone"; \
+	else \
+		TODAY="$$(date +%Y-%m-%d)"; \
+		awk -v v="$(VERSION)" -v d="$$TODAY" 'NR==1 {print; next} /^## \[/ && !inserted {print "## [" v "] - " d "\n\n### Added\n- (describe new journal-visible additions)\n\n### Changed\n- (describe journal behavior changes)\n\n### Fixed\n- (describe journal bug fixes)\n\n"; inserted=1} {print}' CHANGELOG-journal.md > CHANGELOG-journal.md.tmp && mv CHANGELOG-journal.md.tmp CHANGELOG-journal.md; \
+		echo "✓ CHANGELOG-journal.md: scaffolded entry for [$(VERSION)] — $$TODAY (FILL IN BEFORE COMMIT)"; \
+	fi
+	@echo ""
+	@echo "next steps:"
+	@echo "  1. edit CHANGELOG-journal.md — replace scaffold bullets with real release notes"
+	@echo "  2. git diff to review"
+	@echo "  3. git add Sources/journal/Info.plist Makefile Sources/JournalRuntime/BundleConfig.swift CHANGELOG-journal.md"
+	@echo "  4. git commit -m 'release: bump journal to $(VERSION) (build $(BUILD))'"
+	@echo "  5. git push origin main"
+	@echo "  6. make release-preflight && make release-dmg-journal"
 
 # Unlock the sol-signing keychain and add it to the session search list.
 # Fresh SSH sessions don't always inherit the user-domain search list, so
@@ -404,7 +433,7 @@ unlock-signing:
 # Build a universal .app bundle signed with Developer ID Application + hardened runtime.
 # Separate from `bundle-universal` so distribution signing is additive, not destructive —
 # existing self-signed bundle target stays for local dev.
-bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelhouse generate-bundle-config release-universal
+bundle-dist: unlock-signing signing-check release-universal
 	@echo "Creating distribution app bundle..."
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
@@ -421,12 +450,6 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
 	@cp -r .build/apple/Products/Release/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
-	@# arm64-only uv; .app remains universal.
-	@cp $(UV_VENDOR_BINARY) solstone.app/Contents/Resources/uv
-	@chmod +x solstone.app/Contents/Resources/uv
-	@rm -rf solstone.app/Contents/Resources/python
-	@cp -R "$(PYTHON_VENDOR_DIR)" solstone.app/Contents/Resources/python
-	@test -x solstone.app/Contents/Resources/python/bin/python3.13 || { echo "error: bundled python missing executable"; exit 1; }
 	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
@@ -455,40 +478,6 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 		solstone.app/Contents/MacOS/solstone-watchdog
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		solstone.app/Contents/Resources/uv
-	@codesign --verify --strict --verbose=2 solstone.app/Contents/Resources/uv
-	@codesign -dvvv solstone.app/Contents/Resources/uv 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || { echo "error: uv missing team id 7QCG8V4M6H"; exit 1; }
-	@codesign -dvvv solstone.app/Contents/Resources/uv 2>&1 | grep -q 'flags=0x10000(runtime)' || { echo "error: uv missing hardened runtime flag"; exit 1; }
-	@find solstone.app/Contents/Resources/python -type f -name '*.so' -print0 | xargs -0 -I{} codesign --force --options runtime --timestamp \
-		--identifier app.solstone.observer.python \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		"{}"
-	@find solstone.app/Contents/Resources/python -type f -name '*.dylib' -print0 | xargs -0 -I{} codesign --force --options runtime --timestamp \
-		--identifier app.solstone.observer.python \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		"{}"
-	@codesign --force --options runtime --timestamp \
-		--identifier app.solstone.observer.python \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		--entitlements "$(ENTITLEMENTS_PLIST)" \
-		solstone.app/Contents/Resources/python/bin/python3.13
-	@find solstone.app/Contents/Resources/python -type f \( -name '*.so' -o -name '*.dylib' \) -print0 | xargs -0 -I{} codesign --verify --strict --verbose=2 "{}"
-	@codesign --verify --strict --verbose=2 solstone.app/Contents/Resources/python/bin/python3.13
-	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'Identifier=app.solstone.observer.python' || { echo "error: bundled python identifier mismatch"; exit 1; }
-	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'TeamIdentifier=7QCG8V4M6H' || { echo "error: bundled python missing team id 7QCG8V4M6H"; exit 1; }
-	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'flags=0x10000(runtime)' || { echo "error: bundled python missing hardened runtime flag"; exit 1; }
-	@PYOUT="$$(solstone.app/Contents/Resources/python/bin/python3.13 --version 2>&1)"; \
-		echo "python --version output: $$PYOUT"; \
-		echo "$$PYOUT" | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: bundled python reported wrong version (expected $(PYTHON_VERSION))"; exit 1; }
-	@rm -rf solstone.app/Contents/Resources/wheelhouse
-	@cp -R "$(WHEELHOUSE_DIR)" solstone.app/Contents/Resources/wheelhouse
-	@(cd solstone.app/Contents/Resources/wheelhouse && shasum -a 256 -c MANIFEST.sha256) || { echo "error: bundled wheelhouse sha256 manifest verification failed"; exit 1; }
-	@python3 scripts/sign_wheelhouse_native.py solstone.app/Contents/Resources/wheelhouse \
-		--identity "$(DEVELOPER_ID_APP)" \
-		--keychain "$(SIGNING_KEYCHAIN)"
-	@(cd solstone.app/Contents/Resources/wheelhouse && shasum -a 256 -c MANIFEST.sha256) || { echo "error: bundled signed wheelhouse sha256 manifest verification failed"; exit 1; }
-	@codesign --force --options runtime --timestamp \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		--entitlements "$(APP_ENTITLEMENTS_PLIST)" \
 		solstone.app
 	@VERIFY_OUT="$$(mktemp -t solstone-codesign-verify)"; \
@@ -511,6 +500,8 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 		fi
 	@test -f solstone.app/Contents/embedded.provisionprofile || { echo "error: embedded.provisionprofile missing from bundle"; exit 1; }
 	@codesign -d --entitlements - --xml solstone.app 2>/dev/null | plutil -p - 2>/dev/null | grep -q '7QCG8V4M6H.app.solstone.observer.spl' || { echo "error: keychain-access-group entitlement missing from signed app (DP keychain would -34018)"; exit 1; }
+	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
+		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
 	@echo "✓ Signed: solstone.app (keychain-access-group + embedded profile verified)"
 
 journal-app-dev:
@@ -552,50 +543,211 @@ journal-app-dev:
 		echo "✓ Assembled: journal.app"; \
 		find journal.app/Contents -maxdepth 3 \( -path '*/Versions' -o -path '*/_CodeSignature' \) -prune -o \( -type f -o -type d \) -print | sort
 
+bundle-dist-journal: unlock-signing signing-check vendor-uv vendor-python vendor-wheelhouse generate-bundle-config release-universal-journal
+	@echo "Creating journal distribution app bundle..."
+	@rm -rf journal.app
+	@mkdir -p journal.app/Contents/MacOS journal.app/Contents/Resources journal.app/Contents/Frameworks journal.app/Contents/Library/LaunchAgents
+	@cp .build/apple/Products/Release/journal journal.app/Contents/MacOS/
+	@cp .build/apple/Products/Release/solstone-watchdog journal.app/Contents/MacOS/
+	@cp Sources/journal/Info.plist journal.app/Contents/
+	@cp Sources/journal/Resources/AppIcon.icns journal.app/Contents/Resources/
+	@cp Sources/journal/app.solstone.journal.watchdog.plist journal.app/Contents/Library/LaunchAgents/
+	@test -d .build/apple/Products/Release/solstone_JournalMarkKit.bundle || { echo "error: solstone_JournalMarkKit.bundle missing from .build/apple/Products/Release"; exit 1; }
+	@test -d .build/apple/Products/Release/solstone_journal.bundle || { echo "error: solstone_journal.bundle missing from .build/apple/Products/Release"; exit 1; }
+	@cp -r .build/apple/Products/Release/solstone_JournalMarkKit.bundle journal.app/Contents/Resources/
+	@cp -r .build/apple/Products/Release/solstone_journal.bundle journal.app/Contents/Resources/
+	@cp -R "$(SPARKLE_FRAMEWORK)" journal.app/Contents/Frameworks/
+	@RPATH_LOG="$$(mktemp -t journal-rpath)"; \
+		if install_name_tool -add_rpath "@executable_path/../Frameworks" journal.app/Contents/MacOS/journal 2>"$$RPATH_LOG"; then \
+			rm -f "$$RPATH_LOG"; \
+		elif grep -Eq 'would duplicate path|already exists' "$$RPATH_LOG"; then \
+			rm -f "$$RPATH_LOG"; \
+		else \
+			cat "$$RPATH_LOG"; \
+			rm -f "$$RPATH_LOG"; \
+			exit 1; \
+		fi
+	@cp $(UV_VENDOR_BINARY) journal.app/Contents/Resources/uv
+	@chmod +x journal.app/Contents/Resources/uv
+	@rm -rf journal.app/Contents/Resources/python
+	@cp -R "$(PYTHON_VENDOR_DIR)" journal.app/Contents/Resources/python
+	@test -x journal.app/Contents/Resources/python/bin/python3.13 || { echo "error: bundled journal python missing executable"; exit 1; }
+	@rm -rf journal.app/Contents/Resources/wheelhouse
+	@cp -R "$(WHEELHOUSE_DIR)" journal.app/Contents/Resources/wheelhouse
+	@(cd journal.app/Contents/Resources/wheelhouse && shasum -a 256 -c MANIFEST.sha256) || { echo "error: bundled journal wheelhouse sha256 manifest verification failed"; exit 1; }
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		journal.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		journal.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		journal.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		journal.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		journal.app/Contents/Frameworks/Sparkle.framework
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		journal.app/Contents/Resources/solstone_JournalMarkKit.bundle
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		journal.app/Contents/Resources/solstone_journal.bundle
+	@codesign --force --options runtime --timestamp \
+		--identifier app.solstone.journal.watchdog \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		journal.app/Contents/MacOS/solstone-watchdog
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		journal.app/Contents/Resources/uv
+	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/uv
+	@codesign -dvvv journal.app/Contents/Resources/uv 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || { echo "error: journal uv missing team id 7QCG8V4M6H"; exit 1; }
+	@codesign -dvvv journal.app/Contents/Resources/uv 2>&1 | grep -q 'flags=0x10000(runtime)' || { echo "error: journal uv missing hardened runtime flag"; exit 1; }
+	@find journal.app/Contents/Resources/python -type f -name '*.so' -print0 | xargs -0 -I{} codesign --force --options runtime --timestamp \
+		--identifier app.solstone.journal.python \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		"{}"
+	@find journal.app/Contents/Resources/python -type f -name '*.dylib' -print0 | xargs -0 -I{} codesign --force --options runtime --timestamp \
+		--identifier app.solstone.journal.python \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		"{}"
+	@codesign --force --options runtime --timestamp \
+		--identifier app.solstone.journal.python \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		--entitlements Sources/journal/entitlements.plist \
+		journal.app/Contents/Resources/python/bin/python3.13
+	@find journal.app/Contents/Resources/python -type f \( -name '*.so' -o -name '*.dylib' \) -print0 | xargs -0 -I{} codesign --verify --strict --verbose=2 "{}"
+	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/python/bin/python3.13
+	@codesign -dvvv journal.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'Identifier=app.solstone.journal.python' || { echo "error: journal bundled python identifier mismatch"; exit 1; }
+	@codesign -dvvv journal.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'TeamIdentifier=7QCG8V4M6H' || { echo "error: journal bundled python missing team id 7QCG8V4M6H"; exit 1; }
+	@codesign -dvvv journal.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'flags=0x10000(runtime)' || { echo "error: journal bundled python missing hardened runtime flag"; exit 1; }
+	@PYOUT="$$(journal.app/Contents/Resources/python/bin/python3.13 --version 2>&1)"; \
+		echo "journal python --version output: $$PYOUT"; \
+		echo "$$PYOUT" | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: journal bundled python reported wrong version (expected $(PYTHON_VERSION))"; exit 1; }
+	@python3 scripts/sign_wheelhouse_native.py journal.app/Contents/Resources/wheelhouse \
+		--identity "$(DEVELOPER_ID_APP)" \
+		--keychain "$(SIGNING_KEYCHAIN)" \
+		--identifier app.solstone.journal.wheelhouse
+	@(cd journal.app/Contents/Resources/wheelhouse && shasum -a 256 -c MANIFEST.sha256) || { echo "error: bundled signed journal wheelhouse sha256 manifest verification failed"; exit 1; }
+	@python3 scripts/assert_wheelhouse_native_identifier.py journal.app/Contents/Resources/wheelhouse app.solstone.journal.wheelhouse
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		--entitlements Sources/journal/entitlements.plist \
+		journal.app
+	@VERIFY_OUT="$$(mktemp -t journal-codesign-verify)"; \
+		if codesign --verify --strict --deep --verbose=2 journal.app >"$$VERIFY_OUT" 2>&1; then \
+			rm -f "$$VERIFY_OUT"; \
+		elif grep -Eq '(__pycache__|\.pyc)' "$$VERIFY_OUT"; then \
+			cat "$$VERIFY_OUT"; \
+			echo "codesign verify failed on python bytecode; removing __pycache__ and re-sealing"; \
+			rm -rf journal.app/Contents/Resources/python/lib/python3.13/encodings/__pycache__; \
+			codesign --force --options runtime --timestamp \
+				--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+				--entitlements Sources/journal/entitlements.plist \
+				journal.app; \
+			codesign --verify --strict --deep --verbose=2 journal.app; \
+			rm -f "$$VERIFY_OUT"; \
+		else \
+			cat "$$VERIFY_OUT"; \
+			rm -f "$$VERIFY_OUT"; \
+			exit 1; \
+		fi
+	@test ! -f journal.app/Contents/embedded.provisionprofile || { echo "error: journal.app must not embed a provisioning profile"; exit 1; }
+	@! codesign -d --entitlements - --xml journal.app 2>/dev/null | plutil -p - 2>/dev/null | grep -q 'keychain-access-groups' || { echo "error: journal.app must not carry keychain-access-groups"; exit 1; }
+	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -Fq 'Identifier=app.solstone.journal.watchdog' || { echo "error: journal watchdog identifier mismatch"; exit 1; }
+	@codesign -dvvv journal.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'Identifier=app.solstone.journal.python' || { echo "error: journal python identifier mismatch"; exit 1; }
+	@echo "✓ Signed: journal.app (journal identifiers, no profile/keychain-group verified)"
+
 run-journal: journal-app-dev
 	@open journal.app
 	@/usr/bin/log stream --predicate 'subsystem == "app.solstone.journal" OR subsystem == "app.solstone.journal.watchdog"' --level debug
 
-# Create and sign the DMG using create-dmg. Produces a polished mounted
-# volume — cream brand background with sol-ring watermark, app icon
-# left-centered, Applications shortcut right-centered, arrow between.
-# Window dimensions are logical points; background PNG ships @2x so it
-# stays crisp on Retina.
+# Create and sign DMGs using create-dmg. Worker targets are standalone: build
+# bundles first, then run dmg/notarize/staple/verify explicitly. Recursive
+# orchestrators intentionally build each app bundle once; `make -n release-dmg*`
+# does not fully expand sub-makes, so dry-run each segment when auditing.
 #
 # create-dmg builds an unsigned DMG; we codesign with --timestamp after
 # (notarization needs the secure timestamp, and create-dmg doesn't pass
 # extra codesign flags through).
 #
 # Requires: brew install create-dmg
-dmg: bundle-dist
+dmg:
+	@test -d "$(DMG_APP)" || { echo "error: $(DMG_APP) not found — run make bundle-dist* first"; exit 1; }
 	@rm -f $(DMG_NAME)
 	@create-dmg \
-	  --volname "solstone" \
+	  --volname "$(DMG_VOLNAME)" \
 	  --background assets/dmg-background@2x.png \
 	  --window-pos 200 200 \
 	  --window-size 640 400 \
 	  --icon-size 128 \
-	  --icon "solstone.app" 180 200 \
+	  --icon "$(DMG_ICON)" 180 200 \
 	  --app-drop-link 460 200 \
-	  --hide-extension "solstone.app" \
+	  --hide-extension "$(DMG_ICON)" \
 	  --no-internet-enable \
-	  $(DMG_NAME) solstone.app
+	  $(DMG_NAME) $(DMG_APP)
 	@codesign --force --timestamp --sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" $(DMG_NAME)
 	@echo "✓ Built: $(DMG_NAME)"
 
+dmg-journal:
+	@$(MAKE) dmg DMG_NAME=$(JOURNAL_DMG_NAME) DMG_APP=journal.app DMG_VOLNAME=journal DMG_ICON=journal.app
+
+dmg-both:
+	@test -d solstone.app || { echo "error: solstone.app not found — run make bundle-dist first"; exit 1; }
+	@test -d journal.app || { echo "error: journal.app not found — run make bundle-dist-journal first"; exit 1; }
+	@STAGING="$$(mktemp -d -t sol-journal-dmg)"; \
+		trap 'rm -rf "$$STAGING"' EXIT; \
+		cp -R solstone.app "$$STAGING/"; \
+		cp -R journal.app "$$STAGING/"; \
+		rm -f $(BOTH_DMG_NAME); \
+		create-dmg \
+		  --volname "sol + journal" \
+		  --background assets/dmg-background@2x.png \
+		  --window-pos 200 200 \
+		  --window-size 840 400 \
+		  --icon-size 128 \
+		  --icon "solstone.app" 150 200 \
+		  --icon "journal.app" 360 200 \
+		  --app-drop-link 650 200 \
+		  --hide-extension "solstone.app" \
+		  --hide-extension "journal.app" \
+		  --no-internet-enable \
+		  $(BOTH_DMG_NAME) "$$STAGING"
+	@codesign --force --timestamp --sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" $(BOTH_DMG_NAME)
+	@echo "✓ Built: $(BOTH_DMG_NAME)"
+
 # Submit for notarization and block until Apple responds.
-notarize: dmg
+notarize:
+	@test -f "$(DMG_NAME)" || { echo "error: $(DMG_NAME) not found — run make dmg* first"; exit 1; }
 	@echo "Submitting $(DMG_NAME) for notarization (typically 1-5 min)…"
 	@xcrun notarytool submit $(DMG_NAME) \
 		--keychain-profile "$(NOTARY_PROFILE)" --keychain "$(SIGNING_KEYCHAIN)" \
 		--wait
 
+notarize-journal:
+	@$(MAKE) notarize DMG_NAME=$(JOURNAL_DMG_NAME)
+
+notarize-both:
+	@$(MAKE) notarize DMG_NAME=$(BOTH_DMG_NAME)
+
 # Attach the notarization ticket to the DMG so Gatekeeper works offline.
-staple: notarize
+staple:
+	@test -f "$(DMG_NAME)" || { echo "error: $(DMG_NAME) not found — run make notarize* first"; exit 1; }
 	@xcrun stapler staple $(DMG_NAME)
 
+staple-journal:
+	@$(MAKE) staple DMG_NAME=$(JOURNAL_DMG_NAME)
+
+staple-both:
+	@$(MAKE) staple DMG_NAME=$(BOTH_DMG_NAME)
+
 # Confirm the DMG will pass Gatekeeper on a fresh Mac.
-verify-notarization: staple
+verify-notarization:
+	@test -f "$(DMG_NAME)" || { echo "error: $(DMG_NAME) not found — run make staple first"; exit 1; }
+	@test -d solstone.app || { echo "error: solstone.app not found — run make bundle-dist first"; exit 1; }
 	@spctl --assess --type open --context context:primary-signature -v $(DMG_NAME) || \
 		{ echo "spctl verification failed"; exit 1; }
 	@xcrun stapler validate $(DMG_NAME)
@@ -611,27 +763,109 @@ verify-notarization: staple
 		{ echo "watchdog missing arm64 slice"; exit 1; }
 	@lipo -archs solstone.app/Contents/MacOS/solstone-watchdog | grep -q 'x86_64' || \
 		{ echo "watchdog missing x86_64 slice"; exit 1; }
-	@codesign --verify --strict --verbose=2 solstone.app/Contents/Resources/uv
-	@codesign -dvvv solstone.app/Contents/Resources/uv 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || { echo "error: uv missing team id"; exit 1; }
-	@codesign -dvvv solstone.app/Contents/Resources/uv 2>&1 | grep -q 'flags=0x10000(runtime)' || { echo "error: uv missing hardened runtime flag"; exit 1; }
-	@lipo -archs solstone.app/Contents/Resources/uv | grep -q 'arm64' || { echo "error: uv missing arm64 slice"; exit 1; }
-	@find solstone.app/Contents/Resources/python -type f \( -name '*.so' -o -name '*.dylib' \) -print0 | xargs -0 -I{} codesign --verify --strict --verbose=2 "{}"
-	@codesign --verify --strict --verbose=2 solstone.app/Contents/Resources/python/bin/python3.13
-	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'TeamIdentifier=7QCG8V4M6H' || { echo "error: bundled python missing team id"; exit 1; }
-	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'flags=0x10000(runtime)' || { echo "error: bundled python missing hardened runtime flag"; exit 1; }
-	@codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'Identifier=app.solstone.observer.python' || { echo "error: bundled python identifier mismatch"; exit 1; }
-	@lipo -archs solstone.app/Contents/Resources/python/bin/python3.13 | grep -q 'arm64' || { echo "error: bundled python missing arm64 slice"; exit 1; }
-	@solstone.app/Contents/Resources/python/bin/python3.13 --version 2>&1 | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: bundled python reported wrong version"; exit 1; }
+	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
+		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
 	@echo "✓ $(DMG_NAME) notarized + stapled"
 
-# One-shot: build + sign + notarize + staple + verify. This is the canonical
-# entry point for creating an ad-hoc distributable DMG.
-release-dmg: verify-notarization
+verify-notarization-journal:
+	@test -f "$(JOURNAL_DMG_NAME)" || { echo "error: $(JOURNAL_DMG_NAME) not found — run make staple-journal first"; exit 1; }
+	@test -d journal.app || { echo "error: journal.app not found — run make bundle-dist-journal first"; exit 1; }
+	@spctl --assess --type open --context context:primary-signature -v $(JOURNAL_DMG_NAME) || \
+		{ echo "journal spctl verification failed"; exit 1; }
+	@xcrun stapler validate $(JOURNAL_DMG_NAME)
+	@codesign --verify --strict --verbose=2 journal.app/Contents/MacOS/solstone-watchdog || { echo "journal watchdog signature invalid"; exit 1; }
+	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || { echo "journal watchdog missing Team ID 7QCG8V4M6H"; exit 1; }
+	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -q 'flags=0x10000(runtime)' || { echo "journal watchdog missing hardened runtime flag"; exit 1; }
+	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -q 'Identifier=app.solstone.journal.watchdog' || { echo "journal watchdog identifier mismatch"; exit 1; }
+	@lipo -archs journal.app/Contents/MacOS/solstone-watchdog | grep -q 'arm64' || { echo "journal watchdog missing arm64 slice"; exit 1; }
+	@lipo -archs journal.app/Contents/MacOS/solstone-watchdog | grep -q 'x86_64' || { echo "journal watchdog missing x86_64 slice"; exit 1; }
+	@test -x journal.app/Contents/Resources/uv || { echo "error: journal bundled uv missing"; exit 1; }
+	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/uv
+	@codesign -dvvv journal.app/Contents/Resources/uv 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || { echo "error: journal uv missing team id"; exit 1; }
+	@codesign -dvvv journal.app/Contents/Resources/uv 2>&1 | grep -q 'flags=0x10000(runtime)' || { echo "error: journal uv missing hardened runtime flag"; exit 1; }
+	@test -x journal.app/Contents/Resources/python/bin/python3.13 || { echo "error: journal bundled python missing"; exit 1; }
+	@find journal.app/Contents/Resources/python -type f \( -name '*.so' -o -name '*.dylib' \) -print0 | xargs -0 -I{} codesign --verify --strict --verbose=2 "{}"
+	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/python/bin/python3.13
+	@codesign -dvvv journal.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'Identifier=app.solstone.journal.python' || { echo "error: journal bundled python identifier mismatch"; exit 1; }
+	@codesign -dvvv journal.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'TeamIdentifier=7QCG8V4M6H' || { echo "error: journal bundled python missing team id"; exit 1; }
+	@codesign -dvvv journal.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'flags=0x10000(runtime)' || { echo "error: journal bundled python missing hardened runtime flag"; exit 1; }
+	@journal.app/Contents/Resources/python/bin/python3.13 --version 2>&1 | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: journal bundled python reported wrong version"; exit 1; }
+	@test -f journal.app/Contents/Resources/wheelhouse/MANIFEST.sha256 || { echo "error: journal bundled wheelhouse manifest missing"; exit 1; }
+	@(cd journal.app/Contents/Resources/wheelhouse && shasum -a 256 -c MANIFEST.sha256) || { echo "error: journal bundled wheelhouse sha256 manifest verification failed"; exit 1; }
+	@echo "✓ $(JOURNAL_DMG_NAME) notarized + stapled"
+
+verify-notarization-both:
+	@test -f "$(BOTH_DMG_NAME)" || { echo "error: $(BOTH_DMG_NAME) not found — run make staple-both first"; exit 1; }
+	@test -d solstone.app || { echo "error: solstone.app not found — run make bundle-dist first"; exit 1; }
+	@test -d journal.app || { echo "error: journal.app not found — run make bundle-dist-journal first"; exit 1; }
+	@spctl --assess --type open --context context:primary-signature -v $(BOTH_DMG_NAME) || \
+		{ echo "both-DMG spctl verification failed"; exit 1; }
+	@xcrun stapler validate $(BOTH_DMG_NAME)
+	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
+		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
+	@test -x journal.app/Contents/Resources/uv || { echo "error: both-DMG journal bundled uv missing"; exit 1; }
+	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/uv
+	@codesign -dvvv journal.app/Contents/Resources/uv 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || { echo "error: both-DMG journal uv missing team id"; exit 1; }
+	@codesign -dvvv journal.app/Contents/Resources/uv 2>&1 | grep -q 'flags=0x10000(runtime)' || { echo "error: both-DMG journal uv missing hardened runtime flag"; exit 1; }
+	@test -x journal.app/Contents/Resources/python/bin/python3.13 || { echo "error: both-DMG journal bundled python missing"; exit 1; }
+	@find journal.app/Contents/Resources/python -type f \( -name '*.so' -o -name '*.dylib' \) -print0 | xargs -0 -I{} codesign --verify --strict --verbose=2 "{}"
+	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/python/bin/python3.13
+	@codesign -dvvv journal.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'Identifier=app.solstone.journal.python' || { echo "error: both-DMG journal bundled python identifier mismatch"; exit 1; }
+	@codesign -dvvv journal.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'TeamIdentifier=7QCG8V4M6H' || { echo "error: both-DMG journal bundled python missing team id"; exit 1; }
+	@codesign -dvvv journal.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'flags=0x10000(runtime)' || { echo "error: both-DMG journal bundled python missing hardened runtime flag"; exit 1; }
+	@journal.app/Contents/Resources/python/bin/python3.13 --version 2>&1 | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: both-DMG journal bundled python reported wrong version"; exit 1; }
+	@test -f journal.app/Contents/Resources/wheelhouse/MANIFEST.sha256 || { echo "error: both-DMG journal wheelhouse manifest missing"; exit 1; }
+	@(cd journal.app/Contents/Resources/wheelhouse && shasum -a 256 -c MANIFEST.sha256) || { echo "error: both-DMG journal bundled wheelhouse sha256 manifest verification failed"; exit 1; }
+	@echo "✓ $(BOTH_DMG_NAME) notarized + stapled"
+
+# One-shot orchestrators. They intentionally call standalone worker targets in
+# sequence so bundling/signing happens once before DMG notarization.
+release-dmg:
+	@$(MAKE) bundle-dist
+	@$(MAKE) dmg
+	@$(MAKE) notarize
+	@$(MAKE) staple
+	@$(MAKE) verify-notarization
 	@echo ""
 	@echo "✅ Distribution DMG ready: $(DMG_NAME)"
 	@echo "   Signed:  $(DEVELOPER_ID_APP)"
 	@echo "   Notary:  $(NOTARY_PROFILE)"
 	@echo "   Size:    $$(du -h $(DMG_NAME) | cut -f1)"
+
+release-dmg-journal:
+	@$(MAKE) bundle-dist-journal
+	@$(MAKE) dmg-journal
+	@$(MAKE) notarize-journal
+	@$(MAKE) staple-journal
+	@$(MAKE) verify-notarization-journal
+	@echo ""
+	@echo "✅ Journal distribution DMG ready: $(JOURNAL_DMG_NAME)"
+	@echo "   Signed:  $(DEVELOPER_ID_APP)"
+	@echo "   Notary:  $(NOTARY_PROFILE)"
+	@echo "   Size:    $$(du -h $(JOURNAL_DMG_NAME) | cut -f1)"
+
+release-dmg-both:
+	@$(MAKE) bundle-dist
+	@$(MAKE) bundle-dist-journal
+	@$(MAKE) dmg
+	@$(MAKE) dmg-journal
+	@$(MAKE) notarize
+	@$(MAKE) notarize-journal
+	@xcrun stapler staple solstone.app
+	@xcrun stapler staple journal.app
+	@$(MAKE) dmg-both
+	@$(MAKE) notarize-both
+	@$(MAKE) staple-both
+	@$(MAKE) staple
+	@$(MAKE) staple-journal
+	@$(MAKE) verify-notarization
+	@$(MAKE) verify-notarization-journal
+	@$(MAKE) verify-notarization-both
+	@echo ""
+	@echo "✅ Distribution DMGs ready:"
+	@echo "   sol:     $(DMG_NAME)"
+	@echo "   journal: $(JOURNAL_DMG_NAME)"
+	@echo "   both:    $(BOTH_DMG_NAME)"
 
 supply-chain-check: vendor-uv vendor-python generate-bundle-config
 	@echo "── supply chain checklist ──"
@@ -645,16 +879,16 @@ supply-chain-check: vendor-uv vendor-python generate-bundle-config
 	@echo "── BundleConfig.swift ──"
 	@cat Sources/JournalRuntime/BundleConfig.swift
 	@echo "── bundled-uv codesign ──"
-	@if [ -f solstone.app/Contents/Resources/uv ]; then \
-	    codesign -dvvv solstone.app/Contents/Resources/uv 2>&1 || true; \
+	@if [ -f journal.app/Contents/Resources/uv ]; then \
+	    codesign -dvvv journal.app/Contents/Resources/uv 2>&1 || true; \
 	else \
-	    echo "(not signed yet — run make bundle-dist to produce signed bundled uv)"; \
+	    echo "(not signed yet — run make bundle-dist-journal to produce signed bundled uv)"; \
 	fi
 	@echo "── bundled-python codesign ──"
-	@if [ -f solstone.app/Contents/Resources/python/bin/python3.13 ]; then \
-	    codesign -dvvv solstone.app/Contents/Resources/python/bin/python3.13 2>&1 || true; \
+	@if [ -f journal.app/Contents/Resources/python/bin/python3.13 ]; then \
+	    codesign -dvvv journal.app/Contents/Resources/python/bin/python3.13 2>&1 || true; \
 	else \
-	    echo "(not signed yet — run make bundle-dist to produce signed bundled python)"; \
+	    echo "(not signed yet — run make bundle-dist-journal to produce signed bundled python)"; \
 	fi
 	@echo "── bundled backend wheelhouse ──"
 	@python3 scripts/wheelhouse_helper.py verify-wheelhouse "$(WHEELHOUSE_DIR)" "$(SOLSTONE_PIN_VERSION)"
@@ -670,15 +904,44 @@ release-dmg-smoke:
 	    trap "hdiutil detach \"$$MOUNT\" -quiet -force >/dev/null 2>&1 || true; rm -rf \"$$MOUNT\"" EXIT; \
 	    hdiutil attach "$(DMG_NAME)" -mountpoint "$$MOUNT" -nobrowse -quiet || { echo "error: hdiutil attach failed"; exit 1; }; \
 	    codesign --verify --strict --deep --verbose=2 "$$MOUNT/solstone.app" || { echo "error: dmg .app codesign verify failed"; exit 1; }; \
-	    OUT="$$("$$MOUNT/solstone.app/Contents/Resources/uv" --version 2>&1)"; \
-	    echo "uv --version output: $$OUT"; \
-	    echo "$$OUT" | grep -q "$(UV_VERSION)" || { echo "error: bundled uv reported wrong version (expected $(UV_VERSION))"; exit 1; }; \
-	    PYOUT="$$("$$MOUNT/solstone.app/Contents/Resources/python/bin/python3.13" --version 2>&1)"; \
-	    echo "python --version output: $$PYOUT"; \
-	    echo "$$PYOUT" | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: bundled python reported wrong version (expected $(PYTHON_VERSION))"; exit 1; }; \
-	    test -f "$$MOUNT/solstone.app/Contents/Resources/wheelhouse/MANIFEST.sha256" || { echo "error: bundled wheelhouse manifest missing"; exit 1; }; \
-	    (cd "$$MOUNT/solstone.app/Contents/Resources/wheelhouse" && shasum -a 256 -c MANIFEST.sha256) || { echo "error: bundled wheelhouse sha256 manifest verification failed"; exit 1; }; \
+	    BAD="$$(find "$$MOUNT/solstone.app" -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
+	    [ -z "$$BAD" ] || { echo "error: mounted solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }; \
 	    echo "release-dmg-smoke: ok"
+
+release-dmg-smoke-journal:
+	@test -f "$(JOURNAL_DMG_NAME)" || { echo "error: $(JOURNAL_DMG_NAME) not found — run make release-dmg-journal first"; exit 1; }
+	@MOUNT="$$(mktemp -d -t journal-smoke)"; \
+	    trap "hdiutil detach \"$$MOUNT\" -quiet -force >/dev/null 2>&1 || true; rm -rf \"$$MOUNT\"" EXIT; \
+	    hdiutil attach "$(JOURNAL_DMG_NAME)" -mountpoint "$$MOUNT" -nobrowse -quiet || { echo "error: journal hdiutil attach failed"; exit 1; }; \
+	    codesign --verify --strict --deep --verbose=2 "$$MOUNT/journal.app" || { echo "error: journal dmg .app codesign verify failed"; exit 1; }; \
+	    OUT="$$("$$MOUNT/journal.app/Contents/Resources/uv" --version 2>&1)"; \
+	    echo "journal uv --version output: $$OUT"; \
+	    echo "$$OUT" | grep -q "$(UV_VERSION)" || { echo "error: journal bundled uv reported wrong version (expected $(UV_VERSION))"; exit 1; }; \
+	    PYOUT="$$("$$MOUNT/journal.app/Contents/Resources/python/bin/python3.13" --version 2>&1)"; \
+	    echo "journal python --version output: $$PYOUT"; \
+	    echo "$$PYOUT" | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: journal bundled python reported wrong version (expected $(PYTHON_VERSION))"; exit 1; }; \
+	    test -f "$$MOUNT/journal.app/Contents/Resources/wheelhouse/MANIFEST.sha256" || { echo "error: journal bundled wheelhouse manifest missing"; exit 1; }; \
+	    (cd "$$MOUNT/journal.app/Contents/Resources/wheelhouse" && shasum -a 256 -c MANIFEST.sha256) || { echo "error: journal bundled wheelhouse sha256 manifest verification failed"; exit 1; }; \
+	    echo "release-dmg-smoke-journal: ok"
+
+release-dmg-smoke-both:
+	@test -f "$(BOTH_DMG_NAME)" || { echo "error: $(BOTH_DMG_NAME) not found — run make release-dmg-both first"; exit 1; }
+	@MOUNT="$$(mktemp -d -t sol-journal-smoke)"; \
+	    trap "hdiutil detach \"$$MOUNT\" -quiet -force >/dev/null 2>&1 || true; rm -rf \"$$MOUNT\"" EXIT; \
+	    hdiutil attach "$(BOTH_DMG_NAME)" -mountpoint "$$MOUNT" -nobrowse -quiet || { echo "error: both hdiutil attach failed"; exit 1; }; \
+	    codesign --verify --strict --deep --verbose=2 "$$MOUNT/solstone.app" || { echo "error: both dmg solstone.app codesign verify failed"; exit 1; }; \
+	    codesign --verify --strict --deep --verbose=2 "$$MOUNT/journal.app" || { echo "error: both dmg journal.app codesign verify failed"; exit 1; }; \
+	    BAD="$$(find "$$MOUNT/solstone.app" -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
+	    [ -z "$$BAD" ] || { echo "error: mounted both-DMG solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }; \
+	    "$$MOUNT/journal.app/Contents/Resources/uv" --version 2>&1 | grep -q "$(UV_VERSION)" || { echo "error: both-DMG journal uv reported wrong version"; exit 1; }; \
+	    "$$MOUNT/journal.app/Contents/Resources/python/bin/python3.13" --version 2>&1 | grep -Fq "Python $(PYTHON_VERSION)" || { echo "error: both-DMG journal python reported wrong version"; exit 1; }; \
+	    test -f "$$MOUNT/journal.app/Contents/Resources/wheelhouse/MANIFEST.sha256" || { echo "error: both-DMG journal wheelhouse manifest missing"; exit 1; }; \
+	    (cd "$$MOUNT/journal.app/Contents/Resources/wheelhouse" && shasum -a 256 -c MANIFEST.sha256) || { echo "error: both-DMG journal wheelhouse sha256 manifest verification failed"; exit 1; }; \
+	    echo "release-dmg-smoke-both: ok"
+
+journal-materialize-smoke:
+	@test -d journal.app || { echo "error: journal.app not found — run make bundle-dist-journal first"; exit 1; }
+	@python3 scripts/journal_materialize_smoke.py journal.app "$(SOLSTONE_PIN_VERSION)"
 
 # Install development dependencies needed for local build workflows
 install: check-dev-deps
@@ -876,10 +1139,16 @@ publish-preflight:
 	echo "preflight: wrangler OK (account $(CF_ACCOUNT_ID))"
 
 publish-appcast: publish-preflight
-	python3 scripts/publish-appcast.py $(DIST_VERSION)
+	python3 scripts/publish-appcast.py $(DIST_VERSION) --app sol
 
 publish-appcast-staging: publish-preflight
-	python3 scripts/publish-appcast.py $(DIST_VERSION) --staging
+	python3 scripts/publish-appcast.py $(DIST_VERSION) --app sol --staging
+
+publish-appcast-journal: publish-preflight
+	python3 scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal
+
+publish-appcast-journal-staging: publish-preflight
+	python3 scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal --staging
 
 # Cut a GitHub Release: annotated tag + `gh release create` with the DMG
 # attached and CHANGELOG notes. Run AFTER `make publish-appcast` and founder
@@ -887,6 +1156,9 @@ publish-appcast-staging: publish-preflight
 # in). Sparkle is the primary update channel; this is source-release hygiene
 # and the GitHub front door. Mirrors solstone / solstone-linux release.sh.
 github-release:
-	@bash scripts/github-release.sh $(DIST_VERSION)
+	@bash scripts/github-release.sh --app sol $(DIST_VERSION)
 
-.PHONY: publish-preflight publish-appcast publish-appcast-staging github-release
+github-release-journal:
+	@bash scripts/github-release.sh --app journal $(JOURNAL_DIST_VERSION)
+
+.PHONY: publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
