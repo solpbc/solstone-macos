@@ -194,6 +194,7 @@ let package = Package(
             name: "journalTests",
             dependencies: [
                 .target(name: "journal"),
+                .target(name: "JournalMarkKit"),
                 .target(name: "JournalRuntime"),
                 .target(name: "JournalRuntimeTestSupport"),
                 .target(name: "SolstoneCore")

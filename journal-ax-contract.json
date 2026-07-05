@@ -1,0 +1,128 @@
+{
+  "_generated" : "DO NOT EDIT. Generated from Sources/journal/AXID.swift + AXToken.swift. Run `make ax-contract` to regenerate; `make ci` fails on drift.",
+  "grammar" : {
+    "identifier" : "^(journal)(\\.[a-z][a-zA-Z0-9-]*)+$",
+    "token" : "^[a-z][a-z_]*$"
+  },
+  "identifiers" : {
+    "parameterized" : [
+      {
+        "expansions" : [
+          "home",
+          "journal",
+          "runState",
+          "backup",
+          "startup"
+        ],
+        "key" : "JournalPane.rawValue",
+        "template" : "journal.sidebar.tab.{pane}"
+      },
+      {
+        "expansions" : [
+          "home",
+          "journal",
+          "runState",
+          "backup",
+          "startup"
+        ],
+        "key" : "JournalPane.rawValue",
+        "template" : "journal.sidebar.tab.{pane}.state"
+      }
+    ],
+    "static" : [
+      "journal.backup.message.state",
+      "journal.backup.open",
+      "journal.home.mark.card",
+      "journal.home.name.state",
+      "journal.home.open",
+      "journal.home.runDisplay.glance.state",
+      "journal.home.unconfigured.message.state",
+      "journal.journal.diskUsage.state",
+      "journal.journal.location.path.state",
+      "journal.journal.name.field",
+      "journal.journal.name.save",
+      "journal.runState.appVersion.state",
+      "journal.runState.blockedReason.state",
+      "journal.runState.display.state",
+      "journal.runState.health.state",
+      "journal.runState.restart",
+      "journal.runState.runtimeVersion.state",
+      "journal.runState.start",
+      "journal.runState.stop",
+      "journal.startup.launchAtLogin",
+      "journal.startup.launchAtLogin.state"
+    ]
+  },
+  "states" : {
+    "journal.backup.message.state" : {
+      "kind" : "freeform"
+    },
+    "journal.home.name.state" : {
+      "kind" : "freeform"
+    },
+    "journal.home.runDisplay.glance.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalRunDisplay"
+    },
+    "journal.home.unconfigured.message.state" : {
+      "kind" : "freeform"
+    },
+    "journal.journal.diskUsage.state" : {
+      "kind" : "numeric"
+    },
+    "journal.journal.location.path.state" : {
+      "kind" : "freeform"
+    },
+    "journal.runState.appVersion.state" : {
+      "kind" : "freeform"
+    },
+    "journal.runState.blockedReason.state" : {
+      "kind" : "freeform"
+    },
+    "journal.runState.display.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalRunDisplay"
+    },
+    "journal.runState.health.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalHealthDisplay"
+    },
+    "journal.runState.runtimeVersion.state" : {
+      "kind" : "freeform"
+    },
+    "journal.sidebar.tab.{pane}.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalSidebarTabState"
+    },
+    "journal.startup.launchAtLogin.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalEnabledState"
+    }
+  },
+  "surfaces" : [
+    "journal"
+  ],
+  "version" : 1,
+  "vocabularies" : {
+    "JournalEnabledState" : [
+      "enabled",
+      "disabled"
+    ],
+    "JournalHealthDisplay" : [
+      "healthy",
+      "stopped",
+      "unknown"
+    ],
+    "JournalRunDisplay" : [
+      "starting",
+      "running",
+      "stopped",
+      "blocked",
+      "unknown"
+    ],
+    "JournalSidebarTabState" : [
+      "selected",
+      "unselected"
+    ]
+  }
+}

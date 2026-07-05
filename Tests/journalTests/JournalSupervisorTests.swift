@@ -14,8 +14,9 @@ struct JournalSupervisorTests {
     @Test func blockedGateDoesNoRuntimeWork() async throws {
         let events = EventRecorder()
         let diagnostic = JournalDiagnostic(commandLabel: "gate", outputExcerpt: "blocked")
+        let blockage = SingleSupervisorGateBlockage.portConflict(diagnostic)
         let supervisor = JournalSupervisor(
-            gate: RecordingGate(events: events, result: .blocked(.portConflict(diagnostic))),
+            gate: RecordingGate(events: events, result: .blocked(blockage)),
             materializer: try await RecordingMaterializer(events: events),
             runner: RecordingRunner(events: events),
             readinessGate: RecordingReadinessGate(events: events, result: .ready)
@@ -26,6 +27,7 @@ struct JournalSupervisorTests {
         #expect(!started)
         #expect(await events.snapshot() == ["gate"])
         #expect(supervisor.state == .blocked(diagnostic))
+        #expect(supervisor.blockedReason == blockage.ownerMessage)
     }
 
     @Test func openGateRunsMaterializeSpawnReadinessInOrder() async throws {
@@ -42,6 +44,89 @@ struct JournalSupervisorTests {
         #expect(started)
         #expect(await events.snapshot() == ["gate", "materialize", "spawn", "readiness", "markReady"])
         #expect(supervisor.state == .running)
+        #expect(supervisor.journalBinaryURL != nil)
+    }
+
+    @Test func runtimeStatusCanBeAppliedDirectlyForSinkSimulation() async throws {
+        let supervisor = JournalSupervisor(
+            gate: RecordingGate(events: EventRecorder(), result: .success),
+            materializer: try await RecordingMaterializer(events: EventRecorder()),
+            runner: RecordingRunner(events: EventRecorder()),
+            readinessGate: RecordingReadinessGate(events: EventRecorder(), result: .ready)
+        )
+        let diagnostic = JournalDiagnostic(commandLabel: "journal", outputExcerpt: "done")
+
+        supervisor.applyRuntimeStatus(.stopped(diagnostic))
+
+        #expect(supervisor.runtimeStatus == .stopped(diagnostic))
+    }
+
+    @Test func stopAppliesStoppedByUserBecauseRunnerStopIsSilent() async throws {
+        let events = EventRecorder()
+        let supervisor = JournalSupervisor(
+            gate: RecordingGate(events: events, result: .success),
+            materializer: try await RecordingMaterializer(events: events),
+            runner: RecordingRunner(events: events),
+            readinessGate: RecordingReadinessGate(events: events, result: .ready)
+        )
+        _ = await supervisor.start(journalRoot: try makeTemporaryDirectory())
+        supervisor.applyRuntimeStatus(.running)
+
+        let stopped = await supervisor.stop()
+
+        #expect(stopped)
+        #expect(await events.snapshot() == ["gate", "materialize", "spawn", "readiness", "markReady", "stop"])
+        #expect(supervisor.state == .idle)
+        #expect(supervisor.runtimeStatus == .stoppedByUser)
+        #expect(supervisor.journalBinaryURL == nil)
+    }
+
+    @Test func restartPassthroughRerunsReadinessBeforeRunning() async throws {
+        let events = EventRecorder()
+        let supervisor = JournalSupervisor(
+            gate: RecordingGate(events: events, result: .success),
+            materializer: try await RecordingMaterializer(events: events),
+            runner: RecordingRunner(events: events),
+            readinessGate: RecordingReadinessGate(events: events, result: .ready)
+        )
+        let root = try makeTemporaryDirectory()
+        _ = await supervisor.start(journalRoot: root)
+        supervisor.applyRuntimeStatus(.running)
+
+        let restarted = await supervisor.restart()
+
+        #expect(restarted)
+        #expect(await events.snapshot() == [
+            "gate", "materialize", "spawn", "readiness", "markReady",
+            "restart", "readiness", "markReady"
+        ])
+        #expect(supervisor.state == .running)
+        #expect(supervisor.activeJournalRoot == root.standardizedFileURL)
+    }
+
+    @Test func restartWithoutActiveRuntimeFailsClosed() async throws {
+        let events = EventRecorder()
+        let supervisor = JournalSupervisor(
+            gate: RecordingGate(events: events, result: .success),
+            materializer: try await RecordingMaterializer(events: events),
+            runner: RecordingRunner(events: events),
+            readinessGate: RecordingReadinessGate(events: events, result: .ready)
+        )
+
+        let restarted = await supervisor.restart()
+
+        #expect(!restarted)
+        #expect(await events.snapshot().isEmpty)
+        if case .failed(let diagnostic) = supervisor.state {
+            #expect(diagnostic.commandLabel == "journal restart")
+        } else {
+            Issue.record("expected failed restart state")
+        }
+        if case .unknown(let diagnostic) = supervisor.runtimeStatus {
+            #expect(diagnostic.commandLabel == "journal restart")
+        } else {
+            Issue.record("expected unknown restart status")
+        }
     }
 
     @Test func terminateWritesJournalMarkerBeforeStopLadder() async throws {
