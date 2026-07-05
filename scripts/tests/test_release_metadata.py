@@ -32,7 +32,7 @@ class JournalReleaseMetadataTest(unittest.TestCase):
         ).stdout
 
         self.assertNotEqual(sol, journal)
-        self.assertIn("first standalone journal.app release", journal)
+        self.assertIn("the journal has its own app now", journal)
         self.assertIn("Initial release of Solstone Capture.", sol)
 
 
