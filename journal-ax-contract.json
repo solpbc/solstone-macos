@@ -7,10 +7,41 @@
   "identifiers" : {
     "parameterized" : [
       {
+        "key" : "DeviceRow.fingerprint",
+        "runtime" : true,
+        "template" : "journal.devices.row.fingerprint-{fingerprint}"
+      },
+      {
+        "key" : "DeviceRow.fingerprint",
+        "runtime" : true,
+        "template" : "journal.devices.row.fingerprint-{fingerprint}.label"
+      },
+      {
+        "key" : "DeviceRow.fingerprint",
+        "runtime" : true,
+        "template" : "journal.devices.row.fingerprint-{fingerprint}.rename.error.state"
+      },
+      {
+        "key" : "DeviceRow.fingerprint",
+        "runtime" : true,
+        "template" : "journal.devices.row.fingerprint-{fingerprint}.rename.field"
+      },
+      {
+        "key" : "DeviceRow.fingerprint",
+        "runtime" : true,
+        "template" : "journal.devices.row.fingerprint-{fingerprint}.rename.save"
+      },
+      {
+        "key" : "DeviceRow.fingerprint",
+        "runtime" : true,
+        "template" : "journal.devices.row.fingerprint-{fingerprint}.revoke"
+      },
+      {
         "expansions" : [
           "home",
           "journal",
           "runState",
+          "devices",
           "backup",
           "startup",
           "updates"
@@ -23,6 +54,7 @@
           "home",
           "journal",
           "runState",
+          "devices",
           "backup",
           "startup",
           "updates"
@@ -34,6 +66,27 @@
     "static" : [
       "journal.backup.message.state",
       "journal.backup.open",
+      "journal.devices.addDevice",
+      "journal.devices.load.state",
+      "journal.devices.pairing.copyLink",
+      "journal.devices.pairing.copyLink.copied.state",
+      "journal.devices.pairing.countdown",
+      "journal.devices.pairing.countdown.state",
+      "journal.devices.pairing.link.field",
+      "journal.devices.pairing.qr",
+      "journal.devices.pairing.reopen",
+      "journal.devices.pairing.sheet",
+      "journal.devices.pairing.status",
+      "journal.devices.pairing.status.state",
+      "journal.devices.peerJournals.count.state",
+      "journal.devices.peerJournals.header",
+      "journal.devices.revokeConfirm.cancel",
+      "journal.devices.revokeConfirm.confirm",
+      "journal.devices.revokeConfirm.dialog",
+      "journal.devices.revokeConfirm.message.state",
+      "journal.devices.root",
+      "journal.devices.yourDevices.count.state",
+      "journal.devices.yourDevices.header",
       "journal.home.mark.card",
       "journal.home.name.state",
       "journal.home.open",
@@ -81,6 +134,33 @@
   "states" : {
     "journal.backup.message.state" : {
       "kind" : "freeform"
+    },
+    "journal.devices.load.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalDevicesLoadState"
+    },
+    "journal.devices.pairing.copyLink.copied.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalDevicesCopiedState"
+    },
+    "journal.devices.pairing.countdown.state" : {
+      "kind" : "numeric"
+    },
+    "journal.devices.pairing.status.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalDevicesPairingState"
+    },
+    "journal.devices.peerJournals.count.state" : {
+      "kind" : "numeric"
+    },
+    "journal.devices.revokeConfirm.message.state" : {
+      "kind" : "freeform"
+    },
+    "journal.devices.row.fingerprint-{fingerprint}.rename.error.state" : {
+      "kind" : "freeform"
+    },
+    "journal.devices.yourDevices.count.state" : {
+      "kind" : "numeric"
     },
     "journal.home.name.state" : {
       "kind" : "freeform"
@@ -166,6 +246,25 @@
       "day",
       "week",
       "month"
+    ],
+    "JournalDevicesCopiedState" : [
+      "idle",
+      "copied"
+    ],
+    "JournalDevicesLoadState" : [
+      "loading",
+      "loaded",
+      "empty",
+      "not_running",
+      "not_ready"
+    ],
+    "JournalDevicesPairingState" : [
+      "idle",
+      "opening",
+      "open",
+      "paired",
+      "expired",
+      "open_failed"
     ],
     "JournalEnabledState" : [
       "enabled",

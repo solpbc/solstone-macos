@@ -11,6 +11,7 @@ enum JournalPane: String, CaseIterable, Hashable, Identifiable {
     case home
     case journal
     case runState
+    case devices
     case backup
     case startup
     case updates
@@ -22,6 +23,7 @@ enum JournalPane: String, CaseIterable, Hashable, Identifiable {
         case .home: return "home"
         case .journal: return "journal"
         case .runState: return "run state"
+        case .devices: return "devices"
         case .backup: return "backup"
         case .startup: return "startup"
         case .updates: return "updates"
@@ -33,6 +35,7 @@ enum JournalPane: String, CaseIterable, Hashable, Identifiable {
         case .home: return "house"
         case .journal: return "book.closed"
         case .runState: return "waveform.path.ecg"
+        case .devices: return "iphone.gen3"
         case .backup: return "externaldrive"
         case .startup: return "power"
         case .updates: return "arrow.down.circle"
@@ -136,6 +139,7 @@ final class JournalWindowModel {
     @ObservationIgnored private let machineNameProvider: MachineNameProvider
     @ObservationIgnored private let now: NowProvider
     @ObservationIgnored private let diskCacheDuration: TimeInterval
+    let devicesModel: JournalDevicesModel
 
     var selectedPane: JournalPane = .home
     var journalName = ""
@@ -164,6 +168,7 @@ final class JournalWindowModel {
         fetchDiskUsage: DiskUsageFetch? = nil,
         fetchHealth: HealthFetch? = nil,
         fetchVersion: VersionFetch? = nil,
+        devicesModel: JournalDevicesModel? = nil,
         machineNameProvider: @escaping MachineNameProvider = {
             let localized = Host.current().localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let localized, !localized.isEmpty { return localized }
@@ -174,9 +179,10 @@ final class JournalWindowModel {
         appVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
     ) {
         let defaultIdentityFetcher = JournalIdentityFetcher(session: identitySession)
+        let trimmedBaseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.config = config
         self.supervisor = supervisor
-        self.baseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        self.baseURL = trimmedBaseURL
         self.fetchConfig = fetchConfig ?? { try await configClient.fetchConfig() }
         self.updateName = updateName ?? { try await configClient.updateJournalName($0) }
         self.fetchIdentity = fetchIdentity ?? { baseURL in
@@ -193,6 +199,7 @@ final class JournalWindowModel {
         self.now = now
         self.diskCacheDuration = diskCacheDuration
         self.appVersion = appVersion
+        self.devicesModel = devicesModel ?? JournalDevicesModel(client: JournalDevicesClient(baseURL: trimmedBaseURL))
     }
 
     var isConfigured: Bool {
@@ -239,6 +246,7 @@ final class JournalWindowModel {
         selectedPane = .home
         hasLoadedConfig = false
         identityFetchStarted = false
+        devicesModel.resetTransientState()
     }
 
     func loadForWindowOpen() async {
@@ -254,6 +262,8 @@ final class JournalWindowModel {
             Task { await loadDiskUsageIfNeeded() }
         case .runState:
             Task { await refreshRunState() }
+        case .devices:
+            Task { await devicesModel.loadDevices() }
         case .home, .backup, .startup, .updates:
             break
         }

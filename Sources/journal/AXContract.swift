@@ -33,6 +33,27 @@ enum AXContract {
         AXID.Journal.Backup.messageState,
         AXID.Journal.Startup.launchAtLogin,
         AXID.Journal.Startup.launchAtLoginState,
+        AXID.Journal.Devices.root,
+        AXID.Journal.Devices.loadState,
+        AXID.Journal.Devices.yourDevicesHeader,
+        AXID.Journal.Devices.yourDevicesCountState,
+        AXID.Journal.Devices.peerJournalsHeader,
+        AXID.Journal.Devices.peerJournalsCountState,
+        AXID.Journal.Devices.addDevice,
+        AXID.Journal.Devices.Pairing.sheet,
+        AXID.Journal.Devices.Pairing.linkField,
+        AXID.Journal.Devices.Pairing.copyLink,
+        AXID.Journal.Devices.Pairing.copyLinkCopiedState,
+        AXID.Journal.Devices.Pairing.qr,
+        AXID.Journal.Devices.Pairing.countdown,
+        AXID.Journal.Devices.Pairing.countdownState,
+        AXID.Journal.Devices.Pairing.status,
+        AXID.Journal.Devices.Pairing.statusState,
+        AXID.Journal.Devices.Pairing.reopen,
+        AXID.Journal.Devices.RevokeConfirm.dialog,
+        AXID.Journal.Devices.RevokeConfirm.messageState,
+        AXID.Journal.Devices.RevokeConfirm.confirm,
+        AXID.Journal.Devices.RevokeConfirm.cancel,
         UpdatesAXID.statusState,
         UpdatesAXID.unavailable,
         UpdatesAXID.check,
@@ -78,6 +99,36 @@ enum AXContract {
                 template: "journal.sidebar.tab.{pane}.state",
                 key: "JournalPane.rawValue",
                 expansions: JournalPane.allCases.map(\.rawValue)
+            ),
+            ParameterizedIdentifier(
+                template: "journal.devices.row.fingerprint-{fingerprint}",
+                key: "DeviceRow.fingerprint",
+                runtime: true
+            ),
+            ParameterizedIdentifier(
+                template: "journal.devices.row.fingerprint-{fingerprint}.label",
+                key: "DeviceRow.fingerprint",
+                runtime: true
+            ),
+            ParameterizedIdentifier(
+                template: "journal.devices.row.fingerprint-{fingerprint}.rename.field",
+                key: "DeviceRow.fingerprint",
+                runtime: true
+            ),
+            ParameterizedIdentifier(
+                template: "journal.devices.row.fingerprint-{fingerprint}.rename.save",
+                key: "DeviceRow.fingerprint",
+                runtime: true
+            ),
+            ParameterizedIdentifier(
+                template: "journal.devices.row.fingerprint-{fingerprint}.rename.error.state",
+                key: "DeviceRow.fingerprint",
+                runtime: true
+            ),
+            ParameterizedIdentifier(
+                template: "journal.devices.row.fingerprint-{fingerprint}.revoke",
+                key: "DeviceRow.fingerprint",
+                runtime: true
             )
         ].sorted { $0.template < $1.template }
     }
@@ -88,6 +139,9 @@ enum AXContract {
             "JournalRunDisplay": JournalRunDisplay.axTokens,
             "JournalHealthDisplay": JournalHealthDisplay.axTokens,
             "JournalEnabledState": JournalEnabledState.axTokens,
+            "JournalDevicesLoadState": JournalDevicesLoadState.axTokens,
+            "JournalDevicesPairingState": PairingState.axTokens,
+            "JournalDevicesCopiedState": JournalDevicesCopiedState.axTokens,
             "UpdateActivity": UpdateActivity.axTokens,
             "FrequencyOption": FrequencyOption.allCases.map(\.rawValue),
             "UpdateStatus": UpdateStatus.axTokens
@@ -109,6 +163,14 @@ enum AXContract {
             AXID.Journal.RunState.appVersionState: .freeform,
             AXID.Journal.Backup.messageState: .freeform,
             AXID.Journal.Startup.launchAtLoginState: .enum("JournalEnabledState"),
+            AXID.Journal.Devices.loadState: .enum("JournalDevicesLoadState"),
+            AXID.Journal.Devices.yourDevicesCountState: .numeric,
+            AXID.Journal.Devices.peerJournalsCountState: .numeric,
+            "journal.devices.row.fingerprint-{fingerprint}.rename.error.state": .freeform,
+            AXID.Journal.Devices.Pairing.copyLinkCopiedState: .enum("JournalDevicesCopiedState"),
+            AXID.Journal.Devices.Pairing.countdownState: .numeric,
+            AXID.Journal.Devices.Pairing.statusState: .enum("JournalDevicesPairingState"),
+            AXID.Journal.Devices.RevokeConfirm.messageState: .freeform,
             UpdatesAXID.statusState: .enum("UpdateStatus"),
             UpdatesAXID.checkState: .freeform,
             UpdatesAXID.downloadState: .freeform,
@@ -124,16 +186,23 @@ enum AXContract {
     }
 
     static var requiredStateKeys: Set<String> {
-        Set(
+        var keys = Set(
             enumerableIDs
                 .filter { $0.hasSuffix(".state") }
                 .map(stateKey(for:))
         )
+        for template in parameterizedTemplates where template.template.hasSuffix(".state") {
+            keys.insert(template.template)
+        }
+        return keys
     }
 
     static func stateKey(for id: String) -> String {
         if id.hasPrefix("journal.sidebar.tab."), id.hasSuffix(".state") {
             return "journal.sidebar.tab.{pane}.state"
+        }
+        if id.hasPrefix("journal.devices.row.fingerprint-"), id.hasSuffix(".rename.error.state") {
+            return "journal.devices.row.fingerprint-{fingerprint}.rename.error.state"
         }
         return id
     }
@@ -170,6 +239,13 @@ struct ParameterizedIdentifier: Codable, Equatable {
         self.key = key
         self.expansions = expansions
         self.runtime = nil
+    }
+
+    init(template: String, key: String, runtime: Bool) {
+        self.template = template
+        self.key = key
+        self.expansions = nil
+        self.runtime = runtime
     }
 }
 

@@ -64,6 +64,8 @@ struct JournalSettingsWindow: View {
             journalPane
         case .runState:
             runStatePane
+        case .devices:
+            JournalDevicesPane(model: model.devicesModel)
         case .backup:
             backupPane
         case .startup:
