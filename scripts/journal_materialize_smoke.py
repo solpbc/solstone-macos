@@ -63,7 +63,7 @@ def main(argv: list[str]) -> int:
             "install",
             str(leaf),
             "--with-executables-from",
-            "sol",
+            "solstone",
             "--find-links",
             str(wheelhouse),
             "--no-index",
