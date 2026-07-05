@@ -342,7 +342,7 @@ struct JournalHandoffDependencies {
             publicEDKeyBase64: Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String
                 ?? JournalHandoffConstants.productionPublicEDKeyBase64,
             maxDMGBytes: JournalHandoffConstants.maxDMGBytes,
-            adoptionTimeout: .seconds(120),
+            adoptionTimeout: .seconds(900),
             adoptionPollInterval: .seconds(1),
             runningTerminationTimeout: .seconds(15),
             runningTerminationPollInterval: .milliseconds(250),
