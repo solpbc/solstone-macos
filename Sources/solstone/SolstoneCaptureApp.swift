@@ -4,6 +4,8 @@
 import SwiftUI
 import UserNotifications
 import os
+import JournalMarkKit
+import JournalRuntime
 import SolstoneCore
 
 /// Single source of truth for tracked SwiftUI `Window` scenes.

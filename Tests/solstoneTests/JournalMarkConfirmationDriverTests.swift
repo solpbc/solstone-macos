@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import JournalMarkKit
 import SolstoneCore
 @testable import SPLTunnel
 import Testing
@@ -36,7 +37,7 @@ struct JournalMarkConfirmationDriverTests {
 
         driver.startIfNeeded(
             for: .paired,
-            resolveHomeBase: { .url(baseURL) },
+            resolveHomeBase: { JournalMarkConfirmationDriver.HomeBaseResolution.url(baseURL) },
             fetchMark: { baseURL in
                 await fetcher.fetch(baseURL: baseURL)
             }
@@ -142,7 +143,7 @@ struct JournalMarkConfirmationDriverTests {
 
         driver.startIfNeeded(
             for: .paired,
-            resolveHomeBase: { .url("http://127.0.0.1:7071") },
+            resolveHomeBase: { JournalMarkConfirmationDriver.HomeBaseResolution.url("http://127.0.0.1:7071") },
             fetchMark: { _ in .uiTestSample }
         )
         try await waitUntil(timeout: .seconds(2)) {

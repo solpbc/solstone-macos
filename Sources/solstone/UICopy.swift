@@ -9,7 +9,6 @@ public enum UICopy {
     public static let JOURNAL_MARK_CONFIRM_SUBTEXT = "your journal shows this same mark in its network app. it should match — exactly."
     public static let JOURNAL_MARK_CONFIRM_BUTTON = "yes — this is my journal"
     public static let JOURNAL_MARK_MISMATCH_BUTTON = "that doesn't match"
-    public static let JOURNAL_MARK_CONFIRMED_LINE = "this is your journal"
     public static let JOURNAL_MARK_CONNECTING = "connecting…"
     public static let JOURNAL_MARK_MISMATCH_TITLE = "not connected"
     public static let JOURNAL_MARK_MISMATCH_BODY = "you said this mark doesn't match the one your journal shows — so we didn't connect this Mac. you may have pasted the wrong link, or something isn't right. try again, or reach us and we'll help."
@@ -75,16 +74,11 @@ public enum UICopy {
     public static let SETTINGS_HELP_ICON_HALF = "on — saved on this Mac, not reaching your journal right now"
     public static let SETTINGS_HELP_ICON_PAUSED = "paused"
     public static let SETTINGS_HELP_ICON_ERROR = "needs your attention — permissions or a problem"
-    public static let JOURNAL_CHILD_BREAKER_TRIPPED = "journal stopped after repeated exits"
     public static let JOURNAL_MATERIALIZE_FAILED = "journal runtime couldn't be prepared"
-    public static let JOURNAL_SPAWN_BLOCKED_PORTS = "journal ports are still in use"
-    public static let JOURNAL_SPAWN_PORT_CHECK_FAILED = "couldn't verify journal ports are free"
     public static let JOURNAL_SPAWN_FAILED = "journal couldn't start"
     public static let JOURNAL_READINESS_TIMEOUT = "journal didn't become ready in time"
-    public static let JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE = "journal setup needed before upgrade can continue"
     public static let INSTALLER_INLINE_FAILURE_GENERIC = "setup hit a snag — retry below, or open details to share with support."
     public static let INSTALLER_READINESS_TIMEOUT = "the journal didn't become ready in time"
-    public static let INSTALLER_READINESS_GATE_FAILED = "couldn't get the journal ready for this Mac"
     public static let INSTALLER_VERIFY_INTEGRITY_LABEL = "verifying macOS security integrity"
     public static let ERROR_LOGIN_ITEM = "couldn't update your login setting. try again, or toggle it off and on."
     public static let ERROR_SAVE_CONFIG = "couldn't save your settings. try again, or restart sol."
@@ -94,7 +88,4 @@ public enum UICopy {
         "error: \(message) →"
     }
 
-    public static func installerVerifyIntegrityWarning(library: String) -> String {
-        "couldn't get \(library) ready; continuing"
-    }
 }

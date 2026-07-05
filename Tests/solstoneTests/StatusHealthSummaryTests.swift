@@ -1,4 +1,5 @@
 import Foundation
+import JournalRuntime
 import Testing
 import SolstoneCore
 @testable import solstone

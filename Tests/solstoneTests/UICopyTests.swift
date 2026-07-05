@@ -26,7 +26,6 @@ struct UICopyTests {
         #expect(UICopy.JOURNAL_MARK_CONFIRM_SUBTEXT == "your journal shows this same mark in its network app. it should match \u{2014} exactly.")
         #expect(UICopy.JOURNAL_MARK_CONFIRM_BUTTON == "yes \u{2014} this is my journal")
         #expect(UICopy.JOURNAL_MARK_MISMATCH_BUTTON == "that doesn\u{0027}t match")
-        #expect(UICopy.JOURNAL_MARK_CONFIRMED_LINE == "this is your journal")
         #expect(UICopy.JOURNAL_MARK_CONNECTING == "connecting\u{2026}")
         #expect(UICopy.JOURNAL_MARK_MISMATCH_TITLE == "not connected")
         #expect(UICopy.JOURNAL_MARK_MISMATCH_BODY == "you said this mark doesn\u{0027}t match the one your journal shows \u{2014} so we didn\u{0027}t connect this Mac. you may have pasted the wrong link, or something isn\u{0027}t right. try again, or reach us and we\u{0027}ll help.")
@@ -101,7 +100,6 @@ struct UICopyTests {
         #expect(UICopy.RESTART_JOURNAL == "restart journal")
         #expect(UICopy.STOP_JOURNAL == "stop journal")
         #expect(UICopy.START_JOURNAL == "start journal")
-        #expect(UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE == "journal setup needed before upgrade can continue")
     }
 
     @Test func installerInlineFailureGenericString() {
@@ -112,7 +110,4 @@ struct UICopyTests {
         #expect(UICopy.INSTALLER_READINESS_TIMEOUT == "the journal didn't become ready in time")
     }
 
-    @Test func installerReadinessGateFailedString() {
-        #expect(UICopy.INSTALLER_READINESS_GATE_FAILED == "couldn't get the journal ready for this Mac")
-    }
 }

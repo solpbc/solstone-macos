@@ -2,6 +2,8 @@
 // Copyright (c) 2026 sol pbc
 
 import AppKit
+import JournalMarkKit
+import JournalRuntime
 @preconcurrency import ScreenCaptureKit
 import SwiftUI
 import UserNotifications

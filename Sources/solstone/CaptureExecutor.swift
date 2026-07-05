@@ -3,6 +3,7 @@
 
 import Foundation
 import os
+import SolstoneCore
 
 enum PauseReason: Sendable, Hashable {
     case sleep

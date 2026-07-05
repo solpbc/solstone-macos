@@ -7,6 +7,8 @@ import SwiftUI
 import ServiceManagement
 import UserNotifications
 import os
+import JournalMarkKit
+import JournalRuntime
 import SolstoneCore
 import SPLTunnel
 
@@ -300,7 +302,7 @@ public final class AppState {
     }
 
     internal var bundledJournalCardState: InstallerCardState {
-        solstone.bundledJournalCardState(
+        JournalRuntime.bundledJournalCardState(
             main: installer.main,
             failureRecord: installer.upgradeFailureRecord,
             runtimeStatus: journalRuntimeStatus,
@@ -895,7 +897,7 @@ public final class AppState {
         }
 
         // Set shared instance for app-wide access (e.g., termination handler)
-        installer.attach(appState: self)
+        installer.attach(host: self)
         solChatTarget.state = self
         journalStatusTarget.state = self
         heartbeatTarget.state = self
@@ -1154,7 +1156,7 @@ public final class AppState {
         }
     }
 
-    internal func ensureBundledJournalRuntime(journalRoot: URL) async -> Bool {
+    public func ensureBundledJournalRuntime(journalRoot: URL) async -> Bool {
         if config.journalPath != journalRoot.path {
             var next = config
             next.journalPath = journalRoot.path

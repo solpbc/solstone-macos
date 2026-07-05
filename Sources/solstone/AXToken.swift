@@ -7,6 +7,7 @@
 // of hardcoding identifiers or token lists.
 
 import SwiftUI
+import JournalRuntime
 
 internal enum AXPermissionState: CaseIterable {
     case granted

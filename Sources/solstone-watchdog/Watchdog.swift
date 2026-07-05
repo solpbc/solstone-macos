@@ -11,7 +11,12 @@ final class WatchdogCoordinator {
     private var recentRelaunches: [Date] = []
     private var pollTimer: Timer?
     private var lastKnownObserverPID: Int32?
-    private let targetBundleID = SolstoneIdentity.bundleIdentifier
+    private let configuration: WatchdogConfiguration
+    private var targetBundleID: String { configuration.targetBundleID }
+
+    init(configuration: WatchdogConfiguration = WatchdogConfiguration()) {
+        self.configuration = configuration
+    }
 
     func start() {
         let runningApplications = NSWorkspace.shared.runningApplications
@@ -72,7 +77,7 @@ final class WatchdogCoordinator {
 
         pruneRelaunches(now: now)
 
-        let marker = ExpectedExitMarker.readAndConsume()
+        let marker = ExpectedExitMarker.readAndConsume(at: configuration.markerURL)
         let decision = relaunchDecision(
             marker: marker,
             terminatedPID: terminatedPID,

@@ -1,7 +1,7 @@
 .PHONY: build release release-universal run clean test ax-contract integration-test snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist dmg notarize staple verify-notarization release-dmg \
         vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke brand-sync \
-        release-preflight bump-release
+        release-preflight bump-release journal-app-dev run-journal
 
 # Default goal when running bare `make` — build the project. brand-sync is
 # opt-in (run it manually when the brand spec updates).
@@ -177,8 +177,8 @@ generate-bundle-config: check-versions
 	        printf '    public static let bundledUVVersion = "%s"\n' "$(UV_VERSION)"; \
 	        printf '    public static let bundledPythonBuild = "%s"\n' "$(PYTHON_BUILD_STANDALONE_VERSION)"; \
 	        printf '%s\n' '}'; \
-	    } > Sources/solstone/BundleConfig.swift
-	@echo "generated: Sources/solstone/BundleConfig.swift"
+	    } > Sources/JournalRuntime/BundleConfig.swift
+	@echo "generated: Sources/JournalRuntime/BundleConfig.swift"
 
 # Re-vendor brand SVGs from the canonical source. CI verifies the committed
 # output (it does not run brand-sync) — run this locally when the brand spec
@@ -374,7 +374,7 @@ bump-release:
 	@echo "next steps:"
 	@echo "  1. edit CHANGELOG.md — replace scaffold bullets with real release notes"
 	@echo "  2. git diff to review"
-	@echo "  3. git add Sources/solstone/Info.plist Makefile Sources/solstone/BundleConfig.swift CHANGELOG.md"
+	@echo "  3. git add Sources/solstone/Info.plist Makefile Sources/JournalRuntime/BundleConfig.swift CHANGELOG.md"
 	@echo "  4. git commit -m 'release: bump to $(VERSION) (build $(BUILD))'"
 	@echo "  5. git push origin main"
 	@echo "  6. make release-preflight && make release-dmg"
@@ -409,6 +409,7 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 	@mkdir -p solstone.app/Contents/Library/LaunchAgents
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
 	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
+	@cp -r .build/apple/Products/Release/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
 	@# arm64-only uv; .app remains universal.
 	@cp $(UV_VENDOR_BINARY) solstone.app/Contents/Resources/uv
@@ -435,6 +436,9 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		solstone.app/Contents/Resources/solstone_solstone.bundle
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		solstone.app/Contents/Resources/solstone_JournalMarkKit.bundle
 	@codesign --force --options runtime --timestamp \
 		--identifier app.solstone.observer.watchdog \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
@@ -498,6 +502,49 @@ bundle-dist: unlock-signing signing-check vendor-uv vendor-python vendor-wheelho
 	@test -f solstone.app/Contents/embedded.provisionprofile || { echo "error: embedded.provisionprofile missing from bundle"; exit 1; }
 	@codesign -d --entitlements - --xml solstone.app 2>/dev/null | plutil -p - 2>/dev/null | grep -q '7QCG8V4M6H.app.solstone.observer.spl' || { echo "error: keychain-access-group entitlement missing from signed app (DP keychain would -34018)"; exit 1; }
 	@echo "✓ Signed: solstone.app (keychain-access-group + embedded profile verified)"
+
+journal-app-dev:
+	@echo "Building journal dev app..."
+	@swift build -c release --product journal
+	@swift build -c release --product solstone-watchdog
+	@BUILD_DIR="$$(swift build -c release --show-bin-path)"; \
+		echo "Assembling journal.app from $$BUILD_DIR"; \
+		rm -rf journal.app; \
+		mkdir -p journal.app/Contents/MacOS journal.app/Contents/Resources journal.app/Contents/Frameworks journal.app/Contents/Library/LaunchAgents; \
+		cp "$$BUILD_DIR/journal" journal.app/Contents/MacOS/; \
+		cp "$$BUILD_DIR/solstone-watchdog" journal.app/Contents/MacOS/; \
+		cp Sources/journal/Info.plist journal.app/Contents/; \
+		cp Sources/journal/Resources/AppIcon.icns journal.app/Contents/Resources/; \
+		cp Sources/journal/app.solstone.journal.watchdog.plist journal.app/Contents/Library/LaunchAgents/; \
+		test -d "$$BUILD_DIR/solstone_JournalMarkKit.bundle" || { echo "error: solstone_JournalMarkKit.bundle missing from $$BUILD_DIR"; exit 1; }; \
+		cp -R "$$BUILD_DIR/solstone_JournalMarkKit.bundle" journal.app/Contents/Resources/; \
+		if [ -d "$$BUILD_DIR/solstone_journal.bundle" ]; then \
+			cp -R "$$BUILD_DIR/solstone_journal.bundle" journal.app/Contents/Resources/; \
+		fi; \
+		if [ -d "$(SPARKLE_FRAMEWORK)" ]; then \
+			cp -R "$(SPARKLE_FRAMEWORK)" journal.app/Contents/Frameworks/; \
+		elif [ -d "$$BUILD_DIR/Sparkle.framework" ]; then \
+			cp -R "$$BUILD_DIR/Sparkle.framework" journal.app/Contents/Frameworks/; \
+		else \
+			echo "error: Sparkle.framework not found at $(SPARKLE_FRAMEWORK) or $$BUILD_DIR/Sparkle.framework"; \
+			exit 1; \
+		fi; \
+		RPATH_LOG="$$(mktemp -t journal-rpath)"; \
+		if install_name_tool -add_rpath "@executable_path/../Frameworks" journal.app/Contents/MacOS/journal 2>"$$RPATH_LOG"; then \
+			rm -f "$$RPATH_LOG"; \
+		elif grep -Eq 'would duplicate path|already exists' "$$RPATH_LOG"; then \
+			rm -f "$$RPATH_LOG"; \
+		else \
+			cat "$$RPATH_LOG"; \
+			rm -f "$$RPATH_LOG"; \
+			exit 1; \
+		fi; \
+		echo "✓ Assembled: journal.app"; \
+		find journal.app/Contents -maxdepth 3 \( -path '*/Versions' -o -path '*/_CodeSignature' \) -prune -o \( -type f -o -type d \) -print | sort
+
+run-journal: journal-app-dev
+	@open journal.app
+	@/usr/bin/log stream --predicate 'subsystem == "app.solstone.journal" OR subsystem == "app.solstone.journal.watchdog"' --level debug
 
 # Create and sign the DMG using create-dmg. Produces a polished mounted
 # volume — cream brand background with sol-ring watermark, app icon
@@ -586,7 +633,7 @@ supply-chain-check: vendor-uv vendor-python generate-bundle-config
 	@echo "python release url: $(PYTHON_RELEASE_URL)"
 	@echo "python sha256: $$(awk '{print $$1; exit}' "$(PYTHON_VENDOR_SHA_FILE)")"
 	@echo "── BundleConfig.swift ──"
-	@cat Sources/solstone/BundleConfig.swift
+	@cat Sources/JournalRuntime/BundleConfig.swift
 	@echo "── bundled-uv codesign ──"
 	@if [ -f solstone.app/Contents/Resources/uv ]; then \
 	    codesign -dvvv solstone.app/Contents/Resources/uv 2>&1 || true; \

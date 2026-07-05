@@ -212,8 +212,59 @@ struct WatchdogTests {
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
+    @Test func defaultWatchdogConfigurationPreservesSolMarkerPath() {
+        let configuration = WatchdogConfiguration(environment: [:])
+
+        #expect(configuration.targetBundleID == "app.solstone.observer")
+        #expect(configuration.loggerSubsystem == "app.solstone.observer.watchdog")
+        #expect(configuration.markerDiscriminator == ExpectedExitMarker.solMarkerDiscriminator)
+        #expect(configuration.markerURL == ExpectedExitMarker.markerURL)
+        #expect(ExpectedExitMarker.markerURL == SolstoneIdentity.applicationSupportURL.appendingPathComponent("expected-exit.json"))
+    }
+
+    @Test func journalWatchdogConfigurationDerivesDistinctMarkerPath() {
+        let configuration = WatchdogConfiguration(environment: [
+            WatchdogConfiguration.targetBundleIDEnvironmentKey: "app.solstone.journal",
+            WatchdogConfiguration.loggerSubsystemEnvironmentKey: "app.solstone.journal.watchdog",
+            WatchdogConfiguration.markerDiscriminatorEnvironmentKey: ExpectedExitMarker.journalMarkerDiscriminator
+        ])
+
+        #expect(configuration.targetBundleID == "app.solstone.journal")
+        #expect(configuration.loggerSubsystem == "app.solstone.journal.watchdog")
+        #expect(configuration.markerDiscriminator == ExpectedExitMarker.journalMarkerDiscriminator)
+        #expect(configuration.markerURL == ExpectedExitMarker.markerURL(for: ExpectedExitMarker.journalMarkerDiscriminator))
+        #expect(configuration.markerURL != ExpectedExitMarker.markerURL)
+    }
+
+    @Test func expectedExitMarkerAtDerivedJournalPathSuppressesRelaunch() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let markerURL = ExpectedExitMarker.markerURL(
+            for: ExpectedExitMarker.journalMarkerDiscriminator,
+            applicationSupportBaseURL: directory
+        )
+        ExpectedExitMarker.markExpectedExit(
+            reason: "journal-test-quit",
+            now: now,
+            pid: pid,
+            at: markerURL
+        )
+
+        let marker = ExpectedExitMarker.readAndConsume(at: markerURL)
+        let decision = relaunchDecision(
+            marker: marker,
+            terminatedPID: pid,
+            now: now,
+            recentRelaunches: []
+        )
+
+        #expect(decision == .suppress)
+        #expect(!FileManager.default.fileExists(atPath: markerURL.path))
+    }
+
     @Test func plistKeysMatchLaunchAgentContract() throws {
-        let plist = try loadWatchdogPlist()
+        let plist = try loadWatchdogPlist("Sources/solstone/app.solstone.observer.watchdog.plist")
 
         #expect(plist["Label"] as? String == "app.solstone.observer.watchdog")
         #expect(plist["BundleProgram"] as? String == "Contents/MacOS/solstone-watchdog")
@@ -226,12 +277,28 @@ struct WatchdogTests {
         #expect(plist["AssociatedBundleIdentifiers"] as? [String] == ["app.solstone.observer"])
     }
 
-    private func loadWatchdogPlist() throws -> [String: Any] {
+    @Test func journalPlistUsesStaticWatchdogEnvironmentDiscriminators() throws {
+        let plist = try loadWatchdogPlist("Sources/journal/app.solstone.journal.watchdog.plist")
+
+        #expect(plist["Label"] as? String == "app.solstone.journal.watchdog")
+        #expect(plist["BundleProgram"] as? String == "Contents/MacOS/solstone-watchdog")
+        #expect(plist["RunAtLoad"] as? Bool == true)
+        #expect(plist["ThrottleInterval"] as? Int == 30)
+        #expect(plist["AssociatedBundleIdentifiers"] as? [String] == ["app.solstone.journal"])
+
+        let environment = try #require(plist["EnvironmentVariables"] as? [String: String])
+        #expect(environment[WatchdogConfiguration.targetBundleIDEnvironmentKey] == "app.solstone.journal")
+        #expect(environment[WatchdogConfiguration.loggerSubsystemEnvironmentKey] == "app.solstone.journal.watchdog")
+        #expect(environment[WatchdogConfiguration.markerDiscriminatorEnvironmentKey] == ExpectedExitMarker.journalMarkerDiscriminator)
+        #expect(!environment.values.contains { $0.hasPrefix("/") })
+    }
+
+    private func loadWatchdogPlist(_ relativePath: String) throws -> [String: Any] {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let plistURL = repoRoot.appendingPathComponent("Sources/solstone/app.solstone.observer.watchdog.plist")
+        let plistURL = repoRoot.appendingPathComponent(relativePath)
         let data = try Data(contentsOf: plistURL)
         let value = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
         return try #require(value as? [String: Any])

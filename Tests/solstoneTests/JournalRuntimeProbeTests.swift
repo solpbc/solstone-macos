@@ -3,6 +3,8 @@
 
 import Darwin
 import Foundation
+import JournalRuntime
+import JournalRuntimeTestSupport
 import Testing
 import SolstoneCore
 @testable import solstone

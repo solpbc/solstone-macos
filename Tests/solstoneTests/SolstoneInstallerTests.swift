@@ -3,6 +3,8 @@
 
 import Foundation
 import Darwin
+import JournalRuntime
+import JournalRuntimeTestSupport
 import Testing
 import SolstoneCore
 @testable import solstone
@@ -359,7 +361,7 @@ struct SolstoneInstallerTests {
 
         #expect(installer.main == .failed(.cleanup(
             step: .resolveJournal,
-            message: cleanupMessage(step: .resolveJournal, why: UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE)
+            message: cleanupMessage(step: .resolveJournal, why: JournalRuntime.UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE)
         )))
         #expect(!runner.invocations.contains { $0.arguments == ["service", "uninstall"] })
     }
@@ -402,7 +404,7 @@ struct SolstoneInstallerTests {
 
         #expect(installer.main == .failed(.cleanup(
             step: .resolveJournal,
-            message: cleanupMessage(step: .resolveJournal, why: UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE)
+            message: cleanupMessage(step: .resolveJournal, why: JournalRuntime.UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE)
         )))
         #expect(!runner.invocations.contains { $0.arguments == ["config", "show"] })
     }
@@ -1006,7 +1008,7 @@ struct SolstoneInstallerTests {
             connectionTester: { _, _ in nil },
             observerRegistrar: registrar.register
         )
-        installer.attach(appState: appState)
+        installer.attach(host: appState)
         defer { installer.cancel() }
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
@@ -1034,7 +1036,7 @@ struct SolstoneInstallerTests {
         runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
         let registrar = FakeObserverRegistrar(result: .success(ObserverRegistration(key: "new-key", name: "new-name")))
         let installer = makeInstaller(runner: runner, observerRegistrar: registrar.register)
-        installer.attach(appState: appState)
+        installer.attach(host: appState)
         defer { installer.cancel() }
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
@@ -1159,7 +1161,7 @@ struct SolstoneInstallerTests {
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
         try await waitUntil { installer.main == .done }
 
-        #expect(installer.integrityWarningMessage == UICopy.installerVerifyIntegrityWarning(library: "tokenizers"))
+        #expect(installer.integrityWarningMessage == JournalRuntime.UICopy.installerVerifyIntegrityWarning(library: "tokenizers"))
         let warm = try #require(runner.invocations.first { $0.arguments == ["warm"] })
         #expect(warm.executable.lastPathComponent == "journal")
         let materializedRoot = warm.executable
@@ -1184,7 +1186,7 @@ struct SolstoneInstallerTests {
                 return nil
             }
         )
-        installer.attach(appState: appState)
+        installer.attach(host: appState)
         defer { installer.cancel() }
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
@@ -1200,7 +1202,7 @@ struct SolstoneInstallerTests {
         runner.enqueue("install-models", .success())
         runner.enqueue("--version", .success(stdout: Data("sol (solstone) \(BundleConfig.solstonePinVersion)\n".utf8)))
         let installer = makeInstaller(runner: runner, connectionTester: { _, _ in "offline" })
-        installer.attach(appState: appState)
+        installer.attach(host: appState)
         defer { installer.cancel() }
 
         installer.start(journalURL: URL(fileURLWithPath: "/tmp/journal"), existingInstallChoice: .acceptExisting)
@@ -1287,7 +1289,7 @@ struct SolstoneInstallerTests {
 
         #expect(installer.main == .failed(.cleanup(
             step: .resolveJournal,
-            message: cleanupMessage(step: .resolveJournal, why: UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE)
+            message: cleanupMessage(step: .resolveJournal, why: JournalRuntime.UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE)
         )))
         assertNoDestructiveInstallerInvocations(runner)
     }
@@ -1628,7 +1630,7 @@ struct SolstoneInstallerTests {
             main: installer.main,
             probe: installer.probedVersion,
             failureRecord: installer.upgradeFailureRecord
-        ) == .failed(.installSolstone(message: UICopy.JOURNAL_MATERIALIZE_FAILED)))
+        ) == .failed(.installSolstone(message: JournalRuntime.UICopy.JOURNAL_MATERIALIZE_FAILED)))
     }
 
     @Test func upgradeStartClearsRecordSynchronously() {
@@ -1760,7 +1762,7 @@ struct SolstoneInstallerTests {
         try await waitForTerminal(installer)
 
         if case .failed(.installSolstone(let message)) = installer.main {
-            #expect(message == UICopy.JOURNAL_MATERIALIZE_FAILED)
+            #expect(message == JournalRuntime.UICopy.JOURNAL_MATERIALIZE_FAILED)
         } else {
             Issue.record("expected installSolstone failure")
         }
@@ -1786,7 +1788,7 @@ struct SolstoneInstallerTests {
         try await waitForTerminal(installer)
 
         if case .failed(.installSolstone(let message)) = installer.main {
-            #expect(message == UICopy.JOURNAL_MATERIALIZE_FAILED)
+            #expect(message == JournalRuntime.UICopy.JOURNAL_MATERIALIZE_FAILED)
         } else {
             Issue.record("expected installSolstone launch failure")
         }
@@ -1837,7 +1839,7 @@ struct SolstoneInstallerTests {
             solOwnershipResolver: { _ in .externallyManaged(solPath: solPath) },
             observerRegistrar: registrar.register
         )
-        installer.attach(appState: appState)
+        installer.attach(host: appState)
         defer { installer.cancel() }
 
         let found = await installer.detect()

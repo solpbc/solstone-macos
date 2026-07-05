@@ -16,8 +16,20 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
         self.reason = reason
     }
 
+    public static let solMarkerDiscriminator = "Solstone"
+    public static let journalMarkerDiscriminator = "SolstoneJournal"
+
     public static var markerURL: URL {
-        SolstoneIdentity.applicationSupportURL.appendingPathComponent("expected-exit.json")
+        markerURL(for: solMarkerDiscriminator)
+    }
+
+    public static func markerURL(
+        for discriminator: String,
+        applicationSupportBaseURL: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    ) -> URL {
+        applicationSupportBaseURL
+            .appendingPathComponent(discriminator, isDirectory: true)
+            .appendingPathComponent("expected-exit.json")
     }
 
     public static let defaultFreshnessWindow: TimeInterval = 120

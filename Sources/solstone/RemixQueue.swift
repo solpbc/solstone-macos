@@ -5,6 +5,7 @@ import AVFoundation
 import CoreMedia
 import Foundation
 import os
+import SolstoneCore
 
 public protocol AudioRemixing: Sendable {
     func remix(

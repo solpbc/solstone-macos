@@ -1,5 +1,7 @@
 import Darwin
 import Foundation
+import JournalRuntime
+import JournalRuntimeTestSupport
 import Testing
 import SolstoneCore
 @testable import solstone
@@ -51,7 +53,7 @@ struct AppOwnedJournalTests {
 
         #expect(!ready)
         if case .unknown(let diagnostic) = state.journalRuntimeStatus {
-            #expect(diagnostic.outputExcerpt?.contains(UICopy.JOURNAL_MATERIALIZE_FAILED) == true)
+            #expect(diagnostic.outputExcerpt?.contains(solstone.UICopy.JOURNAL_MATERIALIZE_FAILED) == true)
         } else {
             Issue.record("expected unknown attention status")
         }
@@ -73,7 +75,7 @@ struct AppOwnedJournalTests {
 
         #expect(!ready)
         if case .stopped(let diagnostic) = state.journalRuntimeStatus {
-            #expect(diagnostic.outputExcerpt?.contains(UICopy.JOURNAL_SPAWN_BLOCKED_PORTS) == true)
+            #expect(diagnostic.outputExcerpt?.contains(JournalRuntime.UICopy.JOURNAL_SPAWN_BLOCKED_PORTS) == true)
         } else {
             Issue.record("expected stopped attention status")
         }
@@ -93,7 +95,7 @@ struct AppOwnedJournalTests {
 
         #expect(!ready)
         if case .stopped(let diagnostic) = state.journalRuntimeStatus {
-            #expect(diagnostic.outputExcerpt?.contains(UICopy.JOURNAL_SPAWN_FAILED) == true)
+            #expect(diagnostic.outputExcerpt?.contains(solstone.UICopy.JOURNAL_SPAWN_FAILED) == true)
         } else {
             Issue.record("expected stopped attention status")
         }
@@ -118,7 +120,7 @@ struct AppOwnedJournalTests {
 
         #expect(!ready)
         if case .unknown(let diagnostic) = state.journalRuntimeStatus {
-            #expect(diagnostic.outputExcerpt?.contains(UICopy.JOURNAL_READINESS_TIMEOUT) == true)
+            #expect(diagnostic.outputExcerpt?.contains(solstone.UICopy.JOURNAL_READINESS_TIMEOUT) == true)
         } else {
             Issue.record("expected unknown attention status")
         }
@@ -132,7 +134,7 @@ struct AppOwnedJournalTests {
         let runner = MockSupervisedChildRunner()
         let terminalDiagnostic = JournalDiagnostic(
             commandLabel: "journal start --app-supervised",
-            outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
+            outputExcerpt: JournalRuntime.UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
         )
         state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
         state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
@@ -143,8 +145,8 @@ struct AppOwnedJournalTests {
         let ready = await state.ensureBundledJournalRuntime(journalRoot: try makeTemporaryDirectory())
 
         #expect(!ready)
-        #expect(state.journalRuntimeStatus.settingsPresentation.reason == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
-        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(UICopy.JOURNAL_READINESS_TIMEOUT) == false)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason == JournalRuntime.UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(solstone.UICopy.JOURNAL_READINESS_TIMEOUT) == false)
         #expect(runner.startCalls == 1)
         #expect(runner.stopCalls == 1)
         #expect(runner.markReadyCalls == 0)
@@ -155,7 +157,7 @@ struct AppOwnedJournalTests {
         let runner = MockSupervisedChildRunner()
         let terminalDiagnostic = JournalDiagnostic(
             commandLabel: "journal start --app-supervised",
-            outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
+            outputExcerpt: JournalRuntime.UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
         )
         state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
         state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
@@ -165,7 +167,7 @@ struct AppOwnedJournalTests {
             result: .failed(JournalDiagnostic(
                 commandLabel: "journal readiness",
                 timedOut: true,
-                outputExcerpt: UICopy.JOURNAL_READINESS_TIMEOUT
+                outputExcerpt: solstone.UICopy.JOURNAL_READINESS_TIMEOUT
             )),
             beforeReturn: {
                 runner.setTerminalDiagnostic(terminalDiagnostic)
@@ -175,8 +177,8 @@ struct AppOwnedJournalTests {
         let ready = await state.ensureBundledJournalRuntime(journalRoot: try makeTemporaryDirectory())
 
         #expect(!ready)
-        #expect(state.journalRuntimeStatus.settingsPresentation.reason == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
-        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(UICopy.JOURNAL_READINESS_TIMEOUT) == false)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason == JournalRuntime.UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(solstone.UICopy.JOURNAL_READINESS_TIMEOUT) == false)
         #expect(runner.stopCalls == 1)
     }
 
@@ -507,7 +509,7 @@ struct AppOwnedJournalTests {
         let runner = MockSupervisedChildRunner()
         let terminalDiagnostic = JournalDiagnostic(
             commandLabel: "journal start --app-supervised",
-            outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
+            outputExcerpt: JournalRuntime.UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
         )
         state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
         state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
@@ -519,10 +521,10 @@ struct AppOwnedJournalTests {
 
         state.journalReadinessGate = MockJournalReadinessGate(result: .failedTerminal(terminalDiagnostic))
         state.requestJournalRestart()
-        try await waitUntilMain { state.errorMessage == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED }
+        try await waitUntilMain { state.errorMessage == JournalRuntime.UICopy.JOURNAL_CHILD_BREAKER_TRIPPED }
 
-        #expect(state.journalRuntimeStatus.settingsPresentation.reason == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
-        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(UICopy.JOURNAL_READINESS_TIMEOUT) == false)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason == JournalRuntime.UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(solstone.UICopy.JOURNAL_READINESS_TIMEOUT) == false)
         #expect(runner.restartCalls == 1)
     }
 
@@ -532,7 +534,7 @@ struct AppOwnedJournalTests {
         let runner = MockSupervisedChildRunner()
         let terminalDiagnostic = JournalDiagnostic(
             commandLabel: "journal start --app-supervised",
-            outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
+            outputExcerpt: JournalRuntime.UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
         )
         state.journalOwnershipResolver = { (_: Bool) async -> SolOwnership in .absent }
         state.runtimeMaterializer = MockRuntimeMaterializer(result: .success(try makeRuntime()))
@@ -546,17 +548,17 @@ struct AppOwnedJournalTests {
             result: .failed(JournalDiagnostic(
                 commandLabel: "journal readiness",
                 timedOut: true,
-                outputExcerpt: UICopy.JOURNAL_READINESS_TIMEOUT
+                outputExcerpt: solstone.UICopy.JOURNAL_READINESS_TIMEOUT
             )),
             beforeReturn: {
                 runner.setTerminalDiagnostic(terminalDiagnostic)
             }
         )
         state.requestJournalRestart()
-        try await waitUntilMain { state.errorMessage == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED }
+        try await waitUntilMain { state.errorMessage == JournalRuntime.UICopy.JOURNAL_CHILD_BREAKER_TRIPPED }
 
-        #expect(state.journalRuntimeStatus.settingsPresentation.reason == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
-        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(UICopy.JOURNAL_READINESS_TIMEOUT) == false)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason == JournalRuntime.UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(solstone.UICopy.JOURNAL_READINESS_TIMEOUT) == false)
         #expect(runner.restartCalls == 1)
         #expect(runner.stopCalls == 1)
     }
@@ -908,8 +910,8 @@ struct AppOwnedJournalTests {
         let ready = await state.ensureBundledJournalRuntime(journalRoot: try makeTemporaryDirectory())
 
         #expect(!ready)
-        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(UICopy.JOURNAL_SPAWN_PORT_CHECK_FAILED) == true)
-        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(UICopy.JOURNAL_SPAWN_BLOCKED_PORTS) == false)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(JournalRuntime.UICopy.JOURNAL_SPAWN_PORT_CHECK_FAILED) == true)
+        #expect(state.journalRuntimeStatus.settingsPresentation.reason?.contains(JournalRuntime.UICopy.JOURNAL_SPAWN_BLOCKED_PORTS) == false)
         #expect(runner.startCalls == 0)
     }
 
@@ -925,7 +927,7 @@ struct AppOwnedJournalTests {
         try await waitUntil {
             recorder.statuses.contains { status in
                 if case .stopped(let diagnostic) = status {
-                    return diagnostic.outputExcerpt == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
+                    return diagnostic.outputExcerpt == JournalRuntime.UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
                 }
                 return false
             }
@@ -935,7 +937,7 @@ struct AppOwnedJournalTests {
             if case .stopped = status { return true }
             return false
         })
-        #expect(await runner.terminalReason()?.outputExcerpt == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
+        #expect(await runner.terminalReason()?.outputExcerpt == JournalRuntime.UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
         await runner.stop()
     }
 

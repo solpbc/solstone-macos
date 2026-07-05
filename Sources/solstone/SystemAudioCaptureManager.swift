@@ -4,6 +4,7 @@
 import CoreMedia
 import Foundation
 import os
+import SolstoneCore
 @preconcurrency import ScreenCaptureKit
 
 /// Manages persistent system audio capture via SCStream across segment rotations

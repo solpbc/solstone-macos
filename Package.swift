@@ -19,6 +19,36 @@ let package = Package(
             path: "Sources/SolstoneCore",
             swiftSettings: [
                 .swiftLanguageMode(.v6)
+            ],
+            linkerSettings: [
+                .linkedFramework("ScreenCaptureKit")
+            ]
+        ),
+        .target(
+            name: "JournalRuntime",
+            dependencies: [
+                .target(name: "SolstoneCore")
+            ],
+            path: "Sources/JournalRuntime",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .target(
+            name: "JournalMarkKit",
+            dependencies: [
+                .target(name: "SolstoneCore")
+            ],
+            path: "Sources/JournalMarkKit",
+            resources: [
+                .copy("Resources")
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ],
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("CoreText")
             ]
         ),
         .target(
@@ -35,6 +65,8 @@ let package = Package(
             name: "solstone",
             dependencies: [
                 .target(name: "SolstoneCore"),
+                .target(name: "JournalRuntime"),
+                .target(name: "JournalMarkKit"),
                 .target(name: "SPLTunnel"),
                 .target(name: "ObjCHelpers"),
                 .product(name: "Sparkle", package: "Sparkle")
@@ -73,22 +105,100 @@ let package = Package(
                 .linkedFramework("AppKit")
             ]
         ),
+        .executableTarget(
+            name: "journal",
+            dependencies: [
+                .target(name: "SolstoneCore"),
+                .target(name: "JournalRuntime"),
+                .target(name: "JournalMarkKit"),
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
+            path: "Sources/journal",
+            exclude: [
+                "Info.plist",
+                "entitlements.plist",
+                "app.solstone.journal.watchdog.plist"
+            ],
+            resources: [
+                .copy("Resources")
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ],
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("ServiceManagement")
+            ]
+        ),
         .target(
             name: "ObjCHelpers",
             path: "Sources/ObjCHelpers",
             publicHeadersPath: "include"
+        ),
+        .target(
+            name: "JournalRuntimeTestSupport",
+            dependencies: [
+                .target(name: "JournalRuntime"),
+                .target(name: "SolstoneCore")
+            ],
+            path: "Tests/JournalRuntimeTestSupport",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .testTarget(
+            name: "JournalRuntimeTests",
+            dependencies: [
+                .target(name: "JournalRuntime"),
+                .target(name: "JournalRuntimeTestSupport"),
+                .target(name: "SolstoneCore")
+            ],
+            path: "Tests/JournalRuntimeTests",
+            resources: [
+                .copy("Fixtures")
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .testTarget(
+            name: "JournalMarkKitTests",
+            dependencies: [
+                .target(name: "JournalMarkKit"),
+                .target(name: "SolstoneCore")
+            ],
+            path: "Tests/JournalMarkKitTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
         ),
         .testTarget(
             name: "solstoneTests",
             dependencies: [
                 .target(name: "solstone"),
                 .target(name: "SolstoneCore"),
+                .target(name: "JournalRuntime"),
+                .target(name: "JournalMarkKit"),
+                .target(name: "JournalRuntimeTestSupport"),
                 .target(name: "solstone-watchdog")
             ],
             path: "Tests/solstoneTests",
             resources: [
                 .copy("Fixtures")
             ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .testTarget(
+            name: "journalTests",
+            dependencies: [
+                .target(name: "journal"),
+                .target(name: "JournalRuntime"),
+                .target(name: "JournalRuntimeTestSupport"),
+                .target(name: "SolstoneCore")
+            ],
+            path: "Tests/journalTests",
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]

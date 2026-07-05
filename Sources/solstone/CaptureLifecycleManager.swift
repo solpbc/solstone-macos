@@ -3,6 +3,7 @@
 
 import Foundation
 import os
+import SolstoneCore
 @preconcurrency import ScreenCaptureKit
 
 @MainActor

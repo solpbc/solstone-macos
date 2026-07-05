@@ -1,4 +1,5 @@
 import AppKit
+import JournalRuntime
 import SwiftUI
 import SolstoneCore
 

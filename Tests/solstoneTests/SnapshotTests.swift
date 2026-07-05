@@ -3,6 +3,7 @@
 
 import AppKit
 import CoreAudio
+import JournalRuntime
 import SwiftUI
 import Testing
 import UserNotifications

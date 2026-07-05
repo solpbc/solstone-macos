@@ -3,6 +3,7 @@
 
 import Foundation
 @preconcurrency import ScreenCaptureKit
+import SolstoneCore
 import Testing
 @testable import solstone
 

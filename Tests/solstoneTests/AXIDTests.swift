@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import JournalRuntime
 import Testing
 @testable import solstone
 

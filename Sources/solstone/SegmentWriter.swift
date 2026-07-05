@@ -5,6 +5,7 @@ import AVFAudio
 import CoreMedia
 import Foundation
 import os
+import SolstoneCore
 @preconcurrency import ScreenCaptureKit
 
 /// Information about a display for recording

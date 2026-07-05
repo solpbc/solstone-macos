@@ -1,3 +1,4 @@
+import JournalRuntime
 import SwiftUI
 
 struct InstallerProgressRowView: View {

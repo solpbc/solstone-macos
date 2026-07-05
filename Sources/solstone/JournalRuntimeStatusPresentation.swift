@@ -1,3 +1,4 @@
+import JournalRuntime
 import SwiftUI
 
 internal struct JournalRuntimeMenuRowPresentation: Equatable, Sendable {

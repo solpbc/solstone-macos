@@ -2,6 +2,8 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import JournalRuntime
+import JournalRuntimeTestSupport
 import SwiftUI
 import Testing
 import SolstoneCore
@@ -82,8 +84,8 @@ struct BundledServiceCardTests {
 
     @Test func readinessAndUpgradeFailureCopyAvoidsForbiddenTokensAndStartsLowercase() {
         let copies = [
-            UICopy.INSTALLER_READINESS_TIMEOUT,
-            UICopy.INSTALLER_READINESS_GATE_FAILED,
+            solstone.UICopy.INSTALLER_READINESS_TIMEOUT,
+            JournalRuntime.UICopy.INSTALLER_READINESS_GATE_FAILED,
             registerAgainRetryButtonTitle,
             upgradeFailedStatusMessage(installedVersion: "0.4.0", pinnedVersion: "0.4.0"),
             upgradeFailedStatusMessage(installedVersion: nil, pinnedVersion: "0.4.0"),
@@ -175,8 +177,8 @@ struct BundledServiceCardTests {
     }
 
     @Test func sanitizerKeepsReadinessGateSummaries() {
-        #expect(sanitizedInlineFailureMessage(UICopy.INSTALLER_READINESS_TIMEOUT) == UICopy.INSTALLER_READINESS_TIMEOUT)
-        #expect(sanitizedInlineFailureMessage(UICopy.INSTALLER_READINESS_GATE_FAILED) == UICopy.INSTALLER_READINESS_GATE_FAILED)
+        #expect(sanitizedInlineFailureMessage(solstone.UICopy.INSTALLER_READINESS_TIMEOUT) == solstone.UICopy.INSTALLER_READINESS_TIMEOUT)
+        #expect(sanitizedInlineFailureMessage(JournalRuntime.UICopy.INSTALLER_READINESS_GATE_FAILED) == JournalRuntime.UICopy.INSTALLER_READINESS_GATE_FAILED)
     }
 
     @Test func failureDiagnosticRetainsRawRedirectionText() {
