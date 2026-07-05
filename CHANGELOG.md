@@ -5,10 +5,17 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.31] - 2026-07-04
 
 ### Changed
-- refreshed the app's wording throughout: the menu bar app is now "sol", the memory it feeds is "your journal", and status now reads as plain on / off / paused states.
+- the app's wording is refreshed throughout. the menu bar app is now sol, the memory it keeps is your journal, and sol's status reads as plain on / off / paused. permission and setup prompts, and the status spoken aloud for accessibility, are reworded to match.
+- updated the bundled solstone journal to 0.6.24 →
+
+### Fixed
+- if solstone runs into trouble taking things in or syncing, it now shows that instead of quietly staying on, and a day counts as synced only once its uploads have finished. when solstone can't confirm it's observing along with you, it now says so plainly.
+- if you remove a microphone partway through, the audio it already took in still reaches your journal, where before that mic's audio could be left out. when solstone can't finish putting together a stretch of what it took in, it now shows you a banner instead of failing quietly.
+- when solstone's live connection to your journal drops, it now notices within a couple of seconds and reconnects. previously it could look connected for up to a minute and a half before recovering.
+- chat now reconnects on its own if its live connection goes stale, instead of getting stuck and going quiet.
 
 ## [1.3.30] - 2026-07-03
 
