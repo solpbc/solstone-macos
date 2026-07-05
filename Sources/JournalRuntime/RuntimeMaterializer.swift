@@ -133,20 +133,45 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         return wheel
     }
 
-    private func projectWheelJournalSpec() throws -> String {
-        try projectWheel().path + "[journal]"
+    private func projectLeafWheel() throws -> URL {
+        let prefix = "solstone_journal-\(BundleConfig.solstonePinVersion)-"
+        let matches = try wheelFiles().filter {
+            $0.lastPathComponent.hasPrefix(prefix)
+        }
+        guard matches.count == 1, let wheel = matches.first else {
+            throw RuntimeMaterializerError.wheelhouseInvalid("expected exactly one \(prefix)*.whl, found \(matches.count)")
+        }
+        return wheel
+    }
+
+    private func modelsWheel() throws -> URL {
+        let prefix = "solstone_journal_models-"
+        let matches = try wheelFiles().filter {
+            $0.lastPathComponent.hasPrefix(prefix)
+        }
+        guard matches.count == 1, let wheel = matches.first else {
+            throw RuntimeMaterializerError.wheelhouseInvalid("expected exactly one \(prefix)*.whl, found \(matches.count)")
+        }
+        return wheel
+    }
+
+    private func validateWheelhouseContents() throws {
+        _ = try projectWheel()
+        _ = try projectLeafWheel()
+        _ = try modelsWheel()
     }
 
     private func install(into layout: SolstoneRuntimeLayout) async throws {
+        try validateWheelhouseContents()
         let output = LockedRuntimeMaterializerOutput()
         let result = try await runner.run(
             executable: uvBinaryURL,
             arguments: [
                 "tool",
                 "install",
-                try projectWheelJournalSpec(),
+                try projectLeafWheel().path,
                 "--with-executables-from",
-                "solstone-journal-host",
+                "solstone",
                 "--find-links",
                 wheelhouseURL.path,
                 "--no-index",
@@ -172,6 +197,9 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
     private func verify(layout: SolstoneRuntimeLayout) async throws -> String? {
         guard fileManager.isExecutableFile(atPath: layout.journalBinary.path) else {
             return "journal executable missing at \(layout.journalBinary.path)"
+        }
+        guard fileManager.isExecutableFile(atPath: layout.solBinary.path) else {
+            return "sol executable missing at \(layout.solBinary.path)"
         }
         guard try await verifyJournalVersion(layout: layout) else {
             return "journal --version check failed (mismatch or non-zero exit)"

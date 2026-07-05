@@ -202,7 +202,7 @@ struct SolOwnershipTests {
         defer { try? FileManager.default.removeItem(at: workspace) }
         let layout = try makeRuntimeWithSpace(in: workspace)
         let target = layout.rootURL
-            .appendingPathComponent("7.0.0_py_xyz/tools/solstone/bin", isDirectory: true)
+            .appendingPathComponent("7.0.0_py_xyz/tools/solstone-journal/bin", isDirectory: true)
             .appendingPathComponent("sol")
         try writeText("runtime sol\n", to: target)
         let home = workspace.appendingPathComponent("home", isDirectory: true)
@@ -250,7 +250,7 @@ struct SolOwnershipTests {
         defer { try? FileManager.default.removeItem(at: workspace) }
         let layout = try makeRuntimeWithSpace(in: workspace)
         let target = layout.rootURL
-            .appendingPathComponent("7.0.0_py_xyz/tools/solstone/bin", isDirectory: true)
+            .appendingPathComponent("7.0.0_py_xyz/tools/solstone-journal/bin", isDirectory: true)
             .appendingPathComponent("sol")
         try writeText("runtime sol\n", to: target)
         let home = workspace.appendingPathComponent("home", isDirectory: true)

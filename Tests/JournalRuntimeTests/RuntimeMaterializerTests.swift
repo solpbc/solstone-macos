@@ -143,7 +143,7 @@ struct RuntimeMaterializerTests {
                 let ghost = layout.binDir.appendingPathComponent("ghost")
                 try FileManager.default.createSymbolicLink(
                     atPath: ghost.path,
-                    withDestinationPath: tempRoot.appendingPathComponent("tools/solstone/bin/ghost").path
+                    withDestinationPath: tempRoot.appendingPathComponent("tools/solstone-journal/bin/ghost").path
                 )
             } catch {
                 Issue.record("failed to create dangling staged console script: \(error.localizedDescription)")
@@ -199,14 +199,14 @@ struct RuntimeMaterializerTests {
         let sol = runtime.layout.binDir.appendingPathComponent("sol").resolvingSymlinksInPath().standardizedFileURL
         let lines = try String(contentsOf: sol, encoding: .utf8).components(separatedBy: "\n")
         let expectedInterpreter = runtime.layout.rootURL
-            .appendingPathComponent("tools/solstone/bin/python")
+            .appendingPathComponent("tools/solstone-journal/bin/python")
             .standardizedFileURL
             .path
         #expect(lines.count >= 2)
         #expect(lines[1] == "'''exec' \(shellSingleQuotedForTest(expectedInterpreter)) \"$0\" \"$@\"")
     }
 
-    @Test func installPassesJournalHostExecutablesFlagToUvToolInstall() async throws {
+    @Test func installPassesLeafWheelAndSolstoneExecutablesToUvToolInstall() async throws {
         let fixture = try makeMaterializerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.workspace) }
         let runner = FakeSubprocessRunner()
@@ -222,13 +222,114 @@ struct RuntimeMaterializerTests {
         let pairIndex = install.arguments.indices.first { i in
             i + 1 < install.arguments.count
                 && install.arguments[i] == "--with-executables-from"
-                && install.arguments[i + 1] == "solstone-journal-host"
+                && install.arguments[i + 1] == "solstone"
         }
         #expect(pairIndex != nil)
-        // still carries the journal-extra spec, offline + find-links args
-        #expect(install.arguments.contains { $0.hasSuffix("[journal]") })
-        #expect(install.arguments.contains("--offline"))
-        #expect(install.arguments.contains("--find-links"))
+        let spec = try #require(install.arguments.dropFirst(2).first)
+        let retiredJournalExtra = "[" + "journal" + "]"
+        #expect(URL(fileURLWithPath: spec).lastPathComponent.hasPrefix("solstone_journal-\(BundleConfig.solstonePinVersion)-"))
+        #expect(!spec.contains(retiredJournalExtra))
+        #expect(Array(install.arguments.dropFirst(3)) == [
+            "--with-executables-from",
+            "solstone",
+            "--find-links",
+            fixture.wheelhouse.path,
+            "--no-index",
+            "--offline",
+            "--python",
+            fixture.bundledPython.path,
+            "--no-python-downloads",
+            "--force"
+        ])
+    }
+
+    @Test func materializeFailsWhenLeafWheelMissing() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        try FileManager.default.removeItem(at: fixture.wheelhouse.appendingPathComponent(leafWheelName()))
+
+        try await expectWheelhouseInvalid(
+            fixture: fixture,
+            containing: "expected exactly one solstone_journal-\(BundleConfig.solstonePinVersion)-*.whl, found 0"
+        )
+    }
+
+    @Test func materializeFailsWhenLeafWheelDuplicated() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        try writeWheel(named: "solstone_journal-\(BundleConfig.solstonePinVersion)-2-py3-none-any.whl", in: fixture.wheelhouse)
+
+        try await expectWheelhouseInvalid(
+            fixture: fixture,
+            containing: "expected exactly one solstone_journal-\(BundleConfig.solstonePinVersion)-*.whl, found 2"
+        )
+    }
+
+    @Test func materializeFailsWhenModelsWheelMissing() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        try FileManager.default.removeItem(at: fixture.wheelhouse.appendingPathComponent(modelsWheelName()))
+
+        try await expectWheelhouseInvalid(
+            fixture: fixture,
+            containing: "expected exactly one solstone_journal_models-*.whl, found 0"
+        )
+    }
+
+    @Test func materializeFailsWhenModelsWheelDuplicated() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        try writeWheel(named: "solstone_journal_models-1.0.1-py3-none-any.whl", in: fixture.wheelhouse)
+
+        try await expectWheelhouseInvalid(
+            fixture: fixture,
+            containing: "expected exactly one solstone_journal_models-*.whl, found 2"
+        )
+    }
+
+    @Test func materializeStillFailsWhenSolstoneWheelMissing() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        try FileManager.default.removeItem(at: fixture.wheelhouse.appendingPathComponent(solstoneWheelName()))
+
+        try await expectWheelhouseInvalid(
+            fixture: fixture,
+            containing: "expected exactly one solstone-\(BundleConfig.solstonePinVersion)-*.whl, found 0"
+        )
+    }
+
+    @Test func materializeStillFailsWhenSolstoneWheelDuplicated() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        try writeWheel(named: "solstone-\(BundleConfig.solstonePinVersion)-2-py3-none-any.whl", in: fixture.wheelhouse)
+
+        try await expectWheelhouseInvalid(
+            fixture: fixture,
+            containing: "expected exactly one solstone-\(BundleConfig.solstonePinVersion)-*.whl, found 2"
+        )
+    }
+
+    @Test func materializeFailsClosedWhenSolExecutableMissing() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        runner.materializedExposureOverride = ["journal", "mlx-vlm-server"]
+        runner.enqueue("tool", .success())
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        do {
+            _ = try await materializer.materialize(excludingLiveKey: nil)
+            Issue.record("expected materialize to fail when sol executable is missing")
+        } catch let error as RuntimeMaterializerError {
+            guard case .verificationFailed(let message) = error else {
+                Issue.record("expected verificationFailed, got \(error)")
+                return
+            }
+            #expect(message.contains("sol executable missing"))
+            #expect(message != "staged runtime verification failed")
+        } catch {
+            Issue.record("expected RuntimeMaterializerError, got \(error)")
+        }
     }
 
     @Test func materializeInstallTimeoutSurfacesDistinctReasonQuickly() async throws {
@@ -336,7 +437,7 @@ struct RuntimeMaterializerTests {
         let fixture = try makeMaterializerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.workspace) }
         let runner = FakeSubprocessRunner()
-        runner.forcePrimaryOnlyExposure = true
+        runner.materializedExposureOverride = ["sol", "solstone"]
         runner.enqueue("tool", .success())
         let materializer = makeMaterializer(fixture: fixture, runner: runner)
 
@@ -371,6 +472,49 @@ struct RuntimeMaterializerTests {
         return exists && isDirectory.boolValue
     }
 
+    private func expectWheelhouseInvalid(
+        fixture: (
+            workspace: URL,
+            runtimeRoot: URL,
+            wheelhouse: URL,
+            wrapperDir: URL,
+            bundledPython: URL
+        ),
+        containing expected: String
+    ) async throws {
+        let runner = FakeSubprocessRunner()
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        do {
+            _ = try await materializer.materialize(excludingLiveKey: nil)
+            Issue.record("expected materialize to fail with wheelhouseInvalid")
+        } catch let error as RuntimeMaterializerError {
+            guard case .wheelhouseInvalid(let message) = error else {
+                Issue.record("expected wheelhouseInvalid, got \(error)")
+                return
+            }
+            #expect(message.contains(expected))
+        } catch {
+            Issue.record("expected RuntimeMaterializerError, got \(error)")
+        }
+    }
+
+    private func solstoneWheelName() -> String {
+        "solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl"
+    }
+
+    private func leafWheelName() -> String {
+        "solstone_journal-\(BundleConfig.solstonePinVersion)-py3-none-any.whl"
+    }
+
+    private func modelsWheelName() -> String {
+        "solstone_journal_models-1.0.0-py3-none-any.whl"
+    }
+
+    private func writeWheel(named name: String, in wheelhouse: URL) throws {
+        try Data("wheel\n".utf8).write(to: wheelhouse.appendingPathComponent(name))
+    }
+
     private func makeMaterializerFixture(runtimeRootComponents: [String] = ["runtime dir with space and ' quote"]) throws -> (
         workspace: URL,
         runtimeRoot: URL,
@@ -392,7 +536,9 @@ struct RuntimeMaterializerTests {
         try FileManager.default.createDirectory(at: wheelhouse, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: bundledPython.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("manifest\n".utf8).write(to: wheelhouse.appendingPathComponent("MANIFEST.sha256"))
-        try Data("wheel\n".utf8).write(to: wheelhouse.appendingPathComponent("solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl"))
+        try writeWheel(named: solstoneWheelName(), in: wheelhouse)
+        try writeWheel(named: leafWheelName(), in: wheelhouse)
+        try writeWheel(named: modelsWheelName(), in: wheelhouse)
         try Data([0xFF, 0x00, 0xFE]).write(to: bundledPython)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bundledPython.path)
         return (workspace, runtimeRoot, wheelhouse, wrapperDir, bundledPython)

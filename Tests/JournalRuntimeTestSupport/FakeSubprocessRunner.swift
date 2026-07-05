@@ -43,7 +43,7 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
     private var responses: [String: [Response]] = [:]
     private var recordedInvocations: [SubprocessInvocation] = []
     private var materializedToolBinariesSideEffect: (@Sendable () -> Void)?
-    public var forcePrimaryOnlyExposure = false
+    public var materializedExposureOverride: [String]?
     public var preferQueuedVersionResponses = false
 
     public init() {}
@@ -185,17 +185,18 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
     private func createMaterializedToolBinaries(environment: [String: String]?, arguments: [String]) {
         guard let binPath = environment?["UV_TOOL_BIN_DIR"],
               let toolsPath = environment?["UV_TOOL_DIR"] else { return }
-        let exposesJournalHost = !forcePrimaryOnlyExposure && arguments.indices.contains { i in
+        let exposesSolstoneExecutables = arguments.indices.contains { i in
             i + 1 < arguments.count
                 && arguments[i] == "--with-executables-from"
-                && arguments[i + 1] == "solstone-journal-host"
+                && arguments[i + 1] == "solstone"
         }
-        let exposedNames = exposesJournalHost
-            ? ["sol", "journal", "solstone", "mlx-vlm-server"]
-            : ["sol", "solstone"]
+        let exposedNames = materializedExposureOverride
+            ?? (exposesSolstoneExecutables
+                ? ["sol", "journal", "solstone", "mlx-vlm-server"]
+                : ["journal", "mlx-vlm-server"])
         let binURL = URL(fileURLWithPath: binPath, isDirectory: true)
         let toolBinURL = URL(fileURLWithPath: toolsPath, isDirectory: true)
-            .appendingPathComponent("solstone/bin", isDirectory: true)
+            .appendingPathComponent("solstone-journal/bin", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: binURL, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: toolBinURL, withIntermediateDirectories: true)

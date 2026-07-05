@@ -580,8 +580,7 @@ struct AppOwnedJournalTests {
         let wheelhouse = workspace.appendingPathComponent("wheelhouse", isDirectory: true)
         let wrapperDir = workspace.appendingPathComponent("wrappers", isDirectory: true)
         try FileManager.default.createDirectory(at: wheelhouse, withIntermediateDirectories: true)
-        try Data("manifest\n".utf8).write(to: wheelhouse.appendingPathComponent("MANIFEST.sha256"))
-        try Data("wheel\n".utf8).write(to: wheelhouse.appendingPathComponent("solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl"))
+        try writeMaterializerWheelhouse(at: wheelhouse)
         let liveKey = "\(BundleConfig.solstonePinVersion)_py\(BundleConfig.bundledPythonBuild)_bbbbbbbbbbbbbbbb"
         let liveURL = runtimeRoot.appendingPathComponent(liveKey, isDirectory: true)
         try FileManager.default.createDirectory(at: liveURL, withIntermediateDirectories: true)
@@ -613,8 +612,7 @@ struct AppOwnedJournalTests {
         let wheelhouse = workspace.appendingPathComponent("wheelhouse", isDirectory: true)
         let wrapperDir = workspace.appendingPathComponent("wrappers", isDirectory: true)
         try FileManager.default.createDirectory(at: wheelhouse, withIntermediateDirectories: true)
-        try Data("manifest\n".utf8).write(to: wheelhouse.appendingPathComponent("MANIFEST.sha256"))
-        try Data("wheel\n".utf8).write(to: wheelhouse.appendingPathComponent("solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl"))
+        try writeMaterializerWheelhouse(at: wheelhouse)
 
         let runner = FakeSubprocessRunner()
         runner.enqueue("tool", .success())
@@ -670,8 +668,7 @@ struct AppOwnedJournalTests {
         let runtimeRoot = workspace.appendingPathComponent("runtime", isDirectory: true)
         let wheelhouse = workspace.appendingPathComponent("wheelhouse", isDirectory: true)
         try FileManager.default.createDirectory(at: wheelhouse, withIntermediateDirectories: true)
-        try Data("manifest\n".utf8).write(to: wheelhouse.appendingPathComponent("MANIFEST.sha256"))
-        try Data("wheel\n".utf8).write(to: wheelhouse.appendingPathComponent("solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl"))
+        try writeMaterializerWheelhouse(at: wheelhouse)
         let runner = FakeSubprocessRunner()
         runner.enqueue("tool", .success())
         runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
@@ -716,8 +713,7 @@ struct AppOwnedJournalTests {
         let journalRoot = workspace.appendingPathComponent("journal", isDirectory: true)
         try FileManager.default.createDirectory(at: wheelhouse, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: journalRoot.appendingPathComponent("health", isDirectory: true), withIntermediateDirectories: true)
-        try Data("manifest\n".utf8).write(to: wheelhouse.appendingPathComponent("MANIFEST.sha256"))
-        try Data("wheel\n".utf8).write(to: wheelhouse.appendingPathComponent("solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl"))
+        try writeMaterializerWheelhouse(at: wheelhouse)
 
         let runner = FakeSubprocessRunner()
         runner.enqueue("tool", .success())
@@ -1406,6 +1402,17 @@ private func makeTemporaryDirectory() throws -> URL {
         .appendingPathComponent("app-owned-journal-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+private func writeMaterializerWheelhouse(at wheelhouse: URL) throws {
+    try Data("manifest\n".utf8).write(to: wheelhouse.appendingPathComponent("MANIFEST.sha256"))
+    for name in [
+        "solstone-\(BundleConfig.solstonePinVersion)-py3-none-any.whl",
+        "solstone_journal-\(BundleConfig.solstonePinVersion)-py3-none-any.whl",
+        "solstone_journal_models-1.0.0-py3-none-any.whl"
+    ] {
+        try Data("wheel\n".utf8).write(to: wheelhouse.appendingPathComponent(name))
+    }
 }
 
 private func installerFixture(_ name: String) -> Data {

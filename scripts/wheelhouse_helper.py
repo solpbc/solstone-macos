@@ -6,6 +6,8 @@ import zipfile
 
 
 PARAKEET_HELPER_PATH = "solstone/observe/transcribe/parakeet_helper/_bin/parakeet-helper"
+# The real data wheel is much larger; this catches hollow or pointer-file model wheels.
+MODELS_WHEEL_MIN_SIZE = 1024 * 1024
 
 
 def wheel_version(path):
@@ -81,6 +83,30 @@ def verify_wheelhouse(dir_path, pin):
     with zipfile.ZipFile(pinned_wheel) as wheel:
         if PARAKEET_HELPER_PATH not in wheel.namelist():
             raise ValueError(f"pinned solstone wheel missing parakeet-helper binary: {pinned_wheel.name} lacks {PARAKEET_HELPER_PATH}")
+
+    leaf_wheels = sorted(
+        path
+        for path in wheelhouse_dir.glob(f"solstone_journal-{pin}-*.whl")
+        if path.is_file()
+    )
+    if len(leaf_wheels) != 1:
+        raise ValueError(f"expected exactly one solstone_journal-{pin}-*.whl in {dir_path}")
+
+    models_wheels = sorted(
+        path
+        for path in wheelhouse_dir.glob("solstone_journal_models-*.whl")
+        if path.is_file()
+    )
+    if len(models_wheels) != 1:
+        raise ValueError(f"expected exactly one solstone_journal_models-*.whl in {dir_path}")
+
+    models_wheel = models_wheels[0]
+    models_size = models_wheel.stat().st_size
+    if models_size < MODELS_WHEEL_MIN_SIZE:
+        raise ValueError(
+            f"solstone journal models wheel too small: {models_wheel.name} is {models_size} bytes, "
+            f"expected at least {MODELS_WHEEL_MIN_SIZE}"
+        )
 
     runtime_dir_names = {"__pycache__", ".venv", "venv", "cache", "model", "models"}
     offending_paths = sorted(

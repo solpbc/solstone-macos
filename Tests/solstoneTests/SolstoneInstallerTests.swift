@@ -945,12 +945,13 @@ struct SolstoneInstallerTests {
 
         let install = try #require(runner.invocations.first { $0.arguments.starts(with: ["tool", "install"]) })
         #expect(Array(install.arguments.prefix(2)) == ["tool", "install"])
-        #expect(install.arguments[2].hasSuffix("[journal]"))
-        let wheelPath = String(install.arguments[2].dropLast("[journal]".count))
-        #expect(URL(fileURLWithPath: wheelPath).lastPathComponent == "solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl")
+        let wheelName = URL(fileURLWithPath: install.arguments[2]).lastPathComponent
+        let retiredJournalExtra = "[" + "journal" + "]"
+        #expect(wheelName.hasPrefix("solstone_journal-\(BundleConfig.solstonePinVersion)-"))
+        #expect(!install.arguments[2].contains(retiredJournalExtra))
         #expect(Array(install.arguments.dropFirst(3)) == [
             "--with-executables-from",
-            "solstone-journal-host",
+            "solstone",
             "--find-links",
             fixtureURLs.wheelhouse.path,
             "--no-index",
@@ -2013,8 +2014,9 @@ struct SolstoneInstallerTests {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("solstone-wheelhouse-\(UUID().uuidString)", isDirectory: true)
         try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        let wheel = url.appendingPathComponent("solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl")
-        try! Data("wheel\n".utf8).write(to: wheel)
+        for name in Self.defaultWheelNames() {
+            try! Data("wheel\n".utf8).write(to: url.appendingPathComponent(name))
+        }
         return url
     }
 
@@ -2031,7 +2033,7 @@ struct SolstoneInstallerTests {
     }
 
     private func makeStagedInstallFixture(
-        wheelNames: [String] = ["solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl"]
+        wheelNames: [String] = Self.defaultWheelNames()
     ) throws -> (workspace: URL, runtimeRoot: URL, wheelhouse: URL) {
         let workspace = try makeTemporaryDirectory(prefix: "solstone-staged-install")
         let runtimeRoot = workspace.appendingPathComponent("runtime", isDirectory: true)
@@ -2041,6 +2043,14 @@ struct SolstoneInstallerTests {
             try Data("wheel\n".utf8).write(to: wheelhouse.appendingPathComponent(name))
         }
         return (workspace, runtimeRoot, wheelhouse)
+    }
+
+    private static func defaultWheelNames() -> [String] {
+        [
+            "solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl",
+            "solstone_journal-\(BundleConfig.solstonePinVersion)-py3-none-any.whl",
+            "solstone_journal_models-1.0.0-py3-none-any.whl"
+        ]
     }
 
     private func makeTemporaryDirectory(prefix: String) throws -> URL {

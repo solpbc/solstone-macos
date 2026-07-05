@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import os
 import pathlib
 import subprocess
 import sys
@@ -17,6 +18,7 @@ def load_wheelhouse_helper():
 
 
 PARAKEET_HELPER_PATH = load_wheelhouse_helper().PARAKEET_HELPER_PATH
+MODELS_WHEEL_MIN_SIZE = load_wheelhouse_helper().MODELS_WHEEL_MIN_SIZE
 
 
 def make_wheel(root, name="sample-1.2.3-py3-none-any.whl", metadata=None, extra_members=None):
@@ -56,6 +58,28 @@ def make_wheelhouse(root, pin="0.4.8", solstone_version=None):
             ),
         ],
         extra_members={PARAKEET_HELPER_PATH: b"#!/bin/sh\n"},
+    )
+    make_wheel(
+        root,
+        name=f"solstone_journal-{pin}-py3-none-any.whl",
+        metadata=[
+            (
+                f"solstone_journal-{pin}.dist-info/METADATA",
+                f"Metadata-Version: 2.4\nName: solstone-journal\nVersion: {pin}\n",
+            ),
+        ],
+    )
+    make_wheel(
+        root,
+        name="solstone_journal_models-1.0.0-py3-none-any.whl",
+        metadata=[
+            (
+                "solstone_journal_models-1.0.0.dist-info/METADATA",
+                "Metadata-Version: 2.4\nName: solstone-journal"
+                "-models\nVersion: 1.0.0\n",
+            ),
+        ],
+        extra_members={"solstone_journal_models/data.bin": os.urandom(2 * 1024 * 1024)},
     )
     make_wheel(
         root,
@@ -136,7 +160,9 @@ class VerifyWheelhouseTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             make_wheelhouse(tmp)
 
-            self.assertEqual(module.verify_wheelhouse(tmp, "0.4.8"), 2)
+            models_wheel = pathlib.Path(tmp) / "solstone_journal_models-1.0.0-py3-none-any.whl"
+            self.assertGreater(models_wheel.stat().st_size, MODELS_WHEEL_MIN_SIZE)
+            self.assertEqual(module.verify_wheelhouse(tmp, "0.4.8"), 4)
 
     def test_verify_wheelhouse_raises_when_manifest_missing(self):
         module = load_wheelhouse_helper()
@@ -239,6 +265,86 @@ class VerifyWheelhouseTest(unittest.TestCase):
             write_wheelhouse_manifest(tmp)
 
             with self.assertRaisesRegex(ValueError, "pure py3-none-any fallback"):
+                module.verify_wheelhouse(tmp, "0.4.8")
+
+    def test_verify_wheelhouse_raises_when_leaf_wheel_missing(self):
+        module = load_wheelhouse_helper()
+        with tempfile.TemporaryDirectory() as tmp:
+            make_wheelhouse(tmp)
+            (pathlib.Path(tmp) / "solstone_journal-0.4.8-py3-none-any.whl").unlink()
+            write_wheelhouse_manifest(tmp)
+
+            with self.assertRaisesRegex(ValueError, "expected exactly one solstone_journal-0.4.8"):
+                module.verify_wheelhouse(tmp, "0.4.8")
+
+    def test_verify_wheelhouse_raises_when_leaf_wheel_duplicated(self):
+        module = load_wheelhouse_helper()
+        with tempfile.TemporaryDirectory() as tmp:
+            make_wheelhouse(tmp)
+            make_wheel(
+                tmp,
+                name="solstone_journal-0.4.8-2-py3-none-any.whl",
+                metadata=[
+                    (
+                        "solstone_journal-0.4.8.dist-info/METADATA",
+                        "Metadata-Version: 2.4\nName: solstone-journal\nVersion: 0.4.8\n",
+                    ),
+                ],
+            )
+            write_wheelhouse_manifest(tmp)
+
+            with self.assertRaisesRegex(ValueError, "expected exactly one solstone_journal-0.4.8"):
+                module.verify_wheelhouse(tmp, "0.4.8")
+
+    def test_verify_wheelhouse_raises_when_models_wheel_missing(self):
+        module = load_wheelhouse_helper()
+        with tempfile.TemporaryDirectory() as tmp:
+            make_wheelhouse(tmp)
+            (pathlib.Path(tmp) / "solstone_journal_models-1.0.0-py3-none-any.whl").unlink()
+            write_wheelhouse_manifest(tmp)
+
+            with self.assertRaisesRegex(ValueError, "expected exactly one solstone_journal_models"):
+                module.verify_wheelhouse(tmp, "0.4.8")
+
+    def test_verify_wheelhouse_raises_when_models_wheel_duplicated(self):
+        module = load_wheelhouse_helper()
+        with tempfile.TemporaryDirectory() as tmp:
+            make_wheelhouse(tmp)
+            make_wheel(
+                tmp,
+                name="solstone_journal_models-1.0.1-py3-none-any.whl",
+                metadata=[
+                    (
+                        "solstone_journal_models-1.0.1.dist-info/METADATA",
+                        "Metadata-Version: 2.4\nName: solstone-journal"
+                        "-models\nVersion: 1.0.1\n",
+                    ),
+                ],
+            )
+            write_wheelhouse_manifest(tmp)
+
+            with self.assertRaisesRegex(ValueError, "expected exactly one solstone_journal_models"):
+                module.verify_wheelhouse(tmp, "0.4.8")
+
+    def test_verify_wheelhouse_raises_when_models_wheel_is_hollow(self):
+        module = load_wheelhouse_helper()
+        with tempfile.TemporaryDirectory() as tmp:
+            make_wheelhouse(tmp)
+            (pathlib.Path(tmp) / "solstone_journal_models-1.0.0-py3-none-any.whl").unlink()
+            make_wheel(
+                tmp,
+                name="solstone_journal_models-1.0.0-py3-none-any.whl",
+                metadata=[
+                    (
+                        "solstone_journal_models-1.0.0.dist-info/METADATA",
+                        "Metadata-Version: 2.4\nName: solstone-journal"
+                        "-models\nVersion: 1.0.0\n",
+                    ),
+                ],
+            )
+            write_wheelhouse_manifest(tmp)
+
+            with self.assertRaisesRegex(ValueError, "models wheel too small"):
                 module.verify_wheelhouse(tmp, "0.4.8")
 
     def test_verify_wheelhouse_raises_when_manifest_hash_is_tampered(self):

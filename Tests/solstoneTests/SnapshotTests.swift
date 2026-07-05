@@ -359,10 +359,10 @@ struct SnapshotTests {
     @Test func settingsServiceUpgradeFailed() throws {
         let rawMessage = "'observer' moved to 'journal observer' — run that instead."
         let rawLog = """
-        uv tool install /bundle/wheelhouse/solstone-\(BundleConfig.solstonePinVersion)-py3-none-macosx_14_0_arm64.whl[journal] --find-links /bundle/wheelhouse --no-index --offline
+        uv tool install /bundle/wheelhouse/solstone_journal-\(BundleConfig.solstonePinVersion)-py3-none-any.whl --find-links /bundle/wheelhouse --no-index --offline
         error: \(rawMessage)
         """
-        #expect(rawLog.contains("py3-none-macosx_14_0_arm64.whl[journal] --find-links"))
+        #expect(rawLog.contains("solstone_journal-\(BundleConfig.solstonePinVersion)-py3-none-any.whl --find-links"))
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         state.installer.main = .failed(.registering(message: rawMessage))
         state.installer.modelsProgress = .done
