@@ -16,12 +16,14 @@ struct JournalFirstRunView: View {
                 decidingView
             case .ritual(let step):
                 ritualView(step)
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier(AXID.Journal.Ritual.root)
                     .overlay {
                         AXStateCompanion(id: AXID.Journal.Ritual.routeState, value: model.route.axToken)
                     }
             case .adopting:
                 adoptView
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier(AXID.Journal.Adopt.root)
             case .home:
                 EmptyView()
@@ -166,6 +168,7 @@ struct JournalFirstRunView: View {
             if let mark = model.currentMark {
                 JournalMarkView(mark: mark, isConfirmed: model.markLocked)
                     .journalMarkPop(generation: model.markRenderGeneration)
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier(AXID.Journal.Ritual.markCard)
             }
 

@@ -31,6 +31,7 @@ struct JournalDevicesPane: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AXID.Journal.Devices.root)
         .sheet(isPresented: $model.isPairingPresented, onDismiss: {
             model.closePairing()
@@ -169,6 +170,7 @@ struct JournalDevicesPane: View {
             )
         }
         .padding(.vertical, 10)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AXID.Journal.Devices.Row.container(row.fingerprint))
     }
 
@@ -221,6 +223,7 @@ private struct RevokeConfirmSheet: View {
         }
         .padding(24)
         .frame(width: 380)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AXID.Journal.Devices.RevokeConfirm.dialog)
         .interactiveDismissDisabled(model.isRevoking(row))
     }

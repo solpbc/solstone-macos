@@ -46,6 +46,7 @@ struct JournalPairingWindow: View {
         }
         .padding(24)
         .frame(width: 420)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AXID.Journal.Devices.Pairing.sheet)
         .onDisappear {
             copyResetTask?.cancel()

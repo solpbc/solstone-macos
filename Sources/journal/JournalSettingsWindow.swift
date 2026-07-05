@@ -82,6 +82,7 @@ struct JournalSettingsWindow: View {
 
             if let mark = model.identityMark {
                 JournalMarkView(mark: mark, isConfirmed: true)
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier(AXID.Journal.Home.markCard)
             }
 
