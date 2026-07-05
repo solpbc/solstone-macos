@@ -52,6 +52,50 @@ struct JournalWindowModelTests {
         #expect(model.displayName == "machine-name")
     }
 
+    @Test func onIdentityMarkFiresAfterSuccessfulFetch() async throws {
+        let fixture = try makeConfiguredFixture()
+        defer { fixture.clear() }
+        let capture = IdentityMarkCapture()
+        let model = makeModel(
+            config: fixture.config,
+            fetchIdentity: { _ in .uiTestSample },
+            onIdentityMark: { mark in capture.append(mark) }
+        )
+
+        await model.fetchIdentityIfNeeded()
+
+        #expect(capture.snapshot() == [.uiTestSample])
+    }
+
+    @Test func onIdentityMarkDoesNotFireForNilFetch() async throws {
+        let fixture = try makeConfiguredFixture()
+        defer { fixture.clear() }
+        let capture = IdentityMarkCapture()
+        let model = makeModel(
+            config: fixture.config,
+            fetchIdentity: { _ in nil },
+            onIdentityMark: { mark in capture.append(mark) }
+        )
+
+        await model.fetchIdentityIfNeeded()
+
+        #expect(capture.snapshot().isEmpty)
+    }
+
+    @Test func onIdentityMarkFiresAfterFirstRunLandingMark() async throws {
+        let fixture = try makeConfiguredFixture()
+        defer { fixture.clear() }
+        let capture = IdentityMarkCapture()
+        let model = makeModel(
+            config: fixture.config,
+            onIdentityMark: { mark in capture.append(mark) }
+        )
+
+        model.applyFirstRunLanding(identityMark: .uiTestSample, draftName: "desk", nameError: nil)
+
+        #expect(capture.snapshot() == [.uiTestSample])
+    }
+
     @Test func displayNamePrefersConfigThenMarkThenMachineName() async throws {
         let fixture = try makeConfiguredFixture()
         defer { fixture.clear() }
@@ -264,6 +308,7 @@ struct JournalWindowModelTests {
         fetchDiskUsage: JournalWindowModel.DiskUsageFetch? = { _ in 0 },
         fetchHealth: JournalWindowModel.HealthFetch? = { _, _ in .unknown(JournalDiagnostic(commandLabel: "health")) },
         fetchVersion: JournalWindowModel.VersionFetch? = { _, _ in nil },
+        onIdentityMark: JournalWindowModel.IdentityMarkObserver? = nil,
         machineNameProvider: @escaping JournalWindowModel.MachineNameProvider = { "machine-name" },
         appVersion: String = "test-app"
     ) -> JournalWindowModel {
@@ -276,6 +321,7 @@ struct JournalWindowModelTests {
             fetchDiskUsage: fetchDiskUsage,
             fetchHealth: fetchHealth,
             fetchVersion: fetchVersion,
+            onIdentityMark: onIdentityMark,
             machineNameProvider: machineNameProvider,
             appVersion: appVersion
         )
@@ -313,6 +359,19 @@ private actor IdentityCounter {
     func fetch() -> JournalMark? {
         calls += 1
         return mark
+    }
+}
+
+@MainActor
+private final class IdentityMarkCapture {
+    private var marks: [JournalMark] = []
+
+    func append(_ mark: JournalMark) {
+        marks.append(mark)
+    }
+
+    func snapshot() -> [JournalMark] {
+        marks
     }
 }
 

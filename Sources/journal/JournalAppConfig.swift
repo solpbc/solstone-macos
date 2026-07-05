@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import JournalMarkKit
 import os
 import ServiceManagement
 import SolstoneCore
@@ -36,6 +37,8 @@ final class JournalAppConfig {
     private enum Keys {
         static let journalRoot = "journalRoot"
         static let launchAtLoginEnabled = "launchAtLoginEnabled"
+        static let journalIconMarkAppliedAtLeastOnce = "journalIconMarkAppliedAtLeastOnce"
+        static let journalIconCachedMarkJSON = "journalIconCachedMarkJSON"
     }
 
     private let defaults: UserDefaults
@@ -77,6 +80,31 @@ final class JournalAppConfig {
     func setLaunchAtLoginEnabled(_ enabled: Bool) {
         defaults.set(enabled, forKey: Keys.launchAtLoginEnabled)
         applyLaunchAtLoginPreference()
+    }
+
+    var iconMarkAppliedAtLeastOnce: Bool {
+        get {
+            defaults.bool(forKey: Keys.journalIconMarkAppliedAtLeastOnce)
+        }
+        set {
+            defaults.set(newValue, forKey: Keys.journalIconMarkAppliedAtLeastOnce)
+        }
+    }
+
+    func cachedIconMark() -> JournalMark? {
+        guard let data = defaults.data(forKey: Keys.journalIconCachedMarkJSON),
+              let decoded = try? JSONDecoder().decode(JournalMark.self, from: data) else {
+            return nil
+        }
+        return JournalMark.validate(decoded)
+    }
+
+    func setCachedIconMark(_ mark: JournalMark) {
+        guard let validated = JournalMark.validate(mark),
+              let data = try? JSONEncoder().encode(validated) else {
+            return
+        }
+        defaults.set(data, forKey: Keys.journalIconCachedMarkJSON)
     }
 
     func applyLaunchAtLoginPreference() {

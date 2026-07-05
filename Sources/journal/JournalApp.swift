@@ -13,6 +13,7 @@ final class JournalAppModel {
 
     let config: JournalAppConfig
     let supervisor: JournalSupervisor
+    let iconManager: JournalIconManager
     let windowModel: JournalWindowModel
     let firstRunModel: JournalFirstRunModel
     private var startupTask: Task<Void, Never>?
@@ -27,7 +28,12 @@ final class JournalAppModel {
     ) {
         self.config = config
         self.supervisor = supervisor
+        let iconManager = JournalIconManager(config: config, bundlePath: Bundle.main.bundlePath)
+        self.iconManager = iconManager
         let windowModel = JournalWindowModel(config: config, supervisor: supervisor)
+        windowModel.onIdentityMark = { [weak iconManager] mark in
+            iconManager?.handleIdentityMark(mark)
+        }
         self.windowModel = windowModel
         self.firstRunModel = JournalFirstRunModel(
             config: config,
@@ -40,6 +46,7 @@ final class JournalAppModel {
 
     func launch() {
         JournalMarkFont.register()
+        iconManager.start()
         config.applyLaunchAtLoginPreference()
         windowModel.prepareForWindowOpen()
         startupTask = Task { @MainActor [firstRunModel] in

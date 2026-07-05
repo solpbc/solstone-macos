@@ -126,6 +126,7 @@ final class JournalWindowModel {
     typealias VersionFetch = @Sendable (URL, [String: String]?) async -> String?
     typealias MachineNameProvider = @Sendable () -> String
     typealias NowProvider = @Sendable () -> Date
+    typealias IdentityMarkObserver = @MainActor @Sendable (JournalMark) -> Void
 
     @ObservationIgnored private let config: JournalAppConfig
     let supervisor: JournalSupervisor
@@ -139,6 +140,7 @@ final class JournalWindowModel {
     @ObservationIgnored private let machineNameProvider: MachineNameProvider
     @ObservationIgnored private let now: NowProvider
     @ObservationIgnored private let diskCacheDuration: TimeInterval
+    @ObservationIgnored var onIdentityMark: IdentityMarkObserver?
     let devicesModel: JournalDevicesModel
 
     var selectedPane: JournalPane = .home
@@ -169,6 +171,7 @@ final class JournalWindowModel {
         fetchHealth: HealthFetch? = nil,
         fetchVersion: VersionFetch? = nil,
         devicesModel: JournalDevicesModel? = nil,
+        onIdentityMark: IdentityMarkObserver? = nil,
         machineNameProvider: @escaping MachineNameProvider = {
             let localized = Host.current().localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let localized, !localized.isEmpty { return localized }
@@ -198,6 +201,7 @@ final class JournalWindowModel {
         self.machineNameProvider = machineNameProvider
         self.now = now
         self.diskCacheDuration = diskCacheDuration
+        self.onIdentityMark = onIdentityMark
         self.appVersion = appVersion
         self.devicesModel = devicesModel ?? JournalDevicesModel(client: JournalDevicesClient(baseURL: trimmedBaseURL))
     }
@@ -258,6 +262,9 @@ final class JournalWindowModel {
     func applyFirstRunLanding(identityMark: JournalMark?, draftName: String, nameError: String?) {
         self.identityMark = identityMark
         identityFetchStarted = true
+        if let validatedMark = identityMark.flatMap(JournalMark.validate) {
+            onIdentityMark?(validatedMark)
+        }
 
         let trimmedDraftName = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedDraftName.isEmpty, draftJournalName.isEmpty {
@@ -285,7 +292,11 @@ final class JournalWindowModel {
     func fetchIdentityIfNeeded() async {
         guard !identityFetchStarted else { return }
         identityFetchStarted = true
-        identityMark = await fetchIdentity(baseURL)
+        let fetchedMark = await fetchIdentity(baseURL)
+        identityMark = fetchedMark
+        if let validatedMark = fetchedMark.flatMap(JournalMark.validate) {
+            onIdentityMark?(validatedMark)
+        }
     }
 
     func loadConfigIfNeeded() async {

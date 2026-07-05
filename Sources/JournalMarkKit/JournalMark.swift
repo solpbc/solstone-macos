@@ -4,7 +4,7 @@
 import Foundation
 import SwiftUI
 
-public nonisolated struct JournalMark: Decodable, Equatable, Sendable {
+public nonisolated struct JournalMark: Codable, Equatable, Sendable {
     public let icon1: Icon
     public let icon2: Icon
     public let words: [String]
@@ -15,7 +15,7 @@ public nonisolated struct JournalMark: Decodable, Equatable, Sendable {
         case words
     }
 
-    public nonisolated struct Icon: Decodable, Equatable, Sendable {
+    public nonisolated struct Icon: Codable, Equatable, Sendable {
         public let name: String
         public let color: MarkColor
         public let rot: Int
@@ -29,7 +29,7 @@ public nonisolated struct JournalMark: Decodable, Equatable, Sendable {
         }
     }
 
-    public nonisolated struct MarkColor: Decodable, Equatable, Sendable {
+    public nonisolated struct MarkColor: Codable, Equatable, Sendable {
         public let hex: String
 
         public init(hex: String) {
@@ -181,7 +181,7 @@ private struct GlyphShape: Shape {
     }
 }
 
-private enum MarkGeometry {
+enum MarkGeometry {
     static let size: CGFloat = 64
     static let chipRadius: CGFloat = size * 0.25
     static let chipBorderWidth: CGFloat = 2

@@ -8,7 +8,7 @@ import os
 import SolstoneCore
 
 public enum JournalMarkFont {
-    private static let fontName = "Comfortaa-Bold"
+    static let postScriptName = "Comfortaa-Bold"
     private static let fontSize: CGFloat = 19
 
     @MainActor
@@ -17,14 +17,14 @@ public enum JournalMarkFont {
     @MainActor
     public static func register() {
         guard !isRegistered else { return }
-        guard let url = Bundle.module.url(forResource: fontName, withExtension: "ttf", subdirectory: "Resources") else {
+        guard let url = Bundle.module.url(forResource: postScriptName, withExtension: "ttf", subdirectory: "Resources") else {
             Logger.journalMark.error("journal-mark font registration failed: resource missing")
             return
         }
 
         var registrationError: Unmanaged<CFError>?
         let registered = CTFontManagerRegisterFontsForURL(url as CFURL, .process, &registrationError)
-        guard let font = NSFont(name: fontName, size: fontSize) else {
+        guard let font = NSFont(name: postScriptName, size: fontSize) else {
             let detail = registrationError
                 .map { CFErrorCopyDescription($0.takeRetainedValue()) as String }
                 ?? "font probe returned nil"

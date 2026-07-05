@@ -51,6 +51,14 @@ let package = Package(
                 .linkedFramework("CoreText")
             ]
         ),
+        .executableTarget(
+            name: "journal-icon-gen",
+            dependencies: ["JournalMarkKit"],
+            path: "Sources/journal-icon-gen",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
         .target(
             name: "SPLTunnel",
             dependencies: [

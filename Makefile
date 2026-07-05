@@ -763,10 +763,12 @@ reset-full:
 icons: export SOURCE_DATE_EPOCH := 1700000000
 icons: check-icons-deps
 	@echo "Generating icons from SVG sources..."
-	@mkdir -p Sources/solstone/Resources
+	@swift run -c release journal-icon-gen assets/icon-journal.svg
+	@mkdir -p Sources/solstone/Resources Sources/journal/Resources
 	@TMPDIR=$$(mktemp -d) && \
 	ICONSET=$$TMPDIR/AppIcon.iconset && \
-	mkdir -p $$ICONSET && \
+	JOURNAL_ICONSET=$$TMPDIR/JournalAppIcon.iconset && \
+	mkdir -p $$ICONSET $$JOURNAL_ICONSET && \
 	\
 	echo "  Rendering app icon sizes (per-size SVG selection — never downsample)..." && \
 	for size in 16 32 64 128 256 512 1024; do \
@@ -793,6 +795,27 @@ icons: check-icons-deps
 	iconutil -c icns $$ICONSET -o Sources/solstone/Resources/AppIcon.icns && \
 	echo "  ✓ AppIcon.icns" && \
 	\
+	echo "  Rendering journal app icon sizes..." && \
+	for size in 16 32 64 128 256 512 1024; do \
+		rsvg-convert -w $$size -h $$size assets/icon-journal.svg \
+			-o $$TMPDIR/journal_icon_$${size}.png; \
+		echo "    $${size}x$${size}  (assets/icon-journal.svg)"; \
+	done && \
+	\
+	cp $$TMPDIR/journal_icon_16.png    $$JOURNAL_ICONSET/icon_16x16.png && \
+	cp $$TMPDIR/journal_icon_32.png    $$JOURNAL_ICONSET/icon_16x16@2x.png && \
+	cp $$TMPDIR/journal_icon_32.png    $$JOURNAL_ICONSET/icon_32x32.png && \
+	cp $$TMPDIR/journal_icon_64.png    $$JOURNAL_ICONSET/icon_32x32@2x.png && \
+	cp $$TMPDIR/journal_icon_128.png   $$JOURNAL_ICONSET/icon_128x128.png && \
+	cp $$TMPDIR/journal_icon_256.png   $$JOURNAL_ICONSET/icon_128x128@2x.png && \
+	cp $$TMPDIR/journal_icon_256.png   $$JOURNAL_ICONSET/icon_256x256.png && \
+	cp $$TMPDIR/journal_icon_512.png   $$JOURNAL_ICONSET/icon_256x256@2x.png && \
+	cp $$TMPDIR/journal_icon_512.png   $$JOURNAL_ICONSET/icon_512x512.png && \
+	cp $$TMPDIR/journal_icon_1024.png  $$JOURNAL_ICONSET/icon_512x512@2x.png && \
+	\
+	iconutil -c icns $$JOURNAL_ICONSET -o Sources/journal/Resources/AppIcon.icns && \
+	echo "  ✓ journal AppIcon.icns" && \
+	\
 	echo "  Rendering status bar template icons (vector PDF — renders crisp at any density)..." && \
 		rsvg-convert -f pdf assets/sol-ring-mb.svg \
 			-o Sources/solstone/Resources/sol-ring-template.pdf && \
@@ -816,7 +839,7 @@ icons: check-icons-deps
 	echo "  ✓ sol-wordmark.png + @2x" && \
 	\
 	rm -rf $$TMPDIR && \
-	echo "Icons generated in Sources/solstone/Resources/"
+	echo "Icons generated in Sources/solstone/Resources/ and Sources/journal/Resources/"
 
 check-icons-deps:
 	@which rsvg-convert > /dev/null 2>&1 || \

@@ -17,6 +17,14 @@ struct JournalMarkTests {
         #expect(mark.words == ["afoot", "unfixed"])
     }
 
+    @Test func encodeDecodeRoundTripPreservesValidatedMark() throws {
+        let encoded = try JSONEncoder().encode(JournalMark.uiTestSample)
+        let decoded = try JSONDecoder().decode(JournalMark.self, from: encoded)
+
+        #expect(decoded == JournalMark.uiTestSample)
+        #expect(JournalMark.validate(decoded) == JournalMark.uiTestSample)
+    }
+
     @Test func decodeAndValidateReturnsNilForOneIcon() {
         #expect(Self.decodeAndValidate(Self.sampleData(includeIcon2: false)) == nil)
     }
