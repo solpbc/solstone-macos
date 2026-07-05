@@ -211,21 +211,6 @@ struct JournalClientBehaviorTests {
         #expect(workspace.openedURLs == [URL(string: "https://solstone.app/download")!])
     }
 
-    @Test func migrationBannerActionIsInertAndDoesNotMutateConfig() {
-        let state = bundledConfiguredState()
-        let originalConfig = state.config
-        let action = RecordingMigrationBannerAction()
-
-        acknowledgeJournalMigrationBanner(action: action)
-
-        #expect(action.calls == 1)
-        #expect(state.config.serverURL == originalConfig.serverURL)
-        #expect(state.config.serverKey == originalConfig.serverKey)
-        #expect(state.config.observerName == originalConfig.observerName)
-        #expect(state.config.serviceMode == originalConfig.serviceMode)
-        #expect(state.config.serviceMode == .bundled)
-    }
-
     private func bundledConfiguredState(syncPaused: Bool = false) -> AppState {
         AppState.forSnapshot(config: AppConfig(
             serverURL: ServiceMode.bundledServiceURL,
@@ -341,14 +326,5 @@ private final class RecordingJournalAppWorkspace: JournalAppWorkspace {
 
     func open(_ url: URL) {
         openedURLs.append(url)
-    }
-}
-
-@MainActor
-private final class RecordingMigrationBannerAction: JournalMigrationBannerActioning {
-    var calls = 0
-
-    func acknowledge() {
-        calls += 1
     }
 }

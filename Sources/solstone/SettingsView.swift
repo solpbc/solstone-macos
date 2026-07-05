@@ -185,6 +185,7 @@ struct SettingsView: View {
     @State private var inFlightTestID: UUID?
     @State private var disconnectConfirmPending = false
     @State private var journalMarkDriver = JournalMarkConfirmationDriver()
+    @State private var journalHandoffOrchestrator: JournalHandoffOrchestrator
     @State private var pairingMismatch = false
     @State private var journalMarkRederiveEligible = false
     @State private var journalMarkRederiveStarted = false
@@ -199,7 +200,6 @@ struct SettingsView: View {
     @State private var showPairingFlow = false
 
     private let journalAppLauncher: any JournalAppLaunching
-    private let migrationBannerAction: any JournalMigrationBannerActioning
     private let journalNameFetch: @MainActor @Sendable (String) async -> String?
     private let localIdentityFetch: @MainActor @Sendable (String) async -> JournalMark?
     private let observerRegister: @MainActor @Sendable (
@@ -218,7 +218,7 @@ struct SettingsView: View {
         initialLocalDiscoveryCompleted: Bool = false,
         initialShowPairingFlow: Bool = false,
         journalAppLauncher: any JournalAppLaunching = LiveJournalAppLauncher(),
-        migrationBannerAction: any JournalMigrationBannerActioning = InertJournalMigrationBannerAction(),
+        journalHandoffOrchestrator: JournalHandoffOrchestrator = JournalHandoffOrchestrator(),
         journalNameFetch: @escaping @MainActor @Sendable (String) async -> String? = { baseURL in
             await JournalNameFetcher().fetch(baseURL: baseURL)
         },
@@ -238,13 +238,13 @@ struct SettingsView: View {
         self.appState = appState
         self.updateController = updateController
         self.journalAppLauncher = journalAppLauncher
-        self.migrationBannerAction = migrationBannerAction
         self.journalNameFetch = journalNameFetch
         self.localIdentityFetch = localIdentityFetch
         self.observerRegister = observerRegister
         self.markFetch = markFetch
         self._selectedTab = State(initialValue: selectedTab)
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
+        self._journalHandoffOrchestrator = State(initialValue: journalHandoffOrchestrator)
         self._journalName = State(initialValue: initialJournalName)
         self._localJournalMark = State(initialValue: initialLocalJournalMark)
         self._localDiscoveryCompleted = State(initialValue: initialLocalDiscoveryCompleted)
@@ -1003,20 +1003,43 @@ struct SettingsView: View {
     }
 
     private var journalMigrationBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: appState.journalHandoffActive ? "arrow.triangle.2.circlepath" : "book.closed.fill")
                 .foregroundStyle(.orange)
-            Text("your journal needs a new link; sol keeps using the saved connection for now.")
-                .font(.callout)
-                .foregroundStyle(.primary)
-            Spacer(minLength: 0)
-            Button("not now") {
-                acknowledgeJournalMigrationBanner(action: migrationBannerAction)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("your journal is getting its own app")
+                    .font(.headline)
+                Text("nothing moved. your journal was always here — now it has a name.")
+                    .font(.callout)
+                Text("segments are kept on this mac until your journal is back")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if journalHandoffOrchestrator.step != .idle || appState.journalHandoffActive {
+                    Text(journalHandoffOrchestrator.step.ownerStatusMessage)
+                        .font(.caption)
+                        .foregroundStyle(journalHandoffStatusColor)
+                }
+                AXStateCompanion(
+                    id: AXID.Settings.Service.journalHandoffState,
+                    value: journalHandoffOrchestrator.step.axState.axToken
+                )
             }
-            .accessibilityIdentifier(AXID.Settings.Service.journalMigrationAction)
+            Spacer(minLength: 0)
+            Button {
+                journalHandoffOrchestrator.start(
+                    appState: appState,
+                    markDriver: journalMarkDriver,
+                    markFetch: markFetch
+                )
+            } label: {
+                Label("start", systemImage: "arrow.right.circle")
+            }
+            .disabled(appState.journalHandoffActive)
+            .accessibilityIdentifier(AXID.Settings.Service.journalHandoffStart)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(Color.orange.opacity(0.12))
@@ -1025,7 +1048,18 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(Color.orange.opacity(0.35), lineWidth: 1)
         )
-        .accessibilityIdentifier(AXID.Settings.Service.journalMigrationBanner)
+        .accessibilityIdentifier(AXID.Settings.Service.journalHandoffBanner)
+    }
+
+    private var journalHandoffStatusColor: Color {
+        switch journalHandoffOrchestrator.step {
+        case .failed, .aborted:
+            return .red
+        case .completed:
+            return .green
+        default:
+            return .secondary
+        }
     }
 
     private var resolvedJournalName: String {

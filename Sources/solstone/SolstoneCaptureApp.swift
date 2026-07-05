@@ -170,7 +170,7 @@ struct SolstoneCaptureApp: App {
         _updateController = State(initialValue: UpdateController(
             log: Logger.setup,
             errorDomain: "app.solstone.observer.updates",
-            exclusivity: nil,
+            exclusivity: { appState.journalHandoffActive },
             preInstallFinalizer: { @MainActor in
                 await appState.appQuitCoordinator.prepareForUpdaterInstall()
             },

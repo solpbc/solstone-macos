@@ -139,9 +139,10 @@
       "settings.service.external.viewStatus",
       "settings.service.journal.connection.state",
       "settings.service.journal.createThisMac",
+      "settings.service.journal.handoff.banner",
+      "settings.service.journal.handoff.start",
+      "settings.service.journal.handoff.state",
       "settings.service.journal.mark.state",
-      "settings.service.journal.migration.action",
-      "settings.service.journal.migration.banner",
       "settings.service.journal.name.state",
       "settings.service.journal.pairAnotherDevice",
       "settings.service.journal.relink",
@@ -256,6 +257,10 @@
     "settings.service.journal.connection.state" : {
       "kind" : "enum",
       "vocabulary" : "PairingConnectionAXState"
+    },
+    "settings.service.journal.handoff.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalHandoffAXState"
     },
     "settings.service.journal.mark.state" : {
       "kind" : "freeform"
@@ -373,6 +378,21 @@
       "day",
       "week",
       "month"
+    ],
+    "JournalHandoffAXState" : [
+      "idle",
+      "acquiring",
+      "checking_running_journal",
+      "writing_handoff",
+      "launching_journal",
+      "waiting_for_adoption",
+      "auth_gate",
+      "flipping_to_external",
+      "triggering_sync_drain",
+      "confirming_mark_best_effort",
+      "completed",
+      "failed",
+      "aborted"
     ],
     "MenubarIconState" : [
       "recording",

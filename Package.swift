@@ -88,7 +88,8 @@ let package = Package(
                 .target(name: "UpdateKit"),
                 .target(name: "SPLTunnel"),
                 .target(name: "ObjCHelpers"),
-                .product(name: "Sparkle", package: "Sparkle")
+                .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "Crypto", package: "swift-crypto")
             ],
             path: "Sources/solstone",
             exclude: [

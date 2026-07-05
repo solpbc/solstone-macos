@@ -43,8 +43,9 @@ struct AXIDTests {
         #expect(AXID.Settings.Service.localJournalConfirm == "settings.service.localJournal.confirm")
         #expect(AXID.Settings.Service.createJournalThisMac == "settings.service.journal.createThisMac")
         #expect(AXID.Settings.Service.pairJournalAnotherDevice == "settings.service.journal.pairAnotherDevice")
-        #expect(AXID.Settings.Service.journalMigrationBanner == "settings.service.journal.migration.banner")
-        #expect(AXID.Settings.Service.journalMigrationAction == "settings.service.journal.migration.action")
+        #expect(AXID.Settings.Service.journalHandoffBanner == "settings.service.journal.handoff.banner")
+        #expect(AXID.Settings.Service.journalHandoffStart == "settings.service.journal.handoff.start")
+        #expect(AXID.Settings.Service.journalHandoffState == "settings.service.journal.handoff.state")
     }
 
     @Test func runtimeKeysArePrefixStableAndInjective() {
@@ -85,6 +86,7 @@ struct AXIDTests {
         expectTokensMatchGrammar(MenubarStatusRowState.allCases.map(\.axToken))
         expectTokensMatchGrammar(SettingsObservationAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(PairingConnectionAXState.allCases.map(\.axToken))
+        expectTokensMatchGrammar(JournalHandoffAXState.allCases.map(\.axToken))
     }
 
     @Test func menubarIconStateOwnsIconNames() {

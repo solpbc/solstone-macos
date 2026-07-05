@@ -83,6 +83,22 @@ internal enum PairingConnectionAXState: CaseIterable {
     case keychainUnavailable
 }
 
+internal enum JournalHandoffAXState: CaseIterable {
+    case idle
+    case acquiring
+    case checkingRunningJournal
+    case writingHandoff
+    case launchingJournal
+    case waitingForAdoption
+    case authGate
+    case flippingToExternal
+    case triggeringSyncDrain
+    case confirmingMarkBestEffort
+    case completed
+    case failed
+    case aborted
+}
+
 extension UploadCoordinator.Status {
     public static let axTokens = [
         "not_synced",
@@ -228,6 +244,39 @@ extension PairingConnectionAXState {
             return "loopback_unavailable"
         case .keychainUnavailable:
             return "keychain_unavailable"
+        }
+    }
+}
+
+extension JournalHandoffAXState {
+    var axToken: String {
+        switch self {
+        case .idle:
+            return "idle"
+        case .acquiring:
+            return "acquiring"
+        case .checkingRunningJournal:
+            return "checking_running_journal"
+        case .writingHandoff:
+            return "writing_handoff"
+        case .launchingJournal:
+            return "launching_journal"
+        case .waitingForAdoption:
+            return "waiting_for_adoption"
+        case .authGate:
+            return "auth_gate"
+        case .flippingToExternal:
+            return "flipping_to_external"
+        case .triggeringSyncDrain:
+            return "triggering_sync_drain"
+        case .confirmingMarkBestEffort:
+            return "confirming_mark_best_effort"
+        case .completed:
+            return "completed"
+        case .failed:
+            return "failed"
+        case .aborted:
+            return "aborted"
         }
     }
 }

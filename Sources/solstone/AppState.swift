@@ -96,6 +96,7 @@ public final class AppState {
     public internal(set) var solChatPending: SolChatRequestSummary?
     public internal(set) var solChatStale = false
     public internal(set) var connectionTestState: ConnectionTestState = .idle
+    public internal(set) var journalHandoffActive = false
     internal private(set) var confirmedMark: JournalMark?
     public private(set) var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
 

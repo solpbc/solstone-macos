@@ -67,6 +67,29 @@ struct SettingsViewTests {
         #expect(externalStorageGate.contains("AXID.Settings.Status.storageSettings"))
     }
 
+    @Test func journalMigrationBannerUsesHandoffStartOnly() throws {
+        let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
+        let banner = try extract(
+            from: source,
+            start: "private var journalMigrationBanner: some View",
+            end: "    private var resolvedJournalName"
+        )
+        let headline = "your journal is getting " + "its own app"
+        let body = "nothing moved. your journal was always here " + "— now it has a name."
+        let buffering = "segments are kept on this mac " + "until your journal is back"
+        let removedButton = "Button(\"not " + "now\")"
+        let removedAction = "acknowledgeJournal" + "MigrationBanner"
+
+        #expect(banner.contains("Text(\"\(headline)\")"))
+        #expect(banner.contains("Text(\"\(body)\")"))
+        #expect(banner.contains("Text(\"\(buffering)\")"))
+        #expect(banner.contains("journalHandoffOrchestrator.start"))
+        #expect(banner.contains("AXID.Settings.Service.journalHandoffStart"))
+        #expect(banner.contains("AXID.Settings.Service.journalHandoffState"))
+        #expect(!banner.contains(removedButton))
+        #expect(!banner.contains(removedAction))
+    }
+
     private func extract(from source: String, start: String, end: String) throws -> String {
         let startRange = try #require(source.range(of: start))
         let endRange = try #require(source[startRange.upperBound...].range(of: end))
