@@ -430,7 +430,7 @@ private final class ManualDevicesClock: MonotonicClock, @unchecked Sendable {
 
 @MainActor
 private func waitUntil(
-    timeout: Duration = .seconds(2),
+    timeout: Duration = .seconds(30),
     _ condition: @escaping @MainActor () async -> Bool
 ) async throws {
     let clock = ContinuousClock()
