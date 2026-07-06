@@ -11,6 +11,9 @@ public actor HeartbeatService {
 
     public typealias PostHeartbeat =
         @Sendable (_ serverURL: String, _ serverKey: String, _ paused: Bool, _ health: ObserverHealthSnapshot?) async throws -> Void
+    /// Reports each real POST attempt outcome (true = accepted) so UI surfaces can
+    /// present direct-URL connection health without inventing a second prober.
+    public typealias OutcomeSink = @Sendable (Bool) async -> Void
     public typealias IsPausedProvider = @MainActor @Sendable () -> Bool
     public typealias HealthProvider = @MainActor @Sendable () -> ObserverHealthSnapshot?
 
@@ -18,6 +21,7 @@ public actor HeartbeatService {
     private let isPaused: IsPausedProvider
     private let healthProvider: HealthProvider
     private let postHeartbeat: PostHeartbeat
+    private let outcomeSink: OutcomeSink?
     private let clock: any MonotonicClock
     private let resolver: HomeBaseURLResolver
 
@@ -30,7 +34,8 @@ public actor HeartbeatService {
         resolver: HomeBaseURLResolver,
         isPaused: @escaping IsPausedProvider,
         healthProvider: @escaping HealthProvider,
-        postHeartbeat: @escaping PostHeartbeat
+        postHeartbeat: @escaping PostHeartbeat,
+        outcomeSink: OutcomeSink? = nil
     ) {
         self.init(
             intervalSeconds: intervalSeconds,
@@ -38,6 +43,7 @@ public actor HeartbeatService {
             isPaused: isPaused,
             healthProvider: healthProvider,
             postHeartbeat: postHeartbeat,
+            outcomeSink: outcomeSink,
             clock: SystemMonotonicClock()
         )
     }
@@ -48,6 +54,7 @@ public actor HeartbeatService {
         isPaused: @escaping IsPausedProvider,
         healthProvider: @escaping HealthProvider,
         postHeartbeat: @escaping PostHeartbeat,
+        outcomeSink: OutcomeSink? = nil,
         clock: any MonotonicClock
     ) {
         self.intervalSeconds = intervalSeconds
@@ -55,6 +62,7 @@ public actor HeartbeatService {
         self.isPaused = isPaused
         self.healthProvider = healthProvider
         self.postHeartbeat = postHeartbeat
+        self.outcomeSink = outcomeSink
         self.clock = clock
     }
 
@@ -95,8 +103,10 @@ public actor HeartbeatService {
                     do {
                         try await postHeartbeat(serverURL, serverKey, paused, health)
                         clearAuthFailureState()
+                        await outcomeSink?(true)
                     } catch {
                         handleHeartbeatError(error)
+                        await outcomeSink?(false)
                     }
                 case .held:
                     break

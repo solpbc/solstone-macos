@@ -50,6 +50,43 @@ struct PairingRelayAccessPresentation: Equatable {
     let axToken: String
 }
 
+/// Direct-URL mode (no tunnel manages the connection — local link or manual LAN
+/// address): connection health derives from real heartbeat outcomes, because the
+/// tunnel lifecycle never leaves .connecting when there is no tunnel at all.
+func makeDirectConnectionPresentation(
+    outcome: AppState.JournalHeartbeatOutcome?,
+    now: Date = Date()
+) -> PairingConnectionPresentation {
+    guard let outcome else {
+        return PairingConnectionPresentation(
+            message: "connecting to your journal…",
+            severity: .warn,
+            axToken: PairingConnectionAXState.connecting.axToken
+        )
+    }
+    if outcome.ok {
+        // Heartbeats run every 15s; 60s of silence after a success reads as
+        // reconnecting, never as a confident stale green.
+        if now.timeIntervalSince(outcome.at) <= 60 {
+            return PairingConnectionPresentation(
+                message: "sync can connect through your journal",
+                severity: .good,
+                axToken: PairingConnectionAXState.connected.axToken
+            )
+        }
+        return PairingConnectionPresentation(
+            message: "connecting to your journal…",
+            severity: .warn,
+            axToken: PairingConnectionAXState.connecting.axToken
+        )
+    }
+    return PairingConnectionPresentation(
+        message: "can't reach your journal right now",
+        severity: .attention,
+        axToken: PairingConnectionAXState.disconnected.axToken
+    )
+}
+
 func makePairingConnectionPresentation(
     for state: TunnelLifecycleState,
     hasPairing: Bool
@@ -1517,7 +1554,12 @@ struct SettingsView: View {
     }
 
     private var pairingConnectionPresentation: PairingConnectionPresentation {
-        makePairingConnectionPresentation(
+        // Tunnel-managed pairings present tunnel truth; a direct-URL journal (local
+        // link / manual address) has no tunnel, so heartbeat outcomes are the truth.
+        if !appState.tunnelLifecycleOwner.isTunnelManaged, appState.config.serverURL != nil {
+            return makeDirectConnectionPresentation(outcome: appState.journalHeartbeatLastOutcome)
+        }
+        return makePairingConnectionPresentation(
             for: appState.pairingCoordinator.tunnelState,
             hasPairing: pairingCanUnpair
         )

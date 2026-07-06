@@ -5,6 +5,12 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.4] - 2026-07-05
+
+### Fixed
+- the "your journal" panel now reads connection health from real heartbeats when your journal is linked directly (on this mac or by address) — it previously watched the private-link tunnel, which never applies to a direct link, so the panel could say "connecting…" forever while everything was healthy.
+
+
 ## [1.4.3] - 2026-07-05
 
 ### Fixed

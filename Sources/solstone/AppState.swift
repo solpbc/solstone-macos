@@ -36,6 +36,20 @@ private final class AppStateBridgeTarget: @unchecked Sendable {
 @MainActor
 @Observable
 public final class AppState {
+
+    /// Latest real heartbeat POST outcome — the direct-URL connection-health fact
+    /// the "your journal" panel presents when no tunnel manages the connection.
+    struct JournalHeartbeatOutcome: Equatable {
+        let ok: Bool
+        let at: Date
+    }
+
+    private(set) var journalHeartbeatLastOutcome: JournalHeartbeatOutcome?
+
+    func noteJournalHeartbeatOutcome(_ ok: Bool, at: Date = Date()) {
+        journalHeartbeatLastOutcome = JournalHeartbeatOutcome(ok: ok, at: at)
+    }
+
     /// Shared instance for app-wide access (set during init)
     nonisolated(unsafe) public static var shared: AppState?
     private static var snapshotAudioMonitorMode = false
@@ -626,6 +640,11 @@ public final class AppState {
                     paused: paused,
                     health: health
                 )
+            },
+            outcomeSink: { [heartbeatTarget] ok in
+                await MainActor.run {
+                    heartbeatTarget.state?.noteJournalHeartbeatOutcome(ok)
+                }
             }
         )
         self.solChatBridge = SolChatBridge(
