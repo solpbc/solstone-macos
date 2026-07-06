@@ -34,3 +34,32 @@ struct DirectConnectionPresentationTests {
         #expect(p.severity == .attention)
     }
 }
+
+@Suite("LocalJournalConnectionPresentation heartbeat overlay")
+struct LocalJournalHeartbeatOverlayTests {
+    private let now = Date(timeIntervalSince1970: 2_000_000)
+
+    @Test func notSyncedWithFreshHeartbeatReadsConnected() {
+        let hb = AppState.JournalHeartbeatOutcome(ok: true, at: now.addingTimeInterval(-5))
+        let p = makeLocalJournalConnectionPresentation(for: .notSynced, heartbeat: hb, now: now)
+        #expect(p.axToken == PairingConnectionAXState.connected.axToken)
+    }
+
+    @Test func notSyncedWithStaleHeartbeatStaysConnecting() {
+        let hb = AppState.JournalHeartbeatOutcome(ok: true, at: now.addingTimeInterval(-300))
+        let p = makeLocalJournalConnectionPresentation(for: .notSynced, heartbeat: hb, now: now)
+        #expect(p.axToken == PairingConnectionAXState.connecting.axToken)
+    }
+
+    @Test func notSyncedWithFailedHeartbeatStaysConnecting() {
+        let hb = AppState.JournalHeartbeatOutcome(ok: false, at: now)
+        let p = makeLocalJournalConnectionPresentation(for: .notSynced, heartbeat: hb, now: now)
+        #expect(p.axToken == PairingConnectionAXState.connecting.axToken)
+    }
+
+    @Test func uploadErrorStatesUnchangedByHeartbeat() {
+        let hb = AppState.JournalHeartbeatOutcome(ok: true, at: now)
+        let p = makeLocalJournalConnectionPresentation(for: .retrying(segment: "t", attempts: 2), heartbeat: hb, now: now)
+        #expect(p.axToken == PairingConnectionAXState.connecting.axToken)
+    }
+}

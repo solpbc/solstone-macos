@@ -154,8 +154,21 @@ func makePairingRelayAccessPresentation(
 }
 
 func makeLocalJournalConnectionPresentation(
-    for uploadStatus: UploadCoordinator.Status
+    for uploadStatus: UploadCoordinator.Status,
+    heartbeat: AppState.JournalHeartbeatOutcome? = nil,
+    now: Date = Date()
 ) -> PairingConnectionPresentation {
+    // Uploads lag the link by up to a full segment rotation (and legitimately go
+    // quiet while nothing records). A fresh successful heartbeat is live proof the
+    // journal is reachable — never present "connecting" over a healthy link.
+    if case .notSynced = uploadStatus,
+       let heartbeat, heartbeat.ok, now.timeIntervalSince(heartbeat.at) <= 60 {
+        return PairingConnectionPresentation(
+            message: "connected to your journal on this mac",
+            severity: .good,
+            axToken: PairingConnectionAXState.connected.axToken
+        )
+    }
     switch uploadStatus {
     case .synced:
         return PairingConnectionPresentation(
@@ -1141,7 +1154,10 @@ struct SettingsView: View {
     private var journalConnectionPresentation: PairingConnectionPresentation {
         if BundledJournalEndpoint.isBundledServiceURL(appState.config.serverURL),
            appState.config.isUploadConfigured {
-            return makeLocalJournalConnectionPresentation(for: appState.uploadCoordinator.status)
+            return makeLocalJournalConnectionPresentation(
+                for: appState.uploadCoordinator.status,
+                heartbeat: appState.journalHeartbeatLastOutcome
+            )
         }
         return pairingConnectionPresentation
     }
