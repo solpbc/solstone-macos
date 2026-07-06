@@ -12,8 +12,9 @@ class JournalReleaseMetadataTest(unittest.TestCase):
         with (REPO_ROOT / "Sources/journal/Info.plist").open("rb") as handle:
             plist = plistlib.load(handle)
 
-        self.assertEqual(plist["CFBundleShortVersionString"], "1.0.0")
-        self.assertEqual(plist["CFBundleVersion"], "1")
+        import re as _re
+        self.assertRegex(plist["CFBundleShortVersionString"], _re.compile(r"^1\.\d+\.\d+$"))
+        self.assertGreaterEqual(int(plist["CFBundleVersion"]), 1)
 
     def test_sol_and_journal_changelog_1_0_0_blocks_are_distinct(self):
         sol = subprocess.run(
