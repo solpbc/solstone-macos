@@ -1138,17 +1138,23 @@ publish-preflight:
 	fi; \
 	echo "preflight: wrangler OK (account $(CF_ACCOUNT_ID))"
 
+# publish-appcast.py needs PyNaCl (Sparkle EdDSA enclosure signing) and boto3
+# (R2 multipart upload for >300 MiB DMGs). Run it under an ephemeral uv env so
+# the publish never depends on the release host's python site-packages — host
+# env drift broke the 1.0.3 publish (host lost nacl/boto3 between trains).
+PUBLISH_PY := uv run --no-project --with 'pynacl>=1.6,<2' --with boto3 python3
+
 publish-appcast: publish-preflight
-	python3 scripts/publish-appcast.py $(DIST_VERSION) --app sol
+	$(PUBLISH_PY) scripts/publish-appcast.py $(DIST_VERSION) --app sol
 
 publish-appcast-staging: publish-preflight
-	python3 scripts/publish-appcast.py $(DIST_VERSION) --app sol --staging
+	$(PUBLISH_PY) scripts/publish-appcast.py $(DIST_VERSION) --app sol --staging
 
 publish-appcast-journal: publish-preflight
-	python3 scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal
+	$(PUBLISH_PY) scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal
 
 publish-appcast-journal-staging: publish-preflight
-	python3 scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal --staging
+	$(PUBLISH_PY) scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal --staging
 
 # Cut a GitHub Release: annotated tag + `gh release create` with the DMG
 # attached and CHANGELOG notes. Run AFTER `make publish-appcast` and founder
