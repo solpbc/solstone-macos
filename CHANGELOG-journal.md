@@ -5,6 +5,11 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-07-07
+
+### Changed
+- the bundled journal runtime now installs solstone 0.8.2, which keeps the screen and combined-transcript tabs from going blank on unexpected content, makes local thinking on your own machine steadier, files calendar moments as their own category, and stops the home page repeating the same thing to do twice.
+
 ## [1.0.2] - 2026-07-07
 
 ### Changed
