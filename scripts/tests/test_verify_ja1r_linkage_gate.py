@@ -6,8 +6,11 @@ constructed from the pinned harness's own report emitter -- extro-tools
 5d1004f1, tools/solstone-macos-gate/gate.py: new_report() (top-level shape,
 schema_version, lane, result), the per-lane scenario fields it sets, the
 provenance block it fills, oracles() -> rep["post"] (the observed
-journal_version), and runtime_pin_check() (the pin check keys). They are not
-dressed up as recordings of a real run.
+journal_version), _run_linked_upgrade_lane() / establish_linked_baseline()
+(linked_baseline.expected_runtime_version,
+linked_baseline.journal_fingerprint.journal_version), and runtime_pin_check()
+(the pin check keys, including checks.baseline_solstone_pin_matches). They are
+not dressed up as recordings of a real run.
 """
 from __future__ import annotations
 

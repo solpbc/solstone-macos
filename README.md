@@ -152,8 +152,9 @@ What the verifier proves is narrow and deliberate: that the evidence set is
 complete for the profile, that every report is a terminal `PASS` from the pinned
 harness, that all six describe the exact commit being published with the right
 versions and both install orders, that the AX contract scope was clean, and that
-the journal runtime pin was genuinely enforced. The reports' own oracles remain
-authoritative — this is a freshness and completeness check, so that last
+the target journal runtime pin — plus the journal-upgrade baseline runtime pin
+when that lane is in profile — was genuinely enforced. The reports' own oracles
+remain authoritative — this is a freshness and completeness check, so that last
 release's green JSON cannot authorize this one.
 
 One honest limit: the harness does not stamp its own revision into its reports.

@@ -4,6 +4,7 @@ Verify the ja1r install/upgrade linkage-gate evidence set for a release.
 Usage:
   verify-ja1r-linkage-gate.py --profile {sol,journal,paired} --report-dir DIR
       --sync-receipt PATH --product-commit SHA40 --expected-journal-runtime PIN
+      [--expected-journal-baseline-runtime PIN]
       [identity flags -- see --help; which are required depends on --profile]
 Inputs:
   - report dir holding the lane reports listed in REPORT_FILENAMES (operator
@@ -20,7 +21,9 @@ Side effects:
 
 This verifier does NOT re-implement the harness's oracles: a PASS report's own
 checks remain authoritative. Its job is narrow -- freshness, completeness,
-scenario identity, provenance, and the runtime pin -- so that a prior release's
+scenario identity, provenance, the target journal-runtime pin, and, for
+journal-upgrade, the explicitly supplied baseline journal-runtime pin required
+by the journal and paired profiles from LANE_SPECS -- so that a prior release's
 green JSON cannot authorize this one.
 
 Exit 0 prints one JSON verdict on stdout. Every other path exits nonzero with
