@@ -1144,13 +1144,128 @@ publish-preflight:
 # env drift broke the 1.0.3 publish (host lost nacl/boto3 between trains).
 PUBLISH_PY := uv run --no-project --with 'pynacl>=1.6,<2' --with boto3 python3
 
-publish-appcast: publish-preflight
+# ────────────────────────────────────────────────────────────────
+# ja1r linkage gate — production publishes are fail-closed on it.
+#
+# The gate lives in extro-tools (tools/solstone-macos-gate), pinned to one
+# revision in scripts/ja1r-gate/extro-tools.rev. That file is the ONLY place
+# the sha is written; the sync never follows extro-tools main.
+#
+# Workflow:
+#   1. make ja1r-gate-sync     — push the pinned harness + this exact HEAD to
+#                                the rig, read the revision marker back off it,
+#                                and write .ja1r-gate/sync-receipt.json.
+#   2. run the lanes on ja1r   — redirect each lane's stdout into a report file
+#                                (the harness writes no files itself). See the
+#                                README for the six names and their commands.
+#   3. make verify-ja1r-gate-* — offline check of the evidence set; this is what
+#                                publish-appcast depends on.
+#
+# The verifier never infers an expected identity from the evidence it is
+# checking: every version/build/baseline below is passed in explicitly. Only the
+# artifact actually being published may come from its Info.plist, which is why
+# the sol profile still needs the journal identity typed in (in a sol-only
+# release the journal riding along is the RELEASED one, not the tree's).
+# ────────────────────────────────────────────────────────────────
+EXTRO_TOOLS_DIR         ?= $(abspath ..)/extro-tools
+JA1R_HOST               ?= ja1r.local
+JA1R_HARNESS_DIR        ?= $$HOME/extro-tools/tools/solstone-macos-gate
+JA1R_PRODUCT_DIR        ?= $$HOME/projects/solstone-macos
+JA1R_GATE_SYNC_RECEIPT  ?= .ja1r-gate/sync-receipt.json
+JA1R_GATE_REPORT_DIR    ?= .ja1r-gate/reports
+
+PRODUCT_HEAD := $(shell git rev-parse HEAD 2>/dev/null)
+
+VERIFY_JA1R := python3 scripts/verify-ja1r-linkage-gate.py
+
+ja1r-gate-sync:
+	@EXTRO_TOOLS_DIR='$(EXTRO_TOOLS_DIR)' JA1R_HOST='$(JA1R_HOST)' \
+	 JA1R_HARNESS_DIR='$(JA1R_HARNESS_DIR)' JA1R_PRODUCT_DIR='$(JA1R_PRODUCT_DIR)' \
+	 JA1R_GATE_SYNC_RECEIPT='$(JA1R_GATE_SYNC_RECEIPT)' \
+	 bash scripts/ja1r-gate/sync.sh
+
+# Refuse a dirty tree: PRODUCT_HEAD would misrepresent what is being published.
+ja1r-gate-clean-tree:
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "error: working tree is dirty — the ja1r evidence is bound to a commit," >&2; \
+		echo "       so publishing from a dirty tree would misrepresent what shipped." >&2; \
+		exit 1; \
+	fi
+
+# $(1) profile, $(2) newline-free list of required var names, $(3) extra flags
+define require_gate_vars
+	@missing=""; \
+	for v in $(2); do \
+		eval "val=\$$$$v"; \
+		[ -n "$$val" ] || missing="$$missing $$v"; \
+	done; \
+	if [ -n "$$missing" ]; then \
+		echo "error: verify-ja1r-gate-$(1) needs these variables, which are unset:" >&2; \
+		for v in $$missing; do echo "         $$v=…" >&2; done; \
+		echo "" >&2; \
+		echo "       e.g. make verify-ja1r-gate-$(1)$$(for v in $$missing; do printf ' %s=…' "$$v"; done)" >&2; \
+		echo "       (the gate never guesses an identity from the reports it is checking)" >&2; \
+		exit 1; \
+	fi
+endef
+
+verify-ja1r-gate-sol: ja1r-gate-clean-tree
+	$(call require_gate_vars,sol,JA1R_GATE_JOURNAL_VERSION JA1R_GATE_JOURNAL_BUILD JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN)
+	$(VERIFY_JA1R) --profile sol \
+		--report-dir '$(JA1R_GATE_REPORT_DIR)' \
+		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
+		--product-commit '$(PRODUCT_HEAD)' \
+		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
+		--sol-target-version '$(DIST_VERSION)' --sol-target-build '$(DIST_BUILD)' \
+		--journal-target-version '$(JA1R_GATE_JOURNAL_VERSION)' \
+		--journal-target-build '$(JA1R_GATE_JOURNAL_BUILD)' \
+		--sol-baseline-version '$(JA1R_GATE_SOL_BASELINE_VERSION)' \
+		--sol-baseline-build '$(JA1R_GATE_SOL_BASELINE_BUILD)' \
+		--legacy-sol-baseline-version '$(JA1R_GATE_LEGACY_SOL_VERSION)'
+
+verify-ja1r-gate-journal: ja1r-gate-clean-tree
+	$(call require_gate_vars,journal,JA1R_GATE_SOL_VERSION JA1R_GATE_SOL_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN)
+	$(VERIFY_JA1R) --profile journal \
+		--report-dir '$(JA1R_GATE_REPORT_DIR)' \
+		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
+		--product-commit '$(PRODUCT_HEAD)' \
+		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
+		--sol-target-version '$(JA1R_GATE_SOL_VERSION)' \
+		--sol-target-build '$(JA1R_GATE_SOL_BUILD)' \
+		--companion-sol-version '$(JA1R_GATE_SOL_VERSION)' \
+		--companion-sol-build '$(JA1R_GATE_SOL_BUILD)' \
+		--journal-target-version '$(JOURNAL_DIST_VERSION)' \
+		--journal-target-build '$(JOURNAL_DIST_BUILD)' \
+		--journal-baseline-version '$(JA1R_GATE_JOURNAL_BASELINE_VERSION)' \
+		--journal-baseline-build '$(JA1R_GATE_JOURNAL_BASELINE_BUILD)' \
+		--legacy-sol-baseline-version '$(JA1R_GATE_LEGACY_SOL_VERSION)'
+
+verify-ja1r-gate-paired: ja1r-gate-clean-tree
+	$(call require_gate_vars,paired,JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN)
+	$(VERIFY_JA1R) --profile paired \
+		--report-dir '$(JA1R_GATE_REPORT_DIR)' \
+		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
+		--product-commit '$(PRODUCT_HEAD)' \
+		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
+		--sol-target-version '$(DIST_VERSION)' --sol-target-build '$(DIST_BUILD)' \
+		--companion-sol-version '$(DIST_VERSION)' --companion-sol-build '$(DIST_BUILD)' \
+		--journal-target-version '$(JOURNAL_DIST_VERSION)' \
+		--journal-target-build '$(JOURNAL_DIST_BUILD)' \
+		--sol-baseline-version '$(JA1R_GATE_SOL_BASELINE_VERSION)' \
+		--sol-baseline-build '$(JA1R_GATE_SOL_BASELINE_BUILD)' \
+		--journal-baseline-version '$(JA1R_GATE_JOURNAL_BASELINE_VERSION)' \
+		--journal-baseline-build '$(JA1R_GATE_JOURNAL_BASELINE_BUILD)' \
+		--legacy-sol-baseline-version '$(JA1R_GATE_LEGACY_SOL_VERSION)'
+
+# Production publishes are gated. Staging is NOT — it must stay runnable before
+# the rig has produced any evidence at all.
+publish-appcast: publish-preflight verify-ja1r-gate-sol
 	$(PUBLISH_PY) scripts/publish-appcast.py $(DIST_VERSION) --app sol
 
 publish-appcast-staging: publish-preflight
 	$(PUBLISH_PY) scripts/publish-appcast.py $(DIST_VERSION) --app sol --staging
 
-publish-appcast-journal: publish-preflight
+publish-appcast-journal: publish-preflight verify-ja1r-gate-journal
 	$(PUBLISH_PY) scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal
 
 publish-appcast-journal-staging: publish-preflight
@@ -1167,4 +1282,5 @@ github-release:
 github-release-journal:
 	@bash scripts/github-release.sh --app journal $(JOURNAL_DIST_VERSION)
 
-.PHONY: publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
+.PHONY: publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal \
+        ja1r-gate-sync ja1r-gate-clean-tree verify-ja1r-gate-sol verify-ja1r-gate-journal verify-ja1r-gate-paired

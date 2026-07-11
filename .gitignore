@@ -70,3 +70,7 @@ Sources/solstone/Resources/AppIcon.iconset/
 
 # Python __pycache__ from build/release scripts (recursive — also scripts/tests/)
 scripts/**/__pycache__/
+
+# ja1r linkage-gate evidence (sync receipt + lane reports) — release evidence,
+# produced per-release on the release host. Never source.
+.ja1r-gate/

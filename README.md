@@ -62,6 +62,102 @@ make run             # launch solstone.app from the source tree + stream logs
 - `make release-dmg-journal` - Build signed + notarized + stapled journal DMG
 - `make release-dmg-both` - Build signed + notarized + stapled sol + journal DMGs
 
+## The ja1r linkage gate
+
+A production publish is fail-closed on fresh evidence from the ja1r rig: sol and
+the journal are installed and upgraded together on a clean machine, and every
+lane must come back green for the exact commit being published. Staging
+publishes are not gated — `make publish-appcast-staging` and
+`make publish-appcast-journal-staging` stay runnable before the rig has produced
+any evidence at all.
+
+The harness lives in `extro-tools` (`tools/solstone-macos-gate`), pinned to one
+revision in `scripts/ja1r-gate/extro-tools.rev`. That file is the only place the
+revision is written, and the sync never follows extro-tools `main`. Moving to a
+newer harness is a deliberate one-line edit.
+
+**1. Sync the rig.** Pushes the pinned harness and this exact `HEAD` to ja1r,
+reads the revision marker back off the rig, and writes
+`.ja1r-gate/sync-receipt.json`. It refuses to touch the rig if either checkout is
+dirty or the harness is not at the pin, and it never builds, installs, resets an
+app, runs a lane, or publishes.
+
+```bash
+make ja1r-gate-sync
+```
+
+**2. Run the lanes on ja1r.** The harness prints one JSON object per lane to
+stdout and writes no files itself, so redirect each lane into the report file the
+verifier expects, in `.ja1r-gate/reports/`:
+
+<!-- ja1r-report-filenames:start -->
+- `drag.json`
+- `sparkle.json`
+- `fresh-journal-first.json`
+- `fresh-sol-first.json`
+- `sol-upgrade.json`
+- `journal-upgrade.json`
+<!-- ja1r-report-filenames:end -->
+
+```bash
+# on ja1r, from ~/extro-tools/tools/solstone-macos-gate
+GATE="python3 gate.py --checkout $HOME/projects/solstone-macos --expect-solstone <runtime-pin>"
+
+$GATE --lane drag    --from <legacy-sol> --to <sol> --to-build <sol-build> \
+                     --journal <journal> --journal-build <journal-build>   > drag.json
+$GATE --lane sparkle --from <legacy-sol> --to <sol> --to-build <sol-build> \
+                     --journal <journal> --journal-build <journal-build>   > sparkle.json
+$GATE --lane fresh --order journal-first --to <sol> --to-build <sol-build> \
+                     --journal <journal> --journal-build <journal-build>   > fresh-journal-first.json
+$GATE --lane fresh --order sol-first     --to <sol> --to-build <sol-build> \
+                     --journal <journal> --journal-build <journal-build>   > fresh-sol-first.json
+$GATE --lane sol-upgrade --from <sol-baseline> --from-build <sol-baseline-build> \
+                     --to <sol> --to-build <sol-build> \
+                     --journal <journal> --journal-build <journal-build>   > sol-upgrade.json
+$GATE --lane journal-upgrade --to <companion-sol> --to-build <companion-sol-build> \
+                     --journal <journal-baseline> --journal-build <journal-baseline-build> \
+                     --journal-to <journal> --journal-to-build <journal-build> > journal-upgrade.json
+```
+
+Pass `--expect-solstone` on every lane. Without it the harness's runtime-pin
+check reports a *skipped* placeholder rather than a pass, and the verifier
+refuses the set.
+
+**3. Verify, then publish.** The verifier is offline and stdlib-only, so the
+publish never depends on the rig being reachable. `publish-appcast` requires
+`verify-ja1r-gate-sol`, and `publish-appcast-journal` requires
+`verify-ja1r-gate-journal`; `verify-ja1r-gate-paired` checks all six for a joint
+release. There is no opt-out.
+
+```bash
+make verify-ja1r-gate-sol \
+  JA1R_GATE_JOURNAL_VERSION=1.0.4 JA1R_GATE_JOURNAL_BUILD=5 \
+  JA1R_GATE_SOL_BASELINE_VERSION=1.4.4 JA1R_GATE_SOL_BASELINE_BUILD=55 \
+  JA1R_GATE_LEGACY_SOL_VERSION=1.3.31 \
+  JA1R_GATE_JOURNAL_RUNTIME_PIN=0.8.0
+```
+
+Every expected version, build, and baseline is typed in. The verifier never
+reads an expected value out of the evidence it is checking, and only the app
+actually being published takes its identity from its own `Info.plist` — in a
+sol-only release the journal riding along is the *released* journal, not
+whatever the tree happens to hold. Missing variables are listed by name before
+anything is published.
+
+What the verifier proves is narrow and deliberate: that the evidence set is
+complete for the profile, that every report is a terminal `PASS` from the pinned
+harness, that all six describe the exact commit being published with the right
+versions and both install orders, that the AX contract scope was clean, and that
+the journal runtime pin was genuinely enforced. The reports' own oracles remain
+authoritative — this is a freshness and completeness check, so that last
+release's green JSON cannot authorize this one.
+
+One honest limit: the harness does not stamp its own revision into its reports.
+The sync receipt records the revision marker read back off the rig, so a stale or
+unsynced harness cannot be waved through by typing the expected hash — but the
+binding is the sync's observation, not something the reports themselves carry.
+The load-bearing freshness proof is the product commit and the version identities.
+
 ## Architecture
 
 This is one Swift Package Manager repository. Production targets are `SolstoneCore`, `SPLTunnel`, `solstone` (the executable app and recording layer in `Sources/solstone/`), `solstone-watchdog`, and `ObjCHelpers`. Test targets are `solstoneTests` and `SPLTunnelTests`.
