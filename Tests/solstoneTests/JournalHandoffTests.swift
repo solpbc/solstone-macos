@@ -82,6 +82,117 @@ struct JournalHandoffTests {
         #expect(item.url == URL(string: "https://example.test/journal-42-b.dmg"))
     }
 
+    @Test func handoffFeedOverrideUnsetUsesProduction() throws {
+        let isolated = try makeIsolatedDefaults()
+        defer { isolated.remove() }
+
+        let selection = JournalHandoffFeed.resolve(defaults: isolated.defaults)
+
+        #expect(selection == productionFeedSelection)
+    }
+
+    @Test func handoffFeedOverrideCanonicalStagingWithWhitespaceUsesStaging() throws {
+        let isolated = try makeIsolatedDefaults()
+        defer { isolated.remove() }
+        isolated.defaults.set(
+            "\n  \(JournalHandoffConstants.stagingAppcastURLString)  \n",
+            forKey: JournalHandoffConstants.handoffFeedOverrideDefaultsKey
+        )
+
+        let selection = JournalHandoffFeed.resolve(defaults: isolated.defaults)
+
+        #expect(selection == stagingFeedSelection)
+    }
+
+    @Test func handoffFeedOverrideRejectsNonCanonicalValues() throws {
+        let variants: [(name: String, value: Any)] = [
+            ("empty", ""),
+            ("whitespace-only", " \n\t "),
+            ("non-string", 42),
+            ("malformed", "not a url"),
+            ("http", "http://updates.solstone.app/journal-macos/_staging/appcast.xml"),
+            ("query", "\(JournalHandoffConstants.stagingAppcastURLString)?x=1"),
+            ("fragment", "\(JournalHandoffConstants.stagingAppcastURLString)#frag"),
+            ("userinfo", "https://u:p@updates.solstone.app/journal-macos/_staging/appcast.xml"),
+            ("explicit-port", "https://updates.solstone.app:443/journal-macos/_staging/appcast.xml"),
+            ("encoded-path", "https://updates.solstone.app/journal-macos/%5Fstaging/appcast.xml"),
+            ("wrong-host", "https://staging.updates.solstone.app/journal-macos/_staging/appcast.xml"),
+            ("wrong-path", "https://updates.solstone.app/journal-macos/staging/appcast.xml"),
+        ]
+
+        for variant in variants {
+            let isolated = try makeIsolatedDefaults()
+            defer { isolated.remove() }
+            isolated.defaults.set(variant.value, forKey: JournalHandoffConstants.handoffFeedOverrideDefaultsKey)
+
+            let selection = JournalHandoffFeed.resolve(defaults: isolated.defaults)
+
+            #expect(selection == rejectedFeedSelection, "variant: \(variant.name)")
+        }
+    }
+
+    @Test func liveHandoffFeedResolverUsesInjectedDefaultsAndReadsFreshly() throws {
+        let isolated = try makeIsolatedDefaults()
+        defer { isolated.remove() }
+        isolated.defaults.set(
+            JournalHandoffConstants.stagingAppcastURLString,
+            forKey: JournalHandoffConstants.handoffFeedOverrideDefaultsKey
+        )
+        let dependencies = JournalHandoffDependencies.live(defaults: isolated.defaults)
+
+        #expect(dependencies.appcastFeedResolver() == stagingFeedSelection)
+
+        isolated.defaults.removeObject(forKey: JournalHandoffConstants.handoffFeedOverrideDefaultsKey)
+        #expect(dependencies.appcastFeedResolver() == productionFeedSelection)
+
+        isolated.defaults.set(
+            JournalHandoffConstants.stagingAppcastURLString,
+            forKey: JournalHandoffConstants.handoffFeedOverrideDefaultsKey
+        )
+        #expect(dependencies.appcastFeedResolver() == stagingFeedSelection)
+    }
+
+    @Test func orchestratorFetchesSelectedHandoffFeedURL() async throws {
+        let staging = TestWorld(appcastData: appcast([]))
+        staging.selectFeed(stagingFeedSelection)
+        _ = await staging.run()
+
+        #expect(staging.appcast.requestedURLs == [JournalHandoffConstants.stagingAppcastURL])
+        #expect(staging.feedResolver.calls == 1)
+
+        let production = TestWorld(appcastData: appcast([]))
+        production.selectFeed(productionFeedSelection)
+        _ = await production.run()
+
+        #expect(production.appcast.requestedURLs == [JournalHandoffConstants.appcastURL])
+        #expect(production.feedResolver.calls == 1)
+    }
+
+    @Test func stagingHandoffFeedFailureDoesNotFallbackToProduction() async throws {
+        let world = TestWorld(appcastData: appcast([]))
+        world.selectFeed(stagingFeedSelection)
+        world.appcast.failure = .appcastUnavailable("boom")
+
+        let result = await world.run()
+
+        #expect(result == .failed(.appcastUnavailable("boom")))
+        #expect(world.appcast.requestedURLs == [JournalHandoffConstants.stagingAppcastURL])
+        #expect(world.downloader.calls.isEmpty)
+    }
+
+    @Test func sparkleFeedOverrideDoesNotAffectJournalHandoffFeedResolution() throws {
+        let isolated = try makeIsolatedDefaults()
+        defer { isolated.remove() }
+        isolated.defaults.set(
+            JournalHandoffConstants.stagingAppcastURLString,
+            forKey: "solstone.updates.feedURLOverride"
+        )
+
+        let selection = JournalHandoffFeed.resolve(defaults: isolated.defaults)
+
+        #expect(selection == productionFeedSelection)
+    }
+
     @Test func appcastRejectsMissingAndNonIntegerLengthBeforeDownload() async throws {
         let missing = TestWorld(appcastData: appcast([
             appcastItem(version: 1, length: nil)
@@ -337,7 +448,7 @@ struct JournalHandoffTests {
         let result = await world.run()
 
         #expect(result == .completed)
-        #expect(world.appcast.calls == 0)
+        #expect(world.appcast.requestedURLs.count == 0)
         #expect(world.downloader.calls.isEmpty)
         #expect(world.configFlipper.flipCount == 0)
     }
@@ -381,7 +492,7 @@ struct JournalHandoffTests {
 
         #expect(result == .aborted(.missingJournalPath))
         #expect(world.configFlipper.flipCount == 0)
-        #expect(world.appcast.calls == 0)
+        #expect(world.appcast.requestedURLs.count == 0)
     }
 
     @Test func missingJournalDirectoryAbortsWithoutInventingRoot() async throws {
@@ -440,6 +551,7 @@ private final class TestWorld {
     let connectionTester = FakeConnectionTester()
     let runningJournal = FakeRunningJournalController()
     let configFlipper = FakeConfigFlipper()
+    let feedResolver: FakeAppcastFeedResolver
     var dependencies: JournalHandoffDependencies
     let state: AppState
     let driver = JournalMarkConfirmationDriver(
@@ -457,6 +569,8 @@ private final class TestWorld {
             .appendingPathComponent("journal.app", isDirectory: true)
 
         appcast = FakeAppcastClient(data: appcastData)
+        let feedResolver = FakeAppcastFeedResolver()
+        self.feedResolver = feedResolver
         let applicationsURL = tempRoot.appendingPathComponent("Applications", isDirectory: true)
         try! FileManager.default.createDirectory(at: applicationsURL, withIntermediateDirectories: true)
 
@@ -476,6 +590,7 @@ private final class TestWorld {
 
         dependencies = JournalHandoffDependencies(
             appcastClient: appcast,
+            appcastFeedResolver: { feedResolver.resolve() },
             downloader: downloader,
             mounter: mounter,
             trustVerifier: trustVerifier,
@@ -504,6 +619,10 @@ private final class TestWorld {
         try? FileManager.default.removeItem(at: tempRoot)
     }
 
+    func selectFeed(_ selection: JournalHandoffFeedSelection) {
+        feedResolver.selection = selection
+    }
+
     func run() async -> JournalHandoffStep {
         let orchestrator = JournalHandoffOrchestrator(dependencies: dependencies)
         let result = await orchestrator.run(
@@ -517,17 +636,28 @@ private final class TestWorld {
 }
 
 @MainActor
+private final class FakeAppcastFeedResolver {
+    var selection = productionFeedSelection
+    var calls = 0
+
+    func resolve() -> JournalHandoffFeedSelection {
+        calls += 1
+        return selection
+    }
+}
+
+@MainActor
 private final class FakeAppcastClient: AppcastClient {
     let data: Data
     var failure: JournalHandoffFailure?
-    var calls = 0
+    var requestedURLs: [URL] = []
 
     init(data: Data) {
         self.data = data
     }
 
-    func fetchAppcast() async throws -> Data {
-        calls += 1
+    func fetchAppcast(from url: URL) async throws -> Data {
+        requestedURLs.append(url)
         if let failure {
             throw failure
         }
@@ -670,6 +800,34 @@ private final class FakeConfigFlipper: ConfigFlipper {
     func triggerSync(appState: AppState) {
         triggerSyncCount += 1
     }
+}
+
+private var productionFeedSelection: JournalHandoffFeedSelection {
+    JournalHandoffFeedSelection(url: JournalHandoffConstants.appcastURL, feed: .production)
+}
+
+private var stagingFeedSelection: JournalHandoffFeedSelection {
+    JournalHandoffFeedSelection(url: JournalHandoffConstants.stagingAppcastURL, feed: .staging)
+}
+
+private var rejectedFeedSelection: JournalHandoffFeedSelection {
+    JournalHandoffFeedSelection(url: JournalHandoffConstants.appcastURL, feed: .rejectedOverride)
+}
+
+private struct IsolatedDefaults {
+    let suiteName: String
+    let defaults: UserDefaults
+
+    func remove() {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+}
+
+private func makeIsolatedDefaults() throws -> IsolatedDefaults {
+    let suiteName = "app.solstone.tests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defaults.removePersistentDomain(forName: suiteName)
+    return IsolatedDefaults(suiteName: suiteName, defaults: defaults)
 }
 
 private func appcast(_ items: [String]) -> Data {

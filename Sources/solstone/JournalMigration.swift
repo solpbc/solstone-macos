@@ -249,7 +249,7 @@ func deriveResumeState(probes: JournalHandoffResumeProbes) -> JournalHandoffStep
 
 @MainActor
 protocol AppcastClient {
-    func fetchAppcast() async throws -> Data
+    func fetchAppcast(from url: URL) async throws -> Data
 }
 
 @MainActor
@@ -308,6 +308,7 @@ struct AppcastItem: Equatable, Sendable {
 
 struct JournalHandoffDependencies {
     var appcastClient: any AppcastClient
+    var appcastFeedResolver: @MainActor @Sendable () -> JournalHandoffFeedSelection
     var downloader: any DMGDownloader
     var mounter: any DiskImageMounter
     var trustVerifier: any TrustVerifier
@@ -327,9 +328,10 @@ struct JournalHandoffDependencies {
     var now: @Sendable () -> Date
 
     @MainActor
-    static func live() -> JournalHandoffDependencies {
+    static func live(defaults: UserDefaults = .standard) -> JournalHandoffDependencies {
         JournalHandoffDependencies(
             appcastClient: LiveAppcastClient(),
+            appcastFeedResolver: { JournalHandoffFeed.resolve(defaults: defaults) },
             downloader: LiveDMGDownloader(),
             mounter: LiveDiskImageMounter(),
             trustVerifier: LiveTrustVerifier(),
@@ -356,9 +358,51 @@ enum JournalHandoffConstants {
     static let journalBundleIdentifier = "app.solstone.journal"
     static let teamIdentifier = "7QCG8V4M6H"
     static let appcastURL = URL(string: "https://updates.solstone.app/journal-macos/appcast.xml")!
+    static let stagingAppcastURLString = "https://updates.solstone.app/journal-macos/_staging/appcast.xml"
+    static let stagingAppcastURL = URL(string: stagingAppcastURLString)!
+    static let handoffFeedOverrideDefaultsKey = "solstone.journal.handoffFeedOverride"
     static let productionPublicEDKeyBase64 = "5EP/CLtfMrN2qC8zWsHeIWcPVPjqFH7hW4m8cGX7Qg0="
     static let provenance = "bundled-migration"
     static let maxDMGBytes: Int64 = 1_073_741_824
+}
+
+enum JournalHandoffFeed: Equatable, Sendable {
+    case production
+    case staging
+    case rejectedOverride
+
+    var logDescription: String {
+        switch self {
+        case .production:
+            "production"
+        case .staging:
+            "staging"
+        case .rejectedOverride:
+            "rejected override; production"
+        }
+    }
+
+    static func resolve(defaults: UserDefaults) -> JournalHandoffFeedSelection {
+        guard let rawOverride = defaults.object(forKey: JournalHandoffConstants.handoffFeedOverrideDefaultsKey) else {
+            return JournalHandoffFeedSelection(url: JournalHandoffConstants.appcastURL, feed: .production)
+        }
+
+        guard let override = rawOverride as? String else {
+            return JournalHandoffFeedSelection(url: JournalHandoffConstants.appcastURL, feed: .rejectedOverride)
+        }
+
+        let trimmedOverride = override.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedOverride == JournalHandoffConstants.stagingAppcastURLString {
+            return JournalHandoffFeedSelection(url: JournalHandoffConstants.stagingAppcastURL, feed: .staging)
+        }
+
+        return JournalHandoffFeedSelection(url: JournalHandoffConstants.appcastURL, feed: .rejectedOverride)
+    }
+}
+
+struct JournalHandoffFeedSelection: Equatable, Sendable {
+    let url: URL
+    let feed: JournalHandoffFeed
 }
 
 @MainActor
@@ -481,10 +525,12 @@ final class JournalHandoffOrchestrator {
 
     private func acquireJournalApp() async throws -> URL {
         step = .acquiring(.fetchingAppcast)
+        let selection = dependencies.appcastFeedResolver()
+        Logger.setup.notice("journal handoff feed: \(selection.feed.logDescription, privacy: .public)")
         Logger.setup.info("journal handoff: fetching journal appcast")
         let appcastData: Data
         do {
-            appcastData = try await dependencies.appcastClient.fetchAppcast()
+            appcastData = try await dependencies.appcastClient.fetchAppcast(from: selection.url)
         } catch let failure as JournalHandoffFailure {
             throw failure
         } catch {
@@ -938,16 +984,14 @@ private final class AppcastXMLDelegate: NSObject, XMLParserDelegate {
 }
 
 struct LiveAppcastClient: AppcastClient {
-    private let appcastURL: URL
     private let session: URLSession
 
-    init(appcastURL: URL = JournalHandoffConstants.appcastURL, session: URLSession = .shared) {
-        self.appcastURL = appcastURL
+    init(session: URLSession = .shared) {
         self.session = session
     }
 
-    func fetchAppcast() async throws -> Data {
-        let (data, response) = try await session.data(from: appcastURL)
+    func fetchAppcast(from url: URL) async throws -> Data {
+        let (data, response) = try await session.data(from: url)
         guard let http = response as? HTTPURLResponse else {
             throw JournalHandoffFailure.appcastUnavailable("invalid response")
         }
