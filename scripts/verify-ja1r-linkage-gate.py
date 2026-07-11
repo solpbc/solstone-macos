@@ -82,12 +82,31 @@ class LaneSpec:
     fingerprint (top-level `post`) in its report -- see verify_runtime_pin.
     """
 
-    def __init__(self, lane, identity, pin_check_key, observes_runtime, order=None):
+    def __init__(
+        self,
+        lane,
+        identity,
+        pin_check_key,
+        observes_runtime,
+        order=None,
+        baseline_pin=None,
+    ):
         self.lane = lane
         self.identity = identity
         self.pin_check_key = pin_check_key
         self.observes_runtime = observes_runtime
         self.order = order
+        self.baseline_pin = baseline_pin
+
+
+class BaselinePinSpec:
+    """Report keys that prove a linked journal-upgrade baseline runtime pin."""
+
+    def __init__(self, report_key, linked_expected_key, check_key, fingerprint_key):
+        self.report_key = report_key
+        self.linked_expected_key = linked_expected_key
+        self.check_key = check_key
+        self.fingerprint_key = fingerprint_key
 
 
 _DRAG_SPARKLE_IDENTITY = {
@@ -162,6 +181,12 @@ LANE_SPECS = {
         },
         pin_check_key="runtime_pin_matches",
         observes_runtime=True,
+        baseline_pin=BaselinePinSpec(
+            report_key="expect_solstone_baseline",
+            linked_expected_key="expected_runtime_version",
+            check_key="baseline_solstone_pin_matches",
+            fingerprint_key="journal_version",
+        ),
     ),
 }
 
@@ -193,6 +218,14 @@ def required_identity_keys(profile):
     for filename in PROFILES[profile]:
         keys.update(LANE_SPECS[filename].identity.values())
     return sorted(keys)
+
+
+def requires_baseline_runtime(profile):
+    """Whether any lane in this profile asserts a baseline journal runtime pin."""
+    return any(
+        LANE_SPECS[filename].baseline_pin is not None
+        for filename in PROFILES[profile]
+    )
 
 
 def read_pin():
@@ -366,7 +399,111 @@ def verify_runtime_pin(report, filename, spec, expected_runtime):
         )
 
 
-def verify_report(path, filename, spec, expected, expected_commit, expected_runtime):
+def _require_string(container, key, filename, dotted_key, flag):
+    if not isinstance(container, dict) or key not in container:
+        raise GateFailure(
+            f"{filename}: {dotted_key} is missing -- cannot prove the baseline "
+            f"journal runtime pin from {flag}"
+        )
+    value = container[key]
+    if not isinstance(value, str) or not value.strip():
+        raise GateFailure(
+            f"{filename}: {dotted_key} is missing, empty, or not a string -- cannot "
+            f"prove the baseline journal runtime pin from {flag}"
+        )
+    return value
+
+
+def verify_baseline_runtime_pin(report, filename, spec, expected_baseline_runtime):
+    """Prove journal-upgrade asserted the baseline runtime pin before upgrading."""
+    pin = spec.baseline_pin
+    if pin is None:
+        return
+
+    flag = "--expected-journal-baseline-runtime"
+    if (
+        not isinstance(expected_baseline_runtime, str)
+        or not expected_baseline_runtime.strip()
+    ):
+        raise GateFailure(
+            f"{filename}: {flag} is required -- cannot prove the baseline "
+            "journal runtime pin"
+        )
+
+    actual_report_pin = _require_string(
+        report, pin.report_key, filename, pin.report_key, flag
+    )
+    if actual_report_pin != expected_baseline_runtime:
+        raise GateFailure(
+            f"{filename}: {pin.report_key} is {actual_report_pin!r}, expected "
+            f"{expected_baseline_runtime!r} from {flag} -- cannot prove the "
+            "baseline journal runtime pin"
+        )
+
+    linked = report.get("linked_baseline")
+    if not isinstance(linked, dict):
+        raise GateFailure(
+            f"{filename}: linked_baseline is missing or not an object -- cannot prove "
+            f"the baseline journal runtime pin from {flag}"
+        )
+
+    linked_key = f"linked_baseline.{pin.linked_expected_key}"
+    actual_linked_pin = _require_string(
+        linked, pin.linked_expected_key, filename, linked_key, flag
+    )
+    if actual_linked_pin != expected_baseline_runtime:
+        raise GateFailure(
+            f"{filename}: {linked_key} is {actual_linked_pin!r}, expected "
+            f"{expected_baseline_runtime!r} from {flag} -- cannot prove the "
+            "baseline journal runtime pin"
+        )
+
+    checks = report.get("checks")
+    if not isinstance(checks, dict):
+        raise GateFailure(
+            f"{filename}: checks is missing or not an object -- cannot prove the "
+            f"baseline journal runtime pin from {flag}"
+        )
+    check_key = f"checks.{pin.check_key}"
+    if pin.check_key not in checks:
+        raise GateFailure(
+            f"{filename}: {check_key} is absent -- cannot prove the baseline "
+            f"journal runtime pin from {flag}"
+        )
+    verdict = checks[pin.check_key]
+    if verdict is not True:
+        raise GateFailure(
+            f"{filename}: {check_key} is {verdict!r}, not true -- the baseline "
+            f"journal runtime pin was not enforced from {flag}"
+        )
+
+    fingerprint = linked.get("journal_fingerprint")
+    if not isinstance(fingerprint, dict):
+        raise GateFailure(
+            f"{filename}: linked_baseline.journal_fingerprint is missing or not an "
+            f"object -- cannot prove the baseline journal runtime pin from {flag}"
+        )
+    observed_key = f"linked_baseline.journal_fingerprint.{pin.fingerprint_key}"
+    observed = _require_string(
+        fingerprint, pin.fingerprint_key, filename, observed_key, flag
+    )
+    if expected_baseline_runtime not in observed:
+        raise GateFailure(
+            f"{filename}: observed baseline journal runtime {observed!r} does not "
+            f"carry the expected baseline pin {expected_baseline_runtime!r} from "
+            f"{flag}"
+        )
+
+
+def verify_report(
+    path,
+    filename,
+    spec,
+    expected,
+    expected_commit,
+    expected_runtime,
+    expected_baseline_runtime,
+):
     report = load_json_object(path, filename)
 
     if report.get("schema_version") != SCHEMA_VERSION:
@@ -401,6 +538,7 @@ def verify_report(path, filename, spec, expected, expected_commit, expected_runt
 
     verify_provenance(report, filename, expected_commit)
     verify_runtime_pin(report, filename, spec, expected_runtime)
+    verify_baseline_runtime_pin(report, filename, spec, expected_baseline_runtime)
 
 
 def build_parser():
@@ -412,6 +550,7 @@ def build_parser():
     parser.add_argument("--sync-receipt", required=True, type=pathlib.Path)
     parser.add_argument("--product-commit", required=True)
     parser.add_argument("--expected-journal-runtime", required=True)
+    parser.add_argument("--expected-journal-baseline-runtime", default=None)
     for key in IDENTITY_KEYS:
         parser.add_argument(f"--{key.replace('_', '-')}", dest=key, default=None)
     return parser
@@ -445,6 +584,16 @@ def main(argv=None):
         return 2
     expected = {key: getattr(args, key).strip() for key in needed}
 
+    needs_baseline_runtime = requires_baseline_runtime(args.profile)
+    if needs_baseline_runtime and not (
+        args.expected_journal_baseline_runtime or ""
+    ).strip():
+        print(
+            f"error: profile {args.profile!r} requires --expected-journal-baseline-runtime",
+            file=sys.stderr,
+        )
+        return 2
+
     try:
         pin = read_pin()
         verify_receipt(args.sync_receipt, pin, args.product_commit)
@@ -456,6 +605,11 @@ def main(argv=None):
                 expected,
                 args.product_commit,
                 args.expected_journal_runtime,
+                (
+                    args.expected_journal_baseline_runtime
+                    if needs_baseline_runtime
+                    else None
+                ),
             )
     except GateFailure as failure:
         print(f"ja1r linkage gate: REFUSED -- {failure}", file=sys.stderr)
@@ -469,6 +623,8 @@ def main(argv=None):
         "expected_journal_runtime": args.expected_journal_runtime,
         "reports_verified": list(PROFILES[args.profile]),
     }
+    if needs_baseline_runtime:
+        verdict["expected_journal_baseline_runtime"] = args.expected_journal_baseline_runtime
     print(json.dumps(verdict, indent=2))
     return 0
 

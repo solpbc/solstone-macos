@@ -1224,12 +1224,13 @@ verify-ja1r-gate-sol: ja1r-gate-clean-tree
 		--legacy-sol-baseline-version '$(JA1R_GATE_LEGACY_SOL_VERSION)'
 
 verify-ja1r-gate-journal: ja1r-gate-clean-tree
-	$(call require_gate_vars,journal,JA1R_GATE_SOL_VERSION JA1R_GATE_SOL_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN)
+	$(call require_gate_vars,journal,JA1R_GATE_SOL_VERSION JA1R_GATE_SOL_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)
 	$(VERIFY_JA1R) --profile journal \
 		--report-dir '$(JA1R_GATE_REPORT_DIR)' \
 		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
 		--product-commit '$(PRODUCT_HEAD)' \
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
+		--expected-journal-baseline-runtime '$(JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)' \
 		--sol-target-version '$(JA1R_GATE_SOL_VERSION)' \
 		--sol-target-build '$(JA1R_GATE_SOL_BUILD)' \
 		--companion-sol-version '$(JA1R_GATE_SOL_VERSION)' \
@@ -1241,12 +1242,13 @@ verify-ja1r-gate-journal: ja1r-gate-clean-tree
 		--legacy-sol-baseline-version '$(JA1R_GATE_LEGACY_SOL_VERSION)'
 
 verify-ja1r-gate-paired: ja1r-gate-clean-tree
-	$(call require_gate_vars,paired,JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN)
+	$(call require_gate_vars,paired,JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)
 	$(VERIFY_JA1R) --profile paired \
 		--report-dir '$(JA1R_GATE_REPORT_DIR)' \
 		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
 		--product-commit '$(PRODUCT_HEAD)' \
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
+		--expected-journal-baseline-runtime '$(JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)' \
 		--sol-target-version '$(DIST_VERSION)' --sol-target-build '$(DIST_BUILD)' \
 		--companion-sol-version '$(DIST_VERSION)' --companion-sol-build '$(DIST_BUILD)' \
 		--journal-target-version '$(JOURNAL_DIST_VERSION)' \

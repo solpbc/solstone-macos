@@ -3,7 +3,7 @@
 FIXTURE HONESTY: the reports built here are SCHEMA-DERIVED, not captured. No
 real PASS report exists in the harness repo or anywhere on disk, so these are
 constructed from the pinned harness's own report emitter -- extro-tools
-eb7328d8, tools/solstone-macos-gate/gate.py: new_report() (top-level shape,
+5d1004f1, tools/solstone-macos-gate/gate.py: new_report() (top-level shape,
 schema_version, lane, result), the per-lane scenario fields it sets, the
 provenance block it fills, oracles() -> rep["post"] (the observed
 journal_version), and runtime_pin_check() (the pin check keys). They are not
@@ -23,6 +23,7 @@ import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPTS = REPO_ROOT / "scripts"
+MAKEFILE = REPO_ROOT / "Makefile"
 
 # The verifier's filename is not a valid module name, so load it by path.
 _spec = importlib.util.spec_from_file_location(
@@ -35,8 +36,10 @@ _spec.loader.exec_module(verifier)
 PIN = (SCRIPTS / "ja1r-gate" / "extro-tools.rev").read_text().strip()
 COMMIT = "a" * 40
 OTHER_COMMIT = "b" * 40
-RUNTIME_PIN = "0.8.0"
-OBSERVED_RUNTIME = "journal 0.8.0 (build 42)"
+BASELINE_RUNTIME_PIN = "0.8.2"
+RUNTIME_PIN = "0.8.3"
+OBSERVED_BASELINE_RUNTIME = "journal 0.8.2 (build 42)"
+OBSERVED_RUNTIME = "journal 0.8.3 (build 43)"
 
 SOL_V, SOL_B = "1.4.5", "56"
 JOURNAL_V, JOURNAL_B = "1.0.4", "5"
@@ -126,15 +129,24 @@ def report_for(filename):
             post={"journal_version": OBSERVED_RUNTIME},
         )
     if filename == "journal-upgrade.json":
+        # Derived from gate.py at 5d1004f1: new_report(),
+        # _run_linked_upgrade_lane(), and establish_linked_baseline().
         return base_report(
             "journal-upgrade",
-            {"runtime_pin_matches": True},
+            {"runtime_pin_matches": True, "baseline_solstone_pin_matches": True},
             to=COMPANION_SOL_V,
             to_build=COMPANION_SOL_B,
             journal=JOURNAL_BASE_V,
             journal_build=JOURNAL_BASE_B,
             journal_to=JOURNAL_V,
             journal_to_build=JOURNAL_B,
+            expect_solstone=RUNTIME_PIN,
+            expect_solstone_baseline=BASELINE_RUNTIME_PIN,
+            linked_baseline={
+                "ok": True,
+                "expected_runtime_version": BASELINE_RUNTIME_PIN,
+                "journal_fingerprint": {"journal_version": OBSERVED_BASELINE_RUNTIME},
+            },
             post={"journal_version": OBSERVED_RUNTIME},
         )
     raise AssertionError(f"no fixture for {filename}")
@@ -167,7 +179,7 @@ class GateTestCase(unittest.TestCase):
     def write_report(self, filename, report):
         (self.reports / filename).write_text(json.dumps(report, indent=2))
 
-    def run_gate(self, profile="sol"):
+    def run_gate(self, profile="sol", include_baseline_runtime=None):
         argv = [
             "--profile", profile,
             "--report-dir", str(self.reports),
@@ -175,6 +187,10 @@ class GateTestCase(unittest.TestCase):
             "--product-commit", COMMIT,
             "--expected-journal-runtime", RUNTIME_PIN,
         ]
+        if include_baseline_runtime is None:
+            include_baseline_runtime = verifier.requires_baseline_runtime(profile)
+        if include_baseline_runtime:
+            argv += ["--expected-journal-baseline-runtime", BASELINE_RUNTIME_PIN]
         for flag, value in IDENTITY_ARGS.items():
             argv += [f"--{flag}", value]
 
@@ -201,18 +217,23 @@ class ValidSetsPass(GateTestCase):
         self.assertEqual(verdict["profile"], "sol")
         self.assertEqual(verdict["product_commit"], COMMIT)
         self.assertEqual(verdict["harness_revision"], PIN)
+        self.assertNotIn("expected_journal_baseline_runtime", verdict)
 
     def test_valid_journal_set_passes(self):
         self.write_set("journal")
         code, out, _ = self.run_gate("journal")
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(out)["profile"], "journal")
+        verdict = json.loads(out)
+        self.assertEqual(verdict["profile"], "journal")
+        self.assertEqual(verdict["expected_journal_baseline_runtime"], BASELINE_RUNTIME_PIN)
 
     def test_valid_paired_set_passes(self):
         self.write_set("paired")
         code, out, _ = self.run_gate("paired")
         self.assertEqual(code, 0)
-        self.assertEqual(len(json.loads(out)["reports_verified"]), 6)
+        verdict = json.loads(out)
+        self.assertEqual(len(verdict["reports_verified"]), 6)
+        self.assertEqual(verdict["expected_journal_baseline_runtime"], BASELINE_RUNTIME_PIN)
 
     def test_journal_profile_requires_drag(self):
         self.assertIn("drag.json", verifier.PROFILES["journal"])
@@ -368,6 +389,70 @@ class RuntimePin(GateTestCase):
         self.write_report("drag.json", wrong)
         self.assert_refused()
 
+    def test_mismatched_baseline_report_input_is_refused(self):
+        self.write_set("journal")
+        wrong = report_for("journal-upgrade.json")
+        wrong["expect_solstone_baseline"] = RUNTIME_PIN
+        self.write_report("journal-upgrade.json", wrong)
+        self.assertIn("--expected-journal-baseline-runtime", self.assert_refused("journal"))
+
+    def test_mismatched_linked_baseline_runtime_is_refused(self):
+        self.write_set("journal")
+        wrong = report_for("journal-upgrade.json")
+        wrong["linked_baseline"]["expected_runtime_version"] = RUNTIME_PIN
+        self.write_report("journal-upgrade.json", wrong)
+        self.assertIn("linked_baseline.expected_runtime_version", self.assert_refused("journal"))
+
+    def test_skipped_baseline_pin_check_is_refused(self):
+        self.write_set("journal")
+        wrong = report_for("journal-upgrade.json")
+        wrong["checks"]["baseline_solstone_pin_matches"] = "SKIPPED (no --expect-solstone)"
+        self.write_report("journal-upgrade.json", wrong)
+        self.assertIn("baseline_solstone_pin_matches", self.assert_refused("journal"))
+
+    def test_false_baseline_pin_check_is_refused(self):
+        self.write_set("journal")
+        wrong = report_for("journal-upgrade.json")
+        wrong["checks"]["baseline_solstone_pin_matches"] = False
+        self.write_report("journal-upgrade.json", wrong)
+        self.assertIn("not true", self.assert_refused("journal"))
+
+    def test_absent_baseline_pin_check_is_refused(self):
+        self.write_set("journal")
+        wrong = report_for("journal-upgrade.json")
+        del wrong["checks"]["baseline_solstone_pin_matches"]
+        self.write_report("journal-upgrade.json", wrong)
+        self.assertIn("baseline_solstone_pin_matches", self.assert_refused("journal"))
+
+    def test_baseline_observed_runtime_without_the_pin_is_refused(self):
+        self.write_set("journal")
+        wrong = report_for("journal-upgrade.json")
+        wrong["linked_baseline"]["journal_fingerprint"]["journal_version"] = OBSERVED_RUNTIME
+        self.write_report("journal-upgrade.json", wrong)
+        self.assertIn("expected baseline pin", self.assert_refused("journal"))
+
+    def test_missing_baseline_observed_runtime_is_refused(self):
+        self.write_set("journal")
+        wrong = report_for("journal-upgrade.json")
+        del wrong["linked_baseline"]["journal_fingerprint"]["journal_version"]
+        self.write_report("journal-upgrade.json", wrong)
+        self.assertIn("linked_baseline.journal_fingerprint.journal_version", self.assert_refused("journal"))
+
+    def test_baseline_and_target_pins_are_not_interchangeable(self):
+        self.write_set("journal")
+        baseline_has_target = report_for("journal-upgrade.json")
+        baseline_has_target["linked_baseline"]["journal_fingerprint"]["journal_version"] = (
+            OBSERVED_RUNTIME
+        )
+        self.write_report("journal-upgrade.json", baseline_has_target)
+        self.assert_refused("journal")
+
+        self.write_set("journal")
+        target_has_baseline = report_for("journal-upgrade.json")
+        target_has_baseline["post"]["journal_version"] = OBSERVED_BASELINE_RUNTIME
+        self.write_report("journal-upgrade.json", target_has_baseline)
+        self.assert_refused("journal")
+
 
 class MalformedReports(GateTestCase):
     def test_trailing_json_is_refused(self):
@@ -420,6 +505,21 @@ class MissingIdentityInputs(GateTestCase):
         self.assertNotIn("journal_baseline_version", verifier.required_identity_keys("sol"))
         self.assertIn("journal_baseline_version", verifier.required_identity_keys("journal"))
 
+    def test_missing_baseline_runtime_is_listed_for_journal_and_paired(self):
+        for profile in ("journal", "paired"):
+            with self.subTest(profile=profile):
+                self.write_set(profile)
+                code, out, err = self.run_gate(profile, include_baseline_runtime=False)
+                self.assertNotEqual(code, 0)
+                self.assertEqual(out.strip(), "")
+                self.assertIn("--expected-journal-baseline-runtime", err)
+
+    def test_sol_profile_does_not_require_baseline_runtime(self):
+        self.write_set("sol")
+        code, out, _ = self.run_gate("sol", include_baseline_runtime=False)
+        self.assertEqual(code, 0)
+        self.assertNotIn("expected_journal_baseline_runtime", json.loads(out))
+
 
 class PinIsASingleSourceOfTruth(unittest.TestCase):
     def test_pin_file_is_one_bare_sha(self):
@@ -444,6 +544,35 @@ class PinIsASingleSourceOfTruth(unittest.TestCase):
             "the harness pin must live in exactly one file — not restated in the "
             "Makefile, README, or tests",
         )
+
+
+class MakefileContract(unittest.TestCase):
+    # Behavioral `make verify-ja1r-gate-journal` would hit the clean-tree
+    # prerequisite before require_gate_vars, so this stays a text contract.
+    def target_block(self, target):
+        text = MAKEFILE.read_text()
+        start = text.index(f"{target}:")
+        next_target = text.find("\nverify-ja1r-gate-", start + 1)
+        if next_target == -1:
+            next_target = text.find("\n# Production publishes", start)
+        if next_target == -1:
+            next_target = len(text)
+        return text[start:next_target]
+
+    def test_baseline_runtime_var_is_only_required_and_forwarded_for_baseline_profiles(self):
+        sol = self.target_block("verify-ja1r-gate-sol")
+        journal = self.target_block("verify-ja1r-gate-journal")
+        paired = self.target_block("verify-ja1r-gate-paired")
+
+        baseline_var = "JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN"
+        baseline_flag = "--expected-journal-baseline-runtime"
+
+        self.assertNotIn(baseline_var, sol)
+        self.assertNotIn(baseline_flag, sol)
+
+        for block in (journal, paired):
+            self.assertIn(baseline_var, block)
+            self.assertIn(baseline_flag, block)
 
 
 class ReadmeDoesNotDrift(unittest.TestCase):

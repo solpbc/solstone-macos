@@ -101,7 +101,7 @@ verifier expects, in `.ja1r-gate/reports/`:
 
 ```bash
 # on ja1r, from ~/extro-tools/tools/solstone-macos-gate
-GATE="python3 gate.py --checkout $HOME/projects/solstone-macos --expect-solstone <runtime-pin>"
+GATE="python3 gate.py --checkout $HOME/projects/solstone-macos --expect-solstone <target-runtime-pin>"
 
 $GATE --lane drag    --from <legacy-sol> --to <sol> --to-build <sol-build> \
                      --journal <journal> --journal-build <journal-build>   > drag.json
@@ -116,12 +116,15 @@ $GATE --lane sol-upgrade --from <sol-baseline> --from-build <sol-baseline-build>
                      --journal <journal> --journal-build <journal-build>   > sol-upgrade.json
 $GATE --lane journal-upgrade --to <companion-sol> --to-build <companion-sol-build> \
                      --journal <journal-baseline> --journal-build <journal-baseline-build> \
-                     --journal-to <journal> --journal-to-build <journal-build> > journal-upgrade.json
+                     --journal-to <journal> --journal-to-build <journal-build> \
+                     --expect-solstone-baseline <baseline-runtime-pin> > journal-upgrade.json
 ```
 
-Pass `--expect-solstone` on every lane. Without it the harness's runtime-pin
-check reports a *skipped* placeholder rather than a pass, and the verifier
-refuses the set.
+Pass `--expect-solstone <target-runtime-pin>` on every lane. On
+`journal-upgrade`, also pass `--expect-solstone-baseline <baseline-runtime-pin>`
+on that lane only; the harness rejects that flag everywhere else. Without the
+required pins, the harness either refuses the lane or reports a skipped
+runtime-pin check, and the verifier refuses the set.
 
 **3. Verify, then publish.** The verifier is offline and stdlib-only, so the
 publish never depends on the rig being reachable. `publish-appcast` requires
@@ -130,11 +133,12 @@ publish never depends on the rig being reachable. `publish-appcast` requires
 release. There is no opt-out.
 
 ```bash
-make verify-ja1r-gate-sol \
-  JA1R_GATE_JOURNAL_VERSION=1.0.4 JA1R_GATE_JOURNAL_BUILD=5 \
-  JA1R_GATE_SOL_BASELINE_VERSION=1.4.4 JA1R_GATE_SOL_BASELINE_BUILD=55 \
+make verify-ja1r-gate-journal \
+  JA1R_GATE_SOL_VERSION=1.4.5 JA1R_GATE_SOL_BUILD=56 \
+  JA1R_GATE_JOURNAL_BASELINE_VERSION=1.0.3 JA1R_GATE_JOURNAL_BASELINE_BUILD=4 \
   JA1R_GATE_LEGACY_SOL_VERSION=1.3.31 \
-  JA1R_GATE_JOURNAL_RUNTIME_PIN=0.8.0
+  JA1R_GATE_JOURNAL_RUNTIME_PIN=0.8.3 \
+  JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN=0.8.2
 ```
 
 Every expected version, build, and baseline is typed in. The verifier never
