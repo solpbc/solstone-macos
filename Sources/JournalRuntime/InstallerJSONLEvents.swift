@@ -105,6 +105,8 @@ internal enum ParsedLine: Sendable, Equatable {
     case unparseableLine(String)
 }
 
+// Source of truth: solstone/think/setup_events.py.
+// upstreamSetupEventsDocDrift keeps this vocabulary in sync.
 public enum InstallerKnownValues {
     public static let eventTypes: [String] = [
         "setup.started",
@@ -124,7 +126,6 @@ public enum InstallerKnownValues {
         "doctor_timeout",
         "journal_dir_invalid",
         "journal_existing_blocked",
-        "port_in_use_non_interactive",
         "service_up_failed",
         "setup_unhandled_exception",
         "step_subprocess_failed",
@@ -138,14 +139,20 @@ public enum InstallerKnownValues {
         "skills_user",
         "skills_journal",
         "wrapper",
-        "service"
+        "service",
+        "brain"
     ]
 
     public static let skippedReasons: [String] = [
         "--skip-models",
+        "--skip-brain",
+        "--skip-models implies --skip-brain",
         "--skip-skills",
         "--skip-service",
-        "packaged_install",
+        "a provider is already configured",
+        "provider config is not in the expected shape",
+        "local provider unavailable on this host",
+        "local bootstrap did not start",
         "prior_run_ok",
         "resumed_after_restart"
     ]

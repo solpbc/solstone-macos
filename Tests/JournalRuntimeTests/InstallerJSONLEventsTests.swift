@@ -93,6 +93,22 @@ struct InstallerJSONLEventsTests {
         )
     }
 
+    @Test func parsesAndRendersBrainSkipImpliedBySkipModels() {
+        assertEvent(
+            #"{"event":"step.completed","step":"brain","outcome":"skipped","reason":"--skip-models implies --skip-brain"}"#,
+            .stepCompleted(step: "brain", outcome: "skipped", reason: "--skip-models implies --skip-brain", durationMS: nil),
+            "step brain skipped (--skip-models implies --skip-brain)"
+        )
+    }
+
+    @Test func parsesAndRendersBrainProviderSkipReason() {
+        assertEvent(
+            #"{"event":"step.completed","step":"brain","outcome":"skipped","reason":"a provider is already configured"}"#,
+            .stepCompleted(step: "brain", outcome: "skipped", reason: "a provider is already configured", durationMS: nil),
+            "step brain skipped (a provider is already configured)"
+        )
+    }
+
     @Test func negativeCasesClassifyRawLines() {
         #expect(SetupEventParser.parse(line: "{") == .malformed("{"))
         #expect(SetupEventParser.parse(line: #"{"event":"future.event"}"#) == .unrecognized(#"{"event":"future.event"}"#))
@@ -150,9 +166,12 @@ struct InstallerJSONLEventsTests {
     }
 
     private func assertValues(named name: String, in content: String, areRepresentedBy swiftValues: [String]) {
-        let values = quotedValues(in: block(named: name, in: content))
-        for value in values {
+        let upstreamValues = quotedValues(in: block(named: name, in: content))
+        for value in upstreamValues {
             #expect(swiftValues.contains(value))
+        }
+        for value in swiftValues {
+            #expect(upstreamValues.contains(value))
         }
     }
 
