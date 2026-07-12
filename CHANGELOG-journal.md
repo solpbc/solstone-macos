@@ -5,6 +5,11 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-07-12
+
+### Changed
+- the bundled journal runtime now installs solstone 0.8.4, which adds batch review of duplicate-merge suggestions, renders sol's chat replies with formatting, checks your journal by default when you ask about your own history, shows live progress while local thinking installs, keeps your transcript text out of internal error reports, and handles local thinking and transcription limits more honestly.
+
 ## [1.0.4] - 2026-07-10
 
 ### Changed
