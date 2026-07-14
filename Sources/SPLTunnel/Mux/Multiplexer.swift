@@ -8,6 +8,7 @@ import Security
 private let logger = Logger(subsystem: "app.solstone.observer.spl", category: "mux")
 
 public enum MuxError: Error, Equatable {
+    case flowControlError
     case streamLimitExceeded
     case parityViolation
     case unknownStream
@@ -189,13 +190,13 @@ public actor Multiplexer {
     }
 
     private func isolateStream(_ stream: MuxStream, frame: Frame, reason: ResetReason) async throws {
-        logger.warning(
-            "isolating stream violation id=\(frame.streamID, privacy: .public) flags=\(frame.flags, privacy: .public) length=\(frame.payload.count, privacy: .public) reason=\(reason.rawValue, privacy: .public)"
-        )
-
         guard await stream.markResetLocal() else {
             return
         }
+
+        logger.warning(
+            "isolating stream violation id=\(frame.streamID, privacy: .public) flags=\(frame.flags, privacy: .public) length=\(frame.payload.count, privacy: .public) reason=\(reason.rawValue, privacy: .public)"
+        )
 
         try await sink(try encodeFrame(buildReset(streamID: frame.streamID, reason: reason)))
     }

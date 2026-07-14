@@ -44,10 +44,17 @@ private enum WindowGrantSinkError: Error, Equatable {
 }
 
 private actor ThrowingResetSink {
+    private var resetWriteCount = 0
+
     func recordOrThrow(_ data: Data) throws {
         if try decodeFrames(in: data).contains(where: { $0.flags == FrameFlags.reset.rawValue }) {
+            resetWriteCount += 1
             throw ThrowingResetSinkError.resetWrite
         }
+    }
+
+    func resetWrites() -> Int {
+        resetWriteCount
     }
 }
 
@@ -379,6 +386,15 @@ struct MultiplexerTests {
         } catch {
             Issue.record("Expected reset sink failure, got \(error)")
         }
+
+        try await mux.feedInbound(try encodeFrame(Frame(
+            streamID: await isolated.id,
+            flags: FrameFlags.window.rawValue,
+            payload: Data([0x00, 0x00, 0x00, 0x00, 0x00])
+        )))
+
+        #expect(await throwingSink.resetWrites() == 1)
+        #expect(await isolated.state == .resetLocal)
     }
 
     @Test("WINDOW grant sink failure remains transport-fatal")
