@@ -15,7 +15,6 @@ public enum FramingError: Error, Equatable {
     case unknownControlFrame
     case lengthMismatch
     case bufferUnderflow
-    case unknownResetReason(UInt32)
 }
 
 public func encodeFrame(_ frame: Frame) throws -> Data {
@@ -131,7 +130,7 @@ public func buildClose(streamID: UInt32) -> Frame {
 }
 
 public func buildReset(streamID: UInt32, reason: ResetReason) -> Frame {
-    Frame(streamID: streamID, flags: FrameFlags.reset.rawValue, payload: encodeUInt32(reason.rawValue))
+    Frame(streamID: streamID, flags: FrameFlags.reset.rawValue, payload: Data([reason.rawValue]))
 }
 
 public func buildWindow(streamID: UInt32, credit: UInt32) -> Frame {
@@ -152,12 +151,10 @@ public func buildPong(nonce: Data) throws -> Frame {
     return Frame(streamID: 0, flags: FrameFlags.pong.rawValue, payload: nonce)
 }
 
-public func parseResetReason(from payload: Data) throws -> ResetReason {
-    let raw = try parseUInt32(from: payload)
-    guard let reason = ResetReason(rawValue: raw) else {
-        throw FramingError.unknownResetReason(raw)
-    }
-    return reason
+/// Parses a RESET reason per spl proto/framing.md: unknown or absent codes are UNSPECIFIED.
+public func parseResetReason(from payload: Data) -> ResetReason {
+    guard let raw = payload.first else { return .unspecified }
+    return ResetReason(rawValue: raw) ?? .unspecified
 }
 
 public func parseWindowCredit(from payload: Data) throws -> UInt32 {

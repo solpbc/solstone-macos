@@ -27,12 +27,10 @@ private enum Fixtures {
         0x00, 0x00, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00
     ]
     static let resetProtocolError: [UInt8] = [
-        0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x00, 0x04,
-        0x00, 0x00, 0x00, 0x01
+        0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x00, 0x01, 0x01
     ]
     static let resetFlowControlError: [UInt8] = [
-        0x00, 0x00, 0x00, 0x07, 0x08, 0x00, 0x00, 0x04,
-        0x00, 0x00, 0x00, 0x02
+        0x00, 0x00, 0x00, 0x07, 0x08, 0x00, 0x00, 0x01, 0x02
     ]
     static let window64KiB: [UInt8] = [
         0x00, 0x00, 0x00, 0x01, 0x10, 0x00, 0x00, 0x04,
@@ -93,6 +91,47 @@ struct FrameCodecWireCompatTests {
             buildReset(streamID: 7, reason: .flowControlError),
             bytes: Data(Fixtures.resetFlowControlError)
         )
+    }
+
+    @Test func resetReasonsRoundTripAndUnknownReasonsAreUnspecified() throws {
+        let reasons: [ResetReason] = [
+            .protocolError,
+            .flowControlError,
+            .streamLimitExceeded,
+            .internalError,
+            .cancel,
+            .unspecified
+        ]
+
+        for reason in reasons {
+            let frame = buildReset(streamID: 1, reason: reason)
+            #expect(frame.payload == Data([reason.rawValue]))
+            #expect(frame.payload.count == 1)
+
+            var decoder = FrameDecoder()
+            decoder.feed(try encodeFrame(frame))
+            let decoded = try #require(try decoder.next())
+            #expect(parseResetReason(from: decoded.payload) == reason)
+            #expect(try decoder.next() == nil)
+        }
+
+        var unknownDecoder = FrameDecoder()
+        unknownDecoder.feed(try encodeFrame(Frame(
+            streamID: 1,
+            flags: FrameFlags.reset.rawValue,
+            payload: Data([0x42])
+        )))
+        let unknown = try #require(try unknownDecoder.next())
+        #expect(parseResetReason(from: unknown.payload) == .unspecified)
+
+        var emptyDecoder = FrameDecoder()
+        emptyDecoder.feed(try encodeFrame(Frame(
+            streamID: 1,
+            flags: FrameFlags.reset.rawValue,
+            payload: Data()
+        )))
+        let empty = try #require(try emptyDecoder.next())
+        #expect(parseResetReason(from: empty.payload) == .unspecified)
     }
 
     @Test func window64KiBCredit() throws {

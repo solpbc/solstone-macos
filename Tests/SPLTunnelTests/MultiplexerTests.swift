@@ -111,7 +111,7 @@ struct MultiplexerTests {
         let reset = try #require(frames.first)
         #expect(reset.streamID == 11)
         #expect(reset.flags == FrameFlags.reset.rawValue)
-        #expect(try parseResetReason(from: reset.payload) == .protocolError)
+        #expect(parseResetReason(from: reset.payload) == .protocolError)
     }
 
     @Test("credit suspend/resume - 800 KiB + 300 KiB with 200 KiB WINDOW")
@@ -199,6 +199,35 @@ struct MultiplexerTests {
         }
     }
 
+    @Test("inbound RESET with unknown reason does not tear down mux")
+    func inboundResetWithUnknownReasonDoesNotTearDownMux() async throws {
+        let (mux, recorder) = makeMultiplexer()
+        _ = try await mux.openStream()
+        let sibling = try await mux.openStream()
+
+        try await mux.feedInbound(Data([
+            0x00, 0x00, 0x00, 0x01,
+            FrameFlags.reset.rawValue,
+            0x00, 0x00, 0x01,
+            0x42
+        ]))
+
+        await recorder.reset()
+        try await sibling.write(Data([0xa5]))
+        let outboundFrames = try await recorder.frames()
+        let outboundData = try #require(outboundFrames.first { $0.flags == FrameFlags.data.rawValue })
+        #expect(outboundData.streamID == 3)
+        #expect(outboundData.payload == Data([0xa5]))
+
+        try await mux.feedInbound(try encodeFrame(buildData(streamID: 3, payload: Data([0x5a]))))
+        var iterator = await sibling.inbound.makeAsyncIterator()
+        let inbound = try await iterator.next()
+        #expect(inbound == Data([0x5a]))
+
+        let next = try await mux.openStream()
+        #expect(await next.id == 5)
+    }
+
     @Test("tearDown(.transportFailure) - open inbound throws; openStream throws transportClosed")
     func tearDownThrowsOpenInboundAndBlocksOpenStream() async throws {
         let (mux, _) = makeMultiplexer()
@@ -262,7 +291,7 @@ struct MultiplexerTests {
         let reset = try #require(frames.first)
         #expect(reset.streamID == 2)
         #expect(reset.flags == FrameFlags.reset.rawValue)
-        #expect(try parseResetReason(from: reset.payload) == .protocolError)
+        #expect(parseResetReason(from: reset.payload) == .protocolError)
     }
 
     @Test("dialer incomingStreams finishes on tearDown")

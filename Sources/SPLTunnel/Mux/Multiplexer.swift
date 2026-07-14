@@ -168,7 +168,7 @@ public actor Multiplexer {
             await stream.deliverInboundClose()
         }
         if isReset {
-            let reason = try parseResetReason(from: frame.payload)
+            let reason = parseResetReason(from: frame.payload)
             await stream.deliverInboundReset(reason: reason)
         }
     }

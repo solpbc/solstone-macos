@@ -23,10 +23,11 @@ public enum FrameFlags: UInt8, Sendable {
     public static let reservedMask: UInt8 = 0x80
 }
 
-public enum ResetReason: UInt32, Sendable, Equatable {
-    case normal = 0
-    case protocolError = 1
-    case flowControlError = 2
-    case streamLimitExceeded = 3
-    case internalError = 4
+public enum ResetReason: UInt8, Sendable, Equatable {
+    case protocolError = 0x01
+    case flowControlError = 0x02
+    case streamLimitExceeded = 0x03
+    case internalError = 0x04
+    case cancel = 0x05
+    case unspecified = 0xff
 }
