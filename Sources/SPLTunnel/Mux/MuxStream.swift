@@ -20,6 +20,11 @@ public enum StreamState: Sendable, Equatable {
     case resetRemote
 }
 
+enum InboundDataOutcome: Equatable {
+    case accepted
+    case receiveWindowExceeded
+}
+
 public final actor MuxStream {
     public let id: UInt32
     public private(set) var state: StreamState
@@ -105,12 +110,12 @@ public final actor MuxStream {
         return true
     }
 
-    func deliverInboundData(_ payload: Data) async throws {
+    func deliverInboundData(_ payload: Data) async throws -> InboundDataOutcome {
         guard state == .open || state == .halfClosedLocal else {
-            return
+            return .accepted
         }
         guard payload.count <= receiveWindow else {
-            throw MuxError.flowControlError
+            return .receiveWindowExceeded
         }
 
         receiveWindow -= payload.count
@@ -121,6 +126,7 @@ public final actor MuxStream {
             receiveWindow < MuxConstants.windowLowWaterMark {
             try await emitWindowGrant()
         }
+        return .accepted
     }
 
     func deliverInboundClose() {

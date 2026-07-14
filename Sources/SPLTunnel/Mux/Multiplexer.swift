@@ -11,7 +11,6 @@ public enum MuxError: Error, Equatable {
     case streamLimitExceeded
     case parityViolation
     case unknownStream
-    case flowControlError
     case transportClosed
     case writeAfterClose
     case payloadTooLarge
@@ -174,9 +173,8 @@ public actor Multiplexer {
             await stream.grantSendCredit(credit)
         }
         if isData {
-            do {
-                try await stream.deliverInboundData(frame.payload)
-            } catch MuxError.flowControlError {
+            let outcome = try await stream.deliverInboundData(frame.payload)
+            if outcome == .receiveWindowExceeded {
                 try await isolateStream(stream, frame: frame, reason: .flowControlError)
                 return
             }

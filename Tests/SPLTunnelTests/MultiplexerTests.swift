@@ -5,6 +5,16 @@ import Foundation
 import Testing
 @testable import SPLTunnel
 
+private func decodeFrames(in data: Data) throws -> [Frame] {
+    var decoder = FrameDecoder()
+    var frames: [Frame] = []
+    decoder.feed(data)
+    while let frame = try decoder.next() {
+        frames.append(frame)
+    }
+    return frames
+}
+
 private actor SinkRecorder {
     private var chunks: [Data] = []
 
@@ -17,13 +27,9 @@ private actor SinkRecorder {
     }
 
     func frames() throws -> [Frame] {
-        var decoder = FrameDecoder()
         var frames: [Frame] = []
         for chunk in chunks {
-            decoder.feed(chunk)
-            while let frame = try decoder.next() {
-                frames.append(frame)
-            }
+            frames.append(contentsOf: try decodeFrames(in: chunk))
         }
         return frames
     }
@@ -33,28 +39,31 @@ private enum ThrowingResetSinkError: Error, Equatable {
     case resetWrite
 }
 
-private actor ThrowingResetSink {
-    private var chunks: [Data] = []
+private enum WindowGrantSinkError: Error, Equatable {
+    case boom
+}
 
+private actor ThrowingResetSink {
     func recordOrThrow(_ data: Data) throws {
-        chunks.append(data)
-        if try frames(in: data).contains(where: { $0.flags == FrameFlags.reset.rawValue }) {
+        if try decodeFrames(in: data).contains(where: { $0.flags == FrameFlags.reset.rawValue }) {
             throw ThrowingResetSinkError.resetWrite
         }
     }
+}
 
-    func frames() throws -> [Frame] {
-        try chunks.flatMap { try frames(in: $0) }
+private actor WindowGrantThrowingSink {
+    private var frames: [Frame] = []
+
+    func recordOrThrow(_ data: Data) throws {
+        let decoded = try decodeFrames(in: data)
+        frames.append(contentsOf: decoded)
+        if decoded.contains(where: { $0.flags == FrameFlags.window.rawValue }) {
+            throw WindowGrantSinkError.boom
+        }
     }
 
-    private func frames(in data: Data) throws -> [Frame] {
-        var decoder = FrameDecoder()
-        var frames: [Frame] = []
-        decoder.feed(data)
-        while let frame = try decoder.next() {
-            frames.append(frame)
-        }
-        return frames
+    func recordedFrames() -> [Frame] {
+        frames
     }
 }
 
@@ -370,6 +379,31 @@ struct MultiplexerTests {
         } catch {
             Issue.record("Expected reset sink failure, got \(error)")
         }
+    }
+
+    @Test("WINDOW grant sink failure remains transport-fatal")
+    func windowGrantSinkFailureRemainsTransportFatal() async throws {
+        let throwingSink = WindowGrantThrowingSink()
+        let mux = Multiplexer { data in
+            try await throwingSink.recordOrThrow(data)
+        }
+        let stream = try await mux.openStream()
+        let streamID = await stream.id
+
+        do {
+            try await mux.feedInbound(try encodeFrame(buildData(
+                streamID: streamID,
+                payload: Data(repeating: 0, count: MuxConstants.windowGrantThreshold)
+            )))
+            Issue.record("Expected WINDOW grant sink failure")
+        } catch WindowGrantSinkError.boom {
+        } catch {
+            Issue.record("Expected WINDOW grant sink failure, got \(error)")
+        }
+
+        let frames = await throwingSink.recordedFrames()
+        #expect(frames.contains { $0.streamID == streamID && $0.flags == FrameFlags.window.rawValue })
+        #expect(!frames.contains { $0.streamID == streamID && $0.flags == FrameFlags.reset.rawValue })
     }
 
     @Test("non-isolated protocol errors remain fatal")
