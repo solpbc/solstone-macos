@@ -141,8 +141,14 @@ public actor Multiplexer {
             return
         }
 
+        let stream = streams[frame.streamID]
+
         if isPing || isPong {
-            throw MuxError.protocolError
+            guard let stream else {
+                throw MuxError.protocolError
+            }
+            try await isolateStream(stream, frame: frame, reason: .protocolError)
+            return
         }
 
         if isOpen {
@@ -150,7 +156,7 @@ public actor Multiplexer {
             return
         }
 
-        guard let stream = streams[frame.streamID] else {
+        guard let stream else {
             logger.debug(
                 "ignoring frame for unknown stream id=\(frame.streamID, privacy: .public) flags=\(frame.flags, privacy: .public) length=\(frame.payload.count, privacy: .public)"
             )
@@ -158,11 +164,22 @@ public actor Multiplexer {
         }
 
         if isWindow {
-            let credit = try parseWindowCredit(from: frame.payload)
+            let credit: UInt32
+            do {
+                credit = try parseWindowCredit(from: frame.payload)
+            } catch {
+                try await isolateStream(stream, frame: frame, reason: .protocolError)
+                return
+            }
             await stream.grantSendCredit(credit)
         }
         if isData {
-            try await stream.deliverInboundData(frame.payload)
+            do {
+                try await stream.deliverInboundData(frame.payload)
+            } catch MuxError.flowControlError {
+                try await isolateStream(stream, frame: frame, reason: .flowControlError)
+                return
+            }
         }
         if isClose {
             await stream.deliverInboundClose()
@@ -171,6 +188,18 @@ public actor Multiplexer {
             let reason = parseResetReason(from: frame.payload)
             await stream.deliverInboundReset(reason: reason)
         }
+    }
+
+    private func isolateStream(_ stream: MuxStream, frame: Frame, reason: ResetReason) async throws {
+        logger.warning(
+            "isolating stream violation id=\(frame.streamID, privacy: .public) flags=\(frame.flags, privacy: .public) length=\(frame.payload.count, privacy: .public) reason=\(reason.rawValue, privacy: .public)"
+        )
+
+        guard await stream.markResetLocal() else {
+            return
+        }
+
+        try await sink(try encodeFrame(buildReset(streamID: frame.streamID, reason: reason)))
     }
 
     private func handleInboundOpen(_ frame: Frame) async throws {

@@ -88,17 +88,21 @@ public final actor MuxStream {
     }
 
     public func reset(reason: ResetReason) async {
-        guard state != .resetLocal && state != .resetRemote && state != .closed else {
-            return
-        }
-
-        let frame = buildReset(streamID: id, reason: reason)
-        if let data = try? encodeFrame(frame) {
+        guard markResetLocal() else { return }
+        if let data = try? encodeFrame(buildReset(streamID: id, reason: reason)) {
             try? await sink(data)
         }
+    }
+
+    func markResetLocal() -> Bool {
+        guard state != .resetLocal && state != .resetRemote && state != .closed else {
+            return false
+        }
+
         state = .resetLocal
         finishInbound(MuxError.transportClosed)
         resumeCreditWaiters()
+        return true
     }
 
     func deliverInboundData(_ payload: Data) async throws {
@@ -106,7 +110,6 @@ public final actor MuxStream {
             return
         }
         guard payload.count <= receiveWindow else {
-            await reset(reason: .flowControlError)
             throw MuxError.flowControlError
         }
 

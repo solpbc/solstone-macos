@@ -29,6 +29,35 @@ private actor SinkRecorder {
     }
 }
 
+private enum ThrowingResetSinkError: Error, Equatable {
+    case resetWrite
+}
+
+private actor ThrowingResetSink {
+    private var chunks: [Data] = []
+
+    func recordOrThrow(_ data: Data) throws {
+        chunks.append(data)
+        if try frames(in: data).contains(where: { $0.flags == FrameFlags.reset.rawValue }) {
+            throw ThrowingResetSinkError.resetWrite
+        }
+    }
+
+    func frames() throws -> [Frame] {
+        try chunks.flatMap { try frames(in: $0) }
+    }
+
+    private func frames(in data: Data) throws -> [Frame] {
+        var decoder = FrameDecoder()
+        var frames: [Frame] = []
+        decoder.feed(data)
+        while let frame = try decoder.next() {
+            frames.append(frame)
+        }
+        return frames
+    }
+}
+
 private actor KeepaliveTickGate {
     private var parkedTick: CheckedContinuation<Void, Never>?
     private var arrival: CheckedContinuation<Void, Never>?
@@ -228,6 +257,159 @@ struct MultiplexerTests {
         #expect(await next.id == 5)
     }
 
+    @Test("malformed WINDOW resets only that stream and mux survives")
+    func malformedWindowResetsOnlyThatStreamAndMuxSurvives() async throws {
+        let (mux, recorder) = makeMultiplexer()
+        let isolated = try await mux.openStream()
+        let sibling = try await mux.openStream()
+        await recorder.reset()
+
+        try await mux.feedInbound(try encodeFrame(Frame(
+            streamID: await isolated.id,
+            flags: FrameFlags.window.rawValue,
+            payload: Data([0x00, 0x00, 0x00])
+        )))
+
+        try await assertIsolatedAndMuxSurvives(
+            mux: mux,
+            recorder: recorder,
+            isolated: isolated,
+            sibling: sibling,
+            expectedReason: .protocolError
+        )
+    }
+
+    @Test("repeated malformed WINDOW after isolation emits one RESET")
+    func repeatedMalformedWindowAfterIsolationEmitsOneReset() async throws {
+        let (mux, recorder) = makeMultiplexer()
+        let isolated = try await mux.openStream()
+        let sibling = try await mux.openStream()
+        await recorder.reset()
+
+        try await mux.feedInbound(try encodeFrame(Frame(
+            streamID: await isolated.id,
+            flags: FrameFlags.window.rawValue,
+            payload: Data([0x00, 0x00, 0x00])
+        )))
+        try await mux.feedInbound(try encodeFrame(Frame(
+            streamID: await isolated.id,
+            flags: FrameFlags.window.rawValue,
+            payload: Data([0x00, 0x00, 0x00, 0x00, 0x00])
+        )))
+
+        try await assertIsolatedAndMuxSurvives(
+            mux: mux,
+            recorder: recorder,
+            isolated: isolated,
+            sibling: sibling,
+            expectedReason: .protocolError
+        )
+    }
+
+    @Test("over-window DATA resets only that stream and mux survives")
+    func overWindowDataResetsOnlyThatStreamAndMuxSurvives() async throws {
+        let (mux, recorder) = makeMultiplexer()
+        let isolated = try await mux.openStream()
+        let sibling = try await mux.openStream()
+        await recorder.reset()
+
+        try await mux.feedInbound(try encodeFrame(buildData(
+            streamID: await isolated.id,
+            payload: Data(repeating: 0, count: Int(MuxConstants.initialCredit) + 1)
+        )))
+
+        try await assertIsolatedAndMuxSurvives(
+            mux: mux,
+            recorder: recorder,
+            isolated: isolated,
+            sibling: sibling,
+            expectedReason: .flowControlError
+        )
+    }
+
+    @Test("nonzero PING and PONG reset only that stream and mux survives")
+    func nonzeroPingAndPongResetOnlyThatStreamAndMuxSurvive() async throws {
+        for flag in [FrameFlags.ping.rawValue, FrameFlags.pong.rawValue] {
+            let (mux, recorder) = makeMultiplexer()
+            let isolated = try await mux.openStream()
+            let sibling = try await mux.openStream()
+            await recorder.reset()
+
+            try await mux.feedInbound(try encodeFrame(Frame(
+                streamID: await isolated.id,
+                flags: flag,
+                payload: Data([1, 2, 3, 4, 5, 6, 7, 8])
+            )))
+
+            try await assertIsolatedAndMuxSurvives(
+                mux: mux,
+                recorder: recorder,
+                isolated: isolated,
+                sibling: sibling,
+                expectedReason: .protocolError
+            )
+        }
+    }
+
+    @Test("isolation RESET sink failure propagates")
+    func isolationResetSinkFailurePropagates() async throws {
+        let throwingSink = ThrowingResetSink()
+        let mux = Multiplexer { data in
+            try await throwingSink.recordOrThrow(data)
+        }
+        let isolated = try await mux.openStream()
+
+        do {
+            try await mux.feedInbound(try encodeFrame(Frame(
+                streamID: await isolated.id,
+                flags: FrameFlags.window.rawValue,
+                payload: Data([0x00, 0x00, 0x00])
+            )))
+            Issue.record("Expected reset sink failure")
+        } catch ThrowingResetSinkError.resetWrite {
+        } catch {
+            Issue.record("Expected reset sink failure, got \(error)")
+        }
+    }
+
+    @Test("non-isolated protocol errors remain fatal")
+    func nonIsolatedProtocolErrorsRemainFatal() async throws {
+        let (unknownMux, unknownRecorder) = makeMultiplexer()
+        await expectAsyncThrows(.protocolError) {
+            try await unknownMux.feedInbound(try encodeFrame(Frame(
+                streamID: 1,
+                flags: FrameFlags.ping.rawValue,
+                payload: Data([1, 2, 3, 4, 5, 6, 7, 8])
+            )))
+        }
+        try await expectNoResetFrames(in: unknownRecorder)
+
+        let (controlMux, controlRecorder) = makeMultiplexer()
+        await expectAsyncThrows(FramingError.lengthMismatch) {
+            try await controlMux.feedInbound(try encodeFrame(Frame(
+                streamID: 0,
+                flags: FrameFlags.ping.rawValue,
+                payload: Data([0x01])
+            )))
+        }
+        try await expectNoResetFrames(in: controlRecorder)
+    }
+
+    @Test("decoder validation errors remain fatal before dispatch")
+    func decoderValidationErrorsRemainFatalBeforeDispatch() async throws {
+        let (mux, recorder) = makeMultiplexer()
+
+        await expectAsyncThrows(FramingError.reservedBitsSet) {
+            try await mux.feedInbound(Data([
+                0x00, 0x00, 0x00, 0x01,
+                0x80,
+                0x00, 0x00, 0x00
+            ]))
+        }
+
+        try await expectNoResetFrames(in: recorder)
+    }
+
     @Test("tearDown(.transportFailure) - open inbound throws; openStream throws transportClosed")
     func tearDownThrowsOpenInboundAndBlocksOpenStream() async throws {
         let (mux, _) = makeMultiplexer()
@@ -400,6 +582,52 @@ struct MultiplexerTests {
         await mux.tearDown(reason: .transportFailure)
     }
 
+    private func assertIsolatedAndMuxSurvives(
+        mux: Multiplexer,
+        recorder: SinkRecorder,
+        isolated: MuxStream,
+        sibling: MuxStream,
+        expectedReason: ResetReason
+    ) async throws {
+        let isolatedID = await isolated.id
+        let siblingID = await sibling.id
+        let frames = try await recorder.frames()
+        let resets = frames.filter { $0.flags == FrameFlags.reset.rawValue }
+        #expect(resets.count == 1)
+
+        let reset = try #require(resets.first)
+        #expect(reset.streamID == isolatedID)
+        #expect(parseResetReason(from: reset.payload) == expectedReason)
+
+        var isolatedIterator = await isolated.inbound.makeAsyncIterator()
+        await expectAsyncThrows(.transportClosed) {
+            _ = try await isolatedIterator.next()
+        }
+        await expectAsyncThrows(.writeAfterClose) {
+            try await isolated.write(Data([0x01]))
+        }
+
+        await recorder.reset()
+        try await sibling.write(Data([0xa5]))
+        let outboundFrames = try await recorder.frames()
+        let outboundData = try #require(outboundFrames.first { $0.flags == FrameFlags.data.rawValue })
+        #expect(outboundData.streamID == siblingID)
+        #expect(outboundData.payload == Data([0xa5]))
+
+        try await mux.feedInbound(try encodeFrame(buildData(streamID: siblingID, payload: Data([0x5a]))))
+        var siblingIterator = await sibling.inbound.makeAsyncIterator()
+        let inbound = try await siblingIterator.next()
+        #expect(inbound == Data([0x5a]))
+
+        let next = try await mux.openStream()
+        #expect(await next.id == 5)
+    }
+
+    private func expectNoResetFrames(in recorder: SinkRecorder) async throws {
+        let frames = try await recorder.frames()
+        #expect(!frames.contains { $0.flags == FrameFlags.reset.rawValue })
+    }
+
     private func makeMultiplexer() -> (Multiplexer, SinkRecorder) {
         let recorder = SinkRecorder()
         let mux = Multiplexer { data in
@@ -443,6 +671,20 @@ private func expectAsyncThrows(
         try await operation()
         Issue.record("Expected \(expected)")
     } catch let error as MuxError {
+        #expect(error == expected)
+    } catch {
+        Issue.record("Expected \(expected), got \(error)")
+    }
+}
+
+private func expectAsyncThrows(
+    _ expected: FramingError,
+    _ operation: () async throws -> Void
+) async {
+    do {
+        try await operation()
+        Issue.record("Expected \(expected)")
+    } catch let error as FramingError {
         #expect(error == expected)
     } catch {
         Issue.record("Expected \(expected), got \(error)")
