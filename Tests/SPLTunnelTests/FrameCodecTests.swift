@@ -211,6 +211,36 @@ struct FrameCodecValidationTests {
         }
     }
 
+    @Test func windowDataThrows() {
+        expectThrows(.invalidFlagCombination) {
+            try encodeFrame(Frame(
+                streamID: 1,
+                flags: FrameFlags.window.rawValue | FrameFlags.data.rawValue,
+                payload: Data([0x00, 0x00, 0x00, 0x01])
+            ))
+        }
+    }
+
+    @Test func dataResetThrows() {
+        expectThrows(.invalidFlagCombination) {
+            try encodeFrame(Frame(
+                streamID: 1,
+                flags: FrameFlags.data.rawValue | FrameFlags.reset.rawValue,
+                payload: Data([0x01])
+            ))
+        }
+    }
+
+    @Test func openCloseThrows() {
+        expectThrows(.invalidFlagCombination) {
+            try encodeFrame(Frame(
+                streamID: 1,
+                flags: FrameFlags.open.rawValue | FrameFlags.close.rawValue,
+                payload: Data()
+            ))
+        }
+    }
+
     @Test func invalidControlNonceLengthThrows() {
         expectThrows(.lengthMismatch) {
             _ = try buildPing(nonce: Data([0x01]))

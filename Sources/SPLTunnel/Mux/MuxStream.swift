@@ -25,6 +25,11 @@ enum InboundDataOutcome: Equatable {
     case receiveWindowExceeded
 }
 
+enum SendCreditOutcome: Equatable {
+    case accepted
+    case flowControlExceeded
+}
+
 public final actor MuxStream {
     public let id: UInt32
     public private(set) var state: StreamState
@@ -129,6 +134,16 @@ public final actor MuxStream {
         return .accepted
     }
 
+    func admitInitialPayload(_ payload: Data) -> InboundDataOutcome {
+        guard payload.count <= receiveWindow else {
+            return .receiveWindowExceeded
+        }
+
+        receiveWindow -= payload.count
+        inboundContinuation.yield(payload)
+        return .accepted
+    }
+
     func deliverInboundClose() {
         switch state {
         case .open:
@@ -149,9 +164,15 @@ public final actor MuxStream {
         resumeCreditWaiters()
     }
 
-    func grantSendCredit(_ credit: UInt32) {
-        sendCredit += Int(credit)
+    func grantSendCredit(_ credit: UInt32) -> SendCreditOutcome {
+        let updated = sendCredit + Int(credit)
+        guard updated <= Int(Int32.max) else {
+            return .flowControlExceeded
+        }
+
+        sendCredit = updated
         resumeCreditWaiters()
+        return .accepted
     }
 
     func tearDown(reason: TearDownReason) {

@@ -21,6 +21,17 @@ public enum FrameFlags: UInt8, Sendable {
         FrameFlags.ping.rawValue |
         FrameFlags.pong.rawValue
     public static let reservedMask: UInt8 = 0x80
+    public static let validCombinations: Set<UInt8> = [
+        FrameFlags.open.rawValue,
+        FrameFlags.data.rawValue,
+        FrameFlags.open.rawValue | FrameFlags.data.rawValue,
+        FrameFlags.close.rawValue,
+        FrameFlags.data.rawValue | FrameFlags.close.rawValue,
+        FrameFlags.reset.rawValue,
+        FrameFlags.window.rawValue,
+        FrameFlags.ping.rawValue,
+        FrameFlags.pong.rawValue
+    ]
 }
 
 public enum ResetReason: UInt8, Sendable, Equatable {
