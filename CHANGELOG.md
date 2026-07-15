@@ -8,8 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- sol now finds its way back to your journal on its own after your network changes (moving between Wi‑Fi and ethernet, or a VPN going up or down) — previously the private‑link connection could come to rest half‑open and quietly stop new experiences from reaching your journal until sol was restarted, even while sol was still experiencing alongside you on your mac.
-
+- sol now finds its way back to your journal on its own after your network changes, like moving between Wi-Fi and ethernet or a VPN going up or down. previously sol's private-link connection could look connected while nothing new actually reached your journal, and only restarting sol would fix it. sol was still taking in your day alongside you the whole time, so this was easy to miss.
 
 ## [1.4.7] - 2026-07-15
 
