@@ -186,12 +186,18 @@ enum JournalHandoffFailure: Error, Equatable, Sendable {
     }
 }
 
+enum ExistingHandoff: Equatable, Sendable {
+    case none
+    case migration
+    case foreign
+}
+
 struct JournalHandoffResumeProbes: Equatable, Sendable {
     var serviceMode: ServiceMode?
     var journalPath: String?
     var installedTrusted: Bool
     var running: Bool
-    var handoffFileExists: Bool
+    var existingHandoff: ExistingHandoff
     var setupComplete: Bool
     var storedKeyAuthValid: Bool?
 
@@ -200,7 +206,7 @@ struct JournalHandoffResumeProbes: Equatable, Sendable {
         journalPath: String?,
         installedTrusted: Bool,
         running: Bool,
-        handoffFileExists: Bool,
+        existingHandoff: ExistingHandoff,
         setupComplete: Bool,
         storedKeyAuthValid: Bool? = nil
     ) {
@@ -208,7 +214,7 @@ struct JournalHandoffResumeProbes: Equatable, Sendable {
         self.journalPath = journalPath
         self.installedTrusted = installedTrusted
         self.running = running
-        self.handoffFileExists = handoffFileExists
+        self.existingHandoff = existingHandoff
         self.setupComplete = setupComplete
         self.storedKeyAuthValid = storedKeyAuthValid
     }
@@ -234,16 +240,14 @@ func deriveResumeState(probes: JournalHandoffResumeProbes) -> JournalHandoffStep
         return .authGate
     }
 
-    if !probes.handoffFileExists && probes.running {
-        return .authGate
-    }
-
-    if probes.handoffFileExists {
+    switch probes.existingHandoff {
+    case .foreign:
+        return .writingHandoff
+    case .none:
+        return probes.running ? .authGate : .writingHandoff
+    case .migration:
         return probes.running ? .waitingForAdoption : .launchingJournal
     }
-
-    _ = probes.storedKeyAuthValid
-    return .writingHandoff
 }
 
 @MainActor
@@ -526,7 +530,18 @@ final class JournalHandoffOrchestrator {
 
         let setupComplete = (try? await dependencies.initProbe.probeSetupComplete()) == .complete
         let running = dependencies.runningJournal.runningPID() != nil
-        let handoffExists = dependencies.fileManager.fileExists(atPath: dependencies.handoffFileURL.path)
+        let existingHandoff: ExistingHandoff
+        if let data = try? Data(contentsOf: dependencies.handoffFileURL) {
+            if let decoded = try? JSONDecoder().decode(JournalHandoff.self, from: data) {
+                existingHandoff = decoded.provenance == JournalHandoffProvenance.bundledMigration
+                    ? .migration
+                    : .foreign
+            } else {
+                existingHandoff = .foreign
+            }
+        } else {
+            existingHandoff = .none
+        }
         let authValid: Bool?
         if let serverURL = appState.config.serverURL,
            let serverKey = appState.config.serverKey {
@@ -540,7 +555,7 @@ final class JournalHandoffOrchestrator {
             journalPath: appState.config.journalPath,
             installedTrusted: installedTrusted,
             running: running,
-            handoffFileExists: handoffExists,
+            existingHandoff: existingHandoff,
             setupComplete: setupComplete,
             storedKeyAuthValid: authValid
         ))

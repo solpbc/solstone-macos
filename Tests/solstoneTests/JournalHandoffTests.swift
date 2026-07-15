@@ -339,6 +339,26 @@ struct JournalHandoffTests {
         #expect(handoff.provenance == JournalHandoffProvenance.bundledMigration)
     }
 
+    @Test func migrationResumeOverwritesPreexistingDiscoveryProvenanceHandoff() async throws {
+        let world = installedWorld()
+        world.initProbe.replies = [.result(.incomplete), .result(.incomplete), .result(.complete)]
+        try writeHandoff(
+            at: world.dependencies.handoffFileURL,
+            journalRootPath: "/leftover-discovery",
+            provenance: JournalHandoffProvenance.observerDiscovery
+        )
+        let probeOrchestrator = JournalHandoffOrchestrator(dependencies: world.dependencies)
+
+        let derivedStep = await probeOrchestrator.deriveResumeStep(appState: world.state)
+        let result = await world.run()
+        let handoff = try readHandoff(at: world.dependencies.handoffFileURL)
+
+        #expect(derivedStep == .writingHandoff)
+        #expect(result == .completed)
+        #expect(handoff.journalRootPath == world.journalRoot.path)
+        #expect(handoff.provenance == JournalHandoffProvenance.bundledMigration)
+    }
+
     @Test func migrationWriterKeepsExistingMigrationProvenanceHandoff() async throws {
         let world = installedWorld()
         world.initProbe.replies = [.result(.incomplete), .result(.complete)]
@@ -725,7 +745,7 @@ struct JournalHandoffTests {
             journalPath: journalPath,
             installedTrusted: true,
             running: true,
-            handoffFileExists: false,
+            existingHandoff: .none,
             setupComplete: true
         )) == .completed)
 
@@ -734,7 +754,7 @@ struct JournalHandoffTests {
             journalPath: nil,
             installedTrusted: true,
             running: false,
-            handoffFileExists: false,
+            existingHandoff: .none,
             setupComplete: false
         )) == .aborted(.missingJournalPath))
 
@@ -743,7 +763,7 @@ struct JournalHandoffTests {
             journalPath: journalPath,
             installedTrusted: false,
             running: false,
-            handoffFileExists: false,
+            existingHandoff: .none,
             setupComplete: false
         )) == .acquiring(.fetchingAppcast))
 
@@ -752,7 +772,7 @@ struct JournalHandoffTests {
             journalPath: journalPath,
             installedTrusted: true,
             running: false,
-            handoffFileExists: true,
+            existingHandoff: .migration,
             setupComplete: false
         )) == .launchingJournal)
 
@@ -761,7 +781,7 @@ struct JournalHandoffTests {
             journalPath: journalPath,
             installedTrusted: true,
             running: true,
-            handoffFileExists: true,
+            existingHandoff: .migration,
             setupComplete: false
         )) == .waitingForAdoption)
 
@@ -770,7 +790,7 @@ struct JournalHandoffTests {
             journalPath: journalPath,
             installedTrusted: true,
             running: true,
-            handoffFileExists: false,
+            existingHandoff: .none,
             setupComplete: false
         )) == .authGate)
 
@@ -779,10 +799,32 @@ struct JournalHandoffTests {
             journalPath: journalPath,
             installedTrusted: true,
             running: false,
-            handoffFileExists: false,
+            existingHandoff: .none,
             setupComplete: true,
             storedKeyAuthValid: false
         )) == .authGate)
+    }
+
+    @Test func resumeDerivationRoutesForeignHandoffsToWriter() {
+        let journalPath = "/tmp/journal"
+
+        #expect(deriveResumeState(probes: JournalHandoffResumeProbes(
+            serviceMode: .bundled,
+            journalPath: journalPath,
+            installedTrusted: true,
+            running: false,
+            existingHandoff: .foreign,
+            setupComplete: false
+        )) == .writingHandoff)
+
+        #expect(deriveResumeState(probes: JournalHandoffResumeProbes(
+            serviceMode: .bundled,
+            journalPath: journalPath,
+            installedTrusted: true,
+            running: true,
+            existingHandoff: .foreign,
+            setupComplete: false
+        )) == .writingHandoff)
     }
 
     @Test func postFlipNeverReentersMigration() async throws {

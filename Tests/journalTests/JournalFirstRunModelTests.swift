@@ -269,6 +269,30 @@ struct JournalFirstRunModelTests {
         #expect(fixture.model.errorMessage == nil)
     }
 
+    @Test func unknownProvenanceHandoffIsConsumedAndCreatesAtDefault() async throws {
+        let unknownRoot = try makeTemporaryDirectory()
+        let configuredRoot = try makeTemporaryDirectory()
+        let config = makeConfig()
+        config.journalRoot = configuredRoot
+        let handoffStore = FakeFirstRunHandoffStore(
+            handoff: handoff(root: unknownRoot, provenance: "unknown-provenance")
+        )
+        let fixture = makeModel(
+            config: config,
+            startResults: [],
+            probeResults: [],
+            handoffStore: handoffStore
+        )
+
+        await fixture.model.decideLaunchRoute()
+
+        #expect(fixture.model.route == .ritual(.nameLocation))
+        #expect(fixture.model.journalRoot == defaultJournalRoot())
+        #expect(fixture.config.journalRoot == nil)
+        #expect(handoffStore.consumeCount == 1)
+        #expect(fixture.model.errorMessage == nil)
+    }
+
     @Test func journalMarkLockedPostsExactlyOnceWithValidatedMark() async throws {
         let center = NotificationCenter()
         let capture = NotificationCapture()
@@ -567,7 +591,6 @@ final class FakeInitClient: JournalInitClienting, @unchecked Sendable {
 }
 
 struct EmptyHandoffStore: JournalHandoffStoring {
-    func exists() -> Bool { false }
     func load() throws -> JournalHandoff? { nil }
     func consume() throws {}
 }
@@ -583,10 +606,6 @@ final class FakeFirstRunHandoffStore: JournalHandoffStoring, @unchecked Sendable
     init(handoff: JournalHandoff? = nil, loadError: Error? = nil) {
         self.handoff = handoff
         self.loadError = loadError
-    }
-
-    func exists() -> Bool {
-        lock.withLock { handoff != nil || loadError != nil }
     }
 
     func load() throws -> JournalHandoff? {

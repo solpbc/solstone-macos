@@ -19,6 +19,14 @@ struct OnDiskJournalDiscoveryTests {
         #expect(parseJournalPathFromConfigToml(raw) == expected)
     }
 
+    @Test func tomlParserAcceptsNoSpaceJournalAssignment() throws {
+        let expected = URL(fileURLWithPath: "/some/path", isDirectory: true)
+            .standardizedFileURL
+            .path
+
+        #expect(parseJournalPathFromConfigToml(#"journal="/some/path""#) == expected)
+    }
+
     @Test func tomlParserIgnoresNonTopLevelJournalKeys() {
         #expect(parseJournalPathFromConfigToml(#"#journal = "/tmp/nope""#) == nil)
         #expect(parseJournalPathFromConfigToml(#"journal_backup = "/tmp/nope""#) == nil)

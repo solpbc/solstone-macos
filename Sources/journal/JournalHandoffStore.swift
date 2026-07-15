@@ -5,7 +5,6 @@ import Foundation
 import SolstoneCore
 
 protocol JournalHandoffStoring: Sendable {
-    func exists() -> Bool
     func load() throws -> JournalHandoff?
     func consume() throws
 }
