@@ -302,8 +302,38 @@ struct UploadClientTests {
         #expect(file.submittedName == "120000_300_audio.m4a")
         #expect(file.sha256 == "abc123")
         #expect(file.size == 5)
-        #expect(file.status == .relocated)
-        #expect(file.currentPath == "segments/audio.m4a")
+        #expect(file.status == .unknown)
+    }
+
+    @Test func getServerSegmentsDecodedTerminalStatusCanProveHeld() async throws {
+        store.reset()
+        store.enqueue(statusCode: 200, body: #"""
+        [{
+          "key": "120000_300",
+          "original_key": null,
+          "files": [{
+            "name": "audio.m4a",
+            "submitted_name": "120000_300_audio.m4a",
+            "sha256": "abc123",
+            "size": 5,
+            "status": "processed"
+          }]
+        }]
+        """#)
+        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
+
+        let segments = try await uploadClient.getServerSegments(
+            serverURL: "http://journal.example",
+            serverKey: "secret",
+            day: "20260703"
+        )
+
+        let segment = try #require(segments.first)
+        let verdict = proveServerHoldsUploadFiles(
+            localSHAByFilename: ["120000_300_audio.m4a": "abc123"],
+            serverSegment: segment
+        )
+        #expect(verdict.isHeld == true)
     }
 
     @Test func getServerSegmentsDropsMalformedElementsInsideValidArray() async throws {

@@ -13,13 +13,12 @@ public struct ServerFileInfo: Sendable {
     public let sha256: String
     public let size: Int
     public let status: ServerFileStatus
-    public let currentPath: String?
 }
 
 public enum ServerFileStatus: String, Sendable {
     case present
-    case relocated
     case missing
+    case processed
     case unknown
 }
 
@@ -283,14 +282,12 @@ public struct UploadClient: Sendable {
                     let submittedName = file["submitted_name"] as? String ?? name
                     let sha256 = file["sha256"] as? String ?? ""
                     let status = ServerFileStatus(rawValue: file["status"] as? String ?? "") ?? .unknown
-                    let currentPath = file["current_path"] as? String
                     return ServerFileInfo(
                         name: name,
                         submittedName: submittedName,
                         sha256: sha256,
                         size: size,
-                        status: status,
-                        currentPath: currentPath
+                        status: status
                     )
                 }
 

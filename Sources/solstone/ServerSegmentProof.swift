@@ -8,6 +8,11 @@ internal struct SegmentHoldVerdict: Sendable, Equatable {
     let reason: String
 }
 
+/// Terminal statuses that prove reconcile convergence after name and SHA match.
+/// `.processed` means the journal intentionally consumed the raw byte after verified
+/// processing and deliberately does not keep that raw file on journal disk; it makes the
+/// segment eligible for configured local cache cleanup, but does not mean the raw byte is
+/// still stored.
 internal func proveServerHoldsUploadFiles(
     localSHAByFilename: [String: String],
     serverSegment: ServerSegmentInfo?
@@ -16,7 +21,7 @@ internal func proveServerHoldsUploadFiles(
         return SegmentHoldVerdict(isHeld: false, reason: "not on server")
     }
     guard !localSHAByFilename.isEmpty else {
-        return SegmentHoldVerdict(isHeld: true, reason: "held")
+        return SegmentHoldVerdict(isHeld: false, reason: "no local files to prove")
     }
 
     var serverFilesByEffectiveName: [String: ServerFileInfo] = [:]
@@ -32,7 +37,7 @@ internal func proveServerHoldsUploadFiles(
         guard let serverFile = serverFilesByEffectiveName[filename] else {
             return SegmentHoldVerdict(isHeld: false, reason: "\(filename): missing on server")
         }
-        guard serverFile.status == .present || serverFile.status == .relocated else {
+        guard serverFile.status == .present || serverFile.status == .processed else {
             return SegmentHoldVerdict(isHeld: false, reason: "\(filename): \(serverFile.status.rawValue) status")
         }
         guard !serverFile.sha256.isEmpty else {
