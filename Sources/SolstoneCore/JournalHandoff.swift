@@ -13,6 +13,11 @@ public enum JournalHandoffFile {
     }
 }
 
+public enum JournalHandoffProvenance {
+    public static let bundledMigration = "bundled-migration"
+    public static let observerDiscovery = "observer-discovery"
+}
+
 public struct JournalHandoff: Codable, Sendable, Equatable {
     public let journalRootPath: String
     public let observerName: String

@@ -45,6 +45,7 @@ struct SettingsWireUpTests {
             "AXID.Settings.Service.journalConnectionState",
             "AXID.Settings.Service.journalRelink",
             "AXID.Settings.Service.localJournalDiscoveryState",
+            "AXID.Settings.Service.localJournalDiscoveryPathState",
             "AXID.Settings.Service.localJournalConfirm",
             "AXID.Settings.Service.createJournalThisMac",
             "AXID.Settings.Service.createJournalState",

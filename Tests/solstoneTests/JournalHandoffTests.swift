@@ -304,6 +304,64 @@ struct JournalHandoffTests {
         ])
     }
 
+    @Test func migrationWriterWritesWhenNoHandoffExists() async throws {
+        let world = installedWorld()
+        world.initProbe.replies = [.result(.incomplete), .result(.complete)]
+
+        let result = await world.run()
+        let handoff = try readHandoff(at: world.dependencies.handoffFileURL)
+
+        #expect(result == .completed)
+        #expect(handoff.journalRootPath == world.journalRoot.path)
+        #expect(handoff.provenance == JournalHandoffProvenance.bundledMigration)
+    }
+
+    @Test func migrationWriterOverwritesDiscoveryProvenanceHandoff() async throws {
+        let world = installedWorld()
+        world.initProbe.replies = [.result(.incomplete), .result(.complete)]
+        var inserted = false
+        world.connectionTester.onCall = {
+            if !inserted {
+                inserted = true
+                try? writeHandoff(
+                    at: world.dependencies.handoffFileURL,
+                    journalRootPath: "/leftover-discovery",
+                    provenance: JournalHandoffProvenance.observerDiscovery
+                )
+            }
+        }
+
+        let result = await world.run()
+        let handoff = try readHandoff(at: world.dependencies.handoffFileURL)
+
+        #expect(result == .completed)
+        #expect(handoff.journalRootPath == world.journalRoot.path)
+        #expect(handoff.provenance == JournalHandoffProvenance.bundledMigration)
+    }
+
+    @Test func migrationWriterKeepsExistingMigrationProvenanceHandoff() async throws {
+        let world = installedWorld()
+        world.initProbe.replies = [.result(.incomplete), .result(.complete)]
+        var inserted = false
+        world.connectionTester.onCall = {
+            if !inserted {
+                inserted = true
+                try? writeHandoff(
+                    at: world.dependencies.handoffFileURL,
+                    journalRootPath: "/existing-migration",
+                    provenance: JournalHandoffProvenance.bundledMigration
+                )
+            }
+        }
+
+        let result = await world.run()
+        let handoff = try readHandoff(at: world.dependencies.handoffFileURL)
+
+        #expect(result == .completed)
+        #expect(handoff.journalRootPath == "/existing-migration")
+        #expect(handoff.provenance == JournalHandoffProvenance.bundledMigration)
+    }
+
     @Test func freshFlowInstalledTrustedLaunchesActivatedWithoutAcquire() async throws {
         let world = installedWorld()
         let flow = freshFlow(world: world)
@@ -412,6 +470,88 @@ struct JournalHandoffTests {
 
         #expect(rejected.appcast.requestedURLs == [JournalHandoffConstants.appcastURL])
         #expect(rejected.feedResolver.calls == 1)
+    }
+
+    @Test func onDiskAdoptionAbsentAppAcquiresWritesDiscoveryHandoffAndLaunches() async throws {
+        let world = signedWorld()
+        let flow = onDiskAdoptionFlow(world: world)
+
+        flow.start(discoveredPath: world.journalRoot.path, observerName: world.state.config.observerName)
+        try await waitUntil("on-disk adoption waiting after acquire") {
+            flow.state == .waitingForJournal
+        }
+
+        let handoff = try readHandoff(at: world.dependencies.handoffFileURL)
+        #expect(handoff.journalRootPath == world.journalRoot.path)
+        #expect(handoff.observerName == "observer-name")
+        #expect(handoff.provenance == JournalHandoffProvenance.observerDiscovery)
+        #expect(world.appcast.requestedURLs == [JournalHandoffConstants.appcastURL])
+        #expect(world.downloader.calls.count == 1)
+        #expect(world.runningJournal.activatingLaunches == 1)
+    }
+
+    @Test func onDiskAdoptionAcquireFailureDoesNotWriteHandoff() async throws {
+        let world = TestWorld(appcastData: appcast([]))
+        let flow = onDiskAdoptionFlow(world: world)
+
+        flow.start(discoveredPath: world.journalRoot.path, observerName: world.state.config.observerName)
+        try await waitUntil("on-disk adoption failure") {
+            if case .failed = flow.state {
+                return true
+            }
+            return false
+        }
+
+        #expect(flow.state == .failed(.invalidAppcast("missing appcast item")))
+        #expect(!FileManager.default.fileExists(atPath: world.dependencies.handoffFileURL.path))
+        #expect(world.runningJournal.activatingLaunches == 0)
+    }
+
+    @Test func onDiskAdoptionInstalledTrustedCapableWritesHandoffAndSkipsDownload() async throws {
+        let world = installedWorld()
+        try writeJournalInfoPlist(at: world.installedJournalURL, build: 9)
+        let flow = onDiskAdoptionFlow(world: world)
+        let action = await flow.resolveOfferAction()
+
+        flow.start(
+            discoveredPath: world.journalRoot.path,
+            observerName: world.state.config.observerName,
+            action: action
+        )
+        try await waitUntil("on-disk adoption waiting for installed journal") {
+            flow.state == .waitingForJournal
+        }
+
+        let handoff = try readHandoff(at: world.dependencies.handoffFileURL)
+        #expect(action == .open(world.installedJournalURL))
+        #expect(handoff.journalRootPath == world.journalRoot.path)
+        #expect(handoff.provenance == JournalHandoffProvenance.observerDiscovery)
+        #expect(world.appcast.requestedURLs.isEmpty)
+        #expect(world.downloader.calls.isEmpty)
+        #expect(world.runningJournal.activatedURLs == [world.installedJournalURL])
+    }
+
+    @Test func onDiskAdoptionInstalledTrustedOldBuildAcquiresAndDoesNotLaunchOldBuild() async throws {
+        let world = signedWorld()
+        world.runningJournal.installed = world.installedJournalURL
+        try writeJournalInfoPlist(at: world.installedJournalURL, build: 8)
+        let flow = onDiskAdoptionFlow(world: world)
+        let action = await flow.resolveOfferAction()
+
+        flow.start(
+            discoveredPath: world.journalRoot.path,
+            observerName: world.state.config.observerName,
+            action: action
+        )
+        try await waitUntil("on-disk adoption waiting after replacing old journal") {
+            flow.state == .waitingForJournal
+        }
+
+        #expect(action == .install)
+        #expect(world.appcast.requestedURLs == [JournalHandoffConstants.appcastURL])
+        #expect(world.downloader.calls.count == 1)
+        #expect(world.runningJournal.activatedURLs == [world.installedJournalURL])
+        #expect(journalBuild(at: world.installedJournalURL) == 9)
     }
 
     @Test func freshFlowWaitingProbeStoresDiscoveredMarkAndStops() async throws {
@@ -758,6 +898,18 @@ struct JournalHandoffTests {
         ))
     }
 
+    private func onDiskAdoptionFlow(world: TestWorld) -> OnDiskJournalAdoptionFlow {
+        OnDiskJournalAdoptionFlow(dependencies: OnDiskJournalAdoptionFlowDependencies(
+            acquirer: world.dependencies.makeAcquirer(),
+            runningJournal: world.runningJournal,
+            trustVerifier: world.trustVerifier,
+            handoffFileURL: world.dependencies.handoffFileURL,
+            fileManager: .default,
+            now: { Date(timeIntervalSince1970: 1_234) },
+            discoveryCapableBuild: JournalHandoffConstants.discoveryCapableJournalBuild
+        ))
+    }
+
     private func waitUntil(
         _ description: String,
         attempts: Int = 200,
@@ -950,6 +1102,7 @@ private final class FakeDiskImageMounter: DiskImageMounter {
         try FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
         let appURL = mountPoint.appendingPathComponent("journal.app", isDirectory: true)
         try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
+        try writeJournalInfoPlist(at: appURL, build: 9)
         try Data("app".utf8).write(to: appURL.appendingPathComponent("marker"))
         if let mountFailure {
             try? FileManager.default.removeItem(at: mountPoint)
@@ -1005,9 +1158,11 @@ private final class FakeInitProbe: InitProbe {
 private final class FakeConnectionTester: ConnectionTester {
     var failure: String?
     var calls: [(url: String, key: String)] = []
+    var onCall: (() -> Void)?
 
     func testConnection(serverURL: String, serverKey: String) async -> String? {
         calls.append((serverURL, serverKey))
+        onCall?()
         return failure
     }
 }
@@ -1020,6 +1175,8 @@ private final class FakeRunningJournalController: RunningJournalController {
     var launches = 0
     var activatingLaunches = 0
     var terminateCalls = 0
+    var launchedURLs: [URL] = []
+    var activatedURLs: [URL] = []
 
     func installedURL() -> URL? {
         installed
@@ -1040,11 +1197,13 @@ private final class FakeRunningJournalController: RunningJournalController {
 
     func launchJournal(at url: URL) throws {
         launches += 1
+        launchedURLs.append(url)
         running = true
     }
 
     func launchJournalActivating(at url: URL) throws {
         activatingLaunches += 1
+        activatedURLs.append(url)
         running = true
     }
 }
@@ -1064,6 +1223,61 @@ private final class FakeConfigFlipper: ConfigFlipper {
     func triggerSync(appState: AppState) {
         triggerSyncCount += 1
     }
+}
+
+private func readHandoff(at url: URL) throws -> JournalHandoff {
+    try JSONDecoder().decode(JournalHandoff.self, from: Data(contentsOf: url))
+}
+
+private func writeHandoff(
+    at url: URL,
+    journalRootPath: String,
+    provenance: String
+) throws {
+    try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    let handoff = JournalHandoff(
+        journalRootPath: journalRootPath,
+        observerName: "existing-observer",
+        provenance: provenance,
+        timestamp: Date(timeIntervalSince1970: 999)
+    )
+    try JSONEncoder().encode(handoff).write(to: url, options: .atomic)
+}
+
+private func writeJournalInfoPlist(at appURL: URL, build: Int) throws {
+    let contentsURL = appURL.appendingPathComponent("Contents", isDirectory: true)
+    try FileManager.default.createDirectory(at: contentsURL, withIntermediateDirectories: true)
+    let plist: [String: Any] = [
+        "CFBundleIdentifier": JournalHandoffConstants.journalBundleIdentifier,
+        "CFBundleName": "journal",
+        "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": "1.0.\(build - 1)",
+        "CFBundleVersion": "\(build)",
+    ]
+    let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+    try data.write(to: contentsURL.appendingPathComponent("Info.plist"))
+}
+
+private func journalBuild(at appURL: URL) -> Int? {
+    let plistURL = appURL
+        .appendingPathComponent("Contents", isDirectory: true)
+        .appendingPathComponent("Info.plist")
+    guard let data = try? Data(contentsOf: plistURL),
+          let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+          let raw = plist["CFBundleVersion"]
+    else {
+        return nil
+    }
+    if let value = raw as? String {
+        return Int(value)
+    }
+    if let value = raw as? NSNumber {
+        return value.intValue
+    }
+    return nil
 }
 
 private var productionFeedSelection: JournalHandoffFeedSelection {

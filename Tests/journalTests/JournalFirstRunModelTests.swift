@@ -156,6 +156,119 @@ struct JournalFirstRunModelTests {
         #expect(fixture.model.route == .home)
     }
 
+    @Test func discoveryHandoffQualifiesSeedsNameLocationAndConsumesOnContinue() async throws {
+        let root = try makeTemporaryDirectory()
+        let handoffStore = FakeFirstRunHandoffStore(handoff: discoveryHandoff(root: root))
+        let fileReader = FakeFirstRunJournalFileReader()
+        fileReader.directories = [root.standardizedFileURL.path, root.appendingPathComponent("config", isDirectory: true).path]
+        let fixture = makeModel(
+            startResults: [true],
+            probeResults: [.complete],
+            handoffStore: handoffStore,
+            journalFileReader: fileReader,
+            discoveryQualificationTimeout: 0.05
+        )
+
+        await fixture.model.decideLaunchRoute()
+
+        #expect(fixture.model.route == .ritual(.nameLocation))
+        #expect(fixture.model.journalRoot == root.standardizedFileURL)
+        #expect(handoffStore.consumeCount == 0)
+
+        await fixture.model.continueFromNameLocation()
+
+        #expect(handoffStore.consumeCount == 1)
+        #expect(fixture.setupRunner.calls == 1)
+        #expect(fixture.setupRunner.rootsSnapshot == [root.standardizedFileURL])
+    }
+
+    @Test func discoveryHandoffNoLongerQualifiesConsumesAndCreatesAtDefault() async throws {
+        let staleRoot = try makeTemporaryDirectory()
+        let configuredRoot = try makeTemporaryDirectory()
+        let config = makeConfig()
+        config.journalRoot = configuredRoot
+        let handoffStore = FakeFirstRunHandoffStore(handoff: discoveryHandoff(root: staleRoot))
+        let fileReader = FakeFirstRunJournalFileReader()
+        fileReader.directories = [staleRoot.standardizedFileURL.path]
+        let fixture = makeModel(
+            config: config,
+            startResults: [],
+            probeResults: [],
+            handoffStore: handoffStore,
+            journalFileReader: fileReader,
+            discoveryQualificationTimeout: 0.05
+        )
+
+        await fixture.model.decideLaunchRoute()
+
+        #expect(fixture.model.route == .ritual(.nameLocation))
+        #expect(fixture.model.journalRoot == defaultJournalRoot())
+        #expect(fixture.config.journalRoot == nil)
+        #expect(handoffStore.consumeCount == 1)
+        #expect(fixture.setupRunner.calls == 0)
+    }
+
+    @Test func discoveryHandoffStallConsumesAndCreatesAtDefault() async throws {
+        let staleRoot = try makeTemporaryDirectory()
+        let handoffStore = FakeFirstRunHandoffStore(handoff: discoveryHandoff(root: staleRoot))
+        let fileReader = FakeFirstRunJournalFileReader()
+        fileReader.directoryStalls = [staleRoot.standardizedFileURL.path]
+        let fixture = makeModel(
+            startResults: [],
+            probeResults: [],
+            handoffStore: handoffStore,
+            journalFileReader: fileReader,
+            discoveryQualificationTimeout: 0.05
+        )
+        let start = ContinuousClock.now
+
+        await fixture.model.decideLaunchRoute()
+
+        #expect(start.duration(to: ContinuousClock.now) < .milliseconds(500))
+        #expect(fixture.model.route == .ritual(.nameLocation))
+        #expect(fixture.model.journalRoot == defaultJournalRoot())
+        #expect(handoffStore.consumeCount == 1)
+    }
+
+    @Test func migrationHandoffStillUsesAdoptRoute() async throws {
+        let root = try makeTemporaryDirectory()
+        let handoffStore = FakeFirstRunHandoffStore(handoff: migrationHandoff(root: root))
+        let fixture = makeModel(
+            startResults: [false],
+            probeResults: [],
+            handoffStore: handoffStore
+        )
+
+        await fixture.model.decideLaunchRoute()
+
+        #expect(fixture.model.route == .adopting)
+        #expect(fixture.config.journalRoot == root.standardizedFileURL)
+        #expect(handoffStore.consumeCount == 0)
+        #expect(fixture.model.errorMessage != nil)
+    }
+
+    @Test func corruptHandoffIsConsumedAndCreatesAtDefault() async throws {
+        let configuredRoot = try makeTemporaryDirectory()
+        let config = makeConfig()
+        config.journalRoot = configuredRoot
+        let handoffStore = FakeFirstRunHandoffStore(loadError: FakeHandoffLoadError.corrupt)
+        let fixture = makeModel(
+            config: config,
+            startResults: [],
+            probeResults: [],
+            handoffStore: handoffStore
+        )
+
+        await fixture.model.decideLaunchRoute()
+
+        #expect(fixture.model.route == .ritual(.nameLocation))
+        #expect(fixture.model.route != .adopting)
+        #expect(fixture.model.journalRoot == defaultJournalRoot())
+        #expect(fixture.config.journalRoot == nil)
+        #expect(handoffStore.consumeCount == 1)
+        #expect(fixture.model.errorMessage == nil)
+    }
+
     @Test func journalMarkLockedPostsExactlyOnceWithValidatedMark() async throws {
         let center = NotificationCenter()
         let capture = NotificationCapture()
@@ -235,7 +348,9 @@ func makeModel(
     finalizeResponse: JournalInitFinalizeResponse = .success,
     nameUpdateError: Error? = nil,
     handoffStore: any JournalHandoffStoring = EmptyHandoffStore(),
-    notificationCenter: NotificationCenter = NotificationCenter()
+    notificationCenter: NotificationCenter = NotificationCenter(),
+    journalFileReader: any OnDiskJournalFileReading = FakeFirstRunJournalFileReader(),
+    discoveryQualificationTimeout: TimeInterval = 1.0
 ) -> FirstRunModelFixture {
     let config = config ?? makeConfig()
     let supervisor = JournalSupervisor()
@@ -278,6 +393,8 @@ func makeModel(
         handoffStore: handoffStore,
         machineNameProvider: { "machine-name" },
         notificationCenter: notificationCenter,
+        journalFileReader: journalFileReader,
+        discoveryQualificationTimeout: discoveryQualificationTimeout,
         windowModel: windowModel
     )
     return FirstRunModelFixture(
@@ -302,6 +419,36 @@ private func makeTemporaryDirectory() throws -> URL {
         .appendingPathComponent("journal-first-run-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+private func defaultJournalRoot() -> URL {
+    FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("journal", isDirectory: true)
+        .standardizedFileURL
+}
+
+private func discoveryHandoff(root: URL) -> JournalHandoff {
+    handoff(root: root, provenance: JournalHandoffProvenance.observerDiscovery)
+}
+
+private func migrationHandoff(root: URL) -> JournalHandoff {
+    handoff(root: root, provenance: JournalHandoffProvenance.bundledMigration)
+}
+
+private func handoff(root: URL, provenance: String) -> JournalHandoff {
+    JournalHandoff(
+        journalRootPath: root.path,
+        observerName: "desk journal",
+        provenance: provenance,
+        timestamp: Date(timeIntervalSince1970: 1_800_000_000)
+    )
+}
+
+private func stallUntilCancelled<T>(_ value: T) async -> T {
+    while !Task.isCancelled {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return value
 }
 
 actor FirstRunTrace {
@@ -341,6 +488,7 @@ final class FakeSetupRunner: JournalSetupRunning, @unchecked Sendable {
     private var roots: [URL] = []
 
     var calls: Int { lock.withLock { roots.count } }
+    var rootsSnapshot: [URL] { lock.withLock { roots } }
 
     init(trace: FirstRunTrace) {
         self.trace = trace
@@ -422,6 +570,67 @@ struct EmptyHandoffStore: JournalHandoffStoring {
     func exists() -> Bool { false }
     func load() throws -> JournalHandoff? { nil }
     func consume() throws {}
+}
+
+final class FakeFirstRunHandoffStore: JournalHandoffStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var handoff: JournalHandoff?
+    private var loadError: Error?
+    private var consumes = 0
+
+    var consumeCount: Int { lock.withLock { consumes } }
+
+    init(handoff: JournalHandoff? = nil, loadError: Error? = nil) {
+        self.handoff = handoff
+        self.loadError = loadError
+    }
+
+    func exists() -> Bool {
+        lock.withLock { handoff != nil || loadError != nil }
+    }
+
+    func load() throws -> JournalHandoff? {
+        try lock.withLock {
+            if let loadError {
+                throw loadError
+            }
+            return handoff
+        }
+    }
+
+    func consume() throws {
+        lock.withLock {
+            consumes += 1
+            handoff = nil
+            loadError = nil
+        }
+    }
+}
+
+final class FakeFirstRunJournalFileReader: OnDiskJournalFileReading, @unchecked Sendable {
+    var directories: Set<String> = []
+    var files: Set<String> = []
+    var directoryEntries: [String: [String]] = [:]
+    var directoryStalls: Set<String> = []
+
+    func directoryExists(_ path: String) async -> Bool {
+        if directoryStalls.contains(path) {
+            return await stallUntilCancelled(false)
+        }
+        return directories.contains(path)
+    }
+
+    func fileExists(_ path: String) async -> Bool {
+        files.contains(path) || directories.contains(path)
+    }
+
+    func contentsOfDirectory(_ path: String) async -> [String] {
+        directoryEntries[path] ?? []
+    }
+}
+
+enum FakeHandoffLoadError: Error {
+    case corrupt
 }
 
 final class NotificationCapture: @unchecked Sendable {

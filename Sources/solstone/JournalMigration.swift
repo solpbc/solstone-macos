@@ -377,7 +377,8 @@ enum JournalHandoffConstants {
     static let stagingAppcastURL = URL(string: stagingAppcastURLString)!
     static let handoffFeedOverrideDefaultsKey = "solstone.journal.handoffFeedOverride"
     static let productionPublicEDKeyBase64 = "5EP/CLtfMrN2qC8zWsHeIWcPVPjqFH7hW4m8cGX7Qg0="
-    static let provenance = "bundled-migration"
+    static let provenance = JournalHandoffProvenance.bundledMigration
+    static let discoveryCapableJournalBuild = 9
     static let maxDMGBytes: Int64 = 1_073_741_824
 }
 
@@ -587,7 +588,13 @@ final class JournalHandoffOrchestrator {
             return
         }
         if dependencies.fileManager.fileExists(atPath: dependencies.handoffFileURL.path) {
-            return
+            let existingData = try? Data(contentsOf: dependencies.handoffFileURL)
+            let existingHandoff = existingData.flatMap {
+                try? JSONDecoder().decode(JournalHandoff.self, from: $0)
+            }
+            if existingHandoff?.provenance == JournalHandoffProvenance.bundledMigration {
+                return
+            }
         }
 
         step = .writingHandoff

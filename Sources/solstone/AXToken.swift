@@ -111,6 +111,13 @@ internal enum FreshJournalAXState: CaseIterable {
     case failed
 }
 
+internal enum LocalJournalDiscoveryAXState: CaseIterable {
+    case searching
+    case foundRunning
+    case foundOnDisk
+    case notFound
+}
+
 extension UploadCoordinator.Status {
     public static let axTokens = [
         "not_synced",
@@ -319,6 +326,21 @@ extension FreshJournalAXState {
             return "waiting_for_journal"
         case .failed:
             return "failed"
+        }
+    }
+}
+
+extension LocalJournalDiscoveryAXState {
+    var axToken: String {
+        switch self {
+        case .searching:
+            return "searching"
+        case .foundRunning:
+            return "found_running"
+        case .foundOnDisk:
+            return "found_on_disk"
+        case .notFound:
+            return "not_found"
         }
     }
 }

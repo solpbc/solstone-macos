@@ -148,6 +148,7 @@
       "settings.service.journal.pairAnotherDevice",
       "settings.service.journal.relink",
       "settings.service.localJournal.confirm",
+      "settings.service.localJournal.discovery.path.state",
       "settings.service.localJournal.discovery.state",
       "settings.service.next.checkStatus",
       "settings.service.pairing.connect",
@@ -278,8 +279,12 @@
     "settings.service.journal.name.state" : {
       "kind" : "freeform"
     },
-    "settings.service.localJournal.discovery.state" : {
+    "settings.service.localJournal.discovery.path.state" : {
       "kind" : "freeform"
+    },
+    "settings.service.localJournal.discovery.state" : {
+      "kind" : "enum",
+      "vocabulary" : "LocalJournalDiscoveryAXState"
     },
     "settings.service.pairing.connection.state" : {
       "kind" : "enum",
@@ -414,6 +419,12 @@
       "completed",
       "failed",
       "aborted"
+    ],
+    "LocalJournalDiscoveryAXState" : [
+      "searching",
+      "found_running",
+      "found_on_disk",
+      "not_found"
     ],
     "MenubarIconState" : [
       "recording",

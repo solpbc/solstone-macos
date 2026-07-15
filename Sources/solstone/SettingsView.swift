@@ -261,6 +261,7 @@ struct SettingsView: View {
     @State private var journalMarkDriver = JournalMarkConfirmationDriver()
     @State private var journalHandoffOrchestrator: JournalHandoffOrchestrator
     @State private var freshFlow: FreshJournalFlow
+    @State private var onDiskJournalAdoptionFlow: OnDiskJournalAdoptionFlow
     @State private var pairingMismatch = false
     @State private var journalMarkRederiveEligible = false
     @State private var journalMarkRederiveStarted = false
@@ -268,6 +269,8 @@ struct SettingsView: View {
     @State private var journalName: String?
     @State private var journalNameFetchTask: Task<Void, Never>?
     @State private var localJournalMark: JournalMark?
+    @State private var localOnDiskDiscoveryPath: String?
+    @State private var localOnDiskAdoptionAction: OnDiskJournalAdoptionAction = .install
     @State private var localDiscoveryCompleted = false
     @State private var localDiscoveryTask: Task<Void, Never>?
     @State private var localLinkInProgress = false
@@ -276,6 +279,7 @@ struct SettingsView: View {
 
     private let journalNameFetch: @MainActor @Sendable (String) async -> String?
     private let localIdentityFetch: @MainActor @Sendable (String) async -> JournalMark?
+    private let onDiskJournalDiscovery: @MainActor @Sendable () async -> OnDiskJournalDiscovery
     private let observerRegister: @MainActor @Sendable (
         _ baseURL: String,
         _ descriptor: ObserverRegistrationDescriptor
@@ -293,11 +297,15 @@ struct SettingsView: View {
         initialShowPairingFlow: Bool = false,
         journalHandoffOrchestrator: JournalHandoffOrchestrator = JournalHandoffOrchestrator(),
         freshFlow: FreshJournalFlow = FreshJournalFlow(),
+        onDiskJournalAdoptionFlow: OnDiskJournalAdoptionFlow = OnDiskJournalAdoptionFlow(),
         journalNameFetch: @escaping @MainActor @Sendable (String) async -> String? = { baseURL in
             await JournalNameFetcher().fetch(baseURL: baseURL)
         },
         localIdentityFetch: @escaping @MainActor @Sendable (String) async -> JournalMark? = { baseURL in
             await JournalIdentityFetcher().fetch(baseURL: baseURL)
+        },
+        onDiskJournalDiscovery: @escaping @MainActor @Sendable () async -> OnDiskJournalDiscovery = {
+            await discoverOnDiskJournal()
         },
         observerRegister: @escaping @MainActor @Sendable (
             _ baseURL: String,
@@ -313,12 +321,14 @@ struct SettingsView: View {
         self.updateController = updateController
         self.journalNameFetch = journalNameFetch
         self.localIdentityFetch = localIdentityFetch
+        self.onDiskJournalDiscovery = onDiskJournalDiscovery
         self.observerRegister = observerRegister
         self.markFetch = markFetch
         self._selectedTab = State(initialValue: selectedTab)
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
         self._journalHandoffOrchestrator = State(initialValue: journalHandoffOrchestrator)
         self._freshFlow = State(initialValue: freshFlow)
+        self._onDiskJournalAdoptionFlow = State(initialValue: onDiskJournalAdoptionFlow)
         self._journalName = State(initialValue: initialJournalName)
         self._localJournalMark = State(initialValue: initialLocalJournalMark)
         self._localDiscoveryCompleted = State(initialValue: initialLocalDiscoveryCompleted)
@@ -1053,53 +1063,102 @@ struct SettingsView: View {
                     }
                     AXStateCompanion(
                         id: AXID.Settings.Service.localJournalDiscoveryState,
-                        value: "searching"
+                        value: LocalJournalDiscoveryAXState.searching.axToken
                     )
-                } else if let localJournalMark {
-                    Text("found your journal on this mac")
-                        .font(.headline)
-                    JournalMarkView(mark: localJournalMark)
                     AXStateCompanion(
-                        id: AXID.Settings.Service.localJournalDiscoveryState,
-                        value: "found"
+                        id: AXID.Settings.Service.localJournalDiscoveryPathState,
+                        value: ""
                     )
-                    HStack {
-                        Button("confirm") {
-                            confirmLocalJournalLink()
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Service.localJournalConfirm)
-                        .disabled(localLinkInProgress)
-
-                        if localLinkInProgress {
-                            ProgressView()
-                                .scaleEffect(0.5)
-                        }
-                    }
                 } else {
-                    AXStateCompanion(
-                        id: AXID.Settings.Service.localJournalDiscoveryState,
-                        value: "not_found"
-                    )
-                    AXStateCompanion(
-                        id: AXID.Settings.Service.createJournalState,
-                        value: freshFlow.state.axState.axToken
-                    )
-                    Button("create your journal on this mac") {
-                        freshFlow.start()
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Service.createJournalThisMac)
-                    .disabled(freshFlow.state.isBusy)
+                    switch localJournalDiscoveryPanelModel {
+                    case .foundRunning(let mark):
+                        Text("found your journal on this mac")
+                            .font(.headline)
+                        JournalMarkView(mark: mark)
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.localJournalDiscoveryState,
+                            value: LocalJournalDiscoveryAXState.foundRunning.axToken
+                        )
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.localJournalDiscoveryPathState,
+                            value: ""
+                        )
+                        HStack {
+                            Button("confirm") {
+                                confirmLocalJournalLink()
+                            }
+                            .accessibilityIdentifier(AXID.Settings.Service.localJournalConfirm)
+                            .disabled(localLinkInProgress)
 
-                    if freshFlow.state != .idle {
-                        Text(freshFlow.state.ownerStatusMessage)
-                            .font(.caption)
-                            .foregroundStyle(freshJournalStatusColor)
-                    }
+                            if localLinkInProgress {
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                            }
+                        }
 
-                    Button("pair to a journal on another device") {
-                        showPairingFlow = true
+                    case .foundOnDisk(let path):
+                        Text(UICopy.SETTINGS_LOCAL_JOURNAL_FOUND_EXISTING)
+                            .font(.headline)
+                        Text(path)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.localJournalDiscoveryState,
+                            value: LocalJournalDiscoveryAXState.foundOnDisk.axToken
+                        )
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.localJournalDiscoveryPathState,
+                            value: path
+                        )
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.createJournalState,
+                            value: onDiskJournalAdoptionFlow.state.axState.axToken
+                        )
+                        Button(localOnDiskAdoptionAction.buttonTitle) {
+                            onDiskJournalAdoptionFlow.start(
+                                discoveredPath: path,
+                                observerName: appState.config.observerName,
+                                action: localOnDiskAdoptionAction
+                            )
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Service.createJournalThisMac)
+                        .disabled(onDiskJournalAdoptionFlow.state.isBusy)
+
+                        if onDiskJournalAdoptionFlow.state != .idle {
+                            Text(onDiskJournalAdoptionFlow.state.ownerStatusMessage)
+                                .font(.caption)
+                                .foregroundStyle(freshJournalStatusColor(for: onDiskJournalAdoptionFlow.state))
+                        }
+
+                        localJournalPairButton
+
+                    case .none:
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.localJournalDiscoveryState,
+                            value: LocalJournalDiscoveryAXState.notFound.axToken
+                        )
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.localJournalDiscoveryPathState,
+                            value: ""
+                        )
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.createJournalState,
+                            value: freshFlow.state.axState.axToken
+                        )
+                        Button("create your journal on this mac") {
+                            freshFlow.start()
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Service.createJournalThisMac)
+                        .disabled(freshFlow.state.isBusy)
+
+                        if freshFlow.state != .idle {
+                            Text(freshFlow.state.ownerStatusMessage)
+                                .font(.caption)
+                                .foregroundStyle(freshJournalStatusColor(for: freshFlow.state))
+                        }
+
+                        localJournalPairButton
                     }
-                    .accessibilityIdentifier(AXID.Settings.Service.pairJournalAnotherDevice)
                 }
 
                 if let localLinkError {
@@ -1114,6 +1173,23 @@ struct SettingsView: View {
         if showPairingFlow {
             pairingSection
         }
+    }
+
+    private var localJournalDiscoveryPanelModel: LocalJournalDiscoveryPanelModel {
+        if let localJournalMark {
+            return .foundRunning(localJournalMark)
+        }
+        if let localOnDiskDiscoveryPath {
+            return .foundOnDisk(path: localOnDiskDiscoveryPath)
+        }
+        return .none
+    }
+
+    private var localJournalPairButton: some View {
+        Button("pair to a journal on another device") {
+            showPairingFlow = true
+        }
+        .accessibilityIdentifier(AXID.Settings.Service.pairJournalAnotherDevice)
     }
 
     private var journalMigrationBanner: some View {
@@ -1177,8 +1253,8 @@ struct SettingsView: View {
         }
     }
 
-    private var freshJournalStatusColor: Color {
-        switch freshFlow.state {
+    private func freshJournalStatusColor(for state: FreshJournalState) -> Color {
+        switch state {
         case .failed:
             return .red
         default:
@@ -1817,6 +1893,8 @@ struct SettingsView: View {
                 localDiscoveryTask?.cancel()
                 localDiscoveryTask = nil
                 localJournalMark = nil
+                localOnDiskDiscoveryPath = nil
+                localOnDiskAdoptionAction = .install
                 localDiscoveryCompleted = false
             }
             return
@@ -1824,12 +1902,25 @@ struct SettingsView: View {
         localDiscoveryTask?.cancel()
         localDiscoveryCompleted = false
         localJournalMark = nil
+        localOnDiskDiscoveryPath = nil
+        localOnDiskAdoptionAction = .install
         localLinkError = nil
         localDiscoveryTask = Task { @MainActor in
-            let result = await discoverLocalJournal(fetchIdentity: localIdentityFetch)
+            let model = await discoverLocalJournalPanelModel(
+                fetchIdentity: localIdentityFetch,
+                onDiskDiscovery: onDiskJournalDiscovery
+            )
             guard !Task.isCancelled else { return }
-            if case .found(let mark) = result {
+            switch model {
+            case .foundRunning(let mark):
                 localJournalMark = mark
+            case .foundOnDisk(let path):
+                let action = await onDiskJournalAdoptionFlow.resolveOfferAction()
+                guard !Task.isCancelled else { return }
+                localOnDiskDiscoveryPath = path
+                localOnDiskAdoptionAction = action
+            case .none:
+                break
             }
             localDiscoveryCompleted = true
         }

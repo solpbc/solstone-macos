@@ -6,6 +6,7 @@ import JournalMarkKit
 import JournalRuntime
 import Observation
 import os
+import SolstoneCore
 
 enum JournalFirstRunRoute: Equatable {
     case deciding
@@ -54,6 +55,8 @@ final class JournalFirstRunModel {
     @ObservationIgnored private let updateName: NameUpdate
     @ObservationIgnored private let startSupervisor: SupervisorStart
     @ObservationIgnored private let handoffStore: any JournalHandoffStoring
+    @ObservationIgnored private let journalFileReader: any OnDiskJournalFileReading
+    @ObservationIgnored private let discoveryQualificationTimeout: TimeInterval
     @ObservationIgnored private let notificationCenter: NotificationCenter
     @ObservationIgnored private weak var windowModel: JournalWindowModel?
 
@@ -75,6 +78,7 @@ final class JournalFirstRunModel {
     var errorMessage: String?
 
     private var hasPostedJournalMarkLocked = false
+    private var pendingDiscoveryHandoff: JournalHandoff?
 
     init(
         config: JournalAppConfig,
@@ -89,6 +93,8 @@ final class JournalFirstRunModel {
             return ProcessInfo.processInfo.hostName
         },
         notificationCenter: NotificationCenter = .default,
+        journalFileReader: any OnDiskJournalFileReading = LiveOnDiskJournalFileReader(),
+        discoveryQualificationTimeout: TimeInterval = 1.0,
         windowModel: JournalWindowModel? = nil
     ) {
         self.config = config
@@ -97,6 +103,8 @@ final class JournalFirstRunModel {
         self.updateName = updateName
         self.startSupervisor = startSupervisor
         self.handoffStore = handoffStore
+        self.journalFileReader = journalFileReader
+        self.discoveryQualificationTimeout = discoveryQualificationTimeout
         self.notificationCenter = notificationCenter
         self.windowModel = windowModel
 
@@ -107,12 +115,31 @@ final class JournalFirstRunModel {
     }
 
     func decideLaunchRoute() async {
-        if handoffStore.exists() {
-            route = .adopting
-            await adoptFromHandoff()
-            return
-        }
+        pendingDiscoveryHandoff = nil
 
+        do {
+            guard let handoff = try handoffStore.load() else {
+                await continueWithoutHandoff()
+                return
+            }
+
+            switch handoff.provenance {
+            case JournalHandoffProvenance.bundledMigration:
+                route = .adopting
+                await adoptFromHandoff()
+            case JournalHandoffProvenance.observerDiscovery:
+                await routeDiscoveryHandoff(handoff)
+            default:
+                consumeHandoffBestEffort()
+                beginCreateAtDefaultLocation()
+            }
+        } catch {
+            consumeHandoffBestEffort()
+            beginCreateAtDefaultLocation()
+        }
+    }
+
+    private func continueWithoutHandoff() async {
         guard let root = config.journalRoot else {
             beginCreate()
             return
@@ -121,16 +148,67 @@ final class JournalFirstRunModel {
         await resumeConfiguredRoot(root)
     }
 
+    private func routeDiscoveryHandoff(_ handoff: JournalHandoff) async {
+        let root = URL(fileURLWithPath: handoff.journalRootPath, isDirectory: true)
+            .standardizedFileURL
+        let fileReader = journalFileReader
+        let timeout = discoveryQualificationTimeout
+        let qualifies: Bool
+        do {
+            qualifies = try await withTimeout(seconds: timeout) {
+                await journalDirectoryQualifies(at: root.path, using: fileReader)
+            }
+        } catch {
+            qualifies = false
+        }
+
+        guard qualifies else {
+            consumeHandoffBestEffort()
+            beginCreateAtDefaultLocation()
+            return
+        }
+
+        journalRoot = root
+        pendingDiscoveryHandoff = handoff
+        errorMessage = nil
+        adoptMessage = nil
+        route = .ritual(.nameLocation)
+    }
+
+    private func consumeHandoffBestEffort() {
+        try? handoffStore.consume()
+    }
+
+    private func beginCreateAtDefaultLocation() {
+        errorMessage = nil
+        adoptMessage = nil
+        journalRoot = defaultJournalRoot
+        config.journalRoot = nil
+        route = .ritual(.nameLocation)
+    }
+
+    private var defaultJournalRoot: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("journal", isDirectory: true)
+            .standardizedFileURL
+    }
+
     func beginCreate() {
         errorMessage = nil
         adoptMessage = nil
         if let configuredRoot = config.journalRoot {
             journalRoot = configuredRoot.standardizedFileURL
+        } else {
+            journalRoot = defaultJournalRoot
         }
         route = .ritual(.nameLocation)
     }
 
     func continueFromNameLocation() async {
+        if pendingDiscoveryHandoff != nil {
+            consumeHandoffBestEffort()
+            pendingDiscoveryHandoff = nil
+        }
         config.journalRoot = journalRoot.standardizedFileURL
         await runSetupThenStartSupervisor()
     }
