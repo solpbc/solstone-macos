@@ -55,7 +55,7 @@ struct LiveStagingTests {
             let response = try await readLiveResponse(from: await stream.inbound)
             #expect(response.statusLine.contains("200"))
             let json = try #require(try JSONSerialization.jsonObject(with: response.body) as? [String: Any])
-            _ = try #require(json["status"])
+            _ = try #require(json["posture"])
 
             if config.forceRelay {
                 let connectedViaRelay: Bool
