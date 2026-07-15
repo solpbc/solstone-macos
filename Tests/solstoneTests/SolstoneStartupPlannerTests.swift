@@ -37,6 +37,27 @@ struct SolstoneStartupPlannerTests {
         #expect(presented.isEmpty)
     }
 
+    @Test func developerBypassPlanStartupBuildsNormalOnceAndNeverPresentsRepair() {
+        var normalFactoryInvocations = 0
+        var presented: [AppPlacementContext] = []
+        let coordinator = AppPlacementRepairCoordinator { presented.append($0) }
+
+        let startup: String? = SolstoneStartupPlanner.planStartup(
+            decision: .allowed(.developerBypass),
+            coordinator: coordinator,
+            makeNormal: {
+                normalFactoryInvocations += 1
+                return "normal"
+            }
+        )
+
+        coordinator.signalReadiness()
+
+        #expect(startup == "normal")
+        #expect(normalFactoryInvocations == 1)
+        #expect(presented.isEmpty)
+    }
+
     @Test func repairPlanStartupRegistersRepairAndSkipsNormalFactory() {
         var normalFactoryInvocations = 0
         var presented: [AppPlacementContext] = []
