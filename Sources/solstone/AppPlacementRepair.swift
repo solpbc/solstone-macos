@@ -325,7 +325,49 @@ enum AppPlacementTerminalAction: Equatable {
 }
 
 @MainActor
+struct AppPlacementRepairTerminalDependencies {
+    var activate: () -> Void
+    var presentRepairAlert: () -> Bool
+    var runRepair: (AppPlacementContext) -> Bool
+    var presentFallbackAlert: () -> Bool
+    var openApplicationsFolder: (URL) -> Void
+    var markFallbackExit: () -> Void
+
+    static func live(context: AppPlacementContext) -> AppPlacementRepairTerminalDependencies {
+        AppPlacementRepairTerminal.makeLiveDependencies(context: context)
+    }
+}
+
+@MainActor
 enum AppPlacementRepairTerminal {
+    fileprivate static func makeLiveDependencies(context: AppPlacementContext) -> AppPlacementRepairTerminalDependencies {
+        let repairDeps = AppPlacementRepairDependencies.live(applicationsURL: context.applicationsURL)
+        return AppPlacementRepairTerminalDependencies(
+            activate: {
+                NSApp.activate(ignoringOtherApps: true)
+            },
+            presentRepairAlert: {
+                AppPlacementRepairTerminal.presentRepairAlert() == .alertFirstButtonReturn
+            },
+            runRepair: { context in
+                do {
+                    _ = try AppPlacementRepairService(dependencies: repairDeps).repair(context: context)
+                    return true
+                } catch {
+                    repairDeps.logger("placement repair failed: \(String(describing: error))")
+                    return false
+                }
+            },
+            presentFallbackAlert: {
+                AppPlacementRepairTerminal.presentFallbackAlert() == .alertFirstButtonReturn
+            },
+            openApplicationsFolder: repairDeps.openApplicationsFolder,
+            markFallbackExit: {
+                AppPlacementRepairTerminal.markFallbackExit()
+            }
+        )
+    }
+
     nonisolated static func plan(
         userChoseInstall: Bool,
         repairSucceeded: Bool
@@ -335,47 +377,33 @@ enum AppPlacementRepairTerminal {
     }
 
     static func run(context: AppPlacementContext) -> Never {
-        run(
-            context: context,
-            dependencies: AppPlacementRepairDependencies.live(applicationsURL: context.applicationsURL)
-        )
+        _ = resolve(context: context, dependencies: .live(context: context))
+        Darwin.exit(EXIT_SUCCESS)
     }
 
-    static func run(
+    static func resolve(
         context: AppPlacementContext,
-        dependencies: AppPlacementRepairDependencies
-    ) -> Never {
-        NSApp.activate(ignoringOtherApps: true)
+        dependencies: AppPlacementRepairTerminalDependencies
+    ) -> AppPlacementTerminalAction {
+        dependencies.activate()
 
-        let repairResponse = presentRepairAlert()
-        let userChoseInstall = repairResponse == .alertFirstButtonReturn
-        let repairSucceeded: Bool
-        if userChoseInstall {
-            do {
-                _ = try AppPlacementRepairService(dependencies: dependencies).repair(context: context)
-                repairSucceeded = true
-            } catch {
-                dependencies.logger("placement repair failed: \(String(describing: error))")
-                repairSucceeded = false
-            }
-        } else {
-            repairSucceeded = false
-        }
+        let userChoseInstall = dependencies.presentRepairAlert()
+        let repairSucceeded = userChoseInstall ? dependencies.runRepair(context) : false
+        let action = plan(userChoseInstall: userChoseInstall, repairSucceeded: repairSucceeded)
 
-        switch plan(userChoseInstall: userChoseInstall, repairSucceeded: repairSucceeded) {
+        switch action {
         case .exitSuccess:
-            Darwin.exit(EXIT_SUCCESS)
+            break
         case .quitWithoutRepair:
-            markFallbackExit()
-            Darwin.exit(EXIT_SUCCESS)
+            dependencies.markFallbackExit()
         case .presentFallback:
-            let fallbackResponse = presentFallbackAlert()
-            if fallbackResponse == .alertFirstButtonReturn {
+            if dependencies.presentFallbackAlert() {
                 dependencies.openApplicationsFolder(context.applicationsURL)
             }
-            markFallbackExit()
-            Darwin.exit(EXIT_SUCCESS)
+            dependencies.markFallbackExit()
         }
+
+        return action
     }
 
     private static func presentRepairAlert() -> NSApplication.ModalResponse {

@@ -5,57 +5,58 @@ import Foundation
 import Testing
 @testable import solstone
 
-@Suite("SolstoneStartupPlanner")
+@Suite("AppPlacementRepairCoordinator")
 @MainActor
-struct SolstoneStartupPlannerTests {
-    @Test func modeMapsPlacementDecisions() {
+struct AppPlacementRepairCoordinatorTests {
+    @Test func registerThenReadyPresentsOnce() {
         let context = placementContext()
-
-        #expect(SolstoneStartupPlanner.mode(for: .allowed(.canonical)) == .normal(.canonical))
-        #expect(SolstoneStartupPlanner.mode(for: .allowed(.developerBypass)) == .normal(.developerBypass))
-        #expect(SolstoneStartupPlanner.mode(for: .repair(context)) == .repair(context))
-    }
-
-    @Test func canonicalPlanStartupBuildsNormalOnceAndNeverPresentsRepair() {
-        var normalFactoryInvocations = 0
         var presented: [AppPlacementContext] = []
         let coordinator = AppPlacementRepairCoordinator { presented.append($0) }
 
-        let startup: String? = SolstoneStartupPlanner.planStartup(
-            decision: .allowed(.canonical),
-            coordinator: coordinator,
-            makeNormal: {
-                normalFactoryInvocations += 1
-                return "normal"
-            }
-        )
+        coordinator.registerRepair(context: context)
+        #expect(presented.isEmpty)
 
         coordinator.signalReadiness()
+        coordinator.signalReadiness()
 
-        #expect(startup == "normal")
-        #expect(normalFactoryInvocations == 1)
+        #expect(presented == [context])
+    }
+
+    @Test func readyThenRegisterPresentsOnce() {
+        let context = placementContext()
+        var presented: [AppPlacementContext] = []
+        let coordinator = AppPlacementRepairCoordinator { presented.append($0) }
+
+        coordinator.signalReadiness()
+        #expect(presented.isEmpty)
+
+        coordinator.registerRepair(context: context)
+        coordinator.registerRepair(context: context)
+
+        #expect(presented == [context])
+    }
+
+    @Test func zeroReadyPresentsZero() {
+        let context = placementContext()
+        var presented: [AppPlacementContext] = []
+        let coordinator = AppPlacementRepairCoordinator { presented.append($0) }
+
+        coordinator.registerRepair(context: context)
+
         #expect(presented.isEmpty)
     }
 
-    @Test func repairPlanStartupRegistersRepairAndSkipsNormalFactory() {
-        var normalFactoryInvocations = 0
-        var presented: [AppPlacementContext] = []
+    @Test func repeatedAndReentrantReadyPresentsOnce() {
         let context = placementContext()
-        let coordinator = AppPlacementRepairCoordinator { presented.append($0) }
+        var presented: [AppPlacementContext] = []
+        var coordinator: AppPlacementRepairCoordinator!
+        coordinator = AppPlacementRepairCoordinator { presentedContext in
+            presented.append(presentedContext)
+            coordinator.signalReadiness()
+            coordinator.registerRepair(context: presentedContext)
+        }
 
-        let startup: String? = SolstoneStartupPlanner.planStartup(
-            decision: .repair(context),
-            coordinator: coordinator,
-            makeNormal: {
-                normalFactoryInvocations += 1
-                return "normal"
-            }
-        )
-
-        #expect(startup == nil)
-        #expect(normalFactoryInvocations == 0)
-        #expect(presented.isEmpty)
-
+        coordinator.registerRepair(context: context)
         coordinator.signalReadiness()
         coordinator.signalReadiness()
 

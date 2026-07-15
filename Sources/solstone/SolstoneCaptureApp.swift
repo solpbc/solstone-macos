@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var solChatNotificationDelegate: SolChatNotificationDelegate?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppPlacementRepairCoordinator.shared.signalReadiness()
         JournalMarkFont.register()
 
         notificationObservers.append(
@@ -153,14 +154,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct SolstoneCaptureApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @State private var appState: AppState
-    @State private var updateController: UpdateController
+    @State private var startup: SolstoneNormalStartup?
 
     init() {
         // Configure unbuffered output for stderr
         Stderr.setUnbuffered()
 
-        let startup: SolstoneNormalStartup = SolstoneStartupPlanner.buildNormalStartup(
+        _startup = State(initialValue: SolstoneStartupPlanner.planStartup(
             decision: AppPlacementGate.evaluate(),
             makeNormal: {
                 let appState = AppState()
@@ -181,16 +181,11 @@ struct SolstoneCaptureApp: App {
                         }
                     )
                 )
-            },
-            repair: { context in
-                AppPlacementRepairTerminal.run(context: context)
             }
-        )
-        _appState = State(initialValue: startup.appState)
-        _updateController = State(initialValue: startup.updateController)
+        ))
     }
 
-    private var statusAccessibilityLabel: String {
+    private func statusAccessibilityLabel(appState: AppState) -> String {
         let baseLabel: String = switch appState.observationRowState {
         case .permissions:
             UICopy.MENUBAR_A11Y_PERMISSIONS_NEEDED
@@ -226,22 +221,38 @@ struct SolstoneCaptureApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra {
-            MenuContent(appState: appState, updateController: updateController)
+        MenuBarExtra(isInserted: .constant(startup != nil)) {
+            if let startup {
+                MenuContent(appState: startup.appState, updateController: startup.updateController)
+            } else {
+                EmptyView()
+            }
         } label: {
-            StatusIcon(appState: appState, updateController: updateController)
-                .accessibilityLabel(statusAccessibilityLabel)
+            if let startup {
+                StatusIcon(appState: startup.appState, updateController: startup.updateController)
+                    .accessibilityLabel(statusAccessibilityLabel(appState: startup.appState))
+            } else {
+                EmptyView()
+            }
         }
         .menuBarExtraStyle(.menu)
 
         Window("sol settings", id: "settings") {
-            SettingsSceneRoot(appState: appState, updateController: updateController)
+            if let startup {
+                SettingsSceneRoot(appState: startup.appState, updateController: startup.updateController)
+            } else {
+                Color.clear
+            }
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
 
         Window("about sol", id: "about") {
-            AboutView()
+            if startup != nil {
+                AboutView()
+            } else {
+                Color.clear
+            }
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)

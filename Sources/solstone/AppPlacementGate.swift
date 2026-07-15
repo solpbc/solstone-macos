@@ -114,16 +114,18 @@ enum SolstoneStartupPlanner {
         }
     }
 
-    static func buildNormalStartup<Startup>(
+    @MainActor
+    static func planStartup<Normal>(
         decision: AppPlacementDecision,
-        makeNormal: () throws -> Startup,
-        repair: (AppPlacementContext) throws -> Startup
-    ) rethrows -> Startup {
+        coordinator: AppPlacementRepairCoordinator = .shared,
+        makeNormal: () -> Normal
+    ) -> Normal? {
         switch mode(for: decision) {
         case .normal:
-            return try makeNormal()
+            return makeNormal()
         case .repair(let context):
-            return try repair(context)
+            coordinator.registerRepair(context: context)
+            return nil
         }
     }
 }

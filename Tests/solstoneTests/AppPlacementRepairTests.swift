@@ -98,6 +98,145 @@ struct AppPlacementRepairTests {
         }
     }
 
+    @Test @MainActor func terminalResolveQuitDoesNotRunRepairAndMarksFallbackExit() {
+        let world = FakePlacementRepairWorld()
+        var events: [String] = []
+        var runRepairCount = 0
+        var fallbackAlertCount = 0
+        var openApplicationsCount = 0
+
+        let action = AppPlacementRepairTerminal.resolve(
+            context: world.context,
+            dependencies: AppPlacementRepairTerminalDependencies(
+                activate: { events.append("activate") },
+                presentRepairAlert: {
+                    events.append("repairAlert")
+                    return false
+                },
+                runRepair: { context in
+                    runRepairCount += 1
+                    return (try? world.service.repair(context: context)) != nil
+                },
+                presentFallbackAlert: {
+                    fallbackAlertCount += 1
+                    events.append("fallbackAlert")
+                    return true
+                },
+                openApplicationsFolder: { _ in
+                    openApplicationsCount += 1
+                    events.append("openApplications")
+                },
+                markFallbackExit: {
+                    events.append("markFallbackExit")
+                }
+            )
+        )
+
+        #expect(action == .quitWithoutRepair)
+        #expect(runRepairCount == 0)
+        #expect(fallbackAlertCount == 0)
+        #expect(openApplicationsCount == 0)
+        #expect(world.markers.isEmpty)
+        #expect(world.launches.isEmpty)
+        #expect(world.copyCount == 0)
+        #expect(events == ["activate", "repairAlert", "markFallbackExit"])
+    }
+
+    @Test @MainActor func terminalResolveInstallFailurePresentsFallbackOnce() {
+        for userChoseOpenApplications in [false, true] {
+            let world = FakePlacementRepairWorld()
+            world.applicationsDirectoryExists = false
+            var events: [String] = []
+            var runRepairCount = 0
+            var fallbackAlertCount = 0
+            var openApplicationsCount = 0
+
+            let action = AppPlacementRepairTerminal.resolve(
+                context: world.context,
+                dependencies: AppPlacementRepairTerminalDependencies(
+                    activate: { events.append("activate") },
+                    presentRepairAlert: {
+                        events.append("repairAlert")
+                        return true
+                    },
+                    runRepair: { context in
+                        runRepairCount += 1
+                        events.append("runRepair")
+                        return (try? world.service.repair(context: context)) != nil
+                    },
+                    presentFallbackAlert: {
+                        fallbackAlertCount += 1
+                        events.append("fallbackAlert")
+                        return userChoseOpenApplications
+                    },
+                    openApplicationsFolder: { _ in
+                        openApplicationsCount += 1
+                        events.append("openApplications")
+                    },
+                    markFallbackExit: {
+                        events.append("markFallbackExit")
+                    }
+                )
+            )
+
+            #expect(action == .presentFallback)
+            #expect(action != .exitSuccess)
+            #expect(runRepairCount == 1)
+            #expect(fallbackAlertCount == 1)
+            #expect(openApplicationsCount == (userChoseOpenApplications ? 1 : 0))
+            #expect(world.markers.isEmpty)
+            #expect(world.launches.isEmpty)
+            #expect(world.copyCount == 0)
+            if userChoseOpenApplications {
+                #expect(events == ["activate", "repairAlert", "runRepair", "fallbackAlert", "openApplications", "markFallbackExit"])
+            } else {
+                #expect(events == ["activate", "repairAlert", "runRepair", "fallbackAlert", "markFallbackExit"])
+            }
+        }
+    }
+
+    @Test @MainActor func terminalResolveInstallSuccessReturnsExitSuccessWithoutFallback() {
+        let world = FakePlacementRepairWorld()
+        var events: [String] = []
+        var fallbackAlertCount = 0
+        var openApplicationsCount = 0
+        var markFallbackExitCount = 0
+
+        let action = AppPlacementRepairTerminal.resolve(
+            context: world.context,
+            dependencies: AppPlacementRepairTerminalDependencies(
+                activate: { events.append("activate") },
+                presentRepairAlert: {
+                    events.append("repairAlert")
+                    return true
+                },
+                runRepair: { _ in
+                    events.append("runRepair")
+                    return true
+                },
+                presentFallbackAlert: {
+                    fallbackAlertCount += 1
+                    events.append("fallbackAlert")
+                    return true
+                },
+                openApplicationsFolder: { _ in
+                    openApplicationsCount += 1
+                    events.append("openApplications")
+                },
+                markFallbackExit: {
+                    markFallbackExitCount += 1
+                    events.append("markFallbackExit")
+                }
+            )
+        )
+
+        #expect(action == .exitSuccess)
+        #expect(fallbackAlertCount == 0)
+        #expect(openApplicationsCount == 0)
+        #expect(markFallbackExitCount == 0)
+        #expect(events == ["activate", "repairAlert", "runRepair"])
+    }
+
     @Test func unrelatedOrUnversionableExistingDestinationIsNeverOverwritten() throws {
         let untrusted = FakePlacementRepairWorld()
         untrusted.installSource(build: 59, token: "source")
