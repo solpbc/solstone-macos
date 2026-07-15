@@ -66,7 +66,10 @@ struct MenubarWireUpTests {
             "MenubarIconState",
             "iconState.iconName",
             "AXID.Menubar.statusIconState",
+            "AXID.Menubar.statusIconOverlayState",
             "iconState.axToken",
+            ".accessibilityValue(overlayState.axToken)",
+            "menubarIconOverlayState(",
             "appState.observationRowState.iconState"
         ]
 

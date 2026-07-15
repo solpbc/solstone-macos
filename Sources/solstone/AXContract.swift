@@ -15,6 +15,7 @@ enum AXContract {
     static let staticIDs: [String] = [
         AXID.Menubar.pendingChatButton,
         AXID.Menubar.statusIconState,
+        AXID.Menubar.statusIconOverlayState,
         AXID.Menubar.statusRowState,
         AXID.Menubar.permissionsButton,
         AXID.Menubar.errorButton,
@@ -222,6 +223,7 @@ enum AXContract {
         [
             "AXPermissionState": AXPermissionState.allCases.map(\.axToken),
             "MenubarIconState": MenubarIconState.allCases.map(\.axToken),
+            "MenubarIconOverlayState": MenubarIconOverlayState.allCases.map(\.axToken),
             "MenubarStatusRowState": MenubarStatusRowState.allCases.map(\.axToken),
             "SettingsObservationAXState": SettingsObservationAXState.allCases.map(\.axToken),
             "SidebarBadgeState": SettingsView.SidebarBadgeState.allCases.map(\.axToken),
@@ -243,6 +245,7 @@ enum AXContract {
     static var states: [String: StateBinding] {
         [
             AXID.Menubar.statusIconState: .enum("MenubarIconState"),
+            AXID.Menubar.statusIconOverlayState: .enum("MenubarIconOverlayState"),
             AXID.Menubar.statusRowState: .enum("MenubarStatusRowState"),
             AXID.Menubar.journalState: .enum("MenubarStatusRowState"),
             "settings.sidebar.tab.{tab}.state": .enum("SidebarBadgeState"),

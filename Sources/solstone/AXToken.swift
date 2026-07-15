@@ -35,6 +35,13 @@ internal enum MenubarIconState: CaseIterable {
     }
 }
 
+internal enum MenubarIconOverlayState: CaseIterable {
+    case none
+    case journalSetup
+    case chatStale
+    case chatPending
+}
+
 internal enum MenubarStatusRowState: CaseIterable {
     case permissions
     case error
@@ -369,6 +376,21 @@ extension MenubarIconState {
             return "paused"
         case .error:
             return "error"
+        }
+    }
+}
+
+extension MenubarIconOverlayState {
+    var axToken: String {
+        switch self {
+        case .none:
+            return "none"
+        case .journalSetup:
+            return "journal_setup"
+        case .chatStale:
+            return "chat_stale"
+        case .chatPending:
+            return "chat_pending"
         }
     }
 }

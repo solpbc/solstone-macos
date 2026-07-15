@@ -7,6 +7,7 @@ enum AXID {
     enum Menubar {
         static let pendingChatButton = "menubar.chat.pending"
         static let statusIconState = "menubar.status.icon.state"
+        static let statusIconOverlayState = "menubar.status.icon.overlay.state"
         static let statusRowState = "menubar.status.row.state"
         static let permissionsButton = "menubar.status.permissions"
         static let errorButton = "menubar.status.error"

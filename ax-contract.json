@@ -88,6 +88,7 @@
       "menubar.pause.resume",
       "menubar.pause.thirtyMinutes",
       "menubar.status.error",
+      "menubar.status.icon.overlay.state",
       "menubar.status.icon.state",
       "menubar.status.journal.state",
       "menubar.status.journalMigrationNeeded",
@@ -218,6 +219,10 @@
   "states" : {
     "about.identity.version.state" : {
       "kind" : "freeform"
+    },
+    "menubar.status.icon.overlay.state" : {
+      "kind" : "enum",
+      "vocabulary" : "MenubarIconOverlayState"
     },
     "menubar.status.icon.state" : {
       "kind" : "enum",
@@ -425,6 +430,12 @@
       "found_running",
       "found_on_disk",
       "not_found"
+    ],
+    "MenubarIconOverlayState" : [
+      "none",
+      "journal_setup",
+      "chat_stale",
+      "chat_pending"
     ],
     "MenubarIconState" : [
       "recording",

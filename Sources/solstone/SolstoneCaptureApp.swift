@@ -325,6 +325,14 @@ private struct StatusIcon: View {
         appState.observationRowState.iconState
     }
 
+    private var overlayState: MenubarIconOverlayState {
+        menubarIconOverlayState(
+            rowState: appState.observationRowState,
+            solChatStale: appState.solChatStale,
+            solChatPending: appState.solChatPending != nil
+        )
+    }
+
     private var iconName: String {
         iconState.iconName
     }
@@ -380,18 +388,29 @@ private struct StatusIcon: View {
     }
 
     @ViewBuilder
-    private var overlayView: some View {
-        if appState.solChatStale {
+    private var overlayBadge: some View {
+        switch overlayState {
+        case .journalSetup:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 7))
+                .foregroundStyle(.orange)
+        case .chatStale:
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 7))
                 .foregroundStyle(.orange)
                 .help(SolChatLiterals.unreachableTooltip)
-        } else if appState.solChatPending != nil {
+        case .chatPending:
             Circle()
                 .fill(Color.accentColor)
                 .frame(width: 6, height: 6)
-        } else {
+        case .none:
             EmptyView()
         }
+    }
+
+    private var overlayView: some View {
+        overlayBadge
+            .accessibilityIdentifier(AXID.Menubar.statusIconOverlayState)
+            .accessibilityValue(overlayState.axToken)
     }
 }
