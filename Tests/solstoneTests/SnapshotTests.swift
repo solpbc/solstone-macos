@@ -572,14 +572,20 @@ struct SnapshotTests {
     }
 
     @Test func settingsStatusSetupReady() throws {
+        let store = InMemoryLastSuccessfulJournalContactStore()
         let state = AppState.forSnapshot(config: AppConfig(
             serverURL: ServiceMode.bundledServiceURL,
             serverKey: "observer-key",
             serviceMode: .external
-        ))
+        ), lastContactStore: store)
         markPermissionsReady(state)
         state.isRecording = true
         state.uploadCoordinator.status = .synced
+        let recentDate = Date(timeIntervalSinceNow: -120)
+        let fingerprint = try #require(state.currentJournalConnectionFingerprint()?.value)
+        store.write(LastSuccessfulJournalContactPayload(date: recentDate, fingerprint: fingerprint))
+        state.uploadCoordinator.refreshLastSuccessfulJournalContact()
+        #expect(state.uploadCoordinator.lastSuccessfulJournalContactOutcome == .synced(recentDate))
         let updateController = makeSnapshotUpdateController()
         try render(
             SettingsView(
@@ -704,6 +710,31 @@ struct SnapshotTests {
             SettingsView(appState: state, updateController: updateController, selectedTab: .permissions),
             size: settingsSize,
             to: "settings-permissions.png"
+        )
+    }
+
+    @Test func settingsPermissionsRecovery() throws {
+        let state = AppState.forSnapshot()
+        state.initialPermissionCheckComplete = true
+        state.screenRecordingGranted = false
+        state.microphoneGranted = true
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .permissions,
+                initialSetupProbeSnapshot: setupProbeSnapshot(
+                    hasPromptedScreenRecording: true,
+                    screenDiagnostic: ScreenRecordingPermissionDiagnostic(
+                        preflightSucceeded: false,
+                        sckFailedAfterPositivePreflight: false
+                    ),
+                    microphoneCause: .unknown
+                )
+            ),
+            size: settingsSize,
+            to: "settings-permissions-recovery.png"
         )
     }
 

@@ -9,7 +9,7 @@ import SolstoneCore
 
 enum AppPlacementAlertCopy {
     static let repairTitle = "install sol in Applications"
-    static let repairBody = "macOS is running sol from a temporary location, so it can't remember screen recording permission. install sol in Applications and it will reopen."
+    static let repairBody = "sol is running outside Applications, so macOS may not remember its screen recording permission. install sol in Applications and it will reopen."
     static let repairPrimaryButton = "install and reopen"
     static let repairSecondaryButton = "quit sol"
     static let fallbackTitle = "sol couldn't move itself"

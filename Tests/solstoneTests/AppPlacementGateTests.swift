@@ -121,7 +121,7 @@ struct AppPlacementGateTests {
 
     @Test func lockedAlertCopyIsStable() {
         #expect(AppPlacementAlertCopy.repairTitle == "install sol in Applications")
-        #expect(AppPlacementAlertCopy.repairBody == "macOS is running sol from a temporary location, so it can't remember screen recording permission. install sol in Applications and it will reopen.")
+        #expect(AppPlacementAlertCopy.repairBody == "sol is running outside Applications, so macOS may not remember its screen recording permission. install sol in Applications and it will reopen.")
         #expect(AppPlacementAlertCopy.repairPrimaryButton == "install and reopen")
         #expect(AppPlacementAlertCopy.repairSecondaryButton == "quit sol")
         #expect(AppPlacementAlertCopy.fallbackTitle == "sol couldn't move itself")

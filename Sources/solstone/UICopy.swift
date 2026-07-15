@@ -80,7 +80,7 @@ public enum UICopy {
     public static let SETTINGS_SETUP_LAST_SYNC_LABEL = "last sync"
     public static let SETTINGS_SETUP_LAST_SYNC_NEVER = "no sync yet"
     public static let SETTINGS_SETUP_LAST_SYNC_NOT_LINKED = "your journal isn't linked"
-    public static let SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT = "if sol is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old sol entry and try enable screen recording again."
+    public static let SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT = "if sol is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old sol entry and try enabling screen recording again."
     public static let SETTINGS_PERMISSIONS_MIC_DENIED = "microphone access is off. allow sol in Privacy & Security → Microphone."
     public static let SETTINGS_PERMISSIONS_MIC_RESTRICTED = "microphone access is restricted by this Mac."
     public static let SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS = "open system settings →"

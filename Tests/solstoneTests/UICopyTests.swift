@@ -105,7 +105,7 @@ struct UICopyTests {
         #expect(UICopy.SETTINGS_SETUP_SHARED_GRANTED == "granted")
         #expect(UICopy.SETTINGS_SETUP_SHARED_NOT_GRANTED == "not granted")
         #expect(UICopy.SETTINGS_SETUP_SHARED_CHECKING == "checking")
-        #expect(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT == "if sol is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old sol entry and try enable screen recording again.")
+        #expect(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT == "if sol is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old sol entry and try enabling screen recording again.")
         #expect(UICopy.SETTINGS_PERMISSIONS_MIC_DENIED == "microphone access is off. allow sol in Privacy & Security → Microphone.")
         #expect(UICopy.SETTINGS_PERMISSIONS_MIC_RESTRICTED == "microphone access is restricted by this Mac.")
         #expect(UICopy.SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS == "open system settings →")
