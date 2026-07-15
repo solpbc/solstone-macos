@@ -43,7 +43,7 @@ struct AppPlacementRepairTests {
         world.expectNoAttemptBytes()
     }
 
-    @Test func liveReplaceItemRetainsBackupForRollback() throws {
+    @Test func liveReplaceAndRestoreBackupPreservesOriginalForRollback() throws {
         let tempDirectory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: tempDirectory) }
 
@@ -70,6 +70,32 @@ struct AppPlacementRepairTests {
         #expect(try String(contentsOf: originalURL.appendingPathComponent("payload.txt"), encoding: .utf8) == "replacement")
         #expect(FileManager.default.fileExists(atPath: backupURL.path))
         #expect(try String(contentsOf: backupURL.appendingPathComponent("payload.txt"), encoding: .utf8) == "original")
+
+        try dependencies.restoreBackup(backupURL, originalURL)
+
+        #expect(FileManager.default.fileExists(atPath: originalURL.path))
+        #expect(try String(contentsOf: originalURL.appendingPathComponent("payload.txt"), encoding: .utf8) == "original")
+    }
+
+    @Test func terminalPlanCoversRepairChoices() {
+        #expect(AppPlacementRepairTerminal.plan(userChoseInstall: false, repairSucceeded: false) == .quitWithoutRepair)
+        #expect(AppPlacementRepairTerminal.plan(userChoseInstall: false, repairSucceeded: true) == .quitWithoutRepair)
+        #expect(AppPlacementRepairTerminal.plan(userChoseInstall: true, repairSucceeded: true) == .exitSuccess)
+        #expect(AppPlacementRepairTerminal.plan(userChoseInstall: true, repairSucceeded: false) == .presentFallback)
+    }
+
+    @Test func terminalPlanMapsMarkerAndSpawnFailureToFallback() {
+        for failure in [InjectedRepairFailure.marker, InjectedRepairFailure.spawn] {
+            let world = FakePlacementRepairWorld()
+            world.installSource(build: 59, token: "source")
+            world.installCanonical(build: 58, token: "installed")
+            world.inject(failure)
+
+            let repairSucceeded = (try? world.service.repair(context: world.context)) != nil
+
+            #expect(!repairSucceeded)
+            #expect(AppPlacementRepairTerminal.plan(userChoseInstall: true, repairSucceeded: repairSucceeded) == .presentFallback)
+        }
     }
 
     @Test func unrelatedOrUnversionableExistingDestinationIsNeverOverwritten() throws {

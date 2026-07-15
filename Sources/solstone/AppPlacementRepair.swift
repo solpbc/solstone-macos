@@ -93,9 +93,16 @@ struct AppPlacementRepairDependencies {
             },
             restoreBackup: { backupURL, destinationURL in
                 if fileManager.fileExists(atPath: destinationURL.path) {
-                    try fileManager.removeItem(at: destinationURL)
+                    _ = try fileManager.replaceItemAt(
+                        destinationURL,
+                        withItemAt: backupURL,
+                        backupItemName: nil,
+                        options: []
+                    )
+                    return
+                } else {
+                    try fileManager.moveItem(at: backupURL, to: destinationURL)
                 }
-                try fileManager.moveItem(at: backupURL, to: destinationURL)
             },
             copyBundle: { sourceURL, destinationURL in
                 let result = try SolstoneProcessRunner.run(
@@ -311,8 +318,22 @@ struct AppPlacementRepairService {
     }
 }
 
+enum AppPlacementTerminalAction: Equatable {
+    case exitSuccess
+    case quitWithoutRepair
+    case presentFallback
+}
+
 @MainActor
 enum AppPlacementRepairTerminal {
+    nonisolated static func plan(
+        userChoseInstall: Bool,
+        repairSucceeded: Bool
+    ) -> AppPlacementTerminalAction {
+        guard userChoseInstall else { return .quitWithoutRepair }
+        return repairSucceeded ? .exitSuccess : .presentFallback
+    }
+
     static func run(context: AppPlacementContext) -> Never {
         run(
             context: context,
@@ -327,16 +348,27 @@ enum AppPlacementRepairTerminal {
         NSApp.activate(ignoringOtherApps: true)
 
         let repairResponse = presentRepairAlert()
-        guard repairResponse == .alertFirstButtonReturn else {
-            markFallbackExit()
-            Darwin.exit(EXIT_SUCCESS)
+        let userChoseInstall = repairResponse == .alertFirstButtonReturn
+        let repairSucceeded: Bool
+        if userChoseInstall {
+            do {
+                _ = try AppPlacementRepairService(dependencies: dependencies).repair(context: context)
+                repairSucceeded = true
+            } catch {
+                dependencies.logger("placement repair failed: \(String(describing: error))")
+                repairSucceeded = false
+            }
+        } else {
+            repairSucceeded = false
         }
 
-        do {
-            _ = try AppPlacementRepairService(dependencies: dependencies).repair(context: context)
+        switch plan(userChoseInstall: userChoseInstall, repairSucceeded: repairSucceeded) {
+        case .exitSuccess:
             Darwin.exit(EXIT_SUCCESS)
-        } catch {
-            dependencies.logger("placement repair failed: \(String(describing: error))")
+        case .quitWithoutRepair:
+            markFallbackExit()
+            Darwin.exit(EXIT_SUCCESS)
+        case .presentFallback:
             let fallbackResponse = presentFallbackAlert()
             if fallbackResponse == .alertFirstButtonReturn {
                 dependencies.openApplicationsFolder(context.applicationsURL)
