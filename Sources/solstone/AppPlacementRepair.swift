@@ -431,26 +431,90 @@ enum AppPlacementRepairTerminal {
     }
 }
 
-private enum LivePlacementQuarantineCleaner {
-    static func clearRecursively(at url: URL, fileManager: FileManager) throws {
-        try clearQuarantine(at: url)
+enum LivePlacementQuarantineCleaner {
+    typealias AttributeRemover = (URL) throws -> Void
+    typealias EnumeratorFactory = (
+        _ rootURL: URL,
+        _ fileManager: FileManager,
+        _ errorHandler: @escaping (URL, Error) -> Bool
+    ) throws -> FileManager.DirectoryEnumerator?
 
-        guard let enumerator = fileManager.enumerator(
+    private enum Failure: Error {
+        case enumeratorUnavailable(String)
+    }
+
+    static func clearRecursively(at url: URL, fileManager: FileManager) throws {
+        try clearRecursively(
             at: url,
-            includingPropertiesForKeys: [.quarantinePropertiesKey]
-        ) else {
-            return
+            fileManager: fileManager,
+            removeQuarantine: removeQuarantineXattr,
+            makeEnumerator: makeFileManagerEnumerator
+        )
+    }
+
+    static func clearRecursively(
+        at url: URL,
+        fileManager: FileManager,
+        removeQuarantine: AttributeRemover,
+        makeEnumerator: EnumeratorFactory
+    ) throws {
+        try removeQuarantine(url)
+
+        var traversalError: Error?
+        let enumerator = try makeEnumerator(url, fileManager) { _, error in
+            traversalError = error
+            return false
+        }
+
+        guard let enumerator else {
+            if let traversalError {
+                throw traversalError
+            }
+            throw Failure.enumeratorUnavailable(url.path)
         }
 
         for case let childURL as URL in enumerator {
-            try clearQuarantine(at: childURL)
+            try removeQuarantine(childURL)
+        }
+
+        if let traversalError {
+            throw traversalError
         }
     }
 
-    private static func clearQuarantine(at url: URL) throws {
-        var mutableURL = url
-        var resourceValues = URLResourceValues()
-        resourceValues.quarantineProperties = nil
-        try mutableURL.setResourceValues(resourceValues)
+    private static func makeFileManagerEnumerator(
+        rootURL: URL,
+        fileManager: FileManager,
+        errorHandler: @escaping (URL, Error) -> Bool
+    ) throws -> FileManager.DirectoryEnumerator? {
+        fileManager.enumerator(
+            at: rootURL,
+            includingPropertiesForKeys: nil,
+            options: [],
+            errorHandler: errorHandler
+        )
+    }
+
+    private static func removeQuarantineXattr(at url: URL) throws {
+        let result = url.path.withCString { fileSystemPath in
+            "com.apple.quarantine".withCString { attributeName in
+                removexattr(fileSystemPath, attributeName, XATTR_NOFOLLOW)
+            }
+        }
+
+        if result == 0 {
+            return
+        }
+
+        let errorCode = errno
+        if errorCode == ENOATTR {
+            return
+        }
+
+        throw NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(errorCode),
+            userInfo: [NSFilePathErrorKey: url.path]
+        )
     }
 }

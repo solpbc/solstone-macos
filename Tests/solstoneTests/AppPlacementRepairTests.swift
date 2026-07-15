@@ -2,12 +2,16 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import Darwin
 import Testing
 import SolstoneCore
 @testable import solstone
 
 @Suite("AppPlacementRepair")
 struct AppPlacementRepairTests {
+    private static let quarantineAttributeName = "com.apple.quarantine"
+    private static let unrelatedAttributeName = "com.solstone.test.unrelated"
+
     @Test func sameOrNewerValidInstallReopensUntouched() throws {
         let world = FakePlacementRepairWorld()
         world.installSource(build: 57, token: "source")
@@ -75,6 +79,176 @@ struct AppPlacementRepairTests {
 
         #expect(FileManager.default.fileExists(atPath: originalURL.path))
         #expect(try String(contentsOf: originalURL.appendingPathComponent("payload.txt"), encoding: .utf8) == "original")
+    }
+
+    @Test func liveQuarantineCleanerClearsRootDirectoryFileAndSymlinkOnly() throws {
+        let tempDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let rootURL = tempDirectory.appendingPathComponent("solstone.app", isDirectory: true)
+        let directoryURL = rootURL.appendingPathComponent("Contents", isDirectory: true)
+        let fileURL = directoryURL.appendingPathComponent("payload.txt")
+        let outsideTargetURL = tempDirectory.appendingPathComponent("outside-target.txt")
+        let symlinkURL = directoryURL.appendingPathComponent("outside-link")
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        try "payload".write(to: fileURL, atomically: true, encoding: .utf8)
+        try "outside".write(to: outsideTargetURL, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: outsideTargetURL)
+
+        let nodes: [(url: URL, label: String)] = [
+            (rootURL, "root"),
+            (directoryURL, "directory"),
+            (fileURL, "file"),
+            (symlinkURL, "symlink")
+        ]
+        let expectedUnrelatedValues = Dictionary(
+            uniqueKeysWithValues: nodes.map { node in
+                (node.url, Data("unrelated-\(node.label)".utf8))
+            }
+        )
+
+        for node in nodes {
+            try setExtendedAttribute(
+                Self.quarantineAttributeName,
+                value: Data("quarantine-\(node.label)".utf8),
+                at: node.url
+            )
+            try setExtendedAttribute(
+                Self.unrelatedAttributeName,
+                value: expectedUnrelatedValues[node.url]!,
+                at: node.url
+            )
+        }
+
+        let outsideQuarantineValue = Data("outside-quarantine".utf8)
+        let outsideUnrelatedValue = Data("outside-unrelated".utf8)
+        try setExtendedAttribute(Self.quarantineAttributeName, value: outsideQuarantineValue, at: outsideTargetURL)
+        try setExtendedAttribute(Self.unrelatedAttributeName, value: outsideUnrelatedValue, at: outsideTargetURL)
+
+        try LivePlacementQuarantineCleaner.clearRecursively(at: rootURL, fileManager: .default)
+
+        for node in nodes {
+            #expect(try extendedAttributeValue(Self.quarantineAttributeName, at: node.url) == nil)
+            #expect(try extendedAttributeValue(Self.unrelatedAttributeName, at: node.url) == expectedUnrelatedValues[node.url])
+        }
+        #expect(try extendedAttributeValue(Self.quarantineAttributeName, at: outsideTargetURL) == outsideQuarantineValue)
+        #expect(try extendedAttributeValue(Self.unrelatedAttributeName, at: outsideTargetURL) == outsideUnrelatedValue)
+    }
+
+    @Test func liveQuarantineCleanerClearsDescendantWhenRootIsClean() throws {
+        let tempDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let rootURL = tempDirectory.appendingPathComponent("solstone.app", isDirectory: true)
+        let directoryURL = rootURL.appendingPathComponent("Contents", isDirectory: true)
+        let fileURL = directoryURL.appendingPathComponent("payload.txt")
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        try "payload".write(to: fileURL, atomically: true, encoding: .utf8)
+        try setExtendedAttribute(Self.quarantineAttributeName, value: Data("descendant-quarantine".utf8), at: fileURL)
+
+        try LivePlacementQuarantineCleaner.clearRecursively(at: rootURL, fileManager: .default)
+
+        #expect(try extendedAttributeValue(Self.quarantineAttributeName, at: rootURL) == nil)
+        #expect(try extendedAttributeValue(Self.quarantineAttributeName, at: fileURL) == nil)
+    }
+
+    @Test func liveQuarantineCleanerIsIdempotentWhenTreeIsClean() throws {
+        let tempDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let rootURL = tempDirectory.appendingPathComponent("solstone.app", isDirectory: true)
+        let directoryURL = rootURL.appendingPathComponent("Contents", isDirectory: true)
+        let fileURL = directoryURL.appendingPathComponent("payload.txt")
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        try "payload".write(to: fileURL, atomically: true, encoding: .utf8)
+        let unrelatedValue = Data("kept-clean".utf8)
+        try setExtendedAttribute(Self.unrelatedAttributeName, value: unrelatedValue, at: fileURL)
+
+        try LivePlacementQuarantineCleaner.clearRecursively(at: rootURL, fileManager: .default)
+        try LivePlacementQuarantineCleaner.clearRecursively(at: rootURL, fileManager: .default)
+
+        #expect(try extendedAttributeValue(Self.quarantineAttributeName, at: rootURL) == nil)
+        #expect(try extendedAttributeValue(Self.quarantineAttributeName, at: directoryURL) == nil)
+        #expect(try extendedAttributeValue(Self.quarantineAttributeName, at: fileURL) == nil)
+        #expect(try extendedAttributeValue(Self.unrelatedAttributeName, at: fileURL) == unrelatedValue)
+    }
+
+    @Test func injectedNonENOATTRRemovalFailureMapsToQuarantineClearFailed() throws {
+        let world = FakePlacementRepairWorld()
+        world.installSource(build: 59, token: "source")
+        world.installCanonical(build: 58, token: "installed")
+        var dependencies = world.dependencies
+        dependencies.quarantineCleaner = { url in
+            try LivePlacementQuarantineCleaner.clearRecursively(
+                at: url,
+                fileManager: .default,
+                removeQuarantine: { _ in throw InjectedQuarantineCleanerError.removal },
+                makeEnumerator: { _, _, _ in nil }
+            )
+        }
+
+        let repairFailure = captureFailure {
+            _ = try AppPlacementRepairService(dependencies: dependencies).repair(context: world.context)
+        }
+
+        #expect(isQuarantineClearFailed(repairFailure))
+        #expect(world.record(at: world.canonicalURL)?.token == "installed")
+        #expect(world.launches.isEmpty)
+        world.expectSourceUntouched()
+        world.expectNoAttemptBytes()
+    }
+
+    @Test func injectedTraversalFailureMapsToQuarantineClearFailed() throws {
+        let world = FakePlacementRepairWorld()
+        world.installSource(build: 59, token: "source")
+        world.installCanonical(build: 58, token: "installed")
+        var dependencies = world.dependencies
+        dependencies.quarantineCleaner = { url in
+            try LivePlacementQuarantineCleaner.clearRecursively(
+                at: url,
+                fileManager: .default,
+                removeQuarantine: { _ in },
+                makeEnumerator: { _, _, errorHandler in
+                    _ = errorHandler(url, InjectedQuarantineCleanerError.traversal)
+                    return nil
+                }
+            )
+        }
+
+        let repairFailure = captureFailure {
+            _ = try AppPlacementRepairService(dependencies: dependencies).repair(context: world.context)
+        }
+
+        #expect(isQuarantineClearFailed(repairFailure))
+        #expect(world.record(at: world.canonicalURL)?.token == "installed")
+        #expect(world.launches.isEmpty)
+        world.expectSourceUntouched()
+        world.expectNoAttemptBytes()
+    }
+
+    @Test func injectedNilEnumeratorWithoutHandlerMapsToQuarantineClearFailed() throws {
+        let world = FakePlacementRepairWorld()
+        world.installSource(build: 59, token: "source")
+        world.installCanonical(build: 58, token: "installed")
+        var dependencies = world.dependencies
+        dependencies.quarantineCleaner = { url in
+            try LivePlacementQuarantineCleaner.clearRecursively(
+                at: url,
+                fileManager: .default,
+                removeQuarantine: { _ in },
+                makeEnumerator: { _, _, _ in nil }
+            )
+        }
+
+        let repairFailure = captureFailure {
+            _ = try AppPlacementRepairService(dependencies: dependencies).repair(context: world.context)
+        }
+
+        #expect(isQuarantineClearFailed(repairFailure))
+        #expect(world.record(at: world.canonicalURL)?.token == "installed")
+        #expect(world.launches.isEmpty)
+        world.expectSourceUntouched()
+        world.expectNoAttemptBytes()
     }
 
     @Test func terminalPlanCoversRepairChoices() {
@@ -351,6 +525,11 @@ struct AppPlacementRepairTests {
         return true
     }
 
+    private func isQuarantineClearFailed(_ failure: AppPlacementRepairFailure?) -> Bool {
+        guard case .quarantineClearFailed = failure else { return false }
+        return true
+    }
+
     private func matchesInjectedFailure(
         _ repairFailure: AppPlacementRepairFailure?,
         _ injectedFailure: InjectedRepairFailure
@@ -374,6 +553,62 @@ struct AppPlacementRepairTests {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
+
+    private func setExtendedAttribute(_ name: String, value: Data, at url: URL) throws {
+        try value.withUnsafeBytes { buffer in
+            let result = url.path.withCString { fileSystemPath in
+                name.withCString { attributeName in
+                    setxattr(fileSystemPath, attributeName, buffer.baseAddress, buffer.count, 0, XATTR_NOFOLLOW)
+                }
+            }
+            if result != 0 {
+                throw posixError(errno, url: url)
+            }
+        }
+    }
+
+    private func extendedAttributeValue(_ name: String, at url: URL) throws -> Data? {
+        let length = url.path.withCString { fileSystemPath in
+            name.withCString { attributeName in
+                getxattr(fileSystemPath, attributeName, nil, 0, 0, XATTR_NOFOLLOW)
+            }
+        }
+
+        if length < 0 {
+            let errorCode = errno
+            if errorCode == ENOATTR {
+                return nil
+            }
+            throw posixError(errorCode, url: url)
+        }
+
+        var value = Data(count: length)
+        let readLength = value.withUnsafeMutableBytes { buffer in
+            url.path.withCString { fileSystemPath in
+                name.withCString { attributeName in
+                    getxattr(fileSystemPath, attributeName, buffer.baseAddress, buffer.count, 0, XATTR_NOFOLLOW)
+                }
+            }
+        }
+
+        if readLength < 0 {
+            let errorCode = errno
+            if errorCode == ENOATTR {
+                return nil
+            }
+            throw posixError(errorCode, url: url)
+        }
+
+        return readLength == length ? value : Data(value.prefix(readLength))
+    }
+
+    private func posixError(_ code: Int32, url: URL) -> NSError {
+        NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(code),
+            userInfo: [NSFilePathErrorKey: url.path]
+        )
+    }
 }
 
 enum InjectedRepairFailure: CaseIterable {
@@ -393,6 +628,11 @@ private enum FakePlacementRepairError: Error {
     case marker
     case spawn
     case missingRecord
+}
+
+private enum InjectedQuarantineCleanerError: Error {
+    case removal
+    case traversal
 }
 
 private struct FakeBundleRecord: Equatable {
