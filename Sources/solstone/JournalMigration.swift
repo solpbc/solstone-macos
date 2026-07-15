@@ -2,7 +2,6 @@
 // Copyright (c) 2026 sol pbc
 
 import AppKit
-import Crypto
 import Foundation
 import JournalMarkKit
 import Observation
@@ -284,6 +283,7 @@ protocol RunningJournalController: AnyObject {
     func runningPID() -> pid_t?
     func terminateRunningJournal() -> Bool
     func launchJournal(at url: URL) throws
+    func launchJournalActivating(at url: URL) throws
 }
 
 @MainActor
@@ -352,6 +352,21 @@ struct JournalHandoffDependencies {
             now: Date.init
         )
     }
+
+    @MainActor
+    func makeAcquirer() -> JournalAppAcquirer {
+        JournalAppAcquirer(
+            appcastFeedResolver: appcastFeedResolver,
+            appcastClient: appcastClient,
+            downloader: downloader,
+            mounter: mounter,
+            trustVerifier: trustVerifier,
+            publicEDKeyBase64: publicEDKeyBase64,
+            maxDMGBytes: maxDMGBytes,
+            applicationsURL: applicationsURL,
+            fileManager: fileManager
+        )
+    }
 }
 
 enum JournalHandoffConstants {
@@ -408,10 +423,17 @@ struct JournalHandoffFeedSelection: Equatable, Sendable {
 @MainActor
 @Observable
 final class JournalHandoffOrchestrator {
-    private(set) var step: JournalHandoffStep = .idle
+    private(set) var step: JournalHandoffStep = .idle {
+        didSet {
+            guard oldValue != step else { return }
+            onStepTransition?(step)
+        }
+    }
 
     @ObservationIgnored
     private var task: Task<Void, Never>?
+    @ObservationIgnored
+    var onStepTransition: (@MainActor (JournalHandoffStep) -> Void)?
     @ObservationIgnored
     private let dependencies: JournalHandoffDependencies
 
@@ -524,65 +546,8 @@ final class JournalHandoffOrchestrator {
     }
 
     private func acquireJournalApp() async throws -> URL {
-        step = .acquiring(.fetchingAppcast)
-        let selection = dependencies.appcastFeedResolver()
-        Logger.setup.notice("journal handoff feed: \(selection.feed.logDescription, privacy: .public)")
-        Logger.setup.info("journal handoff: fetching journal appcast")
-        let appcastData: Data
-        do {
-            appcastData = try await dependencies.appcastClient.fetchAppcast(from: selection.url)
-        } catch let failure as JournalHandoffFailure {
-            throw failure
-        } catch {
-            throw JournalHandoffFailure.appcastUnavailable(String(describing: error))
-        }
-
-        step = .acquiring(.selectingLatestSparkleVersion)
-        let item = try JournalAppcastParser.latestItem(from: appcastData)
-
-        step = .acquiring(.validatingLength)
-        try validateLength(item.length, maxBytes: dependencies.maxDMGBytes)
-
-        step = .acquiring(.downloadingDMG)
-        let dmgURL = try await dependencies.downloader.downloadDMG(
-            from: item.url,
-            expectedLength: item.length,
-            maxBytes: dependencies.maxDMGBytes
-        )
-        defer { try? dependencies.fileManager.removeItem(at: dmgURL) }
-
-        do {
-            try validateDownloadedLength(fileURL: dmgURL, expectedLength: item.length)
-
-            step = .acquiring(.verifyingEdDSA)
-            try verifyEdDSASignature(
-                fileURL: dmgURL,
-                signatureBase64: item.edSignature,
-                publicKeyBase64: dependencies.publicEDKeyBase64
-            )
-
-            step = .acquiring(.mountingDMG)
-            let mounted = try await dependencies.mounter.mount(dmgURL: dmgURL)
-            do {
-                step = .acquiring(.verifyingJournalAppTrust)
-                try await dependencies.trustVerifier.verifyJournalApp(at: mounted.journalAppURL)
-
-                step = .acquiring(.installingToApplications)
-                let installedURL = try await installJournalApp(from: mounted.journalAppURL)
-
-                step = .acquiring(.clearingQuarantine)
-                try? await clearQuarantine(at: installedURL)
-
-                step = .acquiring(.cleaningTemporaryFiles)
-                await dependencies.mounter.detach(mounted)
-                return installedURL
-            } catch {
-                await dependencies.mounter.detach(mounted)
-                throw error
-            }
-        } catch {
-            step = .acquiring(.cleaningTemporaryFiles)
-            throw error
+        try await dependencies.makeAcquirer().acquire { phase in
+            self.step = .acquiring(phase)
         }
     }
 
@@ -751,72 +716,6 @@ final class JournalHandoffOrchestrator {
         default:
             return false
         }
-    }
-
-    private func validateLength(_ length: Int64, maxBytes: Int64) throws {
-        guard length <= maxBytes else {
-            throw JournalHandoffFailure.lengthExceedsCap(length: length, cap: maxBytes)
-        }
-    }
-
-    private func validateDownloadedLength(fileURL: URL, expectedLength: Int64) throws {
-        let values = try fileURL.resourceValues(forKeys: [.fileSizeKey])
-        let actualLength = Int64(values.fileSize ?? -1)
-        guard actualLength == expectedLength else {
-            throw JournalHandoffFailure.lengthMismatch(expected: expectedLength, actual: actualLength)
-        }
-    }
-
-    private func verifyEdDSASignature(fileURL: URL, signatureBase64: String, publicKeyBase64: String) throws {
-        guard let signature = Data(base64Encoded: signatureBase64),
-              signature.count == 64,
-              let publicKeyBytes = Data(base64Encoded: publicKeyBase64),
-              publicKeyBytes.count == 32
-        else {
-            throw JournalHandoffFailure.invalidSignature
-        }
-
-        let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: publicKeyBytes)
-        let rawDMGBytes = try Data(contentsOf: fileURL)
-        guard publicKey.isValidSignature(signature, for: rawDMGBytes) else {
-            throw JournalHandoffFailure.signatureVerificationFailed
-        }
-    }
-
-    private func installJournalApp(from sourceURL: URL) async throws -> URL {
-        var isDirectory: ObjCBool = false
-        guard dependencies.fileManager.fileExists(atPath: dependencies.applicationsURL.path, isDirectory: &isDirectory),
-              isDirectory.boolValue
-        else {
-            throw JournalHandoffFailure.applicationsDirectoryUnavailable
-        }
-
-        guard dependencies.fileManager.isWritableFile(atPath: dependencies.applicationsURL.path) else {
-            throw JournalHandoffFailure.applicationsDirectoryUnwritable
-        }
-
-        let destinationURL = dependencies.applicationsURL.appendingPathComponent("journal.app", isDirectory: true)
-        do {
-            if dependencies.fileManager.fileExists(atPath: destinationURL.path) {
-                try dependencies.fileManager.removeItem(at: destinationURL)
-            }
-            try await JournalHandoffProcessRunner.run(
-                executable: "/usr/bin/ditto",
-                arguments: [sourceURL.path, destinationURL.path]
-            ).throwIfFailed("ditto")
-            return destinationURL
-        } catch let failure as JournalHandoffFailure {
-            throw failure
-        } catch {
-            throw JournalHandoffFailure.installFailed(String(describing: error))
-        }
-    }
-
-    private func clearQuarantine(at url: URL) async throws {
-        _ = try? await JournalHandoffProcessRunner.run(
-            executable: "/usr/bin/xattr",
-            arguments: ["-dr", "com.apple.quarantine", url.path]
-        )
     }
 
     private func startBestEffortMarkConfirm(
@@ -1157,6 +1056,12 @@ final class LiveRunningJournalController: RunningJournalController {
     func launchJournal(at url: URL) throws {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
+        workspace.openApplication(at: url, configuration: configuration)
+    }
+
+    func launchJournalActivating(at url: URL) throws {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
         workspace.openApplication(at: url, configuration: configuration)
     }
 }

@@ -67,6 +67,7 @@ enum AXID {
             static let localJournalDiscoveryState = "settings.service.localJournal.discovery.state"
             static let localJournalConfirm = "settings.service.localJournal.confirm"
             static let createJournalThisMac = "settings.service.journal.createThisMac"
+            static let createJournalState = "settings.service.journal.create.state"
             static let pairJournalAnotherDevice = "settings.service.journal.pairAnotherDevice"
             static let journalHandoffBanner = "settings.service.journal.handoff.banner"
             static let journalHandoffStart = "settings.service.journal.handoff.start"

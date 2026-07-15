@@ -55,6 +55,7 @@ enum AXContract {
         AXID.Settings.Service.localJournalDiscoveryState,
         AXID.Settings.Service.localJournalConfirm,
         AXID.Settings.Service.createJournalThisMac,
+        AXID.Settings.Service.createJournalState,
         AXID.Settings.Service.pairJournalAnotherDevice,
         AXID.Settings.Service.journalHandoffBanner,
         AXID.Settings.Service.journalHandoffStart,
@@ -230,6 +231,7 @@ enum AXContract {
             "PairingConnectionAXState": PairingConnectionAXState.axTokens,
             "PairingRelayAccessAXState": PairingRelayAccessAXState.axTokens,
             "JournalHandoffAXState": JournalHandoffAXState.allCases.map(\.axToken),
+            "FreshJournalAXState": FreshJournalAXState.allCases.map(\.axToken),
             "UpdateActivity": UpdateActivity.axTokens,
             "FrequencyOption": FrequencyOption.allCases.map(\.rawValue),
             "UpdateStatus": UpdateStatus.axTokens
@@ -253,6 +255,7 @@ enum AXContract {
             AXID.Settings.Service.journalConnectionState: .enum("PairingConnectionAXState"),
             AXID.Settings.Service.journalHandoffState: .enum("JournalHandoffAXState"),
             AXID.Settings.Service.localJournalDiscoveryState: .freeform,
+            AXID.Settings.Service.createJournalState: .enum("FreshJournalAXState"),
             AXID.Settings.Service.externalConnectionTestState: .enum("ConnectionTestState"),
             AXID.Settings.Service.pairingFlowState: .enum("PairingFlowState"),
             AXID.Settings.Service.pairingFailureState: .enum("PairingFailure"),

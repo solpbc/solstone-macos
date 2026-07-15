@@ -260,6 +260,7 @@ struct SettingsView: View {
     @State private var disconnectConfirmPending = false
     @State private var journalMarkDriver = JournalMarkConfirmationDriver()
     @State private var journalHandoffOrchestrator: JournalHandoffOrchestrator
+    @State private var freshFlow: FreshJournalFlow
     @State private var pairingMismatch = false
     @State private var journalMarkRederiveEligible = false
     @State private var journalMarkRederiveStarted = false
@@ -273,7 +274,6 @@ struct SettingsView: View {
     @State private var localLinkError: String?
     @State private var showPairingFlow = false
 
-    private let journalAppLauncher: any JournalAppLaunching
     private let journalNameFetch: @MainActor @Sendable (String) async -> String?
     private let localIdentityFetch: @MainActor @Sendable (String) async -> JournalMark?
     private let observerRegister: @MainActor @Sendable (
@@ -291,8 +291,8 @@ struct SettingsView: View {
         initialLocalJournalMark: JournalMark? = nil,
         initialLocalDiscoveryCompleted: Bool = false,
         initialShowPairingFlow: Bool = false,
-        journalAppLauncher: any JournalAppLaunching = LiveJournalAppLauncher(),
         journalHandoffOrchestrator: JournalHandoffOrchestrator = JournalHandoffOrchestrator(),
+        freshFlow: FreshJournalFlow = FreshJournalFlow(),
         journalNameFetch: @escaping @MainActor @Sendable (String) async -> String? = { baseURL in
             await JournalNameFetcher().fetch(baseURL: baseURL)
         },
@@ -311,7 +311,6 @@ struct SettingsView: View {
     ) {
         self.appState = appState
         self.updateController = updateController
-        self.journalAppLauncher = journalAppLauncher
         self.journalNameFetch = journalNameFetch
         self.localIdentityFetch = localIdentityFetch
         self.observerRegister = observerRegister
@@ -319,6 +318,7 @@ struct SettingsView: View {
         self._selectedTab = State(initialValue: selectedTab)
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
         self._journalHandoffOrchestrator = State(initialValue: journalHandoffOrchestrator)
+        self._freshFlow = State(initialValue: freshFlow)
         self._journalName = State(initialValue: initialJournalName)
         self._localJournalMark = State(initialValue: initialLocalJournalMark)
         self._localDiscoveryCompleted = State(initialValue: initialLocalDiscoveryCompleted)
@@ -888,6 +888,19 @@ struct SettingsView: View {
             if observerKey.isEmpty { observerKey = appState.config.serverKey ?? "" }
             refreshJournalName()
             refreshLocalJournalDiscoveryIfNeeded()
+            freshFlow.armWaitingProbe()
+        }
+        .onChange(of: freshFlow.state) { _, newState in
+            if newState == .waitingForJournal {
+                freshFlow.armWaitingProbe()
+            } else {
+                freshFlow.cancelWaitingProbe()
+            }
+        }
+        .onChange(of: freshFlow.discoveredJournalMark) { _, mark in
+            guard let mark else { return }
+            localJournalMark = mark
+            localDiscoveryCompleted = true
         }
         .onChange(of: appState.config.serverURL) { _, _ in
             observerURL = appState.config.serverURL ?? ""
@@ -908,6 +921,7 @@ struct SettingsView: View {
         .onDisappear {
             journalNameFetchTask?.cancel()
             localDiscoveryTask?.cancel()
+            freshFlow.cancelWaitingProbe()
         }
     }
 
@@ -1066,10 +1080,21 @@ struct SettingsView: View {
                         id: AXID.Settings.Service.localJournalDiscoveryState,
                         value: "not_found"
                     )
+                    AXStateCompanion(
+                        id: AXID.Settings.Service.createJournalState,
+                        value: freshFlow.state.axState.axToken
+                    )
                     Button("create your journal on this mac") {
-                        journalAppLauncher.launchOrDownload()
+                        freshFlow.start()
                     }
                     .accessibilityIdentifier(AXID.Settings.Service.createJournalThisMac)
+                    .disabled(freshFlow.state.isBusy)
+
+                    if freshFlow.state != .idle {
+                        Text(freshFlow.state.ownerStatusMessage)
+                            .font(.caption)
+                            .foregroundStyle(freshJournalStatusColor)
+                    }
 
                     Button("pair to a journal on another device") {
                         showPairingFlow = true
@@ -1147,6 +1172,15 @@ struct SettingsView: View {
             return .red
         case .completed:
             return .green
+        default:
+            return .secondary
+        }
+    }
+
+    private var freshJournalStatusColor: Color {
+        switch freshFlow.state {
+        case .failed:
+            return .red
         default:
             return .secondary
         }

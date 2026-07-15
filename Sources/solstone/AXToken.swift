@@ -103,6 +103,14 @@ internal enum JournalHandoffAXState: CaseIterable {
     case aborted
 }
 
+internal enum FreshJournalAXState: CaseIterable {
+    case idle
+    case acquiring
+    case launching
+    case waitingForJournal
+    case failed
+}
+
 extension UploadCoordinator.Status {
     public static let axTokens = [
         "not_synced",
@@ -294,6 +302,23 @@ extension JournalHandoffAXState {
             return "failed"
         case .aborted:
             return "aborted"
+        }
+    }
+}
+
+extension FreshJournalAXState {
+    var axToken: String {
+        switch self {
+        case .idle:
+            return "idle"
+        case .acquiring:
+            return "acquiring"
+        case .launching:
+            return "launching"
+        case .waitingForJournal:
+            return "waiting_for_journal"
+        case .failed:
+            return "failed"
         }
     }
 }

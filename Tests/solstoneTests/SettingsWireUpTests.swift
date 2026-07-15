@@ -47,6 +47,7 @@ struct SettingsWireUpTests {
             "AXID.Settings.Service.localJournalDiscoveryState",
             "AXID.Settings.Service.localJournalConfirm",
             "AXID.Settings.Service.createJournalThisMac",
+            "AXID.Settings.Service.createJournalState",
             "AXID.Settings.Service.pairJournalAnotherDevice",
             "AXID.Settings.Service.journalHandoffBanner",
             "AXID.Settings.Service.journalHandoffStart",

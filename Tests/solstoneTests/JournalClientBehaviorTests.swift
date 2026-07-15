@@ -215,25 +215,6 @@ struct JournalClientBehaviorTests {
         #expect(notFound == .fork)
     }
 
-    @Test func createJournalLauncherLaunchesAppWhenPresent() {
-        let appURL = URL(fileURLWithPath: "/Applications/Journal.app")
-        let workspace = RecordingJournalAppWorkspace(appURL: appURL)
-        LiveJournalAppLauncher(workspace: workspace).launchOrDownload()
-
-        #expect(workspace.requestedBundleIDs == ["app.solstone.journal"])
-        #expect(workspace.openedApplications == [appURL])
-        #expect(workspace.openedURLs.isEmpty)
-    }
-
-    @Test func createJournalLauncherOpensDownloadWhenAppMissing() {
-        let workspace = RecordingJournalAppWorkspace(appURL: nil)
-        LiveJournalAppLauncher(workspace: workspace).launchOrDownload()
-
-        #expect(workspace.requestedBundleIDs == ["app.solstone.journal"])
-        #expect(workspace.openedApplications.isEmpty)
-        #expect(workspace.openedURLs == [URL(string: "https://solstone.app/download")!])
-    }
-
     private func bundledConfiguredState(syncPaused: Bool = false) -> AppState {
         AppState.forSnapshot(config: AppConfig(
             serverURL: ServiceMode.bundledServiceURL,
@@ -325,29 +306,4 @@ private func markObject() -> [String: Any] {
 private func jsonObject(_ body: String) throws -> [String: Any] {
     let data = Data(body.utf8)
     return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-}
-
-@MainActor
-private final class RecordingJournalAppWorkspace: JournalAppWorkspace {
-    let appURL: URL?
-    var requestedBundleIDs: [String] = []
-    var openedApplications: [URL] = []
-    var openedURLs: [URL] = []
-
-    init(appURL: URL?) {
-        self.appURL = appURL
-    }
-
-    func urlForApplication(withBundleIdentifier bundleIdentifier: String) -> URL? {
-        requestedBundleIDs.append(bundleIdentifier)
-        return appURL
-    }
-
-    func openApplication(at appURL: URL) {
-        openedApplications.append(appURL)
-    }
-
-    func open(_ url: URL) {
-        openedURLs.append(url)
-    }
 }

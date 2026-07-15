@@ -138,6 +138,7 @@
       "settings.service.external.testConnection",
       "settings.service.external.viewStatus",
       "settings.service.journal.connection.state",
+      "settings.service.journal.create.state",
       "settings.service.journal.createThisMac",
       "settings.service.journal.handoff.banner",
       "settings.service.journal.handoff.start",
@@ -263,6 +264,10 @@
       "kind" : "enum",
       "vocabulary" : "PairingConnectionAXState"
     },
+    "settings.service.journal.create.state" : {
+      "kind" : "enum",
+      "vocabulary" : "FreshJournalAXState"
+    },
     "settings.service.journal.handoff.state" : {
       "kind" : "enum",
       "vocabulary" : "JournalHandoffAXState"
@@ -387,6 +392,13 @@
       "day",
       "week",
       "month"
+    ],
+    "FreshJournalAXState" : [
+      "idle",
+      "acquiring",
+      "launching",
+      "waiting_for_journal",
+      "failed"
     ],
     "JournalHandoffAXState" : [
       "idle",

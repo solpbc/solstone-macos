@@ -263,6 +263,209 @@ struct JournalHandoffTests {
         try expectNoTempDebris(in: tampered.tempRoot)
     }
 
+    @Test func recordsSuccessfulFreshAcquireStepSequence() async throws {
+        let world = signedWorld()
+        world.initProbe.replies = [.result(.incomplete), .result(.complete)]
+        var recorded: [JournalHandoffStep] = [.idle]
+        let orchestrator = JournalHandoffOrchestrator(dependencies: world.dependencies)
+        orchestrator.onStepTransition = { step in
+            recorded.append(step)
+        }
+
+        let result = await orchestrator.run(
+            appState: world.state,
+            markDriver: world.driver,
+            markFetch: { _ in nil }
+        )
+        world.driver.cancel()
+
+        #expect(result == .completed)
+        #expect(recorded == [
+            .idle,
+            .acquiring(.fetchingAppcast),
+            .acquiring(.selectingLatestSparkleVersion),
+            .acquiring(.validatingLength),
+            .acquiring(.downloadingDMG),
+            .acquiring(.verifyingEdDSA),
+            .acquiring(.mountingDMG),
+            .acquiring(.verifyingJournalAppTrust),
+            .acquiring(.installingToApplications),
+            .acquiring(.clearingQuarantine),
+            .acquiring(.cleaningTemporaryFiles),
+            .checkingRunningJournal,
+            .writingHandoff,
+            .launchingJournal,
+            .waitingForAdoption,
+            .authGate,
+            .flippingToExternal,
+            .triggeringSyncDrain,
+            .confirmingMarkBestEffort,
+            .completed
+        ])
+    }
+
+    @Test func freshFlowInstalledTrustedLaunchesActivatedWithoutAcquire() async throws {
+        let world = installedWorld()
+        let flow = freshFlow(world: world)
+
+        flow.start()
+        try await waitUntil("fresh flow waiting for installed journal") {
+            flow.state == .waitingForJournal
+        }
+
+        #expect(world.trustVerifier.calls == [world.installedJournalURL])
+        #expect(world.appcast.requestedURLs.isEmpty)
+        #expect(world.downloader.calls.isEmpty)
+        #expect(world.runningJournal.launches == 0)
+        #expect(world.runningJournal.activatingLaunches == 1)
+    }
+
+    @Test func freshFlowAbsentAppAcquiresThenLaunchesActivated() async throws {
+        let world = signedWorld()
+        let flow = freshFlow(world: world)
+
+        flow.start()
+        try await waitUntil("fresh flow waiting after acquire") {
+            flow.state == .waitingForJournal
+        }
+
+        #expect(world.appcast.requestedURLs == [JournalHandoffConstants.appcastURL])
+        #expect(world.downloader.calls.count == 1)
+        #expect(world.mounter.mounts == 1)
+        #expect(world.mounter.detaches == 1)
+        #expect(world.runningJournal.launches == 0)
+        #expect(world.runningJournal.activatingLaunches == 1)
+        #expect(FileManager.default.fileExists(atPath: world.installedJournalURL.path))
+    }
+
+    @Test func freshFlowVerificationFailuresFailWithoutInstall() async throws {
+        let lengthMismatch = TestWorld(appcastData: appcast([
+            appcastItem(version: 1, length: "4")
+        ]))
+        lengthMismatch.downloader.bytes = Data("five!".utf8)
+        try await expectFreshFlowFailure(
+            world: lengthMismatch,
+            .lengthMismatch(expected: 4, actual: 5)
+        )
+
+        let edDSAMismatch = signedWorld()
+        edDSAMismatch.downloader.bytes = Data("Real journal dmg bytes".utf8)
+        try await expectFreshFlowFailure(
+            world: edDSAMismatch,
+            .signatureVerificationFailed
+        )
+
+        let bundleMismatch = signedWorld()
+        bundleMismatch.trustVerifier.failure = .trustFailed("bundle identifier mismatch")
+        try await expectFreshFlowFailure(
+            world: bundleMismatch,
+            .trustFailed("bundle identifier mismatch")
+        )
+
+        let teamMismatch = signedWorld()
+        teamMismatch.trustVerifier.failure = .trustFailed("team identifier mismatch")
+        try await expectFreshFlowFailure(
+            world: teamMismatch,
+            .trustFailed("team identifier mismatch")
+        )
+    }
+
+    @Test func freshFlowDoubleStartWhileInFlightIsNoOp() async throws {
+        let world = signedWorld()
+        world.appcast.beforeReturn = {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        let flow = freshFlow(world: world)
+
+        flow.start()
+        flow.start()
+        try await waitUntil("fresh flow waiting after double start") {
+            flow.state == .waitingForJournal
+        }
+
+        #expect(world.appcast.requestedURLs.count == 1)
+        #expect(world.downloader.calls.count == 1)
+        #expect(world.runningJournal.activatingLaunches == 1)
+    }
+
+    @Test func freshFlowUsesSelectedFeedResolver() async throws {
+        let staging = signedWorld()
+        staging.selectFeed(stagingFeedSelection)
+        let stagingFlow = freshFlow(world: staging)
+
+        stagingFlow.start()
+        try await waitUntil("fresh flow staging acquire") {
+            stagingFlow.state == .waitingForJournal
+        }
+
+        #expect(staging.appcast.requestedURLs == [JournalHandoffConstants.stagingAppcastURL])
+        #expect(staging.feedResolver.calls == 1)
+
+        let rejected = signedWorld()
+        rejected.selectFeed(rejectedFeedSelection)
+        let rejectedFlow = freshFlow(world: rejected)
+
+        rejectedFlow.start()
+        try await waitUntil("fresh flow rejected override acquire") {
+            rejectedFlow.state == .waitingForJournal
+        }
+
+        #expect(rejected.appcast.requestedURLs == [JournalHandoffConstants.appcastURL])
+        #expect(rejected.feedResolver.calls == 1)
+    }
+
+    @Test func freshFlowWaitingProbeStoresDiscoveredMarkAndStops() async throws {
+        let world = installedWorld()
+        var calls = 0
+        let flow = freshFlow(
+            world: world,
+            fetchIdentity: { _ in
+                calls += 1
+                return calls == 1 ? nil : .uiTestSample
+            },
+            sleep: { _ in }
+        )
+
+        flow.start()
+        try await waitUntil("fresh flow waiting before probe") {
+            flow.state == .waitingForJournal
+        }
+        flow.armWaitingProbe()
+        try await waitUntil("fresh flow discovered journal mark") {
+            flow.discoveredJournalMark == .uiTestSample
+        }
+        await Task.yield()
+
+        #expect(calls == 2)
+    }
+
+    @Test func freshFlowCancelWaitingProbeStopsProbing() async throws {
+        let world = installedWorld()
+        var calls = 0
+        let flow = freshFlow(
+            world: world,
+            fetchIdentity: { _ in
+                calls += 1
+                return nil
+            },
+            waitingPollInterval: .milliseconds(5)
+        )
+
+        flow.start()
+        try await waitUntil("fresh flow waiting before cancel probe") {
+            flow.state == .waitingForJournal
+        }
+        flow.armWaitingProbe()
+        try await waitUntil("fresh flow probe made first call") {
+            calls > 0
+        }
+        flow.cancelWaitingProbe()
+        let callsAfterCancel = calls
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(calls == callsAfterCancel)
+    }
+
     @Test func acquireFailureBranchesLeaveNoTemporaryDebris() async throws {
         let signatureWorld = signedWorld()
         signatureWorld.downloader.bytes = Data("tampered".utf8)
@@ -536,6 +739,57 @@ struct JournalHandoffTests {
         world.runningJournal.installed = world.installedJournalURL
         return world
     }
+
+    private func freshFlow(
+        world: TestWorld,
+        fetchIdentity: @escaping @MainActor @Sendable (String) async -> JournalMark? = { _ in nil },
+        waitingPollInterval: Duration = .milliseconds(1),
+        sleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = { duration in
+            try await Task.sleep(for: duration)
+        }
+    ) -> FreshJournalFlow {
+        FreshJournalFlow(dependencies: FreshJournalFlowDependencies(
+            acquirer: world.dependencies.makeAcquirer(),
+            runningJournal: world.runningJournal,
+            trustVerifier: world.trustVerifier,
+            fetchIdentity: fetchIdentity,
+            waitingPollInterval: waitingPollInterval,
+            sleep: sleep
+        ))
+    }
+
+    private func waitUntil(
+        _ description: String,
+        attempts: Int = 200,
+        predicate: @escaping @MainActor () -> Bool
+    ) async throws {
+        for _ in 0..<attempts {
+            if predicate() {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        Issue.record("timed out waiting for \(description)")
+    }
+
+    private func expectFreshFlowFailure(
+        world: TestWorld,
+        _ expectedFailure: JournalHandoffFailure
+    ) async throws {
+        let flow = freshFlow(world: world)
+
+        flow.start()
+        try await waitUntil("fresh flow failure") {
+            if case .failed = flow.state {
+                return true
+            }
+            return false
+        }
+
+        #expect(flow.state == .failed(expectedFailure))
+        #expect(!FileManager.default.fileExists(atPath: world.installedJournalURL.path))
+        #expect(world.runningJournal.activatingLaunches == 0)
+    }
 }
 
 @MainActor
@@ -650,6 +904,7 @@ private final class FakeAppcastFeedResolver {
 private final class FakeAppcastClient: AppcastClient {
     let data: Data
     var failure: JournalHandoffFailure?
+    var beforeReturn: (@MainActor () async -> Void)?
     var requestedURLs: [URL] = []
 
     init(data: Data) {
@@ -658,6 +913,9 @@ private final class FakeAppcastClient: AppcastClient {
 
     func fetchAppcast(from url: URL) async throws -> Data {
         requestedURLs.append(url)
+        if let beforeReturn {
+            await beforeReturn()
+        }
         if let failure {
             throw failure
         }
@@ -760,6 +1018,7 @@ private final class FakeRunningJournalController: RunningJournalController {
     var running = false
     var refusesTerminate = false
     var launches = 0
+    var activatingLaunches = 0
     var terminateCalls = 0
 
     func installedURL() -> URL? {
@@ -781,6 +1040,11 @@ private final class FakeRunningJournalController: RunningJournalController {
 
     func launchJournal(at url: URL) throws {
         launches += 1
+        running = true
+    }
+
+    func launchJournalActivating(at url: URL) throws {
+        activatingLaunches += 1
         running = true
     }
 }
