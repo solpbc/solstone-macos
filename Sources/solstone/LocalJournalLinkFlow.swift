@@ -20,7 +20,7 @@ func discoverLocalJournal(
     return .fork
 }
 
-func makeLocalObserverRegistrationDescriptor(
+func makeObserverRegistrationDescriptor(
     hostname: String = ProcessInfo.processInfo.hostName,
     version: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
 ) -> ObserverRegistrationDescriptor {
@@ -54,7 +54,7 @@ func performLocalObserverRegistration(
         _ descriptor: ObserverRegistrationDescriptor
     ) async -> Result<ObserverRegistration, ObserverRegistrationFailure>
 ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> {
-    let descriptor = makeLocalObserverRegistrationDescriptor()
+    let descriptor = makeObserverRegistrationDescriptor()
     let result = await register(ServiceMode.bundledServiceURL, descriptor)
     if case .success(let registration) = result {
         persistLocalObserverRegistration(registration, appState: appState)

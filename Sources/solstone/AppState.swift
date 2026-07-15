@@ -76,6 +76,12 @@ public final class AppState {
     internal let tunnelLifecycleOwner: TunnelLifecycleOwner
     internal let pairingCoordinator: PairingCoordinator
     private let homeBaseURLResolver: HomeBaseURLResolver
+    private let observerRegister: @MainActor @Sendable (
+        _ baseURL: String,
+        _ descriptor: ObserverRegistrationDescriptor
+    ) async -> Result<ObserverRegistration, ObserverRegistrationFailure>
+    // Test seam for observing tunnel-connected sync nudges when UploadCoordinator short-circuits.
+    private let triggerTunnelConnectedSync: @MainActor @Sendable (AppState) -> Void
     private let notifier: any SolChatNotifying
     private let loginService: any LoginItemService
     private let isSnapshot: Bool
@@ -137,6 +143,7 @@ public final class AppState {
 
     private var tunnelLifecycleObservationEnabled = false
     private var previousTunnelLifecycleState: TunnelLifecycleState?
+    private var tunnelObserverRegistrationTask: Task<Void, Never>?
     private var notificationRequestTask: Task<Void, Never>?
     private var activationObserver: NSObjectProtocol?
     internal var terminationDrainer: any TerminationDraining = RemixQueue.shared
@@ -547,7 +554,16 @@ public final class AppState {
 
     public init(
         notifier: any SolChatNotifying = UNUserNotificationSolChatNotifier(),
-        loginService: any LoginItemService = LiveLoginItemService()
+        loginService: any LoginItemService = LiveLoginItemService(),
+        observerRegister: @escaping @MainActor @Sendable (
+            _ baseURL: String,
+            _ descriptor: ObserverRegistrationDescriptor
+        ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> = { baseURL, descriptor in
+            await ObserverRegistrationClient().register(baseURL: baseURL, descriptor: descriptor)
+        },
+        triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
+            $0.uploadCoordinator.triggerSync()
+        }
     ) {
         // Load configuration
         let config = AppConfig.loadOrCreateDefault()
@@ -566,6 +582,8 @@ public final class AppState {
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isSnapshot = false
         self.config = config
+        self.observerRegister = observerRegister
+        self.triggerTunnelConnectedSync = triggerTunnelConnectedSync
         self.notifier = notifier
         self.loginService = loginService
         self.observerHealthSnapshotEnabled = true
@@ -755,7 +773,16 @@ public final class AppState {
         config: AppConfig = AppConfig(),
         notificationStatus: UNAuthorizationStatus = .authorized,
         notifier: (any SolChatNotifying)? = nil,
-        initialTunnelPairing: StoredPairing? = nil
+        initialTunnelPairing: StoredPairing? = nil,
+        observerRegister: @escaping @MainActor @Sendable (
+            _ baseURL: String,
+            _ descriptor: ObserverRegistrationDescriptor
+        ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> = { baseURL, descriptor in
+            await ObserverRegistrationClient().register(baseURL: baseURL, descriptor: descriptor)
+        },
+        triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
+            $0.uploadCoordinator.triggerSync()
+        }
     ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
@@ -764,7 +791,9 @@ public final class AppState {
             notificationStatus: notificationStatus,
             isSnapshot: true,
             notifier: notifier ?? NoopSolChatNotifier(),
-            initialTunnelPairing: initialTunnelPairing
+            initialTunnelPairing: initialTunnelPairing,
+            observerRegister: observerRegister,
+            triggerTunnelConnectedSync: triggerTunnelConnectedSync
         )
     }
 
@@ -791,7 +820,16 @@ public final class AppState {
         isSnapshot: Bool,
         notifier: any SolChatNotifying,
         initialTunnelPairing: StoredPairing? = nil,
-        loginService: any LoginItemService = LiveLoginItemService()
+        loginService: any LoginItemService = LiveLoginItemService(),
+        observerRegister: @escaping @MainActor @Sendable (
+            _ baseURL: String,
+            _ descriptor: ObserverRegistrationDescriptor
+        ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> = { baseURL, descriptor in
+            await ObserverRegistrationClient().register(baseURL: baseURL, descriptor: descriptor)
+        },
+        triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
+            $0.uploadCoordinator.triggerSync()
+        }
     ) {
         let pauseManager = PauseManager()
         let storageManager = StorageManager()
@@ -811,6 +849,8 @@ public final class AppState {
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isSnapshot = isSnapshot
         self.config = config
+        self.observerRegister = observerRegister
+        self.triggerTunnelConnectedSync = triggerTunnelConnectedSync
         self.notifier = notifier
         self.loginService = loginService
         self.observerHealthSnapshotEnabled = false
@@ -922,11 +962,37 @@ public final class AppState {
         handleTunnelLifecycleState(current)
     }
 
-    private func handleTunnelLifecycleState(_ newState: TunnelLifecycleState) {
+    internal func handleTunnelLifecycleState(_ newState: TunnelLifecycleState) {
         let previousState = previousTunnelLifecycleState
         previousTunnelLifecycleState = newState
         guard isConnected(newState), !isConnected(previousState) else { return }
-        uploadCoordinator.triggerSync()
+
+        let registrationTask: Task<Void, Never>
+        if let inFlight = tunnelObserverRegistrationTask {
+            registrationTask = inFlight
+        } else {
+            let task = Task { @MainActor [weak self] in
+                guard let self else { return }
+                await performTunnelObserverRegistration(
+                    appState: self,
+                    isTunnelManaged: self.tunnelLifecycleOwner.isTunnelManaged,
+                    resolveBase: { [weak self] in
+                        guard let self else { return .held }
+                        return await self.resolveHomeBase()
+                    },
+                    register: self.observerRegister
+                )
+                self.tunnelObserverRegistrationTask = nil
+            }
+            tunnelObserverRegistrationTask = task
+            registrationTask = task
+        }
+
+        Task { @MainActor [weak self, registrationTask] in
+            await registrationTask.value
+            guard let self else { return }
+            self.triggerTunnelConnectedSync(self)
+        }
     }
 
     private func isConnected(_ state: TunnelLifecycleState?) -> Bool {

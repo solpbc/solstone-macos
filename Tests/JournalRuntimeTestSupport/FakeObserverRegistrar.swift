@@ -1,5 +1,5 @@
 import Foundation
-import JournalRuntime
+import JournalMarkKit
 
 public final class FakeObserverRegistrar: @unchecked Sendable {
     private let lock = NSLock()
@@ -7,9 +7,10 @@ public final class FakeObserverRegistrar: @unchecked Sendable {
     private let fallbackResult: Result<ObserverRegistration, ObserverRegistrationFailure>
     private let delay: Duration
     private var descriptors: [ObserverRegistrationDescriptor] = []
+    private var recordedBaseURLs: [String] = []
 
     public init(
-        result: Result<ObserverRegistration, ObserverRegistrationFailure> = .success(ObserverRegistration(key: "observer-key", name: "observer-name")),
+        result: Result<ObserverRegistration, ObserverRegistrationFailure> = .success(ObserverRegistration(key: "observer-key", streamName: "observer-stream")),
         delay: Duration = .zero
     ) {
         self.results = [result]
@@ -22,7 +23,7 @@ public final class FakeObserverRegistrar: @unchecked Sendable {
         delay: Duration = .zero
     ) {
         self.results = results
-        self.fallbackResult = results.last ?? .success(ObserverRegistration(key: "observer-key", name: "observer-name"))
+        self.fallbackResult = results.last ?? .success(ObserverRegistration(key: "observer-key", streamName: "observer-stream"))
         self.delay = delay
     }
 
@@ -38,17 +39,33 @@ public final class FakeObserverRegistrar: @unchecked Sendable {
         return descriptors.last
     }
 
-    public func register(_ descriptor: ObserverRegistrationDescriptor) async -> Result<ObserverRegistration, ObserverRegistrationFailure> {
-        record(descriptor)
+    public var lastBaseURL: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedBaseURLs.last
+    }
+
+    public var baseURLs: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedBaseURLs
+    }
+
+    public func register(
+        baseURL: String,
+        descriptor: ObserverRegistrationDescriptor
+    ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> {
+        record(baseURL: baseURL, descriptor: descriptor)
         if delay != .zero {
             try? await Task.sleep(for: delay)
         }
         return nextResult()
     }
 
-    private func record(_ descriptor: ObserverRegistrationDescriptor) {
+    private func record(baseURL: String, descriptor: ObserverRegistrationDescriptor) {
         lock.lock()
         defer { lock.unlock() }
+        recordedBaseURLs.append(baseURL)
         descriptors.append(descriptor)
     }
 
