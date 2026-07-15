@@ -5,6 +5,13 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.7] - 2026-07-15
+
+### Added
+- "create your journal on this mac" now gets the journal app for you in-app, over the same signed and verified path sol already uses for journal migration, then connects once your journal is ready.
+- if a journal from an earlier install is found on this mac, sol names it and offers to install the journal app to bring it back online, adopting it in place at its original location.
+- when sol is on but no journal is set up yet, the menu bar icon shows an attention badge so first-run setup is easy to spot.
+
 ## [1.4.6] - 2026-07-11
 
 ### Changed
