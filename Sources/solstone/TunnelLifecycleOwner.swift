@@ -190,12 +190,16 @@ final class TunnelLifecycleOwner {
             return
         }
 
-        startTask?.cancel()
-        startTask = nil
+        let previous = startTask
+        previous?.cancel()
         cancelReactiveTokenRefresh()
-        await disconnectCurrentTransport()
         startTask = Task { @MainActor [weak self] in
-            await self?.connectFromStoredPairing()
+            await previous?.value
+            guard let self, self.running, !Task.isCancelled else {
+                return
+            }
+            await self.disconnectCurrentTransport()
+            await self.connectFromStoredPairing()
         }
     }
 

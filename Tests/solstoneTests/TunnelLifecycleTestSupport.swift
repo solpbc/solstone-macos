@@ -182,6 +182,8 @@ final class FakeTunnelTransport: TunnelTransporting {
     private var results: [Result<TunnelTransportConnection, Error>]
     private let tracker: ActiveSessionTracker?
     private var active = false
+    private var connectContinuations: [CheckedContinuation<Void, Never>]?
+    private var disconnectContinuations: [CheckedContinuation<Void, Never>]?
 
     private(set) var connectAttempts = 0
     private(set) var connectInFlight = 0
@@ -208,6 +210,34 @@ final class FakeTunnelTransport: TunnelTransporting {
         modes.continuation.yield(connectionMode)
     }
 
+    var pendingConnectCount: Int {
+        connectContinuations?.count ?? 0
+    }
+
+    var pendingDisconnectCount: Int {
+        disconnectContinuations?.count ?? 0
+    }
+
+    func armConnectGate() {
+        connectContinuations = []
+    }
+
+    func armDisconnectGate() {
+        disconnectContinuations = []
+    }
+
+    func releaseNextConnect() {
+        if connectContinuations?.isEmpty == false {
+            connectContinuations!.removeFirst().resume()
+        }
+    }
+
+    func releaseNextDisconnect() {
+        if disconnectContinuations?.isEmpty == false {
+            disconnectContinuations!.removeFirst().resume()
+        }
+    }
+
     func connect(pairing: StoredPairing, candidates _: [TransportEndpoint]) async throws -> TunnelTransportConnection {
         connectInFlight += 1
         maxConnectInFlight = max(maxConnectInFlight, connectInFlight)
@@ -217,6 +247,11 @@ final class FakeTunnelTransport: TunnelTransporting {
         connectAttempts += 1
         connectedPairings.append(pairing)
         let result = results.count > 1 ? results.removeFirst() : results[0]
+        if connectContinuations != nil {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                connectContinuations?.append(continuation)
+            }
+        }
         switch result {
         case .success(let connection):
             if !active {
@@ -235,6 +270,11 @@ final class FakeTunnelTransport: TunnelTransporting {
 
     func disconnect() async {
         disconnectCount += 1
+        if disconnectContinuations != nil {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                disconnectContinuations?.append(continuation)
+            }
+        }
         if active {
             active = false
             tracker?.didDisconnect()

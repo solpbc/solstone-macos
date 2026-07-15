@@ -943,6 +943,200 @@ struct TunnelLifecycleOwnerTests {
         #expect(store.loadCount == 2)
     }
 
+    @Test func concurrentReevaluatePairingUsesSingleReplacementConnect() async throws {
+        let store = PairingStore(pairing: pairing())
+        let sleeper = ManualSleeper()
+        let initialPort = 68100
+        let replacementPort = 68101
+        let initial = FakeTunnelTransport(connection: .init(localPort: initialPort, via: .relay))
+        let replacement = FakeTunnelTransport(connection: .init(localPort: replacementPort, via: .relay))
+        initial.armDisconnectGate()
+        replacement.armConnectGate()
+        let owner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([
+                initial,
+                replacement,
+                FakeTunnelTransport(),
+                FakeTunnelTransport(),
+            ]),
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: initialPort, via: .relay) }
+        // ManualSleeper is advanced only after the intended newest sleep parks;
+        // this holds its "at most one sleep live at a time" test-harness invariant.
+        try await waitUntil { await sleeper.sleepCount == 1 }
+
+        let reevaluateA = Task { await owner.reevaluatePairing() }
+        try await waitUntil { initial.pendingDisconnectCount == 1 }
+        let reevaluateB = Task { await owner.reevaluatePairing() }
+        await waitBrieflyUntil { replacement.pendingConnectCount >= 1 }
+        initial.releaseNextDisconnect()
+        await waitBrieflyUntil { replacement.pendingConnectCount == 2 }
+        await drainConnectGate(replacement)
+
+        await reevaluateA.value
+        await reevaluateB.value
+        try await waitUntil { owner.state == .connected(localPort: replacementPort, via: .relay) }
+        await owner.stop()
+
+        #expect(replacement.connectAttempts == 1)
+        #expect(replacement.maxConnectInFlight == 1)
+    }
+
+    @Test func concurrentReevaluatePairingKeepsProbeRunning() async throws {
+        let store = PairingStore(pairing: pairing())
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: Array(repeating: true, count: 4))
+        let initialPort = 68200
+        let firstReplacementPort = 68201
+        let secondReplacementPort = 68202
+        let initial = FakeTunnelTransport(connection: .init(localPort: initialPort, via: .relay))
+        let replacement = FakeTunnelTransport(results: [
+            .success(.init(localPort: firstReplacementPort, via: .relay)),
+            .success(.init(localPort: secondReplacementPort, via: .relay)),
+        ])
+        initial.armDisconnectGate()
+        replacement.armConnectGate()
+        let owner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([
+                initial,
+                replacement,
+                FakeTunnelTransport(),
+                FakeTunnelTransport(),
+            ]),
+            probe: { port, _ in await probe.run(port: port) },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: initialPort, via: .relay) }
+        // ManualSleeper is advanced only after the intended newest sleep parks;
+        // this holds its "at most one sleep live at a time" test-harness invariant.
+        try await waitUntil { await sleeper.sleepCount == 1 }
+
+        let reevaluateA = Task { await owner.reevaluatePairing() }
+        try await waitUntil { initial.pendingDisconnectCount == 1 }
+        let reevaluateB = Task { await owner.reevaluatePairing() }
+        await waitBrieflyUntil { replacement.pendingConnectCount >= 1 }
+        initial.releaseNextDisconnect()
+        await waitBrieflyUntil { replacement.pendingConnectCount == 2 }
+        await drainConnectGate(replacement)
+
+        await reevaluateA.value
+        await reevaluateB.value
+        try await waitUntil {
+            owner.state == .connected(localPort: firstReplacementPort, via: .relay) ||
+                owner.state == .connected(localPort: secondReplacementPort, via: .relay)
+        }
+        try await waitUntil { await sleeper.sleepCount >= 2 }
+
+        let probeRounds = 3
+        for expectedCount in 1...probeRounds {
+            await sleeper.advance()
+            await waitBrieflyUntil { await probe.count >= expectedCount }
+            await waitBrieflyUntil { await sleeper.sleepCount >= expectedCount + 2 }
+        }
+        await owner.stop()
+
+        // Pre-fix red: this stays 0 because probe_1 exits on the P1/P2 port
+        // divergence and probeTask never clears, so future startProbe calls refuse.
+        let finalProbeCount = await probe.count
+        #expect(finalProbeCount == probeRounds)
+    }
+
+    @Test func characterizationRepublishedConnectedDoesNotResetProbeInterval() async throws {
+        let port = 68300
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: Array(repeating: true, count: 4))
+        let transport = FakeTunnelTransport(connection: .init(localPort: port, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([
+                transport,
+                FakeTunnelTransport(),
+                FakeTunnelTransport(),
+                FakeTunnelTransport(),
+            ]),
+            probe: { port, _ in await probe.run(port: port) },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: port, via: .relay) }
+        // CHARACTERIZATION: this locks that a republished connected state does
+        // not reset the probe interval. ManualSleeper is advanced only after the
+        // intended newest sleep parks, holding its one-live-sleep invariant.
+        var expectedSleepCount = 1
+        try await waitUntil { await sleeper.sleepCount == expectedSleepCount }
+
+        for expectedProbeCount in 1...3 {
+            transport.emit(.connected(via: URL(string: "ws://relay.example")!.relayConnectedVia))
+            await waitBrieflyUntil { await sleeper.sleepCount > expectedSleepCount }
+            let durations = await sleeper.sleepDurations
+            #expect(durations.count == expectedSleepCount)
+
+            await sleeper.advance()
+            try await waitUntil { await probe.count == expectedProbeCount }
+            expectedSleepCount += 1
+            try await waitUntil { await sleeper.sleepCount == expectedSleepCount }
+        }
+        await owner.stop()
+    }
+
+    @Test func concurrentReevaluatePairingWaitsForPriorDisconnectBeforeReplacementConnect() async throws {
+        let store = PairingStore(pairing: pairing())
+        let sleeper = ManualSleeper()
+        let tracker = ActiveSessionTracker()
+        let initialPort = 68400
+        let replacementPort = 68401
+        let initial = FakeTunnelTransport(connection: .init(localPort: initialPort, via: .relay), tracker: tracker)
+        let replacement = FakeTunnelTransport(connection: .init(localPort: replacementPort, via: .relay), tracker: tracker)
+        initial.armDisconnectGate()
+        replacement.armConnectGate()
+        let owner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([
+                initial,
+                replacement,
+                FakeTunnelTransport(tracker: tracker),
+                FakeTunnelTransport(tracker: tracker),
+            ]),
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: initialPort, via: .relay) }
+        // ManualSleeper is advanced only after the intended newest sleep parks;
+        // this holds its "at most one sleep live at a time" test-harness invariant.
+        try await waitUntil { await sleeper.sleepCount == 1 }
+
+        let reevaluateA = Task { await owner.reevaluatePairing() }
+        try await waitUntil { initial.pendingDisconnectCount == 1 }
+        let reevaluateB = Task { await owner.reevaluatePairing() }
+        await waitBrieflyUntil { replacement.pendingConnectCount >= 1 }
+        if replacement.pendingConnectCount > 0 {
+            replacement.releaseNextConnect()
+            await waitBrieflyUntil { tracker.maxActive == 2 }
+        }
+        initial.releaseNextDisconnect()
+        await waitBrieflyUntil { replacement.pendingConnectCount == 1 }
+        await drainConnectGate(replacement)
+
+        await reevaluateA.value
+        await reevaluateB.value
+        try await waitUntil { owner.state == .connected(localPort: replacementPort, via: .relay) }
+        await owner.stop()
+
+        // This does not observe an NWListener directly; LoopbackProxy and
+        // TunnelSession live inside SPLTunnelTransport. Any listener leak is
+        // inferred from duplicate replacement connects here.
+        #expect(tracker.maxActive == 1)
+        #expect(replacement.connectAttempts == 1)
+    }
+
     @Test func shouldShowPairingRetryPredicate() {
         #expect(shouldShowPairingRetry(for: .error(.keychainUnavailable)))
         #expect(!shouldShowPairingRetry(for: .disconnected))
@@ -1002,6 +1196,18 @@ struct TunnelLifecycleOwnerTests {
             probe: probe,
             sleep: sleep
         )
+    }
+
+    private func drainConnectGate(_ transport: FakeTunnelTransport) async {
+        for _ in 0..<10 {
+            if transport.pendingConnectCount == 0 {
+                await waitBrieflyUntil { transport.pendingConnectCount > 0 }
+            }
+            guard transport.pendingConnectCount > 0 else {
+                return
+            }
+            transport.releaseNextConnect()
+        }
     }
 
     private func waitBrieflyUntil(_ condition: @escaping @MainActor @Sendable () async -> Bool) async {
