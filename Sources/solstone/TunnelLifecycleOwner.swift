@@ -112,6 +112,14 @@ final class TunnelLifecycleOwner {
     @ObservationIgnored
     private var authRefreshTask: Task<Void, Never>?
     @ObservationIgnored
+    private var authRefreshGeneration = 0
+    @ObservationIgnored
+    private var pendingReactiveRefresh = false
+    @ObservationIgnored
+    private var establishedLoopbackPort: Int?
+    @ObservationIgnored
+    private var establishmentInFlight = false
+    @ObservationIgnored
     private var currentPathSignature: NetworkPathSignature?
     @ObservationIgnored
     private var consecutiveProbeFailures = 0
@@ -167,8 +175,7 @@ final class TunnelLifecycleOwner {
         running = false
         startTask?.cancel()
         startTask = nil
-        authRefreshTask?.cancel()
-        authRefreshTask = nil
+        cancelReactiveTokenRefresh()
         pathMonitor.stop()
         currentPathSignature = nil
         await disconnectCurrentTransport()
@@ -185,8 +192,7 @@ final class TunnelLifecycleOwner {
 
         startTask?.cancel()
         startTask = nil
-        authRefreshTask?.cancel()
-        authRefreshTask = nil
+        cancelReactiveTokenRefresh()
         await disconnectCurrentTransport()
         startTask = Task { @MainActor [weak self] in
             await self?.connectFromStoredPairing()
@@ -237,6 +243,11 @@ final class TunnelLifecycleOwner {
     }
 
     private func connect() async {
+        establishmentInFlight = true
+        defer {
+            establishmentInFlight = false
+        }
+
         var establishmentAttempt = 1
         while running, !Task.isCancelled {
             switch await connectOnceForEstablishment() {
@@ -294,6 +305,7 @@ final class TunnelLifecycleOwner {
                 guard running, !Task.isCancelled else {
                     return .cancelled
                 }
+                establishedLoopbackPort = connection.localPort
                 state = .connected(localPort: connection.localPort, via: connection.via)
                 health = .unknown
                 consecutiveProbeFailures = 0
@@ -382,9 +394,11 @@ final class TunnelLifecycleOwner {
             health = .unknown
 
         case .connected(let via):
-            if let localPort {
-                state = .connected(localPort: localPort, via: Self.route(for: via))
-                startProbe(localPort: localPort)
+            if let port = establishedLoopbackPort {
+                state = .connected(localPort: port, via: Self.route(for: via))
+                startProbe(localPort: port)
+            } else if !establishmentInFlight {
+                splOwnerLog.error("tunnel republished connected with no remembered loopback port")
             }
 
         case .failed(.tokenExpired):
@@ -413,57 +427,117 @@ final class TunnelLifecycleOwner {
 
     private func beginReactiveTokenRefresh() {
         guard authRefreshTask == nil else {
+            pendingReactiveRefresh = true
             return
         }
 
+        launchReactiveTokenRefresh()
+    }
+
+    private func launchReactiveTokenRefresh() {
+        pendingReactiveRefresh = false
         stopProbe()
         state = .connecting
         health = .unknown
+        authRefreshGeneration += 1
+        let generation = authRefreshGeneration
         authRefreshTask = Task { @MainActor [weak self] in
-            await self?.runReactiveTokenRefresh()
+            await self?.runReactiveTokenRefresh(generation: generation)
         }
     }
 
-    private func runReactiveTokenRefresh() async {
+    private func finishReactiveTokenRefresh(generation: Int) {
+        guard authRefreshGeneration == generation else {
+            return
+        }
+        authRefreshTask = nil
+    }
+
+    private func cancelReactiveTokenRefresh() {
+        authRefreshTask?.cancel()
+        authRefreshTask = nil
+        authRefreshGeneration += 1
+        pendingReactiveRefresh = false
+    }
+
+    private func runReactiveTokenRefresh(generation: Int) async {
         defer {
-            authRefreshTask = nil
-        }
-        guard running, !Task.isCancelled else {
-            return
+            finishReactiveTokenRefresh(generation: generation)
         }
 
-        let pairing: StoredPairing
-        switch loadPairingCached() {
-        case .loaded(let loaded):
-            pairing = loaded
-        case .absent:
-            await disconnectCurrentTransport()
-            becomeDormant(tunnelManaged: false)
-            return
-        case .failed:
-            await failWithKeychainUnavailable()
-            return
-        }
-
-        switch await tokenRefresher.refreshNow(pairing) {
-        case .refreshed(let updated):
-            do {
-                try savePairing(updated)
-            } catch {
-                splOwnerLog.error("reactive token refresh save failed: \(String(describing: type(of: error)), privacy: .public)")
+        var attempt = 1
+        while running, !Task.isCancelled {
+            let pairing: StoredPairing
+            switch loadPairingCached() {
+            case .loaded(let loaded):
+                pairing = loaded
+            case .absent:
+                await disconnectCurrentTransport()
+                guard running, !Task.isCancelled else {
+                    return
+                }
+                becomeDormant(tunnelManaged: false)
+                return
+            case .failed:
                 await failWithKeychainUnavailable()
                 return
             }
-            setCachedPairingOutcome(.loaded(updated))
-            await disconnectCurrentTransport()
-            await connect()
 
-        case .transientFailure:
-            splOwnerLog.info("reactive token refresh transient failure; preserving pairing")
-            state = .connecting
+            let result = await tokenRefresher.refreshNow(pairing)
+            guard running, !Task.isCancelled else {
+                return
+            }
 
-        case .notNeeded, .definitiveAuthFailure:
-            await retirePairingAndFailRevoked()
+            switch result {
+            case .refreshed(let updated):
+                do {
+                    try savePairing(updated)
+                } catch {
+                    splOwnerLog.error("reactive token refresh save failed: \(String(describing: type(of: error)), privacy: .public)")
+                    await failWithKeychainUnavailable()
+                    return
+                }
+                setCachedPairingOutcome(.loaded(updated))
+                await disconnectCurrentTransport()
+                guard running, !Task.isCancelled else {
+                    return
+                }
+                pendingReactiveRefresh = false
+                await connect()
+                guard running, !Task.isCancelled else {
+                    return
+                }
+                if pendingReactiveRefresh {
+                    pendingReactiveRefresh = false
+                    state = .connecting
+                    health = .unknown
+                    let delay = Self.jitter(Self.establishmentBackoff(forAttempt: attempt))
+                    attempt += 1
+                    do {
+                        try await sleep(delay)
+                    } catch {
+                        return
+                    }
+                    continue
+                }
+                return
+
+            case .transientFailure:
+                splOwnerLog.info("reactive token refresh transient failure; preserving pairing")
+                state = .connecting
+                health = .unknown
+                let delay = Self.jitter(Self.establishmentBackoff(forAttempt: attempt))
+                attempt += 1
+                do {
+                    try await sleep(delay)
+                } catch {
+                    return
+                }
+
+            case .notNeeded, .definitiveAuthFailure:
+                await retirePairingAndFailRevoked()
+                return
+            }
         }
     }
 
@@ -654,6 +728,7 @@ final class TunnelLifecycleOwner {
 
     private func disconnectCurrentTransport() async {
         stopProbe()
+        establishedLoopbackPort = nil
         stateObservationTask?.cancel()
         stateObservationTask = nil
         modeObservationTask?.cancel()

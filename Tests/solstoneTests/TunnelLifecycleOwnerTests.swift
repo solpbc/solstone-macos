@@ -414,6 +414,396 @@ struct TunnelLifecycleOwnerTests {
         #expect(transport.disconnectCount >= 1)
     }
 
+    @Test func republishedConnectedRestoresRememberedLoopbackPort() async throws {
+        let port = 61234
+        let sleeper = ManualSleeper()
+        let transport = FakeTunnelTransport(connection: .init(localPort: port, via: .relay))
+        let owner = makeOwner(factory: FakeTransportFactory([transport]), sleep: { try await sleeper.sleep($0) })
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: port, via: .relay) }
+        transport.emit(.connecting(attempt: 2, candidates: []))
+        try await waitUntil { owner.state == .connecting }
+        transport.emit(.connected(via: .lanDirect(host: "127.0.0.1", port: port)))
+        await waitBrieflyUntil { owner.state == .connected(localPort: port, via: .lan) }
+        #expect(owner.state == .connected(localPort: port, via: .lan))
+        await owner.stop()
+    }
+
+    @Test func republishedConnectedRearmsProbe() async throws {
+        let port = 61235
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: [true])
+        let transport = FakeTunnelTransport(connection: .init(localPort: port, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            probe: { port, _ in await probe.run(port: port) },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: port, via: .relay) }
+        try await waitUntil { await sleeper.sleepCount == 1 }
+        transport.emit(.connecting(attempt: 2, candidates: []))
+        try await waitUntil { owner.state == .connecting }
+        transport.emit(.connected(via: .lanDirect(host: "127.0.0.1", port: port)))
+        await waitBrieflyUntil { await sleeper.sleepCount == 2 }
+        await sleeper.advance()
+        await waitBrieflyUntil { await probe.count == 1 }
+        await owner.stop()
+
+        #expect(await probe.count == 1)
+    }
+
+    @Test func rearmedProbeStillRequestsReconnectAfterFailures() async throws {
+        let port = 61236
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: [false, false, false])
+        let transport = FakeTunnelTransport(connection: .init(localPort: port, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            probe: { port, _ in await probe.run(port: port) },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: port, via: .relay) }
+        try await waitUntil { await sleeper.sleepCount == 1 }
+        transport.emit(.connecting(attempt: 2, candidates: []))
+        try await waitUntil { owner.state == .connecting }
+        transport.emit(.connected(via: .lanDirect(host: "127.0.0.1", port: port)))
+        try await waitUntil { await sleeper.sleepCount == 2 }
+
+        await sleeper.advance()
+        try await waitUntil { await probe.count == 1 }
+        try await waitUntil { await sleeper.sleepCount == 3 }
+        await sleeper.advance()
+        try await waitUntil { await probe.count == 2 }
+        try await waitUntil { await sleeper.sleepCount == 4 }
+        await sleeper.advance()
+        try await waitUntil { transport.requestReconnectCount == 1 }
+        await owner.stop()
+
+        #expect(await probe.count == 3)
+        #expect(transport.requestReconnectCount == 1)
+    }
+
+    @Test func republishedConnectedUsesPayloadRouteAfterModeDrain() async throws {
+        let port = 61237
+        let sleeper = ManualSleeper()
+        let transport = FakeTunnelTransport(
+            connectionMode: .plDirect,
+            connection: .init(localPort: port, via: .lan)
+        )
+        let owner = makeOwner(factory: FakeTransportFactory([transport]), sleep: { try await sleeper.sleep($0) })
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: port, via: .lan) }
+        transport.emitMode(.plViaSpl)
+        try await waitUntil { owner.state == .connected(localPort: port, via: .relay) }
+        transport.emit(.connecting(attempt: 2, candidates: []))
+        try await waitUntil { owner.state == .connecting }
+        transport.emit(.connected(via: .lanDirect(host: "127.0.0.1", port: port)))
+        await waitBrieflyUntil { owner.state == .connected(localPort: port, via: .lan) }
+        #expect(owner.state == .connected(localPort: port, via: .lan))
+        await owner.stop()
+    }
+
+    @Test func transientReactiveRefreshSchedulesBackoffRetry() async throws {
+        let current = pairing(deviceToken: "old-token")
+        let store = PairingStore(pairing: current)
+        let refresh = FakeTokenRefresher(
+            ifNeededResults: [.notNeeded(current)],
+            nowResults: [.transientFailure(current)]
+        )
+        let sleeper = ManualSleeper()
+        let transport = FakeTunnelTransport(results: [
+            .failure(SessionError.tokenExpired),
+        ])
+        let owner = makeOwner(
+            store: store,
+            refresher: refresh.seam,
+            factory: FakeTransportFactory([transport]),
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { transport.connectAttempts == 1 }
+        await waitBrieflyUntil { await sleeper.sleepCount == 1 }
+        #expect(await sleeper.sleepCount == 1)
+        await sleeper.advance()
+        await waitBrieflyUntil { await sleeper.sleepCount == 2 }
+        await owner.stop()
+
+        #expect(await sleeper.sleepCount == 2)
+        #expect(transport.connectAttempts == 1)
+    }
+
+    @Test func transientReactiveRefreshEventuallyReconnects() async throws {
+        let current = pairing(deviceToken: "old-token")
+        let updated = pairing(deviceToken: "new-token")
+        let store = PairingStore(pairing: current)
+        let refresh = FakeTokenRefresher(
+            ifNeededResults: [.notNeeded(current)],
+            nowResults: [.transientFailure(current), .refreshed(updated)]
+        )
+        let sleeper = ManualSleeper()
+        let first = FakeTunnelTransport(results: [
+            .failure(SessionError.tokenExpired),
+        ])
+        let second = FakeTunnelTransport(connection: .init(localPort: 61238, via: .relay))
+        let owner = makeOwner(
+            store: store,
+            refresher: refresh.seam,
+            factory: FakeTransportFactory([first, second]),
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { first.connectAttempts == 1 }
+        try await waitUntil { await sleeper.sleepCount == 1 }
+        await sleeper.advance()
+        try await waitUntil { owner.state == .connected(localPort: 61238, via: .relay) }
+        await owner.stop()
+
+        #expect(store.savedPairings == [updated])
+        #expect(store.currentPairing == updated)
+        #expect(second.connectedPairings == [updated])
+    }
+
+    @Test func reactiveRefreshBackoffUsesEstablishmentBands() async throws {
+        let current = pairing(deviceToken: "old-token")
+        let store = PairingStore(pairing: current)
+        let refresh = FakeTokenRefresher(
+            ifNeededResults: [.notNeeded(current)],
+            nowResults: [.transientFailure(current)]
+        )
+        let sleeper = ManualSleeper()
+        let transport = FakeTunnelTransport(results: [
+            .failure(SessionError.tokenExpired),
+        ])
+        let owner = makeOwner(
+            store: store,
+            refresher: refresh.seam,
+            factory: FakeTransportFactory([transport]),
+            sleep: { try await sleeper.sleep($0) }
+        )
+        let expectedBands = [
+            750...1250,
+            3750...6250,
+            7500...12500,
+            22500...37500,
+        ]
+
+        owner.start()
+        for index in expectedBands.indices {
+            try await waitUntil { await sleeper.sleepCount == index + 1 }
+            let sleeps = await sleeper.sleepDurations
+            expectDuration(sleeps[index], inMilliseconds: expectedBands[index])
+            if index < expectedBands.indices.last! {
+                await sleeper.advance()
+            }
+        }
+        await owner.stop()
+
+        #expect(await sleeper.sleepCount == expectedBands.count)
+        #expect(transport.connectAttempts == 1)
+    }
+
+    @Test func reentrantRefreshedTokenExpiredBacksOffAndClimbsBands() async throws {
+        let current = pairing(deviceToken: "old-token")
+        let updates = (1...4).map { pairing(deviceToken: "refresh-\($0)") }
+        let store = PairingStore(pairing: current)
+        let refresh = FakeTokenRefresher(
+            ifNeededResults: [.notNeeded(current)],
+            nowResults: updates.map { .refreshed($0) }
+        )
+        let sleeper = ManualSleeper()
+        let transports = (0..<5).map { _ in
+            FakeTunnelTransport(results: [
+                .failure(SessionError.tokenExpired),
+            ])
+        }
+        let owner = makeOwner(
+            store: store,
+            refresher: refresh.seam,
+            factory: FakeTransportFactory(transports),
+            sleep: { try await sleeper.sleep($0) }
+        )
+        let expectedBands = [
+            750...1250,
+            3750...6250,
+            7500...12500,
+            22500...37500,
+        ]
+
+        owner.start()
+        for index in expectedBands.indices {
+            try await waitUntil { await sleeper.sleepCount == index + 1 }
+            let sleeps = await sleeper.sleepDurations
+            expectDuration(sleeps[index], inMilliseconds: expectedBands[index])
+            let totalAttempts = transports.reduce(0) { $0 + $1.connectAttempts }
+            #expect(totalAttempts == index + 2)
+            if index < expectedBands.indices.last! {
+                await sleeper.advance()
+            }
+        }
+        await owner.stop()
+
+        #expect(await sleeper.sleepCount == expectedBands.count)
+        #expect(transports.reduce(0) { $0 + $1.connectAttempts } == expectedBands.count + 1)
+    }
+
+    @Test func stopCancelsPendingReactiveRefreshRetry() async throws {
+        let current = pairing(deviceToken: "old-token")
+        let store = PairingStore(pairing: current)
+        let refresh = FakeTokenRefresher(
+            ifNeededResults: [.notNeeded(current)],
+            nowResults: [.transientFailure(current)]
+        )
+        let sleeper = ManualSleeper()
+        let transport = FakeTunnelTransport(results: [
+            .failure(SessionError.tokenExpired),
+        ])
+        let owner = makeOwner(
+            store: store,
+            refresher: refresh.seam,
+            factory: FakeTransportFactory([transport]),
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { await sleeper.sleepCount == 1 }
+        await owner.stop()
+        let attemptsAfterStop = transport.connectAttempts
+        await sleeper.advance()
+        await waitBrieflyUntil { await sleeper.sleepCount > 1 }
+
+        #expect(owner.state == .disconnected)
+        #expect(transport.connectAttempts == attemptsAfterStop)
+        #expect(await sleeper.sleepCount == 1)
+        #expect(store.savedPairings.isEmpty)
+    }
+
+    @Test func republishedConnectedStaysConnectingAfterMemoryCleared() async throws {
+        let store = PairingStore(pairing: pairing())
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: [true])
+        let first = FakeTunnelTransport(connection: .init(localPort: 61239, via: .relay))
+        let second = FakeTunnelTransport(results: [
+            .failure(SessionError.unreachable),
+        ])
+        let owner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([first, second]),
+            probe: { port, _ in await probe.run(port: port) },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 61239, via: .relay) }
+        try await waitUntil { await sleeper.sleepCount == 1 }
+        await owner.reevaluatePairing()
+        try await waitUntil { second.connectAttempts == 1 }
+        try await waitUntil { owner.state == .connecting }
+        second.emit(.connected(via: URL(string: "ws://relay.example")!.relayConnectedVia))
+        await waitBrieflyUntil { owner.state == .connected(localPort: 61239, via: .relay) }
+        #expect(owner.state == .connecting)
+        await sleeper.advance()
+        await waitBrieflyUntil { await probe.count > 0 }
+        #expect(await probe.count == 0)
+        await owner.stop()
+    }
+
+    @Test func reentrantTokenExpiredDrainsPendingReactiveRefresh() async throws {
+        let current = pairing(deviceToken: "old-token")
+        let firstUpdate = pairing(deviceToken: "first-refresh")
+        let secondUpdate = pairing(deviceToken: "second-refresh")
+        let store = PairingStore(pairing: current)
+        let refresh = FakeTokenRefresher(
+            ifNeededResults: [.notNeeded(current)],
+            nowResults: [.refreshed(firstUpdate), .refreshed(secondUpdate)]
+        )
+        let sleeper = ManualSleeper()
+        let first = FakeTunnelTransport(results: [
+            .failure(SessionError.tokenExpired),
+        ])
+        let second = FakeTunnelTransport(results: [
+            .failure(SessionError.tokenExpired),
+        ])
+        let third = FakeTunnelTransport(connection: .init(localPort: 61240, via: .relay))
+        let owner = makeOwner(
+            store: store,
+            refresher: refresh.seam,
+            factory: FakeTransportFactory([first, second, third]),
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { first.connectAttempts == 1 }
+        try await waitUntil { second.connectAttempts == 1 }
+        try await waitUntil { await sleeper.sleepCount == 1 }
+        await sleeper.advance()
+        try await waitUntil { third.connectAttempts == 1 }
+        #expect(first.connectAttempts == 1)
+        #expect(second.connectAttempts == 1)
+        #expect(third.connectAttempts == 1)
+        #expect(store.savedPairings == [firstUpdate, secondUpdate])
+        #expect(owner.state == .connected(localPort: 61240, via: .relay))
+        await owner.stop()
+    }
+
+    @Test func cancelledRefreshCannotClearOrActOnNewRefresh() async throws {
+        let current = pairing(deviceToken: "old-token")
+        let stale = pairing(deviceToken: "stale-token")
+        let updated = pairing(deviceToken: "updated-token")
+        let store = PairingStore(pairing: current)
+        let refresh = ControlledTokenRefresher()
+        let sleeper = ManualSleeper()
+        let first = FakeTunnelTransport(connection: .init(localPort: 61241, via: .relay))
+        let second = FakeTunnelTransport(results: [
+            .failure(SessionError.tokenExpired),
+        ])
+        let third = FakeTunnelTransport(connection: .init(localPort: 61242, via: .relay))
+        let owner = makeOwner(
+            store: store,
+            refresher: refresh.seam,
+            factory: FakeTransportFactory([first, second, third]),
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 61241, via: .relay) }
+        first.emit(.failed(.tokenExpired))
+        try await waitUntil { await refresh.pendingNowCount == 1 }
+        await owner.reevaluatePairing()
+        try await waitUntil { second.connectAttempts == 1 }
+        try await waitUntil { await refresh.pendingNowCount == 2 }
+
+        await refresh.completeNext(with: .refreshed(stale))
+        await waitBrieflyUntil {
+            let savedPairing = !store.savedPairings.isEmpty
+            let disconnectedNewTransport = second.disconnectCount > 0
+            let connectedFallbackTransport = third.connectAttempts > 0
+            return savedPairing || disconnectedNewTransport || connectedFallbackTransport
+        }
+        #expect(store.savedPairings.isEmpty)
+        #expect(second.disconnectCount == 0)
+        #expect(third.connectAttempts == 0)
+
+        await owner.stop()
+        await refresh.completeNext(with: .refreshed(updated))
+        await waitBrieflyUntil {
+            let savedPairing = !store.savedPairings.isEmpty
+            let connectedFallbackTransport = third.connectAttempts > 0
+            return savedPairing || connectedFallbackTransport
+        }
+
+        #expect(owner.state == .disconnected)
+        #expect(store.savedPairings.isEmpty)
+        #expect(third.connectAttempts == 0)
+    }
+
     @Test func loopbackBindRetryIsBoundedAndDisconnectsOnExhaustion() async throws {
         let retryTransport = FakeTunnelTransport(results: [
             .failure(LoopbackProxyError.listenerFailed("one")),
@@ -612,6 +1002,10 @@ struct TunnelLifecycleOwnerTests {
             probe: probe,
             sleep: sleep
         )
+    }
+
+    private func waitBrieflyUntil(_ condition: @escaping @MainActor @Sendable () async -> Bool) async {
+        try? await waitUntil(timeout: .milliseconds(200), condition)
     }
 }
 

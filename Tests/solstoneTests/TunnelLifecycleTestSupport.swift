@@ -118,6 +118,40 @@ actor FakeTokenRefresher {
     }
 }
 
+actor ControlledTokenRefresher {
+    private var nowContinuations: [CheckedContinuation<DeviceTokenRefreshResult, Never>] = []
+    private(set) var nowCount = 0
+
+    nonisolated var seam: TunnelDeviceTokenRefreshing {
+        TunnelDeviceTokenRefreshing(
+            refreshIfNeeded: { pairing, _ in
+                .notNeeded(pairing)
+            },
+            refreshNow: { pairing in
+                await self.refreshNow(pairing: pairing)
+            }
+        )
+    }
+
+    var pendingNowCount: Int {
+        nowContinuations.count
+    }
+
+    func completeNext(with result: DeviceTokenRefreshResult) {
+        guard !nowContinuations.isEmpty else {
+            return
+        }
+        nowContinuations.removeFirst().resume(returning: result)
+    }
+
+    private func refreshNow(pairing _: StoredPairing) async -> DeviceTokenRefreshResult {
+        nowCount += 1
+        return await withCheckedContinuation { continuation in
+            nowContinuations.append(continuation)
+        }
+    }
+}
+
 @MainActor
 final class FakeTransportFactory: @unchecked Sendable {
     private var transports: [FakeTunnelTransport]
@@ -223,6 +257,11 @@ final class FakeTunnelTransport: TunnelTransporting {
         stateContinuation.yield(state)
     }
 
+    func emitMode(_ mode: ConnectionMode?) {
+        connectionMode = mode
+        modeContinuation.yield(mode)
+    }
+
     func recordConstruction() {
         tracker?.didConstruct()
     }
@@ -271,7 +310,13 @@ final class FakePathMonitoringSource: PathMonitoringSource, @unchecked Sendable 
 }
 
 actor ManualSleeper {
-    private var continuations: [CheckedContinuation<Void, Error>] = []
+    private struct ParkedSleep {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
+    private var continuations: [ParkedSleep] = []
+    private var cancelledIDs: Set<UUID> = []
     private var permits = 0
     private var durations: [Duration] = []
 
@@ -293,13 +338,18 @@ actor ManualSleeper {
             permits -= 1
             return
         }
+        let id = UUID()
         try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                continuations.append(continuation)
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                if cancelledIDs.remove(id) != nil {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                continuations.append(ParkedSleep(id: id, continuation: continuation))
             }
         } onCancel: {
             Task {
-                await self.cancelOldest()
+                await self.cancel(id)
             }
         }
     }
@@ -309,14 +359,15 @@ actor ManualSleeper {
             permits += 1
             return
         }
-        continuations.removeFirst().resume()
+        continuations.removeFirst().continuation.resume()
     }
 
-    private func cancelOldest() {
-        guard !continuations.isEmpty else {
+    private func cancel(_ id: UUID) {
+        guard let index = continuations.firstIndex(where: { $0.id == id }) else {
+            cancelledIDs.insert(id)
             return
         }
-        continuations.removeFirst().resume(throwing: CancellationError())
+        continuations.remove(at: index).continuation.resume(throwing: CancellationError())
     }
 }
 

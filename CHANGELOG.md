@@ -5,6 +5,12 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- sol now finds its way back to your journal on its own after your network changes (moving between Wi‑Fi and ethernet, or a VPN going up or down) — previously the private‑link connection could come to rest half‑open and quietly stop new experiences from reaching your journal until sol was restarted, even while sol was still experiencing alongside you on your mac.
+
+
 ## [1.4.7] - 2026-07-15
 
 ### Added
