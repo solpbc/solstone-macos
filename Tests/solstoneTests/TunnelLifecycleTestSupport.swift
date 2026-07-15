@@ -359,7 +359,13 @@ actor ManualSleeper {
             permits += 1
             return
         }
-        continuations.removeFirst().continuation.resume()
+        // Resume the newest parked sleep. In this harness at most one sleep is
+        // ever live at a time; when a waiter is re-armed (for example, a probe
+        // cancelled then restarted) the prior sleep is cancelled and removed
+        // asynchronously via `cancel(_:)`. Tests park the intended new waiter
+        // before advancing, so newest is deterministic even if that cancelled
+        // sleep's async removal has not landed yet.
+        continuations.removeLast().continuation.resume()
     }
 
     private func cancel(_ id: UUID) {
