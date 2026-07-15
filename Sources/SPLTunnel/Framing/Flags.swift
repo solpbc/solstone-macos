@@ -25,6 +25,8 @@ public enum FrameFlags: UInt8, Sendable {
         FrameFlags.open.rawValue,
         FrameFlags.data.rawValue,
         FrameFlags.open.rawValue | FrameFlags.data.rawValue,
+        FrameFlags.open.rawValue | FrameFlags.close.rawValue,
+        FrameFlags.open.rawValue | FrameFlags.data.rawValue | FrameFlags.close.rawValue,
         FrameFlags.close.rawValue,
         FrameFlags.data.rawValue | FrameFlags.close.rawValue,
         FrameFlags.reset.rawValue,

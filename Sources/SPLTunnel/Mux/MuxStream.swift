@@ -36,6 +36,7 @@ public final actor MuxStream {
     public let inbound: AsyncThrowingStream<Data, Error>
 
     private let sink: @Sendable (Data) async throws -> Void
+    private let onTerminal: (@Sendable (UInt32) async -> Void)?
     private let inboundContinuation: AsyncThrowingStream<Data, Error>.Continuation
     private var inboundFinished = false
     private var sendCredit = Int(MuxConstants.initialCredit)
@@ -46,11 +47,13 @@ public final actor MuxStream {
     init(
         id: UInt32,
         state: StreamState = .open,
-        sink: @escaping @Sendable (Data) async throws -> Void
+        sink: @escaping @Sendable (Data) async throws -> Void,
+        onTerminal: (@Sendable (UInt32) async -> Void)? = nil
     ) {
         self.id = id
         self.state = state
         self.sink = sink
+        self.onTerminal = onTerminal
 
         var continuation: AsyncThrowingStream<Data, Error>.Continuation!
         self.inbound = AsyncThrowingStream { continuation = $0 }
@@ -90,6 +93,7 @@ public final actor MuxStream {
             state = .halfClosedLocal
         case .halfClosedRemote:
             state = .closed
+            await onTerminal?(id)
             finishInbound(nil)
             resumeCreditWaiters()
         case .halfClosedLocal, .closed, .resetLocal, .resetRemote:
@@ -98,18 +102,19 @@ public final actor MuxStream {
     }
 
     public func reset(reason: ResetReason) async {
-        guard markResetLocal() else { return }
+        guard await markResetLocal() else { return }
         if let data = try? encodeFrame(buildReset(streamID: id, reason: reason)) {
             try? await sink(data)
         }
     }
 
-    func markResetLocal() -> Bool {
+    func markResetLocal() async -> Bool {
         guard state != .resetLocal && state != .resetRemote && state != .closed else {
             return false
         }
 
         state = .resetLocal
+        await onTerminal?(id)
         finishInbound(MuxError.transportClosed)
         resumeCreditWaiters()
         return true
@@ -144,13 +149,14 @@ public final actor MuxStream {
         return .accepted
     }
 
-    func deliverInboundClose() {
+    func deliverInboundClose() async {
         switch state {
         case .open:
             state = .halfClosedRemote
             finishInbound(nil)
         case .halfClosedLocal:
             state = .closed
+            await onTerminal?(id)
             finishInbound(nil)
             resumeCreditWaiters()
         case .halfClosedRemote, .closed, .resetLocal, .resetRemote:
@@ -158,8 +164,9 @@ public final actor MuxStream {
         }
     }
 
-    func deliverInboundReset(reason _: ResetReason) {
+    func deliverInboundReset(reason _: ResetReason) async {
         state = .resetRemote
+        await onTerminal?(id)
         finishInbound(MuxError.transportClosed)
         resumeCreditWaiters()
     }

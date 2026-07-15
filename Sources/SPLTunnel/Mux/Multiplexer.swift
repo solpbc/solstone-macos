@@ -81,7 +81,13 @@ public actor Multiplexer {
 
         let id = nextOutboundID
         nextOutboundID &+= 2
-        let stream = MuxStream(id: id, sink: sink)
+        let stream = MuxStream(
+            id: id,
+            sink: sink,
+            onTerminal: { [weak self] id in
+                await self?.evictTerminalStream(id: id)
+            }
+        )
         let frame = try encodeFrame(buildOpen(streamID: id))
         try await sink(frame)
         streams[id] = stream
@@ -159,7 +165,13 @@ public actor Multiplexer {
 
         if isPing || isPong {
             guard let stream else {
-                throw MuxError.protocolError
+                try await emitUnknownStreamReset(
+                    streamID: frame.streamID,
+                    flags: frame.flags,
+                    length: frame.payload.count,
+                    reason: .protocolError
+                )
+                return
             }
             try await isolateStream(stream, frame: frame, reason: .protocolError)
             return
@@ -241,6 +253,10 @@ public actor Multiplexer {
         try await sink(try encodeFrame(buildReset(streamID: streamID, reason: reason)))
     }
 
+    private func evictTerminalStream(id: UInt32) {
+        streams.removeValue(forKey: id)
+    }
+
     private func handleInboundOpen(_ frame: Frame) async throws {
         let isOdd = frame.streamID % 2 == 1
         let parityRejected = (role == .dialer && isOdd) || (role == .listener && !isOdd)
@@ -268,7 +284,13 @@ public actor Multiplexer {
             return
         }
 
-        let stream = MuxStream(id: frame.streamID, sink: sink)
+        let stream = MuxStream(
+            id: frame.streamID,
+            sink: sink,
+            onTerminal: { [weak self] id in
+                await self?.evictTerminalStream(id: id)
+            }
+        )
         if !frame.payload.isEmpty {
             let outcome = await stream.admitInitialPayload(frame.payload)
             if outcome == .receiveWindowExceeded {
@@ -278,6 +300,10 @@ public actor Multiplexer {
                 try await sink(try encodeFrame(buildReset(streamID: frame.streamID, reason: .flowControlError)))
                 return
             }
+        }
+
+        if frame.flags & FrameFlags.close.rawValue != 0 {
+            await stream.deliverInboundClose()
         }
 
         streams[frame.streamID] = stream
@@ -353,5 +379,9 @@ public actor Multiplexer {
 
     public func inboundActivitySnapshot() -> UInt64 {
         inboundActivityCounter
+    }
+
+    func streamTableCount() -> Int {
+        streams.count
     }
 }

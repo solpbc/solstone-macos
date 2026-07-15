@@ -289,6 +289,212 @@ struct MultiplexerTests {
         #expect(await next.id == 5)
     }
 
+    @Test("terminal close eviction makes late DATA reset in both close orders")
+    func terminalCloseEvictionLateDataResetsInBothCloseOrders() async throws {
+        do {
+            let (mux, recorder) = makeMultiplexer()
+            let stream = try await mux.openStream()
+            let sibling = try await mux.openStream()
+            let streamID = await stream.id
+
+            try await stream.close()
+            try await mux.feedInbound(try encodeFrame(buildClose(streamID: streamID)))
+
+            await recorder.reset()
+            try await mux.feedInbound(try encodeFrame(buildData(streamID: streamID, payload: Data([0x01]))))
+            try await expectResetFrames(in: recorder, streamID: streamID, reason: .protocolError, count: 1)
+            try await assertSiblingRoundTrip(mux: mux, recorder: recorder, sibling: sibling)
+        }
+
+        do {
+            let (mux, recorder) = makeMultiplexer()
+            let stream = try await mux.openStream()
+            let sibling = try await mux.openStream()
+            let streamID = await stream.id
+
+            try await mux.feedInbound(try encodeFrame(buildClose(streamID: streamID)))
+            try await stream.close()
+
+            await recorder.reset()
+            try await mux.feedInbound(try encodeFrame(buildData(streamID: streamID, payload: Data([0x01]))))
+            try await expectResetFrames(in: recorder, streamID: streamID, reason: .protocolError, count: 1)
+            try await assertSiblingRoundTrip(mux: mux, recorder: recorder, sibling: sibling)
+        }
+    }
+
+    @Test("inbound RESET eviction applies within same feedInbound buffer")
+    func inboundResetEvictionAppliesWithinSameFeedInboundBuffer() async throws {
+        let (mux, recorder) = makeMultiplexer()
+        let stream = try await mux.openStream()
+        let streamID = await stream.id
+        await recorder.reset()
+
+        var bytes = try encodeFrame(buildReset(streamID: streamID, reason: .cancel))
+        bytes.append(try encodeFrame(buildData(streamID: streamID, payload: Data([0x5a]))))
+
+        try await mux.feedInbound(bytes)
+
+        try await expectResetFrames(in: recorder, streamID: streamID, reason: .protocolError, count: 1)
+    }
+
+    @Test("terminal reset eviction makes late DATA reset for all reset paths")
+    func terminalResetEvictionLateDataResetsForAllResetPaths() async throws {
+        do {
+            let (mux, recorder) = makeMultiplexer()
+            let stream = try await mux.openStream()
+            let streamID = await stream.id
+
+            try await mux.feedInbound(try encodeFrame(buildReset(streamID: streamID, reason: .cancel)))
+
+            await recorder.reset()
+            try await mux.feedInbound(try encodeFrame(buildData(streamID: streamID, payload: Data([0x01]))))
+            try await expectResetFrames(in: recorder, streamID: streamID, reason: .protocolError, count: 1)
+        }
+
+        do {
+            let (mux, recorder) = makeMultiplexer()
+            let stream = try await mux.openStream()
+            let streamID = await stream.id
+
+            try await mux.feedInbound(try encodeFrame(Frame(
+                streamID: streamID,
+                flags: FrameFlags.window.rawValue,
+                payload: Data([0x00, 0x00, 0x00])
+            )))
+
+            await recorder.reset()
+            try await mux.feedInbound(try encodeFrame(buildData(streamID: streamID, payload: Data([0x01]))))
+            try await expectResetFrames(in: recorder, streamID: streamID, reason: .protocolError, count: 1)
+        }
+
+        do {
+            let (mux, recorder) = makeMultiplexer()
+            let stream = try await mux.openStream()
+            let streamID = await stream.id
+
+            await stream.reset(reason: .cancel)
+
+            await recorder.reset()
+            try await mux.feedInbound(try encodeFrame(buildData(streamID: streamID, payload: Data([0x01]))))
+            try await expectResetFrames(in: recorder, streamID: streamID, reason: .protocolError, count: 1)
+        }
+    }
+
+    @Test("listener accepts fresh OPEN for previously pruned id")
+    func listenerAcceptsFreshOpenForPreviouslyPrunedID() async throws {
+        let (mux, recorder) = makeListenerMultiplexer()
+        let incoming = mux.incomingStreams
+
+        try await mux.feedInbound(try encodeFrame(buildOpen(streamID: 1)))
+        let first = try #require(try await firstIncomingStream(from: incoming))
+        try await first.close()
+        try await mux.feedInbound(try encodeFrame(buildClose(streamID: 1)))
+
+        await recorder.reset()
+        try await mux.feedInbound(try encodeFrame(buildOpen(streamID: 1)))
+        let second = try #require(try await firstIncomingStream(from: incoming))
+        #expect(await second.id == 1)
+        try await expectNoResetFrames(in: recorder)
+
+        try await second.close()
+        try await mux.feedInbound(try encodeFrame(buildClose(streamID: 1)))
+
+        await recorder.reset()
+        try await mux.feedInbound(try encodeFrame(Frame(
+            streamID: 1,
+            flags: FrameFlags.open.rawValue | FrameFlags.close.rawValue,
+            payload: Data()
+        )))
+        let third = try #require(try await firstIncomingStream(from: incoming))
+        #expect(await third.id == 1)
+        #expect(try await inboundFinished(from: third))
+        try await expectNoResetFrames(in: recorder)
+
+        await recorder.reset()
+        try await third.write(Data([0xa5]))
+        let outboundFrames = try await recorder.frames()
+        let outboundData = try #require(outboundFrames.first { $0.flags == FrameFlags.data.rawValue })
+        #expect(outboundData.streamID == 1)
+        #expect(outboundData.payload == Data([0xa5]))
+    }
+
+    @Test("halfClosedLocal is retained and keeps delivering inbound DATA")
+    func halfClosedLocalRetainedKeepsDeliveringInboundData() async throws {
+        let (mux, recorder) = makeMultiplexer()
+        let stream = try await mux.openStream()
+        let streamID = await stream.id
+        #expect(await mux.streamTableCount() == 1)
+
+        try await stream.close()
+        #expect(await mux.streamTableCount() == 1)
+
+        await recorder.reset()
+        try await mux.feedInbound(try encodeFrame(buildData(streamID: streamID, payload: Data([0x5a]))))
+
+        #expect(try await readInboundPayload(from: stream) == Data([0x5a]))
+        try await expectNoResetFrames(in: recorder)
+        #expect(await mux.streamTableCount() == 1)
+    }
+
+    @Test("halfClosedRemote is retained and keeps writing to sink")
+    func halfClosedRemoteRetainedKeepsWritingToSink() async throws {
+        let (mux, recorder) = makeMultiplexer()
+        let stream = try await mux.openStream()
+        let streamID = await stream.id
+
+        try await mux.feedInbound(try encodeFrame(buildClose(streamID: streamID)))
+        #expect(await mux.streamTableCount() == 1)
+
+        await recorder.reset()
+        try await stream.write(Data([0xa5]))
+
+        let frames = try await recorder.frames()
+        let data = try #require(frames.first { $0.flags == FrameFlags.data.rawValue })
+        #expect(data.streamID == streamID)
+        #expect(data.payload == Data([0xa5]))
+        #expect(!frames.contains { $0.flags == FrameFlags.reset.rawValue })
+    }
+
+    @Test("stream table stays bounded across many full-close cycles")
+    func streamTableStaysBoundedAcrossManyFullCloseCycles() async throws {
+        let (mux, _) = makeMultiplexer()
+        let baseline = await mux.streamTableCount()
+
+        for _ in 0..<100 {
+            let stream = try await mux.openStream()
+            let streamID = await stream.id
+            try await stream.close()
+            try await mux.feedInbound(try encodeFrame(buildClose(streamID: streamID)))
+            #expect(await mux.streamTableCount() == baseline)
+        }
+
+        let next = try await mux.openStream()
+        #expect(await next.id == 201)
+        #expect(await mux.streamTableCount() == baseline + 1)
+    }
+
+    @Test("tearDown finishes remaining live and local-half-closed streams")
+    func tearDownFinishesRemainingLiveStreams() async throws {
+        let (mux, _) = makeMultiplexer()
+        let live = try await mux.openStream()
+        let halfClosedLocal = try await mux.openStream()
+        let liveSibling = try await mux.openStream()
+
+        try await halfClosedLocal.close()
+
+        await mux.tearDown(reason: .transportFailure)
+
+        for stream in [live, halfClosedLocal, liveSibling] {
+            var iterator = await stream.inbound.makeAsyncIterator()
+            await expectAsyncThrows(.transportClosed) {
+                _ = try await iterator.next()
+            }
+        }
+        await expectAsyncThrows(.transportClosed) {
+            _ = try await mux.openStream()
+        }
+    }
+
     @Test("malformed WINDOW resets only that stream and mux survives")
     func malformedWindowResetsOnlyThatStreamAndMuxSurvives() async throws {
         let (mux, recorder) = makeMultiplexer()
@@ -311,31 +517,54 @@ struct MultiplexerTests {
         )
     }
 
-    @Test("repeated malformed WINDOW after isolation emits one RESET")
-    func repeatedMalformedWindowAfterIsolationEmitsOneReset() async throws {
+    @Test("repeated malformed WINDOW after prune emits RESET per frame")
+    func repeatedMalformedWindowAfterPruneEmitsResetPerFrame() async throws {
         let (mux, recorder) = makeMultiplexer()
         let isolated = try await mux.openStream()
         let sibling = try await mux.openStream()
+        let isolatedID = await isolated.id
+        let siblingID = await sibling.id
         await recorder.reset()
 
         try await mux.feedInbound(try encodeFrame(Frame(
-            streamID: await isolated.id,
+            streamID: isolatedID,
             flags: FrameFlags.window.rawValue,
             payload: Data([0x00, 0x00, 0x00])
         )))
         try await mux.feedInbound(try encodeFrame(Frame(
-            streamID: await isolated.id,
+            streamID: isolatedID,
             flags: FrameFlags.window.rawValue,
             payload: Data([0x00, 0x00, 0x00, 0x00, 0x00])
         )))
 
-        try await assertIsolatedAndMuxSurvives(
-            mux: mux,
-            recorder: recorder,
-            isolated: isolated,
-            sibling: sibling,
-            expectedReason: .protocolError
-        )
+        let frames = try await recorder.frames()
+        let resets = frames.filter { $0.flags == FrameFlags.reset.rawValue }
+        #expect(resets.count == 2)
+        #expect(resets.allSatisfy { $0.streamID == isolatedID })
+        #expect(resets.allSatisfy { parseResetReason(from: $0.payload) == .protocolError })
+
+        var isolatedIterator = await isolated.inbound.makeAsyncIterator()
+        await expectAsyncThrows(.transportClosed) {
+            _ = try await isolatedIterator.next()
+        }
+        await expectAsyncThrows(.writeAfterClose) {
+            try await isolated.write(Data([0x01]))
+        }
+
+        await recorder.reset()
+        try await sibling.write(Data([0xa5]))
+        let outboundFrames = try await recorder.frames()
+        let outboundData = try #require(outboundFrames.first { $0.flags == FrameFlags.data.rawValue })
+        #expect(outboundData.streamID == siblingID)
+        #expect(outboundData.payload == Data([0xa5]))
+
+        try await mux.feedInbound(try encodeFrame(buildData(streamID: siblingID, payload: Data([0x5a]))))
+        var siblingIterator = await sibling.inbound.makeAsyncIterator()
+        let inbound = try await siblingIterator.next()
+        #expect(inbound == Data([0x5a]))
+
+        let next = try await mux.openStream()
+        #expect(await next.id == 5)
     }
 
     @Test("over-window DATA resets only that stream and mux survives")
@@ -361,6 +590,7 @@ struct MultiplexerTests {
 
     @Test("nonzero PING and PONG reset only that stream and mux survives")
     func nonzeroPingAndPongResetOnlyThatStreamAndMuxSurvive() async throws {
+        // Pins A4: known-stream PING/PONG still isolate only that stream.
         for flag in [FrameFlags.ping.rawValue, FrameFlags.pong.rawValue] {
             let (mux, recorder) = makeMultiplexer()
             let isolated = try await mux.openStream()
@@ -390,10 +620,11 @@ struct MultiplexerTests {
             try await throwingSink.recordOrThrow(data)
         }
         let isolated = try await mux.openStream()
+        let isolatedID = await isolated.id
 
         do {
             try await mux.feedInbound(try encodeFrame(Frame(
-                streamID: await isolated.id,
+                streamID: isolatedID,
                 flags: FrameFlags.window.rawValue,
                 payload: Data([0x00, 0x00, 0x00])
             )))
@@ -403,14 +634,22 @@ struct MultiplexerTests {
             Issue.record("Expected reset sink failure, got \(error)")
         }
 
-        try await mux.feedInbound(try encodeFrame(Frame(
-            streamID: await isolated.id,
-            flags: FrameFlags.window.rawValue,
-            payload: Data([0x00, 0x00, 0x00, 0x00, 0x00])
-        )))
-
         #expect(await throwingSink.resetWrites() == 1)
         #expect(await isolated.state == .resetLocal)
+
+        do {
+            try await mux.feedInbound(try encodeFrame(Frame(
+                streamID: isolatedID,
+                flags: FrameFlags.window.rawValue,
+                payload: Data([0x00, 0x00, 0x00, 0x00, 0x00])
+            )))
+            Issue.record("Expected reset sink failure")
+        } catch ThrowingResetSinkError.resetWrite {
+        } catch {
+            Issue.record("Expected reset sink failure, got \(error)")
+        }
+
+        #expect(await throwingSink.resetWrites() == 2)
     }
 
     @Test("WINDOW grant sink failure remains transport-fatal")
@@ -516,6 +755,64 @@ struct MultiplexerTests {
         let outboundFrames = try await recorder.frames()
         let outboundData = try #require(outboundFrames.first { $0.flags == FrameFlags.data.rawValue })
         #expect(outboundData.streamID == siblingID)
+    }
+
+    @Test("unknown-stream PING emits RESET(protocolError) and mux survives")
+    func unknownStreamPingEmitsProtocolResetAndMuxSurvives() async throws {
+        let (mux, recorder) = makeMultiplexer()
+        let sibling = try await mux.openStream()
+        await recorder.reset()
+
+        try await mux.feedInbound(try encodeFrame(Frame(
+            streamID: 99,
+            flags: FrameFlags.ping.rawValue,
+            payload: Data([1, 2, 3, 4, 5, 6, 7, 8])
+        )))
+
+        try await expectResetFrames(in: recorder, streamID: 99, reason: .protocolError, count: 1)
+        try await assertSiblingRoundTrip(mux: mux, recorder: recorder, sibling: sibling)
+
+        let next = try await mux.openStream()
+        #expect(await next.id == 3)
+    }
+
+    @Test("unknown-stream PONG emits RESET(protocolError) and mux survives")
+    func unknownStreamPongEmitsProtocolResetAndMuxSurvives() async throws {
+        let (mux, recorder) = makeMultiplexer()
+        let sibling = try await mux.openStream()
+        await recorder.reset()
+
+        try await mux.feedInbound(try encodeFrame(Frame(
+            streamID: 101,
+            flags: FrameFlags.pong.rawValue,
+            payload: Data([8, 7, 6, 5, 4, 3, 2, 1])
+        )))
+
+        try await expectResetFrames(in: recorder, streamID: 101, reason: .protocolError, count: 1)
+        try await assertSiblingRoundTrip(mux: mux, recorder: recorder, sibling: sibling)
+
+        let next = try await mux.openStream()
+        #expect(await next.id == 3)
+    }
+
+    @Test("unknown-stream PING does not stop buffered sibling frame")
+    func unknownStreamPingDoesNotStopBufferedSiblingFrame() async throws {
+        let (mux, recorder) = makeMultiplexer()
+        let sibling = try await mux.openStream()
+        let siblingID = await sibling.id
+        await recorder.reset()
+
+        var bytes = try encodeFrame(Frame(
+            streamID: 99,
+            flags: FrameFlags.ping.rawValue,
+            payload: Data([1, 2, 3, 4, 5, 6, 7, 8])
+        ))
+        bytes.append(try encodeFrame(buildData(streamID: siblingID, payload: Data([0x5a]))))
+
+        try await mux.feedInbound(bytes)
+
+        try await expectResetFrames(in: recorder, streamID: 99, reason: .protocolError, count: 1)
+        #expect(try await readInboundPayload(from: sibling) == Data([0x5a]))
     }
 
     @Test("unknown CLOSE and RESET remain silent")
@@ -735,6 +1032,140 @@ struct MultiplexerTests {
         #expect(inbound == Data([0x5a]))
     }
 
+    @Test("listener OPEN|CLOSE yields EOF writable stream")
+    func listenerOpenCloseYieldsEofWritableStream() async throws {
+        let (mux, recorder) = makeListenerMultiplexer()
+        let incoming = mux.incomingStreams
+
+        try await mux.feedInbound(try encodeFrame(Frame(
+            streamID: 1,
+            flags: FrameFlags.open.rawValue | FrameFlags.close.rawValue,
+            payload: Data()
+        )))
+
+        let stream = try #require(try await firstIncomingStream(from: incoming))
+        #expect(await stream.id == 1)
+        #expect(try await inboundFinished(from: stream))
+        try await expectNoResetFrames(in: recorder)
+
+        await recorder.reset()
+        try await stream.write(Data([0xa5]))
+        let frames = try await recorder.frames()
+        let data = try #require(frames.first { $0.flags == FrameFlags.data.rawValue })
+        #expect(data.streamID == 1)
+        #expect(data.payload == Data([0xa5]))
+    }
+
+    @Test("listener OPEN|DATA|CLOSE delivers payload then EOF with no WINDOW grant")
+    func listenerOpenDataCloseDeliversPayloadThenEofNoWindowGrant() async throws {
+        let (mux, recorder) = makeListenerMultiplexer()
+        let incoming = mux.incomingStreams
+        let payload = Data(repeating: 0x3c, count: Int(MuxConstants.initialCredit))
+
+        try await mux.feedInbound(try encodeFrame(Frame(
+            streamID: 1,
+            flags: FrameFlags.open.rawValue | FrameFlags.data.rawValue | FrameFlags.close.rawValue,
+            payload: payload
+        )))
+
+        let stream = try #require(try await firstIncomingStream(from: incoming))
+        let (inbound, finished) = try await readPayloadThenFinish(from: stream)
+        #expect(inbound == payload)
+        #expect(finished)
+
+        let frames = try await recorder.frames()
+        #expect(!frames.contains { $0.flags == FrameFlags.window.rawValue })
+        #expect(!frames.contains { $0.flags == FrameFlags.reset.rawValue })
+    }
+
+    @Test("listener OPEN|CLOSE oversize payload resets without stream")
+    func listenerOpenCloseOversizePayloadResetsWithoutStream() async throws {
+        let (mux, recorder) = makeListenerMultiplexer()
+        let incoming = mux.incomingStreams
+
+        try await mux.feedInbound(try encodeFrame(Frame(
+            streamID: 1,
+            flags: FrameFlags.open.rawValue | FrameFlags.close.rawValue,
+            payload: Data(repeating: 0, count: Int(MuxConstants.initialCredit) + 1)
+        )))
+
+        try await expectResetFrame(in: recorder, streamID: 1, reason: .flowControlError)
+        await expectNoIncomingStream(from: incoming)
+    }
+
+    @Test("duplicate OPEN|CLOSE resets without replacing existing stream")
+    func duplicateOpenCloseResetsWithoutReplacingLiveStream() async throws {
+        let (mux, recorder) = makeListenerMultiplexer()
+        let incoming = mux.incomingStreams
+
+        try await mux.feedInbound(try encodeFrame(buildOpen(streamID: 1)))
+        let stream = try #require(try await firstIncomingStream(from: incoming))
+        await recorder.reset()
+
+        try await mux.feedInbound(try encodeFrame(Frame(
+            streamID: 1,
+            flags: FrameFlags.open.rawValue | FrameFlags.close.rawValue,
+            payload: Data([0xd0])
+        )))
+
+        try await expectResetFrame(in: recorder, streamID: 1, reason: .protocolError)
+        await expectNoIncomingStream(from: incoming)
+
+        await recorder.reset()
+        try await stream.write(Data([0xa5]))
+        let outboundFrames = try await recorder.frames()
+        let outboundData = try #require(outboundFrames.first { $0.flags == FrameFlags.data.rawValue })
+        #expect(outboundData.streamID == 1)
+
+        try await mux.feedInbound(try encodeFrame(buildData(streamID: 1, payload: Data([0x5a]))))
+        let inbound = try await readInboundPayload(from: stream)
+        #expect(inbound == Data([0x5a]))
+    }
+
+    @Test("composed OPEN flags are legal while other invalid combinations still reset")
+    func composedOpenFlagsLegalOtherInvalidCombosStillReset() async throws {
+        do {
+            let (mux, recorder) = makeListenerMultiplexer()
+            let incoming = mux.incomingStreams
+
+            try await mux.feedInbound(try encodeFrame(Frame(
+                streamID: 1,
+                flags: FrameFlags.open.rawValue | FrameFlags.close.rawValue,
+                payload: Data()
+            )))
+
+            _ = try #require(try await firstIncomingStream(from: incoming))
+            try await expectNoResetFrames(in: recorder)
+        }
+
+        do {
+            let (mux, recorder) = makeListenerMultiplexer()
+            let incoming = mux.incomingStreams
+
+            try await mux.feedInbound(try encodeFrame(Frame(
+                streamID: 1,
+                flags: FrameFlags.open.rawValue | FrameFlags.data.rawValue | FrameFlags.close.rawValue,
+                payload: Data([0x41])
+            )))
+
+            let stream = try #require(try await firstIncomingStream(from: incoming))
+            #expect(try await readInboundPayload(from: stream) == Data([0x41]))
+            try await expectNoResetFrames(in: recorder)
+        }
+
+        for flag in [
+            FrameFlags.close.rawValue | FrameFlags.reset.rawValue,
+            FrameFlags.data.rawValue | FrameFlags.window.rawValue,
+            FrameFlags.open.rawValue | FrameFlags.ping.rawValue
+        ] {
+            let (mux, recorder) = makeListenerMultiplexer()
+
+            try await mux.feedInbound(rawFrame(streamID: 1, flags: flag))
+
+            try await expectResetFrame(in: recorder, streamID: 1, reason: .protocolError)
+        }
+    }
+
     @Test("unknown-stream RESET sink failure propagates")
     func unknownStreamResetSinkFailurePropagates() async throws {
         let throwingSink = ThrowingResetSink()
@@ -775,17 +1206,15 @@ struct MultiplexerTests {
         #expect(await throwingSink.resetWrites() == 1)
     }
 
-    @Test("non-isolated protocol errors remain fatal")
-    func nonIsolatedProtocolErrorsRemainFatal() async throws {
+    @Test("unknown-stream PING resets and control PING length remains fatal")
+    func unknownStreamPingResetsAndControlPingLengthRemainsFatal() async throws {
         let (unknownMux, unknownRecorder) = makeMultiplexer()
-        await expectAsyncThrows(.protocolError) {
-            try await unknownMux.feedInbound(try encodeFrame(Frame(
-                streamID: 1,
-                flags: FrameFlags.ping.rawValue,
-                payload: Data([1, 2, 3, 4, 5, 6, 7, 8])
-            )))
-        }
-        try await expectNoResetFrames(in: unknownRecorder)
+        try await unknownMux.feedInbound(try encodeFrame(Frame(
+            streamID: 1,
+            flags: FrameFlags.ping.rawValue,
+            payload: Data([1, 2, 3, 4, 5, 6, 7, 8])
+        )))
+        try await expectResetFrame(in: unknownRecorder, streamID: 1, reason: .protocolError)
 
         let (controlMux, controlRecorder) = makeMultiplexer()
         await expectAsyncThrows(FramingError.lengthMismatch) {
@@ -1114,6 +1543,61 @@ struct MultiplexerTests {
         }
     }
 
+    private func inboundFinished(from stream: MuxStream, timeout: Duration = .seconds(1)) async throws -> Bool {
+        try await withThrowingTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                var iterator = await stream.inbound.makeAsyncIterator()
+                return try await iterator.next() == nil
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                return false
+            }
+            let finished = try await group.next()!
+            group.cancelAll()
+            return finished
+        }
+    }
+
+    private func readPayloadThenFinish(
+        from stream: MuxStream,
+        timeout: Duration = .seconds(1)
+    ) async throws -> (Data?, Bool) {
+        try await withThrowingTaskGroup(of: (Data?, Bool).self) { group in
+            group.addTask {
+                var iterator = await stream.inbound.makeAsyncIterator()
+                let payload = try await iterator.next()
+                let finished = try await iterator.next() == nil
+                return (payload, finished)
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                return (nil, false)
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
+    }
+
+    private func assertSiblingRoundTrip(
+        mux: Multiplexer,
+        recorder: SinkRecorder,
+        sibling: MuxStream
+    ) async throws {
+        let siblingID = await sibling.id
+        await recorder.reset()
+
+        try await sibling.write(Data([0xa5]))
+        let outboundFrames = try await recorder.frames()
+        let outboundData = try #require(outboundFrames.first { $0.flags == FrameFlags.data.rawValue })
+        #expect(outboundData.streamID == siblingID)
+        #expect(outboundData.payload == Data([0xa5]))
+
+        try await mux.feedInbound(try encodeFrame(buildData(streamID: siblingID, payload: Data([0x5a]))))
+        #expect(try await readInboundPayload(from: sibling) == Data([0x5a]))
+    }
+
     private func expectResetFrame(
         in recorder: SinkRecorder,
         streamID: UInt32,
@@ -1124,6 +1608,20 @@ struct MultiplexerTests {
             $0.streamID == streamID && $0.flags == FrameFlags.reset.rawValue
         })
         #expect(parseResetReason(from: reset.payload) == reason)
+    }
+
+    private func expectResetFrames(
+        in recorder: SinkRecorder,
+        streamID: UInt32,
+        reason: ResetReason,
+        count: Int
+    ) async throws {
+        let frames = try await recorder.frames()
+        let resets = frames.filter {
+            $0.streamID == streamID && $0.flags == FrameFlags.reset.rawValue
+        }
+        #expect(resets.count == count)
+        #expect(resets.allSatisfy { parseResetReason(from: $0.payload) == reason })
     }
 }
 

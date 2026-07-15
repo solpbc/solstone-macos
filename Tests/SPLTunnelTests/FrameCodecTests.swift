@@ -195,14 +195,18 @@ struct FrameCodecValidationTests {
         }
     }
 
-    @Test func openDataCloseThrows() {
-        expectThrows(.invalidFlagCombination) {
-            try validateFlags(
-                FrameFlags.open.rawValue |
-                FrameFlags.data.rawValue |
-                FrameFlags.close.rawValue
-            )
-        }
+    @Test func openDataCloseValidates() throws {
+        let frame = Frame(
+            streamID: 1,
+            flags: FrameFlags.open.rawValue | FrameFlags.data.rawValue | FrameFlags.close.rawValue,
+            payload: Data([0x41])
+        )
+        try validateFlags(frame.flags)
+
+        var decoder = FrameDecoder()
+        decoder.feed(try encodeFrame(frame))
+        #expect(try decoder.next() == frame)
+        #expect(try decoder.next() == nil)
     }
 
     @Test func pingDataThrows() {
@@ -231,14 +235,18 @@ struct FrameCodecValidationTests {
         }
     }
 
-    @Test func openCloseThrows() {
-        expectThrows(.invalidFlagCombination) {
-            try encodeFrame(Frame(
-                streamID: 1,
-                flags: FrameFlags.open.rawValue | FrameFlags.close.rawValue,
-                payload: Data()
-            ))
-        }
+    @Test func openCloseValidates() throws {
+        let frame = Frame(
+            streamID: 1,
+            flags: FrameFlags.open.rawValue | FrameFlags.close.rawValue,
+            payload: Data()
+        )
+        try validateFlags(frame.flags)
+
+        var decoder = FrameDecoder()
+        decoder.feed(try encodeFrame(frame))
+        #expect(try decoder.next() == frame)
+        #expect(try decoder.next() == nil)
     }
 
     @Test func invalidControlNonceLengthThrows() {
