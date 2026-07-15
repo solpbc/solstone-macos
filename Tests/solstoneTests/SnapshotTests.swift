@@ -571,6 +571,98 @@ struct SnapshotTests {
         )
     }
 
+    @Test func settingsStatusSetupReady() throws {
+        let state = AppState.forSnapshot(config: AppConfig(
+            serverURL: ServiceMode.bundledServiceURL,
+            serverKey: "observer-key",
+            serviceMode: .external
+        ))
+        markPermissionsReady(state)
+        state.isRecording = true
+        state.uploadCoordinator.status = .synced
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .status,
+                initialStorageUsedMB: 42,
+                initialSetupProbeSnapshot: setupProbeSnapshot(
+                    solAppPlacement: .ready,
+                    journalAppInstalled: .ready,
+                    solWrapperExecutable: .ready,
+                    journalWrapperExecutable: .ready,
+                    microphoneCause: .unknown
+                )
+            ),
+            size: settingsSize,
+            to: "settings-status-setup-ready.png"
+        )
+    }
+
+    @Test func settingsStatusSetupNeedsAttention() throws {
+        let state = AppState.forSnapshot()
+        state.initialPermissionCheckComplete = true
+        state.screenRecordingGranted = false
+        state.microphoneGranted = false
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .status,
+                initialStorageUsedMB: 42,
+                initialSetupProbeSnapshot: setupProbeSnapshot(
+                    solAppPlacement: .needsAttention,
+                    journalAppInstalled: .needsAttention,
+                    solWrapperExecutable: .needsAttention,
+                    journalWrapperExecutable: .needsAttention,
+                    hasPromptedScreenRecording: true,
+                    screenDiagnostic: ScreenRecordingPermissionDiagnostic(
+                        preflightSucceeded: false,
+                        sckFailedAfterPositivePreflight: false
+                    ),
+                    microphoneCause: .denied
+                )
+            ),
+            size: settingsSize,
+            to: "settings-status-setup-needs-attention.png"
+        )
+    }
+
+    @Test func settingsStatusSetupUnavailable() throws {
+        let state = AppState.forSnapshot(config: AppConfig(
+            serverURL: ServiceMode.bundledServiceURL,
+            serverKey: "observer-key",
+            serviceMode: .external
+        ))
+        state.initialPermissionCheckComplete = true
+        state.screenRecordingGranted = false
+        state.microphoneGranted = true
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .status,
+                initialStorageUsedMB: 42,
+                initialSetupProbeSnapshot: setupProbeSnapshot(
+                    solAppPlacement: .ready,
+                    journalAppInstalled: .unavailable,
+                    solWrapperExecutable: .ready,
+                    journalWrapperExecutable: .ready,
+                    screenDiagnostic: ScreenRecordingPermissionDiagnostic(
+                        preflightSucceeded: true,
+                        sckFailedAfterPositivePreflight: true
+                    ),
+                    microphoneCause: .unknown
+                )
+            ),
+            size: settingsSize,
+            to: "settings-status-setup-unavailable.png"
+        )
+    }
+
     @Test func settingsStatusError() throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         let updateController = makeSnapshotUpdateController()
@@ -629,6 +721,26 @@ struct SnapshotTests {
 
     @Test func about() throws {
         try render(AboutView(), size: aboutSize, to: "about.png")
+    }
+
+    private func setupProbeSnapshot(
+        solAppPlacement: SetupProbeOutcome = .ready,
+        journalAppInstalled: SetupProbeOutcome = .ready,
+        solWrapperExecutable: SetupProbeOutcome = .ready,
+        journalWrapperExecutable: SetupProbeOutcome = .ready,
+        hasPromptedScreenRecording: Bool = false,
+        screenDiagnostic: ScreenRecordingPermissionDiagnostic? = nil,
+        microphoneCause: MicrophoneAuthorizationCause = .unknown
+    ) -> SetupProbeSnapshot {
+        SetupProbeSnapshot(
+            solAppPlacement: solAppPlacement,
+            journalAppInstalled: journalAppInstalled,
+            solWrapperExecutable: solWrapperExecutable,
+            journalWrapperExecutable: journalWrapperExecutable,
+            hasPromptedScreenRecording: hasPromptedScreenRecording,
+            screenDiagnostic: screenDiagnostic,
+            microphoneCause: microphoneCause
+        )
     }
 
     @Test func emptinessGuardFiresOnBlankView() {

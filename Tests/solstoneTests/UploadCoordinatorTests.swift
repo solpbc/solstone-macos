@@ -76,6 +76,28 @@ struct UploadCoordinatorTests {
         #expect(coordinator.lastErrorReason == nil)
     }
 
+    @Test func journalContactSucceededWritesDurableLastContactPayload() throws {
+        let fixed = Date(timeIntervalSince1970: 1_700_000_001)
+        let root = try makeTempDirectory("upload-coordinator-last-contact")
+        let store = InMemoryLastSuccessfulJournalContactStore()
+        let fingerprint = JournalConnectionFingerprint(value: "sha256:current")
+        let coordinator = UploadCoordinator(
+            forSnapshot: StorageManager(baseDirectory: root),
+            config: AppConfig(serverURL: "https://journal.example", serverKey: "secret", serviceMode: .external),
+            lastContactStore: store,
+            journalFingerprintProvider: { fingerprint }
+        )
+        coordinator.nowProvider = { fixed }
+
+        coordinator.handleProgressEvent(.journalContactSucceeded)
+
+        #expect(store.read() == .found(LastSuccessfulJournalContactPayload(
+            date: fixed,
+            fingerprint: fingerprint.value
+        )))
+        #expect(coordinator.lastSuccessfulJournalContactOutcome == .synced(fixed))
+    }
+
     @Test func uploadFailedDoesNotSetBundledLastIngestAt() throws {
         let fixed = Date(timeIntervalSince1970: 1_700_000_000)
         let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: true)

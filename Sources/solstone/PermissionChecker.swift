@@ -6,6 +6,11 @@ import AVFoundation
 import ScreenCaptureKit
 import os
 
+struct ScreenRecordingPermissionDiagnostic: Equatable, Sendable {
+    let preflightSucceeded: Bool
+    let sckFailedAfterPositivePreflight: Bool
+}
+
 /// Checks macOS permissions required for capture.
 /// Screen recording permission is verified via SCShareableContent — pre-check APIs
 /// (CGPreflightScreenCaptureAccess, CGWindowListCopyWindowInfo) are unreliable
@@ -40,6 +45,35 @@ struct PermissionChecker {
 
     var microphoneGranted: Bool {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
+    var microphoneAuthorizationCause: MicrophoneAuthorizationCause {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined:
+            return .notDetermined
+        case .denied:
+            return .denied
+        case .restricted:
+            return .restricted
+        default:
+            return .unknown
+        }
+    }
+
+    static func screenRecordingDiagnostic() async -> ScreenRecordingPermissionDiagnostic {
+        let preflightSucceeded = CGPreflightScreenCaptureAccess()
+        guard preflightSucceeded else {
+            return ScreenRecordingPermissionDiagnostic(
+                preflightSucceeded: false,
+                sckFailedAfterPositivePreflight: false
+            )
+        }
+
+        let sckSucceeded = await checkScreenRecording()
+        return ScreenRecordingPermissionDiagnostic(
+            preflightSucceeded: true,
+            sckFailedAfterPositivePreflight: !sckSucceeded
+        )
     }
 
     /// Clears the prompted flag so background polling stops triggering SCShareableContent.

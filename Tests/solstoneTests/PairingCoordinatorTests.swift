@@ -99,7 +99,8 @@ struct PairingCoordinatorTests {
         let store = PairingStore(pairing: prior)
         let script = PairScript([.success(replacement)])
         let reactivate = ReactivateRecorder()
-        let coordinator = makeCoordinator(store: store, script: script, reactivate: reactivate)
+        let clear = ClearRecorder()
+        let coordinator = makeCoordinator(store: store, script: script, reactivate: reactivate, clear: clear)
 
         await coordinator.submitPairingLink(relayPairLink(instanceID: replacement.instanceID))
         await coordinator.confirmSwitch()
@@ -109,6 +110,7 @@ struct PairingCoordinatorTests {
         #expect(store.savedPairings == [replacement])
         #expect(await script.callCount == 1)
         #expect(await reactivate.count == 1)
+        #expect(clear.count == 1)
     }
 
     @Test func differentInstanceIDCeremonyFailurePreservesPriorPairing() async throws {
@@ -131,7 +133,8 @@ struct PairingCoordinatorTests {
     @Test func unpairDeletesPairingReactivatesAndRestoresIdle() async throws {
         let store = PairingStore(pairing: pairing())
         let reactivate = ReactivateRecorder()
-        let coordinator = makeCoordinator(store: store, outcomes: [], reactivate: reactivate)
+        let clear = ClearRecorder()
+        let coordinator = makeCoordinator(store: store, outcomes: [], reactivate: reactivate, clear: clear)
 
         await coordinator.unpair()
 
@@ -140,6 +143,7 @@ struct PairingCoordinatorTests {
         #expect(store.deleted)
         #expect(store.deleteCount == 1)
         #expect(await reactivate.count == 1)
+        #expect(clear.count == 1)
     }
 
     @Test func invalidPairURLCasesMapToInvalidLink() async throws {
@@ -238,12 +242,14 @@ struct PairingCoordinatorTests {
     private func makeCoordinator(
         store: PairingStore,
         outcomes: [PairScriptOutcome],
-        reactivate: ReactivateRecorder = ReactivateRecorder()
+        reactivate: ReactivateRecorder = ReactivateRecorder(),
+        clear: ClearRecorder = ClearRecorder()
     ) -> PairingCoordinator {
         makeCoordinator(
             store: store,
             script: PairScript(outcomes),
-            reactivate: reactivate
+            reactivate: reactivate,
+            clear: clear
         )
     }
 
@@ -251,7 +257,8 @@ struct PairingCoordinatorTests {
         store: PairingStore,
         script: PairScript,
         reactivate: ReactivateRecorder = ReactivateRecorder(),
-        ownerState: TunnelLifecycleState = .disconnected
+        ownerState: TunnelLifecycleState = .disconnected,
+        clear: ClearRecorder = ClearRecorder()
     ) -> PairingCoordinator {
         PairingCoordinator(
             pair: { pairURL, deviceLabel, relayEndpoint in
@@ -265,7 +272,8 @@ struct PairingCoordinatorTests {
             },
             ownerState: { ownerState },
             relayEndpoint: { URL(string: "https://relay.test")! },
-            deviceLabel: { "test mac" }
+            deviceLabel: { "test mac" },
+            clearLastSuccessfulJournalContact: { clear.record() }
         )
     }
 }
@@ -313,6 +321,15 @@ private actor PairScript {
 }
 
 private actor ReactivateRecorder {
+    private(set) var count = 0
+
+    func record() {
+        count += 1
+    }
+}
+
+@MainActor
+private final class ClearRecorder {
     private(set) var count = 0
 
     func record() {

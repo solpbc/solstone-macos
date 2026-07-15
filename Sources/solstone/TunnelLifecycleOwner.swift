@@ -70,6 +70,16 @@ final class TunnelLifecycleOwner {
         return localPort
     }
 
+    var cachedPairingIdentity: TunnelPairingIdentity? {
+        guard case .loaded(let pairing) = cachedPairingOutcome else {
+            return nil
+        }
+        return TunnelPairingIdentity(
+            instanceID: pairing.instanceID,
+            fingerprint: pairing.fingerprint
+        )
+    }
+
     @ObservationIgnored
     private let loadPairing: @Sendable () throws -> StoredPairing?
     @ObservationIgnored

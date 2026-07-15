@@ -49,6 +49,41 @@ public enum UICopy {
     public static let SETTINGS_TRY_AGAIN = "try again"
     public static let SETTINGS_TRY_AGAIN_IN_FLIGHT = "trying again…"
     public static let SETTINGS_OBSERVATION_RECOVERY_FALLBACK = "observing stopped — sol couldn't restart it on its own."
+    public static let SETTINGS_SETUP_GROUP_TITLE = "check my setup"
+    public static let SETTINGS_SETUP_VERDICT_READY = "your setup is ready"
+    public static let SETTINGS_SETUP_VERDICT_UNAVAILABLE = "some setup checks are unavailable"
+    public static let SETTINGS_SETUP_SHARED_NOT_REQUIRED = "not needed on this Mac"
+    public static let SETTINGS_SETUP_SHARED_COULD_NOT_CHECK = "couldn't check"
+    public static let SETTINGS_SETUP_SHARED_GRANTED = "granted"
+    public static let SETTINGS_SETUP_SHARED_NOT_GRANTED = "not granted"
+    public static let SETTINGS_SETUP_SHARED_CHECKING = "checking"
+    public static let SETTINGS_SETUP_SOL_APP_LABEL = "sol app"
+    public static let SETTINGS_SETUP_SOL_APP_READY = "in Applications"
+    public static let SETTINGS_SETUP_SOL_APP_NEEDS_ATTENTION = "needs to be moved"
+    public static let SETTINGS_SETUP_SOL_APP_ACTION = "open Applications →"
+    public static let SETTINGS_SETUP_JOURNAL_APP_LABEL = "journal app"
+    public static let SETTINGS_SETUP_JOURNAL_APP_READY = "installed"
+    public static let SETTINGS_SETUP_JOURNAL_APP_NEEDS_ATTENTION = "not installed"
+    public static let SETTINGS_SETUP_JOURNAL_APP_ACTION = "open journal settings →"
+    public static let SETTINGS_SETUP_JOURNAL_LINK_LABEL = "your journal"
+    public static let SETTINGS_SETUP_JOURNAL_LINK_READY = "linked"
+    public static let SETTINGS_SETUP_JOURNAL_LINK_NEEDS_ATTENTION = "not linked"
+    public static let SETTINGS_SETUP_JOURNAL_LINK_ACTION = "connect your journal →"
+    public static let SETTINGS_SETUP_COMMAND_LINE_TOOLS_LABEL = "command line tools"
+    public static let SETTINGS_SETUP_COMMAND_LINE_TOOLS_READY = "installed in ~/.local/bin"
+    public static let SETTINGS_SETUP_COMMAND_LINE_TOOLS_NEEDS_ATTENTION = "not installed yet"
+    public static let SETTINGS_SETUP_COMMAND_LINE_TOOLS_ACTION = "open journal settings →"
+    public static let SETTINGS_SETUP_SCREEN_RECORDING_LABEL = "screen recording"
+    public static let SETTINGS_SETUP_SCREEN_RECORDING_ACTION = "grant access →"
+    public static let SETTINGS_SETUP_MICROPHONE_LABEL = "microphone"
+    public static let SETTINGS_SETUP_MICROPHONE_ACTION = "grant access →"
+    public static let SETTINGS_SETUP_LAST_SYNC_LABEL = "last sync"
+    public static let SETTINGS_SETUP_LAST_SYNC_NEVER = "no sync yet"
+    public static let SETTINGS_SETUP_LAST_SYNC_NOT_LINKED = "your journal isn't linked"
+    public static let SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT = "if sol is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old sol entry and try enable screen recording again."
+    public static let SETTINGS_PERMISSIONS_MIC_DENIED = "microphone access is off. allow sol in Privacy & Security → Microphone."
+    public static let SETTINGS_PERMISSIONS_MIC_RESTRICTED = "microphone access is restricted by this Mac."
+    public static let SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS = "open system settings →"
     public static let SETTINGS_HELP_ICON_FULL = "on — your data's reaching your journal"
     public static let SETTINGS_HELP_ICON_HALF = "on — saved on this Mac, not reaching your journal right now"
     public static let SETTINGS_HELP_ICON_PAUSED = "paused"
@@ -59,6 +94,10 @@ public enum UICopy {
 
     public static func menubarErrorOpenSettings(_ message: String) -> String {
         "error: \(message) →"
+    }
+
+    public static func settingsSetupVerdictNeedsAttention(_ count: Int) -> String {
+        count == 1 ? "1 thing needs attention" : "\(count) things need attention"
     }
 
 }

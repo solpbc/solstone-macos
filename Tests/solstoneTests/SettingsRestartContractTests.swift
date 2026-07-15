@@ -63,6 +63,8 @@ struct SettingsRestartContractTests {
         )
 
         #expect(body.contains("syncOnStartup()"))
+        #expect(body.contains("appState.clearLastSuccessfulJournalContact()"))
+        #expect(body.range(of: "appState.clearLastSuccessfulJournalContact()")!.lowerBound < body.range(of: "appState.updateConfig(config)")!.lowerBound)
         #expect(!body.contains("journalDependentServicesReady"))
         #expect(!body.contains("mode != .bundled"))
     }
@@ -80,7 +82,9 @@ struct SettingsRestartContractTests {
         #expect(body.contains("fresh.observerName != config.observerName"))
         #expect(body.contains("fresh.serviceMode != config.serviceMode"))
         #expect(body.contains("fresh.journalPath != config.journalPath"))
+        #expect(body.contains("clearLastSuccessfulJournalContact()"))
         #expect(body.contains("updateConfig(fresh)"))
+        #expect(body.range(of: "clearLastSuccessfulJournalContact()")!.lowerBound < body.range(of: "updateConfig(fresh)")!.lowerBound)
     }
 
     @Test func settingsRelaunchRoutesThroughAppQuitCoordinator() throws {

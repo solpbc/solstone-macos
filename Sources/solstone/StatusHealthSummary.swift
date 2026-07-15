@@ -74,6 +74,38 @@ extension StatusHealthSummary {
         pendingCount: Int,
         lastSyncedAt: Date?,
         serverURL: String?,
+        now: Date,
+        setupVerdict: SetupGroupVerdict? = nil
+    ) -> StatusHealthSummary {
+        let operational = makeOperational(
+            serviceMode: serviceMode,
+            isRecording: isRecording,
+            isPaused: isPaused,
+            uploadStatus: uploadStatus,
+            pendingCount: pendingCount,
+            lastSyncedAt: lastSyncedAt,
+            serverURL: serverURL,
+            now: now
+        )
+        guard let setupVerdict, setupVerdict.severity == .attention else {
+            return operational
+        }
+        return StatusHealthSummary(
+            severity: .attention,
+            title: setupVerdict.text,
+            subtitle: operational.title,
+            axValue: setupVerdict.axState.axToken
+        )
+    }
+
+    private static func makeOperational(
+        serviceMode: ServiceMode?,
+        isRecording: Bool,
+        isPaused: Bool,
+        uploadStatus: UploadCoordinator.Status,
+        pendingCount: Int,
+        lastSyncedAt: Date?,
+        serverURL: String?,
         now: Date
     ) -> StatusHealthSummary {
         let host = journalHost(serverURL)

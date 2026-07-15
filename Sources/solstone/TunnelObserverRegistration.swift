@@ -38,6 +38,7 @@ func performTunnelObserverRegistration(
         config.serverKey = registration.key
         config.observerName = registration.streamName
         config.serviceMode = .external
+        appState.clearLastSuccessfulJournalContact()
         appState.updateConfig(config)
 
     case .failure(let failure):

@@ -84,6 +84,7 @@ public final class AppState {
     private let triggerTunnelConnectedSync: @MainActor @Sendable (AppState) -> Void
     private let notifier: any SolChatNotifying
     private let loginService: any LoginItemService
+    private let lastContactStore: any LastSuccessfulJournalContactStoring
     private let isSnapshot: Bool
     private let observerHealthSnapshotEnabled: Bool
     public private(set) var config: AppConfig
@@ -412,6 +413,25 @@ public final class AppState {
         }
     }
 
+    internal func currentJournalConnectionFingerprint() -> JournalConnectionFingerprint? {
+        let topology = classifySetupTopology(
+            serviceMode: config.serviceMode,
+            serverURL: config.serverURL,
+            isTunnelManaged: tunnelLifecycleOwner.isTunnelManaged
+        )
+        return journalConnectionFingerprint(
+            config: config,
+            topology: topology,
+            isTunnelManaged: tunnelLifecycleOwner.isTunnelManaged,
+            tunnelPairing: tunnelLifecycleOwner.cachedPairingIdentity
+        )
+    }
+
+    internal func clearLastSuccessfulJournalContact() {
+        lastContactStore.clear()
+        uploadCoordinator?.refreshLastSuccessfulJournalContact()
+    }
+
     internal func observerHealthSnapshot() -> ObserverHealthSnapshot? {
         guard observerHealthSnapshotEnabled else { return nil }
         guard config.isUploadConfigured else { return nil }
@@ -573,7 +593,9 @@ public final class AppState {
         let heartbeatTarget = AppStateBridgeTarget()
         let captureTarget = AppStateBridgeTarget()
         let homeBaseURLTarget = AppStateBridgeTarget()
+        let fingerprintTarget = AppStateBridgeTarget()
         let recoveryCoordinator = IncompleteSegmentRecoveryCoordinator.shared
+        let lastContactStore = UserDefaultsLastSuccessfulJournalContactStore()
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager
@@ -584,6 +606,7 @@ public final class AppState {
         self.triggerTunnelConnectedSync = triggerTunnelConnectedSync
         self.notifier = notifier
         self.loginService = loginService
+        self.lastContactStore = lastContactStore
         self.observerHealthSnapshotEnabled = true
         self.recoveryCoordinator = recoveryCoordinator
         let tunnelLifecycleOwner = TunnelLifecycleOwner()
@@ -597,6 +620,13 @@ public final class AppState {
             },
             ownerState: { [owner = tunnelLifecycleOwner] in
                 owner.state
+            },
+            clearLastSuccessfulJournalContact: { [fingerprintTarget, lastContactStore] in
+                if let state = fingerprintTarget.state {
+                    state.clearLastSuccessfulJournalContact()
+                } else {
+                    lastContactStore.clear()
+                }
             }
         )
         let homeBaseURLResolver = Self.makeHomeBaseURLResolver(target: homeBaseURLTarget)
@@ -683,7 +713,11 @@ public final class AppState {
         uploadCoordinator = UploadCoordinator(
             storageManager: storageManager,
             config: config,
-            resolver: homeBaseURLResolver
+            resolver: homeBaseURLResolver,
+            lastContactStore: lastContactStore,
+            journalFingerprintProvider: { [fingerprintTarget] in
+                fingerprintTarget.state?.currentJournalConnectionFingerprint()
+            }
         )
         appQuitCoordinator = makeAppQuitCoordinator(
             setCommitted: { [weak self] committed in
@@ -750,6 +784,8 @@ public final class AppState {
         solChatTarget.state = self
         heartbeatTarget.state = self
         homeBaseURLTarget.state = self
+        fingerprintTarget.state = self
+        uploadCoordinator.refreshLastSuccessfulJournalContact()
         AppState.shared = self
     }
 
@@ -767,7 +803,7 @@ public final class AppState {
     /// Creates an AppState suitable for snapshot previews and testing.
     /// All managers are initialized but no hardware, network, or keychain activity is triggered.
     /// `AppState.shared` is NOT set.
-    public static func forSnapshot(
+    static func forSnapshot(
         config: AppConfig = AppConfig(),
         notificationStatus: UNAuthorizationStatus = .authorized,
         notifier: (any SolChatNotifying)? = nil,
@@ -780,7 +816,8 @@ public final class AppState {
         },
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
             $0.uploadCoordinator.triggerSync()
-        }
+        },
+        lastContactStore: (any LastSuccessfulJournalContactStoring)? = nil
     ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
@@ -791,7 +828,8 @@ public final class AppState {
             notifier: notifier ?? NoopSolChatNotifier(),
             initialTunnelPairing: initialTunnelPairing,
             observerRegister: observerRegister,
-            triggerTunnelConnectedSync: triggerTunnelConnectedSync
+            triggerTunnelConnectedSync: triggerTunnelConnectedSync,
+            lastContactStore: lastContactStore
         )
     }
 
@@ -827,13 +865,15 @@ public final class AppState {
         },
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
             $0.uploadCoordinator.triggerSync()
-        }
+        },
+        lastContactStore providedLastContactStore: (any LastSuccessfulJournalContactStoring)? = nil
     ) {
         let pauseManager = PauseManager()
         let storageManager = StorageManager()
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
         let heartbeatTarget = AppStateBridgeTarget()
         let captureTarget = AppStateBridgeTarget()
+        let fingerprintTarget = AppStateBridgeTarget()
         let snapshotResolver = HomeBaseURLResolver { [config] in
             guard let serverURL = config.serverURL else {
                 return .held
@@ -851,6 +891,8 @@ public final class AppState {
         self.triggerTunnelConnectedSync = triggerTunnelConnectedSync
         self.notifier = notifier
         self.loginService = loginService
+        let lastContactStore = providedLastContactStore ?? InMemoryLastSuccessfulJournalContactStore()
+        self.lastContactStore = lastContactStore
         self.observerHealthSnapshotEnabled = false
         self.notificationAuthorizationStatus = notificationStatus
         self.recoveryCoordinator = .shared
@@ -905,13 +947,20 @@ public final class AppState {
             },
             ownerState: { [owner = tunnelLifecycleOwner] in
                 owner.state
+            },
+            clearLastSuccessfulJournalContact: { [lastContactStore] in
+                lastContactStore.clear()
             }
         )
 
         uploadCoordinator = UploadCoordinator(
             forSnapshot: storageManager,
             config: config,
-            resolver: snapshotResolver
+            resolver: snapshotResolver,
+            lastContactStore: lastContactStore,
+            journalFingerprintProvider: { [fingerprintTarget] in
+                fingerprintTarget.state?.currentJournalConnectionFingerprint()
+            }
         )
         appQuitCoordinator = makeAppQuitCoordinator(
             setCommitted: { _ in },
@@ -921,8 +970,10 @@ public final class AppState {
         visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
         heartbeatTarget.state = self
         captureTarget.state = self
+        fingerprintTarget.state = self
+        uploadCoordinator.refreshLastSuccessfulJournalContact()
 
-        // No callback wiring, no pause restore, no segment recovery,
+        // No pause restore, no segment recovery,
         // no startRecording, no upload sync, no AppState.shared assignment.
     }
 
@@ -1122,6 +1173,13 @@ public final class AppState {
         }
 
         Logger.general.info("External defaults change detected — reloading journal connection config")
+        let identityChanged = fresh.serverURL != config.serverURL ||
+            fresh.serverKey != config.serverKey ||
+            fresh.serviceMode != config.serviceMode ||
+            fresh.journalPath != config.journalPath
+        if identityChanged {
+            clearLastSuccessfulJournalContact()
+        }
         updateConfig(fresh)
 
         if fresh.isUploadConfigured {

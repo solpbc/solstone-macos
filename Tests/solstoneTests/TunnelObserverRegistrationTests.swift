@@ -135,6 +135,46 @@ struct TunnelObserverRegistrationTests {
         #expect(state.config.isUploadConfigured)
     }
 
+    @Test func tunnelRegistrationRekeyClearsDurableLastContactBeforeNewConfigPresents() async {
+        let oldConfig = AppConfig(
+            serverURL: "http://127.0.0.1:49152",
+            serverKey: "old-key",
+            serviceMode: .external
+        )
+        let oldFingerprint = journalConnectionFingerprint(
+            config: oldConfig,
+            topology: .local,
+            isTunnelManaged: false,
+            tunnelPairing: nil
+        )!
+        let store = InMemoryLastSuccessfulJournalContactStore(readResult: .found(
+            LastSuccessfulJournalContactPayload(
+                date: Date(timeIntervalSince1970: 456),
+                fingerprint: oldFingerprint.value
+            )
+        ))
+        let registrar = FakeObserverRegistrar(result: .success(ObserverRegistration(
+            key: "new-key",
+            streamName: "new-stream"
+        )))
+        let state = AppState.forSnapshot(config: oldConfig, lastContactStore: store)
+        #expect(state.uploadCoordinator.lastSuccessfulJournalContactOutcome == .synced(Date(timeIntervalSince1970: 456)))
+
+        await performTunnelObserverRegistration(
+            appState: state,
+            isTunnelManaged: true,
+            resolveBase: { .url("http://127.0.0.1:49153") },
+            register: { baseURL, descriptor in
+                await registrar.register(baseURL: baseURL, descriptor: descriptor)
+            }
+        )
+
+        #expect(store.read() == .absent)
+        #expect(state.config.serverURL == "http://127.0.0.1:49153")
+        #expect(state.config.serverKey == "new-key")
+        #expect(state.uploadCoordinator.lastSuccessfulJournalContactOutcome == .noSyncYet)
+    }
+
     @Test func heldTunnelRegistrationDoesNotPersistAndStillTriggersSync() async {
         let registrar = FakeObserverRegistrar()
         let triggerSpy = TriggerSyncSpy()

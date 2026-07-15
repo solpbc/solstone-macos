@@ -116,6 +116,31 @@ struct StatusHealthSummaryTests {
         #expect(waiting.subtitle?.contains(" · 5 waiting") == true)
     }
 
+    @Test func setupReadyPreservesOperationalSummary() {
+        let summary = makeSummary(uploadStatus: .synced, setupVerdict: .ready)
+
+        #expect(summary.severity == .good)
+        #expect(summary.title == "all good — on, synced to x.example")
+        #expect(summary.axValue == "external_synced")
+    }
+
+    @Test func setupNeedsAttentionOverridesHealthyOperationalSummary() {
+        let summary = makeSummary(uploadStatus: .synced, setupVerdict: .needsAttention(count: 2))
+
+        #expect(summary.severity == .attention)
+        #expect(summary.title == "2 things need attention")
+        #expect(summary.subtitle == "all good — on, synced to x.example")
+        #expect(summary.axValue == SetupGroupVerdictAXState.needsAttention.axToken)
+    }
+
+    @Test func setupUnavailableOverridesHealthyOperationalSummary() {
+        let summary = makeSummary(uploadStatus: .synced, setupVerdict: .someUnavailable)
+
+        #expect(summary.severity == .attention)
+        #expect(summary.title == "some setup checks are unavailable")
+        #expect(summary.axValue == SetupGroupVerdictAXState.someUnavailable.axToken)
+    }
+
     @Test func captureFlagsLoseToRedRowsAndPrecedeExternalProgressRows() {
         let uploadingOff = makeSummary(isRecording: false, uploadStatus: .uploading(segment: "s1"))
         #expect(uploadingOff.axValue == "off")
@@ -156,7 +181,8 @@ struct StatusHealthSummaryTests {
         pendingCount: Int = 0,
         lastSyncedAt: Date? = nil,
         serverURL: String? = statusSummaryServerURL,
-        now: Date = statusSummaryNow
+        now: Date = statusSummaryNow,
+        setupVerdict: SetupGroupVerdict? = nil
     ) -> StatusHealthSummary {
         StatusHealthSummary.make(
             serviceMode: serviceMode,
@@ -166,7 +192,8 @@ struct StatusHealthSummaryTests {
             pendingCount: pendingCount,
             lastSyncedAt: lastSyncedAt,
             serverURL: serverURL,
-            now: now
+            now: now,
+            setupVerdict: setupVerdict
         )
     }
 }

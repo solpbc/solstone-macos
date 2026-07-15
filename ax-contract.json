@@ -170,13 +170,27 @@
       "settings.service.pairing.switchConfirm",
       "settings.service.pairing.unpair",
       "settings.service.prereq.permissions",
-      "settings.status.app.version.state",
       "settings.status.debug.keepRejectedAudio",
       "settings.status.debug.oneMinuteSegments",
       "settings.status.health.summary.state",
-      "settings.status.journal.manageJournal",
       "settings.status.observing.nextSegment.state",
       "settings.status.observing.state",
+      "settings.status.setup.app.version.state",
+      "settings.status.setup.commandLineTools.action",
+      "settings.status.setup.commandLineTools.state",
+      "settings.status.setup.journalApp.action",
+      "settings.status.setup.journalApp.state",
+      "settings.status.setup.journalLink.action",
+      "settings.status.setup.journalLink.state",
+      "settings.status.setup.lastSync.state",
+      "settings.status.setup.manageJournal",
+      "settings.status.setup.microphone.action",
+      "settings.status.setup.microphone.state",
+      "settings.status.setup.screenRecording.action",
+      "settings.status.setup.screenRecording.state",
+      "settings.status.setup.solApp.action",
+      "settings.status.setup.solApp.state",
+      "settings.status.setup.verdict.state",
       "settings.status.storage.settings",
       "settings.status.tryAgain",
       "settings.status.upload.checked.state",
@@ -311,9 +325,6 @@
       "kind" : "enum",
       "vocabulary" : "SidebarBadgeState"
     },
-    "settings.status.app.version.state" : {
-      "kind" : "freeform"
-    },
     "settings.status.health.summary.state" : {
       "kind" : "freeform"
     },
@@ -323,6 +334,41 @@
     "settings.status.observing.state" : {
       "kind" : "enum",
       "vocabulary" : "SettingsObservationAXState"
+    },
+    "settings.status.setup.app.version.state" : {
+      "kind" : "freeform"
+    },
+    "settings.status.setup.commandLineTools.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupCheckRowAXState"
+    },
+    "settings.status.setup.journalApp.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupCheckRowAXState"
+    },
+    "settings.status.setup.journalLink.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupCheckRowAXState"
+    },
+    "settings.status.setup.lastSync.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupCheckRowAXState"
+    },
+    "settings.status.setup.microphone.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupCheckRowAXState"
+    },
+    "settings.status.setup.screenRecording.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupCheckRowAXState"
+    },
+    "settings.status.setup.solApp.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupCheckRowAXState"
+    },
+    "settings.status.setup.verdict.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupGroupVerdictAXState"
     },
     "settings.status.upload.checked.state" : {
       "kind" : "numeric"
@@ -491,6 +537,18 @@
       "paused",
       "starting",
       "error"
+    ],
+    "SetupCheckRowAXState" : [
+      "ready",
+      "needs_attention",
+      "not_required",
+      "checking",
+      "unavailable"
+    ],
+    "SetupGroupVerdictAXState" : [
+      "ready",
+      "needs_attention",
+      "some_unavailable"
     ],
     "SidebarBadgeState" : [
       "done",

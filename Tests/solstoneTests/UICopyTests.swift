@@ -68,4 +68,47 @@ struct UICopyTests {
         #expect(UICopy.SETTINGS_ATTENTION_UPDATE_CHECK_FAILED == "update check failed")
     }
 
+    @Test func settingsSetupCopyStrings() {
+        #expect(UICopy.SETTINGS_SETUP_GROUP_TITLE == "check my setup")
+        #expect(UICopy.SETTINGS_SETUP_VERDICT_READY == "your setup is ready")
+        #expect(UICopy.settingsSetupVerdictNeedsAttention(1) == "1 thing needs attention")
+        #expect(UICopy.settingsSetupVerdictNeedsAttention(2) == "2 things need attention")
+        #expect(UICopy.SETTINGS_SETUP_VERDICT_UNAVAILABLE == "some setup checks are unavailable")
+        #expect(UICopy.SETTINGS_SETUP_SOL_APP_LABEL == "sol app")
+        #expect(UICopy.SETTINGS_SETUP_SOL_APP_READY == "in Applications")
+        #expect(UICopy.SETTINGS_SETUP_SOL_APP_NEEDS_ATTENTION == "needs to be moved")
+        #expect(UICopy.SETTINGS_SETUP_SOL_APP_ACTION == "open Applications →")
+        #expect(UICopy.SETTINGS_SETUP_JOURNAL_APP_LABEL == "journal app")
+        #expect(UICopy.SETTINGS_SETUP_JOURNAL_APP_READY == "installed")
+        #expect(UICopy.SETTINGS_SETUP_JOURNAL_APP_NEEDS_ATTENTION == "not installed")
+        #expect(UICopy.SETTINGS_SETUP_JOURNAL_APP_ACTION == "open journal settings →")
+        #expect(UICopy.SETTINGS_SETUP_JOURNAL_LINK_LABEL == "your journal")
+        #expect(UICopy.SETTINGS_SETUP_JOURNAL_LINK_READY == "linked")
+        #expect(UICopy.SETTINGS_SETUP_JOURNAL_LINK_NEEDS_ATTENTION == "not linked")
+        #expect(UICopy.SETTINGS_SETUP_JOURNAL_LINK_ACTION == "connect your journal →")
+        #expect(UICopy.SETTINGS_SETUP_COMMAND_LINE_TOOLS_LABEL == "command line tools")
+        #expect(UICopy.SETTINGS_SETUP_COMMAND_LINE_TOOLS_READY == "installed in ~/.local/bin")
+        #expect(UICopy.SETTINGS_SETUP_COMMAND_LINE_TOOLS_NEEDS_ATTENTION == "not installed yet")
+        #expect(UICopy.SETTINGS_SETUP_COMMAND_LINE_TOOLS_ACTION == "open journal settings →")
+        #expect(UICopy.SETTINGS_SETUP_SCREEN_RECORDING_LABEL == "screen recording")
+        #expect(UICopy.SETTINGS_SETUP_SCREEN_RECORDING_ACTION == "grant access →")
+        #expect(UICopy.SETTINGS_SETUP_MICROPHONE_LABEL == "microphone")
+        #expect(UICopy.SETTINGS_SETUP_MICROPHONE_ACTION == "grant access →")
+        #expect(UICopy.SETTINGS_SETUP_LAST_SYNC_LABEL == "last sync")
+        #expect(UICopy.SETTINGS_SETUP_LAST_SYNC_NEVER == "no sync yet")
+        #expect(UICopy.SETTINGS_SETUP_LAST_SYNC_NOT_LINKED == "your journal isn't linked")
+    }
+
+    @Test func settingsSetupSharedAndPermissionPaneCopyStrings() {
+        #expect(UICopy.SETTINGS_SETUP_SHARED_NOT_REQUIRED == "not needed on this Mac")
+        #expect(UICopy.SETTINGS_SETUP_SHARED_COULD_NOT_CHECK == "couldn't check")
+        #expect(UICopy.SETTINGS_SETUP_SHARED_GRANTED == "granted")
+        #expect(UICopy.SETTINGS_SETUP_SHARED_NOT_GRANTED == "not granted")
+        #expect(UICopy.SETTINGS_SETUP_SHARED_CHECKING == "checking")
+        #expect(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT == "if sol is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old sol entry and try enable screen recording again.")
+        #expect(UICopy.SETTINGS_PERMISSIONS_MIC_DENIED == "microphone access is off. allow sol in Privacy & Security → Microphone.")
+        #expect(UICopy.SETTINGS_PERMISSIONS_MIC_RESTRICTED == "microphone access is restricted by this Mac.")
+        #expect(UICopy.SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS == "open system settings →")
+    }
+
 }

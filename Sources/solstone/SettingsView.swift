@@ -242,6 +242,7 @@ struct SettingsView: View {
 
     @State private var storageUsedMB: Int?
     @State private var tryAgainInFlight = false
+    @State private var setupProbeSnapshot = SetupProbeSnapshot.checking
 
     // Permissions tab state
     @State private var screenRecordingPrompted = false
@@ -285,6 +286,8 @@ struct SettingsView: View {
         _ descriptor: ObserverRegistrationDescriptor
     ) async -> Result<ObserverRegistration, ObserverRegistrationFailure>
     private let markFetch: @MainActor @Sendable (String) async -> JournalMark?
+    private let runningJournalController: any RunningJournalController
+    private let setupFileManager: FileManager
 
     init(
         appState: AppState,
@@ -315,7 +318,10 @@ struct SettingsView: View {
         },
         markFetch: @escaping @MainActor @Sendable (String) async -> JournalMark? = { baseURL in
             await JournalIdentityFetcher().fetch(baseURL: baseURL)
-        }
+        },
+        runningJournalController: any RunningJournalController = LiveRunningJournalController(),
+        setupFileManager: FileManager = .default,
+        initialSetupProbeSnapshot: SetupProbeSnapshot = .checking
     ) {
         self.appState = appState
         self.updateController = updateController
@@ -324,8 +330,11 @@ struct SettingsView: View {
         self.onDiskJournalDiscovery = onDiskJournalDiscovery
         self.observerRegister = observerRegister
         self.markFetch = markFetch
+        self.runningJournalController = runningJournalController
+        self.setupFileManager = setupFileManager
         self._selectedTab = State(initialValue: selectedTab)
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
+        self._setupProbeSnapshot = State(initialValue: initialSetupProbeSnapshot)
         self._journalHandoffOrchestrator = State(initialValue: journalHandoffOrchestrator)
         self._freshFlow = State(initialValue: freshFlow)
         self._onDiskJournalAdoptionFlow = State(initialValue: onDiskJournalAdoptionFlow)
@@ -424,6 +433,35 @@ struct SettingsView: View {
         .onChange(of: appState.pairingCoordinator.tunnelState) { _, _ in
             startJournalMarkRederiveIfNeeded()
         }
+        .onChange(of: selectedTab) { _, newValue in
+            if newValue == .status || newValue == .permissions {
+                refreshSetupProbes()
+            }
+        }
+        .onChange(of: appState.initialPermissionCheckComplete) { _, _ in
+            refreshSetupProbes()
+        }
+        .onChange(of: appState.screenRecordingGranted) { _, _ in
+            refreshSetupProbes()
+        }
+        .onChange(of: appState.microphoneGranted) { _, _ in
+            refreshSetupProbes()
+        }
+        .onChange(of: appState.config.serverURL) { _, _ in
+            refreshSetupProbes()
+        }
+        .onChange(of: appState.config.serverKey) { _, _ in
+            refreshSetupProbes()
+        }
+        .onChange(of: appState.config.serviceMode) { _, _ in
+            refreshSetupProbes()
+        }
+        .onChange(of: appState.config.journalPath) { _, _ in
+            refreshSetupProbes()
+        }
+        .onChange(of: appState.tunnelLifecycleOwner.isTunnelManaged) { _, _ in
+            refreshSetupProbes()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .openSettingsWindow)) { _ in
             applyPendingSettingsTab()
         }
@@ -454,7 +492,10 @@ struct SettingsView: View {
     private var detailContent: some View {
         switch selectedTab {
         case .status:
-            statusTab.onAppear { appState.markSettingsTabVisited(.status) }
+            statusTab.onAppear {
+                appState.markSettingsTabVisited(.status)
+                refreshSetupProbes()
+            }
         case .observer:
             observerTab.onAppear { appState.markSettingsTabVisited(.observer) }
         case .service:
@@ -464,7 +505,10 @@ struct SettingsView: View {
         case .privacy:
             privacyTab.onAppear { appState.markSettingsTabVisited(.privacy) }
         case .permissions:
-            permissionsTab.onAppear { appState.markSettingsTabVisited(.permissions) }
+            permissionsTab.onAppear {
+                appState.markSettingsTabVisited(.permissions)
+                refreshSetupProbes()
+            }
         case .updates:
             UpdatesTabView(controller: updateController, copy: UpdatesCopy(provider: .solstone))
                 .onAppear { appState.markSettingsTabVisited(.updates) }
@@ -668,6 +712,11 @@ struct SettingsView: View {
                         Text("this is how you get searchable memory of every meeting, document, and idea. sol takes in your screen alongside you and keeps everything on your Mac, sent only to your journal.")
                             .font(.body)
                             .foregroundStyle(.secondary)
+                        if setupProbeSnapshot.hasPromptedScreenRecording && restartCountdown == nil {
+                            Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         HStack {
                             if let countdown = restartCountdown {
                                 HStack(spacing: 6) {
@@ -728,13 +777,23 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                         HStack {
                             Spacer()
-                            Button("enable microphone") {
-                                Task {
-                                    await PermissionChecker().requestMicrophone()
-                                    appState.microphoneGranted = PermissionChecker().microphoneGranted
+                            switch setupProbeSnapshot.microphoneCause {
+                            case .denied:
+                                microphoneSettingsButton(message: UICopy.SETTINGS_PERMISSIONS_MIC_DENIED)
+                            case .restricted:
+                                microphoneSettingsButton(message: UICopy.SETTINGS_PERMISSIONS_MIC_RESTRICTED)
+                            case .notDetermined:
+                                Button("enable microphone") {
+                                    Task {
+                                        await PermissionChecker().requestMicrophone()
+                                        refreshSetupProbes()
+                                        appState.microphoneGranted = PermissionChecker().microphoneGranted
+                                    }
                                 }
+                                .accessibilityIdentifier(AXID.Settings.Permissions.microphoneGrantAccess)
+                            case .unknown:
+                                microphoneSettingsButton(message: UICopy.SETTINGS_SETUP_SHARED_COULD_NOT_CHECK)
                             }
-                            .accessibilityIdentifier(AXID.Settings.Permissions.microphoneGrantAccess)
                         }
                     }
                 }
@@ -803,6 +862,56 @@ struct SettingsView: View {
 
     private func relaunchApp() {
         appState.appQuitCoordinator.requestSettingsRestart()
+    }
+
+    private func microphoneSettingsButton(message: String) -> some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button(UICopy.SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS) {
+                openMicrophoneSettings()
+            }
+            .accessibilityIdentifier(AXID.Settings.Permissions.microphoneGrantAccess)
+        }
+    }
+
+    private func openMicrophoneSettings() {
+        NSWorkspace.shared.open(
+            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+        )
+    }
+
+    private func refreshSetupProbes() {
+        Task { @MainActor in
+            let permissionChecker = PermissionChecker()
+            let screenDiagnostic = await PermissionChecker.screenRecordingDiagnostic()
+            setupProbeSnapshot = SetupProbeSnapshot(
+                solAppPlacement: solAppPlacementOutcome(),
+                journalAppInstalled: runningJournalController.installedURL() == nil ? .needsAttention : .ready,
+                solWrapperExecutable: wrapperExecutableOutcome(named: "sol"),
+                journalWrapperExecutable: wrapperExecutableOutcome(named: "journal"),
+                hasPromptedScreenRecording: permissionChecker.hasPromptedScreenRecording,
+                screenDiagnostic: screenDiagnostic,
+                microphoneCause: permissionChecker.microphoneAuthorizationCause
+            )
+        }
+    }
+
+    private func solAppPlacementOutcome() -> SetupProbeOutcome {
+        switch AppPlacementGate.evaluate() {
+        case .allowed:
+            return .ready
+        case .repair:
+            return .needsAttention
+        }
+    }
+
+    private func wrapperExecutableOutcome(named name: String) -> SetupProbeOutcome {
+        let wrapperURL = setupFileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin", isDirectory: true)
+            .appendingPathComponent(name)
+        return setupFileManager.isExecutableFile(atPath: wrapperURL.path) ? .ready : .needsAttention
     }
 
     // MARK: - Observer Tab
@@ -1862,6 +1971,7 @@ struct SettingsView: View {
         config.serverURL = url
         config.serverKey = key
         config.serviceMode = mode
+        appState.clearLastSuccessfulJournalContact()
         appState.updateConfig(config)
         if appState.microphoneGranted {
             Task {
@@ -2325,20 +2435,48 @@ struct SettingsView: View {
         )
     }
 
-    private var syncTargetText: String {
-        if appState.config.serviceMode == .bundled {
-            return "journal on this Mac"
-        }
+    private var setupTopology: SetupTopology {
+        classifySetupTopology(
+            serviceMode: appState.config.serviceMode,
+            serverURL: appState.config.serverURL,
+            isTunnelManaged: appState.tunnelLifecycleOwner.isTunnelManaged
+        )
+    }
 
-        guard let serverURL = appState.config.serverURL, !serverURL.isEmpty else {
-            return "journal not configured"
-        }
+    private var setupSnapshotPresentation: SetupSnapshotPresentation {
+        let screenOutcome = PermissionOutcome.screenRecording(
+            initialPermissionCheckComplete: appState.initialPermissionCheckComplete,
+            screenRecordingGranted: appState.screenRecordingGranted,
+            hasPromptedScreenRecording: setupProbeSnapshot.hasPromptedScreenRecording,
+            preflightSucceeded: setupProbeSnapshot.screenDiagnostic?.preflightSucceeded,
+            sckFailedAfterPositivePreflight: setupProbeSnapshot.screenDiagnostic?.sckFailedAfterPositivePreflight ?? false
+        )
+        let microphoneOutcome = PermissionOutcome.microphone(
+            initialPermissionCheckComplete: appState.initialPermissionCheckComplete,
+            microphoneGranted: appState.microphoneGranted,
+            cause: setupProbeSnapshot.microphoneCause
+        )
+        let lastSyncOutcome: SetupLastSyncOutcome = appState.serviceIsDone
+            ? appState.uploadCoordinator.lastSuccessfulJournalContactOutcome
+            : .notLinked
 
-        return "syncing to \(journalHost(serverURL))"
+        return buildSetupSnapshot(SetupSnapshotInput(
+            topology: setupTopology,
+            solAppPlacement: setupProbeSnapshot.solAppPlacement,
+            journalAppInstalled: setupProbeSnapshot.journalAppInstalled,
+            serviceIsDone: appState.serviceIsDone,
+            solWrapperExecutable: setupProbeSnapshot.solWrapperExecutable,
+            journalWrapperExecutable: setupProbeSnapshot.journalWrapperExecutable,
+            screenRecording: screenOutcome,
+            microphone: microphoneOutcome,
+            lastSyncOutcome: lastSyncOutcome,
+            now: Date()
+        ))
     }
 
     private var statusHealthSummary: StatusHealthSummary {
-        StatusHealthSummary.make(
+        let setupPresentation = setupSnapshotPresentation
+        return StatusHealthSummary.make(
             serviceMode: appState.config.serviceMode,
             isRecording: appState.isRecording,
             isPaused: appState.isPaused,
@@ -2346,7 +2484,8 @@ struct SettingsView: View {
             pendingCount: appState.uploadCoordinator.pendingCount,
             lastSyncedAt: appState.uploadCoordinator.lastSyncedAt,
             serverURL: appState.config.serverURL,
-            now: Date()
+            now: Date(),
+            setupVerdict: setupPresentation.verdict
         )
     }
 
@@ -2383,9 +2522,160 @@ struct SettingsView: View {
         .accessibilityValue(summary.axValue)
     }
 
+    private var setupGroup: some View {
+        let presentation = setupSnapshotPresentation
+        return GroupBox(UICopy.SETTINGS_SETUP_GROUP_TITLE) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: setupVerdictSystemImage(presentation.verdict))
+                        .foregroundStyle(setupVerdictColor(presentation.verdict))
+                    Text(presentation.verdict.text)
+                        .font(.callout)
+                    Spacer(minLength: 0)
+                }
+                AXStateCompanion(
+                    id: AXID.Settings.Status.setupVerdictState,
+                    value: presentation.verdict.axState.axToken
+                )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(presentation.rows) { row in
+                        setupCheckRow(row)
+                    }
+                }
+
+                Divider()
+
+                HStack {
+                    Text("app version \(AppVersion.short)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    AXStateCompanion(
+                        id: AXID.Settings.Status.setupAppVersionState,
+                        value: AppVersion.short
+                    )
+                    Spacer(minLength: 8)
+                    Button(UICopy.SETTINGS_SETUP_JOURNAL_APP_ACTION) {
+                        selectedTab = .service
+                    }
+                    .font(.caption)
+                    .buttonStyle(.link)
+                    .accessibilityIdentifier(AXID.Settings.Status.setupManageJournal)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func setupCheckRow(_ row: SetupCheckRow) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            LabeledContent {
+                HStack(spacing: 8) {
+                    Image(systemName: row.systemImage)
+                        .foregroundStyle(setupRowColor(row.state))
+                    Text(row.value)
+                        .foregroundStyle(.secondary)
+                    if let action = row.action,
+                       let actionLabel = row.actionLabel,
+                       let actionID = setupActionAXID(for: row.id) {
+                        Button(actionLabel) {
+                            performSetupAction(action)
+                        }
+                        .controlSize(.regular)
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier(actionID)
+                    }
+                }
+            } label: {
+                Text(row.label)
+            }
+            AXStateCompanion(
+                id: setupStateAXID(for: row.id),
+                value: row.state.axToken
+            )
+        }
+    }
+
+    private func setupStateAXID(for rowID: SetupCheckRowID) -> String {
+        switch rowID {
+        case .solApp:
+            return AXID.Settings.Status.setupSolAppState
+        case .journalApp:
+            return AXID.Settings.Status.setupJournalAppState
+        case .journalLink:
+            return AXID.Settings.Status.setupJournalLinkState
+        case .commandLineTools:
+            return AXID.Settings.Status.setupCommandLineToolsState
+        case .screenRecording:
+            return AXID.Settings.Status.setupScreenRecordingState
+        case .microphone:
+            return AXID.Settings.Status.setupMicrophoneState
+        case .lastSync:
+            return AXID.Settings.Status.setupLastSyncState
+        }
+    }
+
+    private func setupActionAXID(for rowID: SetupCheckRowID) -> String? {
+        switch rowID {
+        case .solApp:
+            return AXID.Settings.Status.setupSolAppAction
+        case .journalApp:
+            return AXID.Settings.Status.setupJournalAppAction
+        case .journalLink:
+            return AXID.Settings.Status.setupJournalLinkAction
+        case .commandLineTools:
+            return AXID.Settings.Status.setupCommandLineToolsAction
+        case .screenRecording:
+            return AXID.Settings.Status.setupScreenRecordingAction
+        case .microphone:
+            return AXID.Settings.Status.setupMicrophoneAction
+        case .lastSync:
+            return nil
+        }
+    }
+
+    private func performSetupAction(_ action: SetupCheckAction) {
+        switch action {
+        case .openApplications:
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications", isDirectory: true))
+        case .openJournalSettings, .connectJournal:
+            selectedTab = .service
+        case .grantPermission:
+            selectedTab = .permissions
+        }
+    }
+
+    private func setupRowColor(_ state: SetupCheckRowAXState) -> Color {
+        switch state {
+        case .ready:
+            return .green
+        case .needsAttention, .unavailable:
+            return .red
+        case .notRequired, .checking:
+            return .secondary
+        }
+    }
+
+    private func setupVerdictColor(_ verdict: SetupGroupVerdict) -> Color {
+        verdict.severity.color
+    }
+
+    private func setupVerdictSystemImage(_ verdict: SetupGroupVerdict) -> String {
+        switch verdict {
+        case .ready:
+            return "checkmark.circle.fill"
+        case .needsAttention:
+            return "exclamationmark.triangle.fill"
+        case .someUnavailable:
+            return "questionmark.circle.fill"
+        }
+    }
+
     private var statusTab: some View {
         VStack(alignment: .leading, spacing: 20) {
             healthSummaryCard
+
+            setupGroup
 
             GroupBox("sol") {
                 VStack(alignment: .leading, spacing: 8) {
@@ -2428,35 +2718,6 @@ struct SettingsView: View {
                         .disabled(recovery.buttonDisabled)
                         .accessibilityIdentifier(AXID.Settings.Status.tryAgain)
                     }
-                }
-                .padding(.vertical, 4)
-            }
-
-            GroupBox("journal") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(syncTargetText)
-                        .foregroundStyle(.secondary)
-                    uploadStatusView
-                    if appState.config.serviceMode == .bundled {
-                        Text("your journal needs a new link")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    } else if let lastSyncedAt = appState.uploadCoordinator.lastSyncedAt {
-                        Text("last synced \(coarseRelativeTime(lastSyncedAt, now: Date()))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text("app version \(AppVersion.short)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier(AXID.Settings.Status.appVersionState)
-                        .accessibilityValue(AppVersion.short)
-                    Button("manage journal →") {
-                        selectedTab = .service
-                    }
-                    .font(.caption)
-                    .buttonStyle(.link)
-                    .accessibilityIdentifier(AXID.Settings.Status.manageJournal)
                 }
                 .padding(.vertical, 4)
             }

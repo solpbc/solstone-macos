@@ -41,6 +41,7 @@ final class PairingCoordinator {
     typealias OwnerState = @MainActor @Sendable () -> TunnelLifecycleState
     typealias RelayEndpointSource = @Sendable () -> URL
     typealias DeviceLabelSource = @Sendable () -> String
+    typealias ClearLastSuccessfulJournalContact = @MainActor @Sendable () -> Void
 
     private(set) var state: PairingFlowState = .idle
 
@@ -61,6 +62,8 @@ final class PairingCoordinator {
     @ObservationIgnored
     private let deviceLabel: DeviceLabelSource
     @ObservationIgnored
+    private let clearLastSuccessfulJournalContact: ClearLastSuccessfulJournalContact
+    @ObservationIgnored
     private var pendingSwitchPairing: StoredPairing?
 
     var tunnelState: TunnelLifecycleState {
@@ -77,7 +80,8 @@ final class PairingCoordinator {
         reactivate: @escaping Reactivate = {},
         ownerState: @escaping OwnerState = { .disconnected },
         relayEndpoint: @escaping RelayEndpointSource = { SPLPairingDefaults.relayEndpointURL },
-        deviceLabel: @escaping DeviceLabelSource = { SPLPairingDefaults.deviceLabel }
+        deviceLabel: @escaping DeviceLabelSource = { SPLPairingDefaults.deviceLabel },
+        clearLastSuccessfulJournalContact: @escaping ClearLastSuccessfulJournalContact = {}
     ) {
         self.pair = pair
         self.loadPairing = loadPairing
@@ -87,6 +91,7 @@ final class PairingCoordinator {
         self.ownerState = ownerState
         self.relayEndpoint = relayEndpoint
         self.deviceLabel = deviceLabel
+        self.clearLastSuccessfulJournalContact = clearLastSuccessfulJournalContact
     }
 
     func submitPairingLink(_ rawLink: String) async {
@@ -144,6 +149,7 @@ final class PairingCoordinator {
             return
         }
         pendingSwitchPairing = nil
+        clearLastSuccessfulJournalContact()
         await reactivate()
         state = .idle
     }
@@ -192,6 +198,7 @@ final class PairingCoordinator {
         }
 
         pendingSwitchPairing = nil
+        clearLastSuccessfulJournalContact()
         await reactivate()
         state = successState
     }

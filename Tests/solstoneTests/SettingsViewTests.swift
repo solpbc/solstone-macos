@@ -53,7 +53,7 @@ struct SettingsViewTests {
         )
         let beforeExternalStorageGate = try extract(
             from: statusTab,
-            start: "GroupBox(\"journal\")",
+            start: "setupGroup",
             end: "if resolvedServiceMode(for: appState.config) == .external"
         )
         let externalStorageGate = try extract(
@@ -62,7 +62,8 @@ struct SettingsViewTests {
             end: "Text(statusFooterText)"
         )
 
-        #expect(statusTab.contains("if appState.config.serviceMode == .bundled"))
+        #expect(statusTab.contains("setupGroup"))
+        #expect(!statusTab.contains("GroupBox(\"journal\")"))
         #expect(!beforeExternalStorageGate.contains("AXID.Settings.Status.storageSettings"))
         #expect(externalStorageGate.contains("AXID.Settings.Status.storageSettings"))
     }

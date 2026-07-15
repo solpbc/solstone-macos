@@ -80,6 +80,20 @@ internal enum SettingsObservationAXState: CaseIterable {
     }
 }
 
+internal enum SetupCheckRowAXState: CaseIterable {
+    case ready
+    case needsAttention
+    case notRequired
+    case checking
+    case unavailable
+}
+
+internal enum SetupGroupVerdictAXState: CaseIterable {
+    case ready
+    case needsAttention
+    case someUnavailable
+}
+
 internal enum PairingConnectionAXState: CaseIterable {
     case disconnected
     case connecting
@@ -361,6 +375,36 @@ extension AXPermissionState {
             return "denied"
         case .waiting:
             return "waiting"
+        }
+    }
+}
+
+extension SetupCheckRowAXState {
+    var axToken: String {
+        switch self {
+        case .ready:
+            return "ready"
+        case .needsAttention:
+            return "needs_attention"
+        case .notRequired:
+            return "not_required"
+        case .checking:
+            return "checking"
+        case .unavailable:
+            return "unavailable"
+        }
+    }
+}
+
+extension SetupGroupVerdictAXState {
+    var axToken: String {
+        switch self {
+        case .ready:
+            return "ready"
+        case .needsAttention:
+            return "needs_attention"
+        case .someUnavailable:
+            return "some_unavailable"
         }
     }
 }

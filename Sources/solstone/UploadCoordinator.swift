@@ -84,6 +84,7 @@ public final class UploadCoordinator {
     public internal(set) var lastSyncedAt: Date?
     public internal(set) var recentErrorCount: Int = 0
     public internal(set) var lastErrorReason: String?
+    internal private(set) var lastSuccessfulJournalContactOutcome: SetupLastSyncOutcome = .notLinked
     private var bundledLastIngestAt: Date?
 
     internal var nowProvider: @MainActor () -> Date = { Date() }
@@ -107,19 +108,25 @@ public final class UploadCoordinator {
     // MARK: - Private State
 
     private let syncService: SyncService
+    private let lastContactStore: any LastSuccessfulJournalContactStoring
+    private let journalFingerprintProvider: @MainActor @Sendable () -> JournalConnectionFingerprint?
     private var config: AppConfig
     private var eventTask: Task<Void, Never>?
     private var configurationTask: Task<Void, Never>?
 
     // MARK: - Initialization
 
-    public init(
+    init(
         storageManager: StorageManager,
         config: AppConfig,
         client: UploadClient = UploadClient(),
-        resolver: HomeBaseURLResolver
+        resolver: HomeBaseURLResolver,
+        lastContactStore: any LastSuccessfulJournalContactStoring = UserDefaultsLastSuccessfulJournalContactStore(),
+        journalFingerprintProvider: @escaping @MainActor @Sendable () -> JournalConnectionFingerprint? = { nil }
     ) {
         self.config = config
+        self.lastContactStore = lastContactStore
+        self.journalFingerprintProvider = journalFingerprintProvider
         self.syncService = SyncService(
             storageManager: storageManager,
             client: client,
@@ -137,6 +144,7 @@ public final class UploadCoordinator {
         }
 
         // Start listening to sync events
+        refreshLastSuccessfulJournalContact()
         startEventListener()
     }
 
@@ -145,9 +153,13 @@ public final class UploadCoordinator {
         forSnapshot storageManager: StorageManager,
         config: AppConfig,
         client: UploadClient = UploadClient(),
-        resolver: HomeBaseURLResolver? = nil
+        resolver: HomeBaseURLResolver? = nil,
+        lastContactStore: any LastSuccessfulJournalContactStoring = InMemoryLastSuccessfulJournalContactStore(),
+        journalFingerprintProvider: @escaping @MainActor @Sendable () -> JournalConnectionFingerprint? = { nil }
     ) {
         self.config = config
+        self.lastContactStore = lastContactStore
+        self.journalFingerprintProvider = journalFingerprintProvider
         let resolvedBase = config.serverURL
         self.syncService = SyncService(
             storageManager: storageManager,
@@ -159,6 +171,7 @@ public final class UploadCoordinator {
                 return .held
             }
         )
+        refreshLastSuccessfulJournalContact()
     }
 
     // MARK: - Public API
@@ -184,6 +197,19 @@ public final class UploadCoordinator {
                 await syncService.triggerSync()
             }
         }
+        refreshLastSuccessfulJournalContact()
+    }
+
+    internal func refreshLastSuccessfulJournalContact() {
+        lastSuccessfulJournalContactOutcome = resolveLastSuccessfulJournalContactOutcome(
+            read: lastContactStore.read(),
+            currentFingerprint: journalFingerprintProvider()
+        )
+    }
+
+    internal func clearLastSuccessfulJournalContact() {
+        lastContactStore.clear()
+        refreshLastSuccessfulJournalContact()
     }
 
     /// Trigger sync on startup
@@ -285,7 +311,17 @@ public final class UploadCoordinator {
             // Continue with next segment
 
         case .journalContactSucceeded:
-            lastSyncedAt = nowProvider()
+            let now = nowProvider()
+            lastSyncedAt = now
+            if let fingerprint = journalFingerprintProvider() {
+                lastContactStore.write(LastSuccessfulJournalContactPayload(
+                    date: now,
+                    fingerprint: fingerprint.value
+                ))
+                lastSuccessfulJournalContactOutcome = .synced(now)
+            } else {
+                refreshLastSuccessfulJournalContact()
+            }
             recentErrorCount = 0
             lastErrorReason = nil
             lastError = nil

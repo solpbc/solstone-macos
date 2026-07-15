@@ -51,6 +51,36 @@ struct JournalClientBehaviorTests {
         #expect((payload["version"] as? String)?.isEmpty == false)
     }
 
+    @Test func localRegistrationClearsDurableLastContactBeforePresentingNewConfig() {
+        let oldConfig = AppConfig(
+            serverURL: "https://old.example",
+            serverKey: "old-key",
+            serviceMode: .external
+        )
+        let store = InMemoryLastSuccessfulJournalContactStore(readResult: .found(
+            LastSuccessfulJournalContactPayload(
+                date: Date(timeIntervalSince1970: 123),
+                fingerprint: journalConnectionFingerprint(
+                    config: oldConfig,
+                    topology: .remote,
+                    isTunnelManaged: false,
+                    tunnelPairing: nil
+                )!.value
+            )
+        ))
+        let state = AppState.forSnapshot(config: oldConfig, lastContactStore: store)
+        #expect(state.uploadCoordinator.lastSuccessfulJournalContactOutcome == .synced(Date(timeIntervalSince1970: 123)))
+
+        persistLocalObserverRegistration(
+            ObserverRegistration(key: "new-key", streamName: "new-stream"),
+            appState: state
+        )
+
+        #expect(store.read() == .absent)
+        #expect(state.config.serverURL == ServiceMode.bundledServiceURL)
+        #expect(state.uploadCoordinator.lastSuccessfulJournalContactOutcome == .noSyncYet)
+    }
+
     @Test func localDiscoveryForkDoesNotRegisterWhenIdentityUncommittedOrAbsent() async {
         let uncommitted = await discoverLocalJournal { _ in nil }
         let absent = await discoverLocalJournal { _ in nil }
