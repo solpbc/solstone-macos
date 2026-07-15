@@ -10,6 +10,14 @@ enum LocalJournalDiscoveryResult: Equatable {
     case fork
 }
 
+func shouldProbeLocalJournal(
+    isUploadConfigured: Bool,
+    isTunnelManaged: Bool,
+    localDiscoveryCompleted: Bool
+) -> Bool {
+    !isUploadConfigured && !isTunnelManaged && !localDiscoveryCompleted
+}
+
 @MainActor
 func discoverLocalJournal(
     fetchIdentity: @escaping @MainActor @Sendable (String) async -> JournalMark?

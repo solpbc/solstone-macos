@@ -63,6 +63,29 @@ struct JournalClientBehaviorTests {
         _ = registerCalls
     }
 
+    @Test func localDiscoveryProbeRunsOnlyForUnconfiguredNonTunnelState() {
+        #expect(shouldProbeLocalJournal(
+            isUploadConfigured: false,
+            isTunnelManaged: false,
+            localDiscoveryCompleted: false
+        ))
+        #expect(!shouldProbeLocalJournal(
+            isUploadConfigured: false,
+            isTunnelManaged: true,
+            localDiscoveryCompleted: false
+        ))
+        #expect(!shouldProbeLocalJournal(
+            isUploadConfigured: true,
+            isTunnelManaged: false,
+            localDiscoveryCompleted: false
+        ))
+        #expect(!shouldProbeLocalJournal(
+            isUploadConfigured: false,
+            isTunnelManaged: false,
+            localDiscoveryCompleted: true
+        ))
+    }
+
     @Test func sameKeyRelinkStillPresentsMarkOverlayAfterReset() async throws {
         let state = AppState.forSnapshot()
         state.setConfirmedMark(.uiTestSample)

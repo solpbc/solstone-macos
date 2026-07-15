@@ -899,6 +899,12 @@ struct SettingsView: View {
             refreshJournalName()
             refreshLocalJournalDiscoveryIfNeeded()
         }
+        .onChange(of: appState.pairingCoordinator.tunnelState) { _, _ in
+            refreshJournalName()
+        }
+        .onChange(of: appState.tunnelLifecycleOwner.isTunnelManaged) { _, _ in
+            refreshLocalJournalDiscoveryIfNeeded()
+        }
         .onDisappear {
             journalNameFetchTask?.cancel()
             localDiscoveryTask?.cancel()
@@ -1009,6 +1015,19 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var unconfiguredJournalPanel: some View {
+        if appState.tunnelLifecycleOwner.isTunnelManaged {
+            pairingSection
+        } else {
+            localJournalDiscoveryPanel
+        }
+
+        DisclosureGroup("advanced") {
+            externalServiceSection
+        }
+    }
+
+    @ViewBuilder
+    private var localJournalDiscoveryPanel: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 if !localDiscoveryCompleted {
@@ -1069,10 +1088,6 @@ struct SettingsView: View {
 
         if showPairingFlow {
             pairingSection
-        }
-
-        DisclosureGroup("advanced") {
-            externalServiceSection
         }
     }
 
@@ -1759,8 +1774,19 @@ struct SettingsView: View {
     }
 
     private func refreshLocalJournalDiscoveryIfNeeded() {
-        guard !appState.config.isUploadConfigured else { return }
-        guard !localDiscoveryCompleted else { return }
+        guard shouldProbeLocalJournal(
+            isUploadConfigured: appState.config.isUploadConfigured,
+            isTunnelManaged: appState.tunnelLifecycleOwner.isTunnelManaged,
+            localDiscoveryCompleted: localDiscoveryCompleted
+        ) else {
+            if appState.tunnelLifecycleOwner.isTunnelManaged {
+                localDiscoveryTask?.cancel()
+                localDiscoveryTask = nil
+                localJournalMark = nil
+                localDiscoveryCompleted = false
+            }
+            return
+        }
         localDiscoveryTask?.cancel()
         localDiscoveryCompleted = false
         localJournalMark = nil
