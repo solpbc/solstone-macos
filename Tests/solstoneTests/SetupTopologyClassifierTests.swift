@@ -15,6 +15,14 @@ struct SetupTopologyClassifierTests {
         ) == .local)
     }
 
+    @Test func tunnelManagedWinsOverBundledMode() {
+        #expect(classifySetupTopology(
+            serviceMode: .bundled,
+            serverURL: ServiceMode.bundledServiceURL,
+            isTunnelManaged: true
+        ) == .remote)
+    }
+
     @Test func tunnelManagedIsRemoteEvenWhenRuntimeURLIsLoopback() {
         #expect(classifySetupTopology(
             serviceMode: .external,

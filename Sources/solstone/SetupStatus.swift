@@ -15,11 +15,13 @@ internal func classifySetupTopology(
     serverURL: String?,
     isTunnelManaged: Bool
 ) -> SetupTopology {
-    if serviceMode == .bundled {
-        return .local
-    }
+    // A managed tunnel is the authoritative remote journal identity even when
+    // the runtime URL is loopback or stale config still says bundled.
     if isTunnelManaged {
         return .remote
+    }
+    if serviceMode == .bundled {
+        return .local
     }
     guard let serverURL,
           !serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -375,7 +377,7 @@ private func commandLineToolsRow(
         outcome = .ready
     }
 
-    return probeRow(
+    let row = probeRow(
         id: .commandLineTools,
         label: UICopy.SETTINGS_SETUP_COMMAND_LINE_TOOLS_LABEL,
         readyText: UICopy.SETTINGS_SETUP_COMMAND_LINE_TOOLS_READY,
@@ -386,6 +388,20 @@ private func commandLineToolsRow(
         action: .openJournalSettings,
         actionLabel: UICopy.SETTINGS_SETUP_COMMAND_LINE_TOOLS_ACTION
     )
+    let hasKnownMissingWrapper = solWrapperExecutable == .needsAttention || journalWrapperExecutable == .needsAttention
+    if hasKnownMissingWrapper, row.action == nil {
+        return SetupCheckRow(
+            id: row.id,
+            label: row.label,
+            value: row.value,
+            state: row.state,
+            systemImage: row.systemImage,
+            action: .openJournalSettings,
+            actionLabel: UICopy.SETTINGS_SETUP_COMMAND_LINE_TOOLS_ACTION,
+            votes: row.votes
+        )
+    }
+    return row
 }
 
 private func permissionRow(

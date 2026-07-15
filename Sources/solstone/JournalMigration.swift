@@ -1093,6 +1093,7 @@ final class LiveConfigFlipper: ConfigFlipper {
     func flipToExternal(appState: AppState) {
         var config = appState.config
         config.serviceMode = .external
+        appState.clearLastSuccessfulJournalContact()
         appState.updateConfig(config)
     }
 

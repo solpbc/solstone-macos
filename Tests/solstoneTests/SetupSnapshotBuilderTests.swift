@@ -51,6 +51,50 @@ struct SetupSnapshotBuilderTests {
         #expect(states(in: presentation)[.screenRecording] == .checking)
     }
 
+    @Test func commandLineToolMixedWrapperStatesKeepKnownMissingAction() {
+        let unavailableThenMissing = buildSetupSnapshot(input(
+            solWrapperExecutable: .unavailable,
+            journalWrapperExecutable: .needsAttention
+        ))
+        #expect(states(in: unavailableThenMissing)[.commandLineTools] == .unavailable)
+        #expect(row(.commandLineTools, in: unavailableThenMissing).action == .openJournalSettings)
+
+        let missingThenUnavailable = buildSetupSnapshot(input(
+            solWrapperExecutable: .needsAttention,
+            journalWrapperExecutable: .unavailable
+        ))
+        #expect(states(in: missingThenUnavailable)[.commandLineTools] == .unavailable)
+        #expect(row(.commandLineTools, in: missingThenUnavailable).action == .openJournalSettings)
+
+        let checkingThenMissing = buildSetupSnapshot(input(
+            solWrapperExecutable: .checking,
+            journalWrapperExecutable: .needsAttention
+        ))
+        #expect(states(in: checkingThenMissing)[.commandLineTools] == .checking)
+        #expect(row(.commandLineTools, in: checkingThenMissing).action == .openJournalSettings)
+
+        let bothUnavailable = buildSetupSnapshot(input(
+            solWrapperExecutable: .unavailable,
+            journalWrapperExecutable: .unavailable
+        ))
+        #expect(states(in: bothUnavailable)[.commandLineTools] == .unavailable)
+        #expect(row(.commandLineTools, in: bothUnavailable).action == nil)
+
+        let bothMissing = buildSetupSnapshot(input(
+            solWrapperExecutable: .needsAttention,
+            journalWrapperExecutable: .needsAttention
+        ))
+        #expect(states(in: bothMissing)[.commandLineTools] == .needsAttention)
+        #expect(row(.commandLineTools, in: bothMissing).action == .openJournalSettings)
+
+        let bothReady = buildSetupSnapshot(input(
+            solWrapperExecutable: .ready,
+            journalWrapperExecutable: .ready
+        ))
+        #expect(states(in: bothReady)[.commandLineTools] == .ready)
+        #expect(row(.commandLineTools, in: bothReady).action == nil)
+    }
+
     @Test func remoteTopologyMakesLocalArtifactsNonVoting() {
         let presentation = buildSetupSnapshot(input(
             topology: .remote,
@@ -64,6 +108,23 @@ struct SetupSnapshotBuilderTests {
         #expect(states(in: presentation)[.commandLineTools] == .notRequired)
         #expect(row(.journalApp, in: presentation).votes == false)
         #expect(row(.commandLineTools, in: presentation).votes == false)
+    }
+
+    @Test func beforeJournalChoiceLocalArtifactsAreInformational() {
+        let presentation = buildSetupSnapshot(input(
+            topology: .local,
+            journalAppInstalled: .needsAttention,
+            serviceIsDone: false,
+            solWrapperExecutable: .needsAttention,
+            journalWrapperExecutable: .needsAttention
+        ))
+
+        #expect(states(in: presentation)[.journalLink] == .needsAttention)
+        #expect(row(.journalLink, in: presentation).votes)
+        #expect(states(in: presentation)[.journalApp] == .notRequired)
+        #expect(!row(.journalApp, in: presentation).votes)
+        #expect(states(in: presentation)[.commandLineTools] == .notRequired)
+        #expect(!row(.commandLineTools, in: presentation).votes)
     }
 
     @Test func lastSyncNeverVotesAndUsesCoarseFormatter() {

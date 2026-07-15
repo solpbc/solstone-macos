@@ -85,17 +85,19 @@ internal func resolveLastSuccessfulJournalContactOutcome(
     read: LastSuccessfulJournalContactRead,
     currentFingerprint: JournalConnectionFingerprint?
 ) -> SetupLastSyncOutcome {
-    guard let currentFingerprint else {
-        return .notLinked
-    }
-
     switch read {
-    case .found(let payload):
-        return payload.fingerprint == currentFingerprint.value ? .synced(payload.date) : .noSyncYet
-    case .absent:
-        return .noSyncYet
     case .failed:
         return .couldNotCheck
+    case .found(let payload):
+        guard let currentFingerprint else {
+            return .notLinked
+        }
+        return payload.fingerprint == currentFingerprint.value ? .synced(payload.date) : .noSyncYet
+    case .absent:
+        guard currentFingerprint != nil else {
+            return .notLinked
+        }
+        return .noSyncYet
     }
 }
 

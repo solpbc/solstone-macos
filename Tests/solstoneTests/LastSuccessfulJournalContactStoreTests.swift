@@ -36,6 +36,10 @@ struct LastSuccessfulJournalContactStoreTests {
             read: store.read(),
             currentFingerprint: fingerprint
         ) == .couldNotCheck)
+        #expect(resolveLastSuccessfulJournalContactOutcome(
+            read: store.read(),
+            currentFingerprint: nil
+        ) == .couldNotCheck)
     }
 
     @Test func absentAndMismatchedPayloadsDoNotFabricateSync() {

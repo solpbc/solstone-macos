@@ -434,7 +434,7 @@ struct SettingsView: View {
             startJournalMarkRederiveIfNeeded()
         }
         .onChange(of: selectedTab) { _, newValue in
-            if newValue == .status || newValue == .permissions {
+            if newValue == .status {
                 refreshSetupProbes()
             }
         }
@@ -507,7 +507,6 @@ struct SettingsView: View {
         case .permissions:
             permissionsTab.onAppear {
                 appState.markSettingsTabVisited(.permissions)
-                refreshSetupProbes()
             }
         case .updates:
             UpdatesTabView(controller: updateController, copy: UpdatesCopy(provider: .solstone))

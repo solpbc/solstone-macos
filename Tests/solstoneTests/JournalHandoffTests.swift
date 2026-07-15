@@ -40,6 +40,35 @@ struct JournalHandoffTests {
         #expect(decoded == handoff)
     }
 
+    @Test func liveConfigFlipperClearsDurableLastContactBeforeExternalFlip() throws {
+        let config = AppConfig(
+            serverURL: ServiceMode.bundledServiceURL,
+            serverKey: "observer-key",
+            serviceMode: .bundled,
+            journalPath: "/Users/example/journal"
+        )
+        let oldFingerprint = try #require(journalConnectionFingerprint(
+            config: config,
+            topology: .local,
+            isTunnelManaged: false,
+            tunnelPairing: nil
+        ))
+        let store = InMemoryLastSuccessfulJournalContactStore(readResult: .found(
+            LastSuccessfulJournalContactPayload(
+                date: Date(timeIntervalSince1970: 123),
+                fingerprint: oldFingerprint.value
+            )
+        ))
+        let state = AppState.forSnapshot(config: config, lastContactStore: store)
+        #expect(state.uploadCoordinator.lastSuccessfulJournalContactOutcome == .synced(Date(timeIntervalSince1970: 123)))
+
+        LiveConfigFlipper().flipToExternal(appState: state)
+
+        #expect(store.read() == .absent)
+        #expect(state.config.serviceMode == .external)
+        #expect(state.uploadCoordinator.lastSuccessfulJournalContactOutcome == .noSyncYet)
+    }
+
     @Test func handWrittenCamelCaseFixtureDecodes() throws {
         let fixture = """
         {
@@ -1259,6 +1288,7 @@ private final class FakeConfigFlipper: ConfigFlipper {
         flipCount += 1
         var config = appState.config
         config.serviceMode = .external
+        appState.clearLastSuccessfulJournalContact()
         appState.updateConfig(config)
     }
 

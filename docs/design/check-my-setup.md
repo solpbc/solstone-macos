@@ -441,3 +441,31 @@ Validation commands:
 - The app-placement probe/action surface is not fully specified by prep. Prefer reusing existing `AppPlacementRepair` flow, but the exact owner-visible action depends on current UX.
 - Wrapper repair behavior from Status is not specified. The safe default is informational row plus route to Journal settings; do not mutate shell wrappers from Status without an existing explicit repair API.
 - Bundled fingerprint uses `serviceMode=bundled + journalPath` per direction. If `journalPath` is nil in a real legacy bundled config, the fingerprint should still be canonical and mismatch-safe, but the row will likely need attention.
+
+## As-Built Reconciliation
+
+Commit `3f5f98b` implemented a consolidated setup surface rather than separate
+wrapper rows. The actual Status AX IDs are:
+
+- `setupVerdictState`: `settings.status.setup.verdict.state`
+- `setupSolAppState`: `settings.status.setup.solApp.state`
+- `setupSolAppAction`: `settings.status.setup.solApp.action`
+- `setupJournalAppState`: `settings.status.setup.journalApp.state`
+- `setupJournalAppAction`: `settings.status.setup.journalApp.action`
+- `setupJournalLinkState`: `settings.status.setup.journalLink.state`
+- `setupJournalLinkAction`: `settings.status.setup.journalLink.action`
+- `setupCommandLineToolsState`: `settings.status.setup.commandLineTools.state`
+- `setupCommandLineToolsAction`: `settings.status.setup.commandLineTools.action`
+- `setupScreenRecordingState`: `settings.status.setup.screenRecording.state`
+- `setupScreenRecordingAction`: `settings.status.setup.screenRecording.action`
+- `setupMicrophoneState`: `settings.status.setup.microphone.state`
+- `setupMicrophoneAction`: `settings.status.setup.microphone.action`
+- `setupLastSyncState`: `settings.status.setup.lastSync.state`
+- `setupManageJournal`: `settings.status.setup.manageJournal`
+- `setupAppVersionState`: `settings.status.setup.app.version.state`
+
+The contract exposes one shared row-state vocabulary,
+`SetupCheckRowAXState`, plus `SetupGroupVerdictAXState`. There is no separate
+`PermissionOutcomeAXState` in the emitted AX contract. The old Status
+`manageJournal` route and app-version state were rehomed into the setup group
+as `setupManageJournal` and `setupAppVersionState`.
