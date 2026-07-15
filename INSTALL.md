@@ -1,10 +1,12 @@
 # installing solstone-macos
 
-these instructions are for a coding agent and human working together. solstone-macos is a native swift menu bar app — one of the owner's observers, experiencing screen and audio along with them on macOS, with observations sent to your solstone journal.
+these instructions are for a coding agent and human working together. solstone-macos is a native swift menu bar app — **sol**, experiencing screen and audio along with the owner on macOS, with what it takes in kept in their journal.
+
+sol and the journal are two separate apps built from this same repo. this DMG installs sol only. the journal — the memory sol keeps, with its own first-run wizard and its own CLI wrappers — is a separate download: <https://solstone.app/download/journal>. most people setting up a new Mac want both.
 
 ## default install path — signed DMG
 
-the easiest install is the signed + notarized DMG from <https://solstone.app/download/macos>. download, open, drag to `/Applications`, and launch. the app installs your observer and journal, opens the first-run wizard, and updates over a signed channel. no Xcode, no certificates, no source build.
+the easiest install is the signed + notarized DMG from <https://solstone.app/download/macos>. download, open, drag to `/Applications`, and launch. the app installs sol only — no Xcode, no certificates, no source build, no bundled runtime. if this Mac is also where you want to keep the journal, download it separately: <https://solstone.app/download/journal>.
 
 ## source-build path — Apple Developer Program required
 
