@@ -45,11 +45,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var solChatNotificationDelegate: SolChatNotificationDelegate?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if AppTranslocationDetector.isTranslocated() {
-            AppTranslocationModal.presentAndQuit()
-            return
-        }
-
         JournalMarkFont.register()
 
         notificationObservers.append(
@@ -91,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let state = AppState.shared {
-            state.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
+            state.migrateLoginItemToWatchdogIfNeeded()
 
             let delegate = SolChatNotificationDelegate()
             solChatNotificationDelegate = delegate
@@ -165,22 +160,34 @@ struct SolstoneCaptureApp: App {
         // Configure unbuffered output for stderr
         Stderr.setUnbuffered()
 
-        let appState = AppState()
-        _appState = State(initialValue: appState)
-        _updateController = State(initialValue: UpdateController(
-            log: Logger.setup,
-            errorDomain: "app.solstone.observer.updates",
-            exclusivity: { appState.journalHandoffActive },
-            preInstallFinalizer: { @MainActor in
-                await appState.appQuitCoordinator.prepareForUpdaterInstall()
+        let startup: SolstoneNormalStartup = SolstoneStartupPlanner.buildNormalStartup(
+            decision: AppPlacementGate.evaluate(),
+            makeNormal: {
+                let appState = AppState()
+                return SolstoneNormalStartup(
+                    appState: appState,
+                    updateController: UpdateController(
+                        log: Logger.setup,
+                        errorDomain: "app.solstone.observer.updates",
+                        exclusivity: { appState.journalHandoffActive },
+                        preInstallFinalizer: { @MainActor in
+                            await appState.appQuitCoordinator.prepareForUpdaterInstall()
+                        },
+                        installFailureRecovery: { @MainActor in
+                            appState.appQuitCoordinator.resetAfterFailedUpdaterInstall()
+                        },
+                        terminationBegan: { @MainActor in
+                            appState.appKitTerminationBegan
+                        }
+                    )
+                )
             },
-            installFailureRecovery: { @MainActor in
-                appState.appQuitCoordinator.resetAfterFailedUpdaterInstall()
-            },
-            terminationBegan: { @MainActor in
-                appState.appKitTerminationBegan
+            repair: { context in
+                AppPlacementRepairTerminal.run(context: context)
             }
-        ))
+        )
+        _appState = State(initialValue: startup.appState)
+        _updateController = State(initialValue: startup.updateController)
     }
 
     private var statusAccessibilityLabel: String {
@@ -239,6 +246,11 @@ struct SolstoneCaptureApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.center)
     }
+}
+
+private struct SolstoneNormalStartup {
+    let appState: AppState
+    let updateController: UpdateController
 }
 
 private struct SettingsSceneRoot: View {

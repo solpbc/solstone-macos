@@ -244,30 +244,6 @@ struct AppQuitCoordinatorTests {
         #expect(count(events.all, "terminate") == 1)
     }
 
-    @Test func translocationWritesMarkerUsesEmptyPrepareThenTerminates() async throws {
-        let events = LockedArray<String>([])
-        let coordinator = makeCoordinator(
-            events: events,
-            prepareForQuit: {
-                events.append("unexpectedPrepareForQuit")
-            },
-            prepareForUpdate: {
-                events.append("unexpectedPrepareForUpdate")
-            }
-        )
-
-        coordinator.requestTranslocationRepair()
-
-        try await waitUntil(timeout: .seconds(5)) {
-            events.all.contains("terminate")
-        }
-        #expect(events.all == [
-            "committed:true",
-            "marker:translocation",
-            "terminate"
-        ])
-    }
-
     @Test func prepareForUpdaterInstallRunsSharedBodyAndMarksPrepared() async {
         let events = LockedArray<String>([])
         let coordinator = makeCoordinator(events: events)

@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - sol's journal handoff can now be validated against the exact upcoming journal build before release, using the same signed acquisition and trust path as production.
 
+### Fixed
+- if macOS opens sol from a temporary location, sol now offers to move itself to Applications and reopen from there so screen recording permission can stick.
+
 
 ## [1.4.5] - 2026-07-05
 

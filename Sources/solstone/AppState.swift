@@ -285,9 +285,7 @@ public final class AppState {
         }
     }
 
-    func migrateLoginItemToWatchdogIfNeeded(isTranslocated: Bool) {
-        if isTranslocated { return }
-
+    func migrateLoginItemToWatchdogIfNeeded() {
         let watchdog = loginService.watchdogStatus
         let mainApp = loginService.mainAppStatus
 

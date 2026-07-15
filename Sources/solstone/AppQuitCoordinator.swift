@@ -9,7 +9,6 @@ enum ExitReason: Equatable {
     case externalQuit
     case settingsRestart
     case updaterInstall
-    case translocation
 
     var markerString: String {
         switch self {
@@ -21,8 +20,6 @@ enum ExitReason: Equatable {
             return "settings-restart"
         case .updaterInstall:
             return "sparkle-update"
-        case .translocation:
-            return "translocation"
         }
     }
 }
@@ -135,10 +132,6 @@ final class AppQuitCoordinator {
         begin(intent: settingsRestartIntent())
     }
 
-    func requestTranslocationRepair() {
-        begin(intent: translocationRepairIntent())
-    }
-
     func prepareForUpdaterInstall() async {
         guard let task = begin(intent: updaterInstallIntent()) else { return }
         await task.value
@@ -238,14 +231,6 @@ final class AppQuitCoordinator {
                 dependencies.launchReplacement()
                 dependencies.terminate()
             }
-        )
-    }
-
-    private func translocationRepairIntent() -> ExitIntent {
-        ExitIntent(
-            reason: .translocation,
-            prepare: {},
-            finalize: dependencies.terminate
         )
     }
 

@@ -247,7 +247,7 @@ run:
 	echo "Streaming logs → $$LOG  (Ctrl+C to stop)"; \
 	/usr/bin/log stream --predicate 'subsystem == "app.solstone.observer"' --level debug > "$$LOG" 2>&1 & \
 	STREAM_PID=$$!; \
-	open solstone.app; \
+	open --env SOLSTONE_DEV_LAUNCH=1 solstone.app; \
 	trap "kill $$STREAM_PID 2>/dev/null; echo; echo 'Log saved: $$LOG'" INT TERM; \
 	wait $$STREAM_PID
 

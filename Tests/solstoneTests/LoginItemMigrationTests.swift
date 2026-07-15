@@ -41,7 +41,7 @@ struct LoginItemMigrationTests {
         let fake = FakeLoginItemService(watchdogStatus: .notFound, mainAppStatus: .notFound)
         let state = AppState.forLoginItemTest(loginService: fake)
 
-        state.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
+        state.migrateLoginItemToWatchdogIfNeeded()
 
         #expect(fake.calls == [.registerWatchdog])
         #expect(fake.watchdogStatus == .enabled)
@@ -53,7 +53,7 @@ struct LoginItemMigrationTests {
         let fake = FakeLoginItemService(watchdogStatus: .notFound, mainAppStatus: .enabled)
         let state = AppState.forLoginItemTest(loginService: fake)
 
-        state.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
+        state.migrateLoginItemToWatchdogIfNeeded()
 
         #expect(fake.calls == [.registerWatchdog, .unregisterMainApp])
         #expect(fake.watchdogStatus == .enabled)
@@ -66,7 +66,7 @@ struct LoginItemMigrationTests {
         fake.registerWatchdogError = FakeLoginItemError.requested
         let state = AppState.forLoginItemTest(loginService: fake)
 
-        state.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
+        state.migrateLoginItemToWatchdogIfNeeded()
 
         #expect(fake.calls == [.registerWatchdog])
         #expect(fake.watchdogStatus == .notFound)
@@ -81,7 +81,7 @@ struct LoginItemMigrationTests {
         fake.unregisterMainAppError = FakeLoginItemError.requested
         let state = AppState.forLoginItemTest(loginService: fake)
 
-        state.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
+        state.migrateLoginItemToWatchdogIfNeeded()
 
         #expect(fake.calls == [.registerWatchdog, .unregisterMainApp, .unregisterWatchdog])
         #expect(fake.watchdogStatus == .notRegistered)
@@ -95,7 +95,7 @@ struct LoginItemMigrationTests {
         let fake = FakeLoginItemService(watchdogStatus: .notFound, mainAppStatus: .notRegistered)
         let state = AppState.forLoginItemTest(loginService: fake)
 
-        state.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
+        state.migrateLoginItemToWatchdogIfNeeded()
 
         #expect(fake.calls.isEmpty)
         #expect(fake.watchdogStatus == .notFound)
@@ -107,7 +107,7 @@ struct LoginItemMigrationTests {
         let mainNotFound = FakeLoginItemService(watchdogStatus: .notRegistered, mainAppStatus: .notFound)
         let stateNotFound = AppState.forLoginItemTest(loginService: mainNotFound)
 
-        stateNotFound.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
+        stateNotFound.migrateLoginItemToWatchdogIfNeeded()
 
         #expect(mainNotFound.calls.isEmpty)
         #expect(mainNotFound.watchdogStatus == .notRegistered)
@@ -116,7 +116,7 @@ struct LoginItemMigrationTests {
         let mainNotRegistered = FakeLoginItemService(watchdogStatus: .notRegistered, mainAppStatus: .notRegistered)
         let stateNotRegistered = AppState.forLoginItemTest(loginService: mainNotRegistered)
 
-        stateNotRegistered.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
+        stateNotRegistered.migrateLoginItemToWatchdogIfNeeded()
 
         #expect(mainNotRegistered.calls.isEmpty)
         #expect(mainNotRegistered.watchdogStatus == .notRegistered)
@@ -128,8 +128,8 @@ struct LoginItemMigrationTests {
         let fake = FakeLoginItemService(watchdogStatus: .enabled, mainAppStatus: .notRegistered)
         let state = AppState.forLoginItemTest(loginService: fake)
 
-        state.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
-        state.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
+        state.migrateLoginItemToWatchdogIfNeeded()
+        state.migrateLoginItemToWatchdogIfNeeded()
 
         #expect(fake.calls.isEmpty)
         #expect(fake.watchdogStatus == .enabled)
@@ -141,7 +141,7 @@ struct LoginItemMigrationTests {
         let fake = FakeLoginItemService(watchdogStatus: .enabled, mainAppStatus: .enabled)
         let state = AppState.forLoginItemTest(loginService: fake)
 
-        state.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
+        state.migrateLoginItemToWatchdogIfNeeded()
 
         #expect(fake.calls == [.unregisterMainApp])
         #expect(fake.watchdogStatus == .enabled)
@@ -154,7 +154,7 @@ struct LoginItemMigrationTests {
         fake.unregisterMainAppError = FakeLoginItemError.requested
         let state = AppState.forLoginItemTest(loginService: fake)
 
-        state.migrateLoginItemToWatchdogIfNeeded(isTranslocated: false)
+        state.migrateLoginItemToWatchdogIfNeeded()
 
         #expect(fake.calls == [.unregisterMainApp, .unregisterWatchdog])
         #expect(fake.watchdogStatus == .notRegistered)
@@ -164,17 +164,6 @@ struct LoginItemMigrationTests {
         #expect(!state.isLoginItemEnabled)
     }
 
-    @Test func translocationGateDoesNothing() {
-        let fake = FakeLoginItemService(watchdogStatus: .notFound, mainAppStatus: .enabled)
-        let state = AppState.forLoginItemTest(loginService: fake)
-
-        state.migrateLoginItemToWatchdogIfNeeded(isTranslocated: true)
-
-        #expect(fake.calls.isEmpty)
-        #expect(fake.watchdogStatus == .notFound)
-        #expect(fake.mainAppStatus == .enabled)
-        #expect(!state.isLoginItemEnabled)
-    }
 }
 
 private enum FakeLoginItemError: Error {

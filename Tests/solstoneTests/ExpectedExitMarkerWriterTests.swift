@@ -69,6 +69,59 @@ struct ExpectedExitMarkerWriterTests {
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
+    @Test func durableWriteVerifiesCurrentPIDAndLeavesMarkerUnconsumed() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent("expected-exit.json")
+        let now = Date(timeIntervalSinceReferenceDate: 4_000)
+        let pid: Int32 = 9_001
+
+        let marker = try ExpectedExitMarker.writeAndVerifyExpectedExit(
+            reason: "placement-repair",
+            now: now,
+            pid: pid,
+            at: url
+        )
+
+        #expect(marker == ExpectedExitMarker(pid: pid, timestamp: now, reason: "placement-repair"))
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        let consumed = try #require(ExpectedExitMarker.readAndConsume(at: url))
+        #expect(consumed == marker)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func durableWriteCreatesParentDirectory() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("sub", isDirectory: true)
+            .appendingPathComponent("expected-exit.json")
+
+        let marker = try ExpectedExitMarker.writeAndVerifyExpectedExit(reason: "durable", pid: 123, at: url)
+
+        #expect(marker.pid == 123)
+        #expect(marker.reason == "durable")
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func durableWriteThrowsWhenParentCannotBeCreated() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let regularFile = directory.appendingPathComponent("not-a-directory")
+        _ = FileManager.default.createFile(atPath: regularFile.path, contents: Data())
+        let url = regularFile
+            .appendingPathComponent("sub", isDirectory: true)
+            .appendingPathComponent("expected-exit.json")
+
+        #expect(throws: ExpectedExitMarkerDurableWriteError.self) {
+            try ExpectedExitMarker.writeAndVerifyExpectedExit(reason: "blocked", at: url)
+        }
+    }
+
     @Test func invalidateRemovesExistingMarker() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -11,4 +11,5 @@ public enum SolstoneIdentity {
     }
 
     public static let bundleIdentifier = "app.solstone.observer"
+    public static let teamIdentifier = "7QCG8V4M6H"
 }

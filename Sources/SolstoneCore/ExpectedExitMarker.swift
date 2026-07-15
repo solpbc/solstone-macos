@@ -64,6 +64,64 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
         }
     }
 
+    public static func writeAndVerifyExpectedExit(
+        reason: String,
+        now: Date = Date(),
+        pid: Int32 = getpid(),
+        at url: URL = markerURL,
+        fileManager: FileManager = .default
+    ) throws -> ExpectedExitMarker {
+        let marker = ExpectedExitMarker(pid: pid, timestamp: now, reason: reason)
+        do {
+            try fileManager.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        } catch {
+            throw ExpectedExitMarkerDurableWriteError.createDirectoryFailed(error.localizedDescription)
+        }
+
+        let encoded: Data
+        do {
+            encoded = try marker.encoded()
+        } catch {
+            throw ExpectedExitMarkerDurableWriteError.encodeFailed(error.localizedDescription)
+        }
+
+        do {
+            try encoded.write(to: url, options: .atomic)
+        } catch {
+            throw ExpectedExitMarkerDurableWriteError.writeFailed(error.localizedDescription)
+        }
+
+        guard fileManager.fileExists(atPath: url.path) else {
+            throw ExpectedExitMarkerDurableWriteError.readbackMissing
+        }
+
+        let readbackData: Data
+        do {
+            readbackData = try Data(contentsOf: url)
+        } catch {
+            throw ExpectedExitMarkerDurableWriteError.readbackFailed(error.localizedDescription)
+        }
+
+        let readback: ExpectedExitMarker
+        do {
+            readback = try decode(readbackData)
+        } catch {
+            throw ExpectedExitMarkerDurableWriteError.decodeFailed(error.localizedDescription)
+        }
+
+        guard readback.pid == pid else {
+            throw ExpectedExitMarkerDurableWriteError.pidMismatch(expected: pid, actual: readback.pid)
+        }
+        guard readback.reason == reason else {
+            throw ExpectedExitMarkerDurableWriteError.reasonMismatch(expected: reason, actual: readback.reason)
+        }
+
+        return readback
+    }
+
     public static func decode(_ data: Data) throws -> ExpectedExitMarker {
         try JSONDecoder().decode(ExpectedExitMarker.self, from: data)
     }
@@ -111,4 +169,15 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
             Logger.general.warning("expected-exit marker invalidate failed: \(error.localizedDescription, privacy: .public)")
         }
     }
+}
+
+public enum ExpectedExitMarkerDurableWriteError: Error, Equatable {
+    case createDirectoryFailed(String)
+    case encodeFailed(String)
+    case writeFailed(String)
+    case readbackMissing
+    case readbackFailed(String)
+    case decodeFailed(String)
+    case pidMismatch(expected: Int32, actual: Int32)
+    case reasonMismatch(expected: String, actual: String)
 }
