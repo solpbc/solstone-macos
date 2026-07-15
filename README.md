@@ -101,6 +101,11 @@ verifier expects, in `.ja1r-gate/reports/`:
 - `journal-upgrade.json`
 <!-- ja1r-report-filenames:end -->
 
+Sol and paired production publishes also require `spl-link.json`. That file is a
+coordinator report, not a direct lane report, so it is intentionally outside the
+drift-gated filename block above. The profile counts are sol=8, journal=6, and
+paired=9.
+
 ```bash
 # on ja1r, from ~/extro-tools/tools/solstone-macos-gate
 GATE="python3 gate.py --checkout $HOME/projects/solstone-macos --expect-solstone <target-runtime-pin>"
@@ -140,8 +145,14 @@ the verifier refuses the set.
 **3. Verify, then publish.** The verifier is offline and stdlib-only, so the
 publish never depends on the rig being reachable. `publish-appcast` requires
 `verify-ja1r-gate-sol`, and `publish-appcast-journal` requires
-`verify-ja1r-gate-journal`; `verify-ja1r-gate-paired` checks all eight for a joint
+`verify-ja1r-gate-journal`; `verify-ja1r-gate-paired` checks all nine for a joint
 release. There is no opt-out.
+
+For sol and paired profiles, `sol-<version>.dmg` must already exist in the
+current directory at verify time. The verifier hashes that local DMG and compares
+it to `spl-link.json`, binding the co-observed artifact to the report's
+commit/identity/hash. This does not prove DMG build provenance; it proves the
+release gate saw the same artifact the publish is about to ship.
 
 ```bash
 make verify-ja1r-gate-journal \
@@ -161,12 +172,15 @@ anything is published.
 
 What the verifier proves is narrow and deliberate: that the evidence set is
 complete for the profile, that every report is a terminal `PASS` from the pinned
-harness, that all six describe the exact commit being published with the right
-versions and both install orders, that the AX contract scope was clean, and that
-the target journal runtime pin — plus the journal-upgrade baseline runtime pin
-when that lane is in profile — was genuinely enforced. The reports' own oracles
-remain authoritative — this is a freshness and completeness check, so that last
-release's green JSON cannot authorize this one.
+harness, that the direct lane reports describe the exact commit being published
+with the right versions and both install orders, that `spl-link.json` is recent
+enough in wall-clock time, that the AX contract scope was clean, and that the
+target journal runtime pin — plus the journal-upgrade baseline runtime pin when
+that lane is in profile — was genuinely enforced. The reports' own oracles
+remain authoritative. The freshness dimensions are separate: run age must be
+under 24 hours, product commit must match `--product-commit`, and SPL-link
+lastSynced must strictly advance. This is a freshness and completeness check, so
+that last release's green JSON cannot authorize this one.
 
 One honest limit: the harness does not stamp its own revision into its reports.
 The sync receipt records the revision marker read back off the rig, so a stale or

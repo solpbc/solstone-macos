@@ -32,7 +32,10 @@ no stdout verdict.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+import hashlib
 import json
+import math
 import pathlib
 import re
 import sys
@@ -46,6 +49,148 @@ PASS_RESULT = "PASS"
 
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+RUN_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}$")
+ISO_UTC_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+
+SPL_LINK_REPORT_FILENAME = "spl-link.json"
+
+# Schema-derived from extro-tools coordinator 04bb309c
+# tools/solstone-macos-gate/spl_link_coordinator.py.
+PAIR_LINK_TTL_S = 300.0
+SPL_LINK_MAX_RUN_AGE_S = 24 * 60 * 60
+SPL_LINK_FUTURE_SKEW_S = 5 * 60
+COORDINATOR_REPORT_KEYS = frozenset(
+    (
+        "result",
+        "run_id",
+        "instance_id",
+        "original_verdict",
+        "phases",
+        "lane",
+        "binding",
+        "pairing_timing",
+        "cleanup",
+        "error",
+        "retry",
+    )
+)
+COORDINATOR_PHASE_NAMES = (
+    "create",
+    "home_init",
+    "enroll",
+    "instance_read",
+    "grant",
+    "setup_verify",
+    "remote_prepare",
+    "launch",
+    "pid_wait",
+    "ready_wait",
+    "mint",
+    "deliver",
+    "exit_wait",
+    "report_fetch_parse",
+)
+COORDINATOR_PHASE_KEYS = frozenset(("status", "duration_s"))
+COORDINATOR_BINDING_KEYS = frozenset(("complete", "invalid_fields"))
+COORDINATOR_BINDING_REQUIRED_PATHS = (
+    "schema_version",
+    "to",
+    "to_build",
+    "provenance.commit",
+    "provenance.clean",
+    "provenance.contracts.sol_sha256",
+    "provenance.contracts.journal_sha256",
+)
+COORDINATOR_PAIRING_TIMING_KEYS = frozenset(
+    (
+        "ready_observed_at",
+        "minted_at",
+        "delivered_at",
+        "mint_after_ready",
+        "delivery_after_mint_s",
+        "delivery_within_ttl",
+    )
+)
+COORDINATOR_CLEANUP_STEPS = (
+    "remote_lane",
+    "relay_revoke",
+    "private_link_disable",
+    "sandbox_stop",
+    "remote_run_dir_remove",
+)
+COORDINATOR_CLEANUP_ITEM_KEYS = frozenset(
+    ("attempted", "required", "action_ok", "verified", "duration_s")
+)
+SPL_LINK_LANE_KEYS = frozenset(
+    (
+        "result",
+        "lane",
+        "schema_version",
+        "to",
+        "to_build",
+        "checks",
+        "oracles",
+        "freshness",
+        "identity_match",
+        "dmg_sha256",
+        "provenance",
+        "error_type",
+        "retry",
+        "timings",
+    )
+)
+SPL_LINK_CHECK_KEYS = (
+    "initial_reset_clean",
+    "pairing_precleaned",
+    "pairing_preclean_idle",
+    "pairing_preclean_disconnected",
+    "final_reset_clean",
+    "target_identity_matches",
+    "local_discovery_not_found",
+    "pairing_link_field_found",
+    "pairing_initial_flow_idle",
+    "pairing_initial_connection_disconnected",
+    "ready_written",
+    "link_received",
+    "link_unlinked",
+    "link_prefix_valid",
+    "link_crockford_valid",
+    "link_decoded_length_valid",
+    "link_version_valid",
+    "link_ca_tag_valid",
+    "link_default_relay_valid",
+    "pairing_link_set",
+    "pairing_connect_dispatched",
+    "pairing_flow_paired",
+    "pairing_connection_connected",
+    "pairing_mark_confirmed",
+    "pairing_mark_cleared",
+    "serverkey_trimmed_nonempty",
+    "servicemode_external",
+    "last_synced_fresh",
+)
+SPL_LINK_ORACLE_BOOLEAN_KEYS = (
+    "serverkey_trimmed_nonempty",
+    "servicemode_external",
+    "last_synced_fresh",
+)
+SPL_LINK_ORACLE_KEYS = frozenset((*SPL_LINK_ORACLE_BOOLEAN_KEYS, "serverkey_sha256"))
+SPL_LINK_FRESHNESS_KEYS = frozenset(
+    (
+        "last_synced_pre_raw",
+        "last_synced_post_raw",
+        "last_synced_pre_epoch",
+        "last_synced_post_epoch",
+        "baseline_kind",
+        "ok",
+    )
+)
+SPL_LINK_FRESHNESS_BASELINE_KINDS = frozenset(("observed", "absent_zero"))
+SPL_LINK_PROVENANCE_KEYS = frozenset(("commit", "clean", "contracts"))
+SPL_LINK_CONTRACT_KEYS = frozenset(("sol_sha256", "journal_sha256"))
+SPL_LINK_TIMINGS_KEYS = frozenset(
+    ("ready_at", "link_wait_started_at", "link_received_at", "link_wait_elapsed_s")
+)
 
 # The canonical evidence-set filenames. README documents the producing command
 # for each; scripts/tests/test_verify_ja1r_linkage_gate.py asserts the README
@@ -219,6 +364,7 @@ PROFILES = {
         "fresh-acquire.json",
         "discovered-adopt.json",
         "sol-upgrade.json",
+        SPL_LINK_REPORT_FILENAME,
     ),
     "journal": (
         "drag.json",
@@ -228,7 +374,7 @@ PROFILES = {
         "discovered-adopt.json",
         "journal-upgrade.json",
     ),
-    "paired": REPORT_FILENAMES,
+    "paired": REPORT_FILENAMES + (SPL_LINK_REPORT_FILENAME,),
 }
 
 
@@ -240,6 +386,8 @@ def required_identity_keys(profile):
     """Exactly the identities the profile's member lanes actually assert."""
     keys = set()
     for filename in PROFILES[profile]:
+        if filename == SPL_LINK_REPORT_FILENAME:
+            continue
         keys.update(LANE_SPECS[filename].identity.values())
     return sorted(keys)
 
@@ -249,6 +397,7 @@ def requires_baseline_runtime(profile):
     return any(
         LANE_SPECS[filename].baseline_pin is not None
         for filename in PROFILES[profile]
+        if filename != SPL_LINK_REPORT_FILENAME
     )
 
 
@@ -292,6 +441,119 @@ def as_identity(value, label):
     if not text:
         raise GateFailure(f"{label}: empty")
     return text
+
+
+def _sorted_keys(keys):
+    return ", ".join(sorted(str(key) for key in keys)) or "(none)"
+
+
+def require_exact_keys(value, expected_keys, label):
+    if not isinstance(value, dict):
+        raise GateFailure(f"{label}: expected an object, got {type(value).__name__}")
+    actual = set(value)
+    expected = set(expected_keys)
+    if actual != expected:
+        missing = expected - actual
+        extra = actual - expected
+        raise GateFailure(
+            f"{label}: key set mismatch "
+            f"(missing: {_sorted_keys(missing)}; extra: {_sorted_keys(extra)})"
+        )
+
+
+def require_true(value, label):
+    if value is not True:
+        raise GateFailure(f"{label}: expected true, got {value!r}")
+
+
+def require_none(value, label):
+    if value is not None:
+        raise GateFailure(f"{label}: expected null, got {value!r}")
+
+
+def require_sha40(value, label):
+    if not isinstance(value, str) or not SHA40_RE.match(value):
+        raise GateFailure(f"{label}: expected a lowercase 40-hex sha, got {value!r}")
+    return value
+
+
+def require_sha256(value, label):
+    if not isinstance(value, str) or not SHA256_RE.match(value):
+        raise GateFailure(f"{label}: expected a lowercase 64-hex sha256, got {value!r}")
+    return value
+
+
+def require_nonnegative_finite_number(value, label):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise GateFailure(f"{label}: expected a nonnegative finite number, got {value!r}")
+    if not math.isfinite(value) or value < 0:
+        raise GateFailure(f"{label}: expected a nonnegative finite number, got {value!r}")
+    return value
+
+
+def require_iso_utc(value, label):
+    if not isinstance(value, str) or not ISO_UTC_RE.match(value):
+        raise GateFailure(f"{label}: expected ISO UTC timestamp, got {value!r}")
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def require_schema_version(value, label):
+    if type(value) is not int or value != SCHEMA_VERSION:
+        raise GateFailure(f"{label}: schema_version is {value!r}, expected {SCHEMA_VERSION}")
+
+
+def require_bounded_nonempty_string(value, label, *, max_length=256, no_whitespace=False):
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value) > max_length
+        or any(ord(character) < 32 for character in value)
+        or (no_whitespace and any(character.isspace() for character in value))
+    ):
+        raise GateFailure(f"{label}: expected a bounded non-empty string, got {value!r}")
+    return value
+
+
+def require_raw_epoch(value, label):
+    if value is None:
+        return None
+    if isinstance(value, str) and len(value) <= 20 and value.isdigit():
+        return value
+    raise GateFailure(f"{label}: expected null or an epoch digit string, got {value!r}")
+
+
+def hash_file_sha256(path, label):
+    if path is None:
+        raise GateFailure(f"{label}: required for this profile")
+    path = pathlib.Path(path)
+    if not path.is_file():
+        raise GateFailure(f"{label}: missing or not a file -- {path}")
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    except OSError as exc:
+        raise GateFailure(f"{label}: unreadable -- {exc}") from exc
+    return digest.hexdigest()
+
+
+def verify_run_wall_clock_freshness(run_id, now):
+    if not isinstance(run_id, str) or RUN_ID_RE.match(run_id) is None:
+        raise GateFailure(f"spl-link.json: run_id is invalid: {run_id!r}")
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise GateFailure("spl-link.json: verifier clock must be timezone-aware UTC")
+    run_timestamp = datetime.strptime(
+        run_id.split("-", 1)[0], "%Y%m%dT%H%M%SZ"
+    ).replace(tzinfo=timezone.utc)
+    age_s = (now.astimezone(timezone.utc) - run_timestamp).total_seconds()
+    if age_s > SPL_LINK_MAX_RUN_AGE_S:
+        raise GateFailure("spl-link.json: run is older than 24 hours")
+    if age_s < -SPL_LINK_FUTURE_SKEW_S:
+        raise GateFailure("spl-link.json: run timestamp is more than 5 minutes in the future")
 
 
 def verify_receipt(receipt_path, pin, expected_commit):
@@ -519,6 +781,217 @@ def verify_baseline_runtime_pin(report, filename, spec, expected_baseline_runtim
         )
 
 
+def verify_coordinator_phases(phases, filename):
+    require_exact_keys(phases, COORDINATOR_PHASE_NAMES, f"{filename}: phases")
+    for name in COORDINATOR_PHASE_NAMES:
+        phase = phases[name]
+        label = f"{filename}: phases.{name}"
+        require_exact_keys(phase, COORDINATOR_PHASE_KEYS, label)
+        if phase["status"] != "ok":
+            raise GateFailure(f"{label}.status is {phase['status']!r}, expected 'ok'")
+        require_nonnegative_finite_number(phase["duration_s"], f"{label}.duration_s")
+
+
+def verify_coordinator_binding(binding, filename):
+    require_exact_keys(binding, COORDINATOR_BINDING_KEYS, f"{filename}: binding")
+    require_true(binding["complete"], f"{filename}: binding.complete")
+    if binding["invalid_fields"] != []:
+        raise GateFailure(
+            f"{filename}: binding.invalid_fields is {binding['invalid_fields']!r}, expected []"
+        )
+
+
+def verify_coordinator_pairing_timing(timing, filename):
+    require_exact_keys(
+        timing, COORDINATOR_PAIRING_TIMING_KEYS, f"{filename}: pairing_timing"
+    )
+    ready = require_iso_utc(
+        timing["ready_observed_at"], f"{filename}: pairing_timing.ready_observed_at"
+    )
+    minted = require_iso_utc(timing["minted_at"], f"{filename}: pairing_timing.minted_at")
+    delivered = require_iso_utc(
+        timing["delivered_at"], f"{filename}: pairing_timing.delivered_at"
+    )
+    if not (ready <= minted <= delivered):
+        raise GateFailure(f"{filename}: pairing_timing timestamps are out of order")
+    require_true(timing["mint_after_ready"], f"{filename}: pairing_timing.mint_after_ready")
+    require_true(
+        timing["delivery_within_ttl"],
+        f"{filename}: pairing_timing.delivery_within_ttl",
+    )
+    elapsed = require_nonnegative_finite_number(
+        timing["delivery_after_mint_s"],
+        f"{filename}: pairing_timing.delivery_after_mint_s",
+    )
+    if elapsed > PAIR_LINK_TTL_S:
+        raise GateFailure(f"{filename}: pairing_timing.delivery_after_mint_s exceeds TTL")
+    observed = (delivered - minted).total_seconds()
+    if abs(elapsed - observed) > 1.0:
+        raise GateFailure(
+            f"{filename}: pairing_timing.delivery_after_mint_s disagrees with timestamps"
+        )
+
+
+def verify_coordinator_cleanup(cleanup, filename):
+    require_exact_keys(cleanup, COORDINATOR_CLEANUP_STEPS, f"{filename}: cleanup")
+    for name in COORDINATOR_CLEANUP_STEPS:
+        item = cleanup[name]
+        label = f"{filename}: cleanup.{name}"
+        require_exact_keys(item, COORDINATOR_CLEANUP_ITEM_KEYS, label)
+        require_true(item["attempted"], f"{label}.attempted")
+        require_true(item["required"], f"{label}.required")
+        require_true(item["action_ok"], f"{label}.action_ok")
+        require_true(item["verified"], f"{label}.verified")
+        require_nonnegative_finite_number(item["duration_s"], f"{label}.duration_s")
+
+
+def verify_spl_link_checks(checks, filename):
+    require_exact_keys(checks, SPL_LINK_CHECK_KEYS, f"{filename}: lane.checks")
+    for key in SPL_LINK_CHECK_KEYS:
+        require_true(checks[key], f"{filename}: lane.checks.{key}")
+
+
+def verify_spl_link_oracles(oracles, filename):
+    require_exact_keys(oracles, SPL_LINK_ORACLE_KEYS, f"{filename}: lane.oracles")
+    for key in SPL_LINK_ORACLE_BOOLEAN_KEYS:
+        require_true(oracles[key], f"{filename}: lane.oracles.{key}")
+    require_sha256(oracles["serverkey_sha256"], f"{filename}: lane.oracles.serverkey_sha256")
+
+
+def verify_spl_link_freshness(freshness, filename):
+    require_exact_keys(freshness, SPL_LINK_FRESHNESS_KEYS, f"{filename}: lane.freshness")
+    require_raw_epoch(freshness["last_synced_pre_raw"], f"{filename}: lane.freshness.last_synced_pre_raw")
+    require_raw_epoch(
+        freshness["last_synced_post_raw"],
+        f"{filename}: lane.freshness.last_synced_post_raw",
+    )
+    pre = require_nonnegative_finite_number(
+        freshness["last_synced_pre_epoch"],
+        f"{filename}: lane.freshness.last_synced_pre_epoch",
+    )
+    post = require_nonnegative_finite_number(
+        freshness["last_synced_post_epoch"],
+        f"{filename}: lane.freshness.last_synced_post_epoch",
+    )
+    if freshness["baseline_kind"] not in SPL_LINK_FRESHNESS_BASELINE_KINDS:
+        raise GateFailure(
+            f"{filename}: lane.freshness.baseline_kind is {freshness['baseline_kind']!r}"
+        )
+    require_true(freshness["ok"], f"{filename}: lane.freshness.ok")
+    if post <= pre:
+        raise GateFailure(f"{filename}: lane.freshness lastSynced did not strictly advance")
+
+
+def verify_spl_link_provenance(provenance, filename, expected_commit):
+    require_exact_keys(provenance, SPL_LINK_PROVENANCE_KEYS, f"{filename}: lane.provenance")
+    commit = require_sha40(provenance["commit"], f"{filename}: lane.provenance.commit")
+    if commit != expected_commit:
+        raise GateFailure(
+            f"{filename}: lane.provenance.commit {commit} is not the commit being "
+            f"published ({expected_commit})"
+        )
+    require_true(provenance["clean"], f"{filename}: lane.provenance.clean")
+    contracts = provenance["contracts"]
+    require_exact_keys(
+        contracts, SPL_LINK_CONTRACT_KEYS, f"{filename}: lane.provenance.contracts"
+    )
+    for key in ("sol_sha256", "journal_sha256"):
+        require_sha256(
+            contracts[key], f"{filename}: lane.provenance.contracts.{key}"
+        )
+
+
+def verify_spl_link_timings(timings, filename):
+    require_exact_keys(timings, SPL_LINK_TIMINGS_KEYS, f"{filename}: lane.timings")
+    started = require_iso_utc(
+        timings["link_wait_started_at"], f"{filename}: lane.timings.link_wait_started_at"
+    )
+    ready = require_iso_utc(timings["ready_at"], f"{filename}: lane.timings.ready_at")
+    received = require_iso_utc(
+        timings["link_received_at"], f"{filename}: lane.timings.link_received_at"
+    )
+    if not (ready <= started <= received):
+        raise GateFailure(f"{filename}: lane.timings timestamps are out of order")
+    elapsed = require_nonnegative_finite_number(
+        timings["link_wait_elapsed_s"],
+        f"{filename}: lane.timings.link_wait_elapsed_s",
+    )
+    if elapsed > PAIR_LINK_TTL_S:
+        raise GateFailure(f"{filename}: lane.timings.link_wait_elapsed_s exceeds TTL")
+
+
+def verify_spl_link_lane(
+    lane,
+    filename,
+    expected_version,
+    expected_build,
+    expected_commit,
+    sol_dmg_sha256,
+):
+    require_exact_keys(lane, SPL_LINK_LANE_KEYS, f"{filename}: lane")
+    if lane["result"] != PASS_RESULT:
+        raise GateFailure(f"{filename}: lane.result is {lane['result']!r}, expected 'PASS'")
+    if lane["lane"] != "spl-link":
+        raise GateFailure(f"{filename}: lane.lane is {lane['lane']!r}, expected 'spl-link'")
+    require_schema_version(lane["schema_version"], f"{filename}: lane")
+    if lane["to"] != expected_version:
+        raise GateFailure(
+            f"{filename}: lane.to is {lane['to']!r}, expected {expected_version!r}"
+        )
+    if lane["to_build"] != expected_build:
+        raise GateFailure(
+            f"{filename}: lane.to_build is {lane['to_build']!r}, expected {expected_build!r}"
+        )
+    verify_spl_link_checks(lane["checks"], filename)
+    verify_spl_link_oracles(lane["oracles"], filename)
+    verify_spl_link_freshness(lane["freshness"], filename)
+    require_true(lane["identity_match"], f"{filename}: lane.identity_match")
+    dmg_sha256 = require_sha256(lane["dmg_sha256"], f"{filename}: lane.dmg_sha256")
+    if dmg_sha256 != sol_dmg_sha256:
+        raise GateFailure(f"{filename}: lane.dmg_sha256 does not match --sol-dmg")
+    verify_spl_link_provenance(lane["provenance"], filename, expected_commit)
+    require_none(lane["error_type"], f"{filename}: lane.error_type")
+    require_none(lane["retry"], f"{filename}: lane.retry")
+    verify_spl_link_timings(lane["timings"], filename)
+
+
+def verify_coordinator_report(
+    path,
+    filename,
+    expected_version,
+    expected_build,
+    expected_commit,
+    sol_dmg_sha256,
+    now,
+):
+    report = load_json_object(path, filename)
+    require_exact_keys(report, COORDINATOR_REPORT_KEYS, filename)
+    if report["result"] != PASS_RESULT:
+        raise GateFailure(f"{filename}: result is {report['result']!r}, expected 'PASS'")
+    if report["original_verdict"] != PASS_RESULT:
+        raise GateFailure(
+            f"{filename}: original_verdict is {report['original_verdict']!r}, expected 'PASS'"
+        )
+    require_none(report["error"], f"{filename}: error")
+    require_none(report["retry"], f"{filename}: retry")
+    verify_run_wall_clock_freshness(report["run_id"], now)
+    require_bounded_nonempty_string(
+        report["instance_id"], f"{filename}: instance_id", no_whitespace=True
+    )
+    verify_coordinator_phases(report["phases"], filename)
+    verify_coordinator_binding(report["binding"], filename)
+    verify_coordinator_pairing_timing(report["pairing_timing"], filename)
+    verify_coordinator_cleanup(report["cleanup"], filename)
+    verify_spl_link_lane(
+        report["lane"],
+        filename,
+        expected_version,
+        expected_build,
+        expected_commit,
+        sol_dmg_sha256,
+    )
+
+
 def verify_report(
     path,
     filename,
@@ -575,12 +1048,13 @@ def build_parser():
     parser.add_argument("--product-commit", required=True)
     parser.add_argument("--expected-journal-runtime", required=True)
     parser.add_argument("--expected-journal-baseline-runtime", default=None)
+    parser.add_argument("--sol-dmg", default=None, type=pathlib.Path)
     for key in IDENTITY_KEYS:
         parser.add_argument(f"--{key.replace('_', '-')}", dest=key, default=None)
     return parser
 
 
-def main(argv=None):
+def main(argv=None, *, now=None):
     args = build_parser().parse_args(argv)
 
     if not SHA40_RE.match(args.product_commit):
@@ -618,23 +1092,46 @@ def main(argv=None):
         )
         return 2
 
+    profile_requires_spl_link = SPL_LINK_REPORT_FILENAME in PROFILES[args.profile]
+    verification_now = now or datetime.now(timezone.utc)
+
     try:
+        sol_dmg_sha256 = None
+        if profile_requires_spl_link:
+            sol_dmg_sha256 = hash_file_sha256(args.sol_dmg, "--sol-dmg")
+        elif args.sol_dmg is not None:
+            raise GateFailure(
+                f"profile {args.profile!r} does not include {SPL_LINK_REPORT_FILENAME} "
+                "and must not supply --sol-dmg"
+            )
+
         pin = read_pin()
         verify_receipt(args.sync_receipt, pin, args.product_commit)
         for filename in PROFILES[args.profile]:
-            verify_report(
-                args.report_dir / filename,
-                filename,
-                LANE_SPECS[filename],
-                expected,
-                args.product_commit,
-                args.expected_journal_runtime,
-                (
-                    args.expected_journal_baseline_runtime
-                    if needs_baseline_runtime
-                    else None
-                ),
-            )
+            if filename == SPL_LINK_REPORT_FILENAME:
+                verify_coordinator_report(
+                    args.report_dir / filename,
+                    filename,
+                    expected["sol_target_version"],
+                    expected["sol_target_build"],
+                    args.product_commit,
+                    sol_dmg_sha256,
+                    verification_now,
+                )
+            else:
+                verify_report(
+                    args.report_dir / filename,
+                    filename,
+                    LANE_SPECS[filename],
+                    expected,
+                    args.product_commit,
+                    args.expected_journal_runtime,
+                    (
+                        args.expected_journal_baseline_runtime
+                        if needs_baseline_runtime
+                        else None
+                    ),
+                )
     except GateFailure as failure:
         print(f"ja1r linkage gate: REFUSED -- {failure}", file=sys.stderr)
         return 1

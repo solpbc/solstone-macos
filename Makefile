@@ -1156,10 +1156,19 @@ PUBLISH_PY := uv run --no-project --with 'pynacl>=1.6,<2' --with boto3 python3
 #                                the rig, read the revision marker back off it,
 #                                and write .ja1r-gate/sync-receipt.json.
 #   2. run the lanes on ja1r   — redirect each lane's stdout into a report file
-#                                (the harness writes no files itself). See the
-#                                README for the six names and their commands.
+#                                (the direct harness lanes write no files
+#                                themselves). See the README for the six direct
+#                                names and the spl-link coordinator report.
 #   3. make verify-ja1r-gate-* — offline check of the evidence set; this is what
 #                                publish-appcast depends on.
+#
+# Profile report counts are fail-closed: sol=6, journal=4, paired=7. The extra
+# sol/paired report is spl-link.json, a coordinator envelope around the remote
+# spl-link lane. For sol/paired, the verifier hashes $(DMG_NAME) from CWD and
+# compares that digest to the coordinator report; make release-dmg must therefore
+# precede make publish-appcast, and a missing/unreadable DMG refuses the publish.
+# This binds the DMG co-observed with commit/identity/hash. It does NOT prove DMG
+# build provenance.
 #
 # The verifier never infers an expected identity from the evidence it is
 # checking: every version/build/baseline below is passed in explicitly. Only the
@@ -1216,6 +1225,7 @@ verify-ja1r-gate-sol: ja1r-gate-clean-tree
 		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
 		--product-commit '$(PRODUCT_HEAD)' \
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
+		--sol-dmg '$(DMG_NAME)' \
 		--sol-target-version '$(DIST_VERSION)' --sol-target-build '$(DIST_BUILD)' \
 		--journal-target-version '$(JA1R_GATE_JOURNAL_VERSION)' \
 		--journal-target-build '$(JA1R_GATE_JOURNAL_BUILD)' \
@@ -1249,6 +1259,7 @@ verify-ja1r-gate-paired: ja1r-gate-clean-tree
 		--product-commit '$(PRODUCT_HEAD)' \
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
 		--expected-journal-baseline-runtime '$(JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)' \
+		--sol-dmg '$(DMG_NAME)' \
 		--sol-target-version '$(DIST_VERSION)' --sol-target-build '$(DIST_BUILD)' \
 		--companion-sol-version '$(DIST_VERSION)' --companion-sol-build '$(DIST_BUILD)' \
 		--journal-target-version '$(JOURNAL_DIST_VERSION)' \

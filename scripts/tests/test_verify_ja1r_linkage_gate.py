@@ -2,22 +2,26 @@
 
 FIXTURE HONESTY: the reports built here are SCHEMA-DERIVED, not captured. No
 real PASS report exists in the harness repo or anywhere on disk, so these are
-constructed from the pinned harness's own report emitter -- extro-tools
-704941e0, tools/solstone-macos-gate/gate.py: new_report() (top-level shape,
+constructed from the pinned harness's own report emitters -- extro-tools
+8c09723c, tools/solstone-macos-gate/gate.py: new_report() (direct-lane shape,
 schema_version, lane, result), the per-lane scenario fields it sets, the
 provenance block it fills, oracles() -> rep["post"] (the observed
 journal_version), _run_linked_upgrade_lane() / establish_linked_baseline()
 (linked_baseline.expected_runtime_version,
 linked_baseline.journal_fingerprint.journal_version), and runtime_pin_check()
-(the pin check keys, including checks.baseline_solstone_pin_matches). They are
-not dressed up as recordings of a real run.
+(the pin check keys, including checks.baseline_solstone_pin_matches), plus
+tools/solstone-macos-gate/spl_link_coordinator.py
+(coordinator envelope and sanitized spl-link lane subset). They are not dressed
+up as recordings of a real run.
 """
 from __future__ import annotations
 
 import contextlib
+from datetime import datetime, timedelta, timezone
 import importlib.util
 import io
 import json
+import math
 import pathlib
 import subprocess
 import tempfile
@@ -50,6 +54,9 @@ SOL_BASE_V, SOL_BASE_B = "1.4.4", "55"
 JOURNAL_BASE_V, JOURNAL_BASE_B = "1.0.3", "4"
 COMPANION_SOL_V, COMPANION_SOL_B = "1.4.5", "56"
 LEGACY_SOL_V = "1.3.31"
+RUN_ID = "20260715T184501Z-a1b2c3d4e5f60718"
+FIXED_NOW = datetime(2026, 7, 15, 18, 50, 0, tzinfo=timezone.utc)
+DEFAULT_SOL_DMG_SHA = "e" * 64
 
 IDENTITY_ARGS = {
     "sol-target-version": SOL_V,
@@ -75,6 +82,14 @@ def provenance():
     }
 
 
+def spl_link_provenance():
+    return {
+        "commit": COMMIT,
+        "clean": True,
+        "contracts": {"sol_sha256": "c" * 64, "journal_sha256": "d" * 64},
+    }
+
+
 def base_report(lane, checks, **scenario):
     report = {
         "schema_version": 1,
@@ -88,8 +103,90 @@ def base_report(lane, checks, **scenario):
     return report
 
 
-def report_for(filename):
+def phase_report():
+    return {
+        name: {"status": "ok", "duration_s": 0.001}
+        for name in verifier.COORDINATOR_PHASE_NAMES
+    }
+
+
+def cleanup_report():
+    return {
+        name: {
+            "attempted": True,
+            "required": True,
+            "action_ok": True,
+            "verified": True,
+            "duration_s": 0.001,
+        }
+        for name in verifier.COORDINATOR_CLEANUP_STEPS
+    }
+
+
+def spl_link_lane_subset(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
+    return {
+        "result": "PASS",
+        "lane": "spl-link",
+        "schema_version": 1,
+        "to": SOL_V,
+        "to_build": SOL_B,
+        "checks": {key: True for key in verifier.SPL_LINK_CHECK_KEYS},
+        "oracles": {
+            "serverkey_trimmed_nonempty": True,
+            "servicemode_external": True,
+            "last_synced_fresh": True,
+            "serverkey_sha256": "f" * 64,
+        },
+        "freshness": {
+            "last_synced_pre_raw": None,
+            "last_synced_post_raw": "1",
+            "last_synced_pre_epoch": 0,
+            "last_synced_post_epoch": 1,
+            "baseline_kind": "absent_zero",
+            "ok": True,
+        },
+        "identity_match": True,
+        "dmg_sha256": sol_dmg_sha256,
+        "provenance": spl_link_provenance(),
+        "error_type": None,
+        "retry": None,
+        "timings": {
+            "ready_at": "2026-07-15T18:45:01Z",
+            "link_wait_started_at": "2026-07-15T18:45:01Z",
+            "link_received_at": "2026-07-15T18:45:02Z",
+            "link_wait_elapsed_s": 1.0,
+        },
+    }
+
+
+def spl_link_report(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA, run_id=RUN_ID):
+    # Schema-derived from extro-tools 04bb309c, not captured live evidence.
+    return {
+        "result": "PASS",
+        "run_id": run_id,
+        "instance_id": "instance1",
+        "original_verdict": "PASS",
+        "phases": phase_report(),
+        "lane": spl_link_lane_subset(sol_dmg_sha256),
+        "binding": {"complete": True, "invalid_fields": []},
+        "pairing_timing": {
+            "ready_observed_at": "2026-07-15T18:45:01Z",
+            "minted_at": "2026-07-15T18:45:02Z",
+            "delivered_at": "2026-07-15T18:45:03Z",
+            "mint_after_ready": True,
+            "delivery_after_mint_s": 1.0,
+            "delivery_within_ttl": True,
+        },
+        "cleanup": cleanup_report(),
+        "error": None,
+        "retry": None,
+    }
+
+
+def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
     """One honest PASS report per canonical filename."""
+    if filename == verifier.SPL_LINK_REPORT_FILENAME:
+        return spl_link_report(sol_dmg_sha256)
     if filename in ("drag.json", "sparkle.json"):
         lane = "drag" if filename == "drag.json" else "sparkle"
         return base_report(
@@ -168,6 +265,22 @@ def report_for(filename):
     raise AssertionError(f"no fixture for {filename}")
 
 
+def set_path(mapping, path, value):
+    target = mapping
+    parts = path.split(".")
+    for part in parts[:-1]:
+        target = target[part]
+    target[parts[-1]] = value
+
+
+def delete_path(mapping, path):
+    target = mapping
+    parts = path.split(".")
+    for part in parts[:-1]:
+        target = target[part]
+    del target[parts[-1]]
+
+
 class GateTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -176,6 +289,9 @@ class GateTestCase(unittest.TestCase):
         self.reports = self.root / "reports"
         self.reports.mkdir()
         self.receipt = self.root / "sync-receipt.json"
+        self.sol_dmg = self.root / "sol.dmg"
+        self.sol_dmg.write_bytes(b"schema-derived sol dmg fixture")
+        self.sol_dmg_sha = verifier.hash_file_sha256(self.sol_dmg, "--sol-dmg")
         self.write_receipt()
 
     def write_receipt(self, **overrides):
@@ -190,12 +306,19 @@ class GateTestCase(unittest.TestCase):
 
     def write_set(self, profile):
         for filename in verifier.PROFILES[profile]:
-            self.write_report(filename, report_for(filename))
+            self.write_report(filename, report_for(filename, self.sol_dmg_sha))
 
     def write_report(self, filename, report):
         (self.reports / filename).write_text(json.dumps(report, indent=2))
 
-    def run_gate(self, profile="sol", include_baseline_runtime=None):
+    def run_gate(
+        self,
+        profile="sol",
+        include_baseline_runtime=None,
+        include_sol_dmg=None,
+        sol_dmg_path=None,
+        now=FIXED_NOW,
+    ):
         argv = [
             "--profile", profile,
             "--report-dir", str(self.reports),
@@ -207,12 +330,16 @@ class GateTestCase(unittest.TestCase):
             include_baseline_runtime = verifier.requires_baseline_runtime(profile)
         if include_baseline_runtime:
             argv += ["--expected-journal-baseline-runtime", BASELINE_RUNTIME_PIN]
+        if include_sol_dmg is None:
+            include_sol_dmg = verifier.SPL_LINK_REPORT_FILENAME in verifier.PROFILES[profile]
+        if include_sol_dmg:
+            argv += ["--sol-dmg", str(sol_dmg_path or self.sol_dmg)]
         for flag, value in IDENTITY_ARGS.items():
             argv += [f"--{flag}", value]
 
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = verifier.main(argv)
+            code = verifier.main(argv, now=now)
         return code, out.getvalue(), err.getvalue()
 
     def assert_refused(self, profile="sol"):
@@ -234,6 +361,7 @@ class ValidSetsPass(GateTestCase):
         self.assertEqual(verdict["product_commit"], COMMIT)
         self.assertEqual(verdict["harness_revision"], PIN)
         self.assertNotIn("expected_journal_baseline_runtime", verdict)
+        self.assertEqual(len(verdict["reports_verified"]), 6)
 
     def test_valid_journal_set_passes(self):
         self.write_set("journal")
@@ -242,13 +370,14 @@ class ValidSetsPass(GateTestCase):
         verdict = json.loads(out)
         self.assertEqual(verdict["profile"], "journal")
         self.assertEqual(verdict["expected_journal_baseline_runtime"], BASELINE_RUNTIME_PIN)
+        self.assertEqual(len(verdict["reports_verified"]), 4)
 
     def test_valid_paired_set_passes(self):
         self.write_set("paired")
         code, out, _ = self.run_gate("paired")
         self.assertEqual(code, 0)
         verdict = json.loads(out)
-        self.assertEqual(len(verdict["reports_verified"]), 8)
+        self.assertEqual(len(verdict["reports_verified"]), 9)
         self.assertEqual(verdict["expected_journal_baseline_runtime"], BASELINE_RUNTIME_PIN)
 
     def test_journal_profile_requires_drag(self):
@@ -321,6 +450,255 @@ class Completeness(GateTestCase):
 
     def test_empty_report_dir_is_refused(self):
         self.assert_refused()
+
+
+class SPLLinkCoordinatorReport(GateTestCase):
+    def spl_path(self):
+        return self.reports / verifier.SPL_LINK_REPORT_FILENAME
+
+    def read_spl(self):
+        return json.loads(self.spl_path().read_text())
+
+    def write_spl(self, report):
+        self.spl_path().write_text(json.dumps(report, indent=2))
+
+    def assert_spl_mutation_refused(self, mutate, profile="sol", **run_kwargs):
+        self.write_set(profile)
+        report = self.read_spl()
+        mutate(report)
+        self.write_spl(report)
+        code, out, err = self.run_gate(profile, **run_kwargs)
+        self.assertNotEqual(code, 0, "the gate should have refused this evidence set")
+        self.assertEqual(out.strip(), "", "a refused gate must emit no stdout verdict")
+        self.assertTrue(err.strip(), "a refused gate must explain itself on stderr")
+        return err
+
+    def test_missing_spl_link_is_refused_for_sol_and_paired(self):
+        for profile in ("sol", "paired"):
+            with self.subTest(profile=profile):
+                self.write_set(profile)
+                self.spl_path().unlink()
+                self.assertIn("missing", self.assert_refused(profile))
+
+    def test_sol_dmg_argument_is_profile_conditional(self):
+        self.write_set("sol")
+        code, out, err = self.run_gate("sol", include_sol_dmg=False)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(out.strip(), "")
+        self.assertIn("--sol-dmg", err)
+
+        self.write_set("journal")
+        code, out, err = self.run_gate("journal", include_sol_dmg=True)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(out.strip(), "")
+        self.assertIn("must not supply --sol-dmg", err)
+
+    def test_sol_dmg_file_failures_are_refused(self):
+        missing = self.root / "missing.dmg"
+        directory = self.root / "not-a-file.dmg"
+        directory.mkdir()
+        unreadable = self.root / "unreadable.dmg"
+        unreadable.write_bytes(b"secret")
+        unreadable.chmod(0)
+        try:
+            cases = (
+                ("missing", missing),
+                ("non-file", directory),
+                ("unreadable", unreadable),
+            )
+            for _label, path in cases:
+                with self.subTest(path=path):
+                    self.write_set("sol")
+                    code, out, err = self.run_gate("sol", sol_dmg_path=path)
+                    self.assertNotEqual(code, 0)
+                    self.assertEqual(out.strip(), "")
+                    self.assertIn("--sol-dmg", err)
+        finally:
+            unreadable.chmod(0o600)
+
+    def test_hash_for_different_same_version_dmg_is_refused(self):
+        other = self.root / "other-sol.dmg"
+        other.write_bytes(b"different dmg bytes for same version")
+        self.write_set("sol")
+        code, out, err = self.run_gate("sol", sol_dmg_path=other)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(out.strip(), "")
+        self.assertIn("dmg_sha256", err)
+
+    def test_outer_envelope_refusals(self):
+        cases = (
+            ("missing outer key", lambda r: delete_path(r, "retry")),
+            ("extra outer key", lambda r: r.__setitem__("unknown", True)),
+            ("result", lambda r: r.__setitem__("result", "FAIL")),
+            ("original_verdict", lambda r: r.__setitem__("original_verdict", "FAIL")),
+            ("error", lambda r: r.__setitem__("error", {"type": "x", "phase": "y"})),
+            ("retry", lambda r: r.__setitem__("retry", "retry")),
+            ("instance_id", lambda r: r.__setitem__("instance_id", "")),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_run_id_wall_clock_refusals(self):
+        cases = (
+            ("malformed", lambda r: r.__setitem__("run_id", "not-a-run-id"), FIXED_NOW),
+            (
+                "stale",
+                lambda r: r.__setitem__("run_id", "20260714T184459Z-a1b2c3d4e5f60718"),
+                FIXED_NOW,
+            ),
+            (
+                "future",
+                lambda r: r.__setitem__("run_id", "20260715T185501Z-a1b2c3d4e5f60718"),
+                FIXED_NOW,
+            ),
+        )
+        for label, mutate, now in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate, now=now)
+
+    def test_phase_schema_and_duration_refusals(self):
+        for phase in verifier.COORDINATOR_PHASE_NAMES:
+            with self.subTest(phase=phase, case="missing-key"):
+                self.assert_spl_mutation_refused(
+                    lambda r, phase=phase: delete_path(r, f"phases.{phase}.duration_s")
+                )
+            with self.subTest(phase=phase, case="extra-key"):
+                self.assert_spl_mutation_refused(
+                    lambda r, phase=phase: r["phases"][phase].__setitem__("extra", True)
+                )
+        cases = (
+            ("non-ok status", lambda r: set_path(r, "phases.create.status", "error")),
+            ("bool duration", lambda r: set_path(r, "phases.create.duration_s", True)),
+            ("negative duration", lambda r: set_path(r, "phases.create.duration_s", -0.1)),
+            ("non-finite duration", lambda r: set_path(r, "phases.create.duration_s", math.inf)),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_binding_refusals(self):
+        cases = (
+            ("missing", lambda r: delete_path(r, "binding.complete")),
+            ("extra", lambda r: r["binding"].__setitem__("extra", True)),
+            ("incomplete", lambda r: set_path(r, "binding.complete", False)),
+            ("invalid-fields", lambda r: set_path(r, "binding.invalid_fields", ["to"])),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_pairing_timing_refusals(self):
+        cases = (
+            ("missing", lambda r: delete_path(r, "pairing_timing.minted_at")),
+            ("extra", lambda r: r["pairing_timing"].__setitem__("extra", True)),
+            ("mint false", lambda r: set_path(r, "pairing_timing.mint_after_ready", False)),
+            ("ttl false", lambda r: set_path(r, "pairing_timing.delivery_within_ttl", False)),
+            ("over ttl", lambda r: set_path(r, "pairing_timing.delivery_after_mint_s", 301.0)),
+            ("contradictory", lambda r: set_path(r, "pairing_timing.delivery_after_mint_s", 5.0)),
+            ("out of order", lambda r: set_path(r, "pairing_timing.minted_at", "2026-07-15T18:45:04Z")),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_cleanup_refusals(self):
+        cases = (
+            ("missing step", lambda r: r["cleanup"].pop("remote_lane")),
+            ("extra step", lambda r: r["cleanup"].__setitem__("extra", cleanup_report()["remote_lane"])),
+            ("attempted false", lambda r: set_path(r, "cleanup.remote_lane.attempted", False)),
+            ("required false", lambda r: set_path(r, "cleanup.remote_lane.required", False)),
+            ("action false", lambda r: set_path(r, "cleanup.remote_lane.action_ok", False)),
+            ("verified false", lambda r: set_path(r, "cleanup.remote_lane.verified", False)),
+            ("required non-bool", lambda r: set_path(r, "cleanup.remote_lane.required", "true")),
+            ("bad duration", lambda r: set_path(r, "cleanup.remote_lane.duration_s", -1)),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_lane_shape_and_identity_refusals(self):
+        cases = (
+            ("missing", lambda r: delete_path(r, "lane.retry")),
+            ("extra", lambda r: r["lane"].__setitem__("extra", True)),
+            ("result", lambda r: set_path(r, "lane.result", "FAIL")),
+            ("lane", lambda r: set_path(r, "lane.lane", "fresh")),
+            ("schema", lambda r: set_path(r, "lane.schema_version", True)),
+            ("to", lambda r: set_path(r, "lane.to", "9.9.9")),
+            ("to_build", lambda r: set_path(r, "lane.to_build", "999")),
+            ("identity", lambda r: set_path(r, "lane.identity_match", False)),
+            ("nested error", lambda r: set_path(r, "lane.error_type", "pairing_timeout")),
+            ("nested retry", lambda r: set_path(r, "lane.retry", "retry")),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_each_spl_link_check_must_be_true(self):
+        for key in verifier.SPL_LINK_CHECK_KEYS:
+            with self.subTest(key=key):
+                self.assert_spl_mutation_refused(
+                    lambda r, key=key: set_path(r, f"lane.checks.{key}", False)
+                )
+
+    def test_truthy_non_bool_strings_are_refused_for_booleans(self):
+        paths = (
+            "binding.complete",
+            "pairing_timing.mint_after_ready",
+            "pairing_timing.delivery_within_ttl",
+            "cleanup.remote_lane.attempted",
+            "cleanup.remote_lane.required",
+            "cleanup.remote_lane.action_ok",
+            "cleanup.remote_lane.verified",
+            "lane.checks.initial_reset_clean",
+            "lane.oracles.serverkey_trimmed_nonempty",
+            "lane.freshness.ok",
+            "lane.provenance.clean",
+            "lane.identity_match",
+        )
+        for path in paths:
+            with self.subTest(path=path):
+                self.assert_spl_mutation_refused(lambda r, path=path: set_path(r, path, "true"))
+
+    def test_oracle_refusals(self):
+        cases = (
+            ("missing", lambda r: delete_path(r, "lane.oracles.serverkey_sha256")),
+            ("false tier-a", lambda r: set_path(r, "lane.oracles.last_synced_fresh", False)),
+            ("bad sha", lambda r: set_path(r, "lane.oracles.serverkey_sha256", "x" * 64)),
+            ("none literal", lambda r: set_path(r, "lane.oracles.serverkey_sha256", "NONE")),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_freshness_refusals(self):
+        cases = (
+            ("bad baseline", lambda r: set_path(r, "lane.freshness.baseline_kind", "unknown")),
+            ("equal", lambda r: set_path(r, "lane.freshness.last_synced_post_epoch", 0)),
+            (
+                "stale",
+                lambda r: (
+                    set_path(r, "lane.freshness.last_synced_pre_epoch", 2),
+                    set_path(r, "lane.freshness.last_synced_post_epoch", 1),
+                ),
+            ),
+            ("non-numeric", lambda r: set_path(r, "lane.freshness.last_synced_post_epoch", "1")),
+            ("bool epoch", lambda r: set_path(r, "lane.freshness.last_synced_pre_epoch", False)),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_provenance_refusals(self):
+        cases = (
+            ("commit", lambda r: set_path(r, "lane.provenance.commit", OTHER_COMMIT)),
+            ("dirty", lambda r: set_path(r, "lane.provenance.clean", False)),
+            ("sol hash", lambda r: set_path(r, "lane.provenance.contracts.sol_sha256", "x" * 64)),
+            ("journal hash", lambda r: set_path(r, "lane.provenance.contracts.journal_sha256", "NONE")),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
 
 
 class ScenarioIdentity(GateTestCase):
@@ -520,6 +898,7 @@ class MissingIdentityInputs(GateTestCase):
         # Only the identities the profile's lanes actually assert are required.
         self.assertNotIn("journal_baseline_version", verifier.required_identity_keys("sol"))
         self.assertIn("journal_baseline_version", verifier.required_identity_keys("journal"))
+        self.assertFalse(verifier.requires_baseline_runtime("sol"))
 
     def test_missing_baseline_runtime_is_listed_for_journal_and_paired(self):
         for profile in ("journal", "paired"):
@@ -590,6 +969,15 @@ class MakefileContract(unittest.TestCase):
             self.assertIn(baseline_var, block)
             self.assertIn(baseline_flag, block)
 
+    def test_sol_dmg_is_only_forwarded_for_profiles_with_spl_link(self):
+        sol = self.target_block("verify-ja1r-gate-sol")
+        journal = self.target_block("verify-ja1r-gate-journal")
+        paired = self.target_block("verify-ja1r-gate-paired")
+
+        self.assertIn("--sol-dmg '$(DMG_NAME)'", sol)
+        self.assertNotIn("--sol-dmg", journal)
+        self.assertIn("--sol-dmg '$(DMG_NAME)'", paired)
+
 
 class ReadmeDoesNotDrift(unittest.TestCase):
     def test_readme_lists_exactly_the_canonical_report_filenames(self):
@@ -602,6 +990,16 @@ class ReadmeDoesNotDrift(unittest.TestCase):
             if line.strip().startswith("-")
         ]
         self.assertEqual(listed, list(verifier.REPORT_FILENAMES))
+
+    def test_readme_states_profile_report_counts(self):
+        readme = (REPO_ROOT / "README.md").read_text()
+        normalized = " ".join(readme.split())
+        expected = (
+            f"sol={len(verifier.PROFILES['sol'])}, "
+            f"journal={len(verifier.PROFILES['journal'])}, and "
+            f"paired={len(verifier.PROFILES['paired'])}"
+        )
+        self.assertIn(expected, normalized)
 
 
 if __name__ == "__main__":
