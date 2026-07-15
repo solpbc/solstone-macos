@@ -178,9 +178,10 @@ enough in wall-clock time, that the AX contract scope was clean, and that the
 target journal runtime pin — plus the journal-upgrade baseline runtime pin when
 that lane is in profile — was genuinely enforced. The reports' own oracles
 remain authoritative. The freshness dimensions are separate: run age must be
-under 24 hours, product commit must match `--product-commit`, and SPL-link
-lastSynced must strictly advance. This is a freshness and completeness check, so
-that last release's green JSON cannot authorize this one.
+under 24 hours and not dated more than five minutes in the future, product
+commit must match `--product-commit`, and SPL-link lastSynced must strictly
+advance. This is a freshness and completeness check, so that last release's
+green JSON cannot authorize this one.
 
 One honest limit: the harness does not stamp its own revision into its reports.
 The sync receipt records the revision marker read back off the rig, so a stale or

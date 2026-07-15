@@ -160,7 +160,7 @@ def spl_link_lane_subset(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
 
 
 def spl_link_report(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA, run_id=RUN_ID):
-    # Schema-derived from extro-tools 04bb309c, not captured live evidence.
+    # Schema-derived from extro-tools 8c09723c, not captured live evidence.
     return {
         "result": "PASS",
         "run_id": run_id,
@@ -202,7 +202,7 @@ def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
             post={"journal_version": OBSERVED_RUNTIME},
         )
     if filename in ("fresh-acquire.json", "discovered-adopt.json"):
-        # Derived from gate.py at 704941e0: new_report() scenario fields for the
+        # Derived from gate.py at 8c09723c: new_report() scenario fields for the
         # acquire-driven lanes. Like fresh, they run the oracles + pin check but
         # store the fingerprint under linked_finish, never top-level `post` --
         # the pin is proved by the check alone.
@@ -242,7 +242,7 @@ def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
             post={"journal_version": OBSERVED_RUNTIME},
         )
     if filename == "journal-upgrade.json":
-        # Derived from gate.py at 704941e0: new_report(),
+        # Derived from gate.py at 8c09723c: new_report(),
         # _run_linked_upgrade_lane(), and establish_linked_baseline().
         return base_report(
             "journal-upgrade",
@@ -361,7 +361,7 @@ class ValidSetsPass(GateTestCase):
         self.assertEqual(verdict["product_commit"], COMMIT)
         self.assertEqual(verdict["harness_revision"], PIN)
         self.assertNotIn("expected_journal_baseline_runtime", verdict)
-        self.assertEqual(len(verdict["reports_verified"]), 6)
+        self.assertEqual(len(verdict["reports_verified"]), 8)
 
     def test_valid_journal_set_passes(self):
         self.write_set("journal")
@@ -370,7 +370,7 @@ class ValidSetsPass(GateTestCase):
         verdict = json.loads(out)
         self.assertEqual(verdict["profile"], "journal")
         self.assertEqual(verdict["expected_journal_baseline_runtime"], BASELINE_RUNTIME_PIN)
-        self.assertEqual(len(verdict["reports_verified"]), 4)
+        self.assertEqual(len(verdict["reports_verified"]), 6)
 
     def test_valid_paired_set_passes(self):
         self.write_set("paired")
@@ -640,6 +640,62 @@ class SPLLinkCoordinatorReport(GateTestCase):
                 self.assert_spl_mutation_refused(
                     lambda r, key=key: set_path(r, f"lane.checks.{key}", False)
                 )
+
+    def test_nested_spl_link_objects_reject_missing_and_extra_keys(self):
+        cases = (
+            ("lane.checks", "initial_reset_clean"),
+            ("lane.oracles", "serverkey_sha256"),
+            ("lane.freshness", "ok"),
+            ("lane.provenance", "commit"),
+            ("lane.provenance.contracts", "sol_sha256"),
+            ("lane.timings", "ready_at"),
+        )
+        for object_path, child_key in cases:
+            with self.subTest(object_path=object_path, case="missing"):
+                self.assert_spl_mutation_refused(
+                    lambda r, object_path=object_path, child_key=child_key: delete_path(
+                        r, f"{object_path}.{child_key}"
+                    )
+                )
+            with self.subTest(object_path=object_path, case="extra"):
+                self.assert_spl_mutation_refused(
+                    lambda r, object_path=object_path: set_path(
+                        r, f"{object_path}.extra", True
+                    )
+                )
+
+    def test_lane_timing_refusals(self):
+        cases = (
+            (
+                "out of order",
+                lambda r: set_path(
+                    r, "lane.timings.link_received_at", "2026-07-15T18:45:00Z"
+                ),
+            ),
+            (
+                "over ttl",
+                lambda r: set_path(r, "lane.timings.link_wait_elapsed_s", 301.0),
+            ),
+            (
+                "bool elapsed",
+                lambda r: set_path(r, "lane.timings.link_wait_elapsed_s", True),
+            ),
+            (
+                "negative elapsed",
+                lambda r: set_path(r, "lane.timings.link_wait_elapsed_s", -1.0),
+            ),
+            (
+                "non-finite elapsed",
+                lambda r: set_path(r, "lane.timings.link_wait_elapsed_s", math.inf),
+            ),
+            (
+                "malformed iso",
+                lambda r: set_path(r, "lane.timings.ready_at", "not-a-timestamp"),
+            ),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
 
     def test_truthy_non_bool_strings_are_refused_for_booleans(self):
         paths = (

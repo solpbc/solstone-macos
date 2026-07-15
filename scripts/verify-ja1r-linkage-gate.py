@@ -54,7 +54,7 @@ ISO_UTC_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}
 
 SPL_LINK_REPORT_FILENAME = "spl-link.json"
 
-# Schema-derived from extro-tools coordinator 04bb309c
+# Schema-derived from extro-tools coordinator 8c09723c
 # tools/solstone-macos-gate/spl_link_coordinator.py.
 PAIR_LINK_TTL_S = 300.0
 SPL_LINK_MAX_RUN_AGE_S = 24 * 60 * 60
@@ -92,15 +92,6 @@ COORDINATOR_PHASE_NAMES = (
 )
 COORDINATOR_PHASE_KEYS = frozenset(("status", "duration_s"))
 COORDINATOR_BINDING_KEYS = frozenset(("complete", "invalid_fields"))
-COORDINATOR_BINDING_REQUIRED_PATHS = (
-    "schema_version",
-    "to",
-    "to_build",
-    "provenance.commit",
-    "provenance.clean",
-    "provenance.contracts.sol_sha256",
-    "provenance.contracts.journal_sha256",
-)
 COORDINATOR_PAIRING_TIMING_KEYS = frozenset(
     (
         "ready_observed_at",

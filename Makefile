@@ -1157,12 +1157,12 @@ PUBLISH_PY := uv run --no-project --with 'pynacl>=1.6,<2' --with boto3 python3
 #                                and write .ja1r-gate/sync-receipt.json.
 #   2. run the lanes on ja1r   — redirect each lane's stdout into a report file
 #                                (the direct harness lanes write no files
-#                                themselves). See the README for the six direct
+#                                themselves). See the README for the eight direct
 #                                names and the spl-link coordinator report.
 #   3. make verify-ja1r-gate-* — offline check of the evidence set; this is what
 #                                publish-appcast depends on.
 #
-# Profile report counts are fail-closed: sol=6, journal=4, paired=7. The extra
+# Profile report counts are fail-closed: sol=8, journal=6, paired=9. The extra
 # sol/paired report is spl-link.json, a coordinator envelope around the remote
 # spl-link lane. For sol/paired, the verifier hashes $(DMG_NAME) from CWD and
 # compares that digest to the coordinator report; make release-dmg must therefore
