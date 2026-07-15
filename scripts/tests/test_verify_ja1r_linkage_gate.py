@@ -3,7 +3,7 @@
 FIXTURE HONESTY: the reports built here are SCHEMA-DERIVED, not captured. No
 real PASS report exists in the harness repo or anywhere on disk, so these are
 constructed from the pinned harness's own report emitter -- extro-tools
-5d1004f1, tools/solstone-macos-gate/gate.py: new_report() (top-level shape,
+704941e0, tools/solstone-macos-gate/gate.py: new_report() (top-level shape,
 schema_version, lane, result), the per-lane scenario fields it sets, the
 provenance block it fills, oracles() -> rep["post"] (the observed
 journal_version), _run_linked_upgrade_lane() / establish_linked_baseline()
@@ -104,6 +104,19 @@ def report_for(filename):
             },
             post={"journal_version": OBSERVED_RUNTIME},
         )
+    if filename in ("fresh-acquire.json", "discovered-adopt.json"):
+        # Derived from gate.py at 704941e0: new_report() scenario fields for the
+        # acquire-driven lanes. Like fresh, they run the oracles + pin check but
+        # store the fingerprint under linked_finish, never top-level `post` --
+        # the pin is proved by the check alone.
+        return base_report(
+            filename.removesuffix(".json"),
+            {"solstone_pin_matches": True},
+            to=SOL_V,
+            to_build=SOL_B,
+            journal=JOURNAL_V,
+            journal_build=JOURNAL_B,
+        )
     if filename.startswith("fresh-"):
         order = "journal-first" if "journal-first" in filename else "sol-first"
         # The fresh lane runs the oracles but never stores the fingerprint, so
@@ -132,7 +145,7 @@ def report_for(filename):
             post={"journal_version": OBSERVED_RUNTIME},
         )
     if filename == "journal-upgrade.json":
-        # Derived from gate.py at 5d1004f1: new_report(),
+        # Derived from gate.py at 704941e0: new_report(),
         # _run_linked_upgrade_lane(), and establish_linked_baseline().
         return base_report(
             "journal-upgrade",
@@ -235,7 +248,7 @@ class ValidSetsPass(GateTestCase):
         code, out, _ = self.run_gate("paired")
         self.assertEqual(code, 0)
         verdict = json.loads(out)
-        self.assertEqual(len(verdict["reports_verified"]), 6)
+        self.assertEqual(len(verdict["reports_verified"]), 8)
         self.assertEqual(verdict["expected_journal_baseline_runtime"], BASELINE_RUNTIME_PIN)
 
     def test_journal_profile_requires_drag(self):

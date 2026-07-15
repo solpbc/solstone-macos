@@ -95,6 +95,8 @@ verifier expects, in `.ja1r-gate/reports/`:
 - `sparkle.json`
 - `fresh-journal-first.json`
 - `fresh-sol-first.json`
+- `fresh-acquire.json`
+- `discovered-adopt.json`
 - `sol-upgrade.json`
 - `journal-upgrade.json`
 <!-- ja1r-report-filenames:end -->
@@ -111,6 +113,12 @@ $GATE --lane fresh --order journal-first --to <sol> --to-build <sol-build> \
                      --journal <journal> --journal-build <journal-build>   > fresh-journal-first.json
 $GATE --lane fresh --order sol-first     --to <sol> --to-build <sol-build> \
                      --journal <journal> --journal-build <journal-build>   > fresh-sol-first.json
+$GATE --lane fresh-acquire    --to <sol> --to-build <sol-build> \
+                     --journal <journal> --journal-build <journal-build> \
+                     --journal-to-feed <staging-journal-appcast>           > fresh-acquire.json
+$GATE --lane discovered-adopt --to <sol> --to-build <sol-build> \
+                     --journal <journal> --journal-build <journal-build> \
+                     --journal-to-feed <staging-journal-appcast>           > discovered-adopt.json
 $GATE --lane sol-upgrade --from <sol-baseline> --from-build <sol-baseline-build> \
                      --to <sol> --to-build <sol-build> \
                      --journal <journal> --journal-build <journal-build>   > sol-upgrade.json
@@ -122,14 +130,17 @@ $GATE --lane journal-upgrade --to <companion-sol> --to-build <companion-sol-buil
 
 Pass `--expect-solstone <target-runtime-pin>` on every lane. On
 `journal-upgrade`, also pass `--expect-solstone-baseline <baseline-runtime-pin>`
-on that lane only; the harness rejects that flag everywhere else. Without the
-required pins, the harness either refuses the lane or reports a skipped
-runtime-pin check, and the verifier refuses the set.
+on that lane only; the harness rejects that flag everywhere else. The
+`fresh-acquire` and `discovered-adopt` lanes require `--journal-to-feed` set to
+the exact staging journal appcast (the observer's in-app acquire pulls the
+staged candidate through its handoff feed override). Without the required pins,
+the harness either refuses the lane or reports a skipped runtime-pin check, and
+the verifier refuses the set.
 
 **3. Verify, then publish.** The verifier is offline and stdlib-only, so the
 publish never depends on the rig being reachable. `publish-appcast` requires
 `verify-ja1r-gate-sol`, and `publish-appcast-journal` requires
-`verify-ja1r-gate-journal`; `verify-ja1r-gate-paired` checks all six for a joint
+`verify-ja1r-gate-journal`; `verify-ja1r-gate-paired` checks all eight for a joint
 release. There is no opt-out.
 
 ```bash

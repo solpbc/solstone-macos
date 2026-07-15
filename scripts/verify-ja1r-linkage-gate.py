@@ -55,6 +55,8 @@ REPORT_FILENAMES = (
     "sparkle.json",
     "fresh-journal-first.json",
     "fresh-sol-first.json",
+    "fresh-acquire.json",
+    "discovered-adopt.json",
     "sol-upgrade.json",
     "journal-upgrade.json",
 )
@@ -157,6 +159,21 @@ LANE_SPECS = {
         observes_runtime=False,
         order="sol-first",
     ),
+    # Both acquire-driven lanes mirror the fresh identity echo and, like fresh,
+    # run the oracles + pin check without storing the fingerprint at top-level
+    # `post` -- the strict check-key assertion is the whole of the pin proof.
+    "fresh-acquire.json": LaneSpec(
+        lane="fresh-acquire",
+        identity=_FRESH_IDENTITY,
+        pin_check_key="solstone_pin_matches",
+        observes_runtime=False,
+    ),
+    "discovered-adopt.json": LaneSpec(
+        lane="discovered-adopt",
+        identity=_FRESH_IDENTITY,
+        pin_check_key="solstone_pin_matches",
+        observes_runtime=False,
+    ),
     "sol-upgrade.json": LaneSpec(
         lane="sol-upgrade",
         identity={
@@ -199,12 +216,16 @@ PROFILES = {
         "sparkle.json",
         "fresh-journal-first.json",
         "fresh-sol-first.json",
+        "fresh-acquire.json",
+        "discovered-adopt.json",
         "sol-upgrade.json",
     ),
     "journal": (
         "drag.json",
         "fresh-journal-first.json",
         "fresh-sol-first.json",
+        "fresh-acquire.json",
+        "discovered-adopt.json",
         "journal-upgrade.json",
     ),
     "paired": REPORT_FILENAMES,
