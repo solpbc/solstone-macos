@@ -21,10 +21,12 @@ Side effects:
 
 This verifier does NOT re-implement the harness's oracles: a PASS report's own
 checks remain authoritative. Its job is narrow -- freshness, completeness,
-scenario identity, provenance, the target journal-runtime pin, and, for
-journal-upgrade, the explicitly supplied baseline journal-runtime pin required
-by the journal and paired profiles from LANE_SPECS -- so that a prior release's
-green JSON cannot authorize this one.
+scenario identity, provenance, the target journal-runtime pin, for
+journal-upgrade the explicitly supplied baseline journal-runtime pin required by
+the journal and paired profiles from LANE_SPECS, and, for the sol/paired
+spl-link coordinator report, an independently recomputed Tier B synthetic-segment
+identity that must land exactly once on a clean disposable-home baseline -- so
+that a prior release's green JSON cannot authorize this one.
 
 Exit 0 prints one JSON verdict on stdout. Every other path exits nonzero with
 no stdout verdict.
