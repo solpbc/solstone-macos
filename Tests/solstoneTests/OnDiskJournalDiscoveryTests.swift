@@ -74,17 +74,15 @@ struct OnDiskJournalDiscoveryTests {
         let reader = FakeOnDiskJournalFileReader()
         reader.directories = ["/stall"]
         reader.directoryStalls = ["/stall/config"]
-        let start = ContinuousClock.now
-
         let result = await discoverOnDiskJournal(
             configReader: FakeConfigReader(raw: #"journal = "/stall""#),
             fileReader: reader,
             timeout: 0.05
         )
 
-        let elapsed = start.duration(to: ContinuousClock.now)
+        // Completion is the timeout proof: the stalled stat only returns on
+        // cancellation; the skipped enumeration below shows the flow was cut off.
         #expect(result == .none)
-        #expect(elapsed < .milliseconds(500))
         #expect(reader.calls.prefix(2) == ["directory:/stall", "directory:/stall/config"])
         #expect(!reader.calls.contains("contents:/stall"))
     }

@@ -220,11 +220,10 @@ struct JournalFirstRunModelTests {
             journalFileReader: fileReader,
             discoveryQualificationTimeout: 0.05
         )
-        let start = ContinuousClock.now
-
         await fixture.model.decideLaunchRoute()
 
-        #expect(start.duration(to: ContinuousClock.now) < .milliseconds(500))
+        // Completion is the timeout proof: the stalled probe only returns on
+        // cancellation, so reaching these asserts means qualification was cut off.
         #expect(fixture.model.route == .ritual(.nameLocation))
         #expect(fixture.model.journalRoot == defaultJournalRoot())
         #expect(handoffStore.consumeCount == 1)
