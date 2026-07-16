@@ -56,7 +56,7 @@ ISO_UTC_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}
 
 SPL_LINK_REPORT_FILENAME = "spl-link.json"
 
-# Schema-derived from extro-tools coordinator f82c9bd4
+# Schema-derived from extro-tools coordinator 964ce2ab
 # tools/solstone-macos-gate/spl_link_coordinator.py.
 PAIR_LINK_TTL_S = 300.0
 SPL_LINK_MAX_RUN_AGE_S = 24 * 60 * 60
