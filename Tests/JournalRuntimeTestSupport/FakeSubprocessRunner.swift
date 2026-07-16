@@ -151,6 +151,7 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
         let executableName = executable.lastPathComponent
         if executableName == "codesign" { return ["codesign"] }
         if executableName == "ps" { return ["ps"] }
+        if executableName == "launchctl" { return ["launchctl"] }
         if executableName == "lsof" {
             if let port = lsofPort(from: arguments) {
                 return ["lsof:\(port)", "lsof"]

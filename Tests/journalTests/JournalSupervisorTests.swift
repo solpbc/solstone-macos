@@ -11,26 +11,26 @@ import Testing
 @MainActor
 @Suite("JournalSupervisor")
 struct JournalSupervisorTests {
-    @Test func blockedGateDoesNoRuntimeWork() async throws {
+    @Test func spawnBlockDoesNotRunReadiness() async throws {
         let events = EventRecorder()
         let diagnostic = JournalDiagnostic(commandLabel: "gate", outputExcerpt: "blocked")
         let blockage = SingleSupervisorGateBlockage.portConflict(diagnostic)
         let supervisor = JournalSupervisor(
             gate: RecordingGate(events: events, result: .blocked(blockage)),
             materializer: try await RecordingMaterializer(events: events),
-            runner: RecordingRunner(events: events),
+            runner: RecordingRunner(events: events, startError: SupervisedJournalRunnerError.spawnBlocked(blockage)),
             readinessGate: RecordingReadinessGate(events: events, result: .ready)
         )
 
         let started = await supervisor.start(journalRoot: try makeTemporaryDirectory())
 
         #expect(!started)
-        #expect(await events.snapshot() == ["gate"])
+        #expect(await events.snapshot() == ["materialize", "spawn"])
         #expect(supervisor.state == .blocked(diagnostic))
         #expect(supervisor.blockedReason == blockage.ownerMessage)
     }
 
-    @Test func openGateRunsMaterializeSpawnReadinessInOrder() async throws {
+    @Test func startRunsMaterializeSpawnReadinessInOrder() async throws {
         let events = EventRecorder()
         let supervisor = JournalSupervisor(
             gate: RecordingGate(events: events, result: .success),
@@ -42,7 +42,7 @@ struct JournalSupervisorTests {
         let started = await supervisor.start(journalRoot: try makeTemporaryDirectory())
 
         #expect(started)
-        #expect(await events.snapshot() == ["gate", "materialize", "spawn", "readiness", "markReady"])
+        #expect(await events.snapshot() == ["materialize", "spawn", "readiness", "markReady"])
         #expect(supervisor.state == .running)
         #expect(supervisor.journalBinaryURL != nil)
     }
@@ -75,7 +75,7 @@ struct JournalSupervisorTests {
         let stopped = await supervisor.stop()
 
         #expect(stopped)
-        #expect(await events.snapshot() == ["gate", "materialize", "spawn", "readiness", "markReady", "stop"])
+        #expect(await events.snapshot() == ["materialize", "spawn", "readiness", "markReady", "stop"])
         #expect(supervisor.state == .idle)
         #expect(supervisor.runtimeStatus == .stoppedByUser)
         #expect(supervisor.journalBinaryURL == nil)
@@ -97,7 +97,7 @@ struct JournalSupervisorTests {
 
         #expect(restarted)
         #expect(await events.snapshot() == [
-            "gate", "materialize", "spawn", "readiness", "markReady",
+            "materialize", "spawn", "readiness", "markReady",
             "restart", "readiness", "markReady"
         ])
         #expect(supervisor.state == .running)
@@ -182,7 +182,7 @@ private actor RecordingGate: SingleSupervisorGating {
         self.result = result
     }
 
-    func prepareForSpawn(journalRoot: URL) async -> SingleSupervisorGateResult {
+    func prepareForSpawn(journalRoot: URL, context: LaunchAuthorizationContext) async -> SingleSupervisorGateResult {
         await events.append("gate")
         return result
     }
@@ -206,20 +206,30 @@ private actor RecordingMaterializer: RuntimeMaterializing {
 private actor RecordingRunner: SupervisedChildRunning {
     private let events: EventRecorder
     private let markerURLForStopCheck: URL?
+    private let startError: Error?
     private var runtimeKey: String?
+    private var generation: UInt64 = 0
 
-    init(events: EventRecorder, markerURLForStopCheck: URL? = nil) {
+    init(events: EventRecorder, markerURLForStopCheck: URL? = nil, startError: Error? = nil) {
         self.events = events
         self.markerURLForStopCheck = markerURLForStopCheck
+        self.startError = startError
     }
 
-    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws -> JournalChildIdentity {
         await events.append("spawn")
+        if let startError {
+            throw startError
+        }
+        generation += 1
         runtimeKey = runtime.key
+        return JournalChildIdentity(pid: 4242, startTime: 100, generation: generation)
     }
 
-    func restart() async throws {
+    func restart() async throws -> JournalChildIdentity {
         await events.append("restart")
+        generation += 1
+        return JournalChildIdentity(pid: 4243, startTime: 101, generation: generation)
     }
 
     func stop() async {
@@ -245,8 +255,13 @@ private actor RecordingRunner: SupervisedChildRunning {
         nil
     }
 
-    func markReady() async {
+    func isCurrentGeneration(_ generation: UInt64) async -> Bool {
+        self.generation == generation
+    }
+
+    func markReady(_ identity: JournalChildIdentity) async -> Bool {
         await events.append("markReady")
+        return self.generation == identity.generation
     }
 }
 
@@ -262,7 +277,9 @@ private actor RecordingReadinessGate: JournalReadinessChecking {
     func waitUntilReady(
         journalRoot: URL,
         runtime: MaterializedRuntime,
+        child: JournalChildIdentity,
         timeout: Duration,
+        generationIsCurrent: @escaping @Sendable (UInt64) async -> Bool,
         terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?
     ) async -> JournalReadinessResult {
         await events.append("readiness")

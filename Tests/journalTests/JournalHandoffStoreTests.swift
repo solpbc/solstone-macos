@@ -93,7 +93,7 @@ struct JournalHandoffStoreTests {
         let supervisor = JournalSupervisor(
             gate: MockSingleSupervisorGate(result: .blocked(blockage)),
             materializer: MockRuntimeMaterializer(result: .success(try makeRuntime())),
-            runner: MockSupervisedChildRunner(),
+            runner: MockSupervisedChildRunner(startError: SupervisedJournalRunnerError.spawnBlocked(blockage)),
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
         let windowModel = makeWindowModel(config: fixture.config, supervisor: supervisor)

@@ -40,7 +40,7 @@ public final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked
         self.terminalDiagnostic = terminalDiagnostic
     }
 
-    public func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+    public func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws -> JournalChildIdentity {
         lock.withLock { starts += 1 }
         if let startError {
             throw startError
@@ -50,13 +50,15 @@ public final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked
             self.journalRoot = journalRoot.standardizedFileURL
             terminalDiagnostic = nil
         }
+        return JournalChildIdentity(pid: 4242, startTime: 100, generation: UInt64(starts + restarts))
     }
 
-    public func restart() async throws {
+    public func restart() async throws -> JournalChildIdentity {
         lock.withLock {
             restarts += 1
             terminalDiagnostic = nil
         }
+        return JournalChildIdentity(pid: 4243, startTime: 101, generation: UInt64(starts + restarts))
     }
 
     public func stop() async {
@@ -87,8 +89,13 @@ public final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked
         lock.withLock { terminalDiagnostic = diagnostic }
     }
 
-    public func markReady() async {
+    public func isCurrentGeneration(_ generation: UInt64) async -> Bool {
+        true
+    }
+
+    public func markReady(_ identity: JournalChildIdentity) async -> Bool {
         lock.withLock { readyMarks += 1 }
+        return true
     }
 }
 
@@ -103,7 +110,7 @@ public final class MockSingleSupervisorGate: SingleSupervisorGating, @unchecked 
         self.result = result
     }
 
-    public func prepareForSpawn(journalRoot: URL) async -> SingleSupervisorGateResult {
+    public func prepareForSpawn(journalRoot: URL, context: LaunchAuthorizationContext) async -> SingleSupervisorGateResult {
         lock.withLock { calls += 1 }
         return result
     }
@@ -121,7 +128,9 @@ public struct MockJournalReadinessGate: JournalReadinessChecking {
     public func waitUntilReady(
         journalRoot: URL,
         runtime: MaterializedRuntime,
+        child: JournalChildIdentity,
         timeout: Duration,
+        generationIsCurrent: @escaping @Sendable (UInt64) async -> Bool,
         terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?
     ) async -> JournalReadinessResult {
         await beforeReturn?()

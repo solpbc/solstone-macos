@@ -175,7 +175,7 @@ public enum SolOwnership: Equatable {
         return (provenance, nil)
     }
 
-    private static func canonicalPath(_ path: String) -> String {
+    public static func canonicalPath(_ path: String) -> String {
         URL(fileURLWithPath: path)
             .resolvingSymlinksInPath()
             .standardizedFileURL

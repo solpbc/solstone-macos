@@ -78,35 +78,6 @@ public func parseJournalPath(from output: String) -> String? {
     return nil
 }
 
-public func parsePsOrphanRows(_ output: String) -> [pid_t] {
-    output.split(separator: "\n").compactMap { line -> pid_t? in
-        let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
-        guard parts.count == 3,
-              let pid = Int32(parts[0]),
-              let ppid = Int32(parts[1]) else {
-            return nil
-        }
-        let command = String(parts[2])
-        // Runtime journal child process titles use this prefix; asserted per task and verified live by the calling session.
-        guard pid > 0, ppid == 1, command.hasPrefix("journal:") else {
-            return nil
-        }
-        return pid_t(pid)
-    }
-}
-
-public func countParsedPsRows(_ output: String) -> Int {
-    output.split(separator: "\n").reduce(0) { count, line in
-        let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
-        guard parts.count == 3,
-              Int32(parts[0]) != nil,
-              Int32(parts[1]) != nil else {
-            return count
-        }
-        return count + 1
-    }
-}
-
 public func moveAsideStaleStateFiles(
     journalRoot: URL,
     fileManager: FileManager = .default
@@ -148,6 +119,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
     private let journalPathProvider: @Sendable (URL) async -> String?
     private let terminate: @Sendable (pid_t) -> Void
     private let fileManager: FileManager
+    private let environmentReader: ProcessEnvironmentReading
     private let reprobe: @Sendable () async -> JournalRuntimeProbeOutcome
     private let logSink: (@Sendable (JournalRestartLogEvent) -> Void)?
     private let journalBinary: URL
@@ -159,6 +131,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
             _ = Darwin.kill(pid, SIGTERM)
         },
         fileManager: FileManager = .default,
+        environmentReader: @escaping ProcessEnvironmentReading = defaultProcessEnvironment,
         reprobe: @escaping @Sendable () async -> JournalRuntimeProbeOutcome,
         logSink: (@Sendable (JournalRestartLogEvent) -> Void)? = nil,
         journalBinary: URL
@@ -169,6 +142,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
         }
         self.terminate = terminate
         self.fileManager = fileManager
+        self.environmentReader = environmentReader
         self.reprobe = reprobe
         self.logSink = logSink
         self.journalBinary = journalBinary
@@ -190,10 +164,11 @@ public struct JournalRestartRunner: @unchecked Sendable {
         }
         emit(step: .resolveJournal, outcome: "success", detail: journalPath)
 
-        await runOrphanSweep()
+        let journalRoot = URL(fileURLWithPath: journalPath, isDirectory: true)
+        await runOrphanSweep(journalRoot: journalRoot)
 
         let moveEvents = moveAsideStaleStateFiles(
-            journalRoot: URL(fileURLWithPath: journalPath, isDirectory: true),
+            journalRoot: journalRoot,
             fileManager: fileManager
         )
         emitMoveAsideSummary(moveEvents)
@@ -303,12 +278,27 @@ public struct JournalRestartRunner: @unchecked Sendable {
         }
     }
 
-    private func runOrphanSweep() async {
+    private func runOrphanSweep(journalRoot: URL) async {
+        let protectedLaunchdPIDs: Set<pid_t>
+        switch await runLaunchctlPrint(runner: runner) {
+        case .notFound113:
+            protectedLaunchdPIDs = []
+        case .loaded(let job):
+            if case .running = job.state, let pid = job.pid {
+                protectedLaunchdPIDs = [pid]
+            } else {
+                protectedLaunchdPIDs = []
+            }
+        case .otherError(let exitCode, _):
+            emit(step: .orphanSweep, outcome: "error", detail: "launchctl-exit=\(exitCode)")
+            return
+        }
+
         let output = LockedJournalOutput()
         do {
             let result = try await runner.run(
                 executable: URL(fileURLWithPath: "/bin/ps"),
-                arguments: ["-axo", "pid=,ppid=,command="],
+                arguments: ["-axo", "pid=,ppid=,uid=,command="],
                 environment: nil,
                 stdoutHandler: { data in output.append(data) },
                 stderrHandler: { _ in }
@@ -318,16 +308,26 @@ public struct JournalRestartRunner: @unchecked Sendable {
                 return
             }
             let psOutput = output.string
-            let rowCount = countParsedPsRows(psOutput)
-            let pids = parsePsOrphanRows(psOutput)
-            guard !pids.isEmpty else {
-                emit(step: .orphanSweep, outcome: "noop", detail: "rows=\(rowCount) matched=0 terminated=0")
+            let selection = selectJournalOrphans(
+                from: parseJournalProcessRows(psOutput),
+                rowCount: countParsedPsRows(psOutput),
+                journalRoot: journalRoot,
+                protectedLaunchdPIDs: protectedLaunchdPIDs,
+                excludedPIDs: [],
+                environmentReader: environmentReader
+            )
+            guard selection.ambiguous.isEmpty else {
+                emit(step: .orphanSweep, outcome: "error", detail: "rows=\(selection.rowCount) ambiguous=\(selection.ambiguous.count)")
                 return
             }
-            for pid in pids {
+            guard !selection.selected.isEmpty else {
+                emit(step: .orphanSweep, outcome: "noop", detail: "rows=\(selection.rowCount) matched=0 terminated=0")
+                return
+            }
+            for pid in selection.selected {
                 terminate(pid)
             }
-            emit(step: .orphanSweep, outcome: "success", detail: "rows=\(rowCount) matched=\(pids.count) terminated=\(pids.count)")
+            emit(step: .orphanSweep, outcome: "success", detail: "rows=\(selection.rowCount) matched=\(selection.selected.count) terminated=\(selection.selected.count)")
         } catch {
             emit(step: .orphanSweep, outcome: "error", detail: error.localizedDescription)
         }

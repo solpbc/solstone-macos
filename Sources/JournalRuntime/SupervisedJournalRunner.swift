@@ -7,18 +7,22 @@ import os
 import SolstoneCore
 
 public protocol SupervisedChildRunning: Sendable {
-    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws
-    func restart() async throws
+    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws -> JournalChildIdentity
+    func restart() async throws -> JournalChildIdentity
     func stop() async
     func stopForTermination() async
     func currentRuntimeKey() async -> String?
     func terminalReason() async -> JournalDiagnostic?
-    func markReady() async
+    func isCurrentGeneration(_ generation: UInt64) async -> Bool
+    func markReady(_ identity: JournalChildIdentity) async -> Bool
 }
 
 public enum SupervisedJournalRunnerError: LocalizedError, Sendable, Equatable {
     case alreadyStopped
     case launchFailed(String)
+    case spawnBlocked(SingleSupervisorGateBlockage)
+    case staleLaunch
+    case identityUnavailable
 
     public var errorDescription: String? {
         switch self {
@@ -26,7 +30,93 @@ public enum SupervisedJournalRunnerError: LocalizedError, Sendable, Equatable {
             return "journal child is not configured"
         case .launchFailed(let message):
             return message
+        case .spawnBlocked(let blockage):
+            return blockage.ownerMessage
+        case .staleLaunch:
+            return "journal launch was superseded"
+        case .identityUnavailable:
+            return "journal child identity could not be verified"
         }
+    }
+}
+
+internal protocol JournalChildProcess: AnyObject, Sendable {
+    var executableURL: URL? { get set }
+    var currentDirectoryURL: URL? { get set }
+    var arguments: [String]? { get set }
+    var environment: [String: String]? { get set }
+    var standardInput: Any? { get set }
+    var standardOutput: Any? { get set }
+    var standardError: Any? { get set }
+    var terminationHandler: (@Sendable (any JournalChildProcess) -> Void)? { get set }
+    var processIdentifier: pid_t { get }
+    var terminationStatus: Int32 { get }
+    var isRunning: Bool { get }
+
+    func run() throws
+}
+
+private final class FoundationJournalChildProcess: JournalChildProcess, @unchecked Sendable {
+    private let process = Process()
+
+    var executableURL: URL? {
+        get { process.executableURL }
+        set { process.executableURL = newValue }
+    }
+
+    var currentDirectoryURL: URL? {
+        get { process.currentDirectoryURL }
+        set { process.currentDirectoryURL = newValue }
+    }
+
+    var arguments: [String]? {
+        get { process.arguments }
+        set { process.arguments = newValue }
+    }
+
+    var environment: [String: String]? {
+        get { process.environment }
+        set { process.environment = newValue }
+    }
+
+    var standardInput: Any? {
+        get { process.standardInput }
+        set { process.standardInput = newValue }
+    }
+
+    var standardOutput: Any? {
+        get { process.standardOutput }
+        set { process.standardOutput = newValue }
+    }
+
+    var standardError: Any? {
+        get { process.standardError }
+        set { process.standardError = newValue }
+    }
+
+    var terminationHandler: (@Sendable (any JournalChildProcess) -> Void)? {
+        didSet {
+            process.terminationHandler = { [weak self] _ in
+                guard let self else { return }
+                self.terminationHandler?(self)
+            }
+        }
+    }
+
+    var processIdentifier: pid_t {
+        process.processIdentifier
+    }
+
+    var terminationStatus: Int32 {
+        process.terminationStatus
+    }
+
+    var isRunning: Bool {
+        process.isRunning
+    }
+
+    func run() throws {
+        try process.run()
     }
 }
 
@@ -38,9 +128,12 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
     }
 
     private let clock: any MonotonicClock
+    private let authorizationGate: any SingleSupervisorGating
     private let statusSink: @Sendable (JournalRuntimeStatus) -> Void
     private let pidExists: @Sendable (pid_t) -> Bool
     private let terminate: @Sendable (pid_t, Int32) -> Int32
+    private let processStartTime: ProcessStartTimeReading
+    private let processFactory: @Sendable () -> any JournalChildProcess
     private let backoffSchedule: [Duration] = [
         .seconds(1),
         .seconds(2),
@@ -55,10 +148,12 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
     private let terminationWait: Duration = .seconds(10)
     private let terminationGrace: Duration = .seconds(2)
 
-    private var process: Process?
+    private var process: (any JournalChildProcess)?
     private var parentWriteHandle: FileHandle?
     private var launchRequest: LaunchRequest?
     private var currentKey: String?
+    private var currentIdentity: JournalChildIdentity?
+    private var lifecycleGeneration: UInt64 = 0
     private var stopping = false
     private var breakerTripped = false
     private var terminalDiagnostic: JournalDiagnostic?
@@ -69,6 +164,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
 
     public init(
         clock: any MonotonicClock = SystemMonotonicClock(),
+        authorizationGate: any SingleSupervisorGating = SingleSupervisorGate(),
         statusSink: @escaping @Sendable (JournalRuntimeStatus) -> Void,
         pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
             if Darwin.kill(pid, 0) == 0 { return true }
@@ -76,47 +172,87 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         },
         terminate: @escaping @Sendable (pid_t, Int32) -> Int32 = { pid, signal in
             Darwin.kill(pid, signal)
-        }
+        },
+        processStartTime: @escaping ProcessStartTimeReading = defaultProcessStartTime
+    ) {
+        self.init(
+            clock: clock,
+            authorizationGate: authorizationGate,
+            statusSink: statusSink,
+            pidExists: pidExists,
+            terminate: terminate,
+            processStartTime: processStartTime,
+            processFactory: { FoundationJournalChildProcess() }
+        )
+    }
+
+    internal init(
+        clock: any MonotonicClock = SystemMonotonicClock(),
+        authorizationGate: any SingleSupervisorGating = SingleSupervisorGate(),
+        statusSink: @escaping @Sendable (JournalRuntimeStatus) -> Void,
+        pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
+            if Darwin.kill(pid, 0) == 0 { return true }
+            return errno == EPERM
+        },
+        terminate: @escaping @Sendable (pid_t, Int32) -> Int32 = { pid, signal in
+            Darwin.kill(pid, signal)
+        },
+        processStartTime: @escaping ProcessStartTimeReading = defaultProcessStartTime,
+        processFactory: @escaping @Sendable () -> any JournalChildProcess
     ) {
         self.clock = clock
+        self.authorizationGate = authorizationGate
         self.statusSink = statusSink
         self.pidExists = pidExists
         self.terminate = terminate
+        self.processStartTime = processStartTime
+        self.processFactory = processFactory
     }
 
-    public func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+    public func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws -> JournalChildIdentity {
         Logger.journal.notice("journal-lifecycle: runner-start port=\(port, privacy: .public)")
+        lifecycleGeneration &+= 1
+        let generation = lifecycleGeneration
+        let replacing = currentIdentity
         await cancelPendingRelaunch()
         launchRequest = LaunchRequest(runtime: runtime, journalRoot: journalRoot, port: port)
         currentKey = runtime.key
         breakerTripped = false
         terminalDiagnostic = nil
         stopping = false
-        try await launch(runtime: runtime, journalRoot: journalRoot, port: port)
+        return try await launch(runtime: runtime, journalRoot: journalRoot, port: port, generation: generation, replacing: replacing)
     }
 
-    public func restart() async throws {
+    public func restart() async throws -> JournalChildIdentity {
         guard let launchRequest else {
             throw SupervisedJournalRunnerError.alreadyStopped
         }
         Logger.journal.notice("journal-lifecycle: runner-restart transition=restarting")
+        lifecycleGeneration &+= 1
+        let generation = lifecycleGeneration
+        let replacing = currentIdentity
         statusSink(.restarting)
-        stopping = true
         await cancelPendingRelaunch()
-        await stopCurrentProcess()
-        stopping = false
         breakerTripped = false
         terminalDiagnostic = nil
-        try await launch(runtime: launchRequest.runtime, journalRoot: launchRequest.journalRoot, port: launchRequest.port)
+        return try await launch(
+            runtime: launchRequest.runtime,
+            journalRoot: launchRequest.journalRoot,
+            port: launchRequest.port,
+            generation: generation,
+            replacing: replacing
+        )
     }
 
     public func stop() async {
         Logger.journal.notice("journal-lifecycle: runner-stop")
+        lifecycleGeneration &+= 1
         stopping = true
         await cancelPendingRelaunch()
         await stopCurrentProcess()
         launchRequest = nil
         currentKey = nil
+        currentIdentity = nil
         terminalDiagnostic = nil
         stabilityTask?.cancel()
         stabilityTask = nil
@@ -124,9 +260,11 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
 
     public func stopForTermination() async {
         Logger.journal.notice("journal-lifecycle: runner-stop-for-termination")
+        lifecycleGeneration &+= 1
         stopping = true
         await cancelPendingRelaunch()
         await stopCurrentProcess()
+        currentIdentity = nil
     }
 
     public func currentRuntimeKey() async -> String? {
@@ -137,21 +275,63 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         terminalDiagnostic
     }
 
-    public func markReady() async {
+    public func isCurrentGeneration(_ generation: UInt64) async -> Bool {
+        lifecycleGeneration == generation
+    }
+
+    public func markReady(_ identity: JournalChildIdentity) async -> Bool {
+        guard currentIdentity == identity,
+              lifecycleGeneration == identity.generation,
+              let startTime = processStartTime(identity.pid),
+              abs(startTime - identity.startTime) <= journalStartTimeToleranceS,
+              pidExists(identity.pid) else {
+            return false
+        }
         statusSink(.running)
         stabilityTask?.cancel()
         stabilityTask = Task { [weak self] in
             guard let self else { return }
             await self.sleepForStabilityAndReset()
         }
+        return true
     }
 
-    private func launch(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
-        if process?.isRunning == true {
-            await stopCurrentProcess()
+    private func launch(
+        runtime: MaterializedRuntime,
+        journalRoot: URL,
+        port: Int,
+        generation: UInt64,
+        replacing: JournalChildIdentity?
+    ) async throws -> JournalChildIdentity {
+        guard lifecycleGeneration == generation, !stopping else {
+            throw SupervisedJournalRunnerError.staleLaunch
         }
 
-        let proc = Process()
+        switch await authorizationGate.prepareForSpawn(
+            journalRoot: journalRoot,
+            context: LaunchAuthorizationContext(excludedChild: replacing)
+        ) {
+        case .success:
+            break
+        case .blocked(let blockage):
+            throw SupervisedJournalRunnerError.spawnBlocked(blockage)
+        }
+
+        guard lifecycleGeneration == generation, !stopping else {
+            throw SupervisedJournalRunnerError.staleLaunch
+        }
+
+        if process?.isRunning == true {
+            stopping = true
+            await stopCurrentProcess()
+            stopping = false
+        }
+
+        guard lifecycleGeneration == generation, !stopping else {
+            throw SupervisedJournalRunnerError.staleLaunch
+        }
+
+        let proc = processFactory()
         proc.executableURL = runtime.layout.journalBinary
         proc.currentDirectoryURL = journalRoot
         proc.arguments = ["start", "--app-supervised", String(port)]
@@ -185,16 +365,32 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         do {
             process = proc
             try proc.run()
+            guard let startTime = processStartTime(proc.processIdentifier) else {
+                await stopCurrentProcess()
+                throw SupervisedJournalRunnerError.identityUnavailable
+            }
+            let identity = JournalChildIdentity(
+                pid: proc.processIdentifier,
+                startTime: startTime,
+                generation: generation
+            )
+            currentIdentity = identity
             Logger.journal.notice("journal-lifecycle: runner-child-launched pid=\(proc.processIdentifier, privacy: .public) port=\(port, privacy: .public)")
+            return identity
         } catch {
             process = nil
+            currentIdentity = nil
             parentWriteHandle = nil
+            if let runnerError = error as? SupervisedJournalRunnerError {
+                throw runnerError
+            }
             throw SupervisedJournalRunnerError.launchFailed(error.localizedDescription)
         }
     }
 
     private func childExited(status: Int32) async {
         process = nil
+        currentIdentity = nil
         parentWriteHandle = nil
         stabilityTask?.cancel()
         stabilityTask = nil
@@ -223,8 +419,9 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         guard launchRequest != nil else { return }
         let delay = backoffSchedule[min(backoffIndex, backoffSchedule.count - 1)]
         backoffIndex = min(backoffIndex + 1, backoffSchedule.count - 1)
+        let generation = lifecycleGeneration
         relaunchTask = Task { [weak self] in
-            await self?.performBackoffRelaunch(delay: delay)
+            await self?.performBackoffRelaunch(delay: delay, generation: generation)
         }
     }
 
@@ -234,12 +431,24 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         relaunchTask = nil
     }
 
-    private func performBackoffRelaunch(delay: Duration) async {
+    private func performBackoffRelaunch(delay: Duration, generation: UInt64) async {
         await clock.sleep(for: delay)
-        guard !Task.isCancelled, !stopping, !breakerTripped, let launchRequest else { return }
+        guard !Task.isCancelled,
+              !stopping,
+              !breakerTripped,
+              generation == lifecycleGeneration,
+              let launchRequest else { return }
         Logger.journal.notice("journal-lifecycle: runner-backoff-relaunch delaySeconds=\(delay.components.seconds, privacy: .public)")
         do {
-            try await launch(runtime: launchRequest.runtime, journalRoot: launchRequest.journalRoot, port: launchRequest.port)
+            _ = try await launch(
+                runtime: launchRequest.runtime,
+                journalRoot: launchRequest.journalRoot,
+                port: launchRequest.port,
+                generation: generation,
+                replacing: nil
+            )
+        } catch SupervisedJournalRunnerError.staleLaunch {
+            return
         } catch {
             Logger.journal.error("journal-lifecycle: runner-backoff-relaunch-failed")
             let diagnostic = JournalDiagnostic(
@@ -280,9 +489,10 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
             _ = terminate(child.processIdentifier, SIGKILL)
         }
         process = nil
+        currentIdentity = nil
     }
 
-    private func waitForProcessExit(_ child: Process, timeout: Duration) async {
+    private func waitForProcessExit(_ child: any JournalChildProcess, timeout: Duration) async {
         let deadline = clock.now() + timeout
         while clock.now() < deadline {
             if !child.isRunning || !pidExists(child.processIdentifier) {

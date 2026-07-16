@@ -26,7 +26,6 @@ final class JournalSupervisor {
         weak var supervisor: JournalSupervisor?
     }
 
-    private let gate: any SingleSupervisorGating
     private let materializer: any RuntimeMaterializing
     private let runner: any SupervisedChildRunning
     private let readinessGate: any JournalReadinessChecking
@@ -50,9 +49,8 @@ final class JournalSupervisor {
         readinessTimeout: Duration = .seconds(120)
     ) {
         let bridge = StatusBridge()
-        self.gate = gate
         self.materializer = materializer
-        self.runner = runner ?? SupervisedJournalRunner(statusSink: { status in
+        self.runner = runner ?? SupervisedJournalRunner(authorizationGate: gate, statusSink: { status in
             // The runner is silent for ordinary stop() and for a single unexpected
             // post-ready exit while backoff is pending; only terminal breaker/relaunch
             // failure reaches this sink as .stopped.
@@ -87,17 +85,6 @@ final class JournalSupervisor {
         activeRuntime = nil
         activeJournalRoot = nil
 
-        switch await gate.prepareForSpawn(journalRoot: journalRoot) {
-        case .success:
-            Logger.journalSupervisor.notice("journal supervisor gate open")
-        case .blocked(let blockage):
-            let diagnostic = blockage.diagnostic
-            state = .blocked(diagnostic)
-            blockedReason = blockage.ownerMessage
-            Logger.journalSupervisor.warning("journal supervisor gate blocked: \(diagnostic.outputExcerpt ?? blockage.ownerMessage, privacy: .public)")
-            return false
-        }
-
         let runtime: MaterializedRuntime
         do {
             state = .materializing
@@ -114,9 +101,13 @@ final class JournalSupervisor {
             return false
         }
 
+        let child: JournalChildIdentity
         do {
             state = .starting
-            try await runner.start(runtime: runtime, journalRoot: journalRoot, port: port)
+            child = try await runner.start(runtime: runtime, journalRoot: journalRoot, port: port)
+        } catch SupervisedJournalRunnerError.spawnBlocked(let blockage) {
+            applySpawnBlockage(blockage)
+            return false
         } catch {
             let diagnostic = JournalDiagnostic(
                 commandLabel: "journal start --app-supervised",
@@ -128,7 +119,7 @@ final class JournalSupervisor {
             return false
         }
 
-        return await finishReadiness(journalRoot: journalRoot, runtime: runtime)
+        return await finishReadiness(journalRoot: journalRoot, runtime: runtime, child: child)
     }
 
     @discardableResult
@@ -155,9 +146,13 @@ final class JournalSupervisor {
             return false
         }
 
+        let child: JournalChildIdentity
         do {
             state = .starting
-            try await runner.restart()
+            child = try await runner.restart()
+        } catch SupervisedJournalRunnerError.spawnBlocked(let blockage) {
+            applySpawnBlockage(blockage)
+            return false
         } catch {
             let diagnostic = JournalDiagnostic(
                 commandLabel: "journal restart",
@@ -168,21 +163,37 @@ final class JournalSupervisor {
             return false
         }
 
-        return await finishReadiness(journalRoot: journalRoot, runtime: runtime)
+        return await finishReadiness(journalRoot: journalRoot, runtime: runtime, child: child)
     }
 
-    private func finishReadiness(journalRoot: URL, runtime: MaterializedRuntime) async -> Bool {
+    private func finishReadiness(journalRoot: URL, runtime: MaterializedRuntime, child: JournalChildIdentity) async -> Bool {
         state = .waitingForReadiness
         switch await readinessGate.waitUntilReady(
             journalRoot: journalRoot,
             runtime: runtime,
+            child: child,
             timeout: readinessTimeout,
+            generationIsCurrent: { [runner] generation in
+                await runner.isCurrentGeneration(generation)
+            },
             terminalCheck: { [runner] in
                 await runner.terminalReason()
             }
         ) {
         case .ready:
-            await runner.markReady()
+            guard await runner.markReady(child) else {
+                let diagnostic = JournalDiagnostic(
+                    commandLabel: "journal readiness",
+                    outputExcerpt: "journal child identity could not be verified"
+                )
+                await runner.stop()
+                activeRuntime = nil
+                activeJournalRoot = nil
+                state = .failed(diagnostic)
+                applyRuntimeStatus(.unknown(diagnostic))
+                Logger.journalSupervisor.warning("journal readiness failed: \(diagnostic.outputExcerpt ?? diagnostic.commandLabel, privacy: .public)")
+                return false
+            }
             activeRuntime = runtime
             activeJournalRoot = journalRoot
             state = .running
@@ -205,6 +216,14 @@ final class JournalSupervisor {
             Logger.journalSupervisor.warning("journal readiness failed: \(diagnostic.outputExcerpt ?? diagnostic.commandLabel, privacy: .public)")
             return false
         }
+    }
+
+    private func applySpawnBlockage(_ blockage: SingleSupervisorGateBlockage) {
+        let diagnostic = blockage.diagnostic
+        state = .blocked(diagnostic)
+        blockedReason = blockage.ownerMessage
+        applyRuntimeStatus(.unknown(diagnostic))
+        Logger.journalSupervisor.warning("journal supervisor gate blocked: \(diagnostic.outputExcerpt ?? blockage.ownerMessage, privacy: .public)")
     }
 
     func terminate(reason: String = "ordinary-quit") async {

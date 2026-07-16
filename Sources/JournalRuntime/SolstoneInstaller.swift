@@ -474,6 +474,7 @@ public final class SolstoneInstaller {
         }
 
         if let failure = await runJournalOrphanSweep(
+            journalRoot: journalURL,
             runner: subprocessRunner,
             pidExists: pidExists,
             terminate: terminate,
