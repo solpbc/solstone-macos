@@ -59,8 +59,8 @@ UV_SHA256_FILE := $(UV_VENDOR_DIR)/uv-aarch64-apple-darwin.sha256
 UV_VENDOR_BINARY := $(UV_VENDOR_DIR)/uv
 
 # version pins for installer (consumed by BundleConfig)
-SOLSTONE_PIN_VERSION ?= 0.8.7
-SOLSTONE_MIN_VERSION ?= 0.8.7
+SOLSTONE_PIN_VERSION ?= 0.8.8
+SOLSTONE_MIN_VERSION ?= 0.8.8
 
 # python-build-standalone vendoring
 PYTHON_BUILD_STANDALONE_VERSION ?= 20260510
@@ -73,7 +73,7 @@ PYTHON_VENDOR_SHA_FILE := vendor/python-aarch64-apple-darwin.sha256
 
 # bundled backend wheelhouse
 SOLSTONE_SRC_DIR ?= ../solstone
-SOLSTONE_REF ?= v0.8.7
+SOLSTONE_REF ?= v0.8.8
 WHEELHOUSE_DIR := vendor/solstone-wheelhouse
 WHEELHOUSE_MANIFEST := $(WHEELHOUSE_DIR)/MANIFEST.sha256
 WHEELHOUSE_PLATFORM_TAG ?= macosx_15_0_arm64
