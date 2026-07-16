@@ -56,13 +56,16 @@ struct SupervisedJournalRunnerTests {
             clock: SuspendedBackoffClock()
         )
         _ = try await harness.runner.start(runtime: harness.runtime, journalRoot: harness.journalRoot, port: 5015)
+        let spawnCountBeforeBlockedRelaunch = harness.processes.spawnCount()
+        harness.events.removeAll()
 
         harness.processes.latest()?.exit(status: 7)
         await harness.clock.waitForSleepCount(1)
         harness.clock.resumeNextSleep()
         await Task.yield()
 
-        #expect(harness.processes.spawnCount() == 1)
+        #expect(harness.processes.spawnCount() - spawnCountBeforeBlockedRelaunch == 0)
+        #expect(!harness.events.snapshot().contains { $0.hasPrefix("spawn:") })
         #expect(harness.gate.callCount() == 2)
     }
 
@@ -121,7 +124,7 @@ struct SupervisedJournalRunnerTests {
         harness.processes.latest()?.exit(status: 7)
         await harness.clock.waitForSleepCount(1)
         harness.clock.resumeNextSleep()
-        await Task.yield()
+        await harness.statuses.waitForStoppedCount(1)
         harness.clock.resumeNextSleep()
         await Task.yield()
 
@@ -467,10 +470,13 @@ private final class SuspendedBackoffClock: MonotonicClock, @unchecked Sendable {
 private final class StatusRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [JournalRuntimeStatus] = []
+    private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func append(_ status: JournalRuntimeStatus) {
         lock.withLock {
             values.append(status)
+            waiters.forEach { $0.resume() }
+            waiters.removeAll()
         }
     }
 
@@ -480,6 +486,23 @@ private final class StatusRecorder: @unchecked Sendable {
                 if case .stopped = $0 { return true }
                 return false
             }.count
+        }
+    }
+
+    func waitForStoppedCount(_ count: Int) async {
+        while stoppedCount() < count {
+            await withCheckedContinuation { continuation in
+                lock.withLock {
+                    if values.filter({
+                        if case .stopped = $0 { return true }
+                        return false
+                    }).count >= count {
+                        continuation.resume()
+                    } else {
+                        waiters.append(continuation)
+                    }
+                }
+            }
         }
     }
 }

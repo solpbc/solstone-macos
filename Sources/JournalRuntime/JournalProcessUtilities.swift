@@ -123,11 +123,15 @@ internal func runJournalOrphanSweep(
         termCount += 1
     }
 
-    await clock.sleep(for: gracePeriod)
-
-    let survivors = pids.filter(pidExists)
-    for pid in survivors {
-        _ = terminate(pid, SIGKILL)
+    let survivors: [pid_t]
+    if pids.isEmpty {
+        survivors = []
+    } else {
+        await clock.sleep(for: gracePeriod)
+        survivors = pids.filter(pidExists)
+        for pid in survivors {
+            _ = terminate(pid, SIGKILL)
+        }
     }
 
     Logger.setup.notice("journal-lifecycle: orphan-sweep outcome=success rows=\(selection.rowCount, privacy: .public) selected=\(pids.count, privacy: .public) protected=\(selection.protected.count, privacy: .public) terminated=\(termCount, privacy: .public) survivors=\(survivors.count, privacy: .public)")

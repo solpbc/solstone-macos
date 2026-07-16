@@ -37,6 +37,7 @@ struct SingleSupervisorGateTests {
         )
 
         #expect(result == .success)
+        #expect(fixture.launchctlSubcommands() == ["print", "bootout", "print", "print"])
         #expect(fixture.events.snapshot() == [
             "print-initial",
             "bootout",
@@ -66,6 +67,7 @@ struct SingleSupervisorGateTests {
         )
 
         #expect(result == .success)
+        #expect(fixture.launchctlSubcommands() == ["print", "print"])
         #expect(fixture.events.snapshot() == ["print-initial-113", "print-refresh", "ps", "lsof:7657", "lsof:5015"])
         #expect(!FileManager.default.fileExists(atPath: fixture.plistURL.path))
     }
@@ -74,6 +76,7 @@ struct SingleSupervisorGateTests {
         let fixture = try GateFixture()
         defer { fixture.cleanup() }
         try fixture.writePlist(standardOutRoot: fixture.tempHome.appendingPathComponent("other", isDirectory: true))
+        let plistSnapshot = try fixture.readPlistData()
 
         fixture.runner.enqueue("launchctl", .success(
             stdout: Data(loadedPrint(path: fixture.plistURL.path, state: "running", pid: 111).utf8),
@@ -85,17 +88,15 @@ struct SingleSupervisorGateTests {
             context: LaunchAuthorizationContext()
         )
 
-        expectBlocked(result)
-        #expect(fixture.events.snapshot() == ["print-initial"])
-        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
-        #expect(fixture.terminations.snapshot().isEmpty)
+        expectBlockedWithZeroMutation(result, fixture: fixture, expectedEvents: ["print-initial"], plistSnapshot: plistSnapshot)
     }
 
     @Test func malformedPlistBlocksWithZeroMutation() async throws {
         let fixture = try GateFixture()
         defer { fixture.cleanup() }
         try FileManager.default.createDirectory(at: fixture.plistURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("not a plist".utf8).write(to: fixture.plistURL)
+        let plistSnapshot = Data("not a plist".utf8)
+        try plistSnapshot.write(to: fixture.plistURL)
         fixture.runner.enqueue("launchctl", .success(exitCode: 113, sideEffect: { fixture.events.append("print-initial") }))
 
         let result = await fixture.gate().prepareForSpawn(
@@ -103,10 +104,7 @@ struct SingleSupervisorGateTests {
             context: LaunchAuthorizationContext()
         )
 
-        expectBlocked(result)
-        #expect(fixture.events.snapshot() == ["print-initial"])
-        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
-        #expect(fixture.terminations.snapshot().isEmpty)
+        expectBlockedWithZeroMutation(result, fixture: fixture, expectedEvents: ["print-initial"], plistSnapshot: plistSnapshot)
     }
 
     @Test func labelLoadedWithPlistAbsentBlocksWithZeroMutation() async throws {
@@ -122,16 +120,14 @@ struct SingleSupervisorGateTests {
             context: LaunchAuthorizationContext()
         )
 
-        expectBlocked(result)
-        #expect(fixture.events.snapshot() == ["print-initial"])
-        #expect(!FileManager.default.fileExists(atPath: fixture.plistURL.path))
-        #expect(fixture.terminations.snapshot().isEmpty)
+        expectBlockedWithZeroMutation(result, fixture: fixture, expectedEvents: ["print-initial"], plistSnapshot: nil)
     }
 
     @Test func loadedJobDisagreementBlocksWithZeroMutation() async throws {
         let fixture = try GateFixture()
         defer { fixture.cleanup() }
         try fixture.writePlist()
+        let plistSnapshot = try fixture.readPlistData()
         fixture.runner.enqueue("launchctl", .success(
             stdout: Data(mismatchedLoadedPrint(path: fixture.plistURL.path, pid: 111).utf8),
             sideEffect: { fixture.events.append("print-initial") }
@@ -142,16 +138,14 @@ struct SingleSupervisorGateTests {
             context: LaunchAuthorizationContext()
         )
 
-        expectBlocked(result)
-        #expect(fixture.events.snapshot() == ["print-initial"])
-        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
-        #expect(fixture.terminations.snapshot().isEmpty)
+        expectBlockedWithZeroMutation(result, fixture: fixture, expectedEvents: ["print-initial"], plistSnapshot: plistSnapshot)
     }
 
     @Test func inspectionFailureBlocksWithZeroMutation() async throws {
         let fixture = try GateFixture()
         defer { fixture.cleanup() }
         try fixture.writePlist()
+        let plistSnapshot = try fixture.readPlistData()
         fixture.runner.enqueue("launchctl", .success(exitCode: 5, sideEffect: { fixture.events.append("print-error") }))
 
         let result = await fixture.gate().prepareForSpawn(
@@ -159,10 +153,7 @@ struct SingleSupervisorGateTests {
             context: LaunchAuthorizationContext()
         )
 
-        expectBlocked(result)
-        #expect(fixture.events.snapshot() == ["print-error"])
-        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
-        #expect(fixture.terminations.snapshot().isEmpty)
+        expectBlockedWithZeroMutation(result, fixture: fixture, expectedEvents: ["print-error"], plistSnapshot: plistSnapshot)
     }
 
     @Test func bootoutFailureBlocksWithoutUnlink() async throws {
@@ -263,6 +254,54 @@ struct SingleSupervisorGateTests {
         #expect(fixture.terminations.snapshot().isEmpty)
     }
 
+    @Test func cancellationDuringRefreshReportsCancelledNotRetirementFailure() async throws {
+        let fixture = try GateFixture()
+        defer { fixture.cleanup() }
+        fixture.runner.enqueue("launchctl", .success(exitCode: 113, sideEffect: { fixture.events.append("print-initial") }))
+        fixture.runner.enqueue("launchctl", .success(
+            exitCode: 113,
+            delay: .seconds(60),
+            sideEffect: { fixture.events.append("print-refresh") }
+        ))
+
+        let task = Task {
+            await fixture.gate().prepareForSpawn(
+                journalRoot: fixture.journalRoot,
+                context: LaunchAuthorizationContext()
+            )
+        }
+        await waitForInvocationCount(fixture.runner, 2)
+        task.cancel()
+        let result = await task.value
+
+        guard case .blocked(let blockage) = result else {
+            Issue.record("expected cancellation blockage, got \(result)")
+            return
+        }
+        #expect(fixture.launchctlSubcommands() == ["print", "print"])
+        #expect(blockage.ownerMessage == UICopy.JOURNAL_SPAWN_CANCELLED)
+        #expect(blockage.ownerMessage != UICopy.JOURNAL_SPAWN_LEGACY_SERVICE_RETIRE_FAILED)
+        #expect(fixture.terminations.snapshot().isEmpty)
+    }
+
+    @Test func noOrphansSkipGraceSleepBeforePortChecks() async throws {
+        let fixture = try GateFixture()
+        defer { fixture.cleanup() }
+        fixture.runner.enqueue("launchctl", .success(exitCode: 113, sideEffect: { fixture.events.append("print-initial-113") }))
+        fixture.runner.enqueue("launchctl", .success(exitCode: 113, sideEffect: { fixture.events.append("print-refresh") }))
+        fixture.enqueueEmptyPs()
+        fixture.enqueueFreePorts()
+
+        let result = await fixture.gate(orphanGracePeriod: .seconds(3)).prepareForSpawn(
+            journalRoot: fixture.journalRoot,
+            context: LaunchAuthorizationContext()
+        )
+
+        #expect(result == .success)
+        #expect(fixture.clock.sleepCount() == 0)
+        #expect(fixture.events.snapshot() == ["print-initial-113", "print-refresh", "ps", "lsof:7657", "lsof:5015"])
+    }
+
     @Test func loadedNotRunningStillRequiresBootout() async throws {
         let fixture = try GateFixture()
         defer { fixture.cleanup() }
@@ -312,7 +351,7 @@ private final class GateFixture: @unchecked Sendable {
             .appendingPathComponent("\(label).plist")
     }
 
-    func gate() -> SingleSupervisorGate {
+    func gate(orphanGracePeriod: Duration = .zero) -> SingleSupervisorGate {
         SingleSupervisorGate(
             runner: runner,
             pidExists: { _ in false },
@@ -325,7 +364,7 @@ private final class GateFixture: @unchecked Sendable {
                 pid == 111 ? ["SOLSTONE_JOURNAL": journalRoot.path] : nil
             },
             clock: clock,
-            orphanGracePeriod: .zero,
+            orphanGracePeriod: orphanGracePeriod,
             homeDirectory: tempHome,
             launchdLabel: label,
             launchdPlistURL: plistURL
@@ -349,6 +388,16 @@ private final class GateFixture: @unchecked Sendable {
         ]
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try data.write(to: plistURL)
+    }
+
+    func readPlistData() throws -> Data {
+        try Data(contentsOf: plistURL)
+    }
+
+    func launchctlSubcommands() -> [String] {
+        runner.invocations
+            .filter { $0.executable.lastPathComponent == "launchctl" }
+            .compactMap { $0.arguments.first }
     }
 
     func enqueueEmptyPs() {
@@ -399,14 +448,22 @@ private final class TerminationRecorder: @unchecked Sendable {
 private final class ImmediateClock: MonotonicClock, @unchecked Sendable {
     private let lock = NSLock()
     private var value: Duration = .zero
+    private var sleeps = 0
 
     func now() -> Duration {
         lock.withLock { value }
     }
 
     func sleep(for duration: Duration) async {
-        lock.withLock { value += duration }
+        lock.withLock {
+            sleeps += 1
+            value += duration
+        }
         await Task.yield()
+    }
+
+    func sleepCount() -> Int {
+        lock.withLock { sleeps }
     }
 }
 
@@ -415,6 +472,37 @@ private func expectBlocked(_ result: SingleSupervisorGateResult) {
         Issue.record("expected blocked gate result, got \(result)")
         return
     }
+}
+
+private func expectBlockedWithZeroMutation(
+    _ result: SingleSupervisorGateResult,
+    fixture: GateFixture,
+    expectedEvents: [String],
+    plistSnapshot: Data?
+) {
+    expectBlocked(result)
+    #expect(fixture.events.snapshot() == expectedEvents)
+    #expect(fixture.launchctlSubcommands().allSatisfy { $0 == "print" })
+    #expect(!fixture.launchctlSubcommands().contains("bootout"))
+    if let plistSnapshot {
+        #expect((try? fixture.readPlistData()) == plistSnapshot)
+    } else {
+        #expect(!FileManager.default.fileExists(atPath: fixture.plistURL.path))
+    }
+    #expect(fixture.terminations.snapshot().isEmpty)
+    #expect(!fixture.runner.invocations.contains { invocation in
+        invocation.executable.lastPathComponent == "journal" && invocation.arguments.first == "start"
+    })
+}
+
+private func waitForInvocationCount(_ runner: FakeSubprocessRunner, _ count: Int) async {
+    for _ in 0..<1_000 {
+        if runner.invocations.count >= count {
+            return
+        }
+        await Task.yield()
+    }
+    Issue.record("timed out waiting for \(count) subprocess invocations")
 }
 
 private func loadedPrint(path: String, state: String, pid: pid_t?) -> String {

@@ -38,6 +38,7 @@ public enum SingleSupervisorGateResult: Equatable, Sendable {
 }
 
 public enum SingleSupervisorGateBlockage: Equatable, Sendable {
+    case cancelled(JournalDiagnostic)
     case legacyServiceOwnershipUnverified(JournalDiagnostic)
     case legacyServiceRetirementFailed(JournalDiagnostic)
     case orphanOwnershipUnverified(JournalDiagnostic)
@@ -47,7 +48,8 @@ public enum SingleSupervisorGateBlockage: Equatable, Sendable {
 
     public var diagnostic: JournalDiagnostic {
         switch self {
-        case .legacyServiceOwnershipUnverified(let diagnostic),
+        case .cancelled(let diagnostic),
+             .legacyServiceOwnershipUnverified(let diagnostic),
              .legacyServiceRetirementFailed(let diagnostic),
              .orphanOwnershipUnverified(let diagnostic),
              .orphanRetirementFailed(let diagnostic),
@@ -59,6 +61,8 @@ public enum SingleSupervisorGateBlockage: Equatable, Sendable {
 
     public var ownerMessage: String {
         switch self {
+        case .cancelled:
+            return UICopy.JOURNAL_SPAWN_CANCELLED
         case .legacyServiceOwnershipUnverified:
             return UICopy.JOURNAL_SPAWN_LEGACY_SERVICE_UNVERIFIED
         case .legacyServiceRetirementFailed:
@@ -285,7 +289,7 @@ public struct SingleSupervisorGate: SingleSupervisorGating {
 
     private func cancelledBlockage() -> SingleSupervisorGateResult {
         Logger.setup.warning("journal-lifecycle: gate-blocked reason=cancelled")
-        return .blocked(.legacyServiceRetirementFailed(JournalDiagnostic(
+        return .blocked(.cancelled(JournalDiagnostic(
             commandLabel: "journal supervisor gate",
             outputExcerpt: "journal launch authorization was cancelled"
         )))

@@ -6,6 +6,7 @@ struct JournalRuntimeUICopyTests {
     @Test func runtimeCopyStrings() {
         #expect(UICopy.JOURNAL_CHILD_BREAKER_TRIPPED == "journal stopped after repeated exits")
         #expect(UICopy.JOURNAL_MATERIALIZE_FAILED == "journal runtime couldn't be prepared")
+        #expect(UICopy.JOURNAL_SPAWN_CANCELLED == "journal launch was cancelled")
         #expect(UICopy.JOURNAL_SPAWN_LEGACY_SERVICE_UNVERIFIED == "couldn't verify the existing journal service")
         #expect(UICopy.JOURNAL_SPAWN_LEGACY_SERVICE_RETIRE_FAILED == "couldn't retire the existing journal service")
         #expect(UICopy.JOURNAL_SPAWN_ORPHAN_UNVERIFIED == "couldn't verify existing journal processes")
