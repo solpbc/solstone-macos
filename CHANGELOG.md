@@ -5,18 +5,18 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-- sol now finds its way back to your journal on its own after your network changes, like moving between Wi-Fi and ethernet or a VPN going up or down. previously sol's private-link connection could look connected while nothing new actually reached your journal, and only restarting sol would fix it. sol was still taking in your day alongside you the whole time, so this was easy to miss.
-- after re-checking your journal link, sol keeps its ongoing health check running; before, that check could stop for good, so a private link that quietly went unhealthy might not be noticed or recover until sol was restarted.
-
-## [1.4.7] - 2026-07-15
+## [1.4.7] - 2026-07-16
 
 ### Added
 - "create your journal on this mac" now gets the journal app for you in-app, over the same signed and verified path sol already uses for journal migration, then connects once your journal is ready.
 - if a journal from an earlier install is found on this mac, sol names it and offers to install the journal app to bring it back online, adopting it in place at its original location.
 - when sol is on but no journal is set up yet, the menu bar icon shows an attention badge so first-run setup is easy to spot.
+- settings has a new "check my setup" panel: it reports, in plain language, whether sol, the journal app, your journal link, permissions, and the command-line tools are each in place, with a fix action where one exists — one screenshot now tells support the whole story.
+
+### Fixed
+- sol now finds its way back to your journal on its own after your network changes, like moving between Wi-Fi and ethernet or a VPN going up or down. previously sol's private-link connection could look connected while nothing new actually reached your journal, and only restarting sol would fix it. sol was still taking in your day alongside you the whole time, so this was easy to miss.
+- after re-checking your journal link, sol keeps its ongoing health check running; before, that check could stop for good, so a private link that quietly went unhealthy might not be noticed or recover until sol was restarted.
+- when sol runs from anywhere outside Applications, it now says so honestly and offers to move itself there, so macOS can remember its screen recording permission.
 
 ## [1.4.6] - 2026-07-11
 
