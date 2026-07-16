@@ -142,10 +142,11 @@ struct JournalSnapshotTests {
 
     private func renderRunStateBlocked() async throws {
         let diagnostic = JournalDiagnostic(commandLabel: "gate", outputExcerpt: "port busy")
+        let blockage = SingleSupervisorGateBlockage.portConflict(diagnostic)
         let supervisor = JournalSupervisor(
-            gate: MockSingleSupervisorGate(result: .blocked(.portConflict(diagnostic))),
+            gate: MockSingleSupervisorGate(),
             materializer: MockRuntimeMaterializer(result: .success(try makeRuntime())),
-            runner: MockSupervisedChildRunner(),
+            runner: MockSupervisedChildRunner(startError: SupervisedJournalRunnerError.gateBlocked(blockage)),
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
         let fixture = try makeConfiguredFixture()

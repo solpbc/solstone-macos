@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/Users/jer</string>
+		<key>PATH</key>
+		<string>/Users/jer/Library/Application Support/sol/runtime/versions/0.5.1+52E6898E-2452-4784-BEF0-11069F840FAF/tools/solstone/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>PYTHONUNBUFFERED</key>
+		<string>1</string>
+	</dict>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>Label</key>
+	<string>org.solpbc.solstone</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/jer/.local/bin/journal</string>
+		<string>start</string>
+		<string>5015</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>SoftResourceLimits</key>
+	<dict>
+		<key>NumberOfFiles</key>
+		<integer>4096</integer>
+	</dict>
+	<key>StandardErrorPath</key>
+	<string>/Users/jer/journal/health/service.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/jer/journal/health/service.log</string>
+</dict>
+</plist>

@@ -28,19 +28,26 @@ public final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked
     private var runtimeKey: String?
     private var journalRoot: URL?
     private var terminalDiagnostic: JournalDiagnostic?
+    private var identity: SupervisedChildIdentity?
 
     public var startCalls: Int { lock.withLock { starts } }
     public var markReadyCalls: Int { lock.withLock { readyMarks } }
     public var stopCalls: Int { lock.withLock { stops } }
     public var restartCalls: Int { lock.withLock { restarts } }
     public var runningJournalRoot: URL? { lock.withLock { journalRoot } }
+    public var currentMockIdentity: SupervisedChildIdentity? { lock.withLock { identity } }
 
-    public init(startError: Error? = nil, terminalDiagnostic: JournalDiagnostic? = nil) {
+    public init(
+        startError: Error? = nil,
+        terminalDiagnostic: JournalDiagnostic? = nil,
+        identity: SupervisedChildIdentity? = nil
+    ) {
         self.startError = startError
         self.terminalDiagnostic = terminalDiagnostic
+        self.identity = identity
     }
 
-    public func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws -> JournalChildIdentity {
+    public func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
         lock.withLock { starts += 1 }
         if let startError {
             throw startError
@@ -50,15 +57,13 @@ public final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked
             self.journalRoot = journalRoot.standardizedFileURL
             terminalDiagnostic = nil
         }
-        return JournalChildIdentity(pid: 4242, startTime: 100, generation: UInt64(starts + restarts))
     }
 
-    public func restart() async throws -> JournalChildIdentity {
+    public func restart() async throws {
         lock.withLock {
             restarts += 1
             terminalDiagnostic = nil
         }
-        return JournalChildIdentity(pid: 4243, startTime: 101, generation: UInt64(starts + restarts))
     }
 
     public func stop() async {
@@ -67,6 +72,7 @@ public final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked
             runtimeKey = nil
             journalRoot = nil
             terminalDiagnostic = nil
+            identity = nil
         }
     }
 
@@ -74,11 +80,16 @@ public final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked
         lock.withLock {
             runtimeKey = nil
             journalRoot = nil
+            identity = nil
         }
     }
 
     public func currentRuntimeKey() async -> String? {
         lock.withLock { runtimeKey }
+    }
+
+    public func currentIdentity() async -> SupervisedChildIdentity? {
+        lock.withLock { identity }
     }
 
     public func terminalReason() async -> JournalDiagnostic? {
@@ -89,13 +100,12 @@ public final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked
         lock.withLock { terminalDiagnostic = diagnostic }
     }
 
-    public func isCurrentGeneration(_ generation: UInt64) async -> Bool {
-        true
+    public func setIdentity(_ identity: SupervisedChildIdentity?) {
+        lock.withLock { self.identity = identity }
     }
 
-    public func markReady(_ identity: JournalChildIdentity) async -> Bool {
+    public func markReady() async {
         lock.withLock { readyMarks += 1 }
-        return true
     }
 }
 
@@ -110,7 +120,7 @@ public final class MockSingleSupervisorGate: SingleSupervisorGating, @unchecked 
         self.result = result
     }
 
-    public func prepareForSpawn(journalRoot: URL, context: LaunchAuthorizationContext) async -> SingleSupervisorGateResult {
+    public func prepareForSpawn(journalRoot: URL) async -> SingleSupervisorGateResult {
         lock.withLock { calls += 1 }
         return result
     }
@@ -128,10 +138,9 @@ public struct MockJournalReadinessGate: JournalReadinessChecking {
     public func waitUntilReady(
         journalRoot: URL,
         runtime: MaterializedRuntime,
-        child: JournalChildIdentity,
         timeout: Duration,
-        generationIsCurrent: @escaping @Sendable (UInt64) async -> Bool,
-        terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?
+        terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?,
+        identityProvider: @escaping @Sendable () async -> SupervisedChildIdentity?
     ) async -> JournalReadinessResult {
         await beforeReturn?()
         return result

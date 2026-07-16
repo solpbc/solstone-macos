@@ -13,6 +13,8 @@ struct JournalRuntimeUICopyTests {
         #expect(UICopy.JOURNAL_SPAWN_ORPHAN_RETIRE_FAILED == "couldn't retire existing journal processes")
         #expect(UICopy.JOURNAL_SPAWN_BLOCKED_PORTS == "journal ports are still in use")
         #expect(UICopy.JOURNAL_SPAWN_PORT_CHECK_FAILED == "couldn't verify journal ports are free")
+        #expect(UICopy.JOURNAL_SPAWN_BLOCKED_LEGACY_SERVICE == "journal service needs attention before starting")
+        #expect(UICopy.JOURNAL_SPAWN_SERVICE_CHECK_FAILED == "couldn't verify journal service ownership")
         #expect(UICopy.JOURNAL_READINESS_TIMEOUT == "journal didn't become ready in time")
         #expect(UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE == "journal setup needed before upgrade can continue")
         #expect(UICopy.INSTALLER_READINESS_GATE_FAILED == "couldn't get the journal ready for this Mac")

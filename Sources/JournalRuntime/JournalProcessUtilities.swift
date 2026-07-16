@@ -6,16 +6,8 @@ import Foundation
 import os
 import SolstoneCore
 
-internal enum CleanupFailureKind {
-    case orphanOwnershipUnverified
-    case orphanRetirementFailed
-    case portConflict
-    case portVerificationFailed
-}
-
 internal struct CleanupFailure {
     let step: CleanupStep
-    let kind: CleanupFailureKind
     let message: String
 }
 
@@ -30,23 +22,9 @@ internal struct StartupPortProbeFailure: Equatable, Sendable {
 }
 
 private struct StartupPortCulprit {
-    let pid: pid_t
+    let pid: String
     var command: String?
     var hasName = false
-}
-
-internal struct JournalProcessRow: Equatable, Sendable {
-    let pid: pid_t
-    let ppid: pid_t
-    let uid: uid_t
-    let command: String
-}
-
-internal struct JournalOrphanSelection: Equatable, Sendable {
-    let rowCount: Int
-    let selected: [pid_t]
-    let protected: [pid_t]
-    let ambiguous: [pid_t]
 }
 
 internal func waitForPIDExit(
@@ -69,149 +47,108 @@ internal func waitForPIDExit(
 internal func runJournalOrphanSweep(
     journalRoot: URL,
     runner: SubprocessRunning,
+    evidenceReader: any JournalProcessEvidenceReading = LiveJournalProcessEvidenceReader(),
+    launchdPIDProvider: (@Sendable () async -> LegacyJournalServicePIDLookup)? = nil,
     pidExists: @Sendable (pid_t) -> Bool,
     terminate: @Sendable (pid_t, Int32) -> Int32,
     gracePeriod: Duration,
-    clock: any MonotonicClock,
-    protectedLaunchdPIDs: Set<pid_t> = [],
-    excludedPIDs: Set<pid_t> = [],
-    environmentReader: ProcessEnvironmentReading = defaultProcessEnvironment,
-    currentUID: uid_t = getuid()
+    clock: any MonotonicClock
 ) async -> CleanupFailure? {
-    let output = LockedProcessUtilityOutput()
-    let result: SubprocessResult
-    do {
-        result = try await runner.run(
-            executable: URL(fileURLWithPath: "/bin/ps"),
-            arguments: ["-axo", "pid=,ppid=,uid=,command="],
-            environment: nil,
-            stdoutHandler: { data in
-                output.append(data)
-            },
-            stderrHandler: { _ in }
-        )
-    } catch {
-        return CleanupFailure(step: .orphanSweep, kind: .orphanOwnershipUnverified, message: "ps failed to launch")
-    }
-
-    guard result.exitCode == 0 else {
-        return CleanupFailure(step: .orphanSweep, kind: .orphanOwnershipUnverified, message: "ps exited \(result.exitCode)")
-    }
-
-    let psOutput = output.string()
-    let selection = selectJournalOrphans(
-        from: parseJournalProcessRows(psOutput),
-        rowCount: countParsedPsRows(psOutput),
-        journalRoot: journalRoot,
-        protectedLaunchdPIDs: protectedLaunchdPIDs,
-        excludedPIDs: excludedPIDs,
-        environmentReader: environmentReader,
-        currentUID: currentUID
+    let launchdPIDLookup = await readLegacyLaunchdPID(
+        runner: runner,
+        launchdPIDProvider: launchdPIDProvider
     )
-    guard selection.ambiguous.isEmpty else {
-        Logger.setup.warning("journal-lifecycle: orphan-sweep outcome=blocked rows=\(selection.rowCount, privacy: .public) ambiguous=\(selection.ambiguous.count, privacy: .public)")
-        return CleanupFailure(
-            step: .orphanSweep,
-            kind: .orphanOwnershipUnverified,
-            message: "journal process ownership could not be verified"
-        )
-    }
-    let pids = selection.selected
-    var termCount = 0
-    for pid in pids {
-        _ = terminate(pid, SIGTERM)
-        termCount += 1
+    guard case .known(let launchdPID) = launchdPIDLookup else {
+        return CleanupFailure(step: .orphanSweep, message: "legacy service state could not be inspected")
     }
 
-    let survivors: [pid_t]
-    if pids.isEmpty {
-        survivors = []
-    } else {
-        await clock.sleep(for: gracePeriod)
-        survivors = pids.filter(pidExists)
-        for pid in survivors {
-            _ = terminate(pid, SIGKILL)
-        }
+    let claim = await readJournalOrphanClaim(
+        journalRoot: journalRoot,
+        evidenceReader: evidenceReader,
+        launchdReportedPID: launchdPID
+    )
+    guard case .selected(let pid) = claim.verification else {
+        logOrphanSweepNoop(reason: claim.rejectionReason)
+        return nil
     }
 
-    Logger.setup.notice("journal-lifecycle: orphan-sweep outcome=success rows=\(selection.rowCount, privacy: .public) selected=\(pids.count, privacy: .public) protected=\(selection.protected.count, privacy: .public) terminated=\(termCount, privacy: .public) survivors=\(survivors.count, privacy: .public)")
-    guard survivors.isEmpty else {
-        return CleanupFailure(
-            step: .orphanSweep,
-            kind: .orphanRetirementFailed,
-            message: "old journal process could not be cleared"
-        )
+    let recheckLaunchdPIDLookup = await readLegacyLaunchdPID(
+        runner: runner,
+        launchdPIDProvider: launchdPIDProvider
+    )
+    guard case .known(let recheckLaunchdPID) = recheckLaunchdPIDLookup else {
+        return CleanupFailure(step: .orphanSweep, message: "legacy service state could not be inspected")
     }
+    let recheckedClaim = await readJournalOrphanClaim(
+        journalRoot: journalRoot,
+        evidenceReader: evidenceReader,
+        launchdReportedPID: recheckLaunchdPID
+    )
+    guard recheckedClaim.verification.selectedPID == pid else {
+        logOrphanSweepNoop(reason: recheckedClaim.rejectionReason)
+        return CleanupFailure(step: .orphanSweep, message: "journal orphan changed before signal")
+    }
+
+    _ = terminate(pid, SIGTERM)
+
+    await clock.sleep(for: gracePeriod)
+
+    let survived = pidExists(pid)
+    if survived {
+        _ = terminate(pid, SIGKILL)
+    }
+
+    Logger.setup.notice("journal orphan sweep outcome=success matched=1 terminated=1 survivors=\(survived ? 1 : 0, privacy: .public)")
     return nil
 }
 
-internal func parseJournalProcessRows(_ output: String) -> [JournalProcessRow] {
-    output.split(separator: "\n").compactMap { line -> JournalProcessRow? in
-        let parts = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
-        guard parts.count == 4,
-              let pid = Int32(parts[0]),
-              let ppid = Int32(parts[1]),
-              let uid = UInt32(parts[2]),
-              pid > 0 else {
-            return nil
+private struct JournalOrphanClaimRead {
+    let verification: JournalOrphanClaimVerification
+
+    var rejectionReason: JournalOrphanClaimRejection {
+        if case .notSelected(let reason) = verification {
+            return reason
         }
-        return JournalProcessRow(
-            pid: pid_t(pid),
-            ppid: pid_t(ppid),
-            uid: uid_t(uid),
-            command: String(parts[3])
-        )
+        return .deadPID
     }
 }
 
-internal func countParsedPsRows(_ output: String) -> Int {
-    parseJournalProcessRows(output).count
-}
-
-internal func selectJournalOrphans(
-    from rows: [JournalProcessRow],
-    rowCount: Int,
+private func readJournalOrphanClaim(
     journalRoot: URL,
-    protectedLaunchdPIDs: Set<pid_t>,
-    excludedPIDs: Set<pid_t>,
-    environmentReader: ProcessEnvironmentReading,
-    currentUID: uid_t = getuid()
-) -> JournalOrphanSelection {
-    let canonicalRoot = SolOwnership.canonicalPath(journalRoot.path)
-    var selected: [pid_t] = []
-    var protected: [pid_t] = []
-    var ambiguous: [pid_t] = []
-
-    for row in rows {
-        guard row.ppid == 1,
-              row.uid == currentUID,
-              row.command.hasPrefix("journal:") else {
-            continue
-        }
-        if excludedPIDs.contains(row.pid) || protectedLaunchdPIDs.contains(row.pid) {
-            protected.append(row.pid)
-            continue
-        }
-        guard let environment = environmentReader(row.pid),
-              let rawJournal = environment["SOLSTONE_JOURNAL"],
-              !rawJournal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            ambiguous.append(row.pid)
-            continue
-        }
-        let processRoot = SolOwnership.canonicalPath(rawJournal)
-        if processRoot == canonicalRoot {
-            selected.append(row.pid)
-        } else {
-            protected.append(row.pid)
-        }
+    evidenceReader: any JournalProcessEvidenceReading,
+    launchdReportedPID: pid_t?
+) async -> JournalOrphanClaimRead {
+    let claimedPID = readSupervisorPID(from: journalRoot.appendingPathComponent("health/supervisor.pid"))
+    let recordedStartTime = readSupervisorStartTime(from: journalRoot.appendingPathComponent("health/supervisor.start_time"))
+    let evidence: JournalProcessEvidence?
+    if let claimedPID {
+        evidence = await evidenceReader.evidence(for: claimedPID)
+    } else {
+        evidence = nil
     }
+    return JournalOrphanClaimRead(verification: verifyJournalOrphanClaim(
+        claimedPID: claimedPID,
+        recordedStartTime: recordedStartTime,
+        evidence: evidence,
+        currentUID: getuid(),
+        currentUsername: currentUsername(),
+        ownPID: getpid(),
+        launchdReportedPID: launchdReportedPID
+    ))
+}
 
-    return JournalOrphanSelection(
-        rowCount: rowCount,
-        selected: selected,
-        protected: protected,
-        ambiguous: ambiguous
-    )
+private func readLegacyLaunchdPID(
+    runner: SubprocessRunning,
+    launchdPIDProvider: (@Sendable () async -> LegacyJournalServicePIDLookup)?
+) async -> LegacyJournalServicePIDLookup {
+    if let launchdPIDProvider {
+        return await launchdPIDProvider()
+    }
+    return await LegacyJournalServiceRetirer(runner: runner).currentLegacyServicePID()
+}
+
+private func logOrphanSweepNoop(reason: JournalOrphanClaimRejection) {
+    Logger.setup.notice("journal orphan sweep outcome=noop reason=\(reason.rawValue, privacy: .public) matched=0 terminated=0 survivors=0")
 }
 
 internal func assertPortsReleased(
@@ -231,7 +168,6 @@ internal func assertPortsReleased(
         } catch {
             return CleanupFailure(
                 step: .ports,
-                kind: .portVerificationFailed,
                 message: "lsof failed to launch probing port \(port)"
             )
         }
@@ -240,17 +176,9 @@ internal func assertPortsReleased(
         case 1:
             continue
         case 0:
-            return CleanupFailure(
-                step: .ports,
-                kind: .portConflict,
-                message: "port \(port) still bound after sweep"
-            )
+            return CleanupFailure(step: .ports, message: "port \(port) still bound after sweep")
         default:
-            return CleanupFailure(
-                step: .ports,
-                kind: .portVerificationFailed,
-                message: "lsof exited \(result.exitCode) probing port \(port)"
-            )
+            return CleanupFailure(step: .ports, message: "lsof exited \(result.exitCode) probing port \(port)")
         }
     }
     return nil
@@ -259,8 +187,7 @@ internal func assertPortsReleased(
 internal func assertStartupPortsAvailable(
     ports: [Int],
     runner: SubprocessRunning,
-    clock: any MonotonicClock,
-    excludedPIDs: Set<pid_t> = []
+    clock: any MonotonicClock
 ) async -> StartupPortProbeFailure? {
     let retryDelays: [Duration] = [.seconds(2), .seconds(3)]
 
@@ -289,20 +216,13 @@ internal func assertStartupPortsAvailable(
             case 1:
                 break
             case 0:
-                guard let message = startupPortConflictMessage(
-                    port: port,
-                    output: output.string(),
-                    excludedPIDs: excludedPIDs
-                ) else {
-                    break
-                }
                 if attempt < retryDelays.count {
                     await clock.sleep(for: retryDelays[attempt])
                     continue
                 }
                 return StartupPortProbeFailure(
                     kind: .conflict,
-                    message: message
+                    message: startupPortConflictMessage(port: port, output: output.string())
                 )
             default:
                 return StartupPortProbeFailure(
@@ -316,20 +236,8 @@ internal func assertStartupPortsAvailable(
     return nil
 }
 
-private func startupPortConflictMessage(
-    port: Int,
-    output: String,
-    excludedPIDs: Set<pid_t>
-) -> String? {
-    let allCulprits = parseStartupPortCulprits(output)
-    guard !allCulprits.isEmpty else {
-        return unidentifiedStartupPortMessage(port: port)
-    }
-    let activeCulprits = allCulprits.filter { !excludedPIDs.contains($0.pid) }
-    guard !activeCulprits.isEmpty else {
-        return nil
-    }
-    let culprits = activeCulprits
+private func startupPortConflictMessage(port: Int, output: String) -> String {
+    let culprits = parseStartupPortCulprits(output)
         .filter(\.hasName)
     guard !culprits.isEmpty else {
         return unidentifiedStartupPortMessage(port: port)
@@ -371,11 +279,7 @@ private func parseStartupPortCulprits(_ output: String) -> [StartupPortCulprit] 
         switch field {
         case "p":
             flushCurrent()
-            if let pid = Int32(value), pid > 0 {
-                current = StartupPortCulprit(pid: pid_t(pid))
-            } else {
-                current = nil
-            }
+            current = value.isEmpty ? nil : StartupPortCulprit(pid: value)
         case "c":
             current?.command = value.isEmpty ? nil : value
         case "n":
@@ -393,6 +297,13 @@ internal func readSupervisorPID(from url: URL) -> pid_t? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let value = Int32(trimmed), value > 0 else { return nil }
     return pid_t(value)
+}
+
+internal func readSupervisorStartTime(from url: URL) -> Double? {
+    guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let value = Double(trimmed), value.isFinite else { return nil }
+    return value
 }
 
 private final class LockedProcessUtilityOutput: @unchecked Sendable {

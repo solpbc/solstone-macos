@@ -94,6 +94,10 @@ private actor RecoveryRunner: SupervisedChildRunning {
         runtimeKey
     }
 
+    func currentIdentity() async -> SupervisedChildIdentity? {
+        nil
+    }
+
     func terminalReason() async -> JournalDiagnostic? {
         nil
     }

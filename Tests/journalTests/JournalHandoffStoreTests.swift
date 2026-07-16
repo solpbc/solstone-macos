@@ -91,9 +91,9 @@ struct JournalHandoffStoreTests {
             outputExcerpt: "port busy"
         ))
         let supervisor = JournalSupervisor(
-            gate: MockSingleSupervisorGate(result: .blocked(blockage)),
+            gate: MockSingleSupervisorGate(),
             materializer: MockRuntimeMaterializer(result: .success(try makeRuntime())),
-            runner: MockSupervisedChildRunner(startError: SupervisedJournalRunnerError.spawnBlocked(blockage)),
+            runner: MockSupervisedChildRunner(startError: SupervisedJournalRunnerError.gateBlocked(blockage)),
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
         let windowModel = makeWindowModel(config: fixture.config, supervisor: supervisor)

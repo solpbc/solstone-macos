@@ -2,7 +2,6 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
-import Darwin
 import JournalRuntimeTestSupport
 import SolstoneCore
 import Testing
@@ -10,27 +9,40 @@ import Testing
 
 @Suite("JournalReadinessGate")
 struct JournalReadinessGateTests {
-    @Test func probeRefusalKeepsWaitingEvenWhenMarkerExists() async throws {
+    @Test func identityBoundMarkerReturnsReady() async throws {
         let runtime = try makeRuntime()
-        let clock = AdvancingReadinessClock()
-        let probe = SequencedAcceptProbe([false, false, false])
-        let child = JournalChildIdentity(pid: 4242, startTime: 100, generation: 7)
-        let files = readinessFiles(root: runtime.layout.rootURL, child: child)
-        let gate = JournalReadinessGate(
-            readTextFile: { files[$0] },
-            processStartTime: { $0 == child.pid ? child.startTime : nil },
-            acceptProbe: { await probe.next() },
-            clock: clock,
-            pollInterval: .milliseconds(1)
-        )
+        defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
+        try writeMarkerFiles(root: runtime.layout.rootURL, pid: 4242, startTime: 1_000.0)
+        let gate = JournalReadinessGate(clock: AdvancingReadinessClock(), pollInterval: .milliseconds(1))
 
         let result = await gate.waitUntilReady(
             journalRoot: runtime.layout.rootURL,
             runtime: runtime,
-            child: child,
             timeout: .milliseconds(3),
-            generationIsCurrent: { $0 == child.generation },
-            terminalCheck: { nil }
+            terminalCheck: { nil },
+            identityProvider: {
+                SupervisedChildIdentity(pid: 4242, kernelStartTime: 1_000.0, generation: 1)
+            }
+        )
+
+        #expect(result == .ready)
+    }
+
+    @Test func pidComparisonIsExact() async throws {
+        let runtime = try makeRuntime()
+        defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
+        try writeMarkerFiles(root: runtime.layout.rootURL, pid: 4242, startTime: 1_000.0)
+        let clock = AdvancingReadinessClock()
+        let gate = JournalReadinessGate(clock: clock, pollInterval: .milliseconds(1))
+
+        let result = await gate.waitUntilReady(
+            journalRoot: runtime.layout.rootURL,
+            runtime: runtime,
+            timeout: .milliseconds(3),
+            terminalCheck: { nil },
+            identityProvider: {
+                SupervisedChildIdentity(pid: 4243, kernelStartTime: 1_000.0, generation: 1)
+            }
         )
 
         guard case .failed(let diagnostic) = result else {
@@ -38,54 +50,96 @@ struct JournalReadinessGateTests {
             return
         }
         #expect(diagnostic.timedOut)
-        #expect(probe.calls == 3)
+        #expect(clock.now() == .milliseconds(3))
     }
 
-    @Test func probeAcceptThenMarkerReadyReturnsReady() async throws {
+    @Test func startTimeToleranceAppliesOnlyToKernelStartTime() async throws {
         let runtime = try makeRuntime()
-        let clock = AdvancingReadinessClock()
-        let probe = SequencedAcceptProbe([false, true])
-        let child = JournalChildIdentity(pid: 4242, startTime: 100, generation: 7)
-        let files = readinessFiles(root: runtime.layout.rootURL, child: child)
-        let gate = JournalReadinessGate(
-            readTextFile: { files[$0] },
-            processStartTime: { $0 == child.pid ? child.startTime : nil },
-            acceptProbe: { await probe.next() },
-            clock: clock,
-            pollInterval: .milliseconds(1)
-        )
+        defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
+        try writeMarkerFiles(root: runtime.layout.rootURL, pid: 4242, startTime: 1_000.0)
+        let gate = JournalReadinessGate(clock: AdvancingReadinessClock(), pollInterval: .milliseconds(1))
 
         let result = await gate.waitUntilReady(
             journalRoot: runtime.layout.rootURL,
             runtime: runtime,
-            child: child,
-            timeout: .milliseconds(5),
-            generationIsCurrent: { $0 == child.generation },
-            terminalCheck: { nil }
+            timeout: .milliseconds(3),
+            terminalCheck: { nil },
+            identityProvider: {
+                SupervisedChildIdentity(pid: 4242, kernelStartTime: 1_001.5, generation: 1)
+            }
         )
 
         #expect(result == .ready)
-        #expect(probe.calls == 2)
     }
 
-    @Test func probeAcceptWithoutValidMarkerTimesOut() async throws {
+    @Test func startTimeBeyondToleranceIsNotReady() async throws {
         let runtime = try makeRuntime()
-        let child = JournalChildIdentity(pid: 4242, startTime: 100, generation: 7)
-        let gate = JournalReadinessGate(
-            readTextFile: { _ in nil },
-            processStartTime: { $0 == child.pid ? child.startTime : nil },
-            acceptProbe: { true },
-            clock: AdvancingReadinessClock(),
-            pollInterval: .milliseconds(1)
-        )
+        defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
+        try writeMarkerFiles(root: runtime.layout.rootURL, pid: 4242, startTime: 1_000.0)
+        let clock = AdvancingReadinessClock()
+        let gate = JournalReadinessGate(clock: clock, pollInterval: .milliseconds(1))
 
         let result = await gate.waitUntilReady(
             journalRoot: runtime.layout.rootURL,
             runtime: runtime,
-            child: child,
-            timeout: .milliseconds(5),
-            generationIsCurrent: { $0 == child.generation },
-            terminalCheck: { nil }
+            timeout: .milliseconds(3),
+            terminalCheck: { nil },
+            identityProvider: {
+                SupervisedChildIdentity(pid: 4242, kernelStartTime: 1_001.501, generation: 1)
+            }
+        )
+
+        guard case .failed(let diagnostic) = result else {
+            Issue.record("expected readiness timeout, got \(result)")
+            return
+        }
+        #expect(diagnostic.timedOut)
+    }
+
+    @Test func missingOrPartialMarkersAreNotReadyByDefault() async throws {
+        let runtime = try makeRuntime()
+        defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
+        try FileManager.default.createDirectory(
+            at: runtime.layout.rootURL.appendingPathComponent("health", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try Data(#"{"pid":4242,"ready_at":1000.0,"start_time":1000.0}"#.utf8)
+            .write(to: runtime.layout.rootURL.appendingPathComponent("health/supervisor.ready"))
+        let clock = AdvancingReadinessClock()
+        let gate = JournalReadinessGate(clock: clock, pollInterval: .milliseconds(1))
+
+        let result = await gate.waitUntilReady(
+            journalRoot: runtime.layout.rootURL,
+            runtime: runtime,
+            timeout: .milliseconds(3),
+            terminalCheck: { nil },
+            identityProvider: {
+                SupervisedChildIdentity(pid: 4242, kernelStartTime: 1_000.0, generation: 1)
+            }
+        )
+
+        guard case .failed(let diagnostic) = result else {
+            Issue.record("expected readiness timeout, got \(result)")
+            return
+        }
+        #expect(diagnostic.timedOut)
+    }
+
+    @Test func bakMarkersAreIgnored() async throws {
+        let runtime = try makeRuntime()
+        defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
+        try writeMarkerFiles(root: runtime.layout.rootURL, pid: 4242, startTime: 1_000.0, suffix: ".bak")
+        let clock = AdvancingReadinessClock()
+        let gate = JournalReadinessGate(clock: clock, pollInterval: .milliseconds(1))
+
+        let result = await gate.waitUntilReady(
+            journalRoot: runtime.layout.rootURL,
+            runtime: runtime,
+            timeout: .milliseconds(3),
+            terminalCheck: { nil },
+            identityProvider: {
+                SupervisedChildIdentity(pid: 4242, kernelStartTime: 1_000.0, generation: 1)
+            }
         )
 
         guard case .failed(let diagnostic) = result else {
@@ -97,279 +151,41 @@ struct JournalReadinessGateTests {
 
     @Test func terminalCheckFailsImmediatelyBeforeDeadline() async throws {
         let runtime = try makeRuntime()
+        defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
         let clock = AdvancingReadinessClock()
-        let child = JournalChildIdentity(pid: 4242, startTime: 100, generation: 7)
         let diagnostic = JournalDiagnostic(
             commandLabel: "journal start --app-supervised",
             outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
         )
-        let gate = JournalReadinessGate(
-            readTextFile: { _ in nil },
-            processStartTime: { $0 == child.pid ? child.startTime : nil },
-            acceptProbe: { false },
-            clock: clock,
-            pollInterval: .milliseconds(1)
-        )
+        let gate = JournalReadinessGate(clock: clock, pollInterval: .milliseconds(1))
 
         let result = await gate.waitUntilReady(
             journalRoot: runtime.layout.rootURL,
             runtime: runtime,
-            child: child,
             timeout: .seconds(120),
-            generationIsCurrent: { $0 == child.generation },
-            terminalCheck: { diagnostic }
+            terminalCheck: { diagnostic },
+            identityProvider: { nil }
         )
 
         #expect(result == .failedTerminal(diagnostic))
         #expect(clock.now() == .zero)
     }
-
-    @Test func slowAlivePathStillTimesOutAtDeadline() async throws {
-        let runtime = try makeRuntime()
-        let clock = AdvancingReadinessClock()
-        let child = JournalChildIdentity(pid: 4242, startTime: 100, generation: 7)
-        let gate = JournalReadinessGate(
-            readTextFile: { _ in nil },
-            processStartTime: { $0 == child.pid ? child.startTime : nil },
-            acceptProbe: { false },
-            clock: clock,
-            pollInterval: .milliseconds(1)
-        )
-
-        let result = await gate.waitUntilReady(
-            journalRoot: runtime.layout.rootURL,
-            runtime: runtime,
-            child: child,
-            timeout: .milliseconds(3),
-            generationIsCurrent: { $0 == child.generation },
-            terminalCheck: { nil }
-        )
-
-        guard case .failed(let diagnostic) = result else {
-            Issue.record("expected readiness timeout, got \(result)")
-            return
-        }
-        #expect(diagnostic.timedOut)
-        #expect(clock.now() == .milliseconds(3))
-    }
-
-    @Test func staleMarkerPIDNeverReadies() async throws {
-        let runtime = try makeRuntime()
-        let child = JournalChildIdentity(pid: 4242, startTime: 100, generation: 7)
-        let files = readinessFiles(root: runtime.layout.rootURL, child: child, markerPID: 999, pidFilePID: 999)
-        let gate = JournalReadinessGate(
-            readTextFile: { files[$0] },
-            processStartTime: { $0 == 999 ? 100 : child.startTime },
-            acceptProbe: { true },
-            clock: AdvancingReadinessClock(),
-            pollInterval: .milliseconds(1)
-        )
-
-        let result = await gate.waitUntilReady(
-            journalRoot: runtime.layout.rootURL,
-            runtime: runtime,
-            child: child,
-            timeout: .milliseconds(3),
-            generationIsCurrent: { $0 == child.generation },
-            terminalCheck: { nil }
-        )
-
-        expectNotReady(result)
-    }
-
-    @Test func staleMarkerStartTimeNeverReadies() async throws {
-        let runtime = try makeRuntime()
-        let child = JournalChildIdentity(pid: 4242, startTime: 100, generation: 7)
-        let files = readinessFiles(root: runtime.layout.rootURL, child: child, markerStartTime: 102)
-        let gate = JournalReadinessGate(
-            readTextFile: { files[$0] },
-            processStartTime: { $0 == child.pid ? child.startTime : nil },
-            acceptProbe: { true },
-            clock: AdvancingReadinessClock(),
-            pollInterval: .milliseconds(1)
-        )
-
-        let result = await gate.waitUntilReady(
-            journalRoot: runtime.layout.rootURL,
-            runtime: runtime,
-            child: child,
-            timeout: .milliseconds(3),
-            generationIsCurrent: { $0 == child.generation },
-            terminalCheck: { nil }
-        )
-
-        expectNotReady(result)
-    }
-
-    @Test func markerPIDMismatchWithSupervisorPIDFileNeverReadies() async throws {
-        let runtime = try makeRuntime()
-        let child = JournalChildIdentity(pid: 4242, startTime: 100, generation: 7)
-        let files = readinessFiles(root: runtime.layout.rootURL, child: child, markerPID: 4242, pidFilePID: 999)
-        let gate = JournalReadinessGate(
-            readTextFile: { files[$0] },
-            processStartTime: { $0 == child.pid ? child.startTime : nil },
-            acceptProbe: { true },
-            clock: AdvancingReadinessClock(),
-            pollInterval: .milliseconds(1)
-        )
-
-        let result = await gate.waitUntilReady(
-            journalRoot: runtime.layout.rootURL,
-            runtime: runtime,
-            child: child,
-            timeout: .milliseconds(3),
-            generationIsCurrent: { $0 == child.generation },
-            terminalCheck: { nil }
-        )
-
-        expectNotReady(result)
-    }
-
-    @Test func childExitBeforeFinalRecheckNeverReadies() async throws {
-        let runtime = try makeRuntime()
-        let child = JournalChildIdentity(pid: 4242, startTime: 100, generation: 7)
-        let files = readinessFiles(root: runtime.layout.rootURL, child: child)
-        let startTimes = SequencedStartTimes([child.startTime, nil, nil, nil])
-        let gate = JournalReadinessGate(
-            readTextFile: { files[$0] },
-            processStartTime: { _ in startTimes.next() },
-            acceptProbe: { true },
-            clock: AdvancingReadinessClock(),
-            pollInterval: .milliseconds(1)
-        )
-
-        let result = await gate.waitUntilReady(
-            journalRoot: runtime.layout.rootURL,
-            runtime: runtime,
-            child: child,
-            timeout: .milliseconds(3),
-            generationIsCurrent: { $0 == child.generation },
-            terminalCheck: { nil }
-        )
-
-        expectNotReady(result)
-    }
-
-    @Test func staleGenerationAtReadinessNeverReadies() async throws {
-        let runtime = try makeRuntime()
-        let child = JournalChildIdentity(pid: 4242, startTime: 100, generation: 7)
-        let files = readinessFiles(root: runtime.layout.rootURL, child: child)
-        let gate = JournalReadinessGate(
-            readTextFile: { files[$0] },
-            processStartTime: { $0 == child.pid ? child.startTime : nil },
-            acceptProbe: { true },
-            clock: AdvancingReadinessClock(),
-            pollInterval: .milliseconds(1)
-        )
-
-        let result = await gate.waitUntilReady(
-            journalRoot: runtime.layout.rootURL,
-            runtime: runtime,
-            child: child,
-            timeout: .milliseconds(3),
-            generationIsCurrent: { _ in false },
-            terminalCheck: { nil }
-        )
-
-        expectNotReady(result)
-    }
-
-    @Test func realStaleStateWithoutReadyMarkerTimesOut() async throws {
-        let runtime = try makeRuntime()
-        let child = JournalChildIdentity(pid: 4242, startTime: 100, generation: 7)
-        let pidPath = runtime.layout.rootURL.appendingPathComponent("health/supervisor.pid").path
-        let startTimePath = runtime.layout.rootURL.appendingPathComponent("health/supervisor.start_time").path
-        let files = [
-            pidPath: "30493\n",
-            startTimePath: "1783004521.665381\n"
-        ]
-        let gate = JournalReadinessGate(
-            readTextFile: { files[$0] },
-            processStartTime: { $0 == child.pid ? child.startTime : nil },
-            acceptProbe: { true },
-            clock: AdvancingReadinessClock(),
-            pollInterval: .milliseconds(1)
-        )
-
-        let result = await gate.waitUntilReady(
-            journalRoot: runtime.layout.rootURL,
-            runtime: runtime,
-            child: child,
-            timeout: .milliseconds(3),
-            generationIsCurrent: { $0 == child.generation },
-            terminalCheck: { nil }
-        )
-
-        guard case .failed(let diagnostic) = result else {
-            Issue.record("expected failed stale-state readiness, got \(result)")
-            return
-        }
-        #expect(diagnostic.timedOut)
-    }
 }
 
-private func readinessFiles(
+private func writeMarkerFiles(
     root: URL,
-    child: JournalChildIdentity,
-    markerPID: pid_t? = nil,
-    pidFilePID: pid_t? = nil,
-    markerStartTime: TimeInterval? = nil
-) -> [String: String] {
-    let ready = root.appendingPathComponent("health/supervisor.ready").path
-    let pid = root.appendingPathComponent("health/supervisor.pid").path
-    let markerPID = markerPID ?? child.pid
-    let pidFilePID = pidFilePID ?? child.pid
-    let markerStartTime = markerStartTime ?? child.startTime
-    return [
-        ready: #"{"pid":\#(markerPID),"ready_at":101.0,"start_time":\#(markerStartTime)}"#,
-        pid: "\(pidFilePID)\n"
-    ]
-}
-
-private func expectNotReady(_ result: JournalReadinessResult) {
-    guard case .failed = result else {
-        Issue.record("expected failed readiness, got \(result)")
-        return
-    }
-}
-
-private final class SequencedAcceptProbe: @unchecked Sendable {
-    private let lock = NSLock()
-    private var values: [Bool]
-    private var count = 0
-
-    init(_ values: [Bool]) {
-        self.values = values
-    }
-
-    var calls: Int {
-        lock.withLock { count }
-    }
-
-    func next() async -> Bool {
-        lock.withLock {
-            count += 1
-            guard !values.isEmpty else {
-                return false
-            }
-            return values.removeFirst()
-        }
-    }
-}
-
-private final class SequencedStartTimes: @unchecked Sendable {
-    private let lock = NSLock()
-    private var values: [TimeInterval?]
-
-    init(_ values: [TimeInterval?]) {
-        self.values = values
-    }
-
-    func next() -> TimeInterval? {
-        lock.withLock {
-            values.isEmpty ? nil : values.removeFirst()
-        }
-    }
+    pid: pid_t,
+    startTime: Double,
+    suffix: String = ""
+) throws {
+    let health = root.appendingPathComponent("health", isDirectory: true)
+    try FileManager.default.createDirectory(at: health, withIntermediateDirectories: true)
+    try Data(#"{"pid":\#(pid),"ready_at":1000.0,"start_time":\#(startTime)}"#.utf8)
+        .write(to: health.appendingPathComponent("supervisor.ready\(suffix)"))
+    try Data("\(pid)\n".utf8)
+        .write(to: health.appendingPathComponent("supervisor.pid\(suffix)"))
+    try Data("\(startTime)\n".utf8)
+        .write(to: health.appendingPathComponent("supervisor.start_time\(suffix)"))
 }
 
 private final class AdvancingReadinessClock: MonotonicClock, @unchecked Sendable {

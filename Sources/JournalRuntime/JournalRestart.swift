@@ -118,8 +118,8 @@ public struct JournalRestartRunner: @unchecked Sendable {
     private let runner: SubprocessRunning
     private let journalPathProvider: @Sendable (URL) async -> String?
     private let terminate: @Sendable (pid_t) -> Void
+    private let evidenceReader: any JournalProcessEvidenceReading
     private let fileManager: FileManager
-    private let environmentReader: ProcessEnvironmentReading
     private let reprobe: @Sendable () async -> JournalRuntimeProbeOutcome
     private let logSink: (@Sendable (JournalRestartLogEvent) -> Void)?
     private let journalBinary: URL
@@ -130,8 +130,8 @@ public struct JournalRestartRunner: @unchecked Sendable {
         terminate: @escaping @Sendable (pid_t) -> Void = { pid in
             _ = Darwin.kill(pid, SIGTERM)
         },
+        evidenceReader: any JournalProcessEvidenceReading = LiveJournalProcessEvidenceReader(),
         fileManager: FileManager = .default,
-        environmentReader: @escaping ProcessEnvironmentReading = defaultProcessEnvironment,
         reprobe: @escaping @Sendable () async -> JournalRuntimeProbeOutcome,
         logSink: (@Sendable (JournalRestartLogEvent) -> Void)? = nil,
         journalBinary: URL
@@ -141,8 +141,8 @@ public struct JournalRestartRunner: @unchecked Sendable {
             await Self.defaultJournalPathProvider(journalBinary: journalBinary, runner: runner)
         }
         self.terminate = terminate
+        self.evidenceReader = evidenceReader
         self.fileManager = fileManager
-        self.environmentReader = environmentReader
         self.reprobe = reprobe
         self.logSink = logSink
         self.journalBinary = journalBinary
@@ -165,6 +165,10 @@ public struct JournalRestartRunner: @unchecked Sendable {
         emit(step: .resolveJournal, outcome: "success", detail: journalPath)
 
         let journalRoot = URL(fileURLWithPath: journalPath, isDirectory: true)
+        // The rooted orphan sweep must read supervisor.pid/start_time before
+        // moveAsideStaleStateFiles renames them. If a prior restart already
+        // moved them aside, provenance is unavailable; that intentionally
+        // protects the process and lets the later port check block clearly.
         await runOrphanSweep(journalRoot: journalRoot)
 
         let moveEvents = moveAsideStaleStateFiles(
@@ -279,57 +283,22 @@ public struct JournalRestartRunner: @unchecked Sendable {
     }
 
     private func runOrphanSweep(journalRoot: URL) async {
-        let protectedLaunchdPIDs: Set<pid_t>
-        switch await runLaunchctlPrint(runner: runner) {
-        case .notFound113:
-            protectedLaunchdPIDs = []
-        case .loaded(let job):
-            if case .running = job.state, let pid = job.pid {
-                protectedLaunchdPIDs = [pid]
-            } else {
-                protectedLaunchdPIDs = []
-            }
-        case .otherError(let exitCode, _):
-            emit(step: .orphanSweep, outcome: "error", detail: "launchctl-exit=\(exitCode)")
-            return
-        }
-
-        let output = LockedJournalOutput()
-        do {
-            let result = try await runner.run(
-                executable: URL(fileURLWithPath: "/bin/ps"),
-                arguments: ["-axo", "pid=,ppid=,uid=,command="],
-                environment: nil,
-                stdoutHandler: { data in output.append(data) },
-                stderrHandler: { _ in }
-            )
-            guard result.exitCode == 0 else {
-                emit(step: .orphanSweep, outcome: "error", detail: "exit=\(result.exitCode)")
-                return
-            }
-            let psOutput = output.string
-            let selection = selectJournalOrphans(
-                from: parseJournalProcessRows(psOutput),
-                rowCount: countParsedPsRows(psOutput),
-                journalRoot: journalRoot,
-                protectedLaunchdPIDs: protectedLaunchdPIDs,
-                excludedPIDs: [],
-                environmentReader: environmentReader
-            )
-            guard selection.ambiguous.isEmpty else {
-                emit(step: .orphanSweep, outcome: "error", detail: "rows=\(selection.rowCount) ambiguous=\(selection.ambiguous.count)")
-                return
-            }
-            guard !selection.selected.isEmpty else {
-                emit(step: .orphanSweep, outcome: "noop", detail: "rows=\(selection.rowCount) matched=0 terminated=0")
-                return
-            }
-            for pid in selection.selected {
+        let failure = await runJournalOrphanSweep(
+            journalRoot: journalRoot,
+            runner: runner,
+            evidenceReader: evidenceReader,
+            pidExists: { _ in false },
+            terminate: { pid, _ in
                 terminate(pid)
-            }
-            emit(step: .orphanSweep, outcome: "success", detail: "rows=\(selection.rowCount) matched=\(selection.selected.count) terminated=\(selection.selected.count)")
-        } catch {
-            emit(step: .orphanSweep, outcome: "error", detail: error.localizedDescription)
+                return 0
+            },
+            gracePeriod: .zero,
+            clock: SystemMonotonicClock()
+        )
+        if let failure {
+            emit(step: .orphanSweep, outcome: "error", detail: failure.message)
+        } else {
+            emit(step: .orphanSweep, outcome: "success", detail: nil)
         }
     }
 

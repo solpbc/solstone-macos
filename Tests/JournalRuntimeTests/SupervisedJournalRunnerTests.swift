@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-import Darwin
 import Foundation
+import Darwin
 import JournalRuntimeTestSupport
 import SolstoneCore
 import Testing
@@ -10,527 +10,186 @@ import Testing
 
 @Suite("SupervisedJournalRunner")
 struct SupervisedJournalRunnerTests {
-    @Test func startAuthorizesImmediatelyBeforeSpawn() async throws {
-        let harness = try await RunnerHarness(gateSteps: [.result(.success)])
-
-        _ = try await harness.runner.start(runtime: harness.runtime, journalRoot: harness.journalRoot, port: 5015)
-
-        #expect(harness.gate.callCount() == 1)
-        #expect(harness.events.snapshot() == ["gate:1:excluded:nil", "spawn:7000"])
-    }
-
-    @Test func restartAuthorizesBeforeStoppingAndExcludesCurrentChild() async throws {
-        let harness = try await RunnerHarness(gateSteps: [.result(.success), .result(.success)])
-        let first = try await harness.runner.start(runtime: harness.runtime, journalRoot: harness.journalRoot, port: 5015)
-        harness.events.removeAll()
-
-        _ = try await harness.runner.restart()
-
-        #expect(harness.gate.contexts().map { $0.excludedChild?.pid } == [nil, first.pid])
-        #expect(Array(harness.events.snapshot().prefix(1)) == ["gate:2:excluded:\(first.pid):alive:true"])
-        #expect(harness.events.snapshot().contains("signal:\(first.pid):\(SIGTERM)"))
-        #expect(harness.processes.spawnCount() == 2)
-    }
-
-    @Test func backoffRelaunchAuthorizesImmediatelyBeforeSpawn() async throws {
-        let harness = try await RunnerHarness(
-            gateSteps: [.result(.success), .result(.success)],
-            clock: SuspendedBackoffClock()
+    @Test func launchGatesWithCanonicalRootAndDoesNotStampJournalEnvironment() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let gate = RecordingRunnerGate(result: .success)
+        let spawner = RecordingProcessSpawner(pid: 4242)
+        let runner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(),
+            statusSink: { _ in },
+            gate: gate,
+            evidenceReader: FixedStartTimeReader(startTime: 1_000.0),
+            processSpawner: spawner,
+            pidExists: { _ in false }
         )
-        _ = try await harness.runner.start(runtime: harness.runtime, journalRoot: harness.journalRoot, port: 5015)
-        harness.events.removeAll()
 
-        harness.processes.latest()?.exit(status: 7)
-        await harness.clock.waitForSleepCount(1)
-        harness.clock.resumeNextSleep()
-        await harness.processes.waitForSpawnCount(2)
+        try await runner.start(runtime: fixture.runtime, journalRoot: fixture.linkedJournalRoot, port: 5015)
 
-        #expect(harness.gate.callCount() == 2)
-        #expect(harness.events.snapshot() == ["gate:2:excluded:nil", "spawn:7001"])
+        let requests = spawner.spawnRequests()
+        #expect(requests.count == 1)
+        #expect(requests.first?.executableURL == fixture.runtime.layout.journalBinary)
+        #expect(requests.first?.currentDirectoryURL.path == canonicalPath(fixture.realJournalRoot))
+        #expect(requests.first?.arguments == ["start", "--app-supervised", "5015"])
+        #expect(requests.first?.environment["SOLSTONE_JOURNAL"] == nil)
+        #expect(gate.roots() == [canonicalPath(fixture.realJournalRoot)])
+        #expect(await runner.currentIdentity()?.pid == 4242)
+        #expect(await runner.currentIdentity()?.kernelStartTime == 1_000.0)
+        await runner.stop()
     }
 
-    @Test func competitorAfterOwnedChildExitBlocksBackoffWithZeroSpawn() async throws {
-        let blockage = portBlockage()
-        let harness = try await RunnerHarness(
-            gateSteps: [.result(.success), .result(.blocked(blockage))],
-            clock: SuspendedBackoffClock()
+    @Test func gateBlockedPreventsSpawn() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let diagnostic = JournalDiagnostic(commandLabel: "gate", outputExcerpt: "blocked")
+        let blockage = SingleSupervisorGateBlockage.portConflict(diagnostic)
+        let spawner = RecordingProcessSpawner(pid: 4242)
+        let runner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(),
+            statusSink: { _ in },
+            gate: RecordingRunnerGate(result: .blocked(blockage)),
+            evidenceReader: FixedStartTimeReader(startTime: 1_000.0),
+            processSpawner: spawner,
+            pidExists: { _ in false }
         )
-        _ = try await harness.runner.start(runtime: harness.runtime, journalRoot: harness.journalRoot, port: 5015)
-        let spawnCountBeforeBlockedRelaunch = harness.processes.spawnCount()
-        harness.events.removeAll()
-
-        harness.processes.latest()?.exit(status: 7)
-        await harness.clock.waitForSleepCount(1)
-        harness.clock.resumeNextSleep()
-        await Task.yield()
-
-        #expect(harness.processes.spawnCount() - spawnCountBeforeBlockedRelaunch == 0)
-        #expect(!harness.events.snapshot().contains { $0.hasPrefix("spawn:") })
-        #expect(harness.gate.callCount() == 2)
-    }
-
-    @Test func stopInvalidatesPendingBackoffRelaunch() async throws {
-        let harness = try await RunnerHarness(
-            gateSteps: [.result(.success), .result(.success)],
-            clock: SuspendedBackoffClock()
-        )
-        _ = try await harness.runner.start(runtime: harness.runtime, journalRoot: harness.journalRoot, port: 5015)
-
-        harness.processes.latest()?.exit(status: 7)
-        await harness.clock.waitForSleepCount(1)
-        let stopTask = Task { await harness.runner.stop() }
-        await Task.yield()
-        harness.clock.resumeNextSleep()
-        await stopTask.value
-
-        #expect(harness.processes.spawnCount() == 1)
-        #expect(harness.gate.callCount() == 1)
-    }
-
-    @Test func newerStartInvalidatesOlderAuthorizationContinuation() async throws {
-        let harness = try await RunnerHarness(gateSteps: [.suspended(.success), .result(.success)])
-
-        let firstStart = Task {
-            try await harness.runner.start(runtime: harness.runtime, journalRoot: harness.journalRoot, port: 5015)
-        }
-        await harness.gate.waitForCallCount(1)
-
-        let secondStart = Task {
-            try await harness.runner.start(runtime: harness.runtime, journalRoot: harness.journalRoot, port: 5015)
-        }
-        _ = try await secondStart.value
-        harness.gate.resumeNextSuspended()
 
         do {
-            _ = try await firstStart.value
-            Issue.record("expected stale first launch")
-        } catch SupervisedJournalRunnerError.staleLaunch {
-        } catch {
-            Issue.record("expected stale launch, got \(error)")
+            try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015)
+            Issue.record("expected gateBlocked")
+        } catch let error as SupervisedJournalRunnerError {
+            #expect(error == .gateBlocked(blockage))
         }
 
-        #expect(harness.processes.spawnCount() == 1)
-        #expect(harness.gate.callCount() == 2)
-    }
-
-    @Test func terminalGateFailureLeavesOneDiagnosticAndNoPendingRetry() async throws {
-        let blockage = portBlockage()
-        let harness = try await RunnerHarness(
-            gateSteps: [.result(.success), .result(.blocked(blockage)), .result(.success)],
-            clock: SuspendedBackoffClock()
-        )
-        _ = try await harness.runner.start(runtime: harness.runtime, journalRoot: harness.journalRoot, port: 5015)
-
-        harness.processes.latest()?.exit(status: 7)
-        await harness.clock.waitForSleepCount(1)
-        harness.clock.resumeNextSleep()
-        await harness.statuses.waitForStoppedCount(1)
-        harness.clock.resumeNextSleep()
-        await Task.yield()
-
-        #expect(harness.statuses.stoppedCount() == 1)
-        #expect(await harness.runner.terminalReason() != nil)
-        #expect(harness.processes.spawnCount() == 1)
-        #expect(harness.gate.callCount() == 2)
-    }
-
-    @Test func manualRestartResetsTerminalGateFailureAndReauthorizes() async throws {
-        let blockage = portBlockage()
-        let harness = try await RunnerHarness(
-            gateSteps: [.result(.success), .result(.blocked(blockage)), .result(.success)],
-            clock: SuspendedBackoffClock()
-        )
-        _ = try await harness.runner.start(runtime: harness.runtime, journalRoot: harness.journalRoot, port: 5015)
-        harness.processes.latest()?.exit(status: 7)
-        await harness.clock.waitForSleepCount(1)
-        harness.clock.resumeNextSleep()
-        await Task.yield()
-
-        _ = try await harness.runner.restart()
-
-        #expect(harness.gate.callCount() == 3)
-        #expect(harness.processes.spawnCount() == 2)
-        #expect(await harness.runner.terminalReason() == nil)
-    }
-
-    @Test func breakerBudgetAndBackoffScheduleArePreserved() async throws {
-        let harness = try await RunnerHarness(
-            gateSteps: Array(repeating: .result(.success), count: 5),
-            clock: SuspendedBackoffClock()
-        )
-        _ = try await harness.runner.start(runtime: harness.runtime, journalRoot: harness.journalRoot, port: 5015)
-
-        for expectedSpawnCount in 2...5 {
-            harness.processes.latest()?.exit(status: Int32(expectedSpawnCount))
-            await harness.clock.waitForSleepCount(expectedSpawnCount - 1)
-            harness.clock.resumeNextSleep()
-            await harness.processes.waitForSpawnCount(expectedSpawnCount)
-        }
-
-        harness.processes.latest()?.exit(status: 99)
-        await Task.yield()
-
-        #expect(harness.clock.sleepDurations().prefix(4).map(\.components.seconds) == [1, 2, 4, 8])
-        #expect(harness.processes.spawnCount() == 5)
-        #expect(harness.statuses.stoppedCount() == 1)
-        #expect(await harness.runner.terminalReason()?.outputExcerpt == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
+        #expect(spawner.spawnRequests().isEmpty)
     }
 }
 
-private struct RunnerHarness {
+private struct RunnerFixture {
+    let root: URL
     let runtime: MaterializedRuntime
-    let journalRoot: URL
-    let events: StringEventRecorder
-    let processes: FakeJournalProcessFactory
-    let gate: RecordingAuthorizationGate
-    let statuses: StatusRecorder
-    let clock: SuspendedBackoffClock
-    let runner: SupervisedJournalRunner
+    let realJournalRoot: URL
+    let linkedJournalRoot: URL
 
-    init(gateSteps: [GateStep], clock: SuspendedBackoffClock = SuspendedBackoffClock()) async throws {
-        runtime = try makeRuntime()
-        journalRoot = runtime.layout.rootURL
-        events = StringEventRecorder()
-        processes = FakeJournalProcessFactory(events: events)
-        gate = RecordingAuthorizationGate(events: events, processFactory: processes, steps: gateSteps)
-        statuses = StatusRecorder()
-        self.clock = clock
-        runner = SupervisedJournalRunner(
-            clock: clock,
-            authorizationGate: gate,
-            statusSink: { [statuses] status in statuses.append(status) },
-            pidExists: { [processes] pid in processes.isRunning(pid: pid) },
-            terminate: { [processes, events] pid, signal in
-                events.append("signal:\(pid):\(signal)")
-                processes.signal(pid: pid, status: signal)
-                return 0
-            },
-            processStartTime: { [processes] pid in processes.startTime(pid: pid) },
-            processFactory: { [processes] in processes.makeProcess() }
-        )
+    init() throws {
+        root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("supervised-runner-\(UUID().uuidString)", isDirectory: true)
+        let runtimeRoot = root.appendingPathComponent("runtime", isDirectory: true)
+        let layout = SolstoneRuntimeLayout(rootURL: runtimeRoot)
+        try layout.ensureCreated()
+        runtime = MaterializedRuntime(key: "test-key", layout: layout)
+        realJournalRoot = root.appendingPathComponent("real journal", isDirectory: true)
+        linkedJournalRoot = root.appendingPathComponent("journal-link", isDirectory: true)
+        try FileManager.default.createDirectory(at: realJournalRoot, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: linkedJournalRoot, withDestinationURL: realJournalRoot)
+    }
+
+    func clear() {
+        try? FileManager.default.removeItem(at: root)
     }
 }
 
-private enum GateStep: Sendable {
-    case result(SingleSupervisorGateResult)
-    case suspended(SingleSupervisorGateResult)
-}
-
-private final class RecordingAuthorizationGate: SingleSupervisorGating, @unchecked Sendable {
+private final class RecordingRunnerGate: SingleSupervisorGating, @unchecked Sendable {
     private let lock = NSLock()
-    private let events: StringEventRecorder
-    private let processFactory: FakeJournalProcessFactory
-    private var steps: [GateStep]
-    private var calls: [LaunchAuthorizationContext] = []
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-    private var suspended: [(SingleSupervisorGateResult, CheckedContinuation<SingleSupervisorGateResult, Never>)] = []
+    private let result: SingleSupervisorGateResult
+    private var journalRoots: [String] = []
 
-    init(events: StringEventRecorder, processFactory: FakeJournalProcessFactory, steps: [GateStep]) {
-        self.events = events
-        self.processFactory = processFactory
-        self.steps = steps
+    init(result: SingleSupervisorGateResult) {
+        self.result = result
     }
 
-    func prepareForSpawn(journalRoot: URL, context: LaunchAuthorizationContext) async -> SingleSupervisorGateResult {
-        let (index, step) = lock.withLock {
-            calls.append(context)
-            let index = calls.count
-            let excluded = context.excludedChild.map { String($0.pid) } ?? "nil"
-            let alive = context.excludedChild.map { processFactory.isRunning(pid: $0.pid) }
-            events.append("gate:\(index):excluded:\(excluded)" + (alive.map { ":alive:\($0)" } ?? ""))
-            waiters.forEach { $0.resume() }
-            waiters.removeAll()
-            let step = steps.isEmpty ? GateStep.result(.success) : steps.removeFirst()
-            return (index, step)
-        }
-        _ = index
-        switch step {
-        case .result(let result):
-            return result
-        case .suspended(let result):
-            return await withCheckedContinuation { continuation in
-                lock.withLock {
-                    suspended.append((result, continuation))
-                }
-            }
-        }
-    }
-
-    func callCount() -> Int {
-        lock.withLock { calls.count }
-    }
-
-    func contexts() -> [LaunchAuthorizationContext] {
-        lock.withLock { calls }
-    }
-
-    func waitForCallCount(_ count: Int) async {
-        while callCount() < count {
-            await withCheckedContinuation { continuation in
-                lock.withLock {
-                    if calls.count >= count {
-                        continuation.resume()
-                    } else {
-                        waiters.append(continuation)
-                    }
-                }
-            }
-        }
-    }
-
-    func resumeNextSuspended() {
-        let next = lock.withLock {
-            suspended.isEmpty ? nil : suspended.removeFirst()
-        }
-        next?.1.resume(returning: next?.0 ?? .success)
-    }
-}
-
-private final class FakeJournalProcessFactory: @unchecked Sendable {
-    private let lock = NSLock()
-    private let events: StringEventRecorder
-    private var nextPID: pid_t = 7000
-    private var processes: [FakeJournalChildProcess] = []
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    init(events: StringEventRecorder) {
-        self.events = events
-    }
-
-    func makeProcess() -> any JournalChildProcess {
+    func prepareForSpawn(journalRoot: URL) async -> SingleSupervisorGateResult {
         lock.withLock {
-            let process = FakeJournalChildProcess(pid: nextPID, startTime: TimeInterval(nextPID), events: events) { [weak self] in
-                self?.notifySpawn()
-            }
-            nextPID += 1
-            processes.append(process)
-            return process
+            journalRoots.append(canonicalPath(journalRoot))
         }
+        return result
     }
 
-    func latest() -> FakeJournalChildProcess? {
-        lock.withLock { processes.last }
+    func roots() -> [String] {
+        lock.withLock { journalRoots }
+    }
+}
+
+private final class RecordingProcessSpawner: SupervisedJournalProcessSpawning, @unchecked Sendable {
+    private let lock = NSLock()
+    private let pid: pid_t
+    private var requests: [SupervisedJournalSpawnRequest] = []
+
+    init(pid: pid_t) {
+        self.pid = pid
     }
 
-    func spawnCount() -> Int {
-        lock.withLock { processes.filter(\.hasRun).count }
+    func makeChildProcess(for request: SupervisedJournalSpawnRequest) -> any SupervisedJournalChildProcess {
+        RecordingChildProcess(pid: pid, request: request, spawner: self)
     }
 
-    func waitForSpawnCount(_ count: Int) async {
-        while spawnCount() < count {
-            await withCheckedContinuation { continuation in
-                lock.withLock {
-                    if processes.filter(\.hasRun).count >= count {
-                        continuation.resume()
-                    } else {
-                        waiters.append(continuation)
-                    }
-                }
-            }
-        }
+    func spawnRequests() -> [SupervisedJournalSpawnRequest] {
+        lock.withLock { requests }
     }
 
-    func isRunning(pid: pid_t) -> Bool {
-        lock.withLock { processes.first(where: { $0.processIdentifier == pid })?.isRunning == true }
-    }
-
-    func startTime(pid: pid_t) -> TimeInterval? {
-        lock.withLock { processes.first(where: { $0.processIdentifier == pid })?.startTime }
-    }
-
-    func signal(pid: pid_t, status: Int32) {
-        lock.withLock { processes.first(where: { $0.processIdentifier == pid })?.signal(status: status) }
-    }
-
-    private func notifySpawn() {
+    fileprivate func recordSpawn(_ request: SupervisedJournalSpawnRequest) {
         lock.withLock {
-            waiters.forEach { $0.resume() }
-            waiters.removeAll()
+            requests.append(request)
         }
     }
 }
 
-private final class FakeJournalChildProcess: JournalChildProcess, @unchecked Sendable {
-    var executableURL: URL?
-    var currentDirectoryURL: URL?
-    var arguments: [String]?
-    var environment: [String: String]?
-    var standardInput: Any?
-    var standardOutput: Any?
-    var standardError: Any?
-    var terminationHandler: (@Sendable (any JournalChildProcess) -> Void)?
-    let processIdentifier: pid_t
-    let startTime: TimeInterval
-    private let events: StringEventRecorder
-    private let onRun: @Sendable () -> Void
+private final class RecordingChildProcess: SupervisedJournalChildProcess, @unchecked Sendable {
     private let lock = NSLock()
+    private let pid: pid_t
+    private let request: SupervisedJournalSpawnRequest
+    private let spawner: RecordingProcessSpawner
     private var running = false
-    private var status: Int32 = 0
-    private var ran = false
+    private var terminationHandler: (@Sendable (Int32, pid_t) -> Void)?
 
-    init(pid: pid_t, startTime: TimeInterval, events: StringEventRecorder, onRun: @escaping @Sendable () -> Void) {
-        processIdentifier = pid
-        self.startTime = startTime
-        self.events = events
-        self.onRun = onRun
+    init(pid: pid_t, request: SupervisedJournalSpawnRequest, spawner: RecordingProcessSpawner) {
+        self.pid = pid
+        self.request = request
+        self.spawner = spawner
     }
 
-    var terminationStatus: Int32 {
-        lock.withLock { status }
+    var processIdentifier: pid_t {
+        pid
     }
 
     var isRunning: Bool {
         lock.withLock { running }
     }
 
-    var hasRun: Bool {
-        lock.withLock { ran }
+    func setTerminationHandler(_ handler: @escaping @Sendable (Int32, pid_t) -> Void) {
+        lock.withLock {
+            terminationHandler = handler
+        }
     }
 
     func run() throws {
         lock.withLock {
             running = true
-            ran = true
         }
-        events.append("spawn:\(processIdentifier)")
-        onRun()
+        spawner.recordSpawn(request)
     }
 
-    func exit(status: Int32) {
+    func closeParentInput() {
         lock.withLock {
-            self.status = status
-            running = false
-        }
-        terminationHandler?(self)
-    }
-
-    func signal(status: Int32) {
-        lock.withLock {
-            self.status = status
             running = false
         }
     }
 }
 
-private final class SuspendedBackoffClock: MonotonicClock, @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: Duration = .zero
-    private var sleeps: [(Duration, CheckedContinuation<Void, Never>)] = []
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-    private var recorded: [Duration] = []
+private struct FixedStartTimeReader: JournalProcessEvidenceReading {
+    let startTime: Double
 
-    func now() -> Duration {
-        lock.withLock { value }
-    }
-
-    func sleep(for duration: Duration) async {
-        if duration < .seconds(1) {
-            lock.withLock { value += duration }
-            await Task.yield()
-            return
-        }
-        await withCheckedContinuation { continuation in
-            lock.withLock {
-                recorded.append(duration)
-                sleeps.append((duration, continuation))
-                waiters.forEach { $0.resume() }
-                waiters.removeAll()
-            }
-        }
-    }
-
-    func waitForSleepCount(_ count: Int) async {
-        while sleepDurations().count < count {
-            await withCheckedContinuation { continuation in
-                lock.withLock {
-                    if recorded.count >= count {
-                        continuation.resume()
-                    } else {
-                        waiters.append(continuation)
-                    }
-                }
-            }
-        }
-    }
-
-    func resumeNextSleep() {
-        let next = lock.withLock {
-            sleeps.isEmpty ? nil : sleeps.removeFirst()
-        }
-        guard let next else { return }
-        lock.withLock { value += next.0 }
-        next.1.resume()
-    }
-
-    func sleepDurations() -> [Duration] {
-        lock.withLock { recorded }
+    func evidence(for pid: pid_t) async -> JournalProcessEvidence? {
+        JournalProcessEvidence(
+            pid: pid,
+            ppid: 1,
+            uid: getuid(),
+            username: currentUsername(),
+            kernelStartTime: startTime
+        )
     }
 }
 
-private final class StatusRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var values: [JournalRuntimeStatus] = []
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    func append(_ status: JournalRuntimeStatus) {
-        lock.withLock {
-            values.append(status)
-            waiters.forEach { $0.resume() }
-            waiters.removeAll()
-        }
-    }
-
-    func stoppedCount() -> Int {
-        lock.withLock {
-            values.filter {
-                if case .stopped = $0 { return true }
-                return false
-            }.count
-        }
-    }
-
-    func waitForStoppedCount(_ count: Int) async {
-        while stoppedCount() < count {
-            await withCheckedContinuation { continuation in
-                lock.withLock {
-                    if values.filter({
-                        if case .stopped = $0 { return true }
-                        return false
-                    }).count >= count {
-                        continuation.resume()
-                    } else {
-                        waiters.append(continuation)
-                    }
-                }
-            }
-        }
-    }
-}
-
-private final class StringEventRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var values: [String] = []
-
-    func append(_ value: String) {
-        lock.withLock {
-            values.append(value)
-        }
-    }
-
-    func snapshot() -> [String] {
-        lock.withLock { values }
-    }
-
-    func removeAll() {
-        lock.withLock {
-            values.removeAll()
-        }
-    }
-}
-
-private func portBlockage() -> SingleSupervisorGateBlockage {
-    .portConflict(JournalDiagnostic(
-        commandLabel: "journal supervisor gate",
-        outputExcerpt: "port busy"
-    ))
+private final class NoopRunnerClock: MonotonicClock, @unchecked Sendable {
+    func now() -> Duration { .zero }
+    func sleep(for duration: Duration) async {}
 }
