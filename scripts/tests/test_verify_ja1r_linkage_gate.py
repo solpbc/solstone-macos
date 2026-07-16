@@ -3,7 +3,7 @@
 FIXTURE HONESTY: the reports built here are SCHEMA-DERIVED, not captured. No
 real PASS report exists in the harness repo or anywhere on disk, so these are
 constructed from the pinned harness's own report emitters -- extro-tools
-8c09723c, tools/solstone-macos-gate/gate.py: new_report() (direct-lane shape,
+f7d7bda0, tools/solstone-macos-gate/gate.py: new_report() (direct-lane shape,
 schema_version, lane, result), the per-lane scenario fields it sets, the
 provenance block it fills, oracles() -> rep["post"] (the observed
 journal_version), _run_linked_upgrade_lane() / establish_linked_baseline()
@@ -57,6 +57,14 @@ LEGACY_SOL_V = "1.3.31"
 RUN_ID = "20260715T184501Z-a1b2c3d4e5f60718"
 FIXED_NOW = datetime(2026, 7, 15, 18, 50, 0, tzinfo=timezone.utc)
 DEFAULT_SOL_DMG_SHA = "e" * 64
+TIER_B_DAY = "20260715"
+TIER_B_SEGMENT = "184501_3428"
+TIER_B_PAYLOAD_SHA256 = "94ece5bc14ef9efdb8f8ccf0d63f44eb275a76a6180c999e56427fcc70d0d337"
+TIER_B_PAYLOAD_BYTES = 85
+TIER_B_CREATED_AT = "2026-07-15T18:45:01Z"
+TIER_B_BASELINE_OBSERVED_AT = "2026-07-15T18:45:00Z"
+TIER_B_LANDING_OBSERVED_AT = "2026-07-15T18:45:01Z"
+TIER_B_ELAPSED_S = 0.001
 
 IDENTITY_ARGS = {
     "sol-target-version": SOL_V,
@@ -123,6 +131,56 @@ def cleanup_report():
     }
 
 
+def tier_b_expected():
+    return {
+        "day": TIER_B_DAY,
+        "segment": TIER_B_SEGMENT,
+        "payload_sha256": TIER_B_PAYLOAD_SHA256,
+    }
+
+
+def coordinator_tier_b():
+    return {
+        "expected": tier_b_expected(),
+        "baseline": {
+            "segments_received": 0,
+            "duplicates_rejected": 0,
+            "identity_absent": True,
+            "observed_at": TIER_B_BASELINE_OBSERVED_AT,
+        },
+        "landing": {
+            "attempted": True,
+            "segments_received_before": 0,
+            "segments_received_after": 1,
+            "duplicates_rejected_before": 0,
+            "duplicates_rejected_after": 0,
+            "matching_artifacts": 1,
+            "digest_match": True,
+            "canonical_path": True,
+            "manifest_ok": True,
+            "last_segment": TIER_B_SEGMENT,
+            "ingest_rejection_present": False,
+            "reason": None,
+            "observed_at": TIER_B_LANDING_OBSERVED_AT,
+            "elapsed_s": TIER_B_ELAPSED_S,
+        },
+    }
+
+
+def spl_link_tier_b(preexisting_completed_segments=0, upload_state=None):
+    return {
+        "day": TIER_B_DAY,
+        "segment": TIER_B_SEGMENT,
+        "payload_sha256": TIER_B_PAYLOAD_SHA256,
+        "payload_bytes": TIER_B_PAYLOAD_BYTES,
+        "created_at": TIER_B_CREATED_AT,
+        "preexisting_completed_segments": preexisting_completed_segments,
+        "injected": True,
+        "probe_not_created": True,
+        "upload_state": upload_state,
+    }
+
+
 def spl_link_lane_subset(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
     return {
         "result": "PASS",
@@ -156,11 +214,12 @@ def spl_link_lane_subset(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
             "link_received_at": "2026-07-15T18:45:02Z",
             "link_wait_elapsed_s": 1.0,
         },
+        "tier_b": spl_link_tier_b(),
     }
 
 
 def spl_link_report(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA, run_id=RUN_ID):
-    # Schema-derived from extro-tools 8c09723c, not captured live evidence.
+    # Schema-derived from extro-tools f7d7bda0, not captured live evidence.
     return {
         "result": "PASS",
         "run_id": run_id,
@@ -177,6 +236,7 @@ def spl_link_report(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA, run_id=RUN_ID):
             "delivery_after_mint_s": 1.0,
             "delivery_within_ttl": True,
         },
+        "tier_b": coordinator_tier_b(),
         "cleanup": cleanup_report(),
         "error": None,
         "retry": None,
@@ -202,7 +262,7 @@ def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
             post={"journal_version": OBSERVED_RUNTIME},
         )
     if filename in ("fresh-acquire.json", "discovered-adopt.json"):
-        # Derived from gate.py at 8c09723c: new_report() scenario fields for the
+        # Derived from gate.py at f7d7bda0: new_report() scenario fields for the
         # acquire-driven lanes. Like fresh, they run the oracles + pin check but
         # store the fingerprint under linked_finish, never top-level `post` --
         # the pin is proved by the check alone.
@@ -242,7 +302,7 @@ def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
             post={"journal_version": OBSERVED_RUNTIME},
         )
     if filename == "journal-upgrade.json":
-        # Derived from gate.py at 8c09723c: new_report(),
+        # Derived from gate.py at f7d7bda0: new_report(),
         # _run_linked_upgrade_lane(), and establish_linked_baseline().
         return base_report(
             "journal-upgrade",
@@ -348,6 +408,23 @@ class GateTestCase(unittest.TestCase):
         self.assertEqual(out.strip(), "", "a refused gate must emit no stdout verdict")
         self.assertTrue(err.strip(), "a refused gate must explain itself on stderr")
         return err
+
+
+class TierBDerivation(unittest.TestCase):
+    def test_derive_tier_b_identity_returns_pinned_literals(self):
+        self.assertEqual(
+            verifier.derive_tier_b_identity(RUN_ID),
+            {
+                "day": TIER_B_DAY,
+                "segment": TIER_B_SEGMENT,
+                "payload_sha256": TIER_B_PAYLOAD_SHA256,
+                "payload_bytes": TIER_B_PAYLOAD_BYTES,
+            },
+        )
+
+    def test_calendar_invalid_run_id_is_gate_failure(self):
+        with self.assertRaises(verifier.GateFailure):
+            verifier.derive_tier_b_identity("20261315T184501Z-a1b2c3d4e5f60718")
 
 
 class ValidSetsPass(GateTestCase):
@@ -543,6 +620,13 @@ class SPLLinkCoordinatorReport(GateTestCase):
         cases = (
             ("malformed", lambda r: r.__setitem__("run_id", "not-a-run-id"), FIXED_NOW),
             (
+                "calendar invalid",
+                lambda r: r.__setitem__(
+                    "run_id", "20261315T184501Z-a1b2c3d4e5f60718"
+                ),
+                FIXED_NOW,
+            ),
+            (
                 "stale",
                 lambda r: r.__setitem__("run_id", "20260714T184459Z-a1b2c3d4e5f60718"),
                 FIXED_NOW,
@@ -555,7 +639,24 @@ class SPLLinkCoordinatorReport(GateTestCase):
         )
         for label, mutate, now in cases:
             with self.subTest(label=label):
-                self.assert_spl_mutation_refused(mutate, now=now)
+                err = self.assert_spl_mutation_refused(mutate, now=now)
+                self.assertNotIn("Traceback", err)
+
+    def test_old_tier_a_only_spl_link_shape_is_refused(self):
+        self.write_set("sol")
+        report = self.read_spl()
+        report.pop("tier_b")
+        report["lane"].pop("tier_b")
+        for phase in ("home_baseline", "landing_verify"):
+            report["phases"].pop(phase)
+        report["cleanup"].pop("synthetic_segment_remove")
+        for check in ("tier_b_segment_injected", "tier_b_probe_suppressed"):
+            report["lane"]["checks"].pop(check)
+        self.write_spl(report)
+        code, out, err = self.run_gate("sol")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(out.strip(), "")
+        self.assertTrue(err.strip())
 
     def test_phase_schema_and_duration_refusals(self):
         for phase in verifier.COORDINATOR_PHASE_NAMES:
@@ -572,6 +673,27 @@ class SPLLinkCoordinatorReport(GateTestCase):
             ("bool duration", lambda r: set_path(r, "phases.create.duration_s", True)),
             ("negative duration", lambda r: set_path(r, "phases.create.duration_s", -0.1)),
             ("non-finite duration", lambda r: set_path(r, "phases.create.duration_s", math.inf)),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_new_phase_cleanup_and_check_members_are_required(self):
+        cases = (
+            ("missing home_baseline", lambda r: r["phases"].pop("home_baseline")),
+            ("missing landing_verify", lambda r: r["phases"].pop("landing_verify")),
+            (
+                "missing synthetic cleanup",
+                lambda r: r["cleanup"].pop("synthetic_segment_remove"),
+            ),
+            (
+                "missing tier b injected check",
+                lambda r: r["lane"]["checks"].pop("tier_b_segment_injected"),
+            ),
+            (
+                "missing tier b probe check",
+                lambda r: r["lane"]["checks"].pop("tier_b_probe_suppressed"),
+            ),
         )
         for label, mutate in cases:
             with self.subTest(label=label):
@@ -649,6 +771,7 @@ class SPLLinkCoordinatorReport(GateTestCase):
             ("lane.provenance", "commit"),
             ("lane.provenance.contracts", "sol_sha256"),
             ("lane.timings", "ready_at"),
+            ("lane.tier_b", "day"),
         )
         for object_path, child_key in cases:
             with self.subTest(object_path=object_path, case="missing"):
@@ -696,6 +819,166 @@ class SPLLinkCoordinatorReport(GateTestCase):
         for label, mutate in cases:
             with self.subTest(label=label):
                 self.assert_spl_mutation_refused(mutate)
+
+    def test_tier_b_schema_refusals(self):
+        cases = (
+            ("missing outer", lambda r: r.pop("tier_b")),
+            ("extra outer", lambda r: r["tier_b"].__setitem__("extra", True)),
+            ("missing expected", lambda r: delete_path(r, "tier_b.expected.day")),
+            ("extra expected", lambda r: set_path(r, "tier_b.expected.extra", True)),
+            ("missing baseline", lambda r: delete_path(r, "tier_b.baseline.observed_at")),
+            ("extra baseline", lambda r: set_path(r, "tier_b.baseline.extra", True)),
+            ("missing landing", lambda r: delete_path(r, "tier_b.landing.elapsed_s")),
+            ("extra landing", lambda r: set_path(r, "tier_b.landing.extra", True)),
+            ("missing nested", lambda r: r["lane"].pop("tier_b")),
+            ("extra nested", lambda r: set_path(r, "lane.tier_b.extra", True)),
+            ("missing nested key", lambda r: delete_path(r, "lane.tier_b.day")),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_tier_b_recompute_authority_refusals(self):
+        cases = (
+            (
+                "run id changed",
+                lambda r: r.__setitem__(
+                    "run_id", "20260715T184502Z-a1b2c3d4e5f60718"
+                ),
+            ),
+            ("expected day", lambda r: set_path(r, "tier_b.expected.day", "20260716")),
+            ("expected segment", lambda r: set_path(r, "tier_b.expected.segment", "184501_1")),
+            (
+                "expected digest",
+                lambda r: set_path(r, "tier_b.expected.payload_sha256", "0" * 64),
+            ),
+            ("nested day", lambda r: set_path(r, "lane.tier_b.day", "20260716")),
+            ("nested segment", lambda r: set_path(r, "lane.tier_b.segment", "184501_1")),
+            (
+                "nested digest",
+                lambda r: set_path(r, "lane.tier_b.payload_sha256", "0" * 64),
+            ),
+            ("nested bytes", lambda r: set_path(r, "lane.tier_b.payload_bytes", 84)),
+            ("last segment", lambda r: set_path(r, "tier_b.landing.last_segment", "184501_1")),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_tier_b_outer_value_refusals(self):
+        cases = (
+            ("baseline segments", lambda r: set_path(r, "tier_b.baseline.segments_received", 1)),
+            (
+                "baseline duplicates",
+                lambda r: set_path(r, "tier_b.baseline.duplicates_rejected", 1),
+            ),
+            ("identity absent", lambda r: set_path(r, "tier_b.baseline.identity_absent", False)),
+            (
+                "baseline bool counter",
+                lambda r: set_path(r, "tier_b.baseline.segments_received", True),
+            ),
+            (
+                "before segments mismatch",
+                lambda r: set_path(r, "tier_b.landing.segments_received_before", 1),
+            ),
+            (
+                "before duplicates mismatch",
+                lambda r: set_path(r, "tier_b.landing.duplicates_rejected_before", 1),
+            ),
+            (
+                "segments after no advance",
+                lambda r: set_path(r, "tier_b.landing.segments_received_after", 0),
+            ),
+            (
+                "segments after max",
+                lambda r: set_path(
+                    r, "tier_b.landing.segments_received_after", 1_000_000_001
+                ),
+            ),
+            (
+                "duplicates after negative",
+                lambda r: set_path(r, "tier_b.landing.duplicates_rejected_after", -1),
+            ),
+            (
+                "duplicates after max",
+                lambda r: set_path(
+                    r, "tier_b.landing.duplicates_rejected_after", 1_000_000_001
+                ),
+            ),
+            ("matching zero", lambda r: set_path(r, "tier_b.landing.matching_artifacts", 0)),
+            ("matching two", lambda r: set_path(r, "tier_b.landing.matching_artifacts", 2)),
+            ("attempted", lambda r: set_path(r, "tier_b.landing.attempted", False)),
+            ("digest", lambda r: set_path(r, "tier_b.landing.digest_match", False)),
+            ("canonical", lambda r: set_path(r, "tier_b.landing.canonical_path", False)),
+            ("manifest", lambda r: set_path(r, "tier_b.landing.manifest_ok", False)),
+            (
+                "ingest rejection",
+                lambda r: set_path(r, "tier_b.landing.ingest_rejection_present", True),
+            ),
+            ("reason", lambda r: set_path(r, "tier_b.landing.reason", "duplicate")),
+            (
+                "bad baseline timestamp",
+                lambda r: set_path(r, "tier_b.baseline.observed_at", "not-a-time"),
+            ),
+            (
+                "bad landing timestamp",
+                lambda r: set_path(r, "tier_b.landing.observed_at", "not-a-time"),
+            ),
+            (
+                "landing before baseline",
+                lambda r: set_path(r, "tier_b.landing.observed_at", "2026-07-15T18:44:59Z"),
+            ),
+            ("elapsed negative", lambda r: set_path(r, "tier_b.landing.elapsed_s", -1.0)),
+            ("elapsed nonfinite", lambda r: set_path(r, "tier_b.landing.elapsed_s", math.inf)),
+            ("elapsed over budget", lambda r: set_path(r, "tier_b.landing.elapsed_s", 301.1)),
+            ("elapsed disagree", lambda r: set_path(r, "tier_b.landing.elapsed_s", 2.5)),
+            (
+                "phase over budget",
+                lambda r: set_path(r, "phases.landing_verify.duration_s", 301.1),
+            ),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_tier_b_nested_value_refusals(self):
+        cases = (
+            ("bad created", lambda r: set_path(r, "lane.tier_b.created_at", "not-a-time")),
+            (
+                "preexisting bool",
+                lambda r: set_path(r, "lane.tier_b.preexisting_completed_segments", True),
+            ),
+            (
+                "preexisting negative",
+                lambda r: set_path(r, "lane.tier_b.preexisting_completed_segments", -1),
+            ),
+            (
+                "preexisting max",
+                lambda r: set_path(
+                    r, "lane.tier_b.preexisting_completed_segments", 1_000_000_001
+                ),
+            ),
+            ("payload bool", lambda r: set_path(r, "lane.tier_b.payload_bytes", True)),
+            ("injected", lambda r: set_path(r, "lane.tier_b.injected", False)),
+            ("probe", lambda r: set_path(r, "lane.tier_b.probe_not_created", False)),
+            ("upload uppercase", lambda r: set_path(r, "lane.tier_b.upload_state", "Ready")),
+            ("upload empty", lambda r: set_path(r, "lane.tier_b.upload_state", "")),
+            ("upload long", lambda r: set_path(r, "lane.tier_b.upload_state", "a" * 65)),
+            ("upload nonstr", lambda r: set_path(r, "lane.tier_b.upload_state", 1)),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                self.assert_spl_mutation_refused(mutate)
+
+    def test_tier_b_positive_variants_pass(self):
+        self.write_set("sol")
+        report = self.read_spl()
+        set_path(report, "lane.tier_b.preexisting_completed_segments", 7)
+        set_path(report, "lane.tier_b.upload_state", None)
+        self.write_spl(report)
+        code, out, _ = self.run_gate("sol")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["profile"], "sol")
 
     def test_truthy_non_bool_strings_are_refused_for_booleans(self):
         paths = (

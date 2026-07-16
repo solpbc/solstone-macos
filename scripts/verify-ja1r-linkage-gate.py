@@ -54,11 +54,14 @@ ISO_UTC_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}
 
 SPL_LINK_REPORT_FILENAME = "spl-link.json"
 
-# Schema-derived from extro-tools coordinator 8c09723c
+# Schema-derived from extro-tools coordinator f7d7bda0
 # tools/solstone-macos-gate/spl_link_coordinator.py.
 PAIR_LINK_TTL_S = 300.0
 SPL_LINK_MAX_RUN_AGE_S = 24 * 60 * 60
 SPL_LINK_FUTURE_SKEW_S = 5 * 60
+TIER_B_NUMBER_MAX = 1_000_000_000
+TIER_B_LANDING_BUDGET_S = 300.0
+TIER_B_UPLOAD_STATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 COORDINATOR_REPORT_KEYS = frozenset(
     (
         "result",
@@ -67,6 +70,7 @@ COORDINATOR_REPORT_KEYS = frozenset(
         "original_verdict",
         "phases",
         "lane",
+        "tier_b",
         "binding",
         "pairing_timing",
         "cleanup",
@@ -81,6 +85,7 @@ COORDINATOR_PHASE_NAMES = (
     "instance_read",
     "grant",
     "setup_verify",
+    "home_baseline",
     "remote_prepare",
     "launch",
     "pid_wait",
@@ -89,6 +94,7 @@ COORDINATOR_PHASE_NAMES = (
     "deliver",
     "exit_wait",
     "report_fetch_parse",
+    "landing_verify",
 )
 COORDINATOR_PHASE_KEYS = frozenset(("status", "duration_s"))
 COORDINATOR_BINDING_KEYS = frozenset(("complete", "invalid_fields"))
@@ -104,6 +110,7 @@ COORDINATOR_PAIRING_TIMING_KEYS = frozenset(
 )
 COORDINATOR_CLEANUP_STEPS = (
     "remote_lane",
+    "synthetic_segment_remove",
     "relay_revoke",
     "private_link_disable",
     "sandbox_stop",
@@ -128,6 +135,7 @@ SPL_LINK_LANE_KEYS = frozenset(
         "error_type",
         "retry",
         "timings",
+        "tier_b",
     )
 )
 SPL_LINK_CHECK_KEYS = (
@@ -159,6 +167,8 @@ SPL_LINK_CHECK_KEYS = (
     "serverkey_trimmed_nonempty",
     "servicemode_external",
     "last_synced_fresh",
+    "tier_b_segment_injected",
+    "tier_b_probe_suppressed",
 )
 SPL_LINK_ORACLE_BOOLEAN_KEYS = (
     "serverkey_trimmed_nonempty",
@@ -181,6 +191,42 @@ SPL_LINK_PROVENANCE_KEYS = frozenset(("commit", "clean", "contracts"))
 SPL_LINK_CONTRACT_KEYS = frozenset(("sol_sha256", "journal_sha256"))
 SPL_LINK_TIMINGS_KEYS = frozenset(
     ("ready_at", "link_wait_started_at", "link_received_at", "link_wait_elapsed_s")
+)
+COORDINATOR_TIER_B_KEYS = frozenset(("expected", "baseline", "landing"))
+COORDINATOR_TIER_B_EXPECTED_KEYS = frozenset(("day", "segment", "payload_sha256"))
+COORDINATOR_TIER_B_BASELINE_KEYS = frozenset(
+    ("segments_received", "duplicates_rejected", "identity_absent", "observed_at")
+)
+COORDINATOR_TIER_B_LANDING_KEYS = frozenset(
+    (
+        "attempted",
+        "segments_received_before",
+        "segments_received_after",
+        "duplicates_rejected_before",
+        "duplicates_rejected_after",
+        "matching_artifacts",
+        "digest_match",
+        "canonical_path",
+        "manifest_ok",
+        "last_segment",
+        "ingest_rejection_present",
+        "reason",
+        "observed_at",
+        "elapsed_s",
+    )
+)
+SPL_LINK_TIER_B_KEYS = frozenset(
+    (
+        "day",
+        "segment",
+        "payload_sha256",
+        "payload_bytes",
+        "created_at",
+        "preexisting_completed_segments",
+        "injected",
+        "probe_not_created",
+        "upload_state",
+    )
 )
 
 # The canonical evidence-set filenames. README documents the producing command
@@ -457,6 +503,11 @@ def require_true(value, label):
         raise GateFailure(f"{label}: expected true, got {value!r}")
 
 
+def require_false(value, label):
+    if value is not False:
+        raise GateFailure(f"{label}: expected false, got {value!r}")
+
+
 def require_none(value, label):
     if value is not None:
         raise GateFailure(f"{label}: expected null, got {value!r}")
@@ -479,6 +530,18 @@ def require_nonnegative_finite_number(value, label):
         raise GateFailure(f"{label}: expected a nonnegative finite number, got {value!r}")
     if not math.isfinite(value) or value < 0:
         raise GateFailure(f"{label}: expected a nonnegative finite number, got {value!r}")
+    return value
+
+
+def require_bounded_integer(value, label, *, minimum=0, maximum=TIER_B_NUMBER_MAX):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise GateFailure(
+            f"{label}: expected an integer between {minimum} and {maximum}, got {value!r}"
+        )
+    if value < minimum or value > maximum:
+        raise GateFailure(
+            f"{label}: expected an integer between {minimum} and {maximum}, got {value!r}"
+        )
     return value
 
 
@@ -532,14 +595,39 @@ def hash_file_sha256(path, label):
     return digest.hexdigest()
 
 
-def verify_run_wall_clock_freshness(run_id, now):
+def parse_run_timestamp(run_id):
     if not isinstance(run_id, str) or RUN_ID_RE.match(run_id) is None:
         raise GateFailure(f"spl-link.json: run_id is invalid: {run_id!r}")
+    try:
+        return datetime.strptime(
+            run_id.split("-", 1)[0], "%Y%m%dT%H%M%SZ"
+        ).replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise GateFailure(f"spl-link.json: run_id is invalid: {run_id!r}") from None
+
+
+def derive_tier_b_identity(run_id):
+    parse_run_timestamp(run_id)
+    day = run_id[:8]
+    hhmmss = run_id[9:15]
+    suffix = run_id.split("-", 1)[1]
+    length = 1 + (int(suffix, 16) % 9999)
+    segment = f"{hhmmss}_{length}"
+    payload = (
+        f"solstone-gate tier-b synthetic capture payload run={run_id}\n".encode("ascii")
+    )
+    return {
+        "day": day,
+        "segment": segment,
+        "payload_sha256": hashlib.sha256(payload).hexdigest(),
+        "payload_bytes": len(payload),
+    }
+
+
+def verify_run_wall_clock_freshness(run_id, now):
     if now.tzinfo is None or now.utcoffset() is None:
         raise GateFailure("spl-link.json: verifier clock must be timezone-aware UTC")
-    run_timestamp = datetime.strptime(
-        run_id.split("-", 1)[0], "%Y%m%dT%H%M%SZ"
-    ).replace(tzinfo=timezone.utc)
+    run_timestamp = parse_run_timestamp(run_id)
     age_s = (now.astimezone(timezone.utc) - run_timestamp).total_seconds()
     if age_s > SPL_LINK_MAX_RUN_AGE_S:
         raise GateFailure("spl-link.json: run is older than 24 hours")
@@ -836,6 +924,156 @@ def verify_coordinator_cleanup(cleanup, filename):
         require_nonnegative_finite_number(item["duration_s"], f"{label}.duration_s")
 
 
+def verify_coordinator_tier_b(tier_b, filename, tier_b_identity, landing_verify_duration_s):
+    label = f"{filename}: tier_b"
+    require_exact_keys(tier_b, COORDINATOR_TIER_B_KEYS, label)
+
+    expected = tier_b["expected"]
+    expected_label = f"{label}.expected"
+    require_exact_keys(expected, COORDINATOR_TIER_B_EXPECTED_KEYS, expected_label)
+    for key in COORDINATOR_TIER_B_EXPECTED_KEYS:
+        if expected[key] != tier_b_identity[key]:
+            raise GateFailure(
+                f"{expected_label}.{key} is {expected[key]!r}, "
+                f"expected {tier_b_identity[key]!r}"
+            )
+
+    baseline = tier_b["baseline"]
+    baseline_label = f"{label}.baseline"
+    require_exact_keys(baseline, COORDINATOR_TIER_B_BASELINE_KEYS, baseline_label)
+    baseline_segments = require_bounded_integer(
+        baseline["segments_received"], f"{baseline_label}.segments_received"
+    )
+    if baseline_segments != 0:
+        raise GateFailure(
+            f"{baseline_label}.segments_received is {baseline_segments!r}, expected 0"
+        )
+    baseline_duplicates = require_bounded_integer(
+        baseline["duplicates_rejected"], f"{baseline_label}.duplicates_rejected"
+    )
+    if baseline_duplicates != 0:
+        raise GateFailure(
+            f"{baseline_label}.duplicates_rejected is {baseline_duplicates!r}, expected 0"
+        )
+    require_true(baseline["identity_absent"], f"{baseline_label}.identity_absent")
+    baseline_observed = require_iso_utc(
+        baseline["observed_at"], f"{baseline_label}.observed_at"
+    )
+
+    landing = tier_b["landing"]
+    landing_label = f"{label}.landing"
+    require_exact_keys(landing, COORDINATOR_TIER_B_LANDING_KEYS, landing_label)
+    for key in ("attempted", "digest_match", "canonical_path", "manifest_ok"):
+        require_true(landing[key], f"{landing_label}.{key}")
+    require_false(
+        landing["ingest_rejection_present"],
+        f"{landing_label}.ingest_rejection_present",
+    )
+    require_none(landing["reason"], f"{landing_label}.reason")
+
+    segments_before = require_bounded_integer(
+        landing["segments_received_before"],
+        f"{landing_label}.segments_received_before",
+    )
+    if segments_before != baseline_segments:
+        raise GateFailure(
+            f"{landing_label}.segments_received_before is {segments_before!r}, "
+            f"expected {baseline_segments!r}"
+        )
+    duplicates_before = require_bounded_integer(
+        landing["duplicates_rejected_before"],
+        f"{landing_label}.duplicates_rejected_before",
+    )
+    if duplicates_before != baseline_duplicates:
+        raise GateFailure(
+            f"{landing_label}.duplicates_rejected_before is {duplicates_before!r}, "
+            f"expected {baseline_duplicates!r}"
+        )
+
+    segments_after = require_bounded_integer(
+        landing["segments_received_after"],
+        f"{landing_label}.segments_received_after",
+    )
+    if segments_after <= segments_before:
+        raise GateFailure(f"{landing_label}.segments_received_after did not advance")
+    duplicates_after = require_bounded_integer(
+        landing["duplicates_rejected_after"],
+        f"{landing_label}.duplicates_rejected_after",
+    )
+    if duplicates_after < duplicates_before:
+        raise GateFailure(f"{landing_label}.duplicates_rejected_after regressed")
+
+    matching_artifacts = require_bounded_integer(
+        landing["matching_artifacts"], f"{landing_label}.matching_artifacts"
+    )
+    if matching_artifacts != 1:
+        raise GateFailure(
+            f"{landing_label}.matching_artifacts is {matching_artifacts!r}, expected 1"
+        )
+    if landing["last_segment"] != tier_b_identity["segment"]:
+        raise GateFailure(
+            f"{landing_label}.last_segment is {landing['last_segment']!r}, "
+            f"expected {tier_b_identity['segment']!r}"
+        )
+
+    landing_observed = require_iso_utc(
+        landing["observed_at"], f"{landing_label}.observed_at"
+    )
+    if landing_observed < baseline_observed:
+        raise GateFailure(f"{landing_label}.observed_at is before baseline observed_at")
+
+    elapsed = require_nonnegative_finite_number(
+        landing["elapsed_s"], f"{landing_label}.elapsed_s"
+    )
+    if elapsed > TIER_B_LANDING_BUDGET_S + 1.0:
+        raise GateFailure(f"{landing_label}.elapsed_s exceeds Tier B landing budget")
+    phase_elapsed = require_nonnegative_finite_number(
+        landing_verify_duration_s, f"{filename}: phases.landing_verify.duration_s"
+    )
+    if phase_elapsed > TIER_B_LANDING_BUDGET_S + 1.0:
+        raise GateFailure(
+            f"{filename}: phases.landing_verify.duration_s exceeds Tier B landing budget"
+        )
+    if abs(elapsed - phase_elapsed) > 1.0:
+        raise GateFailure(
+            f"{landing_label}.elapsed_s disagrees with phases.landing_verify.duration_s"
+        )
+
+
+def verify_spl_link_tier_b(tier_b, filename, tier_b_identity):
+    label = f"{filename}: lane.tier_b"
+    require_exact_keys(tier_b, SPL_LINK_TIER_B_KEYS, label)
+    for key in ("day", "segment", "payload_sha256"):
+        if tier_b[key] != tier_b_identity[key]:
+            raise GateFailure(
+                f"{label}.{key} is {tier_b[key]!r}, expected {tier_b_identity[key]!r}"
+            )
+    payload_bytes = require_bounded_integer(
+        tier_b["payload_bytes"], f"{label}.payload_bytes"
+    )
+    if payload_bytes != tier_b_identity["payload_bytes"]:
+        raise GateFailure(
+            f"{label}.payload_bytes is {payload_bytes!r}, "
+            f"expected {tier_b_identity['payload_bytes']!r}"
+        )
+    require_iso_utc(tier_b["created_at"], f"{label}.created_at")
+    require_bounded_integer(
+        tier_b["preexisting_completed_segments"],
+        f"{label}.preexisting_completed_segments",
+    )
+    require_true(tier_b["injected"], f"{label}.injected")
+    require_true(tier_b["probe_not_created"], f"{label}.probe_not_created")
+    upload_state = tier_b["upload_state"]
+    if upload_state is not None and (
+        not isinstance(upload_state, str)
+        or TIER_B_UPLOAD_STATE_RE.match(upload_state) is None
+    ):
+        raise GateFailure(
+            f"{label}.upload_state: expected null or bounded lowercase token, "
+            f"got {upload_state!r}"
+        )
+
+
 def verify_spl_link_checks(checks, filename):
     require_exact_keys(checks, SPL_LINK_CHECK_KEYS, f"{filename}: lane.checks")
     for key in SPL_LINK_CHECK_KEYS:
@@ -918,6 +1156,7 @@ def verify_spl_link_lane(
     expected_build,
     expected_commit,
     sol_dmg_sha256,
+    tier_b_identity,
 ):
     require_exact_keys(lane, SPL_LINK_LANE_KEYS, f"{filename}: lane")
     if lane["result"] != PASS_RESULT:
@@ -944,6 +1183,7 @@ def verify_spl_link_lane(
     require_none(lane["error_type"], f"{filename}: lane.error_type")
     require_none(lane["retry"], f"{filename}: lane.retry")
     verify_spl_link_timings(lane["timings"], filename)
+    verify_spl_link_tier_b(lane["tier_b"], filename, tier_b_identity)
 
 
 def verify_coordinator_report(
@@ -970,6 +1210,11 @@ def verify_coordinator_report(
         report["instance_id"], f"{filename}: instance_id", no_whitespace=True
     )
     verify_coordinator_phases(report["phases"], filename)
+    tier_b_identity = derive_tier_b_identity(report["run_id"])
+    landing_verify_duration_s = report["phases"]["landing_verify"]["duration_s"]
+    verify_coordinator_tier_b(
+        report["tier_b"], filename, tier_b_identity, landing_verify_duration_s
+    )
     verify_coordinator_binding(report["binding"], filename)
     verify_coordinator_pairing_timing(report["pairing_timing"], filename)
     verify_coordinator_cleanup(report["cleanup"], filename)
@@ -980,6 +1225,7 @@ def verify_coordinator_report(
         expected_build,
         expected_commit,
         sol_dmg_sha256,
+        tier_b_identity,
     )
 
 

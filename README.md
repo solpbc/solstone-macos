@@ -106,6 +106,12 @@ coordinator report, not a direct lane report, so it is intentionally outside the
 drift-gated filename block above. The profile counts are sol=8, journal=6, and
 paired=9.
 
+The coordinator report carries both Tier A SPL-link evidence and a Tier B home
+landing proof. Tier B derives a synthetic-segment identity solely from the
+`run_id`, starts from a clean disposable-home baseline, and proves that exact
+identity landed once. Tier A pairing/link evidence alone no longer authorizes a
+production publish.
+
 ```bash
 # on ja1r, from ~/extro-tools/tools/solstone-macos-gate
 GATE="python3 gate.py --checkout $HOME/projects/solstone-macos --expect-solstone <target-runtime-pin>"
@@ -174,13 +180,16 @@ What the verifier proves is narrow and deliberate: that the evidence set is
 complete for the profile, that every report is a terminal `PASS` from the pinned
 harness, that the direct lane reports describe the exact commit being published
 with the right versions and both install orders, that `spl-link.json` is recent
-enough in wall-clock time, that the AX contract scope was clean, and that the
-target journal runtime pin — plus the journal-upgrade baseline runtime pin when
-that lane is in profile — was genuinely enforced. The reports' own oracles
-remain authoritative. The freshness dimensions are separate: run age must be
-under 24 hours and not dated more than five minutes in the future, product
-commit must match `--product-commit`, and SPL-link lastSynced must strictly
-advance. This is a freshness and completeness check, so that last release's
+enough in wall-clock time, that the Tier B synthetic-segment identity is
+independently recomputed from `run_id` and lands exactly once from a clean
+baseline, that the AX contract scope was clean, and that the target journal
+runtime pin — plus the journal-upgrade baseline runtime pin when that lane is in
+profile — was genuinely enforced. The reports' own oracles remain authoritative.
+The freshness dimensions are separate: run age must be under 24 hours and not
+dated more than five minutes in the future, product commit must match
+`--product-commit`, SPL-link lastSynced must strictly advance, and Tier B must
+show the disposable home moved from zero matching evidence to exactly one landed
+artifact. This is a freshness and completeness check, so that last release's
 green JSON cannot authorize this one.
 
 One honest limit: the harness does not stamp its own revision into its reports.
