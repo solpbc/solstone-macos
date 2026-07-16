@@ -53,6 +53,105 @@ struct LegacyJournalServiceRetirerTests {
         #expect(!runner.invocations.contains { $0.arguments.first == "bootout" })
     }
 
+    @Test func launchctlThrowBlocksWithoutBootoutOrUnlink() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        try fixture.writeSameRootPlist()
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .failure("launchctl failed"))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: fixture.sameRoot)
+
+        guard case .blocked(.inspectionFailure, _) = result else {
+            Issue.record("expected inspection failure, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(!runner.invocations.contains { $0.arguments.first == "bootout" })
+    }
+
+    @Test func launchctlTimeoutBlocksWithoutBootoutOrUnlink() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        try fixture.writeSameRootPlist()
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .success(delay: .milliseconds(1)))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501,
+            commandTimeout: .milliseconds(1)
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: fixture.sameRoot)
+
+        guard case .blocked(.inspectionFailure, _) = result else {
+            Issue.record("expected inspection failure, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(!runner.invocations.contains { $0.arguments.first == "bootout" })
+    }
+
+    @Test func launchctlNonNotFoundNonzeroBlocksWithoutBootoutOrUnlink() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        try fixture.writeSameRootPlist()
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .success(stderr: Data("launchctl failed\n".utf8), exitCode: 113))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: fixture.sameRoot)
+
+        guard case .blocked(.inspectionFailure, _) = result else {
+            Issue.record("expected inspection failure, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(!runner.invocations.contains { $0.arguments.first == "bootout" })
+    }
+
+    @Test func malformedLoadedLaunchctlBlocksWithoutBootoutOrUnlink() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        try fixture.writeSameRootPlist()
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .success(stdout: Data("""
+        gui/501/org.solpbc.solstone = {
+            path = \(fixture.plistURL.path)
+            state = running
+        }
+
+        """.utf8)))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: fixture.sameRoot)
+
+        guard case .blocked(.inspectionFailure, _) = result else {
+            Issue.record("expected inspection failure, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(!runner.invocations.contains { $0.arguments.first == "bootout" })
+    }
+
     @Test func notLoadedSameRootPlistIsUnlinked() async throws {
         let fixture = try ServiceFixture()
         defer { fixture.clear() }
@@ -122,6 +221,31 @@ struct LegacyJournalServiceRetirerTests {
         #expect(!runner.invocations.contains { $0.arguments.first == "bootout" })
     }
 
+    @Test func missingRequiredPlistKeyBlocksWithoutBootoutOrUnlink() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        try fixture.writePlist(replacing: [
+            "\t<key>StandardOutPath</key>\n\t<string>/Users/jer/journal/health/service.log</string>\n": ""
+        ])
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .success(stderr: Data(notFoundLaunchctlError.utf8), exitCode: 113))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: fixture.sameRoot)
+
+        guard case .blocked(.malformed, _) = result else {
+            Issue.record("expected malformed block, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(!runner.invocations.contains { $0.arguments.first == "bootout" })
+    }
+
     @Test func labelWithoutPlistBlocksWithoutBootout() async throws {
         let fixture = try ServiceFixture()
         defer { fixture.clear() }
@@ -164,6 +288,132 @@ struct LegacyJournalServiceRetirerTests {
         }
         #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
         #expect(!runner.invocations.contains { $0.arguments.first == "bootout" })
+    }
+
+    @Test func bootoutNonzeroBlocksWithoutUnlink() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        try fixture.writeSameRootPlist()
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .success(stdout: Data(loadedLaunchctlOutput(plistPath: fixture.plistURL.path).utf8)))
+        runner.enqueue("bootout", .success(stderr: Data("bootout failed\n".utf8), exitCode: 5))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: fixture.sameRoot)
+
+        guard case .blocked(.inspectionFailure, _) = result else {
+            Issue.record("expected inspection failure, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(runner.invocations.map(\.arguments.first) == ["print", "bootout"])
+    }
+
+    @Test func bootoutTimeoutBlocksWithoutUnlink() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        try fixture.writeSameRootPlist()
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .success(stdout: Data(loadedLaunchctlOutput(plistPath: fixture.plistURL.path).utf8)))
+        runner.enqueue("bootout", .success(delay: .milliseconds(1)))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501,
+            commandTimeout: .milliseconds(1)
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: fixture.sameRoot)
+
+        guard case .blocked(.inspectionFailure, _) = result else {
+            Issue.record("expected inspection failure, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(runner.invocations.map(\.arguments.first) == ["print", "bootout"])
+    }
+
+    @Test func absencePollTimeoutBlocksWithoutUnlink() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        try fixture.writeSameRootPlist()
+        let runner = FakeSubprocessRunner()
+        let loaded = Data(loadedLaunchctlOutput(plistPath: fixture.plistURL.path).utf8)
+        runner.enqueue("print", .success(stdout: loaded))
+        runner.enqueue("bootout", .success())
+        runner.enqueue("print", .success(stdout: loaded))
+        runner.enqueue("print", .success(stdout: loaded))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501,
+            absenceTimeout: .milliseconds(1),
+            absencePollInterval: .milliseconds(1)
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: fixture.sameRoot)
+
+        guard case .blocked(.inspectionFailure, _) = result else {
+            Issue.record("expected inspection failure, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(runner.invocations.map(\.arguments.first) == ["print", "bootout", "print", "print"])
+    }
+
+    @Test func unlinkFailureBlocksAfterProofWithoutRemovingPlist() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        try fixture.writeSameRootPlist()
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .success(stderr: Data(notFoundLaunchctlError.utf8), exitCode: 113))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501,
+            fileManager: RemovalFailingLegacyFileManager(failingName: fixture.plistURL.lastPathComponent)
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: fixture.sameRoot)
+
+        guard case .blocked(.inspectionFailure, _) = result else {
+            Issue.record("expected inspection failure, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(!runner.invocations.contains { $0.arguments.first == "bootout" })
+    }
+
+    @Test func cancellationDuringBootoutBlocksWithoutUnlink() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        try fixture.writeSameRootPlist()
+        let runner = BootoutCancellingLegacyRunner(
+            loadedOutput: Data(loadedLaunchctlOutput(plistPath: fixture.plistURL.path).utf8)
+        )
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: fixture.sameRoot)
+
+        guard case .blocked(.inspectionFailure, _) = result else {
+            Issue.record("expected inspection failure, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(runner.invocations.map(\.arguments.first) == ["print", "bootout"])
     }
 }
 
@@ -235,4 +485,61 @@ private final class NoopLegacyClock: MonotonicClock, @unchecked Sendable {
     func sleep(for duration: Duration) async {
         lock.withLock { value += duration }
     }
+}
+
+private final class RemovalFailingLegacyFileManager: FileManager {
+    private let failingName: String
+
+    init(failingName: String) {
+        self.failingName = failingName
+        super.init()
+    }
+
+    override func removeItem(at url: URL) throws {
+        if url.lastPathComponent == failingName {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        try super.removeItem(at: url)
+    }
+}
+
+private final class BootoutCancellingLegacyRunner: SubprocessRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private let loadedOutput: Data
+    private var recordedInvocations: [SubprocessInvocation] = []
+
+    var invocations: [SubprocessInvocation] {
+        lock.withLock { recordedInvocations }
+    }
+
+    init(loadedOutput: Data) {
+        self.loadedOutput = loadedOutput
+    }
+
+    func run(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String]?,
+        timeout: Duration?,
+        stdoutHandler: @escaping @Sendable (Data) -> Void,
+        stderrHandler: @escaping @Sendable (Data) -> Void
+    ) async throws -> SubprocessResult {
+        lock.withLock {
+            recordedInvocations.append(SubprocessInvocation(
+                executable: executable,
+                arguments: arguments,
+                environment: environment,
+                timeout: timeout
+            ))
+        }
+        if arguments.first == "bootout" {
+            throw CancellationError()
+        }
+        if arguments.first == "print" {
+            stdoutHandler(loadedOutput)
+        }
+        return SubprocessResult(exitCode: 0, terminationReason: .exit)
+    }
+
+    func cancelAll() {}
 }

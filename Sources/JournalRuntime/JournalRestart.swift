@@ -117,7 +117,8 @@ public func moveAsideStaleStateFiles(
 public struct JournalRestartRunner: @unchecked Sendable {
     private let runner: SubprocessRunning
     private let journalPathProvider: @Sendable (URL) async -> String?
-    private let terminate: @Sendable (pid_t) -> Void
+    private let terminate: @Sendable (pid_t, Int32) -> Int32
+    private let pidExists: @Sendable (pid_t) -> Bool
     private let evidenceReader: any JournalProcessEvidenceReading
     private let fileManager: FileManager
     private let reprobe: @Sendable () async -> JournalRuntimeProbeOutcome
@@ -127,8 +128,14 @@ public struct JournalRestartRunner: @unchecked Sendable {
     public init(
         runner: SubprocessRunning = SubprocessRunner(),
         journalPathProvider: (@Sendable (URL) async -> String?)? = nil,
-        terminate: @escaping @Sendable (pid_t) -> Void = { pid in
-            _ = Darwin.kill(pid, SIGTERM)
+        terminate: @escaping @Sendable (pid_t, Int32) -> Int32 = { pid, signal in
+            Darwin.kill(pid, signal)
+        },
+        pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
+            if Darwin.kill(pid, 0) == 0 {
+                return true
+            }
+            return errno == EPERM
         },
         evidenceReader: any JournalProcessEvidenceReading = LiveJournalProcessEvidenceReader(),
         fileManager: FileManager = .default,
@@ -141,6 +148,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
             await Self.defaultJournalPathProvider(journalBinary: journalBinary, runner: runner)
         }
         self.terminate = terminate
+        self.pidExists = pidExists
         self.evidenceReader = evidenceReader
         self.fileManager = fileManager
         self.reprobe = reprobe
@@ -287,11 +295,8 @@ public struct JournalRestartRunner: @unchecked Sendable {
             journalRoot: journalRoot,
             runner: runner,
             evidenceReader: evidenceReader,
-            pidExists: { _ in false },
-            terminate: { pid, _ in
-                terminate(pid)
-                return 0
-            },
+            pidExists: pidExists,
+            terminate: terminate,
             gracePeriod: .zero,
             clock: SystemMonotonicClock()
         )

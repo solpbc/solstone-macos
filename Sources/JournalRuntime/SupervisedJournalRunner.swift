@@ -309,7 +309,6 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
             arguments: ["start", "--app-supervised", String(port)],
             environment: runtime.layout.uvEnvironment()
         )
-        let child = processSpawner.makeChildProcess(for: spawnRequest)
         switch await gate.prepareForSpawn(journalRoot: canonicalJournalRoot) {
         case .success:
             Logger.journal.notice("journal-lifecycle: runner-gate-open")
@@ -317,6 +316,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
             throw SupervisedJournalRunnerError.gateBlocked(blockage)
         }
 
+        let child = processSpawner.makeChildProcess(for: spawnRequest)
         launchGeneration += 1
         let generation = launchGeneration
         child.setTerminationHandler { [weak self] status, pid in

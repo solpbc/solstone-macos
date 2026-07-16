@@ -82,7 +82,14 @@ public struct JournalReadinessGate: JournalReadinessChecking {
               recordedPID == identity.pid else {
             return false
         }
-        return abs(recordedStartTime - identity.kernelStartTime) <= startTimeToleranceSeconds
+        guard abs(recordedStartTime - identity.kernelStartTime) <= startTimeToleranceSeconds else {
+            return false
+        }
+        // Python's _valid_marker() parses payload start_time but does not bind
+        // it. signal_ready() writes this value from supervisor.start_time, so a
+        // fresh marker matches; this stricter check only rejects stale markers
+        // for a recycled PID.
+        return abs(marker.startTime - identity.kernelStartTime) <= startTimeToleranceSeconds
     }
 
     private struct ReadyMarker: Decodable {

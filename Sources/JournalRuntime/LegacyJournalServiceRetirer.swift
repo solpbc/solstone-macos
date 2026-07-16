@@ -204,7 +204,11 @@ public struct LegacyJournalServiceRetirer: LegacyJournalServiceRetiring, @unchec
         }
 
         if result.exitCode == 0 {
-            return .loaded(parseLaunchdJob(output.stdoutString()))
+            let job = parseLaunchdJob(output.stdoutString())
+            guard job.hasRequiredFields else {
+                return .failed
+            }
+            return .loaded(job)
         }
         if isNotLoaded(stderr: output.stderrString()) {
             return .notLoaded
@@ -215,7 +219,7 @@ public struct LegacyJournalServiceRetirer: LegacyJournalServiceRetiring, @unchec
     private func bootoutAndWaitAbsent() async -> Bool {
         let output = LockedLegacyServiceOutput()
         do {
-            _ = try await runner.run(
+            let result = try await runner.run(
                 executable: launchctlURL,
                 arguments: ["bootout", serviceDomain],
                 environment: nil,
@@ -223,6 +227,9 @@ public struct LegacyJournalServiceRetirer: LegacyJournalServiceRetiring, @unchec
                 stdoutHandler: { data in output.appendStdout(data) },
                 stderrHandler: { data in output.appendStderr(data) }
             )
+            guard result.exitCode == 0 else {
+                return false
+            }
         } catch {
             return false
         }
@@ -321,7 +328,7 @@ private enum RootMatch {
 
 private extension LegacyJournalServiceRetirer.ServicePlist {
     var hasLegacyJournalShape: Bool {
-        label == "org.solpbc.solstone"
+        label == LegacyJournalServiceRetirer.label
             && programArguments.count >= 3
             && URL(fileURLWithPath: programArguments[0]).lastPathComponent == "journal"
             && programArguments[1] == "start"
@@ -342,17 +349,27 @@ private extension LegacyJournalServiceRetirer.ServicePlist {
 }
 
 private extension LegacyJournalServiceRetirer.LaunchdJob {
+    var hasRequiredFields: Bool {
+        path?.isEmpty == false
+            && program?.isEmpty == false
+            && !arguments.isEmpty
+            && state?.isEmpty == false
+            && pid != nil
+    }
+
     func agrees(with plist: LegacyJournalServiceRetirer.ServicePlist, plistURL: URL) -> Bool {
-        if let path, canonicalPath(URL(fileURLWithPath: path)) != canonicalPath(plistURL) {
+        guard let path,
+              let program,
+              !arguments.isEmpty else {
             return false
         }
-        if let program, canonicalPath(URL(fileURLWithPath: program)) != canonicalPath(URL(fileURLWithPath: plist.programArguments[0])) {
+        if canonicalPath(URL(fileURLWithPath: path)) != canonicalPath(plistURL) {
             return false
         }
-        if !arguments.isEmpty, arguments != plist.programArguments {
+        if canonicalPath(URL(fileURLWithPath: program)) != canonicalPath(URL(fileURLWithPath: plist.programArguments[0])) {
             return false
         }
-        return true
+        return arguments == plist.programArguments
     }
 }
 

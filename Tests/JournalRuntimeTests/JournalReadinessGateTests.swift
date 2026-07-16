@@ -96,6 +96,35 @@ struct JournalReadinessGateTests {
         #expect(diagnostic.timedOut)
     }
 
+    @Test func staleReadyMarkerStartTimeIsNotReadyForRecycledPID() async throws {
+        let runtime = try makeRuntime()
+        defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
+        try writeMarkerFiles(
+            root: runtime.layout.rootURL,
+            pid: 4242,
+            startTime: 1_000.0,
+            supervisorStartTime: 2_000.0
+        )
+        let clock = AdvancingReadinessClock()
+        let gate = JournalReadinessGate(clock: clock, pollInterval: .milliseconds(1))
+
+        let result = await gate.waitUntilReady(
+            journalRoot: runtime.layout.rootURL,
+            runtime: runtime,
+            timeout: .milliseconds(3),
+            terminalCheck: { nil },
+            identityProvider: {
+                SupervisedChildIdentity(pid: 4242, kernelStartTime: 2_000.0, generation: 1)
+            }
+        )
+
+        guard case .failed(let diagnostic) = result else {
+            Issue.record("expected readiness timeout, got \(result)")
+            return
+        }
+        #expect(diagnostic.timedOut)
+    }
+
     @Test func missingOrPartialMarkersAreNotReadyByDefault() async throws {
         let runtime = try makeRuntime()
         defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
@@ -176,6 +205,7 @@ private func writeMarkerFiles(
     root: URL,
     pid: pid_t,
     startTime: Double,
+    supervisorStartTime: Double? = nil,
     suffix: String = ""
 ) throws {
     let health = root.appendingPathComponent("health", isDirectory: true)
@@ -184,7 +214,7 @@ private func writeMarkerFiles(
         .write(to: health.appendingPathComponent("supervisor.ready\(suffix)"))
     try Data("\(pid)\n".utf8)
         .write(to: health.appendingPathComponent("supervisor.pid\(suffix)"))
-    try Data("\(startTime)\n".utf8)
+    try Data("\(supervisorStartTime ?? startTime)\n".utf8)
         .write(to: health.appendingPathComponent("supervisor.start_time\(suffix)"))
 }
 
