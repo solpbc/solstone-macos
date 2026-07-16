@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - sol now finds its way back to your journal on its own after your network changes, like moving between Wi-Fi and ethernet or a VPN going up or down. previously sol's private-link connection could look connected while nothing new actually reached your journal, and only restarting sol would fix it. sol was still taking in your day alongside you the whole time, so this was easy to miss.
 - after re-checking your journal link, sol keeps its ongoing health check running; before, that check could stop for good, so a private link that quietly went unhealthy might not be noticed or recover until sol was restarted.
 - when sol runs from anywhere outside Applications, it now says so honestly and offers to move itself there, so macOS can remember its screen recording permission.
+- sol now notices when your journal already holds part of your day and stops sending it again. before, sol could quietly keep re-sending things your journal had already received, using bandwidth and energy it did not need to. nothing was lost, and sol still keeps its own copy until your journal confirms it has one.
 
 ## [1.4.6] - 2026-07-11
 
