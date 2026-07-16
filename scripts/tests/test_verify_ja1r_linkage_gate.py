@@ -3,7 +3,7 @@
 FIXTURE HONESTY: the reports built here are SCHEMA-DERIVED, not captured. No
 real PASS report exists in the harness repo or anywhere on disk, so these are
 constructed from the pinned harness's own report emitters -- extro-tools
-071680bd, tools/solstone-macos-gate/gate.py: new_report() (direct-lane shape,
+8bc4ab50, tools/solstone-macos-gate/gate.py: new_report() (direct-lane shape,
 schema_version, lane, result), the per-lane scenario fields it sets, the
 provenance block it fills, oracles() -> rep["post"] (the observed
 journal_version), _run_linked_upgrade_lane() / establish_linked_baseline()
@@ -219,7 +219,7 @@ def spl_link_lane_subset(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
 
 
 def spl_link_report(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA, run_id=RUN_ID):
-    # Schema-derived from extro-tools 071680bd, not captured live evidence.
+    # Schema-derived from extro-tools 8bc4ab50, not captured live evidence.
     return {
         "result": "PASS",
         "run_id": run_id,
@@ -262,7 +262,7 @@ def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
             post={"journal_version": OBSERVED_RUNTIME},
         )
     if filename in ("fresh-acquire.json", "discovered-adopt.json"):
-        # Derived from gate.py at 071680bd: new_report() scenario fields for the
+        # Derived from gate.py at 8bc4ab50: new_report() scenario fields for the
         # acquire-driven lanes. Like fresh, they run the oracles + pin check but
         # store the fingerprint under linked_finish, never top-level `post` --
         # the pin is proved by the check alone.
@@ -302,7 +302,7 @@ def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
             post={"journal_version": OBSERVED_RUNTIME},
         )
     if filename == "journal-upgrade.json":
-        # Derived from gate.py at 071680bd: new_report(),
+        # Derived from gate.py at 8bc4ab50: new_report(),
         # _run_linked_upgrade_lane(), and establish_linked_baseline().
         return base_report(
             "journal-upgrade",
