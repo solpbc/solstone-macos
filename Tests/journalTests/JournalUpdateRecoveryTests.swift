@@ -60,24 +60,18 @@ private actor RecoveryRunner: SupervisedChildRunning {
     private var terminations = 0
     private var runtimeKey: String?
     private var journalRoot: URL?
-    private var generation: UInt64 = 0
 
     var startCalls: Int { starts }
     var stopForTerminationCalls: Int { terminations }
     var runningJournalRoot: URL? { journalRoot }
 
-    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws -> JournalChildIdentity {
+    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
         starts += 1
-        generation += 1
         runtimeKey = runtime.key
         self.journalRoot = journalRoot.standardizedFileURL
-        return JournalChildIdentity(pid: 6242, startTime: 300, generation: generation)
     }
 
-    func restart() async throws -> JournalChildIdentity {
-        generation += 1
-        return JournalChildIdentity(pid: 6243, startTime: 301, generation: generation)
-    }
+    func restart() async throws {}
 
     func stop() async {
         runtimeKey = nil
@@ -102,13 +96,7 @@ private actor RecoveryRunner: SupervisedChildRunning {
         nil
     }
 
-    func isCurrentGeneration(_ generation: UInt64) async -> Bool {
-        self.generation == generation
-    }
-
-    func markReady(_ identity: JournalChildIdentity) async -> Bool {
-        self.generation == identity.generation
-    }
+    func markReady() async {}
 }
 
 private struct RecoveryFixture {

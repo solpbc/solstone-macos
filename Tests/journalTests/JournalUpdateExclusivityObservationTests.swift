@@ -99,18 +99,12 @@ private final class PausingRuntimeMaterializer: RuntimeMaterializing, @unchecked
 
 private actor ObservationRunner: SupervisedChildRunning {
     private var runtimeKey: String?
-    private var generation: UInt64 = 0
 
-    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws -> JournalChildIdentity {
-        generation += 1
+    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
         runtimeKey = runtime.key
-        return JournalChildIdentity(pid: 5242, startTime: 200, generation: generation)
     }
 
-    func restart() async throws -> JournalChildIdentity {
-        generation += 1
-        return JournalChildIdentity(pid: 5243, startTime: 201, generation: generation)
-    }
+    func restart() async throws {}
 
     func stop() async {
         runtimeKey = nil
@@ -132,13 +126,7 @@ private actor ObservationRunner: SupervisedChildRunning {
         nil
     }
 
-    func isCurrentGeneration(_ generation: UInt64) async -> Bool {
-        self.generation == generation
-    }
-
-    func markReady(_ identity: JournalChildIdentity) async -> Bool {
-        self.generation == identity.generation
-    }
+    func markReady() async {}
 }
 
 @MainActor
