@@ -5,6 +5,19 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.9] - 2026-07-17
+
+### Changed
+
+- when the journal app finds a background journal service, it now shuts that service down and removes it, but only once it can prove the service is running the same journal the app was set up for. if the service points at a different journal, or the journal app can't tell, it stops and tells you what it found instead of taking over: nothing is uninstalled, stopped, or started while that's unclear. running a journal from the command line, with no journal app, works as it did before.
+- updated the bundled journal runtime to 0.8.9.
+
+### Fixed
+
+- once the journal app adopts your journal, it's the only thing running it. before, a background journal service could be running that same journal at the same time, and the two competed for the same files and the same port, so your journal could look healthy while behaving oddly. if you ran into that, this resolves it.
+- the journal app now calls your journal ready only when the journal it started is the one answering. before, it trusted whatever answered on the port, which could be a different copy entirely.
+- if you have your own `sol` or `journal` command, setup no longer replaces it with its own version. your command keeps working across app updates: the journal app refreshes only the commands it created, and leaves anything else exactly as it found it.
+
 ## [1.0.8] - 2026-07-16
 
 ### Added
