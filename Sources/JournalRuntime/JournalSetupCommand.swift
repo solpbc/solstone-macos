@@ -10,6 +10,7 @@ enum JournalSetupCommand {
             "--jsonl",
             "--yes",
             "--skip-models",
+            "--skip-wrapper",
             "--accept-existing-journal",
             "--journal",
             journalURL.path,

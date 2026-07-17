@@ -9,7 +9,7 @@ import Testing
 
 @Suite("JournalSetupRunnerTests")
 struct JournalSetupRunnerTests {
-    @Test func setupUsesExactSharedArgumentsIncludingSkipService() async throws {
+    @Test func setupUsesExactSharedArgumentsIncludingSkipWrapper() async throws {
         let runtime = try makeRuntime()
         defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
         let subprocess = FakeSubprocessRunner()
@@ -31,6 +31,7 @@ struct JournalSetupRunnerTests {
             "--jsonl",
             "--yes",
             "--skip-models",
+            "--skip-wrapper",
             "--accept-existing-journal",
             "--journal",
             journalRoot.standardizedFileURL.path,
@@ -42,6 +43,7 @@ struct JournalSetupRunnerTests {
             "--jsonl",
             "--yes",
             "--skip-models",
+            "--skip-wrapper",
             "--accept-existing-journal",
             "--journal",
             journalRoot.path,
