@@ -33,13 +33,13 @@ public enum SolOwnership: Equatable {
 
         // The app-owned-child wrapper is the authoritative pointer to the active content-addressed runtime.
         if let appOwned = candidates.first(where: {
-            $0.provenance == .appOwnedChild && isUnderRoot($0.resolved, root: runtimeRoot)
+            $0.provenance == .appOwnedChild && ManagedWrapper.isUnderRoot($0.resolved, root: runtimeRoot)
         }) {
             return .appManaged(solPath: appOwned.path)
         }
 
-        let runtime = candidates.first { isUnderRoot($0.resolved, root: runtimeRoot) }
-        let external = candidates.first { !isUnderRoot($0.resolved, root: runtimeRoot) }
+        let runtime = candidates.first { ManagedWrapper.isUnderRoot($0.resolved, root: runtimeRoot) }
+        let external = candidates.first { !ManagedWrapper.isUnderRoot($0.resolved, root: runtimeRoot) }
 
         if let external, (runtime == nil || hasLocalJournalCreds) {
             return .externallyManaged(solPath: external.path)
@@ -51,11 +51,6 @@ public enum SolOwnership: Equatable {
             return .externallyManaged(solPath: external.path)
         }
         return .absent
-    }
-
-    public static func isUnderRoot(_ resolved: String, root: String) -> Bool {
-        let normalizedRoot = normalizeRoot(root)
-        return resolved == normalizedRoot || resolved.hasPrefix(normalizedRoot + "/")
     }
 
     public static func defaultResolver(
@@ -146,29 +141,23 @@ public enum SolOwnership: Equatable {
 
     private static func parseManagedWrapper(forFileAt path: String) -> (provenance: Provenance, target: String?) {
         guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else { return (.bare, nil) }
-        let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
+        let lines = ManagedWrapper.scriptLines(contents)
 
         let provenance: Provenance
-        if lines.contains(where: { line in
-            let trimmedLeading = line.drop(while: { $0.isWhitespace })
-            return trimmedLeading == ManagedWrapper.appOwnedChildMarker
-        }) {
+        if ManagedWrapper.containsAppOwnedChildMarker(in: lines) {
             provenance = .appOwnedChild
         } else {
             provenance = .bare
         }
 
         // Precedence: a literal `exec '...' "$@"` target is authoritative.
-        if let literalTarget = lines.lazy.compactMap({ ManagedWrapper.execTarget(fromLine: String($0)) }).first {
+        if let literalTarget = ManagedWrapper.literalExecTarget(in: lines) {
             return (provenance, literalTarget)
         }
 
         // Otherwise, if the exec line dereferences $SOL_BIN, honor the last
         // uncommented single-quoted SOL_BIN assignment (shell last-assignment wins).
-        if lines.contains(where: { ManagedWrapper.execDereferencesSolBin(String($0)) }) {
-            let target = lines.reversed().lazy
-                .compactMap { ManagedWrapper.solBinAssignment(fromLine: String($0)) }
-                .first
+        if let target = ManagedWrapper.solBinDereferencedTarget(in: lines) {
             return (provenance, target)
         }
 
@@ -182,14 +171,6 @@ public enum SolOwnership: Equatable {
             .path
     }
 
-    private static func normalizeRoot(_ root: String) -> String {
-        guard root != "/" else { return root }
-        var normalized = root
-        while normalized.hasSuffix("/") {
-            normalized.removeLast()
-        }
-        return normalized
-    }
 }
 
 private final class LockedSolOwnershipOutput: @unchecked Sendable {

@@ -57,7 +57,7 @@ struct SolOwnershipTests {
     }
 
     @Test func prefixRuleRejectsSubstringRuntimeRoot() {
-        #expect(!SolOwnership.isUnderRoot("/tmp/runtime-x/bin/sol", root: "/tmp/runtime"))
+        #expect(!ManagedWrapper.isUnderRoot("/tmp/runtime-x/bin/sol", root: "/tmp/runtime"))
         #expect(SolOwnership.classify(
             candidates: [(path: "/tmp/runtime-x/bin/sol", resolved: "/tmp/runtime-x/bin/sol", provenance: SolOwnership.Provenance.bare)],
             runtimeRoot: "/tmp/runtime",

@@ -21,6 +21,29 @@ public protocol RuntimeMaterializing: Sendable {
     func materialize(excludingLiveKey liveKey: String?) async throws -> MaterializedRuntime
 }
 
+internal enum RuntimeAliasDecision: String, Equatable, Sendable {
+    case absent
+    case appOwned
+    case external
+}
+
+internal enum RuntimeAliasOutcome: String, Equatable, Sendable {
+    case created
+    case refreshed
+    case repaired
+    case current
+    case skipped
+    case error
+}
+
+internal struct RuntimeAliasLogEvent: Equatable, Sendable {
+    let alias: String
+    let decision: RuntimeAliasDecision
+    let outcome: RuntimeAliasOutcome
+    let reason: ManagedWrapper.AliasReason?
+    let detail: String?
+}
+
 public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendable {
     private let runtimeRootURL: URL
     private let uvBinaryURL: URL
@@ -31,8 +54,9 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
     private let fileManager: FileManager
     private let installTimeout: Duration
     private let verifyTimeout: Duration
+    private let aliasLogSink: (@Sendable (RuntimeAliasLogEvent) -> Void)?
 
-    public init(
+    public convenience init(
         runtimeRootURL: URL = SolstoneRuntimeLayout.defaultRootURL,
         uvBinaryURL: URL = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/uv"),
         bundledPythonURL: URL = SolstoneRuntimeLayout.bundledPythonURL(),
@@ -43,6 +67,32 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         runner: SubprocessRunning = SubprocessRunner(),
         fileManager: FileManager = .default
     ) {
+        self.init(
+            runtimeRootURL: runtimeRootURL,
+            uvBinaryURL: uvBinaryURL,
+            bundledPythonURL: bundledPythonURL,
+            wheelhouseURL: wheelhouseURL,
+            wrapperDirURL: wrapperDirURL,
+            installTimeout: installTimeout,
+            verifyTimeout: verifyTimeout,
+            runner: runner,
+            fileManager: fileManager,
+            aliasLogSink: nil
+        )
+    }
+
+    internal init(
+        runtimeRootURL: URL = SolstoneRuntimeLayout.defaultRootURL,
+        uvBinaryURL: URL = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/uv"),
+        bundledPythonURL: URL = SolstoneRuntimeLayout.bundledPythonURL(),
+        wheelhouseURL: URL = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/wheelhouse", isDirectory: true),
+        wrapperDirURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin", isDirectory: true),
+        installTimeout: Duration = .seconds(180),
+        verifyTimeout: Duration = .seconds(120),
+        runner: SubprocessRunning = SubprocessRunner(),
+        fileManager: FileManager = .default,
+        aliasLogSink: (@Sendable (RuntimeAliasLogEvent) -> Void)?
+    ) {
         self.runtimeRootURL = runtimeRootURL
         self.uvBinaryURL = uvBinaryURL
         self.bundledPythonURL = bundledPythonURL
@@ -52,6 +102,7 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         self.fileManager = fileManager
         self.installTimeout = installTimeout
         self.verifyTimeout = verifyTimeout
+        self.aliasLogSink = aliasLogSink
     }
 
     public func materialize(excludingLiveKey liveKey: String?) async throws -> MaterializedRuntime {
@@ -59,8 +110,8 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         let finalURL = runtimeRootURL.appendingPathComponent(key, isDirectory: true)
         let finalLayout = SolstoneRuntimeLayout(rootURL: finalURL)
         if try await verify(layout: finalLayout) == nil {
-            try rewriteAliases(layout: finalLayout)
-            garbageCollect(keeping: key, liveKey: liveKey)
+            let aliasRewrite = rewriteAliases(layout: finalLayout)
+            garbageCollect(keeping: key, liveKey: liveKey, aliasRewrite: aliasRewrite)
             return MaterializedRuntime(key: key, layout: finalLayout)
         }
 
@@ -84,8 +135,8 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
             }
             didRenameToFinal = true
             try await assertRelocationSafe(layout: finalLayout)
-            try rewriteAliases(layout: finalLayout)
-            garbageCollect(keeping: key, liveKey: liveKey)
+            let aliasRewrite = rewriteAliases(layout: finalLayout)
+            garbageCollect(keeping: key, liveKey: liveKey, aliasRewrite: aliasRewrite)
             return MaterializedRuntime(key: key, layout: finalLayout)
         } catch {
             try? fileManager.removeItem(at: tempURL)
@@ -478,7 +529,7 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         if containsStagingSegment(in: path) {
             throw RuntimeMaterializerError.verificationFailed("\(what) references staging dir: \(path)")
         }
-        guard path == rootPath || path.hasPrefix(rootPath + "/") else {
+        guard ManagedWrapper.isUnderRoot(path, root: rootPath) else {
             throw RuntimeMaterializerError.verificationFailed("\(what) escapes runtime root: \(path)")
         }
     }
@@ -529,28 +580,339 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 
-    private func rewriteAliases(layout: SolstoneRuntimeLayout) throws {
-        try fileManager.createDirectory(at: wrapperDirURL, withIntermediateDirectories: true)
-        try writeWrapper(named: "sol", target: layout.solBinary)
-        try writeWrapper(named: "journal", target: layout.journalBinary)
+    private struct AliasRewriteResult {
+        var pinnedGenerationKeys: Set<String> = []
+        var skipGenerationGC = false
+
+        mutating func absorb(_ reference: ManagedWrapper.AliasReference) {
+            switch reference {
+            case .determinate(let keys):
+                pinnedGenerationKeys.formUnion(keys)
+            case .indeterminate:
+                skipGenerationGC = true
+            }
+        }
     }
 
-    private func writeWrapper(named name: String, target: URL) throws {
-        let wrapper = wrapperDirURL.appendingPathComponent(name)
-        let script = ManagedWrapper.script(forTarget: target.path)
-        try Data((script + "\n").utf8).write(to: wrapper, options: .atomic)
-        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+    private func rewriteAliases(layout: SolstoneRuntimeLayout) -> AliasRewriteResult {
+        let runtimeRootPaths = runtimeRootPathSpellings()
+        let aliases = [
+            (name: "sol", target: layout.solBinary),
+            (name: "journal", target: layout.journalBinary)
+        ]
+
+        let wrapperDir: URL
+        do {
+            wrapperDir = try resolvedWrapperDirectory()
+        } catch {
+            let result = AliasRewriteResult(skipGenerationGC: true)
+            for alias in aliases {
+                emitAlias(
+                    alias: alias.name,
+                    decision: .external,
+                    outcome: .skipped,
+                    reason: .wrapperDirectoryError,
+                    detail: error.localizedDescription
+                )
+            }
+            return result
+        }
+
+        var result = AliasRewriteResult()
+        for alias in aliases {
+            let aliasResult = rewriteAlias(
+                named: alias.name,
+                target: alias.target,
+                wrapperDir: wrapperDir,
+                runtimeRootPaths: runtimeRootPaths
+            )
+            result.pinnedGenerationKeys.formUnion(aliasResult.pinnedGenerationKeys)
+            result.skipGenerationGC = result.skipGenerationGC || aliasResult.skipGenerationGC
+        }
+        return result
     }
 
-    private func garbageCollect(keeping key: String, liveKey: String?) {
-        Self.sweepRuntimeGenerations(in: runtimeRootURL, currentKey: key, liveKey: liveKey, fileManager: fileManager)
+    private func rewriteAlias(
+        named name: String,
+        target: URL,
+        wrapperDir: URL,
+        runtimeRootPaths: [String]
+    ) -> AliasRewriteResult {
+        let wrapper = wrapperDir.appendingPathComponent(name)
+        let decision = classifyAliasLeaf(at: wrapper, runtimeRootPaths: runtimeRootPaths)
+        var result = AliasRewriteResult()
+
+        switch decision {
+        case .absent:
+            if let failure = replaceAliasLeaf(at: wrapper, target: target) {
+                emitAlias(alias: name, decision: .absent, outcome: .error, reason: failure.reason, detail: failure.detail)
+            } else {
+                emitAlias(alias: name, decision: .absent, outcome: .created, reason: nil, detail: "target=\(target.path)")
+            }
+
+        case .appOwned(let oldTarget, let mode):
+            let isCurrent = oldTarget == target.path && mode == 0o755
+            if isCurrent {
+                emitAlias(alias: name, decision: .appOwned, outcome: .current, reason: nil, detail: "target=\(target.path)")
+                return result
+            }
+
+            if let failure = replaceAliasLeaf(at: wrapper, target: target) {
+                let pinned = referencedGenerationKeys(in: oldTarget, runtimeRootPaths: runtimeRootPaths)
+                result.pinnedGenerationKeys.formUnion(pinned)
+                emitAlias(alias: name, decision: .appOwned, outcome: .error, reason: failure.reason, detail: failure.detail)
+            } else {
+                let outcome: RuntimeAliasOutcome = oldTarget == target.path ? .repaired : .refreshed
+                emitAlias(alias: name, decision: .appOwned, outcome: outcome, reason: nil, detail: "target=\(target.path)")
+            }
+
+        case .external(let reason, let reference):
+            result.absorb(reference)
+            emitAlias(alias: name, decision: .external, outcome: .skipped, reason: reason, detail: nil)
+        }
+
+        return result
+    }
+
+    private func classifyAliasLeaf(at url: URL, runtimeRootPaths: [String]) -> ManagedWrapper.AliasLeafDecision {
+        var metadata = stat()
+        if Darwin.lstat(url.path, &metadata) != 0 {
+            if errno == ENOENT {
+                return .absent
+            }
+            return .external(reason: .metadataError, reference: .indeterminate(reason: .metadataError))
+        }
+
+        switch metadata.st_mode & S_IFMT {
+        case S_IFREG:
+            let mode = Int(metadata.st_mode & 0o7777)
+            let data: Data
+            do {
+                data = try Data(contentsOf: url)
+            } catch {
+                return .external(reason: .readError, reference: .indeterminate(reason: .readError))
+            }
+            guard let text = String(data: data, encoding: .utf8) else {
+                return .external(reason: .decodeError, reference: .indeterminate(reason: .decodeError))
+            }
+
+            if let target = ManagedWrapper.canonicalTarget(fromExactScriptData: data) {
+                if runtimeRootPaths.contains(where: { ManagedWrapper.isUnderRoot(target, root: $0) }) {
+                    return .appOwned(target: target, mode: mode)
+                }
+                return .external(
+                    reason: .targetOutsideRoot,
+                    reference: .determinate(pinnedGenerationKeys: referencedGenerationKeys(in: text, runtimeRootPaths: runtimeRootPaths))
+                )
+            }
+
+            let lines = ManagedWrapper.scriptLines(text)
+            let reason: ManagedWrapper.AliasReason = ManagedWrapper.containsAppOwnedChildMarker(in: lines)
+                ? .noncanonicalBody
+                : .unmarked
+            return .external(
+                reason: reason,
+                reference: .determinate(pinnedGenerationKeys: referencedGenerationKeys(in: text, runtimeRootPaths: runtimeRootPaths))
+            )
+
+        case S_IFLNK:
+            do {
+                let destination = try fileManager.destinationOfSymbolicLink(atPath: url.path)
+                return .external(
+                    reason: .symlink,
+                    reference: .determinate(
+                        pinnedGenerationKeys: referencedGenerationKeys(
+                            inSymlinkDestination: destination,
+                            leaf: url,
+                            runtimeRootPaths: runtimeRootPaths
+                        )
+                    )
+                )
+            } catch {
+                return .external(reason: .readlinkError, reference: .indeterminate(reason: .readlinkError))
+            }
+
+        default:
+            return .external(reason: .notRegularFile, reference: .indeterminate(reason: .notRegularFile))
+        }
+    }
+
+    private func resolvedWrapperDirectory() throws -> URL {
+        var metadata = stat()
+        if Darwin.lstat(wrapperDirURL.path, &metadata) != 0 {
+            if errno != ENOENT {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            try fileManager.createDirectory(at: wrapperDirURL, withIntermediateDirectories: true)
+            return wrapperDirURL.resolvingSymlinksInPath().standardizedFileURL
+        }
+
+        switch metadata.st_mode & S_IFMT {
+        case S_IFDIR:
+            return wrapperDirURL.standardizedFileURL
+        case S_IFLNK:
+            let resolved = wrapperDirURL.resolvingSymlinksInPath().standardizedFileURL
+            var isDirectory = ObjCBool(false)
+            guard fileManager.fileExists(atPath: resolved.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                throw POSIXError(.ENOTDIR)
+            }
+            return resolved
+        default:
+            throw POSIXError(.ENOTDIR)
+        }
+    }
+
+    private func replaceAliasLeaf(at url: URL, target: URL) -> (reason: ManagedWrapper.AliasReason, detail: String)? {
+        let temp = url.deletingLastPathComponent()
+            .appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+        var didRename = false
+        defer {
+            if !didRename {
+                try? fileManager.removeItem(at: temp)
+            }
+        }
+
+        do {
+            try ManagedWrapper.canonicalScriptData(forTarget: target.path).write(to: temp)
+        } catch {
+            return (.writeError, error.localizedDescription)
+        }
+
+        do {
+            try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: temp.path)
+        } catch {
+            return (.modeError, error.localizedDescription)
+        }
+
+        if Darwin.rename(temp.path, url.path) != 0 {
+            let code = POSIXErrorCode(rawValue: errno) ?? .EIO
+            return (.renameError, POSIXError(code).localizedDescription)
+        }
+
+        didRename = true
+        return nil
+    }
+
+    private func runtimeRootPathSpellings() -> [String] {
+        var paths: [String] = []
+        for path in [
+            runtimeRootURL.standardizedFileURL.path,
+            runtimeRootURL.resolvingSymlinksInPath().standardizedFileURL.path
+        ] where !paths.contains(path) {
+            paths.append(path)
+        }
+        return paths
+    }
+
+    private func referencedGenerationKeys(
+        inSymlinkDestination destination: String,
+        leaf: URL,
+        runtimeRootPaths: [String]
+    ) -> Set<String> {
+        var keys = referencedGenerationKeys(in: destination, runtimeRootPaths: runtimeRootPaths)
+        let destinationURL: URL
+        if destination.hasPrefix("/") {
+            destinationURL = URL(fileURLWithPath: destination)
+        } else {
+            destinationURL = URL(fileURLWithPath: destination, relativeTo: leaf.deletingLastPathComponent())
+        }
+        keys.formUnion(
+            referencedGenerationKeys(
+                in: destinationURL.resolvingSymlinksInPath().standardizedFileURL.path,
+                runtimeRootPaths: runtimeRootPaths
+            )
+        )
+        return keys
+    }
+
+    private func referencedGenerationKeys(in text: String, runtimeRootPaths: [String]) -> Set<String> {
+        var keys: Set<String> = []
+        for root in runtimeRootPaths {
+            let prefix = root.hasSuffix("/") ? root : root + "/"
+            var searchRange = text.startIndex..<text.endIndex
+            while let range = text.range(of: prefix, range: searchRange) {
+                var index = range.upperBound
+                var key = ""
+                while index < text.endIndex {
+                    let character = text[index]
+                    if character == "/" || character == "'" || character == "\"" || character.isWhitespace {
+                        break
+                    }
+                    key.append(character)
+                    index = text.index(after: index)
+                }
+                if Self.isRuntimeGenerationDirectory(name: key) {
+                    keys.insert(key)
+                }
+                searchRange = range.upperBound..<text.endIndex
+            }
+        }
+        return keys
+    }
+
+    private func emitAlias(
+        alias: String,
+        decision: RuntimeAliasDecision,
+        outcome: RuntimeAliasOutcome,
+        reason: ManagedWrapper.AliasReason?,
+        detail: String?
+    ) {
+        let event = RuntimeAliasLogEvent(
+            alias: alias,
+            decision: decision,
+            outcome: outcome,
+            reason: reason,
+            detail: detail
+        )
+        var detailParts = ["alias=\(alias)", "decision=\(decision.rawValue)"]
+        if let reason {
+            detailParts.append("reason=\(reason.description)")
+        }
+        if let detail, !detail.isEmpty {
+            detailParts.append(detail)
+        }
+        let detailText = detailParts.joined(separator: " ")
+        switch outcome {
+        case .error:
+            Logger.setup.warning("runtime-alias step=alias outcome=\(outcome.rawValue, privacy: .public) detail=\(detailText, privacy: .public)")
+        case .skipped:
+            Logger.setup.notice("runtime-alias step=alias outcome=\(outcome.rawValue, privacy: .public) detail=\(detailText, privacy: .public)")
+        case .created, .refreshed, .repaired, .current:
+            Logger.setup.info("runtime-alias step=alias outcome=\(outcome.rawValue, privacy: .public) detail=\(detailText, privacy: .public)")
+        }
+        aliasLogSink?(event)
+    }
+
+    private func garbageCollect(keeping key: String, liveKey: String?, aliasRewrite: AliasRewriteResult) {
+        var pinnedKeys = aliasRewrite.pinnedGenerationKeys
+        if let liveKey {
+            pinnedKeys.insert(liveKey)
+        }
+        Self.sweepRuntimeGenerations(
+            in: runtimeRootURL,
+            currentKey: key,
+            pinnedKeys: pinnedKeys,
+            skipGenerationGC: aliasRewrite.skipGenerationGC,
+            fileManager: fileManager
+        )
     }
 
     /// Remove every directory in `root` whose name is a valid runtime-generation key
-    /// other than `currentKey` and `liveKey`, regardless of version. Never throws:
+    /// other than `currentKey` and `pinnedKeys`, regardless of version. Never throws:
     /// enumeration and per-entry delete failures are logged and skipped so a GC failure
     /// can never abort an otherwise-successful materialize.
-    internal static func sweepRuntimeGenerations(in root: URL, currentKey: String, liveKey: String?, fileManager: FileManager) {
+    internal static func sweepRuntimeGenerations(
+        in root: URL,
+        currentKey: String,
+        pinnedKeys: Set<String>,
+        skipGenerationGC: Bool,
+        fileManager: FileManager
+    ) {
+        guard !skipGenerationGC else {
+            Logger.setup.notice("runtime GC: skipped because alias reference provenance was indeterminate")
+            return
+        }
         guard fileManager.fileExists(atPath: root.path) else { return }
         let children: [URL]
         do {
@@ -566,7 +928,7 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         for child in children {
             let name = child.lastPathComponent
             guard isRuntimeGenerationDirectory(name: name) else { continue }
-            guard name != currentKey, name != liveKey else { continue }
+            guard name != currentKey, !pinnedKeys.contains(name) else { continue }
             do {
                 try fileManager.removeItem(at: child)
             } catch {
