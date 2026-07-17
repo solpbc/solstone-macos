@@ -17,7 +17,8 @@ struct RuntimeLayoutCleanupRegressionTests {
             ".versioned",
             "Mode.versioned",
             "LegacyJournalMigrat",
-            "legacyManaged"
+            "legacyManaged",
+            "SolOwnership.isUnderRoot"
         ]
 
         let matches = try matchesInSolstoneSources(banned: banned)

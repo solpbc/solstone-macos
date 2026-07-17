@@ -278,7 +278,7 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
             let rootPath = layout.rootURL.resolvingSymlinksInPath().standardizedFileURL.path
             for script in scripts {
                 let path = script.resolved.path
-                guard path == rootPath || path.hasPrefix(rootPath + "/") else {
+                guard ManagedWrapper.isUnderRoot(path, root: rootPath) else {
                     return "console script \(script.name) resolves outside runtime root: \(path)"
                 }
             }
@@ -411,6 +411,7 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
             let name = script.name
             // Read uv's absolute symlink target into the staging tools tree.
             let targetPath = try fileManager.destinationOfSymbolicLink(atPath: entry.path)
+            // Strictly under the staging root by design; equality would not be a relocatable entrypoint target.
             guard targetPath.hasPrefix(tempRoot + "/") else {
                 throw RuntimeMaterializerError.verificationFailed(
                     "entrypoint \(name) symlink target escapes staging root: \(targetPath)"
@@ -639,6 +640,8 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         runtimeRootPaths: [String]
     ) -> AliasRewriteResult {
         let wrapper = wrapperDir.appendingPathComponent(name)
+        // Classification-to-rename is not atomic; a leaf mutated externally inside this window can still be replaced.
+        // This narrow race is accepted rather than overlooked.
         let decision = classifyAliasLeaf(at: wrapper, runtimeRootPaths: runtimeRootPaths)
         var result = AliasRewriteResult()
 
@@ -836,9 +839,7 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
                 var key = ""
                 while index < text.endIndex {
                     let character = text[index]
-                    if character == "/" || character == "'" || character == "\"" || character.isWhitespace {
-                        break
-                    }
+                    guard Self.isRuntimeGenerationKeyCharacter(character) else { break }
                     key.append(character)
                     index = text.index(after: index)
                 }
@@ -941,6 +942,19 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
     /// with `<hash>` exactly 16 lowercase hex chars. Whole-name (anchored) match.
     internal static func isRuntimeGenerationDirectory(name: String) -> Bool {
         name.wholeMatch(of: /[0-9][0-9A-Za-z.+-]*_py[0-9]+_[0-9a-f]{16}/) != nil
+    }
+
+    private static func isRuntimeGenerationKeyCharacter(_ character: Character) -> Bool {
+        guard character.unicodeScalars.count == 1,
+              let scalar = character.unicodeScalars.first else {
+            return false
+        }
+        switch scalar.value {
+        case 48...57, 65...90, 97...122, 46, 43, 45, 95:
+            return true
+        default:
+            return false
+        }
     }
 
     private func sha256Hex(_ data: Data) -> String {

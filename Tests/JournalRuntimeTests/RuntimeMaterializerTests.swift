@@ -639,6 +639,40 @@ struct RuntimeMaterializerTests {
         #expect(try Data(contentsOf: oldLayout.solBinary) == Data("runtime sol\n".utf8))
     }
 
+    @Test func materializePinsGenerationReferencesTerminatedByShellPunctuation() async throws {
+        let fixture = try makeMaterializerFixture(runtimeRootComponents: ["runtime"])
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let pathKey = "0.1.0_py20240101_5555555555555555"
+        let cdKey = "0.1.0_py20240101_6666666666666666"
+        let orphanKey = "0.1.0_py20240101_7777777777777777"
+        let pathLayout = try createRuntimeGeneration(pathKey, in: fixture.runtimeRoot)
+        let cdLayout = try createRuntimeGeneration(cdKey, in: fixture.runtimeRoot)
+        try createDirectories([orphanKey], in: fixture.runtimeRoot)
+        try writeExternalScript(
+            named: "sol",
+            in: fixture.wrapperDir,
+            body: "PATH=\(pathLayout.rootURL.path):$PATH\nexec /usr/bin/env sol \"$@\"\n",
+            mode: 0o755
+        )
+        try writeExternalScript(
+            named: "journal",
+            in: fixture.wrapperDir,
+            body: "cd \(cdLayout.rootURL.path); exec ./bin/journal \"$@\"\n",
+            mode: 0o755
+        )
+        let before = try snapshotAliases(["sol", "journal"], in: fixture.wrapperDir)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("tool", .success())
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        _ = try await materializer.materialize(excludingLiveKey: nil)
+
+        try assertAliasSnapshotsUnchanged(before, in: fixture.wrapperDir)
+        #expect(directoryExists(pathKey, in: fixture.runtimeRoot))
+        #expect(directoryExists(cdKey, in: fixture.runtimeRoot))
+        #expect(!directoryExists(orphanKey, in: fixture.runtimeRoot))
+    }
+
     @Test func materializePinsOldGenerationReferencedBySymlinkResolution() async throws {
         let fixture = try makeMaterializerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.workspace) }
