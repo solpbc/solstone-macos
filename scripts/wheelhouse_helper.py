@@ -72,6 +72,14 @@ def verify_wheelhouse(dir_path, pin):
     if len(pinned_wheels) != 1:
         raise ValueError(f"expected exactly one solstone-{pin}-*.whl in {dir_path}")
 
+    core_wheels = sorted(
+        path
+        for path in wheelhouse_dir.glob(f"solstone_core-{pin}-*.whl")
+        if path.is_file()
+    )
+    if len(core_wheels) != 1:
+        raise ValueError(f"expected exactly one solstone_core-{pin}-*.whl in {dir_path}")
+
     pinned_wheel = pinned_wheels[0]
     version = wheel_version(pinned_wheel)
     if version != pin:
