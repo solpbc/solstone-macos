@@ -118,6 +118,20 @@ class VendorWheelhouseMakefileTest(unittest.TestCase):
             content,
         )
 
+    def test_exported_wheel_build_preserves_exact_git_head(self):
+        makefile = pathlib.Path(__file__).resolve().parents[2] / "Makefile"
+        content = makefile.read_text()
+
+        self.assertIn(
+            'git clone --quiet --shared --no-checkout "$(SOLSTONE_SRC_DIR)" "$$EXPORT_DIR"',
+            content,
+        )
+        self.assertIn(
+            'git -C "$$EXPORT_DIR" checkout --quiet --detach "$(SOLSTONE_REF)"',
+            content,
+        )
+        self.assertNotIn('git -C "$(SOLSTONE_SRC_DIR)" archive', content)
+
 
 class WheelVersionTest(unittest.TestCase):
     def test_wheel_version_reads_metadata_version(self):
