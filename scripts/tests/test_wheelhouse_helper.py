@@ -108,6 +108,17 @@ def make_wheelhouse(root, pin="0.4.8", solstone_version=None):
     write_wheelhouse_manifest(root)
 
 
+class VendorWheelhouseMakefileTest(unittest.TestCase):
+    def test_exported_wheel_build_uses_vendored_python_on_path(self):
+        makefile = pathlib.Path(__file__).resolve().parents[2] / "Makefile"
+        content = makefile.read_text()
+
+        self.assertIn(
+            'PATH="$(abspath $(PYTHON_VENDOR_DIR))/bin:$$PATH" $(MAKE) -C "$$EXPORT_DIR"',
+            content,
+        )
+
+
 class WheelVersionTest(unittest.TestCase):
     def test_wheel_version_reads_metadata_version(self):
         module = load_wheelhouse_helper()

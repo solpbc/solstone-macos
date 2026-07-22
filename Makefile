@@ -143,7 +143,7 @@ vendor-wheelhouse: check-versions vendor-uv vendor-python
 	    ARCHIVE_TAR="$$BUILD_DIR/solstone-src.tar"; \
 	    git -C "$(SOLSTONE_SRC_DIR)" archive "$(SOLSTONE_REF)" > "$$ARCHIVE_TAR" || { echo "error: failed to archive $(SOLSTONE_SRC_DIR) at $(SOLSTONE_REF)"; exit 1; }; \
 	    tar -x -f "$$ARCHIVE_TAR" -C "$$EXPORT_DIR" || { echo "error: failed to extract solstone archive"; exit 1; }; \
-	    $(MAKE) -C "$$EXPORT_DIR" UV="$(abspath $(UV_VENDOR_BINARY))" wheel-macos || { echo "error: wheel-macos build failed for $(SOLSTONE_SRC_DIR) at $(SOLSTONE_REF)"; exit 1; }; \
+	    PATH="$(abspath $(PYTHON_VENDOR_DIR))/bin:$$PATH" $(MAKE) -C "$$EXPORT_DIR" UV="$(abspath $(UV_VENDOR_BINARY))" wheel-macos || { echo "error: wheel-macos build failed for $(SOLSTONE_SRC_DIR) at $(SOLSTONE_REF)"; exit 1; }; \
 	    BUILT_COUNT="$$(find "$$EXPORT_DIR/dist" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
 	    [ "$$BUILT_COUNT" = "1" ] || { echo "error: expected exactly one built solstone wheel in $$EXPORT_DIR/dist, found $$BUILT_COUNT"; exit 1; }; \
 	    BUILT_WHEEL="$$(find "$$EXPORT_DIR/dist" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | head -n 1)"; \
