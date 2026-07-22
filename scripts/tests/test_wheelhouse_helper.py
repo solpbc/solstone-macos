@@ -37,6 +37,19 @@ def make_wheel(root, name="sample-1.2.3-py3-none-any.whl", metadata=None, extra_
     return wheel
 
 
+def make_core_wheel(root, pin="0.4.8"):
+    return make_wheel(
+        root,
+        name=f"solstone_core-{pin}-py3-none-macosx_14_0_arm64.whl",
+        metadata=[
+            (
+                f"solstone_core-{pin}.dist-info/METADATA",
+                f"Metadata-Version: 2.4\nName: solstone-core\nVersion: {pin}\n",
+            ),
+        ],
+    )
+
+
 def write_wheelhouse_manifest(root):
     manifest = pathlib.Path(root) / "MANIFEST.sha256"
     with manifest.open("w") as manifest_file:
@@ -59,6 +72,7 @@ def make_wheelhouse(root, pin="0.4.8", solstone_version=None):
         ],
         extra_members={PARAKEET_HELPER_PATH: b"#!/bin/sh\n"},
     )
+    make_core_wheel(root, pin)
     make_wheel(
         root,
         name=f"solstone_journal-{pin}-py3-none-any.whl",
@@ -162,7 +176,7 @@ class VerifyWheelhouseTest(unittest.TestCase):
 
             models_wheel = pathlib.Path(tmp) / "solstone_journal_models-1.0.0-py3-none-any.whl"
             self.assertGreater(models_wheel.stat().st_size, MODELS_WHEEL_MIN_SIZE)
-            self.assertEqual(module.verify_wheelhouse(tmp, "0.4.8"), 4)
+            self.assertEqual(module.verify_wheelhouse(tmp, "0.4.8"), 5)
 
     def test_verify_wheelhouse_raises_when_manifest_missing(self):
         module = load_wheelhouse_helper()
@@ -223,6 +237,7 @@ class VerifyWheelhouseTest(unittest.TestCase):
                     ),
                 ],
             )
+            make_core_wheel(tmp)
             make_wheel(
                 tmp,
                 name="dep-1.0.0-py3-none-any.whl",
@@ -252,6 +267,7 @@ class VerifyWheelhouseTest(unittest.TestCase):
                 ],
                 extra_members={PARAKEET_HELPER_PATH: b"#!/bin/sh\n"},
             )
+            make_core_wheel(tmp)
             make_wheel(
                 tmp,
                 name="dep-1.0.0-py3-none-any.whl",
@@ -294,6 +310,35 @@ class VerifyWheelhouseTest(unittest.TestCase):
             write_wheelhouse_manifest(tmp)
 
             with self.assertRaisesRegex(ValueError, "expected exactly one solstone_journal-0.4.8"):
+                module.verify_wheelhouse(tmp, "0.4.8")
+
+    def test_verify_wheelhouse_raises_when_core_wheel_missing(self):
+        module = load_wheelhouse_helper()
+        with tempfile.TemporaryDirectory() as tmp:
+            make_wheelhouse(tmp)
+            (pathlib.Path(tmp) / "solstone_core-0.4.8-py3-none-macosx_14_0_arm64.whl").unlink()
+            write_wheelhouse_manifest(tmp)
+
+            with self.assertRaisesRegex(ValueError, "expected exactly one solstone_core-0.4.8"):
+                module.verify_wheelhouse(tmp, "0.4.8")
+
+    def test_verify_wheelhouse_raises_when_core_wheel_duplicated(self):
+        module = load_wheelhouse_helper()
+        with tempfile.TemporaryDirectory() as tmp:
+            make_wheelhouse(tmp)
+            make_wheel(
+                tmp,
+                name="solstone_core-0.4.8-2-py3-none-macosx_14_0_arm64.whl",
+                metadata=[
+                    (
+                        "solstone_core-0.4.8.dist-info/METADATA",
+                        "Metadata-Version: 2.4\nName: solstone-core\nVersion: 0.4.8\n",
+                    ),
+                ],
+            )
+            write_wheelhouse_manifest(tmp)
+
+            with self.assertRaisesRegex(ValueError, "expected exactly one solstone_core-0.4.8"):
                 module.verify_wheelhouse(tmp, "0.4.8")
 
     def test_verify_wheelhouse_raises_when_models_wheel_missing(self):

@@ -149,6 +149,7 @@ public enum InstallerKnownValues {
         "--skip-models implies --skip-brain",
         "--skip-skills",
         "--skip-service",
+        "--skip-wrapper",
         "a provider is already configured",
         "provider config is not in the expected shape",
         "local provider unavailable on this host",
