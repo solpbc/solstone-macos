@@ -1,10 +1,12 @@
 import pathlib
 import plistlib
 import subprocess
+import tempfile
 import unittest
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+MAKEFILE = REPO_ROOT / "Makefile"
 
 
 class JournalReleaseMetadataTest(unittest.TestCase):
@@ -35,6 +37,73 @@ class JournalReleaseMetadataTest(unittest.TestCase):
         self.assertNotEqual(sol, journal)
         self.assertIn("the journal has its own app now", journal)
         self.assertIn("Initial release of Solstone Capture.", sol)
+
+    def test_extract_changelog_pair_qualified_blocks_are_distinct(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            changelog = pathlib.Path(tmp) / "CHANGELOG-journal.md"
+            changelog.write_text(
+                "# journal\n\n"
+                "## [1.0.12 (build 15)] - 2026-07-23\n\n"
+                "### Fixed\n"
+                "- build 15 only\n\n"
+                "## [1.0.12 (build 14)] - 2026-07-22\n\n"
+                "### Fixed\n"
+                "- build 14 only\n",
+                encoding="utf-8",
+            )
+
+            build14 = subprocess.run(
+                ["scripts/extract_changelog.sh", "1.0.12 (build 14)", str(changelog)],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            build15 = subprocess.run(
+                ["scripts/extract_changelog.sh", "1.0.12 (build 15)", str(changelog)],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+
+        self.assertIn("build 14 only", build14)
+        self.assertNotIn("build 15 only", build14)
+        self.assertIn("build 15 only", build15)
+        self.assertNotIn("build 14 only", build15)
+
+
+class JournalBumpMakefileContractTest(unittest.TestCase):
+    def target_block(self, target):
+        text = MAKEFILE.read_text()
+        start = text.index(f"{target}:")
+        search_from = start + 1
+        while True:
+            candidate = text.find("\n", search_from)
+            if candidate == -1:
+                return text[start:]
+            line_start = candidate + 1
+            if line_start >= len(text):
+                return text[start:]
+            if text[line_start] not in ("\t", " ", "\n", "#"):
+                colon = text.find(":", line_start, text.find("\n", line_start))
+                if colon != -1:
+                    return text[start:candidate]
+            search_from = candidate + 1
+
+    def test_bump_release_journal_checks_pin_before_writes(self):
+        block = self.target_block("bump-release-journal")
+        self.assertLess(
+            block.index("check-journal-prep"),
+            block.index("plutil -replace CFBundleShortVersionString"),
+        )
+
+    def test_bump_release_journal_uses_pair_qualified_changelog_key(self):
+        block = self.target_block("bump-release-journal")
+        self.assertIn("--build \"$(BUILD)\" --field changelog_key", block)
+        self.assertIn("grep -Fq \"## [$$CHANGELOG_KEY]\"", block)
+        self.assertIn("awk -v k=\"$$CHANGELOG_KEY\"", block)
+        self.assertIn("BUILD=$(BUILD) must be strictly greater", block)
 
 
 if __name__ == "__main__":

@@ -76,6 +76,34 @@ revision in `scripts/ja1r-gate/extro-tools.rev`. That file is the only place the
 revision is written, and the sync never follows extro-tools `main`. Moving to a
 newer harness is a deliberate one-line edit.
 
+## Journal release identity
+
+Journal macOS releases are identified by the pair `(J, B)`, where `J` is
+`CFBundleShortVersionString` and `B` is `CFBundleVersion` from
+`Sources/journal/Info.plist`. A build-only hot release keeps the same `J` and
+uses a higher decimal `B`; Sparkle ordering is global across the feed, so the new
+`B` must be greater than every published `sparkle:version`, even when `J`
+increases.
+
+The canonical generator is `scripts/release_identity.py identity --app journal
+--version J --build B`. It produces the release tag `journal-vJ-build-B`, the
+DMG/GitHub asset `journal-J-build-B.dmg`, the R2 object
+`journal-macos/releases/vJ/build-B/journal-J-build-B.dmg` (or the same path under
+`journal-macos/_staging`), the shared GitHub/appcast title
+`journal J (build B)`, and the changelog key `J (build B)`.
+
+Before preparing or publishing a journal release, the journal `J`, the Makefile
+`SOLSTONE_PIN_VERSION`, and generated `BundleConfig.solstonePinVersion` must all
+match. Preparation also requires `VERSION == SOLSTONE` before any file is
+written.
+
+Safe recovery is intentionally narrow. If the R2 DMG object already exists, it is
+reused only when its stored `sha256` metadata and `ContentLength` prove byte
+identity. For GitHub, a rerun may continue when the expected tag already points
+at the expected commit and the release is absent, or when the release already
+matches the expected tag, title, notes, and asset. Do not overwrite, clobber,
+delete, retag, or reuse an identity for different bytes.
+
 **1. Sync the rig.** Pushes the pinned harness and this exact `HEAD` to ja1r,
 reads the revision marker back off the rig, and writes
 `.ja1r-gate/sync-receipt.json`. It refuses to touch the rig if either checkout is

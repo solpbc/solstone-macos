@@ -31,18 +31,20 @@ SIGNING_KC_PASS_FILE   ?= $(HOME)/.config/sol-pbc/signing/keychain-password
 ASC_API_KEY_FILE       ?= $(HOME)/.config/sol-pbc/signing/apple-asc-api-key.p8
 ASC_API_KEY_ID         ?= SNP7CMKMZ5
 ASC_API_ISSUER         ?= 0fe42f6d-2c46-4f09-a9c2-152b20b3ea19
-DIST_VERSION           := $(shell python3 -c "import plistlib; print(plistlib.load(open('Sources/solstone/Info.plist','rb'))['CFBundleShortVersionString'])" 2>/dev/null || echo 0.0.0)
-DIST_BUILD             := $(shell python3 -c "import plistlib; print(plistlib.load(open('Sources/solstone/Info.plist','rb'))['CFBundleVersion'])" 2>/dev/null || echo 0)
-DMG_NAME               ?= sol-$(DIST_VERSION).dmg
-JOURNAL_DIST_VERSION   := $(shell python3 -c "import plistlib; print(plistlib.load(open('Sources/journal/Info.plist','rb'))['CFBundleShortVersionString'])" 2>/dev/null || echo 0.0.0)
-JOURNAL_DIST_BUILD     := $(shell python3 -c "import plistlib; print(plistlib.load(open('Sources/journal/Info.plist','rb'))['CFBundleVersion'])" 2>/dev/null || echo 0)
-JOURNAL_DMG_NAME       ?= journal-$(JOURNAL_DIST_VERSION).dmg
+RELEASE_IDENTITY       := python3 scripts/release_identity.py
+DIST_VERSION           := $(shell $(RELEASE_IDENTITY) identity --app sol --plist Sources/solstone/Info.plist --field short_version 2>/dev/null || echo 0.0.0)
+DIST_BUILD             := $(shell $(RELEASE_IDENTITY) identity --app sol --plist Sources/solstone/Info.plist --field bundle_version 2>/dev/null || echo 0)
+DMG_NAME               ?= $(shell $(RELEASE_IDENTITY) identity --app sol --version '$(DIST_VERSION)' --field dmg_name 2>/dev/null || echo sol-$(DIST_VERSION).dmg)
+JOURNAL_DIST_VERSION   := $(shell $(RELEASE_IDENTITY) identity --app journal --plist Sources/journal/Info.plist --field short_version 2>/dev/null || echo 0.0.0)
+JOURNAL_DIST_BUILD     := $(shell $(RELEASE_IDENTITY) identity --app journal --plist Sources/journal/Info.plist --field bundle_version 2>/dev/null || echo 0)
+JOURNAL_DMG_NAME       ?= $(shell $(RELEASE_IDENTITY) identity --app journal --version '$(JOURNAL_DIST_VERSION)' --build '$(JOURNAL_DIST_BUILD)' --field dmg_name 2>/dev/null || echo journal-$(JOURNAL_DIST_VERSION)-build-$(JOURNAL_DIST_BUILD).dmg)
 BOTH_DMG_NAME          ?= sol-journal-$(DIST_VERSION).dmg
 DMG_VOLNAME            ?= sol
 DMG_APP                ?= solstone.app
 DMG_ICON               ?= solstone.app
 SPARKLE_ARTIFACT_DIR   ?= .build/artifacts/sparkle/Sparkle
 SPARKLE_FRAMEWORK      ?= $(SPARKLE_ARTIFACT_DIR)/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
+JOURNAL_PIN_CHECK      = $(RELEASE_IDENTITY) check-journal-pin --journal-plist Sources/journal/Info.plist --makefile Makefile --bundle-config Sources/JournalRuntime/BundleConfig.swift --expected-version '$(JOURNAL_DIST_VERSION)'
 ENTITLEMENTS_PLIST     := Sources/solstone/entitlements.plist
 # App-only entitlements (adds the DP-keychain keychain-access-groups). Helpers like the
 # bundled python3.13 keep the base ENTITLEMENTS_PLIST — a profile-less helper signed with
@@ -393,6 +395,7 @@ bump-release-journal:
 	@test -n "$(VERSION)" || { echo "error: VERSION=... required (e.g. VERSION=1.0.1)"; exit 1; }
 	@test -n "$(BUILD)"   || { echo "error: BUILD=... required (e.g. BUILD=2)"; exit 1; }
 	@test -n "$(SOLSTONE)" || { echo "error: SOLSTONE=... required for journal runtime pin"; exit 1; }
+	@$(RELEASE_IDENTITY) check-journal-prep --version "$(VERSION)" --solstone "$(SOLSTONE)"
 	@CURRENT_BUILD="$(JOURNAL_DIST_BUILD)"; \
 		python3 -c "import sys; sys.exit(0 if int('$(BUILD)') > int('$$CURRENT_BUILD') else 1)" || \
 		{ echo "error: BUILD=$(BUILD) must be strictly greater than current journal build $$CURRENT_BUILD"; exit 1; }
@@ -404,12 +407,13 @@ bump-release-journal:
 	@sed -i '' "s/^SOLSTONE_REF ?= .*/SOLSTONE_REF ?= v$(SOLSTONE)/" Makefile
 	@echo "✓ Makefile pins: SOLSTONE_PIN_VERSION = $(SOLSTONE), SOLSTONE_REF = v$(SOLSTONE)"
 	@$(MAKE) -s SOLSTONE_PIN_VERSION="$(SOLSTONE)" SOLSTONE_MIN_VERSION="$(SOLSTONE)" generate-bundle-config
-	@if grep -q "^## \[$(VERSION)\]" CHANGELOG-journal.md; then \
-		echo "note: CHANGELOG-journal.md already has an entry for $(VERSION); leaving it alone"; \
+	@CHANGELOG_KEY="$$( $(RELEASE_IDENTITY) identity --app journal --version "$(VERSION)" --build "$(BUILD)" --field changelog_key )"; \
+	if grep -Fq "## [$$CHANGELOG_KEY]" CHANGELOG-journal.md; then \
+		echo "note: CHANGELOG-journal.md already has an entry for $$CHANGELOG_KEY; leaving it alone"; \
 	else \
 		TODAY="$$(date +%Y-%m-%d)"; \
-		awk -v v="$(VERSION)" -v d="$$TODAY" 'NR==1 {print; next} /^## \[/ && !inserted {print "## [" v "] - " d "\n\n### Added\n- (describe new journal-visible additions)\n\n### Changed\n- (describe journal behavior changes)\n\n### Fixed\n- (describe journal bug fixes)\n\n"; inserted=1} {print}' CHANGELOG-journal.md > CHANGELOG-journal.md.tmp && mv CHANGELOG-journal.md.tmp CHANGELOG-journal.md; \
-		echo "✓ CHANGELOG-journal.md: scaffolded entry for [$(VERSION)] — $$TODAY (FILL IN BEFORE COMMIT)"; \
+		awk -v k="$$CHANGELOG_KEY" -v d="$$TODAY" 'NR==1 {print; next} /^## \[/ && !inserted {print "## [" k "] - " d "\n\n### Added\n- (describe new journal-visible additions)\n\n### Changed\n- (describe journal behavior changes)\n\n### Fixed\n- (describe journal bug fixes)\n\n"; inserted=1} {print}' CHANGELOG-journal.md > CHANGELOG-journal.md.tmp && mv CHANGELOG-journal.md.tmp CHANGELOG-journal.md; \
+		echo "✓ CHANGELOG-journal.md: scaffolded entry for [$$CHANGELOG_KEY] — $$TODAY (FILL IN BEFORE COMMIT)"; \
 	fi
 	@echo ""
 	@echo "next steps:"
@@ -1280,11 +1284,15 @@ publish-appcast: publish-preflight verify-ja1r-gate-sol
 publish-appcast-staging: publish-preflight
 	$(PUBLISH_PY) scripts/publish-appcast.py $(DIST_VERSION) --app sol --staging
 
-publish-appcast-journal: publish-preflight verify-ja1r-gate-journal
-	$(PUBLISH_PY) scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal
+publish-appcast-journal: verify-ja1r-gate-journal
+	@$(JOURNAL_PIN_CHECK)
+	@$(MAKE) publish-preflight
+	$(PUBLISH_PY) scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal --build $(JOURNAL_DIST_BUILD)
 
-publish-appcast-journal-staging: publish-preflight
-	$(PUBLISH_PY) scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal --staging
+publish-appcast-journal-staging:
+	@$(JOURNAL_PIN_CHECK)
+	@$(MAKE) publish-preflight
+	$(PUBLISH_PY) scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal --build $(JOURNAL_DIST_BUILD) --staging
 
 # Cut a GitHub Release: annotated tag + `gh release create` with the DMG
 # attached and CHANGELOG notes. Run AFTER `make publish-appcast` and founder
@@ -1295,7 +1303,7 @@ github-release:
 	@bash scripts/github-release.sh --app sol $(DIST_VERSION)
 
 github-release-journal:
-	@bash scripts/github-release.sh --app journal $(JOURNAL_DIST_VERSION)
+	@bash scripts/github-release.sh --app journal --build $(JOURNAL_DIST_BUILD) $(JOURNAL_DIST_VERSION)
 
 .PHONY: publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal \
         ja1r-gate-sync ja1r-gate-clean-tree verify-ja1r-gate-sol verify-ja1r-gate-journal verify-ja1r-gate-paired

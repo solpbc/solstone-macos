@@ -93,8 +93,9 @@ class AppConfigTest(unittest.TestCase):
         self.assertEqual(journal["staging_prefix"], "journal-macos/_staging")
         self.assertEqual(journal["plist_path"], "Sources/journal/Info.plist")
         self.assertEqual(journal["changelog_path"], "CHANGELOG-journal.md")
-        self.assertEqual(journal["dmg_name"].format(version="1.0.0"), "journal-1.0.0.dmg")
-        self.assertEqual(journal["item_title"].format(version="1.0.0"), "journal 1.0.0")
+        identity = module.build_identity("journal", short_version="1.0.0", bundle_version=14)
+        self.assertEqual(journal["dmg_name"].format(version="1.0.0", build="14"), identity.dmg_name)
+        self.assertEqual(journal["item_title"].format(version="1.0.0", build="14"), identity.appcast_item_title)
         self.assertNotEqual(journal["plist_path"], sol["plist_path"])
 
 
@@ -255,6 +256,297 @@ class UploadRoutingTest(unittest.TestCase):
         s3.assert_called_once_with(tmp.name, "path/object.dmg", "application/x-apple-diskimage")
 
 
+class AppcastMergeTest(unittest.TestCase):
+    def make_item(self, module, version, build, url):
+        identity = module.build_identity("journal", short_version=version, bundle_version=build)
+        return module.build_item(
+            module.APP_CONFIG["journal"],
+            version,
+            build,
+            f"signature-{build}",
+            123 + build,
+            url,
+            f"notes {build}",
+            item_title=identity.appcast_item_title,
+        )
+
+    def item_versions(self, module, tree):
+        channel = tree.getroot().find("channel")
+        return [
+            item.find(f"{{{module.SPARKLE_NS}}}version").text
+            for item in channel.findall("item")
+        ]
+
+    def test_two_same_short_version_builds_remain_present_and_ordered(self):
+        module = load_publish_appcast()
+        config = module.APP_CONFIG["journal"]
+        tree = module.seed_appcast(config, config["prod_prefix"])
+        identity14 = module.build_identity("journal", short_version="1.0.12", bundle_version=14)
+        identity15 = module.build_identity("journal", short_version="1.0.12", bundle_version=15)
+
+        module.merge_item(
+            tree,
+            self.make_item(module, "1.0.12", 14, identity14.enclosure_url),
+            14,
+        )
+        module.merge_item(
+            tree,
+            self.make_item(module, "1.0.12", 15, identity15.enclosure_url),
+            15,
+        )
+
+        channel = tree.getroot().find("channel")
+        items = channel.findall("item")
+        self.assertEqual(self.item_versions(module, tree), ["15", "14"])
+        self.assertEqual(
+            [
+                item.find(f"{{{module.SPARKLE_NS}}}shortVersionString").text
+                for item in items
+            ],
+            ["1.0.12", "1.0.12"],
+        )
+        self.assertEqual(items[0].find("enclosure").get("url"), identity15.enclosure_url)
+        self.assertEqual(items[1].find("enclosure").get("url"), identity14.enclosure_url)
+
+    def test_decimal_build_10_orders_newer_than_9(self):
+        module = load_publish_appcast()
+        config = module.APP_CONFIG["journal"]
+        tree = module.seed_appcast(config, config["prod_prefix"])
+
+        module.merge_item(tree, self.make_item(module, "1.0.12", 9, "https://example/9"), 9)
+        module.merge_item(tree, self.make_item(module, "1.0.12", 10, "https://example/10"), 10)
+
+        self.assertEqual(self.item_versions(module, tree), ["10", "9"])
+
+    def test_later_short_version_with_non_increasing_build_is_rejected(self):
+        module = load_publish_appcast()
+        config = module.APP_CONFIG["journal"]
+        tree = module.seed_appcast(config, config["prod_prefix"])
+        module.merge_item(tree, self.make_item(module, "1.0.12", 15, "https://example/15"), 15)
+
+        with self.assertRaises(SystemExit):
+            module.merge_item(tree, self.make_item(module, "1.0.13", 14, "https://example/14"), 14)
+
+        self.assertEqual(self.item_versions(module, tree), ["15"])
+
+    def test_equal_or_lower_build_rejected_without_rewrite(self):
+        module = load_publish_appcast()
+        config = module.APP_CONFIG["journal"]
+        tree = module.seed_appcast(config, config["prod_prefix"])
+        module.merge_item(tree, self.make_item(module, "1.0.12", 14, "https://example/14"), 14)
+
+        with self.assertRaises(SystemExit):
+            module.merge_item(tree, self.make_item(module, "1.0.12", 14, "https://example/new"), 14)
+
+        channel = tree.getroot().find("channel")
+        items = channel.findall("item")
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].find("enclosure").get("url"), "https://example/14")
+
+    def test_missing_or_malformed_existing_sparkle_version_fails_closed(self):
+        module = load_publish_appcast()
+        for existing_text in (None, "not-an-int"):
+            with self.subTest(existing_text=existing_text):
+                config = module.APP_CONFIG["journal"]
+                tree = module.seed_appcast(config, config["prod_prefix"])
+                channel = tree.getroot().find("channel")
+                item = module.ET.SubElement(channel, "item")
+                if existing_text is not None:
+                    module.ET.SubElement(
+                        item, f"{{{module.SPARKLE_NS}}}version"
+                    ).text = existing_text
+
+                with self.assertRaises(SystemExit):
+                    module.merge_item(
+                        tree,
+                        self.make_item(module, "1.0.12", 14, "https://example/14"),
+                        14,
+                    )
+
+
+class FakeClientError(Exception):
+    def __init__(self, code, status):
+        super().__init__(code)
+        self.response = {
+            "Error": {"Code": code},
+            "ResponseMetadata": {"HTTPStatusCode": status},
+        }
+
+
+class JournalDmgCreateOnlyTest(unittest.TestCase):
+    def identity(self, module):
+        return module.build_identity("journal", short_version="1.0.12", bundle_version=14)
+
+    def temp_dmg(self, payload=b"journal dmg bytes"):
+        tmp = tempfile.NamedTemporaryFile(delete=False)
+        tmp.write(payload)
+        tmp.close()
+        self.addCleanup(lambda: pathlib.Path(tmp.name).unlink(missing_ok=True))
+        return tmp.name, payload
+
+    def test_absent_journal_dmg_uses_create_only_multipart(self):
+        module = load_publish_appcast()
+        identity = self.identity(module)
+        path, payload = self.temp_dmg()
+        sha = module.hash_file_sha256(path)
+        calls = []
+
+        class FakeClient:
+            def head_object(self, **kwargs):
+                calls.append(("head", kwargs))
+                raise FakeClientError("404", 404)
+
+            def create_multipart_upload(self, **kwargs):
+                calls.append(("create", kwargs))
+                return {"UploadId": "upload-1"}
+
+            def upload_part(self, **kwargs):
+                calls.append(("part", kwargs))
+                return {"ETag": '"part-etag"'}
+
+            def complete_multipart_upload(self, **kwargs):
+                calls.append(("complete", kwargs))
+                return {}
+
+        with mock.patch.object(module, "create_r2_client", return_value=FakeClient()):
+            module.upload_journal_dmg_create_or_reuse(
+                path,
+                identity,
+                "application/x-apple-diskimage",
+                module.WRANGLER_MAX_UPLOAD_BYTES + 1,
+                sha,
+            )
+
+        self.assertEqual(calls[0][0], "head")
+        create = calls[1][1]
+        self.assertEqual(create["Key"], identity.dmg_key)
+        self.assertEqual(create["Metadata"]["sha256"], sha)
+        self.assertEqual(create["Metadata"]["short-version"], "1.0.12")
+        self.assertEqual(create["Metadata"]["bundle-version"], "14")
+        self.assertEqual(calls[2][1]["Body"], payload)
+        self.assertEqual(calls[3][1]["IfNoneMatch"], "*")
+
+    def test_identical_existing_journal_dmg_skips_upload(self):
+        module = load_publish_appcast()
+        identity = self.identity(module)
+        path, _ = self.temp_dmg()
+        sha = module.hash_file_sha256(path)
+        calls = []
+
+        class FakeClient:
+            def head_object(self, **kwargs):
+                calls.append(("head", kwargs))
+                return {"ContentLength": 17, "Metadata": {"sha256": sha}}
+
+            def create_multipart_upload(self, **kwargs):
+                calls.append(("create", kwargs))
+                return {"UploadId": "upload-1"}
+
+        with mock.patch.object(module, "create_r2_client", return_value=FakeClient()):
+            module.upload_journal_dmg_create_or_reuse(
+                path,
+                identity,
+                "application/x-apple-diskimage",
+                17,
+                sha,
+            )
+
+        self.assertEqual([name for name, _ in calls], ["head"])
+
+    def test_nonidentical_existing_journal_dmg_fails_before_writes(self):
+        module = load_publish_appcast()
+        identity = self.identity(module)
+        path, _ = self.temp_dmg()
+        calls = []
+
+        class FakeClient:
+            def head_object(self, **kwargs):
+                calls.append(("head", kwargs))
+                return {"ContentLength": 17, "Metadata": {"sha256": "0" * 64}}
+
+            def create_multipart_upload(self, **kwargs):
+                calls.append(("create", kwargs))
+                return {"UploadId": "upload-1"}
+
+        with mock.patch.object(module, "create_r2_client", return_value=FakeClient()):
+            with self.assertRaises(SystemExit):
+                module.upload_journal_dmg_create_or_reuse(
+                    path,
+                    identity,
+                    "application/x-apple-diskimage",
+                    17,
+                    module.hash_file_sha256(path),
+                )
+
+        self.assertEqual([name for name, _ in calls], ["head"])
+
+    def test_missing_sha_or_length_mismatch_fails_closed(self):
+        module = load_publish_appcast()
+        for head in (
+            {"ContentLength": 18, "Metadata": {"sha256": "a" * 64}},
+            {"ContentLength": 17, "Metadata": {}},
+            {"ContentLength": 17, "Metadata": {"sha256": "not-sha"}},
+        ):
+            with self.subTest(head=head):
+                with self.assertRaises(SystemExit):
+                    module.prove_existing_journal_dmg(
+                        head,
+                        r2_key="key",
+                        expected_length=17,
+                        expected_sha256="a" * 64,
+                    )
+
+    def test_preflight_to_complete_race_aborts_without_success(self):
+        module = load_publish_appcast()
+        identity = self.identity(module)
+        path, _ = self.temp_dmg()
+        calls = []
+
+        class FakeClient:
+            def head_object(self, **kwargs):
+                raise FakeClientError("404", 404)
+
+            def create_multipart_upload(self, **kwargs):
+                return {"UploadId": "upload-1"}
+
+            def upload_part(self, **kwargs):
+                return {"ETag": '"part-etag"'}
+
+            def complete_multipart_upload(self, **kwargs):
+                calls.append(("complete", kwargs))
+                raise FakeClientError("PreconditionFailed", 412)
+
+            def abort_multipart_upload(self, **kwargs):
+                calls.append(("abort", kwargs))
+
+        with mock.patch.object(module, "create_r2_client", return_value=FakeClient()):
+            with self.assertRaises(SystemExit):
+                module.upload_journal_dmg_create_or_reuse(
+                    path,
+                    identity,
+                    "application/x-apple-diskimage",
+                    module.WRANGLER_MAX_UPLOAD_BYTES + 1,
+                    module.hash_file_sha256(path),
+                )
+
+        self.assertEqual([name for name, _ in calls], ["complete", "abort"])
+
+    def test_journal_dmg_refuses_wrangler_sized_path(self):
+        module = load_publish_appcast()
+        identity = self.identity(module)
+        path, _ = self.temp_dmg()
+
+        with self.assertRaises(SystemExit):
+            module.complete_create_only_multipart(
+                object(),
+                local_path=path,
+                identity=identity,
+                content_type="application/x-apple-diskimage",
+                length=module.WRANGLER_MAX_UPLOAD_BYTES,
+                sha256=module.hash_file_sha256(path),
+            )
+
+
 class Appcast404Test(unittest.TestCase):
     def test_404_without_first_publish_dies(self):
         module = load_publish_appcast()
@@ -304,38 +596,104 @@ class Appcast404Test(unittest.TestCase):
     def test_journal_staging_first_publish_uses_journal_paths(self):
         module = load_publish_appcast()
         plist_paths = []
+        note_keys = []
 
         def fake_run(cmd, **kwargs):
             return types.SimpleNamespace(returncode=0, stdout="404", stderr="")
 
-        def fake_read_info(version, plist_path):
-            plist_paths.append(plist_path)
-            return 1
+        def fake_read_info(version, plist_path, build=None):
+            plist_paths.append((plist_path, build))
+            return int(build)
+
+        def fake_notes(key, changelog_path):
+            note_keys.append((key, changelog_path))
+            return "notes"
 
         with mock.patch.object(sys, "argv", [
             "publish-appcast.py",
             "1.0.0",
             "--app",
             "journal",
+            "--build",
+            "14",
             "--staging",
             "--first-publish",
         ]), \
+             mock.patch.object(module, "check_journal_pin"), \
              mock.patch.object(module, "preflight_wrangler"), \
              mock.patch.object(module, "preflight_r2"), \
              mock.patch.object(module, "load_private_key", return_value=object()), \
              mock.patch.object(module, "sign_dmg", return_value=("signature", 123)), \
+             mock.patch.object(module, "hash_file_sha256", return_value="a" * 64), \
              mock.patch.object(module, "read_info_plist", side_effect=fake_read_info), \
-             mock.patch.object(module, "extract_release_notes", return_value="notes"), \
+             mock.patch.object(module, "extract_release_notes", side_effect=fake_notes), \
              mock.patch.object(module, "run", fake_run), \
              mock.patch.object(module, "seed_appcast", wraps=module.seed_appcast) as seed, \
+             mock.patch.object(module, "upload_journal_dmg_create_or_reuse") as journal_upload, \
              mock.patch.object(module, "upload") as upload, \
              mock.patch.object(module, "head_check"):
             module.main()
 
-        self.assertEqual(plist_paths, ["Sources/journal/Info.plist"])
+        self.assertEqual(plist_paths, [("Sources/journal/Info.plist", "14")])
+        self.assertEqual(note_keys, [("1.0.0 (build 14)", "CHANGELOG-journal.md")])
         seed.assert_called_once_with(module.APP_CONFIG["journal"], module.APP_CONFIG["journal"]["staging_prefix"])
-        self.assertEqual(upload.call_args_list[0].args[1], "journal-macos/_staging/releases/v1.0.0/journal-1.0.0.dmg")
-        self.assertEqual(upload.call_args_list[1].args[1], "journal-macos/_staging/appcast.xml")
+        journal_identity = journal_upload.call_args.args[1]
+        self.assertEqual(
+            journal_identity.dmg_key,
+            "journal-macos/_staging/releases/v1.0.0/build-14/journal-1.0.0-build-14.dmg",
+        )
+        self.assertEqual(upload.call_args_list[0].args[1], "journal-macos/_staging/appcast.xml")
+
+    def test_journal_pin_gate_runs_before_publish_side_effects(self):
+        module = load_publish_appcast()
+        with mock.patch.object(sys, "argv", [
+            "publish-appcast.py",
+            "1.0.0",
+            "--app",
+            "journal",
+            "--build",
+            "14",
+        ]), \
+             mock.patch.object(module, "read_info_plist", return_value=14), \
+             mock.patch.object(module, "check_journal_pin", side_effect=SystemExit(1)), \
+             mock.patch.object(module, "preflight_wrangler") as wrangler, \
+             mock.patch.object(module, "preflight_r2") as r2:
+            with self.assertRaises(SystemExit):
+                module.main()
+
+        wrangler.assert_not_called()
+        r2.assert_not_called()
+
+    def test_journal_dmg_failure_prevents_appcast_upload(self):
+        module = load_publish_appcast()
+
+        def fake_run(cmd, **kwargs):
+            return types.SimpleNamespace(returncode=0, stdout="404", stderr="")
+
+        with mock.patch.object(sys, "argv", [
+            "publish-appcast.py",
+            "1.0.0",
+            "--app",
+            "journal",
+            "--build",
+            "14",
+            "--first-publish",
+        ]), \
+             mock.patch.object(module, "check_journal_pin"), \
+             mock.patch.object(module, "preflight_wrangler"), \
+             mock.patch.object(module, "preflight_r2"), \
+             mock.patch.object(module, "load_private_key", return_value=object()), \
+             mock.patch.object(module, "sign_dmg", return_value=("signature", 123)), \
+             mock.patch.object(module, "hash_file_sha256", return_value="a" * 64), \
+             mock.patch.object(module, "read_info_plist", return_value=14), \
+             mock.patch.object(module, "extract_release_notes", return_value="notes"), \
+             mock.patch.object(module, "run", fake_run), \
+             mock.patch.object(module, "upload_journal_dmg_create_or_reuse", side_effect=SystemExit(1)), \
+             mock.patch.object(module, "upload") as upload:
+            with self.assertRaises(SystemExit):
+                module.main()
+
+        upload.assert_not_called()
 
 
 if __name__ == "__main__":

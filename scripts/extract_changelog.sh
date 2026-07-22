@@ -19,8 +19,8 @@ if [[ ! -f "$CHANGELOG" ]]; then
   exit 1
 fi
 
-# Escape regex metacharacters in the version (dots, etc.) for the awk pattern.
-ESCAPED=$(printf '%s\n' "$VERSION" | sed 's/[][\\.*^$/]/\\&/g')
+# Escape regex metacharacters in the version/key for the awk ERE pattern.
+ESCAPED=$(printf '%s\n' "$VERSION" | sed 's/[][\\.^$*+?(){}|/]/\\&/g')
 AWK_ESCAPED="${ESCAPED//\\/\\\\}"
 
 OUTPUT=$(awk -v pat="^## \\\\[${AWK_ESCAPED}\\\\]" '
