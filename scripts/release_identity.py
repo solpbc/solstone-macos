@@ -141,6 +141,9 @@ def build_identity(
     if not version:
         die("--version is required when --plist is not supplied")
 
+    if app == "sol" and plist_path is None and bundle_version is not None and str(bundle_version).strip():
+        die("sol release identity is version-only; omit --build")
+
     build: int | None
     if bundle_version is None or str(bundle_version).strip() == "":
         if app == "journal":
@@ -214,7 +217,8 @@ def check_journal_prep(version: str, solstone: str) -> None:
     if version != solstone:
         die(
             "journal release prep pin mismatch: "
-            f"VERSION={version!r}, SOLSTONE={solstone!r}"
+            f"VERSION={version!r}, SOLSTONE={solstone!r}. "
+            "Pass matching VERSION and SOLSTONE; they must be the same shared release number."
         )
 
 
@@ -237,7 +241,11 @@ def check_journal_pin(
         values["--expected-version"] = expected_version
     if len(set(values.values())) != 1:
         rendered = ", ".join(f"{source}={value!r}" for source, value in values.items())
-        die(f"journal publication pin mismatch: {rendered}")
+        die(
+            f"journal publication pin mismatch: {rendered}. "
+            "Align committed journal J, Makefile SOLSTONE_PIN_VERSION, and "
+            "BundleConfig solstonePinVersion before publishing; bump/regenerate so they match."
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -265,6 +273,8 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.command == "identity":
+        if args.app == "sol" and args.build is not None:
+            die("sol release identity is version-only; omit --build")
         identity = build_identity(
             args.app,
             short_version=args.version,

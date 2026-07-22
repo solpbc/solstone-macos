@@ -499,7 +499,6 @@ class JournalDmgCreateOnlyTest(unittest.TestCase):
     def test_preflight_to_complete_race_aborts_without_success(self):
         module = load_publish_appcast()
         identity = self.identity(module)
-        path, _ = self.temp_dmg()
         calls = []
 
         class FakeClient:
@@ -519,17 +518,41 @@ class JournalDmgCreateOnlyTest(unittest.TestCase):
             def abort_multipart_upload(self, **kwargs):
                 calls.append(("abort", kwargs))
 
-        with mock.patch.object(module, "create_r2_client", return_value=FakeClient()):
-            with self.assertRaises(SystemExit):
-                module.upload_journal_dmg_create_or_reuse(
-                    path,
-                    identity,
-                    "application/x-apple-diskimage",
-                    module.WRANGLER_MAX_UPLOAD_BYTES + 1,
-                    module.hash_file_sha256(path),
+        with tempfile.TemporaryDirectory() as tmp:
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                pathlib.Path(identity.dmg_name).write_bytes(b"journal dmg bytes")
+                tree = module.seed_appcast(
+                    module.APP_CONFIG["journal"],
+                    module.APP_CONFIG["journal"]["prod_prefix"],
                 )
+                with mock.patch.object(sys, "argv", [
+                    "publish-appcast.py",
+                    "1.0.12",
+                    "--app",
+                    "journal",
+                    "--build",
+                    "14",
+                ]), \
+                     mock.patch.object(module, "check_journal_pin"), \
+                     mock.patch.object(module, "preflight_wrangler"), \
+                     mock.patch.object(module, "preflight_r2"), \
+                     mock.patch.object(module, "load_private_key", return_value=object()), \
+                     mock.patch.object(module, "sign_dmg", return_value=("signature", module.WRANGLER_MAX_UPLOAD_BYTES + 1)), \
+                     mock.patch.object(module, "read_info_plist", return_value=14), \
+                     mock.patch.object(module, "extract_release_notes", return_value="notes"), \
+                     mock.patch.object(module, "fetch_appcast", return_value=tree), \
+                     mock.patch.object(module, "create_r2_client", return_value=FakeClient()), \
+                     mock.patch.object(module, "upload") as upload:
+                    with self.assertRaises(SystemExit):
+                        module.main()
+            finally:
+                os.chdir(old_cwd)
 
         self.assertEqual([name for name, _ in calls], ["complete", "abort"])
+        self.assertEqual(calls[0][1]["IfNoneMatch"], "*")
+        upload.assert_not_called()
 
     def test_journal_dmg_refuses_wrangler_sized_path(self):
         module = load_publish_appcast()
@@ -545,6 +568,29 @@ class JournalDmgCreateOnlyTest(unittest.TestCase):
                 length=module.WRANGLER_MAX_UPLOAD_BYTES,
                 sha256=module.hash_file_sha256(path),
             )
+
+    def test_zero_byte_journal_dmg_fails_before_multipart_create(self):
+        module = load_publish_appcast()
+        identity = self.identity(module)
+        calls = []
+
+        class FakeClient:
+            def create_multipart_upload(self, **kwargs):
+                calls.append(("create", kwargs))
+                return {"UploadId": "upload-1"}
+
+        with tempfile.NamedTemporaryFile() as tmp:
+            with self.assertRaises(SystemExit):
+                module.complete_create_only_multipart(
+                    FakeClient(),
+                    local_path=tmp.name,
+                    identity=identity,
+                    content_type="application/x-apple-diskimage",
+                    length=0,
+                    sha256="a" * 64,
+                )
+
+        self.assertEqual(calls, [])
 
 
 class Appcast404Test(unittest.TestCase):

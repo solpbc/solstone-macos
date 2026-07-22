@@ -124,8 +124,10 @@ class ReleaseIdentityTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 module.check_journal_prep("1.0.12", "0.9.1")
 
-        self.assertIn("VERSION='1.0.12'", stderr.getvalue())
-        self.assertIn("SOLSTONE='0.9.1'", stderr.getvalue())
+        diagnostic = stderr.getvalue()
+        self.assertIn("VERSION='1.0.12'", diagnostic)
+        self.assertIn("SOLSTONE='0.9.1'", diagnostic)
+        self.assertIn("Pass matching VERSION and SOLSTONE", diagnostic)
 
     def test_publication_pin_gate_uses_injected_paths(self):
         module = load_release_identity()
@@ -171,6 +173,27 @@ class ReleaseIdentityTest(unittest.TestCase):
         self.assertIn("SOLSTONE_PIN_VERSION", diagnostic)
         self.assertIn("solstonePinVersion", diagnostic)
         self.assertIn("0.9.1", diagnostic)
+        self.assertIn("Align committed journal J", diagnostic)
+
+    def test_sol_cli_rejects_build_argument(self):
+        proc = subprocess.run(
+            [
+                str(SCRIPT),
+                "identity",
+                "--app",
+                "sol",
+                "--version",
+                "1.2.3",
+                "--build",
+                "99",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("sol release identity is version-only", proc.stderr)
 
 
 class MakefileJournalIdentityContractTest(unittest.TestCase):
@@ -198,6 +221,11 @@ class MakefileJournalIdentityContractTest(unittest.TestCase):
         self.assertIn("RELEASE_IDENTITY       := python3 scripts/release_identity.py", text)
         self.assertIn("JOURNAL_DMG_NAME       ?= $(shell $(RELEASE_IDENTITY) identity --app journal", text)
         self.assertIn("--build '$(JOURNAL_DIST_BUILD)' --field dmg_name", text)
+        self.assertNotIn("|| echo sol-$(DIST_VERSION).dmg", text)
+        self.assertNotIn(
+            "|| echo journal-$(JOURNAL_DIST_VERSION)-build-$(JOURNAL_DIST_BUILD).dmg",
+            text,
+        )
 
     def test_journal_dmg_targets_consume_journal_dmg_name(self):
         for target in (

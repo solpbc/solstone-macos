@@ -338,16 +338,28 @@ def prove_existing_journal_dmg(
     if content_length != expected_length:
         die(
             f"R2 object {r2_key}: ContentLength is {content_length!r}, "
-            f"expected {expected_length}"
+            f"expected {expected_length}; remote object differs from the local DMG. "
+            "Investigate the existing object; this tool will not overwrite, clobber, or reuse it."
         )
     metadata = head.get("Metadata")
     if not isinstance(metadata, dict):
-        die(f"R2 object {r2_key}: missing metadata; cannot prove byte identity")
+        die(
+            f"R2 object {r2_key}: missing metadata; cannot prove byte identity. "
+            "Investigate the existing object; this tool will not overwrite, clobber, or reuse it."
+        )
     actual_sha256 = str(metadata.get("sha256", "")).strip().lower()
     if not SHA256_RE.match(actual_sha256):
-        die(f"R2 object {r2_key}: missing or malformed sha256 metadata")
+        die(
+            f"R2 object {r2_key}: missing or malformed sha256 metadata; "
+            "remote object cannot be proven to match the local DMG. Investigate the existing object; "
+            "this tool will not overwrite, clobber, or reuse it."
+        )
     if actual_sha256 != expected_sha256:
-        die(f"R2 object {r2_key}: sha256 metadata does not match local DMG")
+        die(
+            f"R2 object {r2_key}: sha256 metadata {actual_sha256!r} does not match "
+            f"local DMG sha256 {expected_sha256!r}; remote object differs from the local DMG. "
+            "Investigate the existing object; this tool will not overwrite, clobber, or reuse it."
+        )
 
 def complete_create_only_multipart(
     client,
@@ -358,6 +370,8 @@ def complete_create_only_multipart(
     length: int,
     sha256: str,
 ) -> None:
+    if length <= 0:
+        die(f"{identity.dmg_name}: journal DMG is empty; refusing create-only upload")
     if length <= WRANGLER_MAX_UPLOAD_BYTES:
         die(
             f"{identity.dmg_name}: journal DMG is {length} bytes; refusing "
@@ -394,7 +408,7 @@ def complete_create_only_multipart(
                 parts.append({"PartNumber": part_number, "ETag": upload_part_response["ETag"]})
                 part_number += 1
         if not parts:
-            die(f"{local_path}: empty journal DMG")
+            raise RuntimeError(f"{local_path}: empty journal DMG")
         client.complete_multipart_upload(
             Bucket=R2_BUCKET,
             Key=identity.dmg_key,

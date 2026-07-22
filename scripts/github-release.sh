@@ -212,13 +212,13 @@ with open(notes_path, "r", encoding="utf-8") as handle:
     expected_body = handle.read()
 
 if release.get("tagName") != expected_tag:
-    print("conflict: tagName")
+    print(f"tagName conflict: existing={release.get('tagName')!r}, expected={expected_tag!r}")
     raise SystemExit(20)
 if release.get("name") != expected_title:
-    print("conflict: title")
+    print(f"title conflict: existing={release.get('name')!r}, expected={expected_title!r}")
     raise SystemExit(20)
 if release.get("body") != expected_body:
-    print("conflict: notes")
+    print("notes conflict: existing release body differs from expected changelog notes")
     raise SystemExit(20)
 
 for asset in release.get("assets") or []:
@@ -226,7 +226,7 @@ for asset in release.get("assets") or []:
         continue
     size = asset.get("size")
     if size is None or str(size) != str(asset_size):
-        print("conflict: asset")
+        print(f"asset conflict: {asset_name} size existing={size!r}, expected={asset_size}")
         raise SystemExit(20)
     print("complete")
     raise SystemExit(0)
@@ -247,7 +247,8 @@ PY
       exit 0
       ;;
     *)
-      echo "error: GitHub release ${TAG} conflicts (${RELEASE_STATE})" >&2
+      echo "error: GitHub release ${TAG} conflicts: ${RELEASE_STATE}" >&2
+      echo "       Reconcile the existing release manually; this tool will not overwrite it." >&2
       exit 1
       ;;
   esac

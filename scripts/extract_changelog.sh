@@ -30,7 +30,7 @@ OUTPUT=$(awk -v pat="^## \\\\[${AWK_ESCAPED}\\\\]" '
 ' "$CHANGELOG")
 
 if [[ -z "$OUTPUT" ]]; then
-  echo "error: no CHANGELOG.md entry for version ${VERSION}" >&2
+  echo "error: ${CHANGELOG}: no entry for key ${VERSION}" >&2
   exit 1
 fi
 
