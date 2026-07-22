@@ -14,6 +14,7 @@ IDENTITY = REPO_ROOT / "scripts" / "release_identity.py"
 EXTRACT = REPO_ROOT / "scripts" / "extract_changelog.sh"
 HEAD = "a" * 40
 OTHER = "b" * 40
+EXPECTED_DMG_SHA256 = "2bbea039f194420fd24683a7cd663ce39fec7292698e3f59588dfd9a1779620f"
 
 
 class GithubReleaseDryRunTest(unittest.TestCase):
@@ -91,32 +92,7 @@ class GithubReleaseRecoveryTest(unittest.TestCase):
                 handle,
             )
 
-    def make_workspace(self, *, release_json=None, release_absent=False, local_tag=HEAD, remote_tag=HEAD):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = pathlib.Path(tmp.name)
-        log = root / "calls.log"
-        tag = "journal-v1.0.12-build-14"
-        dmg = root / "journal-1.0.12-build-14.dmg"
-        dmg.write_bytes(b"fake journal dmg")
-        (root / "CHANGELOG-journal.md").write_text(
-            "# journal\n\n"
-            "## [1.0.12 (build 14)] - 2026-07-22\n\n"
-            "### Fixed\n"
-            "- build 14\n",
-            encoding="utf-8",
-        )
-        self.write_plist(root / "Sources/journal/Info.plist", "1.0.12", 14)
-        (root / "Makefile").write_text("SOLSTONE_PIN_VERSION ?= 1.0.12\n", encoding="utf-8")
-        bundle = root / "Sources/JournalRuntime/BundleConfig.swift"
-        bundle.parent.mkdir(parents=True, exist_ok=True)
-        bundle.write_text(
-            'public enum BundleConfig {\n'
-            '    public static let solstonePinVersion = "1.0.12"\n'
-            '}\n',
-            encoding="utf-8",
-        )
-
+    def write_fake_git(self, root, log, *, tag, local_tag, remote_tag):
         git_bin = root / "fake-git"
         self.write_executable(
             git_bin,
@@ -142,18 +118,23 @@ class GithubReleaseRecoveryTest(unittest.TestCase):
                 """
             ),
         )
+        return git_bin
 
+    def write_fake_gh(
+        self,
+        root,
+        log,
+        *,
+        release_path,
+        release_absent,
+        tag,
+        asset_name,
+        download_source,
+        download_fail,
+    ):
         gh_bin = root / "fake-gh"
-        if release_json is None:
-            release_json = {
-                "tagName": tag,
-                "name": "journal 1.0.12 (build 14)",
-                "body": "## [1.0.12 (build 14)] - 2026-07-22\n\n### Fixed\n- build 14\n",
-                "assets": [{"name": dmg.name, "size": dmg.stat().st_size}],
-            }
-        release_path = root / "release.json"
-        release_path.write_text(json.dumps(release_json), encoding="utf-8")
         absent = "1" if release_absent else "0"
+        fail_download = "1" if download_fail else "0"
         self.write_executable(
             gh_bin,
             textwrap.dedent(
@@ -167,16 +148,157 @@ class GithubReleaseRecoveryTest(unittest.TestCase):
                     cat {release_path}; exit 0 ;;
                   "release create") exit 0 ;;
                   "release upload") exit 0 ;;
+                  "release download")
+                    requested_tag="${{3:-}}"
+                    shift 3
+                    pattern=""
+                    output_dir=""
+                    while [[ $# -gt 0 ]]; do
+                      case "$1" in
+                        --pattern|-p)
+                          pattern="${{2:-}}"
+                          shift 2 ;;
+                        --dir|-D)
+                          output_dir="${{2:-}}"
+                          shift 2 ;;
+                        *)
+                          shift ;;
+                      esac
+                    done
+                    if [[ "$requested_tag" != "{tag}" || "$pattern" != "{asset_name}" || -z "$output_dir" ]]; then
+                      echo "unexpected gh release download" >&2
+                      exit 99
+                    fi
+                    if [[ "{fail_download}" == "1" ]]; then
+                      echo "download failed" >&2
+                      exit 1
+                    fi
+                    mkdir -p "$output_dir"
+                    cp {download_source} "$output_dir/$pattern"
+                    exit 0 ;;
                 esac
                 echo "unexpected gh $*" >&2
                 exit 99
                 """
             ),
         )
+        return gh_bin
+
+    def make_app_workspace(
+        self,
+        *,
+        tag,
+        dmg_name,
+        title,
+        changelog_path,
+        changelog_text,
+        release_body,
+        dmg_bytes,
+        release_json=None,
+        release_absent=False,
+        local_tag=HEAD,
+        remote_tag=HEAD,
+        download_bytes=None,
+        download_fail=False,
+    ):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = pathlib.Path(tmp.name)
+        log = root / "calls.log"
+        dmg = root / dmg_name
+        dmg.write_bytes(dmg_bytes)
+        changelog = root / changelog_path
+        changelog.parent.mkdir(parents=True, exist_ok=True)
+        changelog.write_text(changelog_text, encoding="utf-8")
+        download_source = root / "download-asset.bin"
+        download_source.write_bytes(dmg_bytes if download_bytes is None else download_bytes)
+
+        git_bin = self.write_fake_git(root, log, tag=tag, local_tag=local_tag, remote_tag=remote_tag)
+        if release_json is None:
+            release_json = {
+                "tagName": tag,
+                "name": title,
+                "body": release_body,
+                "assets": [{"name": dmg.name, "size": dmg.stat().st_size}],
+            }
+        release_path = root / "release.json"
+        release_path.write_text(json.dumps(release_json), encoding="utf-8")
+        gh_bin = self.write_fake_gh(
+            root,
+            log,
+            release_path=release_path,
+            release_absent=release_absent,
+            tag=tag,
+            asset_name=dmg.name,
+            download_source=download_source,
+            download_fail=download_fail,
+        )
+        return root, log, git_bin, gh_bin
+
+    def make_workspace(
+        self,
+        *,
+        release_json=None,
+        release_absent=False,
+        local_tag=HEAD,
+        remote_tag=HEAD,
+        download_bytes=None,
+        download_fail=False,
+    ):
+        tag = "journal-v1.0.12-build-14"
+        root, log, git_bin, gh_bin = self.make_app_workspace(
+            tag=tag,
+            dmg_name="journal-1.0.12-build-14.dmg",
+            title="journal 1.0.12 (build 14)",
+            changelog_path="CHANGELOG-journal.md",
+            changelog_text=(
+                "# journal\n\n"
+                "## [1.0.12 (build 14)] - 2026-07-22\n\n"
+                "### Fixed\n"
+                "- build 14\n"
+            ),
+            release_body="## [1.0.12 (build 14)] - 2026-07-22\n\n### Fixed\n- build 14\n",
+            dmg_bytes=b"fake journal dmg",
+            release_json=release_json,
+            release_absent=release_absent,
+            local_tag=local_tag,
+            remote_tag=remote_tag,
+            download_bytes=download_bytes,
+            download_fail=download_fail,
+        )
+        self.write_plist(root / "Sources/journal/Info.plist", "1.0.12", 14)
+        (root / "Makefile").write_text("SOLSTONE_PIN_VERSION ?= 1.0.12\n", encoding="utf-8")
+        bundle = root / "Sources/JournalRuntime/BundleConfig.swift"
+        bundle.parent.mkdir(parents=True, exist_ok=True)
+        bundle.write_text(
+            'public enum BundleConfig {\n'
+            '    public static let solstonePinVersion = "1.0.12"\n'
+            '}\n',
+            encoding="utf-8",
+        )
 
         return root, log, git_bin, gh_bin
 
-    def run_live(self, root, git_bin, gh_bin):
+    def make_sol_workspace(self, *, release_json=None, local_tag=HEAD, remote_tag=HEAD):
+        return self.make_app_workspace(
+            tag="v1.2.3",
+            dmg_name="sol-1.2.3.dmg",
+            title="solstone-macos 1.2.3",
+            changelog_path="CHANGELOG.md",
+            changelog_text=(
+                "# solstone\n\n"
+                "## [1.2.3] - 2026-07-22\n\n"
+                "### Fixed\n"
+                "- sol recovery\n"
+            ),
+            release_body="## [1.2.3] - 2026-07-22\n\n### Fixed\n- sol recovery\n",
+            dmg_bytes=b"fake sol dmg",
+            release_json=release_json,
+            local_tag=local_tag,
+            remote_tag=remote_tag,
+        )
+
+    def run_live(self, root, git_bin, gh_bin, *args):
         env = os.environ.copy()
         env.update(
             {
@@ -186,13 +308,20 @@ class GithubReleaseRecoveryTest(unittest.TestCase):
                 "EXTRACT_CHANGELOG_BIN": str(EXTRACT),
             }
         )
+        release_args = args or ("--app", "journal", "--build", "14", "1.0.12")
         return subprocess.run(
-            ["bash", str(SCRIPT), "--app", "journal", "--build", "14", "1.0.12"],
+            ["bash", str(SCRIPT), *release_args],
             cwd=REPO_ROOT,
             env=env,
             capture_output=True,
             text=True,
         )
+
+    def assert_no_release_mutation(self, calls):
+        self.assertNotIn("gh release upload", calls)
+        self.assertNotIn("gh release create", calls)
+        self.assertNotIn("gh release delete", calls)
+        self.assertNotIn("--clobber", calls)
 
     def test_correct_tag_release_absent_creates_only_release(self):
         root, log, git_bin, gh_bin = self.make_workspace(release_absent=True)
@@ -235,6 +364,80 @@ class GithubReleaseRecoveryTest(unittest.TestCase):
         self.assertIn("gh release upload", calls)
         self.assertNotIn("gh release create", calls)
         self.assertNotIn("--clobber", calls)
+
+    def test_matching_journal_asset_downloads_and_verifies_sha(self):
+        root, log, git_bin, gh_bin = self.make_workspace()
+
+        proc = self.run_live(root, git_bin, gh_bin)
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        calls = log.read_text(encoding="utf-8")
+        self.assertIn("gh release download", calls)
+        self.assertIn(EXPECTED_DMG_SHA256, proc.stdout)
+        self.assert_no_release_mutation(calls)
+
+    def test_same_length_journal_asset_sha_conflict_fails_without_mutation(self):
+        root, log, git_bin, gh_bin = self.make_workspace(download_bytes=b"fake journal DMG")
+
+        proc = self.run_live(root, git_bin, gh_bin)
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("byte-identity conflict", proc.stderr)
+        self.assertIn("SHA-256", proc.stderr)
+        self.assertIn("no asset was changed", proc.stderr)
+        calls = log.read_text(encoding="utf-8")
+        self.assertIn("gh release download", calls)
+        self.assert_no_release_mutation(calls)
+
+    def test_journal_download_failure_is_unprovable_without_mutation(self):
+        root, log, git_bin, gh_bin = self.make_workspace(download_fail=True)
+
+        proc = self.run_live(root, git_bin, gh_bin)
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("identity could not be proven", proc.stderr)
+        self.assertIn("investigate", proc.stderr)
+        calls = log.read_text(encoding="utf-8")
+        self.assertIn("gh release download", calls)
+        self.assert_no_release_mutation(calls)
+
+    def test_short_journal_download_is_unprovable_without_mutation(self):
+        root, log, git_bin, gh_bin = self.make_workspace(download_bytes=b"short")
+
+        proc = self.run_live(root, git_bin, gh_bin)
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("identity could not be proven", proc.stderr)
+        self.assertIn("investigate", proc.stderr)
+        calls = log.read_text(encoding="utf-8")
+        self.assertIn("gh release download", calls)
+        self.assert_no_release_mutation(calls)
+
+    def test_unreadable_local_journal_dmg_is_unprovable_without_mutation(self):
+        root, log, git_bin, gh_bin = self.make_workspace()
+        dmg = root / "journal-1.0.12-build-14.dmg"
+        dmg.chmod(0)
+        self.addCleanup(lambda: dmg.chmod(0o644) if dmg.exists() else None)
+
+        proc = self.run_live(root, git_bin, gh_bin)
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("identity could not be proven", proc.stderr)
+        self.assertIn("investigate", proc.stderr)
+        calls = log.read_text(encoding="utf-8")
+        self.assertIn("gh release download", calls)
+        self.assert_no_release_mutation(calls)
+
+    def test_live_sol_recovery_stays_size_only_without_download(self):
+        root, log, git_bin, gh_bin = self.make_sol_workspace()
+
+        proc = self.run_live(root, git_bin, gh_bin, "--app", "sol", "1.2.3")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("already matches", proc.stdout)
+        calls = log.read_text(encoding="utf-8")
+        self.assertNotIn("gh release download", calls)
+        self.assert_no_release_mutation(calls)
 
     def test_wrong_commit_tag_fails_without_mutation(self):
         root, log, git_bin, gh_bin = self.make_workspace(local_tag=OTHER)

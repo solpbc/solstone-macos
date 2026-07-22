@@ -134,7 +134,8 @@ fi
 NOTES_FILE=$(mktemp)
 RELEASE_JSON=$(mktemp)
 RELEASE_VIEW_ERR=$(mktemp)
-trap 'rm -f "$NOTES_FILE" "$RELEASE_JSON" "$RELEASE_VIEW_ERR"' EXIT
+ASSET_DIR=$(mktemp -d)
+trap 'rm -f "$NOTES_FILE" "$RELEASE_JSON" "$RELEASE_VIEW_ERR"; rm -rf "$ASSET_DIR"' EXIT
 "$EXTRACT_CHANGELOG_BIN" "$CHANGELOG_KEY" "$CHANGELOG" > "$NOTES_FILE"
 
 if [[ "$APP" == "journal" ]]; then
@@ -201,11 +202,11 @@ fi
 DMG_SIZE=$(python3 -c 'import os, sys; print(os.path.getsize(sys.argv[1]))' "$DMG")
 if "$GH_BIN" release view "$TAG" --json tagName,name,body,assets > "$RELEASE_JSON" 2>"$RELEASE_VIEW_ERR"; then
   RELEASE_STATE_STATUS=0
-  RELEASE_STATE=$(python3 - "$RELEASE_JSON" "$TAG" "$TITLE" "$NOTES_FILE" "$DMG" "$DMG_SIZE" <<'PY'
+  RELEASE_STATE=$(python3 - "$RELEASE_JSON" "$TAG" "$TITLE" "$NOTES_FILE" "$DMG" "$DMG_SIZE" "$APP" <<'PY'
 import json
 import sys
 
-release_path, expected_tag, expected_title, notes_path, asset_name, asset_size = sys.argv[1:]
+release_path, expected_tag, expected_title, notes_path, asset_name, asset_size, app = sys.argv[1:]
 with open(release_path, "r", encoding="utf-8") as handle:
     release = json.load(handle)
 with open(notes_path, "r", encoding="utf-8") as handle:
@@ -228,6 +229,9 @@ for asset in release.get("assets") or []:
     if size is None or str(size) != str(asset_size):
         print(f"asset conflict: {asset_name} size existing={size!r}, expected={asset_size}")
         raise SystemExit(20)
+    if app == "journal":
+        print("verify-bytes")
+        raise SystemExit(30)
     print("complete")
     raise SystemExit(0)
 
@@ -245,6 +249,81 @@ PY
       "$GH_BIN" release upload "$TAG" "$DMG"
       echo "✓ uploaded missing GitHub release asset ${DMG} to ${TAG}"
       exit 0
+      ;;
+    30)
+      if ! "$GH_BIN" release download "$TAG" --pattern "$DMG" --dir "$ASSET_DIR"; then
+        echo "error: identity could not be proven for GitHub release ${TAG} asset ${DMG}: download failed; investigate the existing release." >&2
+        exit 1
+      fi
+      if VERIFIED_SHA=$(python3 - "$DMG" "$ASSET_DIR/$DMG" "$DMG_SIZE" <<'PY'
+import hashlib
+import os
+import sys
+
+local_path, downloaded_path, advertised_size_raw = sys.argv[1:]
+advertised_size = int(advertised_size_raw)
+
+if not os.path.exists(downloaded_path):
+    print(
+        f"error: identity could not be proven for GitHub release asset {downloaded_path}: downloaded file is missing; investigate the existing release.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+try:
+    downloaded_size = os.path.getsize(downloaded_path)
+except OSError as exc:
+    print(
+        f"error: identity could not be proven for GitHub release asset {downloaded_path}: could not read downloaded file ({exc}); investigate the existing release.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+if downloaded_size < advertised_size:
+    print(
+        f"error: identity could not be proven for GitHub release asset {downloaded_path}: downloaded size {downloaded_size} is shorter than advertised size {advertised_size}; investigate the existing release.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+def sha256(path, message):
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    except OSError as exc:
+        print(message.format(error=exc), file=sys.stderr)
+        raise SystemExit(1)
+    return digest.hexdigest()
+
+local_sha = sha256(
+    local_path,
+    f"error: identity could not be proven for local DMG {local_path}: could not read local file ({{error}}); investigate before retrying.",
+)
+downloaded_sha = sha256(
+    downloaded_path,
+    f"error: identity could not be proven for GitHub release asset {downloaded_path}: could not read downloaded file ({{error}}); investigate the existing release.",
+)
+
+if local_sha != downloaded_sha:
+    print(
+        f"error: byte-identity conflict for GitHub release asset {downloaded_path}: SHA-256 local {local_sha} != downloaded {downloaded_sha}; no asset was changed.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+print(local_sha)
+PY
+      ); then
+        echo "✓ GitHub release ${TAG} already matches ${DMG} (SHA-256 ${VERIFIED_SHA})"
+        exit 0
+      else
+        exit 1
+      fi
       ;;
     *)
       echo "error: GitHub release ${TAG} conflicts: ${RELEASE_STATE}" >&2
