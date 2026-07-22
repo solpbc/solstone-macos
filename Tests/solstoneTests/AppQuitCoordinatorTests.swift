@@ -4,7 +4,7 @@
 import Testing
 @testable import solstone
 
-@Suite("AppQuitCoordinator")
+@Suite("AppQuitCoordinator", .serialized)
 @MainActor
 struct AppQuitCoordinatorTests {
     @Test func appOwnedQuitWritesMarkerRunsCleanupThenTerminates() async throws {
