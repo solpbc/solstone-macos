@@ -233,6 +233,37 @@ struct TunnelSessionTests {
         await tlsServer.stop()
     }
 
+    @Test func openStreamTransportClosedRequestsReconnectOnceAndThrowsNotConnected() async throws {
+        let fixture = try TestCA.make()
+        let tlsServer = TLSEchoServer(bundle: fixture, mode: .mux)
+        try await tlsServer.start()
+        let tlsPort = await tlsServer.port
+        let pairing = pairing(from: fixture, localPort: tlsPort)
+        let muxFactory = CapturingMuxFactory()
+        let session = TunnelSession(pairing: pairing, multiplexerFactory: { tls in muxFactory.make(tls: tls) })
+        let recorder = StateRecorder()
+        let observation = observe(session: session, recorder: recorder)
+
+        try await session.connect(endpoints: TransportEndpoint.candidates(for: pairing))
+        try await waitForConnected(recorder, via: .lanDirect(host: "127.0.0.1", port: tlsPort), minimumCount: 1)
+        let mux = try #require(muxFactory.latestMux())
+
+        await mux.tearDown(reason: .transportFailure)
+        await expectSessionError(.notConnected) {
+            _ = try await session.openStream()
+        }
+        try await waitForConnected(recorder, via: .lanDirect(host: "127.0.0.1", port: tlsPort), minimumCount: 2)
+        let muxCountAfterReconnect = muxFactory.makeCount
+        try await Task.sleep(for: .milliseconds(300))
+
+        await session.disconnect()
+        observation.cancel()
+        await tlsServer.stop()
+
+        #expect(muxCountAfterReconnect == 2)
+        #expect(muxFactory.makeCount == 2)
+    }
+
     @Test func requestReconnectCoalescesConnectedRequestsThroughExistingLoop() async throws {
         let fixture = try TestCA.make()
         let server = TLSEchoServer(bundle: fixture, mode: .mux)
@@ -433,5 +464,28 @@ private final class FirstKeepaliveMuxFailsFactory: @unchecked Sendable {
 
     func releaseFirstKeepalive() async {
         await gate.release()
+    }
+}
+
+private final class CapturingMuxFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var muxes: [Multiplexer] = []
+
+    var makeCount: Int {
+        lock.withLock { muxes.count }
+    }
+
+    func make(tls: InnerTLS) -> Multiplexer {
+        let mux = Multiplexer { data in
+            try await tls.send(data)
+        }
+        lock.withLock {
+            muxes.append(mux)
+        }
+        return mux
+    }
+
+    func latestMux() -> Multiplexer? {
+        lock.withLock { muxes.last }
     }
 }
