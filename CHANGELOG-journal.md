@@ -5,6 +5,12 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.12 (build 14)] - 2026-07-22
+
+### Changed
+- updated the bundled journal to [1.0.12](https://solstone.app/releases#v1.0.12) →
+
+
 ## [1.0.11] - 2026-07-22
 
 ### Changed
