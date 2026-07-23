@@ -278,14 +278,22 @@ public enum SPLKeychain {
     }
 
     static func baseQuery(service: String) -> [String: Any] {
-        [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
-            kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
-            kSecAttrAccessGroup as String: accessGroup,
         ]
+
+        // Local ad-hoc test builds only; never shipped; never set by any production target.
+        // Reason: unentitled ad-hoc builds cannot reach the Team-ID-gated Data Protection
+        // keychain access group, so they fall back to the plain login-keychain plane.
+        #if !SPL_LOGIN_KEYCHAIN
+        query[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue as Any
+        query[kSecAttrAccessGroup as String] = accessGroup
+        #endif
+
+        return query
     }
 
     static func encode(_ pairing: StoredPairing) throws -> Data {

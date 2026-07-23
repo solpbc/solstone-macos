@@ -45,6 +45,8 @@ make run             # launch solstone.app from the source tree + stream logs
 
 `make bundle-dist` signs under `Developer ID Application: sol pbc (7QCG8V4M6H)` with hardened runtime. Without those identities the build fails at `signing-check`; install the DMG instead.
 
+contributors without sol pbc signing identities can use [the local test build guide](docs/local-test-build.md).
+
 ## Building and Running
 
 - `make build` - Build both packages (debug)

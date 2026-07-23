@@ -75,6 +75,16 @@ struct SPLKeychainTests {
         #expect(try #require(attrs[kSecAttrSynchronizable as String] as? Bool) == false)
     }
 
+    @Test func baseQueryDefaultsToDataProtectionKeychainAndTeamAccessGroup() throws {
+        // The SPL_LOGIN_KEYCHAIN branch omits these keys but is compiled only by
+        // `bundle-adhoc`; one `swift test` run cannot exercise both modes.
+        let query = SPLKeychain.baseQuery(service: "svc")
+
+        #expect(try #require(query[kSecUseDataProtectionKeychain as String] as? Bool) == true)
+        #expect(try #require(query[kSecAttrAccessGroup as String] as? String)
+            == "7QCG8V4M6H.app.solstone.observer.spl")
+    }
+
     @Test func updateAttributesContainOnlyValueData() throws {
         let attrs = SPLKeychain.updateAttributes(data: Data("x".utf8))
         #expect(try #require(attrs[kSecValueData as String] as? Data) == Data("x".utf8))

@@ -1,5 +1,5 @@
-.PHONY: build release release-universal release-universal-journal run clean test ax-contract integration-test snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
-        signing-check notary-restore unlock-signing bundle-dist bundle-dist-journal dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
+.PHONY: build release release-universal release-universal-journal release-universal-adhoc run clean test ax-contract integration-test snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
+        signing-check notary-restore unlock-signing bundle-dist bundle-dist-journal bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
         vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-materialize-smoke brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
 
@@ -50,6 +50,11 @@ ENTITLEMENTS_PLIST     := Sources/solstone/entitlements.plist
 # bundled python3.13 keep the base ENTITLEMENTS_PLIST — a profile-less helper signed with
 # the restricted keychain entitlements is SIGKILLed by amfi (exit 137).
 APP_ENTITLEMENTS_PLIST := Sources/solstone/entitlements-app.plist
+# Local ad-hoc test builds only; never shipped; never referenced by any production
+# or CI target. ADHOC_SIGN_ID resolves to the optional stable dev-cert CN when present,
+# else "-" (pure ad-hoc). Expanded lazily — only the bundle-adhoc recipe references it.
+ADHOC_SIGN_ID      ?= $(shell scripts/adhoc-dev-cert.sh identity 2>/dev/null || echo -)
+ADHOC_ENTITLEMENTS ?= $(ENTITLEMENTS_PLIST)
 
 # uv vendoring
 UV_VERSION ?= 0.11.13
@@ -237,6 +242,12 @@ release-universal:
 	swift build -c release --arch arm64 --arch x86_64 --product solstone
 	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
 
+# Local ad-hoc test builds only; never shipped; never set by any production target.
+# Uses the login-keychain SPL plane for unentitled local bundles.
+release-universal-adhoc:
+	swift build -c release --arch arm64 --arch x86_64 --product solstone -Xswiftc -DSPL_LOGIN_KEYCHAIN
+	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog -Xswiftc -DSPL_LOGIN_KEYCHAIN
+
 release-universal-journal:
 	swift build -c release --arch arm64 --arch x86_64 --product journal
 	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
@@ -249,7 +260,7 @@ run:
 	@mkdir -p scratch; \
 	LOG=scratch/$$(date +%Y%m%d_%H%M%S).log; \
 	echo "Streaming logs → $$LOG  (Ctrl+C to stop)"; \
-	/usr/bin/log stream --predicate 'subsystem == "app.solstone.observer"' --level debug > "$$LOG" 2>&1 & \
+	/usr/bin/log stream --predicate 'subsystem BEGINSWITH "app.solstone.observer"' --level debug > "$$LOG" 2>&1 & \
 	STREAM_PID=$$!; \
 	open --env SOLSTONE_DEV_LAUNCH=1 solstone.app; \
 	trap "kill $$STREAM_PID 2>/dev/null; echo; echo 'Log saved: $$LOG'" INT TERM; \
@@ -437,8 +448,7 @@ unlock-signing:
 	fi
 
 # Build a universal .app bundle signed with Developer ID Application + hardened runtime.
-# Separate from `bundle-universal` so distribution signing is additive, not destructive —
-# existing self-signed bundle target stays for local dev.
+# Separate from `bundle-adhoc`, which is the local-only unsigned/dev-cert path.
 bundle-dist: unlock-signing signing-check release-universal
 	@echo "Creating distribution app bundle..."
 	@rm -rf solstone.app
@@ -509,6 +519,59 @@ bundle-dist: unlock-signing signing-check release-universal
 	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
 		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
 	@echo "✓ Signed: solstone.app (keychain-access-group + embedded profile verified)"
+
+# Local ad-hoc test bundle only; never shipped, never update-served, never production.
+# Keep in lockstep with bundle-dist; only signing/provisioning/keychain plane differ.
+bundle-adhoc: release-universal-adhoc
+	@echo "Creating local ad-hoc app bundle..."
+	@rm -rf solstone.app
+	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
+	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
+	@cp .build/apple/Products/Release/solstone-watchdog solstone.app/Contents/MacOS/
+	@cp Sources/solstone/Info.plist solstone.app/Contents/
+	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
+	@mkdir -p solstone.app/Contents/Library/LaunchAgents
+	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
+	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
+	@cp -r .build/apple/Products/Release/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
+	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
+	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
+	@codesign --force --options runtime --timestamp=none \
+		--sign "$(ADHOC_SIGN_ID)" \
+		solstone.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc
+	@codesign --force --options runtime --timestamp=none \
+		--sign "$(ADHOC_SIGN_ID)" \
+		solstone.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc
+	@codesign --force --options runtime --timestamp=none \
+		--sign "$(ADHOC_SIGN_ID)" \
+		solstone.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate
+	@codesign --force --options runtime --timestamp=none \
+		--sign "$(ADHOC_SIGN_ID)" \
+		solstone.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app
+	@codesign --force --options runtime --timestamp=none \
+		--sign "$(ADHOC_SIGN_ID)" \
+		solstone.app/Contents/Frameworks/Sparkle.framework
+	@codesign --force --options runtime --timestamp=none \
+		--sign "$(ADHOC_SIGN_ID)" \
+		solstone.app/Contents/Resources/solstone_solstone.bundle
+	@codesign --force --options runtime --timestamp=none \
+		--sign "$(ADHOC_SIGN_ID)" \
+		solstone.app/Contents/Resources/solstone_JournalMarkKit.bundle
+	@codesign --force --options runtime --timestamp=none \
+		--identifier app.solstone.observer.watchdog \
+		--sign "$(ADHOC_SIGN_ID)" \
+		solstone.app/Contents/MacOS/solstone-watchdog
+	@codesign --force --options runtime --timestamp=none \
+		--sign "$(ADHOC_SIGN_ID)" \
+		--entitlements "$(ADHOC_ENTITLEMENTS)" \
+		solstone.app
+	@codesign --verify --strict --deep --verbose=2 solstone.app
+	@echo "✓ Signed: solstone.app (local ad-hoc SPL login-keychain plane)"
+
+# Local ad-hoc debug bundle only; never shipped, never update-served, never production.
+# Same recipe as bundle-adhoc with get-task-allow entitlements for debugger attach.
+bundle-adhoc-debug:
+	@$(MAKE) bundle-adhoc ADHOC_ENTITLEMENTS=Sources/solstone/entitlements-adhoc-debug.plist
 
 journal-app-dev:
 	@echo "Building journal dev app..."
