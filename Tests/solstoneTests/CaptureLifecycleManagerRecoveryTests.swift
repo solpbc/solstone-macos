@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import AppKit
 import Testing
 @testable import solstone
 
@@ -162,6 +163,54 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(pauseCompleted < resumeStarted)
         #expect(delegate.lifecycleCurrentState.isRecording)
         #expect(!manager.suspendedForRecovery)
+    }
+
+    @Test func willSleepNotificationDeliveredThroughInjectedWorkspaceCenter() async {
+        let center = NotificationCenter()
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        let manager = makeManager(delegate: delegate, workspaceCenter: center)
+
+        center.post(name: NSWorkspace.willSleepNotification, object: NSWorkspace.shared)
+
+        await delegate.waitForEvent(.pauseStarted("sleep"))
+        delegate.releasePause()
+        await delegate.waitForEvent(.pauseCompleted("sleep"))
+        withExtendedLifetime(manager) {}
+    }
+
+    @Test func didWakeNotificationDeliveredThroughInjectedWorkspaceCenter() async {
+        let center = NotificationCenter()
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        let manager = makeManager(delegate: delegate, workspaceCenter: center)
+
+        center.post(name: NSWorkspace.willSleepNotification, object: NSWorkspace.shared)
+        await delegate.waitForEvent(.pauseStarted("sleep"))
+        delegate.releasePause()
+        await delegate.waitForEvent(.pauseCompleted("sleep"))
+        #expect(manager.suspendedForRecovery)
+
+        center.post(name: NSWorkspace.didWakeNotification, object: NSWorkspace.shared)
+
+        await delegate.waitForEvent(.resumeStarted("wake"))
+        await delegate.waitForEvent(.resumeCompleted("wake"))
+        #expect(delegate.lifecycleCurrentState.isRecording)
+        #expect(!manager.suspendedForRecovery)
+    }
+
+    @Test func sleepWakeObserversIgnoreDefaultCenter() async throws {
+        let center = NotificationCenter()
+        let delegate = FakeLifecycleDelegate(state: .recording)
+        let manager = makeManager(delegate: delegate, workspaceCenter: center)
+
+        NotificationCenter.default.post(name: NSWorkspace.willSleepNotification, object: NSWorkspace.shared)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!delegate.events.contains(.pauseStarted("sleep")))
+
+        center.post(name: NSWorkspace.willSleepNotification, object: NSWorkspace.shared)
+        await delegate.waitForEvent(.pauseStarted("sleep"))
+        delegate.releasePause()
+        await delegate.waitForEvent(.pauseCompleted("sleep"))
+        withExtendedLifetime(manager) {}
     }
 
     @Test func rapidRelockCancelsDebouncedUnlockAndCoalescesPause() async throws {
@@ -913,7 +962,8 @@ struct CaptureLifecycleManagerRecoveryTests {
         delegate: FakeLifecycleDelegate,
         isScreenLocked: @escaping @MainActor () -> Bool = { false },
         unlockResumeDelay: @escaping @MainActor @Sendable () async throws -> Void = {},
-        transitionTimeoutSeconds: TimeInterval = 30
+        transitionTimeoutSeconds: TimeInterval = 30,
+        workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter
     ) -> CaptureLifecycleManager {
         let manager = CaptureLifecycleManager(
             recoveryScheduler: { delay, fire in
@@ -921,7 +971,8 @@ struct CaptureLifecycleManagerRecoveryTests {
             },
             isScreenLocked: isScreenLocked,
             unlockResumeDelay: unlockResumeDelay,
-            transitionTimeoutSeconds: transitionTimeoutSeconds
+            transitionTimeoutSeconds: transitionTimeoutSeconds,
+            workspaceCenter: workspaceCenter
         )
         manager.configure(delegate: delegate)
         return manager

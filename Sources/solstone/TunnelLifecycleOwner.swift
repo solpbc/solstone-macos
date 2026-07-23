@@ -414,8 +414,7 @@ final class TunnelLifecycleOwner {
 
     private func installWakeUnlockObservers() {
         if didWakeObserver == nil {
-            // CaptureLifecycleManager currently registers workspace wake on NotificationCenter.default;
-            // tunnel lifecycle follows AppKit's workspace notification center. Capture is out of scope here.
+            // Tunnel lifecycle follows AppKit's workspace notification center for wake, matching CaptureLifecycleManager.
             didWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
                 forName: NSWorkspace.didWakeNotification,
                 object: nil,

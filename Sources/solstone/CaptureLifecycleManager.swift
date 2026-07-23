@@ -71,6 +71,7 @@ final class CaptureLifecycleManager {
     private let recoveryScheduler: RecoveryScheduler
     private let isScreenLockedProvider: @MainActor () -> Bool
     private let executor: CaptureExecutor
+    private let workspaceCenter: NotificationCenter
 
     nonisolated(unsafe) private var willSleepObserver: NSObjectProtocol?
     nonisolated(unsafe) private var didWakeObserver: NSObjectProtocol?
@@ -83,10 +84,12 @@ final class CaptureLifecycleManager {
         unlockResumeDelay: @escaping @MainActor @Sendable () async throws -> Void = {
             try await Task.sleep(nanoseconds: 500_000_000)
         },
-        transitionTimeoutSeconds: TimeInterval = 30
+        transitionTimeoutSeconds: TimeInterval = 30,
+        workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter
     ) {
         self.recoveryScheduler = recoveryScheduler
         self.isScreenLockedProvider = isScreenLocked
+        self.workspaceCenter = workspaceCenter
         self.executor = CaptureExecutor(
             isScreenLocked: isScreenLocked,
             unlockResumeDelay: unlockResumeDelay,
@@ -148,7 +151,7 @@ final class CaptureLifecycleManager {
         self.delegate = delegate
         executor.delegate = delegate
 
-        willSleepObserver = NotificationCenter.default.addObserver(
+        willSleepObserver = workspaceCenter.addObserver(
             forName: NSWorkspace.willSleepNotification,
             object: nil,
             queue: .main
@@ -158,7 +161,7 @@ final class CaptureLifecycleManager {
             }
         }
 
-        didWakeObserver = NotificationCenter.default.addObserver(
+        didWakeObserver = workspaceCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil,
             queue: .main
@@ -191,10 +194,10 @@ final class CaptureLifecycleManager {
 
     deinit {
         if let observer = willSleepObserver {
-            NotificationCenter.default.removeObserver(observer)
+            workspaceCenter.removeObserver(observer)
         }
         if let observer = didWakeObserver {
-            NotificationCenter.default.removeObserver(observer)
+            workspaceCenter.removeObserver(observer)
         }
         if let observer = screenLockedObserver {
             DistributedNotificationCenter.default().removeObserver(observer)
