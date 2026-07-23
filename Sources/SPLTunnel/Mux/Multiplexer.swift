@@ -119,6 +119,9 @@ public actor Multiplexer {
     }
 
     public func tearDown(reason: TearDownReason) async {
+        guard !tornDown else {
+            return
+        }
         tornDown = true
         keepaliveTask?.cancel()
         keepaliveTask = nil
@@ -336,6 +339,11 @@ public actor Multiplexer {
                 try await sleeper(interval)
                 try await sendKeepalivePing(missedLimit: missedLimit)
             } catch {
+                guard !Task.isCancelled, !(error is CancellationError) else {
+                    return
+                }
+                logger.notice("mux keepalive lost reason=\("sendFailure", privacy: .public)")
+                keepaliveLostContinuation.yield(())
                 await tearDown(reason: .transportFailure)
                 return
             }
@@ -350,7 +358,7 @@ public actor Multiplexer {
         if pendingPingNonce != nil {
             missedPings += 1
             if missedPings >= missedLimit {
-                logger.debug("mux keepalive lost missed_pings=\(self.missedPings, privacy: .public)")
+                logger.notice("mux keepalive lost missed_pings=\(self.missedPings, privacy: .public)")
                 keepaliveLostContinuation.yield(())
                 keepaliveTask?.cancel()
                 keepaliveTask = nil

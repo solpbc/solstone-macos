@@ -203,6 +203,36 @@ struct TunnelSessionTests {
         #expect(mode == .plViaSpl)
     }
 
+    @Test func keepaliveSendFailureReconnectsFromConnectedSession() async throws {
+        let fixture = try TestCA.make()
+        let tlsServer = TLSEchoServer(bundle: fixture, mode: .mux)
+        try await tlsServer.start()
+        let tlsPort = await tlsServer.port
+        let relay = RelayBridgeServer(tlsPort: tlsPort)
+        try await relay.start()
+        let relayPort = await relay.port
+        let pairing = pairing(from: fixture, localPort: tlsPort, relayPort: relayPort)
+        let muxFactory = FirstKeepaliveMuxFailsFactory()
+        let session = TunnelSession(pairing: pairing, multiplexerFactory: { tls in muxFactory.make(tls: tls) })
+        let recorder = StateRecorder()
+        let observation = observe(session: session, recorder: recorder)
+        let relayURL = try #require(URL(string: "ws://127.0.0.1:\(relayPort)"))
+
+        try await session.connect(endpoints: TransportEndpoint.candidates(for: pairing))
+        try await waitForConnected(recorder, via: .lanDirect(host: "127.0.0.1", port: tlsPort), minimumCount: 1)
+
+        await muxFactory.waitForFirstKeepalive()
+        await muxFactory.releaseFirstKeepalive()
+
+        try await waitForState(recorder, .failed(.directKeepaliveMissed))
+        try await waitForConnected(recorder, via: .relay(endpoint: relayURL), minimumCount: 1)
+
+        await session.disconnect()
+        observation.cancel()
+        await relay.stop()
+        await tlsServer.stop()
+    }
+
     @Test func requestReconnectCoalescesConnectedRequestsThroughExistingLoop() async throws {
         let fixture = try TestCA.make()
         let server = TLSEchoServer(bundle: fixture, mode: .mux)
@@ -345,5 +375,63 @@ private actor StateRecorder {
 
     func append(_ state: TunnelState) {
         values.append(state)
+    }
+}
+
+private enum SessionKeepaliveSinkError: Error {
+    case boom
+}
+
+private actor SessionKeepaliveGate {
+    private var parkedTick: CheckedContinuation<Void, Never>?
+    private var arrival: CheckedContinuation<Void, Never>?
+
+    func tick() async {
+        await withCheckedContinuation { continuation in
+            parkedTick = continuation
+            arrival?.resume()
+            arrival = nil
+        }
+    }
+
+    func waitForTick() async {
+        if parkedTick != nil { return }
+        await withCheckedContinuation { continuation in arrival = continuation }
+    }
+
+    func release() {
+        guard let continuation = parkedTick else { return }
+        parkedTick = nil
+        continuation.resume()
+    }
+}
+
+private final class FirstKeepaliveMuxFailsFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private let gate = SessionKeepaliveGate()
+    private var makeCount = 0
+
+    func make(tls: InnerTLS) -> Multiplexer {
+        let shouldFail = lock.withLock {
+            makeCount += 1
+            return makeCount == 1
+        }
+        guard shouldFail else {
+            return Multiplexer { data in
+                try await tls.send(data)
+            }
+        }
+        return Multiplexer(
+            sink: { _ in throw SessionKeepaliveSinkError.boom },
+            sleeper: { _ in await self.gate.tick() }
+        )
+    }
+
+    func waitForFirstKeepalive() async {
+        await gate.waitForTick()
+    }
+
+    func releaseFirstKeepalive() async {
+        await gate.release()
     }
 }

@@ -61,14 +61,19 @@ public actor InnerTLS {
         self.inboundContinuation = continuation
     }
 
-    public static func connectLAN(host: String, port: Int, pairing: StoredPairing) async throws -> InnerTLS {
+    public static func connectLAN(
+        host: String,
+        port: Int,
+        pairing: StoredPairing,
+        unpinnedInterface: Bool = false
+    ) async throws -> InnerTLS {
         guard let nwPort = NWEndpoint.Port(rawValue: UInt16(clamping: port)), 1...65535 ~= port else {
             throw InnerTLSError.invalidPort(port)
         }
 
         let verifyFailure = TLSVerifyFailure()
         let options = try makeTLSOptions(pairing: pairing, verifyFailure: verifyFailure)
-        let parameters = NWParameters(tls: options, tcp: NWProtocolTCP.Options())
+        let parameters = makeLANParameters(tls: options, host: host, unpinnedInterface: unpinnedInterface)
         let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: parameters)
         let startedAt = ContinuousClock.now
         do {
@@ -88,21 +93,26 @@ public actor InnerTLS {
         }
 
         let elapsed = startedAt.duration(to: .now).milliseconds
-        logger.debug("handshake transport=\("lan", privacy: .public) duration_ms=\(elapsed, privacy: .public)")
+        logger.notice("handshake transport=\("lan", privacy: .public) duration_ms=\(elapsed, privacy: .public)")
 
         let tls = InnerTLS(connection: connection)
         await tls.startReceiveLoop()
         return tls
     }
 
-    public static func connectLANCertless(host: String, port: Int, caFingerprintBytes: [UInt8]) async throws -> InnerTLS {
+    public static func connectLANCertless(
+        host: String,
+        port: Int,
+        caFingerprintBytes: [UInt8],
+        unpinnedInterface: Bool = false
+    ) async throws -> InnerTLS {
         guard let nwPort = NWEndpoint.Port(rawValue: UInt16(clamping: port)), 1...65535 ~= port else {
             throw InnerTLSError.invalidPort(port)
         }
 
         let verifyFailure = TLSVerifyFailure()
         let options = makeCertlessTLSOptions(caFingerprintBytes: caFingerprintBytes, verifyFailure: verifyFailure)
-        let parameters = NWParameters(tls: options, tcp: NWProtocolTCP.Options())
+        let parameters = makeLANParameters(tls: options, host: host, unpinnedInterface: unpinnedInterface)
         let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: parameters)
         let startedAt = ContinuousClock.now
         do {
@@ -122,7 +132,7 @@ public actor InnerTLS {
         }
 
         let elapsed = startedAt.duration(to: .now).milliseconds
-        logger.debug("handshake transport=\("lan-certless", privacy: .public) duration_ms=\(elapsed, privacy: .public)")
+        logger.notice("handshake transport=\("lan-certless", privacy: .public) duration_ms=\(elapsed, privacy: .public)")
 
         let tls = InnerTLS(connection: connection)
         await tls.startReceiveLoop()
@@ -178,7 +188,7 @@ public actor InnerTLS {
         }
 
         let elapsed = startedAt.duration(to: .now).milliseconds
-        logger.debug("handshake transport=\(transport.transportKind, privacy: .public) duration_ms=\(elapsed, privacy: .public)")
+        logger.notice("handshake transport=\(transport.transportKind, privacy: .public) duration_ms=\(elapsed, privacy: .public)")
 
         let tls = InnerTLS(
             connection: connection,
@@ -241,7 +251,7 @@ public actor InnerTLS {
         }
 
         let elapsed = startedAt.duration(to: .now).milliseconds
-        logger.debug("pairing handshake transport=\(transport.transportKind, privacy: .public) duration_ms=\(elapsed, privacy: .public)")
+        logger.notice("pairing handshake transport=\(transport.transportKind, privacy: .public) duration_ms=\(elapsed, privacy: .public)")
 
         guard let caSPKIDER = trustCapture.caSPKIDER else {
             pumps.forEach { $0.cancel() }
@@ -345,6 +355,22 @@ public actor InnerTLS {
             complete(trusted)
         }, tlsQueue)
         return options
+    }
+
+    static func lanParametersForTesting(host: String, unpinnedInterface: Bool) -> NWParameters {
+        makeLANParameters(tls: NWProtocolTLS.Options(), host: host, unpinnedInterface: unpinnedInterface)
+    }
+
+    private static func makeLANParameters(
+        tls options: NWProtocolTLS.Options,
+        host: String,
+        unpinnedInterface: Bool
+    ) -> NWParameters {
+        let parameters = NWParameters(tls: options, tcp: NWProtocolTCP.Options())
+        if TunnelAddressClassifier.isRFC1918IPv4Literal(host), !unpinnedInterface {
+            parameters.prohibitedInterfaceTypes = [.other]
+        }
+        return parameters
     }
 
     private static func makeCertlessTLSOptions(caFingerprintBytes: [UInt8], verifyFailure: TLSVerifyFailure) -> NWProtocolTLS.Options {

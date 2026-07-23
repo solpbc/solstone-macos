@@ -28,7 +28,7 @@ public enum DialClient {
         timeout: Duration = .seconds(5)
     ) async throws -> any ByteTransport {
         switch endpoint {
-        case .lan(let host, let port, _):
+        case .lan(let host, let port, _, _):
             return try await dialLAN(host: host, port: port, timeout: timeout)
         case .relay(let endpoint, let instanceID, let deviceToken):
             return try await dialRelay(

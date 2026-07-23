@@ -2,12 +2,13 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import AppKit
 import Observation
 import SPLTunnel
 import Testing
 @testable import solstone
 
-@Suite("TunnelLifecycleOwner")
+@Suite("TunnelLifecycleOwner", .serialized)
 @MainActor
 struct TunnelLifecycleOwnerTests {
     @Test func nilAndNoUsableCandidatesStayDormant() async throws {
@@ -297,9 +298,16 @@ struct TunnelLifecycleOwnerTests {
 
     @Test func probeFailureSuppressedWhenInboundActivityIncreases() async throws {
         let sleeper = ManualSleeper()
-        let probe = ProbeScript(results: [false])
+        let probe = ProbeScript(results: Array(repeating: false, count: 6))
         let transport = FakeTunnelTransport(connection: .init(localPort: 45678, via: .relay))
-        transport.inboundSnapshots = [0, 1]
+        transport.inboundSnapshots = [
+            0, 1,
+            1, 2,
+            2, 3,
+            3, 4,
+            4, 5,
+            5, 6,
+        ]
         let owner = makeOwner(
             factory: FakeTransportFactory([transport]),
             probe: { port, _ in await probe.run(port: port) },
@@ -308,12 +316,118 @@ struct TunnelLifecycleOwnerTests {
 
         owner.start()
         try await waitUntil { owner.state == .connected(localPort: 45678, via: .relay) }
+
+        for expectedCount in 1...5 {
+            await sleeper.advance()
+            try await waitUntil { await probe.count == expectedCount }
+            #expect(owner.health != .healthy)
+            #expect(transport.requestReconnectCount == 0)
+        }
         await sleeper.advance()
-        try await waitUntil { await probe.count == 1 }
+        try await waitUntil { await probe.count == 6 }
+        try await waitUntil { transport.requestReconnectCount == 1 }
         await owner.stop()
 
-        #expect(owner.health == .unknown || owner.health == .healthy)
+        #expect(owner.health != .healthy)
+        #expect(transport.requestReconnectCount == 1)
+    }
+
+    @Test func wakeProbeFailureRequestsReconnectOnce() async throws {
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: [false])
+        let transport = FakeTunnelTransport(connection: .init(localPort: 45679, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            probe: { port, _ in await probe.run(port: port) },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 45679, via: .relay) }
+        await owner.handleWakeOrUnlock()
+        await owner.stop()
+
+        #expect(await probe.count == 1)
+        #expect(transport.requestReconnectCount == 1)
+    }
+
+    @Test func wakeProbeSuccessDoesNotRequestReconnect() async throws {
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: [true])
+        let transport = FakeTunnelTransport(connection: .init(localPort: 45680, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            probe: { port, _ in await probe.run(port: port) },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 45680, via: .relay) }
+        await owner.handleWakeOrUnlock()
+        #expect(owner.health == .healthy)
+        await owner.stop()
+
+        #expect(await probe.count == 1)
         #expect(transport.requestReconnectCount == 0)
+    }
+
+    @Test func wakeProbeSkipsWhenStoppedOrDisconnected() async throws {
+        let stoppedProbe = ProbeScript(results: [false])
+        let stoppedTransport = FakeTunnelTransport(connection: .init(localPort: 45681, via: .relay))
+        let stoppedOwner = makeOwner(
+            factory: FakeTransportFactory([stoppedTransport]),
+            probe: { port, _ in await stoppedProbe.run(port: port) }
+        )
+        await stoppedOwner.handleWakeOrUnlock()
+
+        let dormantProbe = ProbeScript(results: [false])
+        let dormantOwner = makeOwner(
+            store: PairingStore(pairing: nil),
+            factory: FakeTransportFactory([FakeTunnelTransport()]),
+            probe: { port, _ in await dormantProbe.run(port: port) }
+        )
+        dormantOwner.start()
+        try await waitUntil { dormantOwner.state == .disconnected }
+        await dormantOwner.handleWakeOrUnlock()
+        await dormantOwner.stop()
+
+        #expect(await stoppedProbe.count == 0)
+        #expect(await dormantProbe.count == 0)
+        #expect(stoppedTransport.requestReconnectCount == 0)
+    }
+
+    @Test func wakeObserversAreRemovedOnStopAndNotDuplicatedAcrossRestart() async throws {
+        let probe = ProbeScript(results: [false, false])
+        let first = FakeTunnelTransport(connection: .init(localPort: 45682, via: .relay))
+        let second = FakeTunnelTransport(connection: .init(localPort: 45683, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([first, second]),
+            probe: { port, _ in await probe.run(port: port) }
+        )
+
+        owner.start()
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 45682, via: .relay) }
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        try await waitUntil { first.requestReconnectCount == 1 }
+        await waitBrieflyUntil { first.requestReconnectCount > 1 }
+        #expect(first.requestReconnectCount == 1)
+
+        await owner.stop()
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        DistributedNotificationCenter.default().post(name: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil)
+        await waitBrieflyUntil { first.requestReconnectCount > 1 }
+        #expect(first.requestReconnectCount == 1)
+
+        owner.start()
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 45683, via: .relay) }
+        DistributedNotificationCenter.default().post(name: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil)
+        try await waitUntil { second.requestReconnectCount == 1 }
+        await waitBrieflyUntil { second.requestReconnectCount > 1 }
+        await owner.stop()
+
+        #expect(second.requestReconnectCount == 1)
     }
 
     @Test func proactiveRefreshSavesAndConnectsUpdatedPairing() async throws {

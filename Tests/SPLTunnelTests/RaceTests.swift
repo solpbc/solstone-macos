@@ -7,7 +7,7 @@ import Testing
 
 @Suite("RaceCoordinator")
 struct RaceTests {
-    @Test func sortsULAThenRFC1918ThenOtherDirectThenRelay() {
+    @Test func sortsRFC1918ThenULAThenOtherDirectThenRelay() {
         let relay = TransportEndpoint.relay(
             endpoint: URL(string: "wss://relay.example/session")!,
             instanceID: "instance",
@@ -21,14 +21,14 @@ struct RaceTests {
         ]
 
         #expect(RaceCoordinator<Int>.sorted(endpoints) == [
-            .lan(host: "fd12:3456::1", port: 443, scope: "ula"),
             .lan(host: "192.168.1.10", port: 443, scope: "local"),
+            .lan(host: "fd12:3456::1", port: 443, scope: "ula"),
             .lan(host: "203.0.113.10", port: 443, scope: "public"),
             relay,
         ])
     }
 
-    @Test func ulaWinsOverRFC1918WithStaggerAndSimilarHandshakeTime() async throws {
+    @Test func rfc1918WinsOverULAWithStaggerAndSimilarHandshakeTime() async throws {
         let ula = TransportEndpoint.lan(host: "fd12:3456::1", port: 443, scope: "ula")
         let rfc1918 = TransportEndpoint.lan(host: "192.168.1.10", port: 443, scope: "local")
         let coordinator = RaceCoordinator<TransportEndpoint>(
@@ -42,8 +42,64 @@ struct RaceTests {
 
         let result = try await coordinator.connect(endpoints: [rfc1918, ula])
 
-        #expect(result.endpoint == ula)
-        #expect(result.value == ula)
+        #expect(result.endpoint == rfc1918)
+        #expect(result.value == rfc1918)
+    }
+
+    @Test func rfc1918ClassifierCoversIPv4LiteralEdgeCasesOnly() {
+        let cases: [(host: String, expected: Bool)] = [
+            ("172.15.255.255", false),
+            ("172.32.0.1", false),
+            ("172.16.0.1", true),
+            ("10.2.3.4", true),
+            ("192.168.4.20", true),
+            ("127.0.0.1", false),
+            ("100.64.0.1", false),
+            ("fd12:3456::1", false),
+            ("home.local", false),
+        ]
+
+        for testCase in cases {
+            #expect(TunnelAddressClassifier.isRFC1918IPv4Literal(testCase.host) == testCase.expected)
+        }
+    }
+
+    @Test func candidatesAddUnpinnedRFC1918DuplicateAsLastResortBeforeRelay() {
+        let relay = TransportEndpoint.relay(
+            endpoint: URL(string: "wss://relay.example/session")!,
+            instanceID: "instance",
+            deviceToken: "token"
+        )
+        let pinned = TransportEndpoint.lan(host: "192.168.1.10", port: 443, scope: "local")
+        let ula = TransportEndpoint.lan(host: "fd12:3456::1", port: 443, scope: "ula")
+        let unpinned = TransportEndpoint.lan(host: "192.168.1.10", port: 443, scope: "local", unpinnedInterface: true)
+        let pairing = racePairing(
+            relayEnrollment: .enrolled(deviceToken: "token", expiresAt: nil),
+            localEndpoints: [
+                LocalEndpoint(host: "192.168.1.10", port: 443, scope: "local"),
+                LocalEndpoint(host: "fd12:3456::1", port: 443, scope: "ula"),
+            ]
+        )
+
+        let candidates = TransportEndpoint.candidates(for: pairing)
+
+        #expect(candidates.contains(pinned))
+        #expect(candidates.contains(unpinned))
+        #expect(!candidates.contains(.lan(host: "fd12:3456::1", port: 443, scope: "ula", unpinnedInterface: true)))
+        #expect(RaceCoordinator<Int>.sorted(candidates) == [pinned, ula, unpinned, relay])
+    }
+
+    @Test func directOnlyRFC1918CandidateKeepsUnpinnedFallbackPath() {
+        let pinned = TransportEndpoint.lan(host: "192.168.1.10", port: 443, scope: "local")
+        let unpinned = TransportEndpoint.lan(host: "192.168.1.10", port: 443, scope: "local", unpinnedInterface: true)
+        let pairing = racePairing(
+            relayEnrollment: .unavailable,
+            localEndpoints: [
+                LocalEndpoint(host: "192.168.1.10", port: 443, scope: "local"),
+            ]
+        )
+
+        #expect(RaceCoordinator<Int>.sorted(TransportEndpoint.candidates(for: pairing)) == [pinned, unpinned])
     }
 
     @Test func loserGraceLetsSlowerBetterCandidateWin() async throws {
@@ -73,8 +129,8 @@ struct RaceTests {
     }
 
     @Test func loserDiscardedExactlyOnce() async throws {
-        let winner = TransportEndpoint.lan(host: "fd12:3456::1", port: 443, scope: "ula")
-        let loser = TransportEndpoint.lan(host: "192.168.1.10", port: 443, scope: "local")
+        let winner = TransportEndpoint.lan(host: "192.168.1.10", port: 443, scope: "local")
+        let loser = TransportEndpoint.lan(host: "fd12:3456::1", port: 443, scope: "ula")
         let log = DiscardLog()
         let coordinator = RaceCoordinator<DiscardValue>(
             stagger: .milliseconds(1),
@@ -360,6 +416,24 @@ struct RaceTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         throw SessionError.transportFailed("discard timeout")
+    }
+
+    private func racePairing(
+        relayEnrollment: RelayEnrollment,
+        localEndpoints: [LocalEndpoint]
+    ) -> StoredPairing {
+        StoredPairing(
+            instanceID: "instance",
+            homeLabel: "home",
+            relayEndpoint: "wss://relay.example/session",
+            fingerprint: "fingerprint",
+            clientCertPEM: "cert",
+            clientKeyPEM: "key",
+            caChainPEM: "ca",
+            relayEnrollment: relayEnrollment,
+            localEndpoints: localEndpoints,
+            pairedAt: Date()
+        )
     }
 }
 

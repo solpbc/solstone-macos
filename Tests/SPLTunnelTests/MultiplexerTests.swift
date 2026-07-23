@@ -59,6 +59,10 @@ private enum WindowGrantSinkError: Error, Equatable {
     case boom
 }
 
+private enum KeepaliveSinkError: Error, Equatable {
+    case boom
+}
+
 private actor ThrowingResetSink {
     private var resetWriteCount = 0
 
@@ -87,6 +91,21 @@ private actor WindowGrantThrowingSink {
 
     func recordedFrames() -> [Frame] {
         frames
+    }
+}
+
+private actor KeepaliveThrowingSink {
+    private var pings = 0
+
+    func recordOrThrow(_ data: Data) throws {
+        if try decodeFrames(in: data).contains(where: { $0.streamID == 0 && $0.flags == FrameFlags.ping.rawValue }) {
+            pings += 1
+            throw KeepaliveSinkError.boom
+        }
+    }
+
+    func pingWrites() -> Int {
+        pings
     }
 }
 
@@ -1421,6 +1440,65 @@ struct MultiplexerTests {
         #expect(await lostIterator.next() != nil)   // keepaliveLost fired; blocks only until the yield, no wall-clock wait
 
         await mux.tearDown(reason: .transportFailure)
+    }
+
+    @Test("keepalive send failure emits keepaliveLost before teardown")
+    func keepaliveSendFailureEmitsLostBeforeTeardown() async throws {
+        let sink = KeepaliveThrowingSink()
+        let gate = KeepaliveTickGate()
+        let mux = Multiplexer(
+            sink: { data in try await sink.recordOrThrow(data) },
+            sleeper: { _ in await gate.tick() }
+        )
+        let lost = mux.keepaliveLost
+
+        await mux.startKeepalive(missedLimit: 10)
+        await gate.waitForTick()
+        await gate.release()
+
+        var lostIterator = lost.makeAsyncIterator()
+        #expect(await lostIterator.next() != nil)
+        #expect(await sink.pingWrites() == 1)
+        await expectAsyncThrows(.transportClosed) {
+            _ = try await mux.openStream()
+        }
+    }
+
+    @Test("normal keepalive cancellation emits no keepaliveLost")
+    func normalKeepaliveCancellationEmitsNoLost() async throws {
+        let mux = Multiplexer(
+            sink: { _ in },
+            sleeper: { _ in throw CancellationError() }
+        )
+        let lost = mux.keepaliveLost
+
+        await mux.startKeepalive()
+        await mux.tearDown(reason: .normalShutdown)
+
+        var lostIterator = lost.makeAsyncIterator()
+        #expect(await lostIterator.next() == nil)
+    }
+
+    @Test("tearDown is idempotent after keepalive loss")
+    func tearDownIsIdempotentAfterKeepaliveLoss() async throws {
+        let (mux, _, gate) = makeGatedMultiplexer()
+        let lost = mux.keepaliveLost
+
+        await mux.startKeepalive(missedLimit: 1)
+        for _ in 0..<2 {
+            await gate.waitForTick()
+            await gate.release()
+        }
+
+        var lostIterator = lost.makeAsyncIterator()
+        #expect(await lostIterator.next() != nil)
+        await mux.tearDown(reason: .transportFailure)
+        await mux.tearDown(reason: .transportFailure)
+        #expect(await lostIterator.next() == nil)
+
+        await expectAsyncThrows(.transportClosed) {
+            _ = try await mux.openStream()
+        }
     }
 
     private func assertIsolatedAndMuxSurvives(

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import AppKit
 import Observation
 import SPLTunnel
 import os
@@ -55,6 +56,9 @@ struct TunnelDeviceTokenRefreshing: Sendable {
 final class TunnelLifecycleOwner {
     private static let probeInterval: Duration = .seconds(30)
     private static let probeTimeout: Duration = .seconds(3)
+    private static let degradedProbeInterval: Duration = .seconds(5)
+    private static let silentProbeFailureLimit = 3
+    private static let activeInboundProbeFailureLimit = 6
     private static let loopbackRetryDelays: [Duration] = [.milliseconds(100), .milliseconds(300)]
     private static let establishmentRetryDelays: [Duration] = [.seconds(1), .seconds(5), .seconds(10), .seconds(30)]
 
@@ -116,6 +120,10 @@ final class TunnelLifecycleOwner {
     @ObservationIgnored
     private var pendingReactiveRefresh = false
     @ObservationIgnored
+    private var didWakeObserver: NSObjectProtocol?
+    @ObservationIgnored
+    private var screenUnlockedObserver: NSObjectProtocol?
+    @ObservationIgnored
     private var establishedLoopbackPort: Int?
     @ObservationIgnored
     private var establishmentInFlight = false
@@ -165,6 +173,7 @@ final class TunnelLifecycleOwner {
         refreshTunnelManagedFromStoredPairing()
         state = .disconnected
         health = .unknown
+        installWakeUnlockObservers()
         startPathMonitor()
         startTask = Task { @MainActor [weak self] in
             await self?.connectFromStoredPairing()
@@ -173,6 +182,7 @@ final class TunnelLifecycleOwner {
 
     func stop() async {
         running = false
+        removeWakeUnlockObservers()
         startTask?.cancel()
         startTask = nil
         cancelReactiveTokenRefresh()
@@ -201,6 +211,26 @@ final class TunnelLifecycleOwner {
             await self.disconnectCurrentTransport()
             await self.connectFromStoredPairing()
         }
+    }
+
+    func handleWakeOrUnlock() async {
+        guard running,
+              case .connected(let localPort, _) = state
+        else {
+            return
+        }
+
+        let succeeded = await probe(localPort, Self.probeTimeout)
+        if succeeded {
+            consecutiveProbeFailures = 0
+            health = .healthy
+            splOwnerLog.notice("wake probe ok local_port=\(localPort, privacy: .public)")
+            return
+        }
+
+        health = .degraded
+        splOwnerLog.notice("wake probe failed local_port=\(localPort, privacy: .public) reconnect=true")
+        await transport?.requestReconnect()
     }
 
     private func connectFromStoredPairing() async {
@@ -313,8 +343,8 @@ final class TunnelLifecycleOwner {
                 state = .connected(localPort: connection.localPort, via: connection.via)
                 health = .unknown
                 consecutiveProbeFailures = 0
-                startProbe(localPort: connection.localPort)
-                splOwnerLog.info("tunnel connected route=\(String(describing: connection.via), privacy: .public) local_port=\(connection.localPort, privacy: .public)")
+                startProbe()
+                splOwnerLog.notice("tunnel connected route=\(String(describing: connection.via), privacy: .public) local_port=\(connection.localPort, privacy: .public)")
                 return .connected
             } catch is CancellationError {
                 return .cancelled
@@ -378,6 +408,45 @@ final class TunnelLifecycleOwner {
         }
     }
 
+    private func installWakeUnlockObservers() {
+        if didWakeObserver == nil {
+            // CaptureLifecycleManager currently registers workspace wake on NotificationCenter.default;
+            // tunnel lifecycle follows AppKit's workspace notification center. Capture is out of scope here.
+            didWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.handleWakeOrUnlock()
+                }
+            }
+        }
+
+        if screenUnlockedObserver == nil {
+            screenUnlockedObserver = DistributedNotificationCenter.default().addObserver(
+                forName: NSNotification.Name("com.apple.screenIsUnlocked"),
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.handleWakeOrUnlock()
+                }
+            }
+        }
+    }
+
+    private func removeWakeUnlockObservers() {
+        if let observer = didWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            didWakeObserver = nil
+        }
+        if let observer = screenUnlockedObserver {
+            DistributedNotificationCenter.default().removeObserver(observer)
+            screenUnlockedObserver = nil
+        }
+    }
+
     private func handle(_ tunnelState: TunnelState) async {
         guard running else {
             return
@@ -400,24 +469,25 @@ final class TunnelLifecycleOwner {
         case .connected(let via):
             if let port = establishedLoopbackPort {
                 state = .connected(localPort: port, via: Self.route(for: via))
-                startProbe(localPort: port)
+                startProbe()
             } else if !establishmentInFlight {
                 splOwnerLog.error("tunnel republished connected with no remembered loopback port")
             }
 
-        case .failed(.tokenExpired):
-            beginReactiveTokenRefresh()
-
-        case .failed(.revoked):
-            await retirePairingAndFailRevoked()
-
-        case .failed(.notEntitled):
-            await failWithNotEntitled()
-
-        case .failed:
-            stopProbe()
-            state = .connecting
-            health = .unknown
+        case .failed(let error):
+            splOwnerLog.notice("tunnel failed error=\(String(describing: error), privacy: .public)")
+            switch error {
+            case .tokenExpired:
+                beginReactiveTokenRefresh()
+            case .revoked:
+                await retirePairingAndFailRevoked()
+            case .notEntitled:
+                await failWithNotEntitled()
+            default:
+                stopProbe()
+                state = .connecting
+                health = .unknown
+            }
         }
     }
 
@@ -569,18 +639,23 @@ final class TunnelLifecycleOwner {
         }
     }
 
-    private func startProbe(localPort: Int) {
+    private func startProbe() {
         guard probeTask == nil else {
             return
         }
         probeTask = Task { @MainActor [weak self] in
             while let self, !Task.isCancelled {
+                let interval = self.consecutiveProbeFailures > 0 ? Self.degradedProbeInterval : Self.probeInterval
                 do {
-                    try await self.sleep(Self.probeInterval)
+                    try await self.sleep(interval)
                 } catch {
                     return
                 }
-                guard !Task.isCancelled, self.localPort == localPort else {
+                guard !Task.isCancelled,
+                      self.running,
+                      case .connected = self.state,
+                      let localPort = self.establishedLoopbackPort
+                else {
                     return
                 }
                 await self.runProbe(localPort: localPort)
@@ -607,17 +682,15 @@ final class TunnelLifecycleOwner {
         }
 
         let after = await transport.inboundActivitySnapshot()
-        guard after == before else {
-            consecutiveProbeFailures = 0
-            health = .healthy
-            return
-        }
+        let inboundMoving = after != before
 
         consecutiveProbeFailures += 1
         if consecutiveProbeFailures >= 2 {
             health = .degraded
         }
-        if consecutiveProbeFailures >= 3 {
+        let failureLimit = inboundMoving ? Self.activeInboundProbeFailureLimit : Self.silentProbeFailureLimit
+        if consecutiveProbeFailures >= failureLimit {
+            splOwnerLog.notice("watchdog probe failed limit=\(failureLimit, privacy: .public) inbound_moving=\(inboundMoving, privacy: .public) reconnect=true")
             consecutiveProbeFailures = 0
             await transport.requestReconnect()
         }
@@ -626,7 +699,7 @@ final class TunnelLifecycleOwner {
     private func usableCandidates(for pairing: StoredPairing) -> [TransportEndpoint] {
         TransportEndpoint.candidates(for: pairing).filter { candidate in
             switch candidate {
-            case .lan(let host, let port, _):
+            case .lan(let host, let port, _, _):
                 return !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && 1...65535 ~= port
             case .relay(let endpoint, let instanceID, let deviceToken):
                 return endpoint.scheme != nil &&

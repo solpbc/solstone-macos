@@ -21,8 +21,9 @@ actor TCPEchoServer {
     func start() async throws {
         let listener = try NWListener(using: .tcp, on: .any)
         listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { return }
             Task {
-                await self?.accept(connection)
+                await self.accept(connection)
             }
         }
         self.listener = listener
@@ -78,8 +79,9 @@ actor TCPHangingServer {
     func start() async throws {
         let listener = try NWListener(using: .tcp, on: .any)
         listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { return }
             Task {
-                await self?.accept(connection)
+                await self.accept(connection)
             }
         }
         self.listener = listener
@@ -124,13 +126,15 @@ actor WebSocketEchoServer {
         options.autoReplyPing = true
         options.setClientRequestHandler(serverQueue) { [weak self] _, headers in
             if let authorization = headers.first(where: { $0.name.lowercased() == "authorization" })?.value {
+                guard let server = self else { return NWProtocolWebSocket.Response(status: .accept, subprotocol: nil) }
                 Task {
-                    await self?.setAuthorizationHeader(authorization)
+                    await server.setAuthorizationHeader(authorization)
                 }
             }
             if let pairKey = headers.first(where: { $0.name.lowercased() == "sec-pair-key" })?.value {
+                guard let server = self else { return NWProtocolWebSocket.Response(status: .accept, subprotocol: nil) }
                 Task {
-                    await self?.setPairKeyHeader(pairKey)
+                    await server.setPairKeyHeader(pairKey)
                 }
             }
             return NWProtocolWebSocket.Response(status: .accept, subprotocol: nil)
@@ -141,8 +145,9 @@ actor WebSocketEchoServer {
 
         let listener = try NWListener(using: parameters, on: .any)
         listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { return }
             Task {
-                await self?.accept(connection)
+                await self.accept(connection)
             }
         }
         self.listener = listener
@@ -227,8 +232,9 @@ actor WebSocketClosingServer {
     func start() async throws {
         let listener = try NWListener(using: .tcp, on: .any)
         listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { return }
             Task {
-                await self?.accept(connection)
+                await self.accept(connection)
             }
         }
         self.listener = listener
@@ -262,12 +268,14 @@ actor WebSocketClosingServer {
             var request = buffered
             request.append(data)
             if request.range(of: Data("\r\n\r\n".utf8)) != nil {
+                guard let self else { return }
                 Task {
-                    await self?.sendAcceptAndClose(on: connection, request: request)
+                    await self.sendAcceptAndClose(on: connection, request: request)
                 }
             } else {
+                guard let self else { return }
                 Task {
-                    await self?.readHandshake(on: connection, buffered: request)
+                    await self.readHandshake(on: connection, buffered: request)
                 }
             }
         }
@@ -341,8 +349,9 @@ actor WebSocketFailingServer {
     func start() async throws {
         let listener = try NWListener(using: .tcp, on: .any)
         listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { return }
             Task {
-                await self?.accept(connection)
+                await self.accept(connection)
             }
         }
         self.listener = listener
@@ -418,8 +427,9 @@ actor TLSEchoServer {
         let port = requestedPort.flatMap { NWEndpoint.Port(rawValue: UInt16(clamping: $0)) }
         let listener = try NWListener(using: parameters, on: port ?? .any)
         listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { return }
             Task {
-                await self?.accept(connection)
+                await self.accept(connection)
             }
         }
         self.listener = listener
@@ -586,13 +596,15 @@ actor RelayBridgeServer {
         options.autoReplyPing = true
         options.setClientRequestHandler(serverQueue) { [weak self] _, headers in
             if let authorization = headers.first(where: { $0.name.lowercased() == "authorization" })?.value {
+                guard let server = self else { return NWProtocolWebSocket.Response(status: .accept, subprotocol: nil) }
                 Task {
-                    await self?.setAuthorizationHeader(authorization)
+                    await server.setAuthorizationHeader(authorization)
                 }
             }
             if let pairKey = headers.first(where: { $0.name.lowercased() == "sec-pair-key" })?.value {
+                guard let server = self else { return NWProtocolWebSocket.Response(status: .accept, subprotocol: nil) }
                 Task {
-                    await self?.setPairKeyHeader(pairKey)
+                    await server.setPairKeyHeader(pairKey)
                 }
             }
             return NWProtocolWebSocket.Response(status: .accept, subprotocol: nil)
@@ -603,8 +615,9 @@ actor RelayBridgeServer {
 
         let listener = try NWListener(using: parameters, on: .any)
         listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { return }
             Task {
-                await self?.accept(connection)
+                await self.accept(connection)
             }
         }
         self.listener = listener

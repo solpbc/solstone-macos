@@ -66,6 +66,7 @@ public actor TunnelSession: TunnelSessioning {
     private let stateContinuation: AsyncStream<TunnelState>.Continuation
     private let connectionModeStream: AsyncStream<ConnectionMode?>
     private let connectionModeContinuation: AsyncStream<ConnectionMode?>.Continuation
+    private let makeMultiplexer: @Sendable (InnerTLS) -> Multiplexer
     private let reconnectSignal = ReconnectSignal()
     private var state: TunnelState = .disconnected
     private var reconnectTask: Task<Void, Never>?
@@ -79,7 +80,19 @@ public actor TunnelSession: TunnelSessioning {
     private var reconnectRequestPending = false
 
     public init(pairing: StoredPairing) {
+        self.init(
+            pairing: pairing,
+            multiplexerFactory: { tls in
+                Multiplexer { data in
+                    try await tls.send(data)
+                }
+            }
+        )
+    }
+
+    init(pairing: StoredPairing, multiplexerFactory: @escaping @Sendable (InnerTLS) -> Multiplexer) {
         self.pairing = pairing
+        self.makeMultiplexer = multiplexerFactory
         var continuation: AsyncStream<TunnelState>.Continuation!
         self.stateStream = AsyncStream { continuation = $0 }
         self.stateContinuation = continuation
@@ -124,7 +137,14 @@ public actor TunnelSession: TunnelSessioning {
         guard case .connected = state, let multiplexer else {
             throw SessionError.notConnected
         }
-        return try await multiplexer.openStream()
+        do {
+            return try await multiplexer.openStream()
+        } catch MuxError.transportClosed {
+            if case .connected = state {
+                await requestReconnect()
+            }
+            throw SessionError.notConnected
+        }
     }
 
     public func requestReconnect() async {
@@ -223,11 +243,16 @@ public actor TunnelSession: TunnelSessioning {
         let startedAt = ContinuousClock.now
 
         switch endpoint {
-        case .lan(let host, let port, _):
+        case .lan(let host, let port, _, _):
             let tls = try await withSessionTimeout(.seconds(5)) {
-                try await InnerTLS.connectLAN(host: host, port: port, pairing: self.pairing)
+                try await InnerTLS.connectLAN(
+                    host: host,
+                    port: port,
+                    pairing: self.pairing,
+                    unpinnedInterface: endpoint.unpinnedInterface
+                )
             }
-            logger.debug("connected transport=\("lan", privacy: .public) attempt=\(attempt, privacy: .public) duration_ms=\(startedAt.duration(to: .now).milliseconds, privacy: .public)")
+            logger.notice("connected transport=\("lan", privacy: .public) attempt=\(attempt, privacy: .public) duration_ms=\(startedAt.duration(to: .now).milliseconds, privacy: .public)")
             return ConnectedAttempt(via: via, tls: tls)
 
         case .relay:
@@ -235,7 +260,7 @@ public actor TunnelSession: TunnelSessioning {
             let tls = try await withSessionTimeout(.seconds(5)) {
                 try await InnerTLS.connectViaTransport(transport: transport, pairing: self.pairing)
             }
-            logger.debug("connected transport=\("relay", privacy: .public) attempt=\(attempt, privacy: .public) duration_ms=\(startedAt.duration(to: .now).milliseconds, privacy: .public)")
+            logger.notice("connected transport=\("relay", privacy: .public) attempt=\(attempt, privacy: .public) duration_ms=\(startedAt.duration(to: .now).milliseconds, privacy: .public)")
             return ConnectedAttempt(via: via, tls: tls)
         }
     }
@@ -256,9 +281,7 @@ public actor TunnelSession: TunnelSessioning {
     private func installConnected(_ connected: ConnectedAttempt) async {
         let tls = connected.tls
         innerTLS = tls
-        let mux = Multiplexer { data in
-            try await tls.send(data)
-        }
+        let mux = makeMultiplexer(tls)
         multiplexer = mux
         let pump = Task {
             do {
@@ -294,12 +317,14 @@ public actor TunnelSession: TunnelSessioning {
     private func handleKeepaliveLost() async {
         switch connectionMode {
         case .plDirect:
+            logger.notice("keepalive lost route=\("direct", privacy: .public)")
             relayOnlyNextReconnect = true
             lastTrustedDirectEndpoint = nil
             trustDirectUntil = nil
             publish(.failed(.directKeepaliveMissed))
             await tearDownCurrent(reason: .transportFailure)
         case .plViaSpl:
+            logger.notice("keepalive lost route=\("relay", privacy: .public)")
             publish(.failed(.relayKeepaliveMissed))
             await tearDownCurrent(reason: .transportFailure)
         case nil:
@@ -322,6 +347,9 @@ public actor TunnelSession: TunnelSessioning {
     }
 
     private func publish(_ newState: TunnelState) {
+        if case .failed(let error) = newState {
+            logger.notice("session failed error=\(String(describing: error), privacy: .public)")
+        }
         state = newState
         stateContinuation.yield(newState)
     }

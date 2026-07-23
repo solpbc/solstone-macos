@@ -420,13 +420,15 @@ actor ManualSleeper {
 actor ProbeScript {
     private var results: [Bool]
     private(set) var count = 0
+    private(set) var ports: [Int] = []
 
     init(results: [Bool]) {
         self.results = results
     }
 
-    func run(port _: Int) -> Bool {
+    func run(port: Int) -> Bool {
         count += 1
+        ports.append(port)
         guard !results.isEmpty else {
             return true
         }

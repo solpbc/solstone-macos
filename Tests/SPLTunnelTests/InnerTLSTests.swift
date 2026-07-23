@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import Network
 import Testing
 @testable import SPLTunnel
 
@@ -95,6 +96,19 @@ struct InnerTLSTests {
         await tlsServer.stop()
 
         #expect(echoed == payload)
+    }
+
+    @Test func lanParametersPinOnlyRFC1918IPv4LiteralsToNonOtherInterfaces() {
+        let pinnedRFC1918 = InnerTLS.lanParametersForTesting(host: "192.168.1.10", unpinnedInterface: false)
+        #expect(pinnedRFC1918.prohibitedInterfaceTypes == [.other])
+
+        let unpinnedRFC1918 = InnerTLS.lanParametersForTesting(host: "192.168.1.10", unpinnedInterface: true)
+        #expect(unpinnedRFC1918.prohibitedInterfaceTypes?.contains(.other) != true)
+
+        for host in ["fd12:3456::1", "100.64.0.1", "203.0.113.10", "home.local"] {
+            let parameters = InnerTLS.lanParametersForTesting(host: host, unpinnedInterface: false)
+            #expect(parameters.prohibitedInterfaceTypes?.contains(.other) != true)
+        }
     }
 
     private func firstInbound(from stream: AsyncThrowingStream<Data, Error>) async throws -> Data? {

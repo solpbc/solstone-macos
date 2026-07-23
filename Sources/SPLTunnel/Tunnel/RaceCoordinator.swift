@@ -2,6 +2,9 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
+
+private let raceLog = Logger(subsystem: "app.solstone.observer.spl", category: "race")
 
 struct RaceResult<Value: Sendable>: Sendable {
     let endpoint: TransportEndpoint
@@ -42,12 +45,19 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
         }
 
         let sorted = Self.sorted(endpoints)
+        raceLog.notice("dial candidates=\(Self.describe(sorted), privacy: .public)")
         guard sorted.count > 1 else {
+            let endpoint = sorted[0]
+            let startedAt = ContinuousClock.now
             do {
-                let endpoint = sorted[0]
-                return RaceResult(endpoint: endpoint, value: try await dial(endpoint))
+                let value = try await dial(endpoint)
+                raceLog.notice("candidate ok endpoint=\(endpoint.logDescription, privacy: .public) duration_ms=\(startedAt.duration(to: .now).milliseconds, privacy: .public)")
+                raceLog.notice("race winner endpoint=\(endpoint.logDescription, privacy: .public)")
+                return RaceResult(endpoint: endpoint, value: value)
             } catch {
-                throw Self.sessionError(from: error)
+                let sessionError = Self.sessionError(from: error)
+                raceLog.notice("candidate failed endpoint=\(endpoint.logDescription, privacy: .public) error=\(String(describing: sessionError), privacy: .public) duration_ms=\(startedAt.duration(to: .now).milliseconds, privacy: .public)")
+                throw sessionError
             }
         }
 
@@ -62,11 +72,15 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                         }
                     }
 
+                    let startedAt = ContinuousClock.now
                     do {
                         let value = try await dial(endpoint)
+                        raceLog.notice("candidate ok endpoint=\(endpoint.logDescription, privacy: .public) duration_ms=\(startedAt.duration(to: .now).milliseconds, privacy: .public)")
                         return .success(order: order, endpoint: endpoint, value: value)
                     } catch {
-                        return .failure(order: order, error: Self.sessionError(from: error))
+                        let sessionError = Self.sessionError(from: error)
+                        raceLog.notice("candidate failed endpoint=\(endpoint.logDescription, privacy: .public) error=\(String(describing: sessionError), privacy: .public) duration_ms=\(startedAt.duration(to: .now).milliseconds, privacy: .public)")
+                        return .failure(order: order, error: sessionError)
                     }
                 }
             }
@@ -148,6 +162,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                     group.cancelAll()
                     await discardCollectedLosers(successes, winnerOrder: winner.order)
                     await drainDiscarding(&group)
+                    raceLog.notice("race winner endpoint=\(winner.endpoint.logDescription, privacy: .public)")
                     return RaceResult(endpoint: winner.endpoint, value: winner.value)
                 }
             }
@@ -160,6 +175,7 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
                 )
             }
             await discardCollectedLosers(successes, winnerOrder: winner.order)
+            raceLog.notice("race winner endpoint=\(winner.endpoint.logDescription, privacy: .public)")
             return RaceResult(endpoint: winner.endpoint, value: winner.value)
         }
     }
@@ -196,35 +212,24 @@ struct RaceCoordinator<Value: Sendable>: Sendable {
 
     private static func rank(_ endpoint: TransportEndpoint) -> Int {
         switch endpoint {
-        case .lan(let host, _, _):
-            if isIPv6ULA(host) {
+        case .lan(let host, _, _, _):
+            if TunnelAddressClassifier.isRFC1918IPv4Literal(host), !endpoint.unpinnedInterface {
                 return 0
             }
-            if isRFC1918(host) {
+            if TunnelAddressClassifier.isIPv6ULA(host) {
                 return 1
+            }
+            if TunnelAddressClassifier.isRFC1918IPv4Literal(host), endpoint.unpinnedInterface {
+                return 3
             }
             return 2
         case .relay:
-            return 3
+            return 4
         }
     }
 
-    private static func isIPv6ULA(_ host: String) -> Bool {
-        let normalized = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
-        return normalized.hasPrefix("fc") || normalized.hasPrefix("fd")
-    }
-
-    private static func isRFC1918(_ host: String) -> Bool {
-        let octets = host.split(separator: ".").compactMap { Int($0) }
-        guard octets.count == 4, octets.allSatisfy({ 0...255 ~= $0 }) else {
-            return false
-        }
-        switch (octets[0], octets[1]) {
-        case (10, _), (172, 16...31), (192, 168):
-            return true
-        default:
-            return false
-        }
+    private static func describe(_ endpoints: [TransportEndpoint]) -> String {
+        endpoints.map(\.logDescription).joined(separator: ", ")
     }
 
     private static func sessionError(from error: any Error) -> SessionError {
@@ -267,4 +272,11 @@ private func * (duration: Duration, multiplier: Int) -> Duration {
     let components = duration.components
     let milliseconds = Int(components.seconds * 1_000 + components.attoseconds / 1_000_000_000_000_000)
     return .milliseconds(milliseconds * multiplier)
+}
+
+private extension Duration {
+    var milliseconds: Int {
+        let components = self.components
+        return Int(components.seconds * 1_000 + components.attoseconds / 1_000_000_000_000_000)
+    }
 }
