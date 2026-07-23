@@ -47,6 +47,15 @@ single_line_or_empty() {
   awk 'NF { count += 1; value = $0 } END { if (count == 1) print value; else exit 1 }'
 }
 
+has_any_match() {
+  local identities certs
+
+  identities="$(matching_identity_hashes)"
+  certs="$(matching_cert_hashes)"
+
+  [ -n "$identities" ] || [ -n "$certs" ]
+}
+
 identity_hash() {
   local identities certs identity cert
 
@@ -72,6 +81,12 @@ install_identity() {
   if identity_hash >/dev/null; then
     printf '%s\n' "$CN"
     return 0
+  fi
+
+  if has_any_match; then
+    printf 'error: ambiguous existing "%s" code-signing entries in %s\n' "$CN" "$LOGIN_KC" >&2
+    printf '       remove duplicate "%s" entries from login.keychain-db, then rerun this script\n' "$CN" >&2
+    exit 1
   fi
 
   tmpdir="$(mktemp -d -t solstone-adhoc-cert)"

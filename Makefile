@@ -256,7 +256,7 @@ release-universal-journal:
 # file in scratch/. Run `make bundle-dist` first to produce solstone.app.
 # Keeps capturing across app restarts. Ctrl+C to stop.
 run:
-	@test -d solstone.app || { echo "error: solstone.app not found — run 'make bundle-dist' first"; exit 1; }
+	@test -d solstone.app || { echo "error: solstone.app not found — run 'make bundle-dist' (or 'make bundle-adhoc') first"; exit 1; }
 	@mkdir -p scratch; \
 	LOG=scratch/$$(date +%Y%m%d_%H%M%S).log; \
 	echo "Streaming logs → $$LOG  (Ctrl+C to stop)"; \

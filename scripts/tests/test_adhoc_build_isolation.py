@@ -15,6 +15,7 @@ ADHOC_TARGETS = {
 
 PRODUCTION_TARGETS = {
     "release",
+    "release-preflight",
     "release-universal",
     "release-universal-journal",
     "bundle-dist",
