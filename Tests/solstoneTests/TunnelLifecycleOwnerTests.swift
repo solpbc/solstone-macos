@@ -296,7 +296,110 @@ struct TunnelLifecycleOwnerTests {
         await owner.stop()
     }
 
-    @Test func probeFailureSuppressedWhenInboundActivityIncreases() async throws {
+    @Test func watchdogForcedReconnectCadenceBacksOffOnPersistentFailure() async throws {
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: Array(repeating: false, count: 9))
+        let transport = FakeTunnelTransport(connection: .init(localPort: 34568, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            probe: { port, _ in await probe.run(port: port) },
+            sleep: { try await sleeper.sleep($0) }
+        )
+        let expectedMilliseconds = [
+            30_000, 5_000, 5_000,
+            30_000, 10_000, 10_000,
+            30_000, 20_000, 20_000,
+        ]
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 34568, via: .relay) }
+
+        for expectedSleepCount in 1...expectedMilliseconds.count {
+            await waitBrieflyUntil { await sleeper.sleepCount == expectedSleepCount }
+            #expect(await sleeper.sleepCount == expectedSleepCount)
+            await sleeper.advance()
+            await waitBrieflyUntil { await probe.count == expectedSleepCount }
+        }
+        await waitBrieflyUntil { transport.requestReconnectCount == 3 }
+        await owner.stop()
+
+        let sleepMilliseconds = (await sleeper.sleepDurations).map(durationMilliseconds)
+        let observedMilliseconds = Array(sleepMilliseconds.prefix(expectedMilliseconds.count))
+        try #require(observedMilliseconds.count == expectedMilliseconds.count)
+        #expect(observedMilliseconds == expectedMilliseconds)
+        let firstBackedOffGap = observedMilliseconds[3..<6].reduce(0, +)
+        let secondBackedOffGap = observedMilliseconds[6..<9].reduce(0, +)
+        #expect(transport.requestReconnectCount == 3)
+        #expect(firstBackedOffGap == 50_000)
+        #expect(secondBackedOffGap == 70_000)
+        #expect(firstBackedOffGap < secondBackedOffGap)
+    }
+
+    @Test func watchdogFirstForcedReconnectTimingUnchanged() async throws {
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: Array(repeating: false, count: 3))
+        let transport = FakeTunnelTransport(connection: .init(localPort: 34569, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            probe: { port, _ in await probe.run(port: port) },
+            sleep: { try await sleeper.sleep($0) }
+        )
+        let expectedMilliseconds = [30_000, 5_000, 5_000]
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 34569, via: .relay) }
+
+        for expectedSleepCount in 1...expectedMilliseconds.count {
+            await waitBrieflyUntil { await sleeper.sleepCount == expectedSleepCount }
+            #expect(await sleeper.sleepCount == expectedSleepCount)
+            await sleeper.advance()
+            await waitBrieflyUntil { await probe.count == expectedSleepCount }
+        }
+        await waitBrieflyUntil { transport.requestReconnectCount == 1 }
+        await owner.stop()
+
+        let sleepMilliseconds = (await sleeper.sleepDurations).map(durationMilliseconds)
+        #expect(Array(sleepMilliseconds.prefix(expectedMilliseconds.count)) == expectedMilliseconds)
+        #expect(await probe.count == 3)
+        #expect(transport.requestReconnectCount == 1)
+    }
+
+    @Test func watchdogForcedReconnectBackoffResetsAfterSuccessfulProbe() async throws {
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: [false, false, false, true, false, false, false])
+        let transport = FakeTunnelTransport(connection: .init(localPort: 34570, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            probe: { port, _ in await probe.run(port: port) },
+            sleep: { try await sleeper.sleep($0) }
+        )
+        let expectedMilliseconds = [
+            30_000, 5_000, 5_000,
+            30_000,
+            30_000, 5_000, 5_000,
+        ]
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 34570, via: .relay) }
+
+        for expectedSleepCount in 1...expectedMilliseconds.count {
+            await waitBrieflyUntil { await sleeper.sleepCount == expectedSleepCount }
+            #expect(await sleeper.sleepCount == expectedSleepCount)
+            await sleeper.advance()
+            await waitBrieflyUntil { await probe.count == expectedSleepCount }
+        }
+        await waitBrieflyUntil { transport.requestReconnectCount == 2 }
+        await owner.stop()
+
+        let sleepMilliseconds = (await sleeper.sleepDurations).map(durationMilliseconds)
+        let observedMilliseconds = Array(sleepMilliseconds.prefix(expectedMilliseconds.count))
+        try #require(observedMilliseconds.count == expectedMilliseconds.count)
+        #expect(observedMilliseconds == expectedMilliseconds)
+        #expect(Array(observedMilliseconds[4..<7]) == [30_000, 5_000, 5_000])
+        #expect(transport.requestReconnectCount == 2)
+    }
+
+    @Test func probeFailuresWithInboundActivityReconnectAtRaisedThreshold() async throws {
         let sleeper = ManualSleeper()
         let probe = ProbeScript(results: Array(repeating: false, count: 6))
         let transport = FakeTunnelTransport(connection: .init(localPort: 45678, via: .relay))

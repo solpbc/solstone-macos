@@ -57,6 +57,7 @@ final class TunnelLifecycleOwner {
     private static let probeInterval: Duration = .seconds(30)
     private static let probeTimeout: Duration = .seconds(3)
     private static let degradedProbeInterval: Duration = .seconds(5)
+    private static let forcedReconnectDegradedProbeIntervalCap: Duration = .seconds(120)
     private static let silentProbeFailureLimit = 3
     private static let activeInboundProbeFailureLimit = 6
     private static let loopbackRetryDelays: [Duration] = [.milliseconds(100), .milliseconds(300)]
@@ -131,6 +132,8 @@ final class TunnelLifecycleOwner {
     private var currentPathSignature: NetworkPathSignature?
     @ObservationIgnored
     private var consecutiveProbeFailures = 0
+    @ObservationIgnored
+    private var consecutiveForcedReconnects = 0
     @ObservationIgnored
     private var running = false
     @ObservationIgnored
@@ -223,6 +226,7 @@ final class TunnelLifecycleOwner {
         let succeeded = await probe(localPort, Self.probeTimeout)
         if succeeded {
             consecutiveProbeFailures = 0
+            consecutiveForcedReconnects = 0
             health = .healthy
             splOwnerLog.notice("wake probe ok local_port=\(localPort, privacy: .public)")
             return
@@ -645,7 +649,18 @@ final class TunnelLifecycleOwner {
         }
         probeTask = Task { @MainActor [weak self] in
             while let self, !Task.isCancelled {
-                let interval = self.consecutiveProbeFailures > 0 ? Self.degradedProbeInterval : Self.probeInterval
+                let interval: Duration
+                if self.consecutiveProbeFailures > 0 {
+                    var degraded = Self.degradedProbeInterval
+                    var steps = self.consecutiveForcedReconnects
+                    while steps > 0 && degraded < Self.forcedReconnectDegradedProbeIntervalCap {
+                        degraded *= 2
+                        steps -= 1
+                    }
+                    interval = min(degraded, Self.forcedReconnectDegradedProbeIntervalCap)
+                } else {
+                    interval = Self.probeInterval
+                }
                 do {
                     try await self.sleep(interval)
                 } catch {
@@ -667,6 +682,7 @@ final class TunnelLifecycleOwner {
         probeTask?.cancel()
         probeTask = nil
         consecutiveProbeFailures = 0
+        consecutiveForcedReconnects = 0
     }
 
     private func runProbe(localPort: Int) async {
@@ -677,6 +693,7 @@ final class TunnelLifecycleOwner {
         let succeeded = await probe(localPort, Self.probeTimeout)
         if succeeded {
             consecutiveProbeFailures = 0
+            consecutiveForcedReconnects = 0
             health = .healthy
             return
         }
@@ -693,6 +710,7 @@ final class TunnelLifecycleOwner {
             splOwnerLog.notice("watchdog probe failed limit=\(failureLimit, privacy: .public) inbound_moving=\(inboundMoving, privacy: .public) reconnect=true")
             consecutiveProbeFailures = 0
             await transport.requestReconnect()
+            consecutiveForcedReconnects += 1
         }
     }
 
