@@ -5,13 +5,15 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.8] - 2026-07-24
 
 ### Fixed
 - your private link reconnects after your mac locks, sleeps, wakes, or comes back from a network blackhole. reported by Dave Smith.
 - your private link now prefers the direct home-network path before trying the relay. reported by Dave Smith.
 - your private link can still reach your journal when a VPN is up and the home-network address only works through it. reported by Dave Smith.
 - sol now picks back up on its own after your mac sleeps and wakes. before, it could stay paused until you restarted it.
+
+## [Unreleased]
 
 ## [1.4.7] - 2026-07-16
 
