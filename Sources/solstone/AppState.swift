@@ -609,12 +609,16 @@ public final class AppState {
         self.lastContactStore = lastContactStore
         self.observerHealthSnapshotEnabled = true
         self.recoveryCoordinator = recoveryCoordinator
-        let tunnelLifecycleOwner = TunnelLifecycleOwner()
+        let splClientInfo = SPLRuntime.clientInfo
+        let splKeychainStore = SPLPairingKeychain.store()
+        let tunnelLifecycleOwner = TunnelLifecycleOwner(
+            keychainStore: splKeychainStore,
+            clientInfo: splClientInfo
+        )
         self.tunnelLifecycleOwner = tunnelLifecycleOwner
         self.pairingCoordinator = PairingCoordinator(
-            loadPairing: { try SPLKeychain.load() },
-            savePairing: { try SPLKeychain.save($0) },
-            deletePairing: { try SPLKeychain.delete() },
+            clientInfo: splClientInfo,
+            keychainStore: splKeychainStore,
             reactivate: { [owner = tunnelLifecycleOwner] in
                 await owner.reevaluatePairing()
             },

@@ -195,7 +195,16 @@ struct PairingCoordinatorTests {
 
     @Test func pairingWindowClosedMapsToStaleLink() async throws {
         await expectCeremonyFailure(PairError.pairingWindowClosed, mapsTo: .staleLink)
+        await expectCeremonyFailure(DialError.pairingWindowClosed, mapsTo: .staleLink)
         #expect(PairingFailure.staleLink.message == "this pairing window closed or expired. get a fresh link from your journal's network app and try again.")
+    }
+
+    @Test func relayCloseUnauthorizedMapsToStaleLink() async throws {
+        await expectCeremonyFailure(DialError.relayCloseUnauthorized, mapsTo: .staleLink)
+    }
+
+    @Test func directAddressNotLocalMapsToExistingInvalidLinkCopy() async throws {
+        await expectCeremonyFailure(PairError.directAddressNotLocal, mapsTo: .invalidLink("pairing link is not a relay link"))
     }
 
     @Test func relayUnauthorizedMapsToRelayUnauthorized() async throws {
@@ -218,6 +227,8 @@ struct PairingCoordinatorTests {
         #expect(PairingCoordinator.failure(for: DialError.sendFailed("closed")) == .homeUnreachable)
         #expect(PairingCoordinator.failure(for: DialError.receiveFailed("closed")) == .homeUnreachable)
         #expect(PairingCoordinator.failure(for: DialError.unexpectedTextFrame) == .homeUnreachable)
+        #expect(PairingCoordinator.failure(for: PairError.lanCandidatesExhausted(sawCAFingerprintMismatch: false)) == .homeUnreachable)
+        #expect(PairingCoordinator.failure(for: PairError.lanCandidatesExhausted(sawCAFingerprintMismatch: true)) == .instanceMismatch)
     }
 
     @Test func underlyingRelayNetworkFailureMapsToNetwork() async throws {

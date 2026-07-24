@@ -5,7 +5,9 @@ import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
-FLAG = "-DSPL_LOGIN_KEYCHAIN"
+INFO_PLIST = REPO_ROOT / "Sources" / "solstone" / "Info.plist"
+FLAG = "-D" + "SPL_LOGIN" + "_KEYCHAIN"
+MARKER_KEY = "SolstoneSPLKeychainPlane"
 
 ADHOC_TARGETS = {
     "release-universal-adhoc",
@@ -71,15 +73,34 @@ def parse_makefile():
 
 
 class AdhocBuildIsolationTest(unittest.TestCase):
-    def test_spl_login_keychain_flag_only_appears_in_adhoc_build_recipe(self):
+    def test_spl_login_keychain_flag_appears_nowhere(self):
+        offenders = []
+        for path in REPO_ROOT.rglob("*"):
+            if not path.is_file():
+                continue
+            if any(part in {".git", ".build", "solstone.app", "journal.app"} for part in path.parts):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            if FLAG in text:
+                offenders.append(path.relative_to(REPO_ROOT).as_posix())
+
+        self.assertEqual(offenders, [])
+
+    def test_login_keychain_marker_only_appears_in_adhoc_bundle_recipe(self):
         blocks = parse_makefile()
 
-        targets_with_flag = sorted(
+        targets_with_marker = sorted(
             name for name, block in blocks.items()
-            if FLAG in "\n".join(block["recipe"])
+            if MARKER_KEY in "\n".join(block["recipe"])
         )
 
-        self.assertEqual(targets_with_flag, ["release-universal-adhoc"])
+        self.assertEqual(targets_with_marker, ["bundle-adhoc"])
+
+    def test_shared_info_plist_does_not_contain_login_keychain_marker(self):
+        self.assertNotIn(MARKER_KEY, INFO_PLIST.read_text(encoding="utf-8"))
 
     def test_production_targets_do_not_reference_adhoc_targets(self):
         blocks = parse_makefile()
@@ -97,6 +118,20 @@ class AdhocBuildIsolationTest(unittest.TestCase):
                     target,
                 )
                 self.assertNotIn(f"$(MAKE) {adhoc_target}", recipe, target)
+
+    def test_bundle_adhoc_debug_reenters_bundle_adhoc(self):
+        blocks = parse_makefile()
+        self.assertIn(
+            "$(MAKE) bundle-adhoc",
+            "\n".join(blocks["bundle-adhoc-debug"]["recipe"]),
+        )
+
+    def test_production_bundle_keeps_keychain_access_group_gate(self):
+        blocks = parse_makefile()
+        recipe = "\n".join(blocks["bundle-dist"]["recipe"])
+        self.assertIn("codesign -d --entitlements", recipe)
+        self.assertIn("grep -q", recipe)
+        self.assertIn("keychain-access-group entitlement missing", recipe)
 
 
 if __name__ == "__main__":

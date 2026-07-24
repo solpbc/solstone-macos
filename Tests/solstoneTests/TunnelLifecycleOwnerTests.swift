@@ -186,7 +186,7 @@ struct TunnelLifecycleOwnerTests {
         #expect(transport.connectAttempts == attemptsAfterStop)
     }
 
-    @Test func tokenExpiredDuringBootstrapStopsRetryAndRunsReactiveRefresh() async throws {
+    @Test func authRefreshRequiredDuringBootstrapStopsRetryAndRunsReactiveRefresh() async throws {
         let current = pairing(deviceToken: "old-token")
         let updated = pairing(deviceToken: "new-token")
         let store = PairingStore(pairing: current)
@@ -197,7 +197,7 @@ struct TunnelLifecycleOwnerTests {
         let sleeper = ManualSleeper()
         let first = FakeTunnelTransport(results: [
             .failure(SessionError.unreachable),
-            .failure(SessionError.tokenExpired),
+            .failure(SessionError.authRefreshRequired),
         ])
         let second = FakeTunnelTransport(connection: .init(localPort: 41414, via: .relay))
         let owner = makeOwner(
@@ -293,6 +293,35 @@ struct TunnelLifecycleOwnerTests {
         try await waitUntil { transport.requestReconnectCount == 1 }
         #expect(owner.health == .degraded)
 
+        await owner.stop()
+    }
+
+    @Test func probeWatchdogPolicyMatchesShippedConstantsAndProbeTimeout() async throws {
+        let policy = TunnelLifecycleOwner.probeWatchdogPolicy
+        #expect(durationMilliseconds(policy.healthyInterval) == 30_000)
+        #expect(durationMilliseconds(policy.degradedInterval) == 5_000)
+        #expect(durationMilliseconds(policy.forcedReconnectDegradedIntervalCap) == 120_000)
+        #expect(policy.silentFailureLimit == 3)
+        #expect(policy.activeInboundFailureLimit == 6)
+        #expect(policy.jitterRange == 1.0...1.0)
+
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: [true])
+        let transport = FakeTunnelTransport(connection: .init(localPort: 34566, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            probe: { port, timeout in
+                #expect(durationMilliseconds(timeout) == 3_000)
+                return await probe.run(port: port)
+            },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 34566, via: .relay) }
+        try await waitUntil { await sleeper.sleepCount == 1 }
+        await sleeper.advance()
+        try await waitUntil { await probe.count == 1 }
         await owner.stop()
     }
 
@@ -399,6 +428,45 @@ struct TunnelLifecycleOwnerTests {
         #expect(transport.requestReconnectCount == 2)
     }
 
+    @Test func forcedReconnectBackoffEscalationSurvivesReconnectTransitions() async throws {
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: Array(repeating: false, count: 4))
+        let transport = FakeTunnelTransport(connection: .init(localPort: 34571, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            probe: { port, _ in await probe.run(port: port) },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 34571, via: .relay) }
+
+        for expectedProbeCount in 1...3 {
+            try await waitUntil { await sleeper.sleepCount == expectedProbeCount }
+            await sleeper.advance()
+            try await waitUntil { await probe.count == expectedProbeCount }
+        }
+        try await waitUntil { transport.requestReconnectCount == 1 }
+
+        transport.emit(.connecting(candidates: []))
+        try await waitUntil { owner.state == .connecting }
+        let sleepCountBeforeReconnectConnected = await sleeper.sleepCount
+        transport.emit(.connected(via: URL(string: "ws://relay.example")!.relayConnectedVia))
+        try await waitUntil { owner.state == .connected(localPort: 34571, via: .relay) }
+
+        try await waitUntil { await sleeper.sleepCount > sleepCountBeforeReconnectConnected }
+        let failedProbeSleepCount = await sleeper.sleepCount
+        await sleeper.advance()
+        try await waitUntil { await probe.count == 4 }
+        try await waitUntil { await sleeper.sleepCount > failedProbeSleepCount }
+
+        await owner.stop()
+
+        let sleepMilliseconds = (await sleeper.sleepDurations).map(durationMilliseconds)
+        try #require(sleepMilliseconds.count > failedProbeSleepCount)
+        #expect(sleepMilliseconds[failedProbeSleepCount] == 10_000)
+    }
+
     @Test func probeFailuresWithInboundActivityReconnectAtRaisedThreshold() async throws {
         let sleeper = ManualSleeper()
         let probe = ProbeScript(results: Array(repeating: false, count: 6))
@@ -452,6 +520,26 @@ struct TunnelLifecycleOwnerTests {
 
         #expect(await probe.count == 1)
         #expect(transport.requestReconnectCount == 1)
+    }
+
+    @Test func wakeProbeFailureReachesInjectedSupervisor() async throws {
+        let supervisor = FakeTunnelReconnectingSession()
+        let transport = SPLTunnelTransport(
+            clientInfo: SPLClientInfo(userAgent: "solstone-macos/test"),
+            makeSession: { _, _, _ in supervisor }
+        )
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            probe: { _, _ in false }
+        )
+
+        owner.start()
+        try await waitUntil { owner.localPort != nil }
+        await owner.handleWakeOrUnlock()
+        try await waitUntil { await supervisor.requestReconnectCount == 1 }
+        await owner.stop()
+
+        #expect(await supervisor.requestReconnectCount == 1)
     }
 
     @Test func wakeProbeSuccessDoesNotRequestReconnect() async throws {
@@ -575,7 +663,7 @@ struct TunnelLifecycleOwnerTests {
         #expect(transport.connectedPairings == [updated])
     }
 
-    @Test func reactiveTokenExpiredRefreshesWithoutDeletingAndSwapsSessionAfterDisconnect() async throws {
+    @Test func reactiveAuthRefreshRequiredRefreshesWithoutDeletingAndSwapsSessionAfterDisconnect() async throws {
         let current = pairing(deviceToken: "old-token")
         let updated = pairing(deviceToken: "new-token")
         let store = PairingStore(pairing: current)
@@ -594,7 +682,7 @@ struct TunnelLifecycleOwnerTests {
 
         owner.start()
         try await waitUntil { first.connectAttempts == 1 }
-        first.emit(.failed(.tokenExpired))
+        first.emit(.failed(.authRefreshRequired))
         try await waitUntil { second.connectAttempts == 1 }
         await owner.stop()
 
@@ -607,7 +695,7 @@ struct TunnelLifecycleOwnerTests {
         #expect(tracker.maxActive == 1)
     }
 
-    @Test func reactiveTokenExpiredDefinitiveFailureRetiresPairing() async throws {
+    @Test func reactiveAuthRefreshRequiredDefinitiveFailureRetiresPairing() async throws {
         let current = pairing(deviceToken: "old-token")
         let store = PairingStore(pairing: current)
         let refresh = FakeTokenRefresher(
@@ -623,7 +711,7 @@ struct TunnelLifecycleOwnerTests {
 
         owner.start()
         try await waitUntil { transport.connectAttempts == 1 }
-        transport.emit(.failed(.tokenExpired))
+        transport.emit(.failed(.authRefreshRequired))
         try await waitUntil { owner.state == .error(.revoked) }
         await owner.stop()
 
@@ -639,7 +727,7 @@ struct TunnelLifecycleOwnerTests {
 
         owner.start()
         try await waitUntil { owner.state == .connected(localPort: port, via: .relay) }
-        transport.emit(.connecting(attempt: 2, candidates: []))
+        transport.emit(.connecting(candidates: []))
         try await waitUntil { owner.state == .connecting }
         transport.emit(.connected(via: .lanDirect(host: "127.0.0.1", port: port)))
         await waitBrieflyUntil { owner.state == .connected(localPort: port, via: .lan) }
@@ -661,7 +749,7 @@ struct TunnelLifecycleOwnerTests {
         owner.start()
         try await waitUntil { owner.state == .connected(localPort: port, via: .relay) }
         try await waitUntil { await sleeper.sleepCount == 1 }
-        transport.emit(.connecting(attempt: 2, candidates: []))
+        transport.emit(.connecting(candidates: []))
         try await waitUntil { owner.state == .connecting }
         transport.emit(.connected(via: .lanDirect(host: "127.0.0.1", port: port)))
         await waitBrieflyUntil { await sleeper.sleepCount == 2 }
@@ -686,7 +774,7 @@ struct TunnelLifecycleOwnerTests {
         owner.start()
         try await waitUntil { owner.state == .connected(localPort: port, via: .relay) }
         try await waitUntil { await sleeper.sleepCount == 1 }
-        transport.emit(.connecting(attempt: 2, candidates: []))
+        transport.emit(.connecting(candidates: []))
         try await waitUntil { owner.state == .connecting }
         transport.emit(.connected(via: .lanDirect(host: "127.0.0.1", port: port)))
         try await waitUntil { await sleeper.sleepCount == 2 }
@@ -718,7 +806,7 @@ struct TunnelLifecycleOwnerTests {
         try await waitUntil { owner.state == .connected(localPort: port, via: .lan) }
         transport.emitMode(.plViaSpl)
         try await waitUntil { owner.state == .connected(localPort: port, via: .relay) }
-        transport.emit(.connecting(attempt: 2, candidates: []))
+        transport.emit(.connecting(candidates: []))
         try await waitUntil { owner.state == .connecting }
         transport.emit(.connected(via: .lanDirect(host: "127.0.0.1", port: port)))
         await waitBrieflyUntil { owner.state == .connected(localPort: port, via: .lan) }
@@ -735,7 +823,7 @@ struct TunnelLifecycleOwnerTests {
         )
         let sleeper = ManualSleeper()
         let transport = FakeTunnelTransport(results: [
-            .failure(SessionError.tokenExpired),
+            .failure(SessionError.authRefreshRequired),
         ])
         let owner = makeOwner(
             store: store,
@@ -766,7 +854,7 @@ struct TunnelLifecycleOwnerTests {
         )
         let sleeper = ManualSleeper()
         let first = FakeTunnelTransport(results: [
-            .failure(SessionError.tokenExpired),
+            .failure(SessionError.authRefreshRequired),
         ])
         let second = FakeTunnelTransport(connection: .init(localPort: 61238, via: .relay))
         let owner = makeOwner(
@@ -797,7 +885,7 @@ struct TunnelLifecycleOwnerTests {
         )
         let sleeper = ManualSleeper()
         let transport = FakeTunnelTransport(results: [
-            .failure(SessionError.tokenExpired),
+            .failure(SessionError.authRefreshRequired),
         ])
         let owner = makeOwner(
             store: store,
@@ -827,7 +915,7 @@ struct TunnelLifecycleOwnerTests {
         #expect(transport.connectAttempts == 1)
     }
 
-    @Test func reentrantRefreshedTokenExpiredBacksOffAndClimbsBands() async throws {
+    @Test func reentrantRefreshedAuthRefreshRequiredBacksOffAndClimbsBands() async throws {
         let current = pairing(deviceToken: "old-token")
         let updates = (1...4).map { pairing(deviceToken: "refresh-\($0)") }
         let store = PairingStore(pairing: current)
@@ -838,7 +926,7 @@ struct TunnelLifecycleOwnerTests {
         let sleeper = ManualSleeper()
         let transports = (0..<5).map { _ in
             FakeTunnelTransport(results: [
-                .failure(SessionError.tokenExpired),
+                .failure(SessionError.authRefreshRequired),
             ])
         }
         let owner = makeOwner(
@@ -880,7 +968,7 @@ struct TunnelLifecycleOwnerTests {
         )
         let sleeper = ManualSleeper()
         let transport = FakeTunnelTransport(results: [
-            .failure(SessionError.tokenExpired),
+            .failure(SessionError.authRefreshRequired),
         ])
         let owner = makeOwner(
             store: store,
@@ -932,7 +1020,7 @@ struct TunnelLifecycleOwnerTests {
         await owner.stop()
     }
 
-    @Test func reentrantTokenExpiredDrainsPendingReactiveRefresh() async throws {
+    @Test func reentrantAuthRefreshRequiredDrainsPendingReactiveRefresh() async throws {
         let current = pairing(deviceToken: "old-token")
         let firstUpdate = pairing(deviceToken: "first-refresh")
         let secondUpdate = pairing(deviceToken: "second-refresh")
@@ -943,10 +1031,10 @@ struct TunnelLifecycleOwnerTests {
         )
         let sleeper = ManualSleeper()
         let first = FakeTunnelTransport(results: [
-            .failure(SessionError.tokenExpired),
+            .failure(SessionError.authRefreshRequired),
         ])
         let second = FakeTunnelTransport(results: [
-            .failure(SessionError.tokenExpired),
+            .failure(SessionError.authRefreshRequired),
         ])
         let third = FakeTunnelTransport(connection: .init(localPort: 61240, via: .relay))
         let owner = makeOwner(
@@ -979,7 +1067,7 @@ struct TunnelLifecycleOwnerTests {
         let sleeper = ManualSleeper()
         let first = FakeTunnelTransport(connection: .init(localPort: 61241, via: .relay))
         let second = FakeTunnelTransport(results: [
-            .failure(SessionError.tokenExpired),
+            .failure(SessionError.authRefreshRequired),
         ])
         let third = FakeTunnelTransport(connection: .init(localPort: 61242, via: .relay))
         let owner = makeOwner(
@@ -991,7 +1079,7 @@ struct TunnelLifecycleOwnerTests {
 
         owner.start()
         try await waitUntil { owner.state == .connected(localPort: 61241, via: .relay) }
-        first.emit(.failed(.tokenExpired))
+        first.emit(.failed(.authRefreshRequired))
         try await waitUntil { await refresh.pendingNowCount == 1 }
         await owner.reevaluatePairing()
         try await waitUntil { second.connectAttempts == 1 }
@@ -1083,6 +1171,30 @@ struct TunnelLifecycleOwnerTests {
         await owner.stop()
 
         #expect(transport.requestReconnectCount == 1)
+    }
+
+    @Test func pathBucketChangeWhileConnectedReachesInjectedSupervisor() async throws {
+        let pathSource = FakePathMonitoringSource()
+        let supervisor = FakeTunnelReconnectingSession()
+        let transport = SPLTunnelTransport(
+            clientInfo: SPLClientInfo(userAgent: "solstone-macos/test"),
+            makeSession: { _, _, _ in supervisor }
+        )
+        let owner = makeOwner(factory: FakeTransportFactory([transport]), pathSource: pathSource)
+        let wifiStatus = NetworkPathStatus(bucket: .wifi, isSatisfied: true, isExpensive: false, isConstrained: false)
+        let wiredStatus = NetworkPathStatus(bucket: .wired, isSatisfied: true, isExpensive: false, isConstrained: false)
+
+        owner.start()
+        try await waitUntil { owner.localPort != nil }
+        pathSource.emit(wifiStatus)
+        try await waitUntil { currentPathSignature(of: owner) == wifiStatus.signature }
+        #expect(await supervisor.requestReconnectCount == 0)
+
+        pathSource.emit(wiredStatus)
+        try await waitUntil { await supervisor.requestReconnectCount == 1 }
+        await owner.stop()
+
+        #expect(await supervisor.requestReconnectCount == 1)
     }
 
     @Test func reevaluatePairingWhileDormantConnectsAddedPairing() async throws {
@@ -1263,6 +1375,34 @@ struct TunnelLifecycleOwnerTests {
         // divergence and probeTask never clears, so future startProbe calls refuse.
         let finalProbeCount = await probe.count
         #expect(finalProbeCount == probeRounds)
+    }
+
+    @Test func probeUsesLiveLoopbackPortAfterReplacementConnect() async throws {
+        let store = PairingStore(pairing: pairing())
+        let sleeper = ManualSleeper()
+        let probe = ProbeScript(results: [true])
+        let initialPort = 68210
+        let replacementPort = 68211
+        let initial = FakeTunnelTransport(connection: .init(localPort: initialPort, via: .relay))
+        let replacement = FakeTunnelTransport(connection: .init(localPort: replacementPort, via: .relay))
+        let owner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([initial, replacement]),
+            probe: { port, _ in await probe.run(port: port) },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: initialPort, via: .relay) }
+        try await waitUntil { await sleeper.sleepCount == 1 }
+        await owner.reevaluatePairing()
+        try await waitUntil { owner.state == .connected(localPort: replacementPort, via: .relay) }
+        try await waitUntil { await sleeper.sleepCount >= 2 }
+        await sleeper.advance()
+        try await waitUntil { await probe.count == 1 }
+        await owner.stop()
+
+        #expect(await probe.ports == [replacementPort])
     }
 
     @Test func characterizationRepublishedConnectedDoesNotResetProbeInterval() async throws {

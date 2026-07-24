@@ -1,5 +1,5 @@
 {
-  "originHash" : "cf8fef2c0f9fb1b103415bcd18b30c79846b51296ad92d4bb55316f5ce04cde7",
+  "originHash" : "c198bb8f9a7aa8b3a015e412e1b1eec8b6a26f7618f020925d315cda28b71bd3",
   "pins" : [
     {
       "identity" : "sparkle",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "b6496a74a087257ef5e6da1c5b29a447a60f5bd7",
         "version" : "2.9.4"
+      }
+    },
+    {
+      "identity" : "spl-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/solpbc/spl-swift.git",
+      "state" : {
+        "revision" : "bb96b030bd27aadd03adda14711081c7b9cbed89",
+        "version" : "0.2.0"
       }
     },
     {

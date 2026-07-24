@@ -1,4 +1,4 @@
-.PHONY: build release release-universal release-universal-journal release-universal-adhoc run clean test ax-contract integration-test snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
+.PHONY: build release release-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist bundle-dist-journal bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
         vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-materialize-smoke brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
@@ -243,10 +243,10 @@ release-universal:
 	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
 
 # Local ad-hoc test builds only; never shipped; never set by any production target.
-# Uses the login-keychain SPL plane for unentitled local bundles.
+# The binary matches production; bundle-adhoc selects the login-keychain SPL plane.
 release-universal-adhoc:
-	swift build -c release --arch arm64 --arch x86_64 --product solstone -Xswiftc -DSPL_LOGIN_KEYCHAIN
-	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog -Xswiftc -DSPL_LOGIN_KEYCHAIN
+	swift build -c release --arch arm64 --arch x86_64 --product solstone
+	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
 
 release-universal-journal:
 	swift build -c release --arch arm64 --arch x86_64 --product journal
@@ -281,9 +281,6 @@ ax-contract:
 
 ci:
 	@./scripts/run-ci.sh
-
-integration-test:
-	SPL_INTEGRATION=1 swift test --filter 'SPLTunnelTests.IntegrationTests'
 
 # Render view snapshots
 snapshot:
@@ -529,6 +526,8 @@ bundle-adhoc: release-universal-adhoc
 	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
 	@cp .build/apple/Products/Release/solstone-watchdog solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
+	@# Local ad-hoc test bundles only; never shipped; never set by any production target.
+	@/usr/bin/plutil -insert SolstoneSPLKeychainPlane -string login-keychain solstone.app/Contents/Info.plist
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@mkdir -p solstone.app/Contents/Library/LaunchAgents
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/

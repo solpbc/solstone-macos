@@ -11,7 +11,8 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.1"),
-        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0")
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
+        .package(url: "https://github.com/solpbc/spl-swift.git", exact: "0.2.0")
     ],
     targets: [
         .target(
@@ -60,16 +61,6 @@ let package = Package(
             ]
         ),
         .target(
-            name: "SPLTunnel",
-            dependencies: [
-                .product(name: "Crypto", package: "swift-crypto")
-            ],
-            path: "Sources/SPLTunnel",
-            swiftSettings: [
-                .swiftLanguageMode(.v6)
-            ]
-        ),
-        .target(
             name: "UpdateKit",
             dependencies: [
                 .target(name: "SolstoneCore"),
@@ -86,7 +77,7 @@ let package = Package(
                 .target(name: "SolstoneCore"),
                 .target(name: "JournalMarkKit"),
                 .target(name: "UpdateKit"),
-                .target(name: "SPLTunnel"),
+                .product(name: "SPLTunnel", package: "spl-swift"),
                 .target(name: "ObjCHelpers"),
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Crypto", package: "swift-crypto")
@@ -218,6 +209,7 @@ let package = Package(
                 .target(name: "JournalRuntime"),
                 .target(name: "JournalMarkKit"),
                 .target(name: "UpdateKit"),
+                .product(name: "SPLTunnel", package: "spl-swift"),
                 .target(name: "JournalRuntimeTestSupport"),
                 .target(name: "solstone-watchdog")
             ],
@@ -244,13 +236,5 @@ let package = Package(
                 .swiftLanguageMode(.v6)
             ]
         ),
-        .testTarget(
-            name: "SPLTunnelTests",
-            dependencies: [.target(name: "SPLTunnel")],
-            path: "Tests/SPLTunnelTests",
-            swiftSettings: [
-                .swiftLanguageMode(.v6)
-            ]
-        )
     ]
 )

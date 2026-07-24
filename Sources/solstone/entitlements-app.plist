@@ -13,7 +13,7 @@
     <key>com.apple.security.device.audio-input</key>
     <true/>
     <!-- Data Protection keychain access for the SPL pairing bundle. The group string MUST match
-         SPLKeychain.baseQuery's kSecAttrAccessGroup exactly (7QCG8V4M6H.app.solstone.observer.spl)
+         SPLPairingKeychain.productionPolicy's accessGroup exactly (7QCG8V4M6H.app.solstone.observer.spl)
          or DP-keychain access fails at runtime with errSecMissingEntitlement (-34018). -->
     <key>com.apple.application-identifier</key>
     <string>7QCG8V4M6H.app.solstone.observer</string>

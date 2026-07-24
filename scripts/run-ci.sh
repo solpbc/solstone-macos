@@ -5,18 +5,17 @@
 # `make ci` wrapper: run swift + python tests inside an ephemeral macOS test
 # keychain.
 #
-# Why: tests that exercise SecItemAdd against the default user keychain (e.g.
-# Tests/SPLTunnelTests/SPLKeychainTests.swift) fail under non-interactive SSH
-# with errSecInteractionNotAllowed (-25308) because the login keychain is
-# locked and refuses to fire a GUI unlock prompt. The login keychain is the
-# default keychain on a fresh user account, so any kSecClassGenericPassword
-# write goes there by default.
+# Why: tests that exercise SecItemAdd against the default user keychain can fail
+# under non-interactive SSH with errSecInteractionNotAllowed (-25308) because the
+# login keychain is locked and refuses to fire a GUI unlock prompt. The login
+# keychain is the default keychain on a fresh user account, so any
+# kSecClassGenericPassword write goes there by default.
 #
 # How: create a fresh keychain with a random per-run password, swap it in as
 # the user-domain default and the head of the user-domain search list, run
 # tests, then restore prior state and delete the keychain on EXIT. Because
-# SPLKeychain (and any well-formed keychain helper) calls SecItemAdd without
-# kSecUseKeychain, items follow the default keychain — redirecting the
+# SPLKeychainStore (and any well-formed keychain helper) calls SecItemAdd
+# without kSecUseKeychain, items follow the default keychain — redirecting the
 # default routes all writes transparently. No production code or test code
 # changes needed.
 #

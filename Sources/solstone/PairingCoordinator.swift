@@ -71,22 +71,24 @@ final class PairingCoordinator {
     }
 
     init(
-        pair: @escaping PairOperation = { pairURL, deviceLabel, relayEndpoint in
-            try await PairClient().pair(pairURL: pairURL, deviceLabel: deviceLabel, relayEndpoint: relayEndpoint)
-        },
-        loadPairing: @escaping LoadPairing = { try SPLKeychain.load() },
-        savePairing: @escaping SavePairing = { try SPLKeychain.save($0) },
-        deletePairing: @escaping DeletePairing = { try SPLKeychain.delete() },
+        pair: PairOperation? = nil,
+        clientInfo: SPLClientInfo = SPLRuntime.clientInfo,
+        keychainStore: SPLKeychainStore = SPLPairingKeychain.store(),
+        loadPairing: LoadPairing? = nil,
+        savePairing: SavePairing? = nil,
+        deletePairing: DeletePairing? = nil,
         reactivate: @escaping Reactivate = {},
         ownerState: @escaping OwnerState = { .disconnected },
         relayEndpoint: @escaping RelayEndpointSource = { SPLPairingDefaults.relayEndpointURL },
         deviceLabel: @escaping DeviceLabelSource = { SPLPairingDefaults.deviceLabel },
         clearLastSuccessfulJournalContact: @escaping ClearLastSuccessfulJournalContact = {}
     ) {
-        self.pair = pair
-        self.loadPairing = loadPairing
-        self.savePairing = savePairing
-        self.deletePairing = deletePairing
+        self.pair = pair ?? { pairURL, deviceLabel, relayEndpoint in
+            try await PairClient(clientInfo: clientInfo).pair(pairURL: pairURL, deviceLabel: deviceLabel, relayEndpoint: relayEndpoint)
+        }
+        self.loadPairing = loadPairing ?? { try keychainStore.load() }
+        self.savePairing = savePairing ?? { try keychainStore.save($0) }
+        self.deletePairing = deletePairing ?? { try keychainStore.delete() }
         self.reactivate = reactivate
         self.ownerState = ownerState
         self.relayEndpoint = relayEndpoint
@@ -236,8 +238,10 @@ final class PairingCoordinator {
             return .staleLink
         case .pairingWindowClosed:
             return .staleLink
-        case .lanCandidatesExhausted:
-            return .homeUnreachable
+        case .directAddressNotLocal:
+            return .invalidLink("pairing link is not a relay link")
+        case .lanCandidatesExhausted(let sawCAFingerprintMismatch):
+            return sawCAFingerprintMismatch ? .instanceMismatch : .homeUnreachable
         case .relayRequestFailed(let underlying):
             if let dialError = underlying as? DialError {
                 return failure(for: dialError)
@@ -278,7 +282,9 @@ final class PairingCoordinator {
             return .relayUnauthorized
         case .relayUnauthorized:
             return .relayUnauthorized
-        case .relayTokenExpired:
+        case .relayCloseUnauthorized:
+            return .staleLink
+        case .pairingWindowClosed:
             return .staleLink
         case .relayInstanceUnknown:
             return .instanceMismatch

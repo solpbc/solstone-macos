@@ -26,22 +26,38 @@ protocol TunnelTransporting: AnyObject, Sendable {
     func inboundActivitySnapshot() async -> UInt64
 }
 
+protocol TunnelReconnecting: TunnelSessioning, MuxStreamOpening {
+    func requestReconnect() async
+}
+
+extension TunnelSupervisor: TunnelReconnecting {}
+
 @MainActor
 final class SPLTunnelTransport: TunnelTransporting {
     let stateUpdates: AsyncStream<TunnelState>
     let connectionModeUpdates: AsyncStream<ConnectionMode?>
     private(set) var connectionMode: ConnectionMode?
 
-    private let makeSession: @Sendable (StoredPairing) -> any TunnelSessioning
+    private let clientInfo: SPLClientInfo
+    private let policy: SessionPolicy
+    private let makeSession: @Sendable (StoredPairing, SPLClientInfo, SessionPolicy) -> any TunnelReconnecting
     private let stateContinuation: AsyncStream<TunnelState>.Continuation
     private let connectionModeContinuation: AsyncStream<ConnectionMode?>.Continuation
 
-    private var session: (any TunnelSessioning)?
+    private var session: (any TunnelReconnecting)?
     private var proxy: LoopbackProxy?
     private var stateForwardTask: Task<Void, Never>?
     private var connectionModeForwardTask: Task<Void, Never>?
 
-    init(makeSession: @escaping @Sendable (StoredPairing) -> any TunnelSessioning = { TunnelSession(pairing: $0) }) {
+    init(
+        clientInfo: SPLClientInfo = SPLRuntime.clientInfo,
+        policy: SessionPolicy = SessionPolicy(keepalive: KeepalivePolicy(runsOnRelayPath: true)),
+        makeSession: @escaping @Sendable (StoredPairing, SPLClientInfo, SessionPolicy) -> any TunnelReconnecting = {
+            TunnelSupervisor(pairing: $0, clientInfo: $1, policy: $2)
+        }
+    ) {
+        self.clientInfo = clientInfo
+        self.policy = policy
         self.makeSession = makeSession
         let state = AsyncStream<TunnelState>.makeStream()
         self.stateUpdates = state.stream
@@ -58,7 +74,7 @@ final class SPLTunnelTransport: TunnelTransporting {
         _ = try await session.connect(endpoints: candidates)
         connectionMode = await session.connectionMode
 
-        let proxy = LoopbackProxy(tunnel: session)
+        let proxy = LoopbackProxy(opener: session)
         self.proxy = proxy
         do {
             let port = try await proxy.start()
@@ -102,12 +118,12 @@ final class SPLTunnelTransport: TunnelTransporting {
         return await session.inboundActivitySnapshot()
     }
 
-    private func activeSession(for pairing: StoredPairing) -> any TunnelSessioning {
+    private func activeSession(for pairing: StoredPairing) -> any TunnelReconnecting {
         if let session {
             return session
         }
 
-        let session = makeSession(pairing)
+        let session = makeSession(pairing, clientInfo, policy)
         self.session = session
         observe(session)
         observeConnectionMode(session)

@@ -154,9 +154,9 @@ actor ControlledTokenRefresher {
 
 @MainActor
 final class FakeTransportFactory: @unchecked Sendable {
-    private var transports: [FakeTunnelTransport]
+    private var transports: [any TunnelTransporting]
 
-    init(_ transports: [FakeTunnelTransport]) {
+    init(_ transports: [any TunnelTransporting]) {
         self.transports = transports
     }
 
@@ -165,8 +165,58 @@ final class FakeTransportFactory: @unchecked Sendable {
             preconditionFailure("Missing fake tunnel transport")
         }
         let transport = transports.removeFirst()
-        transport.recordConstruction()
+        (transport as? FakeTunnelTransport)?.recordConstruction()
         return transport
+    }
+}
+
+actor FakeTunnelReconnectingSession: TunnelReconnecting {
+    nonisolated let stateUpdates: AsyncStream<TunnelState>
+    nonisolated let connectionModeUpdates: AsyncStream<ConnectionMode?>
+
+    private let stateContinuation: AsyncStream<TunnelState>.Continuation
+    private let connectionModeValue: ConnectionMode?
+    private let connectedVia: ConnectedVia
+    private(set) var requestReconnectCount = 0
+
+    init(
+        connectionMode: ConnectionMode? = .plViaSpl,
+        connectedVia: ConnectedVia = URL(string: "ws://relay.example")!.relayConnectedVia
+    ) {
+        self.connectionModeValue = connectionMode
+        self.connectedVia = connectedVia
+        let states = AsyncStream<TunnelState>.makeStream()
+        self.stateUpdates = states.stream
+        self.stateContinuation = states.continuation
+        let modes = AsyncStream<ConnectionMode?>.makeStream()
+        self.connectionModeUpdates = modes.stream
+        modes.continuation.yield(connectionMode)
+        states.continuation.yield(.disconnected)
+    }
+
+    var connectionMode: ConnectionMode? {
+        connectionModeValue
+    }
+
+    func connect(endpoints _: [TransportEndpoint]) async throws -> ConnectedVia {
+        stateContinuation.yield(.connected(via: connectedVia))
+        return connectedVia
+    }
+
+    func disconnect() async {
+        stateContinuation.yield(.disconnected)
+    }
+
+    func openStream() async throws -> MuxStream {
+        throw SessionError.notConnected
+    }
+
+    func inboundActivitySnapshot() async -> UInt64 {
+        0
+    }
+
+    func requestReconnect() async {
+        requestReconnectCount += 1
     }
 }
 

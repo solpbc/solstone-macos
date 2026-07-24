@@ -16,7 +16,7 @@ make run
 
 ## login-keychain pairing plane
 
-the normal shipped app stores the SPL pairing bundle in the Team-ID-gated Data Protection keychain access group. Local ad-hoc builds are not entitled for that group, so `bundle-adhoc` compiles with `SPL_LOGIN_KEYCHAIN` and omits the Data Protection keychain and access-group query attributes.
+the normal shipped app stores the SPL pairing bundle in the Team-ID-gated Data Protection keychain access group. Local ad-hoc builds are not entitled for that group, so `bundle-adhoc` seals the `SolstoneSPLKeychainPlane=login-keychain` marker into `solstone.app/Contents/Info.plist` and omits the Data Protection keychain and access-group query attributes.
 
 that local-only build stores pairing material in the plain login keychain instead. This exists only so contributors can exercise SPL pairing and tunnel behavior without Developer ID signing identities. It is never update-served or shipped.
 
@@ -46,7 +46,7 @@ codesign -d --entitlements - --xml solstone.app | plutil -p -
 codesign --verify --strict --verbose=2 solstone.app
 ```
 
-the local bundle should not contain `keychain-access-groups` or `com.apple.developer.team-identifier` entitlements.
+the local bundle should contain `SolstoneSPLKeychainPlane = login-keychain` in `Contents/Info.plist` and should not contain `keychain-access-groups` or `com.apple.developer.team-identifier` entitlements.
 
 ## gotchas
 

@@ -6,6 +6,7 @@ import UserNotifications
 import os
 import JournalMarkKit
 import SolstoneCore
+import SPLTunnel
 import UpdateKit
 
 /// Single source of truth for tracked SwiftUI `Window` scenes.
@@ -159,6 +160,7 @@ struct SolstoneCaptureApp: App {
     init() {
         // Configure unbuffered output for stderr
         Stderr.setUnbuffered()
+        SPLLogging.configure(subsystem: "app.solstone.observer.spl")
 
         _startup = State(initialValue: SolstoneStartupPlanner.planStartup(
             decision: AppPlacementGate.evaluate(),

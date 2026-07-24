@@ -230,7 +230,7 @@ The load-bearing freshness proof is the product commit and the version identitie
 
 ## Architecture
 
-This is one Swift Package Manager repository. Production targets are `SolstoneCore`, `SPLTunnel`, `solstone` (the executable app and recording layer in `Sources/solstone/`), `solstone-watchdog`, and `ObjCHelpers`. Test targets are `solstoneTests` and `SPLTunnelTests`.
+This is one Swift Package Manager repository. Production targets are `SolstoneCore`, `solstone` (the executable app and recording layer in `Sources/solstone/`), `solstone-watchdog`, and `ObjCHelpers`; SPL tunnel code comes from the shared `spl-swift` package. Test targets are `solstoneTests`.
 
 ## File Storage
 
