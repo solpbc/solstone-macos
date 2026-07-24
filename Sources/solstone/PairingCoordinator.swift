@@ -43,6 +43,8 @@ final class PairingCoordinator {
     typealias DeviceLabelSource = @Sendable () -> String
     typealias ClearLastSuccessfulJournalContact = @MainActor @Sendable () -> Void
 
+    private static let nonRelayPairingLinkReason = "pairing link is not a relay link"
+
     private(set) var state: PairingFlowState = .idle
 
     @ObservationIgnored
@@ -160,7 +162,7 @@ final class PairingCoordinator {
         let trimmed = rawLink.trimmingCharacters(in: .whitespacesAndNewlines)
         let pairURL = try PairURL(string: trimmed)
         guard pairURL.kind == .relay else {
-            throw LocalPairingFailure(.invalidLink("pairing link is not a relay link"))
+            throw LocalPairingFailure(.invalidLink(Self.nonRelayPairingLinkReason))
         }
         return pairURL
     }
@@ -239,7 +241,7 @@ final class PairingCoordinator {
         case .pairingWindowClosed:
             return .staleLink
         case .directAddressNotLocal:
-            return .invalidLink("pairing link is not a relay link")
+            return .invalidLink(nonRelayPairingLinkReason)
         case .lanCandidatesExhausted(let sawCAFingerprintMismatch):
             return sawCAFingerprintMismatch ? .instanceMismatch : .homeUnreachable
         case .relayRequestFailed(let underlying):
