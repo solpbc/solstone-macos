@@ -5,6 +5,16 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.9] - 2026-07-25
+
+### Added
+- opening your journal from sol's menu or a notification now shows it in a window inside sol instead of your browser. the window uses your current journal connection and shows when it is waiting, loading, ready, or needs a retry.
+
+### Fixed
+- clicking a notification while your journal is unavailable now opens the journal window and waits for the connection instead of doing nothing.
+- connection errors that might be temporary no longer make sol forget your journal pairing.
+
+
 ## [1.4.8] - 2026-07-24
 
 ### Fixed
