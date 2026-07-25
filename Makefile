@@ -32,6 +32,7 @@ ASC_API_KEY_FILE       ?= $(HOME)/.config/sol-pbc/signing/apple-asc-api-key.p8
 ASC_API_KEY_ID         ?= SNP7CMKMZ5
 ASC_API_ISSUER         ?= 0fe42f6d-2c46-4f09-a9c2-152b20b3ea19
 RELEASE_IDENTITY       := python3 scripts/release_identity.py
+KEYCHAIN_SEARCH_LIST   := python3 scripts/keychain_search_list.py
 DIST_VERSION           := $(shell $(RELEASE_IDENTITY) identity --app sol --plist Sources/solstone/Info.plist --field short_version 2>/dev/null || echo 0.0.0)
 DIST_BUILD             := $(shell $(RELEASE_IDENTITY) identity --app sol --plist Sources/solstone/Info.plist --field bundle_version 2>/dev/null || echo 0)
 DMG_NAME               ?= $(shell $(RELEASE_IDENTITY) identity --app sol --version '$(DIST_VERSION)' --field dmg_name)
@@ -437,7 +438,7 @@ bump-release-journal:
 # setting it here makes `make signing-check` work from any session (not just
 # the persistent hopper:build tmux window).
 unlock-signing:
-	@security list-keychains -s "$(SIGNING_KEYCHAIN)" "$(HOME)/Library/Keychains/login.keychain-db" >/dev/null
+	@$(KEYCHAIN_SEARCH_LIST) prepend "$(SIGNING_KEYCHAIN)" >/dev/null
 	@if [ -f "$(SIGNING_KC_PASS_FILE)" ]; then \
 		security unlock-keychain -p "$$(cat $(SIGNING_KC_PASS_FILE))" "$(SIGNING_KEYCHAIN)"; \
 	else \
