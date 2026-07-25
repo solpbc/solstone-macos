@@ -129,69 +129,6 @@ internal enum JournalWindowNavigationEvent: Sendable, Equatable {
             return generation
         }
     }
-
-    var isTerminal: Bool {
-        switch self {
-        case .started, .committed:
-            return false
-        case .finished, .failed, .contentProcessTerminated:
-            return true
-        }
-    }
-}
-
-internal struct JournalWindowProgrammaticNavigationClaims: Sendable, Equatable {
-    private static let maxPendingClaims = 32
-    private var generationsByURL: [URL: [UInt64]] = [:]
-    private var urlByGeneration: [UInt64: URL] = [:]
-
-    mutating func prepare(_ command: JournalWindowLoadCommand) {
-        generationsByURL[command.url, default: []].append(command.generation)
-        urlByGeneration[command.generation] = command.url
-        pruneIfNeeded()
-    }
-
-    mutating func consume(url: URL) -> UInt64? {
-        guard var generations = generationsByURL[url], !generations.isEmpty else {
-            return nil
-        }
-
-        let generation = generations.removeFirst()
-        if generations.isEmpty {
-            generationsByURL.removeValue(forKey: url)
-        } else {
-            generationsByURL[url] = generations
-        }
-        urlByGeneration.removeValue(forKey: generation)
-        return generation
-    }
-
-    mutating func remove(generation: UInt64) {
-        guard let url = urlByGeneration.removeValue(forKey: generation),
-              var generations = generationsByURL[url]
-        else {
-            return
-        }
-
-        generations.removeAll { $0 == generation }
-        if generations.isEmpty {
-            generationsByURL.removeValue(forKey: url)
-        } else {
-            generationsByURL[url] = generations
-        }
-    }
-
-    mutating func removeAll() {
-        generationsByURL.removeAll()
-        urlByGeneration.removeAll()
-    }
-
-    private mutating func pruneIfNeeded() {
-        while urlByGeneration.count > Self.maxPendingClaims,
-              let oldestGeneration = urlByGeneration.keys.min() {
-            remove(generation: oldestGeneration)
-        }
-    }
 }
 
 internal struct JournalWindowComposition: Sendable, Equatable {
@@ -236,15 +173,15 @@ internal struct JournalWindowComposition: Sendable, Equatable {
         return command
     }
 
-    mutating func beginAllowedNavigation(url: URL, baseURL: URL) -> UInt64 {
-        if let derived = Self.destination(for: url, relativeTo: baseURL) {
-            destination = derived
-        }
+    mutating func beginUserInitiatedNavigation(url: URL, baseURL: URL) -> UInt64 {
+        applyNavigationContinuation(url: url, baseURL: baseURL)
         generation += 1
-        state = .loading
-        currentBaseURL = baseURL
         loadCommand = nil
         return generation
+    }
+
+    mutating func continueCurrentNavigation(url: URL, baseURL: URL) {
+        applyNavigationContinuation(url: url, baseURL: baseURL)
     }
 
     mutating func handle(_ event: JournalWindowNavigationEvent) {
@@ -287,6 +224,14 @@ internal struct JournalWindowComposition: Sendable, Equatable {
         currentBaseURL = command.baseURL
         loadCommand = command
         return command
+    }
+
+    private mutating func applyNavigationContinuation(url: URL, baseURL: URL) {
+        if let derived = Self.destination(for: url, relativeTo: baseURL) {
+            destination = derived
+        }
+        state = .loading
+        currentBaseURL = baseURL
     }
 
     static func composeLoadCommand(
@@ -394,8 +339,12 @@ internal final class JournalWindowSession {
         composition.beginDirectLoad(url: url, baseURL: baseURL)
     }
 
-    func beginAllowedNavigation(url: URL, baseURL: URL) -> UInt64 {
-        composition.beginAllowedNavigation(url: url, baseURL: baseURL)
+    func beginUserInitiatedNavigation(url: URL, baseURL: URL) -> UInt64 {
+        composition.beginUserInitiatedNavigation(url: url, baseURL: baseURL)
+    }
+
+    func continueCurrentNavigation(url: URL, baseURL: URL) {
+        composition.continueCurrentNavigation(url: url, baseURL: baseURL)
     }
 
     func handle(_ event: JournalWindowNavigationEvent) {

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import AppKit
+import SolstoneCore
 import SwiftUI
 import WebKit
 
@@ -96,7 +97,6 @@ private struct JournalWindowView: View {
                     openExternalURL: openExternalURL,
                     websiteDataStore: websiteDataStore
                 )
-                .accessibilityIdentifier(AXID.Journal.Browser.webView)
             }
 
             switch session.state {
@@ -124,10 +124,13 @@ private struct JournalWindowView: View {
                 .background(.regularMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
+
+            AXStateCompanion(
+                id: AXID.Journal.Browser.navigationState,
+                value: session.state.axToken
+            )
         }
         .frame(minWidth: 820, minHeight: 580)
-        .accessibilityIdentifier(AXID.Journal.Browser.navigationState)
-        .accessibilityValue(session.state.axToken)
         .task(id: intent?.id) {
             guard let intent else { return }
             await session.open(destination: intent.destination)
@@ -152,6 +155,7 @@ private struct JournalWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero, configuration: Self.makeConfiguration(dataStore: websiteDataStore()))
+        webView.setAccessibilityIdentifier(AXID.Journal.Browser.webView)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false
@@ -175,7 +179,6 @@ private struct JournalWebView: NSViewRepresentable {
             return
         }
 
-        context.coordinator.prepareProgrammaticLoad(loadCommand)
         let navigation = webView.load(URLRequest(url: loadCommand.url))
         context.coordinator.register(navigation: navigation, generation: loadCommand.generation)
         context.coordinator.lastLoadedGeneration = loadCommand.generation
@@ -206,7 +209,6 @@ private struct JournalWebView: NSViewRepresentable {
         var openExternalURL: JournalWindowExternalURLOpener
         var lastLoadedGeneration: UInt64?
         private var generationByNavigation: [ObjectIdentifier: UInt64] = [:]
-        private var programmaticNavigationClaims = JournalWindowProgrammaticNavigationClaims()
 
         init(
             session: JournalWindowSession,
@@ -216,10 +218,6 @@ private struct JournalWebView: NSViewRepresentable {
             self.openExternalURL = openExternalURL
         }
 
-        func prepareProgrammaticLoad(_ command: JournalWindowLoadCommand) {
-            programmaticNavigationClaims.prepare(command)
-        }
-
         func register(navigation: WKNavigation?, generation: UInt64) {
             guard let navigation else { return }
             generationByNavigation[ObjectIdentifier(navigation)] = generation
@@ -227,7 +225,6 @@ private struct JournalWebView: NSViewRepresentable {
 
         func tearDown() {
             generationByNavigation.removeAll()
-            programmaticNavigationClaims.removeAll()
         }
 
         func webView(
@@ -242,10 +239,11 @@ private struct JournalWebView: NSViewRepresentable {
                 shouldPerformDownload: navigationAction.shouldPerformDownload,
                 currentBaseURL: session.currentBaseURL
             )
+            let isUserInitiated = Self.isUserInitiatedNavigation(navigationAction.navigationType)
 
             switch JournalWindowPolicy.decideNavigationAction(input) {
             case .allow:
-                beginAllowedNavigationIfNeeded(input)
+                beginAllowedNavigationIfNeeded(input, isUserInitiated: isUserInitiated)
                 decisionHandler(.allow)
             case .cancel:
                 decisionHandler(.cancel)
@@ -271,15 +269,18 @@ private struct JournalWebView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            handleNavigationEvent(.started(generation: generation(for: navigation)))
+            guard let generation = bindStartedNavigation(navigation) else { return }
+            session.handle(.started(generation: generation))
         }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-            handleNavigationEvent(.committed(generation: generation(for: navigation)))
+            guard let generation = generation(for: navigation) else { return }
+            session.handle(.committed(generation: generation))
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            handleNavigationEvent(.finished(generation: generation(for: navigation)))
+            guard let generation = generation(for: navigation) else { return }
+            session.handle(.finished(generation: generation))
         }
 
         func webView(
@@ -295,7 +296,7 @@ private struct JournalWebView: NSViewRepresentable {
         }
 
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            handleNavigationEvent(.contentProcessTerminated(generation: session.generation))
+            session.handle(.contentProcessTerminated(generation: session.generation))
         }
 
         func webView(
@@ -332,23 +333,26 @@ private struct JournalWebView: NSViewRepresentable {
             decisionHandler(.deny)
         }
 
-        private func beginAllowedNavigationIfNeeded(_ input: JournalWindowNavigationPolicyInput) {
+        private func beginAllowedNavigationIfNeeded(
+            _ input: JournalWindowNavigationPolicyInput,
+            isUserInitiated: Bool
+        ) {
             guard input.targetFrameIsMainFrame != false,
                   let url = input.requestURL
             else {
                 return
             }
-            if programmaticNavigationClaims.consume(url: url) != nil {
-                return
-            }
             guard let baseURL = session.currentBaseURL else { return }
-            _ = session.beginAllowedNavigation(url: url, baseURL: baseURL)
+            if isUserInitiated {
+                _ = session.beginUserInitiatedNavigation(url: url, baseURL: baseURL)
+            } else {
+                session.continueCurrentNavigation(url: url, baseURL: baseURL)
+            }
         }
 
         private func loadInCurrentWindow(_ url: URL, webView: WKWebView) {
             guard let baseURL = session.currentBaseURL else { return }
             let command = session.beginDirectLoad(url: url, baseURL: baseURL)
-            prepareProgrammaticLoad(command)
             let navigation = webView.load(URLRequest(url: command.url))
             register(navigation: navigation, generation: command.generation)
             lastLoadedGeneration = command.generation
@@ -358,19 +362,35 @@ private struct JournalWebView: NSViewRepresentable {
             let failure: JournalWindowNavigationFailure = JournalWindowPolicy.isSelfInflictedCancellation(error)
                 ? .selfInflictedCancellation
                 : .other
-            handleNavigationEvent(.failed(generation: generation(for: navigation), failure: failure))
+            guard let generation = generation(for: navigation) else { return }
+            session.handle(.failed(generation: generation, failure: failure))
         }
 
-        private func handleNavigationEvent(_ event: JournalWindowNavigationEvent) {
-            session.handle(event)
-            if event.isTerminal {
-                programmaticNavigationClaims.remove(generation: event.generation)
+        private static func isUserInitiatedNavigation(_ navigationType: WKNavigationType) -> Bool {
+            switch navigationType {
+            case .linkActivated, .formSubmitted, .backForward, .reload:
+                return true
+            case .formResubmitted, .other:
+                return false
+            @unknown default:
+                return false
             }
         }
 
-        private func generation(for navigation: WKNavigation?) -> UInt64 {
-            guard let navigation else { return session.generation }
-            return generationByNavigation[ObjectIdentifier(navigation)] ?? session.generation
+        private func bindStartedNavigation(_ navigation: WKNavigation?) -> UInt64? {
+            guard let navigation else { return nil }
+            let identifier = ObjectIdentifier(navigation)
+            if let generation = generationByNavigation[identifier] {
+                return generation
+            }
+            let generation = session.generation
+            generationByNavigation[identifier] = generation
+            return generation
+        }
+
+        private func generation(for navigation: WKNavigation?) -> UInt64? {
+            guard let navigation else { return nil }
+            return generationByNavigation[ObjectIdentifier(navigation)]
         }
     }
 }

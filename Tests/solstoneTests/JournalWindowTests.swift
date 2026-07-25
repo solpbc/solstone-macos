@@ -110,33 +110,70 @@ struct JournalWindowCompositionTests {
         #expect(second?.generation == 2)
     }
 
-    @Test func programmaticClaimIsSingleUseSoLaterSameURLNavigationGetsNewGeneration() {
+    @Test func programmaticLoadThenOwnerSameURLNavigationGetsNewGeneration() {
         var composition = JournalWindowComposition()
-        var claims = JournalWindowProgrammaticNavigationClaims()
         let command = composition.open(destination: .root, resolvedBase: .url("https://journal.example"))!
-        claims.prepare(command)
 
-        #expect(claims.consume(url: command.url) == command.generation)
-        let userGeneration = composition.beginAllowedNavigation(url: command.url, baseURL: command.baseURL)
+        composition.continueCurrentNavigation(url: command.url, baseURL: command.baseURL)
+        #expect(composition.loadCommand == command)
+        let userGeneration = composition.beginUserInitiatedNavigation(url: command.url, baseURL: command.baseURL)
 
         #expect(userGeneration == command.generation + 1)
         #expect(composition.generation == userGeneration)
         #expect(composition.state == .loading)
     }
 
-    @Test func successiveProgrammaticLoadsToSameURLClaimDistinctGenerations() {
+    @Test func successiveProgrammaticLoadsToSameURLGetDistinctGenerations() {
         var composition = JournalWindowComposition()
-        var claims = JournalWindowProgrammaticNavigationClaims()
         let first = composition.open(destination: .root, resolvedBase: .url("https://journal.example"))!
-        claims.prepare(first)
         let second = composition.open(destination: .root, resolvedBase: .url("https://journal.example"))!
-        claims.prepare(second)
 
         #expect(first.url == second.url)
         #expect(second.generation == first.generation + 1)
-        #expect(claims.consume(url: first.url) == first.generation)
-        #expect(claims.consume(url: second.url) == second.generation)
-        #expect(claims.consume(url: first.url) == nil)
+        #expect(composition.generation == second.generation)
+        #expect(composition.loadCommand == second)
+    }
+
+    @Test func conveyRootRedirectOtherContinuationFinishesOriginalProgrammaticGeneration() {
+        var composition = JournalWindowComposition()
+        let command = composition.open(destination: .root, resolvedBase: .url("https://journal.example"))!
+        let redirectURL = URL(string: "https://journal.example/app/home/")!
+
+        // Models convey 302 "/" -> "/app/home/": WebKit reports both policy callbacks as .other, so they must ride generation N.
+        composition.continueCurrentNavigation(url: command.url, baseURL: command.baseURL)
+        composition.continueCurrentNavigation(url: redirectURL, baseURL: command.baseURL)
+        composition.handle(.finished(generation: command.generation))
+
+        #expect(composition.state == .loaded)
+        #expect(composition.generation == command.generation)
+    }
+
+    @Test func baseChangeAfterConveyRootRedirectReloadsHomeDestination() {
+        var composition = JournalWindowComposition()
+        let command = composition.open(destination: .root, resolvedBase: .url("https://journal.example"))!
+        let redirectURL = URL(string: "https://journal.example/app/home/")!
+
+        composition.continueCurrentNavigation(url: command.url, baseURL: command.baseURL)
+        composition.continueCurrentNavigation(url: redirectURL, baseURL: command.baseURL)
+        composition.handle(.finished(generation: command.generation))
+        let reloaded = composition.reload(resolvedBase: .url("https://journal-new.example"))!
+
+        #expect(reloaded.url.absoluteString == "https://journal-new.example/app/home/")
+        #expect(reloaded.generation == command.generation + 1)
+    }
+
+    @Test func userInitiatedSameOriginNavigationBumpsGenerationAndRetainsDestination() {
+        var composition = JournalWindowComposition()
+        let command = composition.open(destination: .root, resolvedBase: .url("https://journal.example"))!
+        let linkURL = URL(string: "https://journal.example/app/home/")!
+        let expectedDestination = JournalWindowDestination(path: "/app/home/")!
+
+        let userGeneration = composition.beginUserInitiatedNavigation(url: linkURL, baseURL: command.baseURL)
+
+        #expect(userGeneration == command.generation + 1)
+        #expect(composition.generation == userGeneration)
+        #expect(composition.destination == expectedDestination)
+        #expect(composition.state == .loading)
     }
 
     @Test func baseChangesReloadRetainedDestinationAndHeldRetainsIt() async {
