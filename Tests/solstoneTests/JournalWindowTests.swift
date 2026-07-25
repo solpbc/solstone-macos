@@ -2,7 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
-import JournalMarkKit
+import JournalRuntimeTestSupport
 import SolstoneCore
 import Testing
 import WebKit
@@ -110,11 +110,39 @@ struct JournalWindowCompositionTests {
         #expect(second?.generation == 2)
     }
 
+    @Test func programmaticClaimIsSingleUseSoLaterSameURLNavigationGetsNewGeneration() {
+        var composition = JournalWindowComposition()
+        var claims = JournalWindowProgrammaticNavigationClaims()
+        let command = composition.open(destination: .root, resolvedBase: .url("https://journal.example"))!
+        claims.prepare(command)
+
+        #expect(claims.consume(url: command.url) == command.generation)
+        let userGeneration = composition.beginAllowedNavigation(url: command.url, baseURL: command.baseURL)
+
+        #expect(userGeneration == command.generation + 1)
+        #expect(composition.generation == userGeneration)
+        #expect(composition.state == .loading)
+    }
+
+    @Test func successiveProgrammaticLoadsToSameURLClaimDistinctGenerations() {
+        var composition = JournalWindowComposition()
+        var claims = JournalWindowProgrammaticNavigationClaims()
+        let first = composition.open(destination: .root, resolvedBase: .url("https://journal.example"))!
+        claims.prepare(first)
+        let second = composition.open(destination: .root, resolvedBase: .url("https://journal.example"))!
+        claims.prepare(second)
+
+        #expect(first.url == second.url)
+        #expect(second.generation == first.generation + 1)
+        #expect(claims.consume(url: first.url) == first.generation)
+        #expect(claims.consume(url: second.url) == second.generation)
+        #expect(claims.consume(url: first.url) == nil)
+    }
+
     @Test func baseChangesReloadRetainedDestinationAndHeldRetainsIt() async {
+        let registrar = FakeObserverRegistrar()
         let state = AppState.forSnapshot(
-            observerRegister: { _, _ in
-                .failure(ObserverRegistrationFailure(kind: .invalidResponse))
-            },
+            observerRegister: registrar.register,
             triggerTunnelConnectedSync: { _ in }
         )
         let destination = JournalWindowDestination(
@@ -131,13 +159,13 @@ struct JournalWindowCompositionTests {
             await resolver.next()
         })
 
-        state.handleTunnelLifecycleState(.connected(localPort: 41000, via: .relay))
+        state.handleTunnelLifecycleState(TunnelLifecycleState.connected(localPort: 41000, via: TunnelConnectionRoute.relay))
         let first = await session.open(destination: destination)
         let tokenAfterA = state.journalHomeBaseChangeToken
-        state.handleTunnelLifecycleState(.disconnected)
+        state.handleTunnelLifecycleState(TunnelLifecycleState.disconnected)
         let held = await session.reloadRetainedDestination()
         let tokenAfterHeld = state.journalHomeBaseChangeToken
-        state.handleTunnelLifecycleState(.connected(localPort: 42000, via: .relay))
+        state.handleTunnelLifecycleState(TunnelLifecycleState.connected(localPort: 42000, via: TunnelConnectionRoute.relay))
         let second = await session.reloadRetainedDestination()
 
         #expect(first?.url.absoluteString == "http://127.0.0.1:41000/app/chat/2026-05-09?pane=owner#event-5")

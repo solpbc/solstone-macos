@@ -129,6 +129,69 @@ internal enum JournalWindowNavigationEvent: Sendable, Equatable {
             return generation
         }
     }
+
+    var isTerminal: Bool {
+        switch self {
+        case .started, .committed:
+            return false
+        case .finished, .failed, .contentProcessTerminated:
+            return true
+        }
+    }
+}
+
+internal struct JournalWindowProgrammaticNavigationClaims: Sendable, Equatable {
+    private static let maxPendingClaims = 32
+    private var generationsByURL: [URL: [UInt64]] = [:]
+    private var urlByGeneration: [UInt64: URL] = [:]
+
+    mutating func prepare(_ command: JournalWindowLoadCommand) {
+        generationsByURL[command.url, default: []].append(command.generation)
+        urlByGeneration[command.generation] = command.url
+        pruneIfNeeded()
+    }
+
+    mutating func consume(url: URL) -> UInt64? {
+        guard var generations = generationsByURL[url], !generations.isEmpty else {
+            return nil
+        }
+
+        let generation = generations.removeFirst()
+        if generations.isEmpty {
+            generationsByURL.removeValue(forKey: url)
+        } else {
+            generationsByURL[url] = generations
+        }
+        urlByGeneration.removeValue(forKey: generation)
+        return generation
+    }
+
+    mutating func remove(generation: UInt64) {
+        guard let url = urlByGeneration.removeValue(forKey: generation),
+              var generations = generationsByURL[url]
+        else {
+            return
+        }
+
+        generations.removeAll { $0 == generation }
+        if generations.isEmpty {
+            generationsByURL.removeValue(forKey: url)
+        } else {
+            generationsByURL[url] = generations
+        }
+    }
+
+    mutating func removeAll() {
+        generationsByURL.removeAll()
+        urlByGeneration.removeAll()
+    }
+
+    private mutating func pruneIfNeeded() {
+        while urlByGeneration.count > Self.maxPendingClaims,
+              let oldestGeneration = urlByGeneration.keys.min() {
+            remove(generation: oldestGeneration)
+        }
+    }
 }
 
 internal struct JournalWindowComposition: Sendable, Equatable {

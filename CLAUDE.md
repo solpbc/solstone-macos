@@ -53,6 +53,7 @@ This is a single-package Swift repository using Swift Package Manager with Swift
 ### Sources/solstone/
 - **SolstoneCaptureApp.swift** - SwiftUI entry point with MenuBarExtra
 - **AppState.swift** - Observable application state, coordinates all managers
+- **JournalWindow.swift** - Native journal window (WebKit) with base resolved at open time
 - **CaptureManager.swift** - Orchestrates continuous recording with segment rotation
 - **SegmentWriter.swift** - Manages individual 5-minute recording segments
 - **PerSourceAudioManager.swift** - Manages per-source audio writers, handles dynamic mic join/leave

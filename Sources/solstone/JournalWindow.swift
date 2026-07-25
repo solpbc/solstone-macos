@@ -206,7 +206,7 @@ private struct JournalWebView: NSViewRepresentable {
         var openExternalURL: JournalWindowExternalURLOpener
         var lastLoadedGeneration: UInt64?
         private var generationByNavigation: [ObjectIdentifier: UInt64] = [:]
-        private var programmaticGenerationByURL: [URL: UInt64] = [:]
+        private var programmaticNavigationClaims = JournalWindowProgrammaticNavigationClaims()
 
         init(
             session: JournalWindowSession,
@@ -217,7 +217,7 @@ private struct JournalWebView: NSViewRepresentable {
         }
 
         func prepareProgrammaticLoad(_ command: JournalWindowLoadCommand) {
-            programmaticGenerationByURL[command.url] = command.generation
+            programmaticNavigationClaims.prepare(command)
         }
 
         func register(navigation: WKNavigation?, generation: UInt64) {
@@ -227,7 +227,7 @@ private struct JournalWebView: NSViewRepresentable {
 
         func tearDown() {
             generationByNavigation.removeAll()
-            programmaticGenerationByURL.removeAll()
+            programmaticNavigationClaims.removeAll()
         }
 
         func webView(
@@ -334,12 +334,14 @@ private struct JournalWebView: NSViewRepresentable {
 
         private func beginAllowedNavigationIfNeeded(_ input: JournalWindowNavigationPolicyInput) {
             guard input.targetFrameIsMainFrame != false,
-                  let url = input.requestURL,
-                  programmaticGenerationByURL[url] == nil,
-                  let baseURL = session.currentBaseURL
+                  let url = input.requestURL
             else {
                 return
             }
+            if programmaticNavigationClaims.consume(url: url) != nil {
+                return
+            }
+            guard let baseURL = session.currentBaseURL else { return }
             _ = session.beginAllowedNavigation(url: url, baseURL: baseURL)
         }
 
@@ -361,6 +363,9 @@ private struct JournalWebView: NSViewRepresentable {
 
         private func handleNavigationEvent(_ event: JournalWindowNavigationEvent) {
             session.handle(event)
+            if event.isTerminal {
+                programmaticNavigationClaims.remove(generation: event.generation)
+            }
         }
 
         private func generation(for navigation: WKNavigation?) -> UInt64 {
