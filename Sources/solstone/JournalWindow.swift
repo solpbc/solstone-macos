@@ -129,6 +129,7 @@ private struct JournalWindowView: View {
                 id: AXID.Journal.Browser.navigationState,
                 value: session.state.axToken
             )
+            .allowsHitTesting(false)
         }
         .frame(minWidth: 820, minHeight: 580)
         .task(id: intent?.id) {
