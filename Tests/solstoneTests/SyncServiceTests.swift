@@ -204,6 +204,39 @@ struct SyncServiceTests {
         #expect(listingRequestCount == 2)
     }
 
+    @Test func uploadExcludedOnlySegmentIsRetainedByCleanup() async throws {
+        resetSyncedDaysCache()
+        store.reset()
+        let root = try makeTempDirectory("sync-upload-excluded-cleanup")
+        let segment = try makeSegmentWithOnlyUploadExcludedFile(root: root, date: oldDateForRetention())
+        let listing = #"[{"key":"\#(segment.url.lastPathComponent)","files":[]}]"#
+        store.enqueue(statusCode: 200, body: listing)
+        store.enqueue(statusCode: 200, body: listing)
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24692") })
+        let recorder = SyncProgressRecorder()
+        let eventTask = await recordProgress(from: service, into: recorder)
+        defer { eventTask.cancel() }
+        await configure(service, cacheRetentionDays: 0)
+
+        await service.sync()
+
+        let requests = store.snapshotRequests()
+        let uploadRequestCount = requests.filter { $0.url?.path == "/app/observer/ingest" }.count
+        let listingRequestCount = requests.filter {
+            $0.url?.path.contains("/app/observer/ingest/segments/") == true
+        }.count
+        #expect(FileManager.default.fileExists(atPath: segment.sentinelURL.path))
+        #expect((try? Data(contentsOf: segment.sentinelURL)) == segment.sentinelBytes)
+        #expect(uploadRequestCount == 0)
+        #expect(listingRequestCount == 2)
+        #expect(syncedDays().contains(dayString(for: segment.date)))
+        try await waitUntil(timeout: .seconds(3), poll: .milliseconds(100)) {
+            await recorder.containsSyncComplete()
+        }
+        #expect(!(await recorder.containsOffline()))
+        #expect(!(await recorder.containsAwaitingTunnel()))
+    }
+
     @Test func duplicateAliasConfirmsWithinServiceAndFreshServiceFailsClosed() async throws {
         resetSyncedDaysCache()
         store.reset()
@@ -375,6 +408,20 @@ struct SyncServiceTests {
         let audioURL = segmentURL.appendingPathComponent("\(segmentName)_audio.m4a")
         try Data("audio".utf8).write(to: audioURL)
         return (segmentURL, date)
+    }
+
+    private func makeSegmentWithOnlyUploadExcludedFile(
+        root: URL,
+        date: Date
+    ) throws -> (url: URL, date: Date, sentinelURL: URL, sentinelBytes: Data) {
+        let segmentName = "120000_300"
+        let dayDir = root.appendingPathComponent(dateFolderString(for: date), isDirectory: true)
+        let segmentURL = dayDir.appendingPathComponent(segmentName, isDirectory: true)
+        try FileManager.default.createDirectory(at: segmentURL, withIntermediateDirectories: true)
+        let sentinelURL = segmentURL.appendingPathComponent("\(segmentName)_audio_system.m4a")
+        let sentinelBytes = Data("source audio".utf8)
+        try sentinelBytes.write(to: sentinelURL)
+        return (segmentURL, date, sentinelURL, sentinelBytes)
     }
 
     private func assertUnprovenListingRetainsAndUploads(
