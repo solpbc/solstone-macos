@@ -366,6 +366,21 @@ extension LocalJournalDiscoveryAXState {
     }
 }
 
+extension JournalWindowAXState {
+    var axToken: String {
+        switch self {
+        case .held:
+            return "held"
+        case .loading:
+            return "loading"
+        case .loaded:
+            return "loaded"
+        case .error:
+            return "error"
+        }
+    }
+}
+
 extension AXPermissionState {
     var axToken: String {
         switch self {

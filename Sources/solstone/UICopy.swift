@@ -1,4 +1,9 @@
 public enum UICopy {
+    public static let JOURNAL_WINDOW_TITLE = "your journal"
+    public static let JOURNAL_WINDOW_HELD = "your journal isn't connected yet"
+    public static let JOURNAL_WINDOW_LOADING = "opening your journal…"
+    public static let JOURNAL_WINDOW_ERROR = "your journal couldn't load"
+    public static let JOURNAL_WINDOW_RETRY = "try again"
     public static let JOURNAL_MODE_THIS_MAC_LABEL = "this Mac"
     public static let JOURNAL_MODE_ANOTHER_MACHINE_LABEL = "another device"
     public static let PAIRING_NOTENTITLED_RECOVERY = "your journal is paired, but it isn't on the paid plan — so it can't sync over the internet. on the same wi-fi as your journal, or over your own vpn, it connects directly without the plan."

@@ -165,7 +165,7 @@ enum SolChatEvent: Decodable {
 }
 
 public actor SolChatBridge {
-    public typealias PostOpenChat = @Sendable (URL) async -> Void
+    public typealias PostOpenJournalDestination = @Sendable (JournalWindowDestination) async -> Void
     public typealias SetPending = @MainActor @Sendable (SolChatRequestSummary?) -> Void
     public typealias SetStale = @MainActor @Sendable (Bool) -> Void
     public typealias Sleeper = @Sendable (TimeInterval) async -> Void
@@ -182,7 +182,7 @@ public actor SolChatBridge {
     private let watchdogIntervalSeconds: TimeInterval
     private let setPending: SetPending
     private let setStale: SetStale
-    private let postOpenChat: PostOpenChat
+    private let postOpenJournalDestination: PostOpenJournalDestination
     private let notifier: any SolChatNotifying
     private let session: URLSession
     private let sleep: Sleeper
@@ -204,7 +204,7 @@ public actor SolChatBridge {
         resolver: HomeBaseURLResolver,
         setPending: @escaping SetPending,
         setStale: @escaping SetStale,
-        postOpenChat: @escaping PostOpenChat,
+        postOpenJournalDestination: @escaping PostOpenJournalDestination,
         notifier: any SolChatNotifying = UNUserNotificationSolChatNotifier(),
         sessionConfiguration: URLSessionConfiguration? = nil,
         staleThresholdSeconds: TimeInterval = 60,
@@ -218,7 +218,7 @@ public actor SolChatBridge {
         self.resolver = resolver
         self.setPending = setPending
         self.setStale = setStale
-        self.postOpenChat = postOpenChat
+        self.postOpenJournalDestination = postOpenJournalDestination
         self.notifier = notifier
         self.staleThresholdSeconds = staleThresholdSeconds
         self.watchdogIntervalSeconds = watchdogIntervalSeconds
@@ -281,7 +281,7 @@ public actor SolChatBridge {
 
     public func handleClick(requestID: String) async {
         let summary = pendingByID[requestID]
-        await postOpenChatIfConfigured(summary: summary)
+        await postOpenJournalDestination(Self.destination(summary: summary))
         await postOwnerChatOpen(requestID: requestID)
         pendingByID.removeValue(forKey: requestID)
         await notifier.removeDelivered(identifier: requestID)
@@ -585,22 +585,10 @@ public actor SolChatBridge {
         }
     }
 
-    private func postOpenChatIfConfigured(summary: SolChatRequestSummary?) async {
-        let serverURL: String
-        switch await resolver.resolve() {
-        case .url(let resolved):
-            serverURL = resolved
-        case .held:
-            return
-        }
-        let baseURL = serverURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    private static func destination(summary: SolChatRequestSummary?) -> JournalWindowDestination {
         let resolvedDay = summary?.day ?? Self.todayString()
         let resolvedIndex = summary?.eventIndex ?? 0
-        guard let url = URL(string: "\(baseURL)/app/chat/\(resolvedDay)#event-\(resolvedIndex)") else {
-            Logger.callosum.info("open chat skipped: invalid URL")
-            return
-        }
-        await postOpenChat(url)
+        return .chat(day: resolvedDay, eventIndex: resolvedIndex)
     }
 
     private static func todayString() -> String {

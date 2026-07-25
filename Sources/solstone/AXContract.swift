@@ -6,7 +6,7 @@ import SolstoneCore
 import UpdateKit
 
 enum AXContract {
-    static let idPattern = #"^(menubar|settings|updates|about)(\.[a-z][a-zA-Z0-9-]*)+$"#
+    static let idPattern = #"^(about|journal|menubar|settings|updates)(\.[a-z][a-zA-Z0-9-]*)+$"#
     static let tokenPattern = #"^[a-z][a-z_]*$"#
 
     private static let generatedMarker =
@@ -33,6 +33,9 @@ enum AXContract {
         AXID.Menubar.settingsButton,
         AXID.Menubar.aboutButton,
         AXID.Menubar.quitButton,
+        AXID.Journal.Browser.webView,
+        AXID.Journal.Browser.navigationState,
+        AXID.Journal.Browser.retry,
         AXID.Settings.Permissions.screenRecordingState,
         AXID.Settings.Permissions.screenRecordingEnable,
         AXID.Settings.Permissions.screenRecordingRestartNow,
@@ -252,6 +255,7 @@ enum AXContract {
             "JournalHandoffAXState": JournalHandoffAXState.allCases.map(\.axToken),
             "FreshJournalAXState": FreshJournalAXState.allCases.map(\.axToken),
             "LocalJournalDiscoveryAXState": LocalJournalDiscoveryAXState.allCases.map(\.axToken),
+            "JournalWindowAXState": JournalWindowAXState.allCases.map(\.axToken),
             "UpdateActivity": UpdateActivity.axTokens,
             "FrequencyOption": FrequencyOption.allCases.map(\.rawValue),
             "UpdateStatus": UpdateStatus.axTokens
@@ -264,6 +268,7 @@ enum AXContract {
             AXID.Menubar.statusIconOverlayState: .enum("MenubarIconOverlayState"),
             AXID.Menubar.statusRowState: .enum("MenubarStatusRowState"),
             AXID.Menubar.journalState: .enum("MenubarStatusRowState"),
+            AXID.Journal.Browser.navigationState: .enum("JournalWindowAXState"),
             "settings.sidebar.tab.{tab}.state": .enum("SidebarBadgeState"),
             AXID.Settings.Permissions.screenRecordingState: .enum("AXPermissionState"),
             AXID.Settings.Permissions.screenRecordingRestartCountdown: .numeric,
@@ -340,7 +345,7 @@ enum AXContract {
             generated: generatedMarker,
             version: 1,
             grammar: Grammar(identifier: idPattern, token: tokenPattern),
-            surfaces: ["about", "menubar", "settings", "updates"],
+            surfaces: ["about", "journal", "menubar", "settings", "updates"],
             vocabularies: vocabularies,
             identifiers: IdentifierSet(
                 staticIDs: staticIDs.sorted(),

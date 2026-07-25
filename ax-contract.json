@@ -1,7 +1,7 @@
 {
   "_generated" : "DO NOT EDIT. Generated from AXID.swift + AXToken.swift. Run `make ax-contract` to regenerate; `make ci` fails on drift.",
   "grammar" : {
-    "identifier" : "^(menubar|settings|updates|about)(\\.[a-z][a-zA-Z0-9-]*)+$",
+    "identifier" : "^(about|journal|menubar|settings|updates)(\\.[a-z][a-zA-Z0-9-]*)+$",
     "token" : "^[a-z][a-z_]*$"
   },
   "identifiers" : {
@@ -76,6 +76,9 @@
       "about.identity.version.state",
       "about.link.sourceCode",
       "about.link.website",
+      "journal.browser.navigation.state",
+      "journal.browser.retry",
+      "journal.browser.webView",
       "menubar.app.quit",
       "menubar.chat.pending",
       "menubar.navigation.about",
@@ -233,6 +236,10 @@
   "states" : {
     "about.identity.version.state" : {
       "kind" : "freeform"
+    },
+    "journal.browser.navigation.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalWindowAXState"
     },
     "menubar.status.icon.overlay.state" : {
       "kind" : "enum",
@@ -427,6 +434,7 @@
   },
   "surfaces" : [
     "about",
+    "journal",
     "menubar",
     "settings",
     "updates"
@@ -470,6 +478,12 @@
       "completed",
       "failed",
       "aborted"
+    ],
+    "JournalWindowAXState" : [
+      "held",
+      "loading",
+      "loaded",
+      "error"
     ],
     "LocalJournalDiscoveryAXState" : [
       "searching",

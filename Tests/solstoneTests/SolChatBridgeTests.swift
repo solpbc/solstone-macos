@@ -167,7 +167,7 @@ private actor SolChatTestNotifier: SolChatNotifying {
 private final class SolChatStateBox {
     var pendingValues: [SolChatRequestSummary?] = []
     var staleValues: [Bool] = []
-    var openedURLs: [URL] = []
+    var openedDestinations: [JournalWindowDestination] = []
 
     var pending: SolChatRequestSummary? {
         pendingValues.last ?? nil
@@ -212,9 +212,9 @@ struct SolChatBridgeTests {
             resolver: resolver,
             setPending: { [state] pending in state.setPending(pending) },
             setStale: { [state] stale in state.setStale(stale) },
-            postOpenChat: { [state] url in
+            postOpenJournalDestination: { [state] destination in
                 await MainActor.run {
-                    state.openedURLs.append(url)
+                    state.openedDestinations.append(destination)
                 }
             },
             notifier: notifier,
@@ -642,7 +642,7 @@ struct SolChatBridgeTests {
         await bridge.handleClick(requestID: "req-8")
         await bridge.stop()
 
-        #expect(state.openedURLs.last?.absoluteString == "https://example.com/app/chat/2026-05-09#event-99")
+        #expect(state.openedDestinations.last == .chat(day: "2026-05-09", eventIndex: 99))
         #expect(state.pending == nil)
         let post = store.requests.first { $0.httpMethod == "POST" }
         let postIndex = store.requests.firstIndex { $0.httpMethod == "POST" }
@@ -651,6 +651,29 @@ struct SolChatBridgeTests {
         #expect(post?.value(forHTTPHeaderField: "Authorization") == store.authorizationHeader)
         #expect(postIndex.map { store.requestBodies[$0] } == "{\"request_id\":\"req-8\"}")
     }
+
+    @Test func handleClickOnHeldBaseStillEmitsIntentAndClearsPendingWithoutOwnerOpenPost() async {
+        let store = SolChatURLProtocolStore()
+        store.enqueue(body: requestFrame(id: "req-held", day: "2026-05-11", eventIndex: 7))
+        let state = SolChatStateBox()
+        let resolver = SequencedHomeBaseResolver([.url("https://example.com"), .held])
+        let bridge = makeBridge(
+            resolver: HomeBaseURLResolver {
+                await resolver.next()
+            },
+            state: state,
+            store: store
+        )
+
+        await bridge.configure(serverKey: store.serverKey)
+        _ = await waitForPending(state)
+        await bridge.handleClick(requestID: "req-held")
+        await bridge.stop()
+
+        #expect(state.openedDestinations == [.chat(day: "2026-05-11", eventIndex: 7)])
+        #expect(state.pending == nil)
+        #expect(!store.requests.contains { $0.httpMethod == "POST" })
+    }
 }
 
 private actor SleepRecorder {
@@ -658,5 +681,20 @@ private actor SleepRecorder {
 
     func record(_ value: TimeInterval) {
         values.append(value)
+    }
+}
+
+private actor SequencedHomeBaseResolver {
+    private var values: [ResolvedHomeBase]
+
+    init(_ values: [ResolvedHomeBase]) {
+        self.values = values
+    }
+
+    func next() -> ResolvedHomeBase {
+        if values.count > 1 {
+            return values.removeFirst()
+        }
+        return values.first ?? .held
     }
 }

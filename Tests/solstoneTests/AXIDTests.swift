@@ -35,6 +35,9 @@ struct AXIDTests {
 
     @Test func journalClientPanelIDsAreStable() {
         #expect(AXID.Menubar.journalMigrationNeededButton == "menubar.status.journalMigrationNeeded")
+        #expect(AXID.Journal.Browser.webView == "journal.browser.webView")
+        #expect(AXID.Journal.Browser.navigationState == "journal.browser.navigation.state")
+        #expect(AXID.Journal.Browser.retry == "journal.browser.retry")
         #expect(AXID.Settings.Service.journalNameState == "settings.service.journal.name.state")
         #expect(AXID.Settings.Service.journalMarkState == "settings.service.journal.mark.state")
         #expect(AXID.Settings.Service.journalConnectionState == "settings.service.journal.connection.state")
@@ -94,6 +97,7 @@ struct AXIDTests {
         expectTokensMatchGrammar(JournalHandoffAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(FreshJournalAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(LocalJournalDiscoveryAXState.allCases.map(\.axToken))
+        expectTokensMatchGrammar(JournalWindowAXState.allCases.map(\.axToken))
     }
 
     @Test func menubarIconStateOwnsIconNames() {

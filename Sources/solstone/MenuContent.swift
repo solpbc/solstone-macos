@@ -47,9 +47,7 @@ struct MenuContent: View {
         Section {
             if appState.config.isUploadConfigured {
                 Button("open journal") {
-                    if let url = journalURLToOpen(from: appState.config.serverURL) {
-                        NSWorkspace.shared.open(url)
-                    }
+                    appState.requestOpenJournal(.root)
                 }
                 .accessibilityIdentifier(AXID.Menubar.openJournalButton)
             }
@@ -235,10 +233,6 @@ struct MenuContent: View {
 
     // MARK: - Upload Status Row
 
-}
-
-func journalURLToOpen(from serverURL: String?) -> URL? {
-    URL(string: serverURL ?? "")
 }
 
 func pausedHeaderText(timeRemaining: String?) -> String {

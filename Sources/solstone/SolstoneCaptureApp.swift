@@ -15,6 +15,7 @@ import UpdateKit
 public enum SolstoneSceneID: String, CaseIterable {
     case settings
     case about
+    case journal
 }
 
 public enum DockMode: String {
@@ -70,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
 
-        // When the status menu opens, bring any visible app windows (settings, about) to front
+        // When the status menu opens, bring any visible app windows to front.
         menuTrackingObserver = NotificationCenter.default.addObserver(
             forName: NSMenu.didBeginTrackingNotification,
             object: nil,
@@ -78,8 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { _ in
             MainActor.assumeIsolated {
                 let hasVisibleWindow = NSApp.windows.contains { window in
-                    window.isVisible && (window.identifier?.rawValue.contains("settings") == true
-                        || window.identifier?.rawValue.contains("about") == true)
+                    window.isVisible && SolstoneSceneID.allCases.contains { sceneID in
+                        window.identifier?.rawValue.contains(sceneID.rawValue) == true
+                    }
                 }
                 if hasVisibleWindow {
                     NSApp.activate(ignoringOtherApps: true)
@@ -258,6 +260,16 @@ struct SolstoneCaptureApp: App {
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
+
+        Window(UICopy.JOURNAL_WINDOW_TITLE, id: SolstoneSceneID.journal.rawValue) {
+            if let startup {
+                JournalWindowSceneRoot(appState: startup.appState)
+            } else {
+                Color.clear
+            }
+        }
+        .windowResizability(.contentMinSize)
+        .defaultPosition(.center)
     }
 }
 
@@ -383,6 +395,13 @@ private struct StatusIcon: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .openSettingsWindow)) { _ in
                 routeOpenSettingsWindow(
+                    appState: appState,
+                    openWindow: { openWindow(id: $0) },
+                    activate: { NSApp.activate(ignoringOtherApps: true) }
+                )
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openJournalWindow)) { _ in
+                routeOpenJournalWindow(
                     appState: appState,
                     openWindow: { openWindow(id: $0) },
                     activate: { NSApp.activate(ignoringOtherApps: true) }

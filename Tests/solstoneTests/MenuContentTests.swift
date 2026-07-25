@@ -144,9 +144,13 @@ struct MenuContentTests {
         #expect(pausedHeaderText(timeRemaining: "1 min") != pausedHeaderText(timeRemaining: nil))
     }
 
-    @Test func openJournalIgnoresInvalidConfiguredURL() {
-        #expect(journalURLToOpen(from: nil) == nil)
-        #expect(journalURLToOpen(from: "") == nil)
+    @Test func openJournalMenuItemKeepsConfigurationGateAndUsesIntentPath() throws {
+        let source = try readWireUpSource("Sources/solstone/MenuContent.swift")
+
+        #expect(wireUpContains(source, "if appState.config.isUploadConfigured"))
+        #expect(wireUpContains(source, "appState.requestOpenJournal(.root)"))
+        #expect(!source.contains("journalURLToOpen"))
+        #expect(!source.contains("NSWorkspace.shared.open"))
     }
 
     @Test func firstSettingsAttentionTruthTable() {

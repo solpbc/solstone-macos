@@ -3,6 +3,27 @@ import Testing
 
 @Suite("UICopy")
 struct UICopyTests {
+    @Test func journalWindowStrings() {
+        let values = [
+            UICopy.JOURNAL_WINDOW_TITLE,
+            UICopy.JOURNAL_WINDOW_HELD,
+            UICopy.JOURNAL_WINDOW_LOADING,
+            UICopy.JOURNAL_WINDOW_ERROR,
+            UICopy.JOURNAL_WINDOW_RETRY
+        ]
+
+        #expect(UICopy.JOURNAL_WINDOW_TITLE == "your journal")
+        #expect(UICopy.JOURNAL_WINDOW_HELD == "your journal isn\u{0027}t connected yet")
+        #expect(UICopy.JOURNAL_WINDOW_LOADING == "opening your journal\u{2026}")
+        #expect(UICopy.JOURNAL_WINDOW_ERROR == "your journal couldn\u{0027}t load")
+        #expect(UICopy.JOURNAL_WINDOW_RETRY == "try again")
+        for value in values {
+            for banned in ["capture", "watch", "record", "monitor", "track", "collect"] {
+                #expect(!value.localizedCaseInsensitiveContains(banned))
+            }
+        }
+    }
+
     @Test func journalModeThisMacLabelString() {
         #expect(UICopy.JOURNAL_MODE_THIS_MAC_LABEL == "this Mac")
     }

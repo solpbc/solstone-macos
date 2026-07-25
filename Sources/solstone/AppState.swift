@@ -116,6 +116,8 @@ public final class AppState {
 
     public internal(set) var solChatPending: SolChatRequestSummary?
     public internal(set) var solChatStale = false
+    internal private(set) var journalOpenIntent: JournalOpenIntent?
+    internal private(set) var journalHomeBaseChangeToken: UInt64 = 0
     public internal(set) var connectionTestState: ConnectionTestState = .idle
     public internal(set) var journalHandoffActive = false
     internal private(set) var confirmedMark: JournalMark?
@@ -159,6 +161,7 @@ public final class AppState {
     public internal(set) var isTerminating: Bool = false
     public internal(set) var appKitTerminationBegan: Bool = false
     private var activationPolicyWorkItem: DispatchWorkItem?
+    private var nextJournalOpenIntentID: UInt64 = 0
     private let dockBehaviorDefaultsKey = "SolstoneDockBehavior"
     private let visitedSettingsTabsDefaultsKey = "SolstoneVisitedSettingsTabs"
     private static let loginLaunchSuppressionInterval: TimeInterval = 2.0
@@ -706,9 +709,9 @@ public final class AppState {
             setStale: { [solChatTarget] stale in
                 solChatTarget.state?.solChatStale = stale
             },
-            postOpenChat: { url in
+            postOpenJournalDestination: { [solChatTarget] destination in
                 await MainActor.run {
-                    _ = NSWorkspace.shared.open(url)
+                    solChatTarget.state?.requestOpenJournal(destination)
                 }
             },
             notifier: notifier
@@ -935,7 +938,7 @@ public final class AppState {
             resolver: snapshotResolver,
             setPending: { _ in },
             setStale: { _ in },
-            postOpenChat: { _ in },
+            postOpenJournalDestination: { _ in },
             notifier: notifier
         )
         let tunnelLifecycleOwner = initialTunnelPairing
@@ -1018,6 +1021,7 @@ public final class AppState {
     internal func handleTunnelLifecycleState(_ newState: TunnelLifecycleState) {
         let previousState = previousTunnelLifecycleState
         previousTunnelLifecycleState = newState
+        journalHomeBaseChangeToken += 1
         guard isConnected(newState), !isConnected(previousState) else { return }
 
         let registrationTask: Task<Void, Never>
@@ -1093,6 +1097,15 @@ public final class AppState {
         reevaluateActivationPolicy(debounced: false)
     }
 
+    public func requestOpenJournal(_ destination: JournalWindowDestination) {
+        nextJournalOpenIntentID += 1
+        journalOpenIntent = JournalOpenIntent(
+            id: nextJournalOpenIntentID,
+            destination: destination
+        )
+        NotificationCenter.default.post(name: .openJournalWindow, object: nil)
+    }
+
     func handleWindowWillClose(identifier: String?) {
         let rawID = identifier ?? ""
         let matchedSceneIDs = SolstoneSceneID.allCases.filter { rawID.contains($0.rawValue) }
@@ -1154,7 +1167,7 @@ public final class AppState {
         if policy == .accessory {
             let hasVisibleTrackedWindow = NSApp.windows.contains { window in
                 guard window.isVisible, let identifier = window.identifier?.rawValue else { return false }
-                return identifier.contains(SolstoneSceneID.settings.rawValue) || identifier.contains(SolstoneSceneID.about.rawValue)
+                return SolstoneSceneID.allCases.contains { identifier.contains($0.rawValue) }
             }
             if hasVisibleTrackedWindow {
                 Logger.general.warning("Activation policy drift: set to accessory but visible solstone window still in NSApp.windows")

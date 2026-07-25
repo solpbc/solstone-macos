@@ -27,6 +27,14 @@ enum AXID {
         static let quitButton = "menubar.app.quit"
     }
 
+    enum Journal {
+        enum Browser {
+            static let webView = "journal.browser.webView"
+            static let navigationState = "journal.browser.navigation.state"
+            static let retry = "journal.browser.retry"
+        }
+    }
+
     enum Settings {
         enum Sidebar {
             static func tab(_ tab: SettingsView.Tab) -> String {
