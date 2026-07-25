@@ -146,7 +146,7 @@ struct RuntimeMaterializerTests {
         #expect(!FileManager.default.fileExists(atPath: missingRoot.path))
     }
 
-    @Test func materializeRelocatesAllDiscoveredConsoleScriptsAndLeavesPythonLinkUntouched() async throws {
+    @Test func materializeRelocatesRawAndPolyglotExportedEntriesAndLeavesPythonLinkUntouched() async throws {
         let fixture = try makeMaterializerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.workspace) }
         let runner = FakeSubprocessRunner()
@@ -159,8 +159,10 @@ struct RuntimeMaterializerTests {
         #expect(!runtimeChildren.contains { $0.hasPrefix(".tmp-") })
         let rootPath = runtime.layout.rootURL.resolvingSymlinksInPath().standardizedFileURL.path
         for name in ["journal", "mlx-vlm-server", "sol", "solstone"] {
-            try assertRelocatedConsoleScript(named: name, in: runtime, rootPath: rootPath)
+            try assertRelocatedExportedEntry(named: name, in: runtime, rootPath: rootPath)
         }
+        try assertRelocatedUvPolyglotEntry(named: "journal", in: runtime)
+        try assertRelocatedUvPolyglotEntry(named: "mlx-vlm-server", in: runtime)
 
         let pythonLink = runtime.layout.binDir.appendingPathComponent("python3.13")
         let pythonDestination = try FileManager.default.destinationOfSymbolicLink(atPath: pythonLink.path)
@@ -169,7 +171,7 @@ struct RuntimeMaterializerTests {
         #expect(!runner.invocations.contains { $0.executable.lastPathComponent == "mlx-vlm-server" })
     }
 
-    @Test func materializeFailsClosedWhenDiscoveredConsoleScriptDanglesDuringStaging() async throws {
+    @Test func materializeFailsClosedWhenDiscoveredExportedEntryDanglesDuringStaging() async throws {
         let fixture = try makeMaterializerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.workspace) }
         let runner = FakeSubprocessRunner()
@@ -189,14 +191,14 @@ struct RuntimeMaterializerTests {
                     withDestinationPath: tempRoot.appendingPathComponent("tools/solstone-journal/bin/ghost").path
                 )
             } catch {
-                Issue.record("failed to create dangling staged console script: \(error.localizedDescription)")
+                Issue.record("failed to create dangling staged exported entry: \(error.localizedDescription)")
             }
         }
         let materializer = makeMaterializer(fixture: fixture, runner: runner)
 
         do {
             _ = try await materializer.materialize(excludingLiveKey: nil)
-            Issue.record("expected materialize to fail on dangling discovered console script")
+            Issue.record("expected materialize to fail on dangling discovered exported entry")
         } catch let error as RuntimeMaterializerError {
             guard case .verificationFailed = error else {
                 Issue.record("expected verificationFailed, got \(error)")
@@ -207,7 +209,7 @@ struct RuntimeMaterializerTests {
         }
     }
 
-    @Test func materializeRematerializesFinalRuntimeWithDanglingDiscoveredConsoleScript() async throws {
+    @Test func materializeRematerializesFinalRuntimeWithDanglingDiscoveredExportedEntry() async throws {
         let fixture = try makeMaterializerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.workspace) }
         let runner = FakeSubprocessRunner()
@@ -227,7 +229,7 @@ struct RuntimeMaterializerTests {
 
         #expect(toolInstallCount(in: runner) == initialInstallCount + 1)
         let rootPath = healedRuntime.layout.rootURL.resolvingSymlinksInPath().standardizedFileURL.path
-        try assertRelocatedConsoleScript(named: "mlx-vlm-server", in: healedRuntime, rootPath: rootPath)
+        try assertRelocatedExportedEntry(named: "mlx-vlm-server", in: healedRuntime, rootPath: rootPath)
     }
 
     @Test func materializeRoundTripsUvTrampolineInterpreterPathWithSpacesAndSingleQuotes() async throws {
@@ -239,14 +241,265 @@ struct RuntimeMaterializerTests {
 
         let runtime = try await materializer.materialize(excludingLiveKey: nil)
 
-        let sol = runtime.layout.binDir.appendingPathComponent("sol").resolvingSymlinksInPath().standardizedFileURL
-        let lines = try String(contentsOf: sol, encoding: .utf8).components(separatedBy: "\n")
+        let journal = runtime.layout.binDir.appendingPathComponent("journal").resolvingSymlinksInPath().standardizedFileURL
+        let lines = try String(contentsOf: journal, encoding: .utf8).components(separatedBy: "\n")
         let expectedInterpreter = runtime.layout.rootURL
             .appendingPathComponent("tools/solstone-journal/bin/python")
             .standardizedFileURL
             .path
         #expect(lines.count >= 2)
         #expect(lines[1] == "'''exec' \(shellSingleQuotedForTest(expectedInterpreter)) \"$0\" \"$@\"")
+    }
+
+    @Test func relocatedRawSolExecutesSentinelViaShell() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("tool", .success())
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        let runtime = try await materializer.materialize(excludingLiveKey: nil)
+        let sol = runtime.layout.binDir.appendingPathComponent("sol").resolvingSymlinksInPath().standardizedFileURL
+        let result = try runShell(sol, arguments: ["--version"])
+
+        #expect(result.status == 0)
+        #expect(result.stdout == "solstone \(BundleConfig.solstonePinVersion)\n")
+    }
+
+    @Test func materializeLeavesRawLaunchersByteIdenticalAcrossRelocation() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        let recorder = DataMapRecorder()
+        runner.enqueue("tool", .success())
+        runner.onMaterializedToolBinaries {
+            Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "snapshot raw launchers") { layout in
+                for name in ["sol", "solstone"] {
+                    recorder.record(try Data(contentsOf: Self.materializedTool(named: name, in: layout)), for: name)
+                }
+            }
+        }
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        let runtime = try await materializer.materialize(excludingLiveKey: nil)
+
+        for name in ["sol", "solstone"] {
+            let relocated = runtime.layout.binDir.appendingPathComponent(name).resolvingSymlinksInPath().standardizedFileURL
+            #expect(try Data(contentsOf: relocated) == recorder.data(for: name))
+        }
+    }
+
+    @Test func materializeClassifiesMalformedPolyglotLikeScriptAsRawAndDoesNotRewrite() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        let recorder = DataMapRecorder()
+        let malformed = Data("""
+        #!/bin/sh
+        '''exec' /not/a/uv/trampoline "$0" "$@"
+        echo "almost"
+
+        """.utf8)
+        runner.enqueue("tool", .success())
+        runner.onMaterializedToolBinaries {
+            Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "write malformed exported entry") { layout in
+                let solstone = Self.materializedTool(named: "solstone", in: layout)
+                try malformed.write(to: solstone)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: solstone.path)
+                recorder.record(malformed, for: "solstone")
+            }
+        }
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        let runtime = try await materializer.materialize(excludingLiveKey: nil)
+
+        let relocated = runtime.layout.binDir.appendingPathComponent("solstone").resolvingSymlinksInPath().standardizedFileURL
+        #expect(try Data(contentsOf: relocated) == recorder.data(for: "solstone"))
+    }
+
+    @Test func materializeProbesRequiredRawSolAndPolyglotJournalEntrypoints() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("tool", .success())
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        _ = try await materializer.materialize(excludingLiveKey: nil)
+
+        let versionInvocations = runner.invocations.filter { $0.arguments == ["--version"] }
+        #expect(versionInvocations.filter { $0.executable.lastPathComponent == "sol" }.count == 1)
+        #expect(versionInvocations.filter { $0.executable.lastPathComponent == "journal" }.count == 2)
+        #expect(!versionInvocations.contains { $0.executable.lastPathComponent == "solstone" })
+    }
+
+    @Test func materializeFailsWhenExportedEntryDangles() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        let expected = StringRecorder()
+        runner.enqueue("tool", .success())
+        runner.onMaterializedToolBinaries {
+            Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "create dangling exported entry") { layout in
+                let entry = layout.binDir.appendingPathComponent("ghost")
+                let target = Self.materializedTool(named: "ghost", in: layout)
+                try FileManager.default.createSymbolicLink(atPath: entry.path, withDestinationPath: target.path)
+                expected.record("entrypoint ghost target missing or dangling: \(entry.resolvingSymlinksInPath().standardizedFileURL.path)")
+            }
+        }
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        try await expectMaterializeVerificationFailure(materializer, expected: expected)
+    }
+
+    @Test func materializeFailsWhenExportedEntryEscapesStagingByAbsolutePath() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        let expected = StringRecorder()
+        runner.enqueue("tool", .success())
+        runner.onMaterializedToolBinaries {
+            Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "create absolute escape") { layout in
+                let outside = fixture.workspace.appendingPathComponent("outside-absolute")
+                try Self.writeExecutableShell(at: outside, body: "echo outside\n")
+                let entry = layout.binDir.appendingPathComponent("absolute-escape")
+                try FileManager.default.createSymbolicLink(atPath: entry.path, withDestinationPath: outside.path)
+                expected.record("entrypoint absolute-escape symlink target escapes staging root: \(outside.path)")
+            }
+        }
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        try await expectMaterializeVerificationFailure(materializer, expected: expected)
+    }
+
+    @Test func materializeFailsWhenExportedEntryEscapesStagingWithDotDot() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        let expected = StringRecorder()
+        runner.enqueue("tool", .success())
+        runner.onMaterializedToolBinaries {
+            Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "create dot-dot escape") { layout in
+                let outside = fixture.runtimeRoot.appendingPathComponent("outside-dotdot")
+                try Self.writeExecutableShell(at: outside, body: "echo outside\n")
+                let rawDestination = layout.rootURL.path + "/../outside-dotdot"
+                let entry = layout.binDir.appendingPathComponent("dotdot-escape")
+                try FileManager.default.createSymbolicLink(atPath: entry.path, withDestinationPath: rawDestination)
+                expected.record("entrypoint dotdot-escape symlink target escapes staging root: \(rawDestination)")
+            }
+        }
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        try await expectMaterializeVerificationFailure(materializer, expected: expected)
+    }
+
+    @Test func materializeFailsWhenExportedEntryEscapesStagingThroughSymlinkChain() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        let expected = StringRecorder()
+        runner.enqueue("tool", .success())
+        runner.onMaterializedToolBinaries {
+            Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "create symlink-chain escape") { layout in
+                let outsideDir = fixture.workspace.appendingPathComponent("outside-chain", isDirectory: true)
+                try FileManager.default.createDirectory(at: outsideDir, withIntermediateDirectories: true)
+                try Self.writeExecutableShell(at: outsideDir.appendingPathComponent("chain-escape"), body: "echo outside\n")
+                let link = layout.toolsDir.appendingPathComponent("escape-link")
+                try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: outsideDir.path)
+                let rawDestination = link.path + "/chain-escape"
+                let entry = layout.binDir.appendingPathComponent("chain-escape")
+                try FileManager.default.createSymbolicLink(atPath: entry.path, withDestinationPath: rawDestination)
+                expected.record("entrypoint chain-escape symlink target escapes staging root: \(rawDestination)")
+            }
+        }
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        try await expectMaterializeVerificationFailure(materializer, expected: expected)
+    }
+
+    @Test func materializeFailsWhenExportedEntryIsNotSymlink() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        let expected = StringRecorder()
+        runner.enqueue("tool", .success())
+        runner.onMaterializedToolBinaries {
+            Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "create non-symlink exported entry") { layout in
+                let entry = layout.binDir.appendingPathComponent("not-symlink")
+                try Self.writeExecutableShell(at: entry, body: "echo regular\n")
+                expected.record("entrypoint not-symlink is not a symlink: \(entry.path)")
+            }
+        }
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        try await expectMaterializeVerificationFailure(materializer, expected: expected)
+    }
+
+    @Test func materializeFailsWhenRelocatedEntryHasAbsoluteDestination() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        let outside = fixture.workspace.appendingPathComponent("outside-relocated-absolute")
+        try Self.writeExecutableShell(at: outside, body: "echo absolute\n")
+        runner.enqueue("tool", .success())
+        runner.onMaterializedToolBinaries {
+            Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "create entry for absolute relocation") { layout in
+                let target = Self.materializedTool(named: "absolute-after-relocation", in: layout)
+                try Self.writeExecutableShell(at: target, body: "echo absolute\n")
+                let entry = layout.binDir.appendingPathComponent("absolute-after-relocation")
+                try FileManager.default.createSymbolicLink(atPath: entry.path, withDestinationPath: target.path)
+            }
+        }
+        let fileManager = AbsoluteRelocationFileManager(
+            absoluteLeafName: "absolute-after-relocation",
+            absoluteDestination: outside
+        )
+        let materializer = makeMaterializer(fixture: fixture, runner: runner, fileManager: fileManager)
+
+        let expected = StringRecorder("entrypoint absolute-after-relocation is not a relative symlink after relocation: \(outside.path)")
+        try await expectMaterializeVerificationFailure(materializer, expected: expected)
+    }
+
+    @Test func materializeRollsBackFinalGenerationWhenPostRenameProbeFails() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let priorKey = "0.1.0_py20240101_8888888888888888"
+        let orphanKey = "0.1.0_py20240101_9999999999999999"
+        try createDirectories([priorKey, orphanKey], in: fixture.runtimeRoot)
+        try writeExternalScript(named: "sol", in: fixture.wrapperDir, body: "external sol\n", mode: 0o755)
+        try writeExternalScript(named: "journal", in: fixture.wrapperDir, body: "external journal\n", mode: 0o755)
+        let aliasSnapshots = try snapshotAliases(["sol", "journal"], in: fixture.wrapperDir)
+        let runner = FakeSubprocessRunner()
+        runner.preferQueuedVersionResponses = true
+        runner.enqueue("tool", .success())
+        runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
+        let wrongVersion = Data("solstone 0.0.0\n".utf8)
+        runner.enqueue("--version", .success(stdout: wrongVersion, exitCode: 1))
+        runner.enqueue("--version", .success(stdout: wrongVersion, exitCode: 1))
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        do {
+            _ = try await materializer.materialize(excludingLiveKey: nil)
+            Issue.record("expected materialize to fail on post-rename probe")
+        } catch let error as RuntimeMaterializerError {
+            guard case .verificationFailed(let message) = error else {
+                Issue.record("expected verificationFailed, got \(error)")
+                return
+            }
+            let expectedMessages = [
+                "entrypoint journal did not execute and report the pinned version after relocation: exit=1 parsed=0.0.0",
+                "entrypoint sol did not execute and report the pinned version after relocation: exit=1 parsed=0.0.0"
+            ]
+            #expect(expectedMessages.contains(message))
+        } catch {
+            Issue.record("expected RuntimeMaterializerError, got \(error)")
+        }
+
+        try assertAliasSnapshotsUnchanged(aliasSnapshots, in: fixture.wrapperDir)
+        let runtimeChildren = try FileManager.default.contentsOfDirectory(atPath: fixture.runtimeRoot.path)
+        #expect(!runtimeChildren.contains { $0.hasPrefix(".tmp-") })
+        #expect(Set(runtimeChildren) == Set([priorKey, orphanKey]))
+        #expect(directoryExists(priorKey, in: fixture.runtimeRoot))
+        #expect(directoryExists(orphanKey, in: fixture.runtimeRoot))
     }
 
     @Test func installPassesLeafWheelAndSolstoneExecutablesToUvToolInstall() async throws {
@@ -765,8 +1018,15 @@ struct RuntimeMaterializerTests {
         let fixture = try makeMaterializerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.workspace) }
         let runner = FakeSubprocessRunner()
+        let expected = StringRecorder()
         runner.materializedExposureOverride = ["journal", "mlx-vlm-server"]
         runner.enqueue("tool", .success())
+        runner.onMaterializedToolBinaries {
+            Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "record missing sol path") { layout in
+                let rawTempRoot = fixture.runtimeRoot.appendingPathComponent(layout.rootURL.lastPathComponent, isDirectory: true)
+                expected.record("sol executable missing at \(SolstoneRuntimeLayout(rootURL: rawTempRoot).solBinary.path)")
+            }
+        }
         let materializer = makeMaterializer(fixture: fixture, runner: runner)
 
         do {
@@ -777,7 +1037,7 @@ struct RuntimeMaterializerTests {
                 Issue.record("expected verificationFailed, got \(error)")
                 return
             }
-            #expect(message.contains("sol executable missing"))
+            #expect(message == (try expected.require()))
             #expect(message != "staged runtime verification failed")
         } catch {
             Issue.record("expected RuntimeMaterializerError, got \(error)")
@@ -889,8 +1149,15 @@ struct RuntimeMaterializerTests {
         let fixture = try makeMaterializerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.workspace) }
         let runner = FakeSubprocessRunner()
+        let expected = StringRecorder()
         runner.materializedExposureOverride = ["sol", "solstone"]
         runner.enqueue("tool", .success())
+        runner.onMaterializedToolBinaries {
+            Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "record missing journal path") { layout in
+                let rawTempRoot = fixture.runtimeRoot.appendingPathComponent(layout.rootURL.lastPathComponent, isDirectory: true)
+                expected.record("journal executable missing at \(SolstoneRuntimeLayout(rootURL: rawTempRoot).journalBinary.path)")
+            }
+        }
         let materializer = makeMaterializer(fixture: fixture, runner: runner)
 
         do {
@@ -901,7 +1168,7 @@ struct RuntimeMaterializerTests {
                 Issue.record("expected verificationFailed, got \(error)")
                 return
             }
-            #expect(message.contains("journal executable missing"))
+            #expect(message == (try expected.require()))
             #expect(message != "staged runtime verification failed")
         }
     }
@@ -1160,23 +1427,107 @@ struct RuntimeMaterializerTests {
         )
     }
 
-    private func assertRelocatedConsoleScript(named name: String, in runtime: MaterializedRuntime, rootPath: String) throws {
+    private func assertRelocatedExportedEntry(named name: String, in runtime: MaterializedRuntime, rootPath: String) throws {
         let entry = runtime.layout.binDir.appendingPathComponent(name)
         let destination = try FileManager.default.destinationOfSymbolicLink(atPath: entry.path)
         #expect(!destination.hasPrefix("/"))
         #expect(!pathContainsStagingSegment(destination))
         let resolved = entry.resolvingSymlinksInPath().standardizedFileURL
         #expect(FileManager.default.fileExists(atPath: resolved.path))
+        #expect(FileManager.default.isExecutableFile(atPath: resolved.path))
         #expect(pathIsUnderRoot(resolved.path, rootPath: rootPath))
         #expect(!pathContainsStagingSegment(resolved.path))
+    }
+
+    private func assertRelocatedUvPolyglotEntry(named name: String, in runtime: MaterializedRuntime) throws {
+        let resolved = runtime.layout.binDir.appendingPathComponent(name).resolvingSymlinksInPath().standardizedFileURL
         let script = try String(contentsOf: resolved, encoding: .utf8)
         let lines = script.components(separatedBy: "\n")
         #expect(lines.first == "#!/bin/sh")
         guard lines.count >= 2 else {
-            Issue.record("console script \(name) missing uv trampoline line")
+            Issue.record("exported entry \(name) missing uv trampoline line")
             return
         }
+        #expect(lines[1].hasPrefix("'''exec' '"))
         #expect(!lines.contains { pathContainsStagingSegment($0) })
+    }
+
+    private static func withStagedLayout(
+        runtimeRoot: URL,
+        operation: String,
+        _ body: @Sendable (SolstoneRuntimeLayout) throws -> Void
+    ) {
+        do {
+            let children = try FileManager.default.contentsOfDirectory(
+                at: runtimeRoot,
+                includingPropertiesForKeys: nil,
+                options: []
+            )
+            let tempRoot = try #require(children.first { $0.lastPathComponent.hasPrefix(".tmp-") })
+            try body(SolstoneRuntimeLayout(rootURL: tempRoot))
+        } catch {
+            Issue.record("failed to \(operation): \(error.localizedDescription)")
+        }
+    }
+
+    private static func materializedTool(named name: String, in layout: SolstoneRuntimeLayout) -> URL {
+        layout.toolsDir
+            .appendingPathComponent("solstone-journal", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent(name)
+    }
+
+    private static func writeExecutableShell(at url: URL, body: String) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(("#!/bin/sh\n" + body).utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    private func runShell(_ script: URL, arguments: [String]) throws -> (status: Int32, stdout: String, stderr: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [script.path] + arguments
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+        return (
+            process.terminationStatus,
+            String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
+            String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        )
+    }
+
+    private func expectMaterializeVerificationFailure(
+        _ materializer: RuntimeMaterializer,
+        expected: StringRecorder
+    ) async throws {
+        try await expectMaterializeVerificationFailure(
+            materializer,
+            expectedPrefixRecorder: expected,
+            buildExpected: { $0 }
+        )
+    }
+
+    private func expectMaterializeVerificationFailure(
+        _ materializer: RuntimeMaterializer,
+        expectedPrefixRecorder: StringRecorder,
+        buildExpected: (String) -> String
+    ) async throws {
+        do {
+            _ = try await materializer.materialize(excludingLiveKey: nil)
+            Issue.record("expected materialize to fail verification")
+        } catch let error as RuntimeMaterializerError {
+            guard case .verificationFailed(let message) = error else {
+                Issue.record("expected verificationFailed, got \(error)")
+                return
+            }
+            #expect(message == buildExpected(try expectedPrefixRecorder.require()))
+        } catch {
+            Issue.record("expected RuntimeMaterializerError, got \(error)")
+        }
     }
 
     private func toolInstallCount(in runner: FakeSubprocessRunner) -> Int {
@@ -1235,6 +1586,26 @@ private final class AttributeFailingFileManager: FileManager {
     }
 }
 
+private final class AbsoluteRelocationFileManager: FileManager {
+    private let absoluteLeafName: String
+    private let absoluteDestination: URL
+
+    init(absoluteLeafName: String, absoluteDestination: URL) {
+        self.absoluteLeafName = absoluteLeafName
+        self.absoluteDestination = absoluteDestination
+        super.init()
+    }
+
+    override func createSymbolicLink(atPath path: String, withDestinationPath destPath: String) throws {
+        if URL(fileURLWithPath: path).lastPathComponent == absoluteLeafName,
+           destPath.hasPrefix("../") {
+            try super.createSymbolicLink(atPath: path, withDestinationPath: absoluteDestination.path)
+            return
+        }
+        try super.createSymbolicLink(atPath: path, withDestinationPath: destPath)
+    }
+}
+
 private final class AliasEventRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [RuntimeAliasLogEvent] = []
@@ -1246,6 +1617,44 @@ private final class AliasEventRecorder: @unchecked Sendable {
     func record(_ event: RuntimeAliasLogEvent) {
         lock.withLock {
             recorded.append(event)
+        }
+    }
+}
+
+private final class DataMapRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Data] = [:]
+
+    func record(_ data: Data, for key: String) {
+        lock.withLock {
+            values[key] = data
+        }
+    }
+
+    func data(for key: String) throws -> Data {
+        try lock.withLock {
+            try #require(values[key])
+        }
+    }
+}
+
+private final class StringRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: String?
+
+    init(_ value: String? = nil) {
+        self.value = value
+    }
+
+    func record(_ value: String) {
+        lock.withLock {
+            self.value = value
+        }
+    }
+
+    func require() throws -> String {
+        try lock.withLock {
+            try #require(value)
         }
     }
 }

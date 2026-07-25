@@ -45,6 +45,28 @@ internal struct RuntimeAliasLogEvent: Equatable, Sendable {
 }
 
 public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendable {
+    private static let bundledPythonLinkName = "python3.13"
+    private static let exportedEntryClassificationPrefixByteLimit = 4096
+    private static let requiredPostRenameProbeEntryNames: Set<String> = ["sol", "journal"]
+
+    private enum ExportedEntryClassification {
+        case uvPolyglot
+        case raw
+    }
+
+    private enum ExportedEntryContainmentPhase {
+        case staging
+        case postRename
+    }
+
+    private struct ExportedEntry {
+        let name: String
+        let entry: URL
+        let rawDestination: String
+        let resolved: URL
+        let classification: ExportedEntryClassification
+    }
+
     private let runtimeRootURL: URL
     private let uvBinaryURL: URL
     private let bundledPythonURL: URL
@@ -109,7 +131,7 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         let key = try runtimeKey()
         let finalURL = runtimeRootURL.appendingPathComponent(key, isDirectory: true)
         let finalLayout = SolstoneRuntimeLayout(rootURL: finalURL)
-        if try await verify(layout: finalLayout) == nil {
+        if try await verify(layout: finalLayout, phase: .postRename) == nil {
             let aliasRewrite = rewriteAliases(layout: finalLayout)
             garbageCollect(keeping: key, liveKey: liveKey, aliasRewrite: aliasRewrite)
             return MaterializedRuntime(key: key, layout: finalLayout)
@@ -122,7 +144,7 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
             try tempLayout.ensureCreated()
             try createBundledPythonLink(layout: tempLayout)
             try await install(into: tempLayout)
-            if let reason = try await verify(layout: tempLayout) {
+            if let reason = try await verify(layout: tempLayout, phase: .staging) {
                 Logger.setup.notice("runtime materializer: staged runtime verification failed: \(reason, privacy: .public)")
                 throw RuntimeMaterializerError.verificationFailed(reason)
             }
@@ -245,7 +267,7 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         }
     }
 
-    private func verify(layout: SolstoneRuntimeLayout) async throws -> String? {
+    private func verify(layout: SolstoneRuntimeLayout, phase: ExportedEntryContainmentPhase) async throws -> String? {
         guard fileManager.isExecutableFile(atPath: layout.journalBinary.path) else {
             return "journal executable missing at \(layout.journalBinary.path)"
         }
@@ -261,11 +283,11 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         guard try await verifyPython(at: bundledPythonURL) else {
             return "bundled python check failed at \(bundledPythonURL.path)"
         }
-        let materializedPython = layout.binDir.appendingPathComponent("python3.13")
+        let materializedPython = layout.binDir.appendingPathComponent(Self.bundledPythonLinkName)
         if fileManager.fileExists(atPath: materializedPython.path) {
             let resolved = materializedPython.resolvingSymlinksInPath().standardizedFileURL.path
             guard resolved == bundledPythonURL.standardizedFileURL.path else {
-                return "materialized python3.13 link does not resolve to bundled python"
+                return "materialized \(Self.bundledPythonLinkName) link does not resolve to bundled python"
             }
         } else {
             try createBundledPythonLink(layout: layout)
@@ -274,16 +296,17 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
             return "materialized python check failed at \(materializedPython.path)"
         }
         do {
-            let scripts = try discoverConsoleScripts(in: layout)
-            let rootPath = layout.rootURL.resolvingSymlinksInPath().standardizedFileURL.path
-            for script in scripts {
-                let path = script.resolved.path
-                guard ManagedWrapper.isUnderRoot(path, root: rootPath) else {
-                    return "console script \(script.name) resolves outside runtime root: \(path)"
+            let entries = try discoverExportedEntries(in: layout)
+            for entry in entries {
+                try assertUniversalExportedEntryContract(entry, rootURL: layout.rootURL, phase: phase)
+                if entry.classification == .uvPolyglot {
+                    try assertUvPolyglotContract(entry, rootURL: layout.rootURL, phase: phase)
                 }
             }
+        } catch let error as RuntimeMaterializerError {
+            return error.localizedDescription
         } catch {
-            return "console script discovery failed: \(error.localizedDescription)"
+            return "entrypoint discovery failed: \(error.localizedDescription)"
         }
         return nil
     }
@@ -347,14 +370,14 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
 
     private func createBundledPythonLink(layout: SolstoneRuntimeLayout) throws {
         try fileManager.createDirectory(at: layout.binDir, withIntermediateDirectories: true)
-        let link = layout.binDir.appendingPathComponent("python3.13")
+        let link = layout.binDir.appendingPathComponent(Self.bundledPythonLinkName)
         if fileManager.fileExists(atPath: link.path) {
             try fileManager.removeItem(at: link)
         }
         try fileManager.createSymbolicLink(at: link, withDestinationURL: bundledPythonURL)
     }
 
-    private func discoverConsoleScripts(in layout: SolstoneRuntimeLayout) throws -> [(name: String, entry: URL, resolved: URL)] {
+    private func discoverExportedEntries(in layout: SolstoneRuntimeLayout) throws -> [ExportedEntry] {
         let entries: [URL]
         do {
             entries = try fileManager.contentsOfDirectory(
@@ -369,72 +392,92 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
             )
         }
 
-        var scripts: [(name: String, entry: URL, resolved: URL)] = []
+        var exportedEntries: [ExportedEntry] = []
         for entry in entries {
             let name = entry.lastPathComponent
-            let resolved = entry.resolvingSymlinksInPath().standardizedFileURL
-            guard fileManager.fileExists(atPath: resolved.path) else {
+            if name == Self.bundledPythonLinkName {
+                continue
+            }
+            guard isSymbolicLink(entry) else {
                 throw RuntimeMaterializerError.verificationFailed(
-                    "entrypoint \(name) target missing or dangling: \(resolved.path)"
+                    "entrypoint \(name) is not a symlink: \(entry.path)"
+                )
+            }
+            let rawDestination = try fileManager.destinationOfSymbolicLink(atPath: entry.path)
+            let diagnosticResolved = entry.resolvingSymlinksInPath().standardizedFileURL
+            guard fileManager.fileExists(atPath: diagnosticResolved.path) else {
+                throw RuntimeMaterializerError.verificationFailed(
+                    "entrypoint \(name) target missing or dangling: \(diagnosticResolved.path)"
                 )
             }
 
-            let data: Data
+            let resolvedPath: String
             do {
-                data = try Data(contentsOf: resolved)
+                resolvedPath = try canonicalExistingPath(diagnosticResolved.path)
             } catch {
                 throw RuntimeMaterializerError.verificationFailed(
-                    "entrypoint \(name) target unreadable: \(resolved.path): \(error.localizedDescription)"
+                    "entrypoint \(name) target missing or dangling: \(diagnosticResolved.path)"
                 )
             }
-
-            guard let text = String(data: data, encoding: .utf8) else {
-                continue
-            }
-            let lines = text.components(separatedBy: "\n")
-            guard Self.isUvPolyglot(lines) else {
-                continue
-            }
-            scripts.append((name: name, entry: entry, resolved: resolved))
+            let resolved = URL(fileURLWithPath: resolvedPath)
+            let classification = try classifyExportedEntry(named: name, resolved: resolved)
+            exportedEntries.append(ExportedEntry(
+                name: name,
+                entry: entry,
+                rawDestination: rawDestination,
+                resolved: resolved,
+                classification: classification
+            ))
         }
-        return scripts
+        return exportedEntries
     }
 
-    /// Rewrites every uv polyglot console script discovered in `bin/` so it survives temp -> final rename.
-    /// uv writes console entrypoints as absolute symlinks into `<tools>/.../bin/` and the scripts there
-    /// carry an absolute python trampoline into the staging venv. Both reference the `.tmp-*` staging dir,
-    /// which vanishes after rename. Rewrite entrypoint symlinks to relative targets and trampolines to the final venv python.
+    private func classifyExportedEntry(named name: String, resolved: URL) throws -> ExportedEntryClassification {
+        let data: Data
+        do {
+            let handle = try FileHandle(forReadingFrom: resolved)
+            defer { try? handle.close() }
+            data = try handle.read(upToCount: Self.exportedEntryClassificationPrefixByteLimit) ?? Data()
+        } catch {
+            throw RuntimeMaterializerError.verificationFailed(
+                "entrypoint \(name) target unreadable: \(resolved.path): \(error.localizedDescription)"
+            )
+        }
+
+        guard let text = String(data: data, encoding: .utf8),
+              text.filter({ $0 == "\n" }).count >= 2 else {
+            return .raw
+        }
+        let lines = text.components(separatedBy: "\n")
+        return Self.isUvPolyglot(lines) ? .uvPolyglot : .raw
+    }
+
+    /// Makes every exported entry in `bin/` survive temp -> final rename.
+    /// uv writes exported entries as absolute symlinks into `<tools>/.../bin/`; uv polyglot targets also
+    /// carry an absolute python trampoline into the staging venv. Rewrite every exported symlink to a
+    /// relative target, and rewrite only uv polyglot trampolines to the final venv python.
     private func makeRelocationSafe(layout: SolstoneRuntimeLayout, finalURL: URL) throws {
-        let tempRoot = layout.rootURL.standardizedFileURL.path
-        for script in try discoverConsoleScripts(in: layout) {
-            let entry = script.entry
-            let name = script.name
-            // Read uv's absolute symlink target into the staging tools tree.
-            let targetPath = try fileManager.destinationOfSymbolicLink(atPath: entry.path)
-            // Strictly under the staging root by design; equality would not be a relocatable entrypoint target.
-            guard targetPath.hasPrefix(tempRoot + "/") else {
-                throw RuntimeMaterializerError.verificationFailed(
-                    "entrypoint \(name) symlink target escapes staging root: \(targetPath)"
-                )
+        let stagingRootPath = try canonicalExistingPath(layout.rootURL.path)
+        for entry in try discoverExportedEntries(in: layout) {
+            try assertUniversalExportedEntryContract(entry, rootURL: layout.rootURL, phase: .staging)
+            let targetRelToRoot = relativePathInsideRoot(canonicalPath: entry.resolved.path, canonicalRootPath: stagingRootPath)
+            if entry.classification == .uvPolyglot {
+                let finalTarget = finalURL.standardizedFileURL.appendingPathComponent(targetRelToRoot)
+                let finalVenvPython = finalTarget.deletingLastPathComponent().appendingPathComponent("python").path
+                try rewriteUvPolyglotInterpreter(of: entry.resolved, to: finalVenvPython)
             }
-            let targetRelToRoot = String(targetPath.dropFirst(tempRoot.count + 1))
-            // Rewrite the console-script python trampoline from the staging venv python to the final venv python.
-            let consoleScript = URL(fileURLWithPath: targetPath)
-            let finalVenvPython = consoleScript.deletingLastPathComponent().appendingPathComponent("python").path
-                .replacingOccurrences(of: tempRoot, with: finalURL.standardizedFileURL.path)
-            try rewriteConsoleScriptPython(of: consoleScript, to: finalVenvPython)
             // Replace the absolute entrypoint symlink with a relative one.
-            try fileManager.removeItem(at: entry)
-            try fileManager.createSymbolicLink(atPath: entry.path, withDestinationPath: "../" + targetRelToRoot)
+            try fileManager.removeItem(at: entry.entry)
+            try fileManager.createSymbolicLink(atPath: entry.entry.path, withDestinationPath: "../" + targetRelToRoot)
         }
     }
 
-    private func rewriteConsoleScriptPython(of script: URL, to interpreter: String) throws {
+    private func rewriteUvPolyglotInterpreter(of script: URL, to interpreter: String) throws {
         let original = try String(contentsOf: script, encoding: .utf8)
         var lines = original.components(separatedBy: "\n")
         guard Self.isUvPolyglot(lines) else {
             throw RuntimeMaterializerError.verificationFailed(
-                "console script \(script.lastPathComponent) does not match uv polyglot trampoline"
+                "entrypoint \(script.lastPathComponent) does not match uv polyglot trampoline"
             )
         }
         lines[1] = "'''exec' " + shellSingleQuoted(interpreter) + " \"$0\" \"$@\""
@@ -446,49 +489,29 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         }
     }
 
-    /// Fails loudly if any discovered uv console script would dangle post-rename. All scripts get
-    /// static relocation checks; `sol` and `journal` also get a `--version` liveness probe. The
-    /// probe is intentionally limited because entries like `mlx-vlm-server` do not implement `--version`.
+    /// Fails loudly if any exported entry would dangle post-rename. Every entry gets universal
+    /// relocation checks; uv polyglot entries also get trampoline checks. `sol` and `journal` are
+    /// required exported entries and get a `--version` liveness probe.
     private func assertRelocationSafe(layout: SolstoneRuntimeLayout) async throws {
-        let rootPath = layout.rootURL.resolvingSymlinksInPath().standardizedFileURL.path
-        let scripts = try discoverConsoleScripts(in: layout)
-        for script in scripts {
-            let name = script.name
-            let entry = script.entry
-            let resolved = script.resolved
-            guard fileManager.isExecutableFile(atPath: resolved.path) else {
-                throw RuntimeMaterializerError.verificationFailed(
-                    "entrypoint \(name) does not resolve to an executable: \(resolved.path)"
-                )
+        let entries = try discoverExportedEntries(in: layout)
+        for entry in entries {
+            try assertUniversalExportedEntryContract(entry, rootURL: layout.rootURL, phase: .postRename)
+            if entry.classification == .uvPolyglot {
+                try assertUvPolyglotContract(entry, rootURL: layout.rootURL, phase: .postRename)
             }
-            try assertWithinRoot(resolved.path, rootPath: rootPath, what: "entrypoint \(name)")
-            let destination = try fileManager.destinationOfSymbolicLink(atPath: entry.path)
-            guard !destination.hasPrefix("/") else {
-                throw RuntimeMaterializerError.verificationFailed(
-                    "entrypoint \(name) is not a relative symlink after relocation: \(destination)"
-                )
-            }
-
-            let scriptText = try String(contentsOf: resolved, encoding: .utf8)
-            let lines = scriptText.components(separatedBy: "\n")
-            guard lines.first == "#!/bin/sh" else {
-                throw RuntimeMaterializerError.verificationFailed("console script \(name) lost its space-safe shebang")
-            }
-            if lines.contains(where: { containsStagingSegment(in: $0) }) {
-                throw RuntimeMaterializerError.verificationFailed("console script \(name) references staging dir after relocation")
-            }
-            guard lines.count >= 2,
-                  let interpreterPath = uvPolyglotInterpreterPath(from: lines[1]) else {
-                throw RuntimeMaterializerError.verificationFailed("console script \(name) lost its uv python trampoline")
-            }
-            let standardizedInterpreter = URL(fileURLWithPath: interpreterPath).standardizedFileURL.path
-            try assertWithinRoot(standardizedInterpreter, rootPath: rootPath, what: "entrypoint \(name) trampoline")
         }
 
-        let probeNames: Set<String> = ["sol", "journal"]
-        let probes: [(name: String, executable: URL)] = scripts
-            .filter { probeNames.contains($0.name) }
-            .map { (name: $0.name, executable: $0.resolved) }
+        let entriesByName = Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0) })
+        let probes: [(name: String, executable: URL)] = try Self.requiredPostRenameProbeEntryNames
+            .sorted()
+            .map { name in
+                guard let entry = entriesByName[name] else {
+                    throw RuntimeMaterializerError.verificationFailed(
+                        "entrypoint \(name) missing from relocated runtime exports"
+                    )
+                }
+                return (name: name, executable: entry.resolved)
+            }
         let environment = layout.uvEnvironment()
         let runner = self.runner
         try await withThrowingTaskGroup(of: Void.self) { group in
@@ -526,13 +549,143 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         }
     }
 
-    private func assertWithinRoot(_ path: String, rootPath: String, what: String) throws {
-        if containsStagingSegment(in: path) {
-            throw RuntimeMaterializerError.verificationFailed("\(what) references staging dir: \(path)")
+    private func assertUniversalExportedEntryContract(
+        _ entry: ExportedEntry,
+        rootURL: URL,
+        phase: ExportedEntryContainmentPhase
+    ) throws {
+        guard fileManager.isExecutableFile(atPath: entry.resolved.path) else {
+            throw RuntimeMaterializerError.verificationFailed(
+                "entrypoint \(entry.name) does not resolve to an executable: \(entry.resolved.path)"
+            )
         }
-        guard ManagedWrapper.isUnderRoot(path, root: rootPath) else {
-            throw RuntimeMaterializerError.verificationFailed("\(what) escapes runtime root: \(path)")
+        switch phase {
+        case .staging:
+            guard entry.rawDestination.hasPrefix("/") else {
+                throw RuntimeMaterializerError.verificationFailed(
+                    "entrypoint \(entry.name) symlink target escapes staging root: \(entry.rawDestination)"
+                )
+            }
+            _ = try assertContainedPath(
+                entry.resolved.path,
+                rootURL: rootURL,
+                phase: phase,
+                what: "entrypoint \(entry.name) target",
+                missingMessage: { path in
+                    "entrypoint \(entry.name) target missing or dangling: \(path)"
+                },
+                escapeMessage: { _ in
+                    "entrypoint \(entry.name) symlink target escapes staging root: \(entry.rawDestination)"
+                }
+            )
+        case .postRename:
+            guard !entry.rawDestination.hasPrefix("/") else {
+                throw RuntimeMaterializerError.verificationFailed(
+                    "entrypoint \(entry.name) is not a relative symlink after relocation: \(entry.rawDestination)"
+                )
+            }
+            _ = try assertContainedPath(
+                entry.resolved.path,
+                rootURL: rootURL,
+                phase: phase,
+                what: "entrypoint \(entry.name) target",
+                missingMessage: { path in
+                    "entrypoint \(entry.name) target missing or dangling: \(path)"
+                },
+                escapeMessage: { canonicalPath in
+                    "entrypoint \(entry.name) target escapes final root: \(canonicalPath)"
+                }
+            )
         }
+    }
+
+    private func assertUvPolyglotContract(
+        _ entry: ExportedEntry,
+        rootURL: URL,
+        phase: ExportedEntryContainmentPhase
+    ) throws {
+        let scriptText = try String(contentsOf: entry.resolved, encoding: .utf8)
+        let lines = scriptText.components(separatedBy: "\n")
+        guard lines.first == "#!/bin/sh" else {
+            throw RuntimeMaterializerError.verificationFailed("entrypoint \(entry.name) lost its space-safe shebang")
+        }
+        if phase == .postRename, lines.contains(where: { containsStagingSegment(in: $0) }) {
+            throw RuntimeMaterializerError.verificationFailed("entrypoint \(entry.name) references staging dir after relocation")
+        }
+        guard lines.count >= 2,
+              let interpreterPath = uvPolyglotInterpreterPath(from: lines[1]) else {
+            throw RuntimeMaterializerError.verificationFailed("entrypoint \(entry.name) lost its uv python trampoline")
+        }
+        _ = try assertContainedPath(
+            interpreterPath,
+            rootURL: rootURL,
+            phase: phase,
+            what: "entrypoint \(entry.name) trampoline",
+            missingMessage: { path in
+                "entrypoint \(entry.name) trampoline target missing or dangling: \(path)"
+            },
+            escapeMessage: { canonicalPath in
+                switch phase {
+                case .staging:
+                    return "entrypoint \(entry.name) trampoline escapes staging root: \(canonicalPath)"
+                case .postRename:
+                    return "entrypoint \(entry.name) trampoline escapes final root: \(canonicalPath)"
+                }
+            }
+        )
+    }
+
+    private func assertContainedPath(
+        _ path: String,
+        rootURL: URL,
+        phase: ExportedEntryContainmentPhase,
+        what: String,
+        missingMessage: (String) -> String,
+        escapeMessage: (String) -> String
+    ) throws -> String {
+        let canonicalPath: String
+        let canonicalRoot: String
+        do {
+            canonicalPath = try canonicalExistingPath(path)
+            canonicalRoot = try canonicalExistingPath(rootURL.path)
+        } catch {
+            throw RuntimeMaterializerError.verificationFailed(missingMessage(path))
+        }
+        guard canonicalPath != canonicalRoot,
+              ManagedWrapper.isUnderRoot(canonicalPath, root: canonicalRoot) else {
+            throw RuntimeMaterializerError.verificationFailed(escapeMessage(canonicalPath))
+        }
+        let stagingScanPath: String
+        switch phase {
+        case .staging:
+            stagingScanPath = relativePathInsideRoot(canonicalPath: canonicalPath, canonicalRootPath: canonicalRoot)
+        case .postRename:
+            stagingScanPath = canonicalPath
+        }
+        if containsStagingSegment(in: stagingScanPath) {
+            throw RuntimeMaterializerError.verificationFailed("\(what) references staging dir: \(canonicalPath)")
+        }
+        return canonicalPath
+    }
+
+    private func canonicalExistingPath(_ path: String) throws -> String {
+        guard let resolved = realpath(path, nil) else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    private func relativePathInsideRoot(canonicalPath: String, canonicalRootPath: String) -> String {
+        let rootComponents = URL(fileURLWithPath: canonicalRootPath).pathComponents
+        let pathComponents = URL(fileURLWithPath: canonicalPath).pathComponents
+        return pathComponents.dropFirst(rootComponents.count).joined(separator: "/")
+    }
+
+    private func isSymbolicLink(_ url: URL) -> Bool {
+        var metadata = stat()
+        guard Darwin.lstat(url.path, &metadata) == 0 else { return false }
+        return (metadata.st_mode & S_IFMT) == S_IFLNK
     }
 
     private func containsStagingSegment(in text: String) -> Bool {

@@ -208,17 +208,26 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
             try Data((pythonBody + "\n").utf8).write(to: python)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: python.path)
 
+            let uvPolyglotNames: Set<String> = ["journal", "mlx-vlm-server"]
             for name in ["sol", "journal", "solstone", "mlx-vlm-server"] {
-                let consoleScript = toolBinURL.appendingPathComponent(name)
-                let body = """
-                #!/bin/sh
-                '''exec' \(shellSingleQuoted(python.path)) "$0" "$@"
-                ' '''
-                # -*- coding: utf-8 -*-
-                # fake console script
-                """
-                try Data((body + "\n").utf8).write(to: consoleScript)
-                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: consoleScript.path)
+                let exportedTool = toolBinURL.appendingPathComponent(name)
+                let body: String
+                if uvPolyglotNames.contains(name) {
+                    body = """
+                    #!/bin/sh
+                    '''exec' \(shellSingleQuoted(python.path)) "$0" "$@"
+                    ' '''
+                    # -*- coding: utf-8 -*-
+                    # fake uv polyglot entry
+                    """
+                } else {
+                    body = """
+                    #!/bin/sh
+                    echo "solstone \(BundleConfig.solstonePinVersion)"
+                    """
+                }
+                try Data((body + "\n").utf8).write(to: exportedTool)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exportedTool.path)
 
                 if exposedNames.contains(name) {
                     let entrypoint = binURL.appendingPathComponent(name)
@@ -227,7 +236,7 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
                     }
                     try FileManager.default.createSymbolicLink(
                         atPath: entrypoint.path,
-                        withDestinationPath: consoleScript.path
+                        withDestinationPath: exportedTool.path
                     )
                 }
             }
