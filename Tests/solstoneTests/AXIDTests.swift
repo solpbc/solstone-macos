@@ -216,6 +216,7 @@ struct AXIDTests {
             .relayUnauthorized,
             .instanceMismatch,
             .network,
+            .connectionDropped,
             .invalidLink("bad"),
             .localSetup
         ]

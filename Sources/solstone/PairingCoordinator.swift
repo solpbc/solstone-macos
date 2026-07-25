@@ -26,6 +26,7 @@ enum PairingFailure: Equatable, Sendable {
     case relayUnauthorized
     case instanceMismatch
     case network
+    case connectionDropped
     case invalidLink(String)
     case localSetup
 }
@@ -240,6 +241,8 @@ final class PairingCoordinator {
             return .staleLink
         case .pairingWindowClosed:
             return .staleLink
+        case .lanClosedBeforeResponse:
+            return .connectionDropped
         case .directAddressNotLocal:
             return .invalidLink(nonRelayPairingLinkReason)
         case .lanCandidatesExhausted(let sawCAFingerprintMismatch):
@@ -363,6 +366,8 @@ extension PairingFailure {
             return "this link is for a different journal. get a fresh link from the journal you want."
         case .network:
             return "pairing couldn't reach your journal. check your connection and try again."
+        case .connectionDropped:
+            return "lost the connection to your journal before it answered. try again."
         case .invalidLink(let reason):
             return reason
         case .localSetup:

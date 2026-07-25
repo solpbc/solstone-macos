@@ -233,6 +233,7 @@ extension PairingFailure {
         "relay_unauthorized",
         "instance_mismatch",
         "network",
+        "connection_dropped",
         "invalid_link",
         "local_setup"
     ]
@@ -249,6 +250,8 @@ extension PairingFailure {
             return "instance_mismatch"
         case .network:
             return "network"
+        case .connectionDropped:
+            return "connection_dropped"
         case .invalidLink:
             return "invalid_link"
         case .localSetup:

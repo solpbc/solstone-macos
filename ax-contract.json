@@ -530,6 +530,7 @@
       "relay_unauthorized",
       "instance_mismatch",
       "network",
+      "connection_dropped",
       "invalid_link",
       "local_setup"
     ],

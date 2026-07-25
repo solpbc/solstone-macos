@@ -199,6 +199,13 @@ struct PairingCoordinatorTests {
         #expect(PairingFailure.staleLink.message == "this pairing window closed or expired. get a fresh link from your journal's network app and try again.")
     }
 
+    @Test func lanClosedBeforeResponseMapsToConnectionDropped() async throws {
+        #expect(PairingCoordinator.failure(for: PairError.lanClosedBeforeResponse) == .connectionDropped)
+        #expect(PairingFailure.connectionDropped.message == "lost the connection to your journal before it answered. try again.")
+        #expect(PairingFailure.connectionDropped.message != PairingFailure.staleLink.message)
+        await expectCeremonyFailure(PairError.lanClosedBeforeResponse, mapsTo: .connectionDropped)
+    }
+
     @Test func relayCloseUnauthorizedMapsToStaleLink() async throws {
         await expectCeremonyFailure(DialError.relayCloseUnauthorized, mapsTo: .staleLink)
     }
