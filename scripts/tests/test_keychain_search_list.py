@@ -107,9 +107,8 @@ class KeychainSearchListSubprocessTest(unittest.TestCase):
 
         security = bin_dir / "security"
         security.write_text(
-            textwrap.dedent(
+            "#!" + sys.executable + "\n" + textwrap.dedent(
                 """\
-                #!/usr/bin/env python3
                 import json
                 import os
                 import pathlib
@@ -166,7 +165,8 @@ class KeychainSearchListSubprocessTest(unittest.TestCase):
     def run_helper(self, root, bin_dir, *args):
         env = os.environ.copy()
         env["FAKE_SECURITY_ROOT"] = str(root)
-        env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+        # Replace PATH so a missing fake cannot fall through to the real security binary.
+        env["PATH"] = str(bin_dir)
         return subprocess.run(
             [sys.executable, str(HELPER), *args],
             cwd=REPO_ROOT,
