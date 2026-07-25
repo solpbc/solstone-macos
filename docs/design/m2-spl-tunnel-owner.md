@@ -2,6 +2,16 @@
 
 Status: design only. No implementation in this document.
 
+> **Historical — superseded in part.** This records the original M2 design, from when
+> SPL lived in a vendored `Sources/SPLTunnel/` target in this repo. That target and its
+> `SPLTunnelTests` suite no longer exist: SPL now comes from the shared `spl-swift`
+> package, which owns those tests. Two things below no longer describe the system —
+> the goal "keep exactly one reconnect loop: `TunnelSession.monitorAndReconnect`" (the
+> package splits this into a single-shot `TunnelSession` plus a `TunnelSupervisor` that
+> owns the reconnect loop), and the `SPLTunnelTests` test plan. The app-layer
+> lifecycle-owner design is otherwise still accurate. Kept as a point-in-time record —
+> do not update it to track the package.
+
 ## Goals
 
 - Link the existing `SPLTunnel` module into the `solstone` app target.
