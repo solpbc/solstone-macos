@@ -379,10 +379,13 @@ struct RuntimeMaterializerTests {
         runner.enqueue("tool", .success())
         runner.onMaterializedToolBinaries {
             Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "create dot-dot escape") { layout in
+                let rawTempRoot = fixture.runtimeRoot.appendingPathComponent(layout.rootURL.lastPathComponent, isDirectory: true)
+                let rawLayout = SolstoneRuntimeLayout(rootURL: rawTempRoot)
                 let outside = fixture.runtimeRoot.appendingPathComponent("outside-dotdot")
                 try Self.writeExecutableShell(at: outside, body: "echo outside\n")
-                let rawDestination = layout.rootURL.path + "/../outside-dotdot"
-                let entry = layout.binDir.appendingPathComponent("dotdot-escape")
+                let rawDestination = rawLayout.rootURL.path + "/../outside-dotdot"
+                #expect(rawDestination.hasPrefix(rawLayout.rootURL.path + "/"))
+                let entry = rawLayout.binDir.appendingPathComponent("dotdot-escape")
                 try FileManager.default.createSymbolicLink(atPath: entry.path, withDestinationPath: rawDestination)
                 expected.record("entrypoint dotdot-escape symlink target escapes staging root: \(rawDestination)")
             }
@@ -400,13 +403,16 @@ struct RuntimeMaterializerTests {
         runner.enqueue("tool", .success())
         runner.onMaterializedToolBinaries {
             Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "create symlink-chain escape") { layout in
+                let rawTempRoot = fixture.runtimeRoot.appendingPathComponent(layout.rootURL.lastPathComponent, isDirectory: true)
+                let rawLayout = SolstoneRuntimeLayout(rootURL: rawTempRoot)
                 let outsideDir = fixture.workspace.appendingPathComponent("outside-chain", isDirectory: true)
                 try FileManager.default.createDirectory(at: outsideDir, withIntermediateDirectories: true)
                 try Self.writeExecutableShell(at: outsideDir.appendingPathComponent("chain-escape"), body: "echo outside\n")
-                let link = layout.toolsDir.appendingPathComponent("escape-link")
+                let link = rawLayout.toolsDir.appendingPathComponent("escape-link")
                 try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: outsideDir.path)
                 let rawDestination = link.path + "/chain-escape"
-                let entry = layout.binDir.appendingPathComponent("chain-escape")
+                #expect(rawDestination.hasPrefix(rawLayout.rootURL.path + "/"))
+                let entry = rawLayout.binDir.appendingPathComponent("chain-escape")
                 try FileManager.default.createSymbolicLink(atPath: entry.path, withDestinationPath: rawDestination)
                 expected.record("entrypoint chain-escape symlink target escapes staging root: \(rawDestination)")
             }
