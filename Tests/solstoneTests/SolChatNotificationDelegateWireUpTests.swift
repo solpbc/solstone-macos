@@ -12,9 +12,9 @@ struct SolChatNotificationDelegateWireUpTests {
             "case .updatesSettings:",
             #"state.pendingSettingsTab = "updates""#,
             "NotificationCenter.default.post(name: .openSettingsWindow, object: nil)",
-            "NSApp.activate(ignoringOtherApps: true)",
             "case .solChat(let requestID):",
-            "handleClick(requestID: requestID)"
+            "handleClick(requestID: requestID)",
+            "completionHandler(userNotificationPresentationOptions(for: notification.request.identifier))"
         ]
 
         for reference in references {

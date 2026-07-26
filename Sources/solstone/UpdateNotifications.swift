@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-@preconcurrency import UserNotifications
+import UserNotifications
 import UpdateKit
 
 enum UpdateNotificationIdentifier {
@@ -50,9 +50,8 @@ struct UpdateNotificationAnnouncer: Sendable {
         let identifier = UpdateNotificationIdentifier.make(version: version)
         let title = copy.updateNotificationTitle(version: version)
         let body = copy.updateNotificationBody
-        let notifier = notifier
         Task {
-            await notifier.post(identifier: identifier, title: title, body: body, sound: false)
+            await self.notifier.post(identifier: identifier, title: title, body: body, sound: false)
         }
     }
 }

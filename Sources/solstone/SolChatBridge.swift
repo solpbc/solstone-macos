@@ -649,7 +649,6 @@ final class SolChatNotificationDelegate: NSObject, UNUserNotificationCenterDeleg
                     Logger.general.error("AppState.shared nil in update notification click")
                 }
                 NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
-                NSApp.activate(ignoringOtherApps: true)
             case .solChat(let requestID):
                 await AppState.shared?.solChatBridge.handleClick(requestID: requestID)
             }
