@@ -17,10 +17,12 @@ public final class SparkleUserDriver: NSObject, SPUUserDriver {
     }
 
     public func show(_ request: SPUUpdatePermissionRequest, reply: @escaping (SUUpdatePermissionResponse) -> Void) {
+        // This path is unreachable in production while SUEnableAutomaticChecks is set in Info.plist.
+        // A concrete automaticUpdateDownloading value here would pin UserDefaults and defeat plist defaults.
         reply(
             SUUpdatePermissionResponse(
                 automaticUpdateChecks: true,
-                automaticUpdateDownloading: NSNumber(value: false),
+                automaticUpdateDownloading: nil,
                 sendSystemProfile: false
             )
         )

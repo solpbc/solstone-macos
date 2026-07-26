@@ -77,7 +77,7 @@ public struct UpdatesCopy: Sendable {
 
     public var lastCheckedNever: String { "never checked for updates" }
     public var lastCheckedJustNow: String { "just now" }
-    public var privacyFootnote: String { "no usage data is ever sent. update checks only fetch the version manifest." }
+    public var privacyFootnote: String { "no usage data is ever sent. update checks fetch the version list, then download the update itself in the background." }
     public var updateChecksNotRunningTitle: String { "update checks aren't running right now" }
 
     public func appHeader(version: String) -> String {

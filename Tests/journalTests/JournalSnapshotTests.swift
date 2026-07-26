@@ -78,6 +78,7 @@ struct JournalSnapshotTests {
         try await renderBackupStatic()
         try await renderStartup(enabled: true)
         try await renderStartup(enabled: false)
+        try await renderUpdates()
         try await renderFirstRunNameEntry()
         try await renderFirstRunSetupProgress()
         try await renderFirstRunMarkReveal()
@@ -177,6 +178,12 @@ struct JournalSnapshotTests {
         let model = configuredModel(fixture: fixture, supervisor: JournalSupervisor(), mark: .uiTestSample, name: "home base")
         model.selectedPane = .startup
         try await renderWindow(model, to: enabled ? "journal-startup-enabled.png" : "journal-startup-disabled.png")
+    }
+
+    private func renderUpdates() async throws {
+        let model = try configuredModel(mark: .uiTestSample, name: "home base")
+        model.selectedPane = .updates
+        try await renderWindow(model, to: "journal-updates.png")
     }
 
     private func renderFirstRunNameEntry() async throws {

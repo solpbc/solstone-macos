@@ -89,7 +89,7 @@ struct UpdatesCopyTests {
     }
 
     @Test func privacyFootnoteString() {
-        #expect(UpdatesCopy(provider: .solstone).privacyFootnote == "no usage data is ever sent. update checks only fetch the version manifest.")
+        #expect(UpdatesCopy(provider: .solstone).privacyFootnote == "no usage data is ever sent. update checks fetch the version list, then download the update itself in the background.")
     }
 
     @Test func releaseNotesOnlineLinkLabelString() {

@@ -641,14 +641,19 @@ struct SettingsView: View {
                     sidebarBadgeStateCompanion(tab: tab, badge: badge)
                 }
         case .attention:
-            label
-                .badge(Text("!"))
-                .tint(.orange)
-                .accessibilityLabel("\(title), \(UICopy.SETTINGS_TAB_ATTENTION_A11Y)")
-                .accessibilityIdentifier(AXID.Settings.Sidebar.tab(tab))
-                .overlay(alignment: .topLeading) {
-                    sidebarBadgeStateCompanion(tab: tab, badge: badge)
-                }
+            HStack {
+                label
+                Spacer()
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(SolstoneColors.solOrange)
+                    .accessibilityHidden(true)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(title), \(UICopy.SETTINGS_TAB_ATTENTION_A11Y)")
+            .accessibilityIdentifier(AXID.Settings.Sidebar.tab(tab))
+            .overlay(alignment: .topLeading) {
+                sidebarBadgeStateCompanion(tab: tab, badge: badge)
+            }
         case .done:
             HStack {
                 label
@@ -1047,7 +1052,7 @@ struct SettingsView: View {
     private var serviceSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             if appState.permissionsNeedAttention {
-                navRow(UICopy.SETTINGS_PREREQ_PERMISSIONS) {
+                attentionRow(UICopy.SETTINGS_PREREQ_PERMISSIONS) {
                     selectedTab = .permissions
                 }
                 .accessibilityIdentifier(AXID.Settings.Service.prereqPermissions)
@@ -1502,6 +1507,27 @@ struct SettingsView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
+    }
+
+    private func attentionRow(_ text: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(SolstoneColors.solOrange)
+                    .accessibilityHidden(true)
+                Text(text)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(SolstoneColors.solOrange.opacity(0.12))
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var pairingSection: some View {

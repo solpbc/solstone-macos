@@ -204,6 +204,39 @@ struct UpdateControllerTests {
         #expect(!controller.automaticDownloadsEnabled)
     }
 
+    @Test func updateKitSourcesDoNotWriteSparkleAutomaticDownloadDefaultDirectly() throws {
+        let root = URL(fileURLWithPath: "Sources/UpdateKit", isDirectory: true)
+        let enumerator = try #require(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
+        var offenders: [String] = []
+
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            let source = try String(contentsOf: url, encoding: .utf8)
+            if source.contains("SUAutomaticallyUpdate") {
+                offenders.append(url.path)
+            }
+        }
+
+        if !offenders.isEmpty {
+            Issue.record("UpdateKit must not write SUAutomaticallyUpdate directly: \(offenders.joined(separator: ", "))")
+        }
+        #expect(offenders.isEmpty)
+    }
+
+    @Test func permissionPromptResponseLeavesAutomaticDownloadDefaultUnset() throws {
+        let driver = SparkleUserDriver(log: updateKitTestLog)
+        let request = SPUUpdatePermissionRequest()
+        var response: SUUpdatePermissionResponse?
+
+        driver.show(request) { permissionResponse in
+            response = permissionResponse
+        }
+
+        let permissionResponse = try #require(response)
+        #expect(permissionResponse.automaticUpdateChecks)
+        #expect(permissionResponse.automaticUpdateDownloading == nil)
+        #expect(!permissionResponse.sendSystemProfile)
+    }
+
     @Test func updaterArmStateRecordsFactoryNilFailure() {
         clearDefaults()
         defer { clearDefaults() }

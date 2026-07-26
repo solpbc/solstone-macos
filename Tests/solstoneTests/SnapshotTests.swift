@@ -432,6 +432,19 @@ struct SnapshotTests {
         )
     }
 
+    @Test func settingsServicePermissionsAttention() throws {
+        let state = AppState.forSnapshot()
+        state.initialPermissionCheckComplete = true
+        state.screenRecordingGranted = false
+        state.microphoneGranted = true
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .service, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "settings-service-permissions-attention.png"
+        )
+    }
+
     @Test func settingsServiceConfigured() throws {
         var config = AppConfig(serverURL: "https://solstone.example.com")
         config.serverKey = "sk-test-key-1234"
