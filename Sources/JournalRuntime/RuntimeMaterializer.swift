@@ -616,7 +616,7 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
               let interpreterPath = uvPolyglotInterpreterPath(from: lines[1]) else {
             throw RuntimeMaterializerError.verificationFailed("entrypoint \(entry.name) lost its uv python trampoline")
         }
-        _ = try assertContainedPath(
+        try assertContainedInterpreterPath(
             interpreterPath,
             rootURL: rootURL,
             phase: phase,
@@ -624,15 +624,87 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
             missingMessage: { path in
                 "entrypoint \(entry.name) trampoline target missing or dangling: \(path)"
             },
-            escapeMessage: { canonicalPath in
+            escapeMessage: { reportedPath in
                 switch phase {
                 case .staging:
-                    return "entrypoint \(entry.name) trampoline escapes staging root: \(canonicalPath)"
+                    return "entrypoint \(entry.name) trampoline escapes staging root: \(reportedPath)"
                 case .postRename:
-                    return "entrypoint \(entry.name) trampoline escapes final root: \(canonicalPath)"
+                    return "entrypoint \(entry.name) trampoline escapes final root: \(reportedPath)"
                 }
             }
         )
+    }
+
+    /// Containment for a uv polyglot trampoline's interpreter.
+    ///
+    /// The trampoline points at the runtime's own venv `python`, and that is a symlink chain which
+    /// deliberately terminates at the app-bundled interpreter *outside* the runtime root — see
+    /// `createBundledPythonLink`, which creates exactly such an outward link on purpose. So
+    /// `realpath` on a perfectly healthy bundled runtime always lands outside the root.
+    ///
+    /// Containment is therefore asserted in two parts:
+    ///
+    /// 1. the **lexical** path must sit under the root. This is what rejects `..` traversal and a
+    ///    trampoline rewritten to point somewhere else entirely.
+    /// 2. the **resolved** path must either stay under the root, or be exactly the bundled
+    ///    interpreter. This is what rejects an in-root symlink chain escaping to an arbitrary
+    ///    target.
+    ///
+    /// Asserting only (1) — the pre-2026-07-25 behaviour — misses symlink-chain escapes. Asserting
+    /// only (2) via `realpath`, which is what this check did between `8a4d769` and this commit,
+    /// rejects *every* bundled runtime, because (2)'s legitimate case is the normal case: the
+    /// materializer's own link is the one path that is supposed to leave the root. Keep both halves.
+    private func assertContainedInterpreterPath(
+        _ path: String,
+        rootURL: URL,
+        phase: ExportedEntryContainmentPhase,
+        what: String,
+        missingMessage: (String) -> String,
+        escapeMessage: (String) -> String
+    ) throws {
+        let canonicalRoot: String
+        do {
+            canonicalRoot = try canonicalExistingPath(rootURL.path)
+        } catch {
+            throw RuntimeMaterializerError.verificationFailed(missingMessage(rootURL.path))
+        }
+
+        // (1) lexical containment — no `..` traversal, no unrelated absolute target.
+        let lexicalPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard lexicalPath != canonicalRoot,
+              ManagedWrapper.isUnderRoot(lexicalPath, root: canonicalRoot) else {
+            throw RuntimeMaterializerError.verificationFailed(escapeMessage(lexicalPath))
+        }
+
+        // The interpreter must actually exist and be reachable.
+        let resolvedPath: String
+        do {
+            resolvedPath = try canonicalExistingPath(path)
+        } catch {
+            throw RuntimeMaterializerError.verificationFailed(missingMessage(path))
+        }
+
+        // (2) resolved target — under the root, or exactly the bundled interpreter.
+        if !ManagedWrapper.isUnderRoot(resolvedPath, root: canonicalRoot) {
+            let canonicalBundledPython =
+                (try? canonicalExistingPath(bundledPythonURL.path))
+                ?? bundledPythonURL.standardizedFileURL.path
+            guard resolvedPath == canonicalBundledPython else {
+                throw RuntimeMaterializerError.verificationFailed(escapeMessage(resolvedPath))
+            }
+        }
+
+        // Staging-dir scan runs on the written path, which is what a stale `.tmp-*` would appear in.
+        let stagingScanPath: String
+        switch phase {
+        case .staging:
+            stagingScanPath = relativePathInsideRoot(canonicalPath: lexicalPath, canonicalRootPath: canonicalRoot)
+        case .postRename:
+            stagingScanPath = lexicalPath
+        }
+        if containsStagingSegment(in: stagingScanPath) {
+            throw RuntimeMaterializerError.verificationFailed("\(what) references staging dir: \(lexicalPath)")
+        }
     }
 
     private func assertContainedPath(

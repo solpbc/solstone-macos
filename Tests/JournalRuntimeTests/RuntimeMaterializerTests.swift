@@ -422,6 +422,97 @@ struct RuntimeMaterializerTests {
         try await expectMaterializeVerificationFailure(materializer, expected: expected)
     }
 
+    /// Real `uv` writes the venv `bin/python` as a symlink chain terminating at the base
+    /// interpreter, which for a bundled app is the app's own python OUTSIDE the runtime root. The
+    /// shared fake writes it as a regular file, so no existing test exercised that shape — which is
+    /// how a `realpath`-based containment check on the trampoline interpreter shipped green while
+    /// breaking every bundled runtime on the rig (journal 1.0.16 build 17, gate lanes all ERROR
+    /// with "trampoline escapes staging root"). Model the real shape here.
+    @Test func materializeAcceptsVenvPythonSymlinkedToBundledInterpreter() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("tool", .success())
+        runner.onMaterializedToolBinaries {
+            Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "symlink venv python to bundled interpreter") { layout in
+                let python = Self.materializedTool(named: "python", in: layout)
+                try FileManager.default.removeItem(at: python)
+                try FileManager.default.createSymbolicLink(
+                    atPath: python.path,
+                    withDestinationPath: fixture.bundledPython.path
+                )
+            }
+        }
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        let runtime = try await materializer.materialize(excludingLiveKey: nil)
+
+        // The trampoline still names the in-root venv python, even though it resolves out of the
+        // root to the bundled interpreter.
+        let journal = runtime.layout.binDir.appendingPathComponent("journal")
+            .resolvingSymlinksInPath().standardizedFileURL
+        let lines = try String(contentsOf: journal, encoding: .utf8).components(separatedBy: "\n")
+        let expectedInterpreter = runtime.layout.rootURL
+            .appendingPathComponent("tools/solstone-journal/bin/python")
+            .standardizedFileURL
+            .path
+        #expect(lines.count >= 2)
+        #expect(lines[1] == "'''exec' \(shellSingleQuotedForTest(expectedInterpreter)) \"$0\" \"$@\"")
+        #expect(
+            URL(fileURLWithPath: expectedInterpreter).resolvingSymlinksInPath().standardizedFileURL.path
+                == fixture.bundledPython.standardizedFileURL.path
+        )
+    }
+
+    /// Falsification for the test above: the resolved-target allowance is exactly the bundled
+    /// interpreter and nothing else, so an in-root venv python symlinked anywhere else must still
+    /// fail. Without this, the fix would degrade to "any escape is fine".
+    @Test func materializeFailsWhenVenvPythonSymlinkEscapesToForeignInterpreter() async throws {
+        let fixture = try makeMaterializerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspace) }
+        let runner = FakeSubprocessRunner()
+        let expected = StringRecorder()
+        runner.enqueue("tool", .success())
+        runner.onMaterializedToolBinaries {
+            Self.withStagedLayout(runtimeRoot: fixture.runtimeRoot, operation: "symlink venv python to a foreign interpreter") { layout in
+                let foreign = fixture.workspace
+                    .appendingPathComponent("foreign-python", isDirectory: true)
+                    .appendingPathComponent("python3.13")
+                try FileManager.default.createDirectory(
+                    at: foreign.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try Self.writeExecutableShell(at: foreign, body: "echo foreign\n")
+                let python = Self.materializedTool(named: "python", in: layout)
+                try FileManager.default.removeItem(at: python)
+                try FileManager.default.createSymbolicLink(
+                    atPath: python.path,
+                    withDestinationPath: foreign.path
+                )
+                let canonicalForeign = foreign.resolvingSymlinksInPath().standardizedFileURL.path
+                expected.record(canonicalForeign)
+            }
+        }
+        let materializer = makeMaterializer(fixture: fixture, runner: runner)
+
+        // Asserted by content rather than exact string: both `journal` and `mlx-vlm-server` are uv
+        // polyglot entries sharing this interpreter, and entry enumeration order is not guaranteed,
+        // so pinning the entry name would make this flaky.
+        do {
+            _ = try await materializer.materialize(excludingLiveKey: nil)
+            Issue.record("expected materialize to reject a venv python escaping to a foreign interpreter")
+        } catch let error as RuntimeMaterializerError {
+            guard case .verificationFailed(let message) = error else {
+                Issue.record("expected verificationFailed, got \(error)")
+                return
+            }
+            #expect(message.contains("trampoline escapes staging root"))
+            #expect(message.contains(try expected.require()))
+        } catch {
+            Issue.record("expected RuntimeMaterializerError, got \(error)")
+        }
+    }
+
     @Test func materializeFailsWhenExportedEntryIsNotSymlink() async throws {
         let fixture = try makeMaterializerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.workspace) }
