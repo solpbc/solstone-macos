@@ -40,7 +40,6 @@ private struct Options {
 }
 
 private struct BundleResources {
-    var appURL: URL
     var uvURL: URL
     var bundledPythonURL: URL
     var wheelhouseURL: URL
@@ -194,7 +193,6 @@ enum JournalRuntimeProbe {
         try requireDirectory(wheelhouseURL, what: "bundled wheelhouse")
 
         return BundleResources(
-            appURL: appURL,
             uvURL: uvURL,
             bundledPythonURL: bundledPythonURL,
             wheelhouseURL: wheelhouseURL
@@ -272,8 +270,8 @@ enum JournalRuntimeProbe {
 
     private static func makeProductionWorkspace() throws -> RegimeWorkspace {
         let workspaceURL = URL(fileURLWithPath: "/tmp", isDirectory: true)
-            .appendingPathComponent("journal-runtime-probe-\(shortUniqueToken())", isDirectory: true)
-        let baseComponent = "runtime root with space"
+            .appendingPathComponent("jrp-\(shortUniqueToken())", isDirectory: true)
+        let baseComponent = "a b"
         let baseRootURL = workspaceURL.appendingPathComponent(baseComponent, isDirectory: true)
         let targetLength = productionInterpreterPathLength()
         let baseLength = finalInterpreterPathLength(runtimeRootURL: baseRootURL)
@@ -316,11 +314,14 @@ enum JournalRuntimeProbe {
         regime: ProbeRegime
     ) throws {
         let binEntries = try exportedBinEntries(in: runtime.layout.binDir)
+        var uvAuthoredCount = 0
+        var classifications: [String] = []
         print("[\(regime.rawValue)] shape table:")
         print("name\tclassification\tinterpreter-bytes\tinterpreter-whitespace\traw-symlink")
 
         for entry in binEntries {
             let inspection = try inspect(entry: entry, runtimeRootURL: runtime.layout.rootURL.deletingLastPathComponent())
+            classifications.append("\(inspection.name)=\(inspection.shape.rawValue)")
             print(shapeTableLine(inspection))
 
             guard !inspection.rawSymlinkDestination.hasPrefix("/") else {
@@ -330,6 +331,7 @@ enum JournalRuntimeProbe {
             }
 
             if inspection.shape.isUvAuthored {
+                uvAuthoredCount += 1
                 guard inspection.shape == .uvPolyglot else {
                     throw ProbeFailure(
                         message: "error: \(regime.rawValue) \(inspection.name) final shape mismatch: expected uvPolyglot, observed \(inspection.shape.rawValue)"
@@ -340,6 +342,13 @@ enum JournalRuntimeProbe {
                 }
                 _ = try canonicalExistingPath(interpreterPath)
             }
+        }
+
+        guard uvAuthoredCount > 0 else {
+            let classified = classifications.isEmpty ? "<none>" : classifications.joined(separator: ", ")
+            throw ProbeFailure(
+                message: "error: \(regime.rawValue) observed zero uv-authored exported entries; classified: \(classified)"
+            )
         }
 
         if regime == .production {
