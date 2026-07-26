@@ -118,7 +118,7 @@ func makePairingConnectionPresentation(
         )
     case .error(.revoked):
         return PairingConnectionPresentation(
-            message: "pairing was revoked — pair again to reconnect.",
+            message: "pairing was revoked. pair again to reconnect.",
             severity: .attention,
             axToken: PairingConnectionAXState.revoked.axToken
         )
@@ -726,7 +726,7 @@ struct SettingsView: View {
                                 HStack(spacing: 6) {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundStyle(.green)
-                                    Text("granted — restarting in \(countdown)...")
+                                    Text("granted, restarting in \(countdown)...")
                                         .foregroundStyle(.secondary)
                                     Spacer()
                                     Button("restart now") { relaunchApp() }
@@ -1313,7 +1313,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("your journal is getting its own app")
                     .font(.headline)
-                Text("nothing moved. your journal was always here — now it has a name.")
+                Text("nothing moved. your journal was always here. now it has a name.")
                     .font(.callout)
                 Text("segments are kept on this mac until your journal is back")
                     .font(.caption)
@@ -1742,7 +1742,7 @@ struct SettingsView: View {
 
     private var pairingDisconnectConfirmText: String {
         if let mark = appState.confirmedMark {
-            return "disconnect this Mac from \(mark.words.joined(separator: " · "))? your journal keeps everything — you can pair again anytime."
+            return "disconnect this Mac from \(mark.words.joined(separator: " · "))? your journal keeps everything. you can pair again anytime."
         }
         return UICopy.PAIRING_DISCONNECT_CONFIRM
     }
@@ -2946,7 +2946,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 20) {
             GroupBox("get help") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("need a hand? reach a human — we're happy to help.")
+                    Text("need a hand? reach a human. we're happy to help.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Link("support.solstone.app", destination: failureDiagnosticSupportURL)

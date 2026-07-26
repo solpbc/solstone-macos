@@ -156,7 +156,7 @@ enum JournalHandoffFailure: Error, Equatable, Sendable {
         case .applicationsDirectoryUnwritable:
             return "couldn't install the journal app in /Applications. open sol from an administrator account and try again."
         case .feedNotYetPublished:
-            return "the journal app isn't available yet — sol is keeping everything safe on this mac"
+            return "the journal app isn't available yet. sol is keeping everything safe on this mac"
         case .runningJournalWouldNotQuit:
             return "journal is still open. quit journal and try again."
         case .missingJournalPath, .journalPathMissing:

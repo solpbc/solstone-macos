@@ -132,8 +132,8 @@ extension StatusHealthSummary {
                 )
             case .offline:
                 let subtitle = pendingCount > 0
-                    ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here — nothing is lost, sync resumes when it's back"
-                    : "nothing is lost — sync resumes when it's back"
+                    ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here · nothing is lost, sync resumes when it's back"
+                    : "nothing is lost · sync resumes when it's back"
                 return .init(
                     severity: .attention,
                     title: "can't reach \(host)",
@@ -155,7 +155,7 @@ extension StatusHealthSummary {
                     : "retrying the last upload"
                 return .init(
                     severity: .warn,
-                    title: "trouble reaching \(host) — retrying",
+                    title: "trouble reaching \(host) · retrying",
                     subtitle: subtitle,
                     axValue: "external_retrying"
                 )
@@ -171,7 +171,7 @@ extension StatusHealthSummary {
                 }
                 return .init(
                     severity: .warn,
-                    title: "catching up — \(checked) of \(total) segments",
+                    title: "catching up · \(checked) of \(total) segments",
                     subtitle: "syncing to \(host)",
                     axValue: "external_syncing"
                 )
@@ -188,7 +188,7 @@ extension StatusHealthSummary {
                 let subtitle = pendingCount > 0 ? "\(pendingCount) more waiting" : "syncing to \(host)"
                 return .init(
                     severity: .warn,
-                    title: "catching up — sending the latest",
+                    title: "catching up · sending the latest",
                     subtitle: subtitle,
                     axValue: "external_uploading"
                 )
@@ -227,7 +227,7 @@ extension StatusHealthSummary {
                 }
                 return .init(
                     severity: .good,
-                    title: "all good — on, synced to \(host)",
+                    title: "all good · on, synced to \(host)",
                     subtitle: subtitle,
                     axValue: "external_synced"
                 )
@@ -247,7 +247,7 @@ extension StatusHealthSummary {
                 severity: .warn,
                 title: "sol is off",
                 subtitle: isBundled
-                    ? "your journal is fine — turn sol back on to keep building memory"
+                    ? "your journal is fine. turn sol back on to keep building memory"
                     : "nothing is reaching \(host) while sol is off",
                 axValue: "off"
             )
@@ -255,7 +255,7 @@ extension StatusHealthSummary {
         if isPaused {
             let subtitle = isBundled
                 ? "journal healthy on this Mac"
-                : (isSynced ? "synced to \(host)" : "paused — \(host)")
+                : (isSynced ? "synced to \(host)" : "paused · \(host)")
             return StatusHealthSummary(
                 severity: .warn,
                 title: "sol is paused",

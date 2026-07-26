@@ -7,8 +7,8 @@ enum JournalFirstRunCopy {
     static let lockButton = "lock it in"
     static let tryAnotherButton = "try another"
     static let tryAnotherLoading = "trying…"
-    static let markRevealExplainer = "lock it in and this mark is your journal's, for good — it can't be changed later. try as many as you like first."
-    static let adoptLandingLine = "nothing moved. your journal was always here — now it has a name."
+    static let markRevealExplainer = "lock it in and this mark is your journal's, for good. it can't be changed later. try as many as you like first."
+    static let adoptLandingLine = "nothing moved. your journal was always here. now it has a name."
 
     static let markTitle = "your journal mark"
     static let nameField = "name"

@@ -24,7 +24,7 @@ extension FreshJournalState {
         case .launching:
             return JournalHandoffStep.launchingJournal.ownerStatusMessage
         case .waitingForJournal:
-            return "finish setting up in the journal app — your journal will appear here when it's ready"
+            return "finish setting up in the journal app. your journal will appear here when it's ready"
         case .failed(let failure):
             return failure.ownerMessage
         }

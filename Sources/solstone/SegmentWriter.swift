@@ -167,7 +167,7 @@ public final class SegmentWriter {
             verbose: verbose
         )
         capturer.onHealthFailure = {
-            Logger.capture.error("ScreenshotCapturer: terminal capture failure for display \(info.displayID, privacy: .public) — restart policy exhausted")
+            Logger.capture.error("ScreenshotCapturer: terminal capture failure for display \(info.displayID, privacy: .public), restart policy exhausted")
         }
         return capturer
     }

@@ -58,7 +58,7 @@ struct MenuContent: View {
             } label: {
                 if let reason = settingsAttentionToShow {
                     Label {
-                        Text("settings… — \(attentionSuffix(reason))")
+                        Text("settings… · \(attentionSuffix(reason))")
                     } icon: {
                         Image(systemName: "exclamationmark.circle.fill")
                             .foregroundStyle(SolstoneColors.solOrange)

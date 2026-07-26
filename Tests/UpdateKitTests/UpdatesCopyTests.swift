@@ -37,7 +37,7 @@ struct UpdatesCopyTests {
         #expect(UpdatesCopy(provider: .solstone).actionRelaunchToInstall == "relaunch to install")
         #expect(
             UpdatesCopy(provider: .solstone).lastCheckedStaged(relative: "just now", version: "1.1.0")
-                == "last checked just now — version 1.1.0 ready to install"
+                == "last checked just now · version 1.1.0 ready to install"
         )
     }
 
@@ -50,7 +50,7 @@ struct UpdatesCopyTests {
     }
 
     @Test func extractingSubtitleString() {
-        #expect(UpdatesCopy(provider: .solstone).extractingSubtitle == "download complete — finalizing.")
+        #expect(UpdatesCopy(provider: .solstone).extractingSubtitle == "download complete, finalizing.")
     }
 
     @Test func byteProgressWithTotalString() {
@@ -80,12 +80,12 @@ struct UpdatesCopyTests {
     }
 
     @Test func lastCheckedUpToDateString() {
-        #expect(UpdatesCopy(provider: .solstone).lastCheckedUpToDate(relative: "just now") == "last checked just now — sol is up to date")
+        #expect(UpdatesCopy(provider: .solstone).lastCheckedUpToDate(relative: "just now") == "last checked just now · sol is up to date")
     }
 
     @Test func deferredStrings() {
         #expect(UpdatesCopy(provider: .solstone).deferredTitle(version: "1.1.0") == "deferred update 1.1.0")
-        #expect(UpdatesCopy(provider: .solstone).deferredSubtitle == "deferred — will continue after journal setup.")
+        #expect(UpdatesCopy(provider: .solstone).deferredSubtitle == "deferred, will continue after journal setup.")
     }
 
     @Test func privacyFootnoteString() {

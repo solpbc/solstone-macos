@@ -148,7 +148,7 @@ public final class CaptureCoordinator {
             }
         case .threw(let failure):
             if failure.isPermissionError {
-                Logger.general.info("[Permissions] Recording denied — screen recording permission not granted")
+                Logger.general.info("[Permissions] Recording denied, screen recording permission not granted")
                 screenRecordingGranted = false
             } else {
                 Logger.general.error("Recording failed to start: \(failure.message, privacy: .public)")
@@ -237,7 +237,7 @@ public final class CaptureCoordinator {
                         // Preflight passed but SCShareableContent failed — CDHash changed after
                         // reinstall. Reset prompted flag so user re-grants via the button.
                         PermissionChecker.resetPromptedFlag()
-                        Logger.setup.info("[Permissions] Screen recording access lost (CDHash changed?) — resetting prompt flag")
+                        Logger.setup.info("[Permissions] Screen recording access lost (CDHash changed?), resetting prompt flag")
                     }
                     screenRecordingGranted = granted
                 }

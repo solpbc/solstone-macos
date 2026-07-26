@@ -16,13 +16,13 @@ public extension UpdatesCopyProvider {
     static let solstone = UpdatesCopyProvider(
         appDisplayName: "sol",
         releaseNotesURL: URL(string: "https://solstone.app/releases/macos")!,
-        deferralLine: "deferred — will continue after journal setup."
+        deferralLine: "deferred, will continue after journal setup."
     )
 
     static let journal = UpdatesCopyProvider(
         appDisplayName: "journal",
         releaseNotesURL: URL(string: "https://solstone.app/releases/macos")!,
-        deferralLine: "deferred — will continue after your journal is ready."
+        deferralLine: "deferred, will continue after your journal is ready."
     )
 }
 
@@ -85,19 +85,19 @@ public struct UpdatesCopy: Sendable {
     }
 
     public func lastCheckedUpToDate(relative: String) -> String {
-        "last checked \(relative) — \(provider.appDisplayName) is up to date"
+        "last checked \(relative) · \(provider.appDisplayName) is up to date"
     }
 
     public func lastCheckedUpdateFound(relative: String, version: String) -> String {
-        "last checked \(relative) — version \(version) found"
+        "last checked \(relative) · version \(version) found"
     }
 
     public func lastCheckedStaged(relative: String, version: String) -> String {
-        "last checked \(relative) — version \(version) ready to install"
+        "last checked \(relative) · version \(version) ready to install"
     }
 
     public func lastCheckedFailed(relative: String) -> String {
-        "last checked \(relative) — check failed"
+        "last checked \(relative) · check failed"
     }
 
     public func lastCheckedGeneric(relative: String) -> String {
@@ -167,7 +167,7 @@ public struct UpdatesCopy: Sendable {
     }
 
     public var extractingSubtitle: String {
-        "download complete — \(finalizingSuffix)."
+        "download complete, \(finalizingSuffix)."
     }
 
     public func readyToInstallTitle(version: String) -> String {

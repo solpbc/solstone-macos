@@ -327,7 +327,7 @@ private func permissionProbeCheck(
             name: name,
             status: .warn,
             severity: nil,
-            detail: "unknown — checking permissions",
+            detail: "unknown, checking permissions",
             fix: nil
         )
     }

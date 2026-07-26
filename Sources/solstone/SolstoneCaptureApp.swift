@@ -285,7 +285,7 @@ internal func statusAccessibilityLabel(
     case .starting:
         UICopy.MENUBAR_A11Y_STARTING
     case .journalMigrationNeeded:
-        "sol — journal link needs attention"
+        "sol · journal link needs attention"
     case .connectionWaiting:
         UICopy.MENUBAR_A11Y_WAITING_FOR_JOURNAL
     case .localOnly:

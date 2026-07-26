@@ -238,7 +238,7 @@ final class JournalWindowModel {
     }
 
     var unconfiguredMessage: String? {
-        isConfigured ? nil : "nothing here yet — creating your journal comes next."
+        isConfigured ? nil : "nothing here yet. creating your journal comes next."
     }
 
     var diskUsageValue: String {

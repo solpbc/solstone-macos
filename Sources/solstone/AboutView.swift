@@ -39,12 +39,12 @@ struct AboutView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
 
-                Text("sol is part of solstone — open source, local-first.")
+                Text("sol is part of solstone: open source, local-first.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
-                Text("a public benefit corporation. your data is never sold or shared — by binding legal covenant.")
+                Text("a public benefit corporation. your data is never sold or shared, by binding legal covenant.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

@@ -1409,7 +1409,7 @@ public final class SolstoneInstaller {
     }
 
     nonisolated private static func cleanupFailureMessage(step: CleanupStep, why: String) -> String {
-        "upgrade pre-clean failed at \(step.displayName) — \(why)"
+        "upgrade pre-clean failed at \(step.displayName): \(why)"
     }
 
     nonisolated private static func append(_ data: Data, to output: InstallerOutput, stream: OutputStream) {

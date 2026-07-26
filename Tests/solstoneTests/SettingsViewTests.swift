@@ -76,7 +76,7 @@ struct SettingsViewTests {
             end: "    private var resolvedJournalName"
         )
         let headline = "your journal is getting " + "its own app"
-        let body = "nothing moved. your journal was always here " + "— now it has a name."
+        let body = "nothing moved. your journal was always here. " + "now it has a name."
         let buffering = "segments are kept on this mac " + "until your journal is back"
         let removedButton = "Button(\"not " + "now\")"
         let removedAction = "acknowledgeJournal" + "MigrationBanner"

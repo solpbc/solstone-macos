@@ -31,7 +31,7 @@ struct StatusHealthSummaryTests {
 
         #expect(empty.severity == .attention)
         #expect(empty.axValue == "external_offline")
-        #expect(empty.subtitle == "nothing is lost — sync resumes when it's back")
+        #expect(empty.subtitle == "nothing is lost · sync resumes when it's back")
         #expect(empty.subtitle?.contains("MB") == false)
         #expect(empty.subtitle?.contains("bytes") == false)
     }
@@ -61,7 +61,7 @@ struct StatusHealthSummaryTests {
         let connecting = makeSummary(isPaused: true, uploadStatus: .notSynced)
         #expect(connecting.severity == .warn)
         #expect(connecting.axValue == "paused")
-        #expect(connecting.subtitle == "paused — x.example")
+        #expect(connecting.subtitle == "paused · x.example")
     }
 
     @Test func externalInProgressRowsMapToWarningStates() {
@@ -73,7 +73,7 @@ struct StatusHealthSummaryTests {
         let syncing = makeSummary(uploadStatus: .syncing(checked: 2, total: 5))
         #expect(syncing.severity == .warn)
         #expect(syncing.axValue == "external_syncing")
-        #expect(syncing.title == "catching up — 2 of 5 segments")
+        #expect(syncing.title == "catching up · 2 of 5 segments")
         #expect(syncing.subtitle == "syncing to x.example")
 
         let uploading = makeSummary(uploadStatus: .uploading(segment: "s2"), pendingCount: 4)
@@ -120,7 +120,7 @@ struct StatusHealthSummaryTests {
         let summary = makeSummary(uploadStatus: .synced, setupVerdict: .ready)
 
         #expect(summary.severity == .good)
-        #expect(summary.title == "all good — on, synced to x.example")
+        #expect(summary.title == "all good · on, synced to x.example")
         #expect(summary.axValue == "external_synced")
     }
 
@@ -129,7 +129,7 @@ struct StatusHealthSummaryTests {
 
         #expect(summary.severity == .attention)
         #expect(summary.title == "2 things need attention")
-        #expect(summary.subtitle == "all good — on, synced to x.example")
+        #expect(summary.subtitle == "all good · on, synced to x.example")
         #expect(summary.axValue == SetupGroupVerdictAXState.needsAttention.axToken)
     }
 

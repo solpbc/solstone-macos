@@ -267,7 +267,7 @@ struct JournalWindowModelTests {
         try await Task.sleep(for: .milliseconds(25))
 
         #expect(gate.prepareCalls == 0)
-        #expect(appModel.windowModel.unconfiguredMessage == "nothing here yet — creating your journal comes next.")
+        #expect(appModel.windowModel.unconfiguredMessage == "nothing here yet. creating your journal comes next.")
     }
 
     @Test func launchAtLoginToggleUsesConfig() {

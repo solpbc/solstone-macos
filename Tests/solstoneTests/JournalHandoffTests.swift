@@ -759,7 +759,7 @@ struct JournalHandoffTests {
         world.appcast.failure = .feedNotYetPublished
 
         let result = await world.run()
-        let message = "the journal app isn't available yet " + "— sol is keeping everything safe on this mac"
+        let message = "the journal app isn't available yet. " + "sol is keeping everything safe on this mac"
 
         #expect(result == .failed(.feedNotYetPublished))
         #expect(JournalHandoffFailure.feedNotYetPublished.ownerMessage == message)

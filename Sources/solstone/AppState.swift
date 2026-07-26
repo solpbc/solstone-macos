@@ -178,7 +178,7 @@ public final class AppState {
             return "Paused"
         }
         if isRecording {
-            return "Recording"
+            return "on"
         }
         return "Idle"
     }
@@ -1189,7 +1189,7 @@ public final class AppState {
             return
         }
 
-        Logger.general.info("External defaults change detected — reloading journal connection config")
+        Logger.general.info("External defaults change detected, reloading journal connection config")
         let identityChanged = fresh.serverURL != config.serverURL ||
             fresh.serverKey != config.serverKey ||
             fresh.serviceMode != config.serviceMode ||

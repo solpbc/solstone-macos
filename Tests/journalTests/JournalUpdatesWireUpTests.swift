@@ -40,7 +40,7 @@ struct JournalUpdatesWireUpTests {
         #expect(JournalPane.updates.systemImage == "arrow.down.circle")
         #expect(source.contains("UpdatesTabView(controller: updateController, copy: UpdatesCopy(provider: .journal))"))
         #expect(provider.appDisplayName == "journal")
-        #expect(provider.deferralLine == "deferred — will continue after your journal is ready.")
+        #expect(provider.deferralLine == "deferred, will continue after your journal is ready.")
         #expect(provider.releaseNotesURL.absoluteString == UpdatesCopyProvider.solstone.releaseNotesURL.absoluteString)
     }
 
