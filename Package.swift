@@ -60,6 +60,14 @@ let package = Package(
                 .swiftLanguageMode(.v6)
             ]
         ),
+        .executableTarget(
+            name: "journal-runtime-probe",
+            dependencies: ["JournalRuntime"],
+            path: "Sources/journal-runtime-probe",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
         .target(
             name: "UpdateKit",
             dependencies: [

@@ -1,6 +1,6 @@
 .PHONY: build release release-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist bundle-dist-journal bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
-        vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-materialize-smoke brand-sync \
+        vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-runtime-probe brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
 
 # Default goal when running bare `make` — build the project. brand-sync is
@@ -729,6 +729,7 @@ bundle-dist-journal: unlock-signing signing-check vendor-uv vendor-python vendor
 	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -Fq 'Identifier=app.solstone.journal.watchdog' || { echo "error: journal watchdog identifier mismatch"; exit 1; }
 	@codesign -dvvv journal.app/Contents/Resources/python/bin/python3.13 2>&1 | grep -Fq 'Identifier=app.solstone.journal.python' || { echo "error: journal python identifier mismatch"; exit 1; }
 	@echo "✓ Signed: journal.app (journal identifiers, no profile/keychain-group verified)"
+	@$(MAKE) journal-runtime-probe
 
 run-journal: journal-app-dev
 	@open journal.app
@@ -1008,9 +1009,10 @@ release-dmg-smoke-both:
 	    (cd "$$MOUNT/journal.app/Contents/Resources/wheelhouse" && shasum -a 256 -c MANIFEST.sha256) || { echo "error: both-DMG journal wheelhouse sha256 manifest verification failed"; exit 1; }; \
 	    echo "release-dmg-smoke-both: ok"
 
-journal-materialize-smoke:
+journal-runtime-probe:
 	@test -d journal.app || { echo "error: journal.app not found — run make bundle-dist-journal first"; exit 1; }
-	@python3 scripts/journal_materialize_smoke.py journal.app "$(SOLSTONE_PIN_VERSION)"
+	@swift build --product journal-runtime-probe
+	@.build/debug/journal-runtime-probe --app journal.app --regime both
 
 # Install development dependencies needed for local build workflows
 install: check-dev-deps
