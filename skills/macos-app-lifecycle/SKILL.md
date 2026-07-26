@@ -11,7 +11,7 @@ description: >
 
 `SolstoneCaptureApp.swift` — status bar app, no dock icon, no main window.
 
-- **`.menuBarExtraStyle(.menu)`** — standard dropdown (vs `.window` for detachable popover). Label uses `appState.statusIconName` for reactive SF Symbol changes: `record.circle.fill`, `pause.circle.fill`, `circle.lefthalf.filled` (paused), `exclamationmark.circle.fill` (error), `circle` (idle).
+- **`.menuBarExtraStyle(.menu)`** — standard dropdown (vs `.window` for detachable popover). Label renders `StatusIcon`, which derives `MenubarPresentation` from `AppState.menubarPresentation(durableUpdateStatus:)` and draws `MenubarIconGlyphView` with bundled template PDF assets plus an optional badge.
 - **`LSUIElement = true`** in Info.plist hides from Dock and Cmd-Tab.
 - **`Window` scene alongside MenuBarExtra** — Settings window with ID `"settings"`, opened via `@Environment(\.openWindow)`. Needs `NSApp.activate(ignoringOtherApps: true)` because menu bar apps don't take focus.
 - **`@NSApplicationDelegateAdaptor`** — bridges to `AppDelegate` for `applicationWillTerminate`. SwiftUI Scene has no shutdown hook.

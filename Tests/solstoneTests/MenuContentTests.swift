@@ -238,7 +238,11 @@ struct MenuContentTests {
     }
 
     @Test func statusAccessibilityLabelNamesEveryAttentionReason() {
+        var suffixes = Set<String>()
+        var labels = Set<String>()
+
         for reason in AttentionReason.allCases {
+            let suffix = attentionSuffix(reason)
             let label = statusAccessibilityLabel(
                 presentation: MenubarPresentation(
                     observation: .observing,
@@ -250,8 +254,13 @@ struct MenuContentTests {
                 solChatPending: nil
             )
 
-            #expect(label.contains(attentionSuffix(reason)))
+            #expect(!suffix.isEmpty, "\(String(describing: reason)) should have a non-empty suffix")
+            #expect(suffixes.insert(suffix).inserted, "\(String(describing: reason)) should have a distinct suffix")
+            #expect(label.contains(suffix))
+            #expect(labels.insert(label).inserted, "\(String(describing: reason)) should have a distinct label")
         }
+
+        #expect(labels.count == AttentionReason.allCases.count)
     }
 
     @Test func statusAccessibilityLabelSuppressesAlreadySaidAttention() {
@@ -289,6 +298,35 @@ struct MenuContentTests {
 
         #expect(label == "\(UICopy.MENUBAR_A11Y_OBSERVING_CONNECTED) · \(UICopy.SETTINGS_ATTENTION_UPDATE_AVAILABLE) · \(SolChatLiterals.unreachableTooltip)")
         #expect(!label.contains(pending.summary))
+    }
+
+    @Test @MainActor func staleChatDrawsNoBadgeButStaysInA11yLabel() {
+        let state = AppState.forSnapshot(config: AppConfig(
+            serverURL: "https://example.com",
+            serverKey: "key",
+            serviceMode: .external
+        ))
+        state.initialPermissionCheckComplete = true
+        state.screenRecordingGranted = true
+        state.microphoneGranted = true
+        state.isRecording = true
+        state.uploadCoordinator.status = .synced
+        state.solChatStale = true
+        state.solChatPending = nil
+
+        let presentation = state.menubarPresentation(durableUpdateStatus: .idle)
+        let label = statusAccessibilityLabel(
+            presentation: presentation,
+            errorMessage: nil,
+            solChatStale: state.solChatStale,
+            solChatPending: state.solChatPending
+        )
+
+        #expect(!presentation.showsAttentionBadge)
+        #expect(presentation.message == nil)
+        #expect(presentation.overlayState == .none)
+        #expect(presentation.overlayState.badgeTreatment == nil)
+        #expect(label.contains(SolChatLiterals.unreachableTooltip))
     }
 
     @Test func journalClientRowsUseExpectedAXTokens() {

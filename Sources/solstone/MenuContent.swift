@@ -58,7 +58,7 @@ struct MenuContent: View {
             } label: {
                 if let reason = settingsAttentionToShow {
                     Label {
-                        Text("settings… — \(settingsAttentionSuffix(reason))")
+                        Text("settings… — \(attentionSuffix(reason))")
                     } icon: {
                         Image(systemName: "exclamationmark.circle.fill")
                             .foregroundStyle(SolstoneColors.solOrange)
@@ -240,8 +240,4 @@ func pausedHeaderText(timeRemaining: String?) -> String {
                    .replacingOccurrences(of: " secs", with: " sec")
                    .replacingOccurrences(of: " hrs", with: " hr")
     return "paused, \(compact) left"
-}
-
-func settingsAttentionSuffix(_ reason: AttentionReason) -> String {
-    attentionSuffix(reason)
 }

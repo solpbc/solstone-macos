@@ -73,7 +73,8 @@ struct MenubarWireUpTests {
             "AXID.Menubar.statusIconState",
             "AXID.Menubar.statusIconOverlayState",
             "overlayPresentation.axToken",
-            "statusAccessibilityLabel("
+            "statusAccessibilityLabel(",
+            ".help(SolChatLiterals.unreachableTooltip)"
         ]
 
         for reference in references {

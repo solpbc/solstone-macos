@@ -4,6 +4,7 @@
 import Foundation
 import Testing
 import SolstoneCore
+import UpdateKit
 @testable import solstone
 
 @Suite("AppState attention")
@@ -192,6 +193,30 @@ struct AppStateAttentionTests {
         #expect(presentation.message == .chatPending)
         #expect(presentation.icon == .recording)
         #expect(presentation.overlayState == .attention)
+    }
+
+    @Test func updateAttentionStatusesReachRecordingIcon() {
+        let statuses: [(String, DurableUpdateStatus)] = [
+            ("available", .available(version: "1.3.9", releaseNotes: nil)),
+            ("staged", .staged(version: "1.3.9", releaseNotes: nil)),
+            ("deferred", .deferred(version: "1.3.9")),
+            ("failedWithAvailable", .failedWithAvailable(version: "1.3.9")),
+            ("failed", .failed),
+        ]
+
+        for (name, status) in statuses {
+            let state = makeState(config: configuredExternal())
+            state.initialPermissionCheckComplete = true
+            state.screenRecordingGranted = true
+            state.microphoneGranted = true
+            state.isRecording = true
+            state.uploadCoordinator.status = .synced
+
+            let presentation = state.menubarPresentation(durableUpdateStatus: status)
+
+            #expect(presentation.icon == .recording, "\(name) should preserve the recording icon")
+            #expect(presentation.showsAttentionBadge, "\(name) should show the attention badge")
+        }
     }
 
     @Test func visitedSettingsTabsPersistAndRestore() {
