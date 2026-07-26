@@ -45,6 +45,7 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
     private var materializedToolBinariesSideEffect: (@Sendable () -> Void)?
     public var materializedExposureOverride: [String]?
     public var preferQueuedVersionResponses = false
+    public var uvPlainShebangNames: Set<String> = []
 
     public init() {}
 
@@ -212,7 +213,13 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
             for name in ["sol", "journal", "solstone", "mlx-vlm-server"] {
                 let exportedTool = toolBinURL.appendingPathComponent(name)
                 let body: String
-                if uvPolyglotNames.contains(name) {
+                if uvPlainShebangNames.contains(name) {
+                    body = """
+                    #!\(python.path)
+                    # -*- coding: utf-8 -*-
+                    # fake uv plain shebang entry
+                    """
+                } else if uvPolyglotNames.contains(name) {
                     body = """
                     #!/bin/sh
                     '''exec' \(shellSingleQuoted(python.path)) "$0" "$@"

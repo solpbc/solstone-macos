@@ -51,7 +51,17 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
 
     private enum ExportedEntryClassification {
         case uvPolyglot
-        case raw
+        case uvPlainShebang
+        case native
+
+        var isUvAuthored: Bool {
+            switch self {
+            case .uvPolyglot, .uvPlainShebang:
+                return true
+            case .native:
+                return false
+            }
+        }
     }
 
     private enum ExportedEntryContainmentPhase {
@@ -65,6 +75,12 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         let rawDestination: String
         let resolved: URL
         let classification: ExportedEntryClassification
+        let inspectedPrefix: Data
+    }
+
+    private struct ExportedEntryInspection {
+        let classification: ExportedEntryClassification
+        let inspectedPrefix: Data
     }
 
     private let runtimeRootURL: URL
@@ -299,8 +315,8 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
             let entries = try discoverExportedEntries(in: layout)
             for entry in entries {
                 try assertUniversalExportedEntryContract(entry, rootURL: layout.rootURL, phase: phase)
-                if entry.classification == .uvPolyglot {
-                    try assertUvPolyglotContract(entry, rootURL: layout.rootURL, phase: phase)
+                if entry.classification.isUvAuthored {
+                    try assertUvAuthoredEntryContract(entry, rootURL: layout.rootURL, phase: phase)
                 }
             }
         } catch let error as RuntimeMaterializerError {
@@ -420,19 +436,20 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
                 )
             }
             let resolved = URL(fileURLWithPath: resolvedPath)
-            let classification = try classifyExportedEntry(named: name, resolved: resolved)
+            let inspection = try classifyExportedEntry(named: name, resolved: resolved, rootURL: layout.rootURL)
             exportedEntries.append(ExportedEntry(
                 name: name,
                 entry: entry,
                 rawDestination: rawDestination,
                 resolved: resolved,
-                classification: classification
+                classification: inspection.classification,
+                inspectedPrefix: inspection.inspectedPrefix
             ))
         }
         return exportedEntries
     }
 
-    private func classifyExportedEntry(named name: String, resolved: URL) throws -> ExportedEntryClassification {
+    private func classifyExportedEntry(named name: String, resolved: URL, rootURL: URL) throws -> ExportedEntryInspection {
         let data: Data
         do {
             let handle = try FileHandle(forReadingFrom: resolved)
@@ -444,27 +461,35 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
             )
         }
 
-        guard let text = String(data: data, encoding: .utf8),
-              text.filter({ $0 == "\n" }).count >= 2 else {
-            return .raw
+        guard let text = String(data: data, encoding: .utf8) else {
+            return ExportedEntryInspection(classification: .native, inspectedPrefix: data)
         }
         let lines = text.components(separatedBy: "\n")
-        return Self.isUvPolyglot(lines) ? .uvPolyglot : .raw
+        if Self.isUvPolyglot(lines) {
+            return ExportedEntryInspection(classification: .uvPolyglot, inspectedPrefix: data)
+        }
+        if let line = lines.first,
+           let interpreter = uvPlainShebangInterpreterPath(from: line),
+           pathIsLexicallyUnderRoot(interpreter, rootURL: rootURL) {
+            return ExportedEntryInspection(classification: .uvPlainShebang, inspectedPrefix: data)
+        }
+        return ExportedEntryInspection(classification: .native, inspectedPrefix: data)
     }
 
     /// Makes every exported entry in `bin/` survive temp -> final rename.
-    /// uv writes exported entries as absolute symlinks into `<tools>/.../bin/`; uv polyglot targets also
-    /// carry an absolute python trampoline into the staging venv. Rewrite every exported symlink to a
-    /// relative target, and rewrite only uv polyglot trampolines to the final venv python.
+    /// uv writes exported entries as absolute symlinks into `<tools>/.../bin/`; uv-authored targets
+    /// carry either a polyglot trampoline or a plain absolute python shebang into the staging venv.
+    /// Rewrite every exported symlink to a relative target, and rewrite every uv-authored target to
+    /// the relocation-safe polyglot form naming the final venv python.
     private func makeRelocationSafe(layout: SolstoneRuntimeLayout, finalURL: URL) throws {
         let stagingRootPath = try canonicalExistingPath(layout.rootURL.path)
         for entry in try discoverExportedEntries(in: layout) {
             try assertUniversalExportedEntryContract(entry, rootURL: layout.rootURL, phase: .staging)
             let targetRelToRoot = relativePathInsideRoot(canonicalPath: entry.resolved.path, canonicalRootPath: stagingRootPath)
-            if entry.classification == .uvPolyglot {
+            if entry.classification.isUvAuthored {
                 let finalTarget = finalURL.standardizedFileURL.appendingPathComponent(targetRelToRoot)
                 let finalVenvPython = finalTarget.deletingLastPathComponent().appendingPathComponent("python").path
-                try rewriteUvPolyglotInterpreter(of: entry.resolved, to: finalVenvPython)
+                try rewriteUvAuthoredEntryAsPolyglot(entry, to: finalVenvPython)
             }
             // Replace the absolute entrypoint symlink with a relative one.
             try fileManager.removeItem(at: entry.entry)
@@ -472,32 +497,68 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         }
     }
 
-    private func rewriteUvPolyglotInterpreter(of script: URL, to interpreter: String) throws {
-        let original = try String(contentsOf: script, encoding: .utf8)
-        var lines = original.components(separatedBy: "\n")
-        guard Self.isUvPolyglot(lines) else {
+    private func rewriteUvAuthoredEntryAsPolyglot(_ entry: ExportedEntry, to interpreter: String) throws {
+        let original = try Data(contentsOf: entry.resolved)
+        let attrs = try fileManager.attributesOfItem(atPath: entry.resolved.path)
+        let rewritten: Data
+        switch entry.classification {
+        case .uvPolyglot:
+            guard let firstNewline = original.firstIndex(of: 0x0A) else {
+                throw RuntimeMaterializerError.verificationFailed(
+                    "entrypoint \(entry.name) does not match uv polyglot trampoline"
+                )
+            }
+            let line1Start = original.index(after: firstNewline)
+            guard line1Start < original.endIndex,
+                  let secondNewline = original[line1Start...].firstIndex(of: 0x0A) else {
+                throw RuntimeMaterializerError.verificationFailed(
+                    "entrypoint \(entry.name) does not match uv polyglot trampoline"
+                )
+            }
+            var data = Data()
+            data.append(original[..<line1Start])
+            data.append(Data(uvPolyglotExecLine(for: interpreter).utf8))
+            data.append(original[secondNewline...])
+            rewritten = data
+        case .uvPlainShebang:
+            let bodyStart: Data.Index
+            if let firstNewline = original.firstIndex(of: 0x0A) {
+                bodyStart = original.index(after: firstNewline)
+            } else {
+                bodyStart = original.endIndex
+            }
+            var data = Data()
+            data.append(Data(uvPolyglotHeader(for: interpreter).utf8))
+            data.append(original[bodyStart...])
+            rewritten = data
+        case .native:
             throw RuntimeMaterializerError.verificationFailed(
-                "entrypoint \(script.lastPathComponent) does not match uv polyglot trampoline"
+                "entrypoint \(entry.name) is not uv-authored"
             )
         }
-        lines[1] = "'''exec' " + shellSingleQuoted(interpreter) + " \"$0\" \"$@\""
-        let rewritten = lines.joined(separator: "\n")
-        let attrs = try fileManager.attributesOfItem(atPath: script.path)
-        try Data(rewritten.utf8).write(to: script, options: .atomic)
+        try rewritten.write(to: entry.resolved, options: .atomic)
         if let perms = attrs[.posixPermissions] {
-            try fileManager.setAttributes([.posixPermissions: perms], ofItemAtPath: script.path)
+            try fileManager.setAttributes([.posixPermissions: perms], ofItemAtPath: entry.resolved.path)
         }
     }
 
+    private func uvPolyglotHeader(for interpreter: String) -> String {
+        "#!/bin/sh\n" + uvPolyglotExecLine(for: interpreter) + "\n' '''\n"
+    }
+
+    private func uvPolyglotExecLine(for interpreter: String) -> String {
+        "'''exec' " + shellSingleQuoted(interpreter) + " \"$0\" \"$@\""
+    }
+
     /// Fails loudly if any exported entry would dangle post-rename. Every entry gets universal
-    /// relocation checks; uv polyglot entries also get trampoline checks. `sol` and `journal` are
+    /// relocation checks; uv-authored entries also get interpreter checks. `sol` and `journal` are
     /// required exported entries and get a `--version` liveness probe.
     private func assertRelocationSafe(layout: SolstoneRuntimeLayout) async throws {
         let entries = try discoverExportedEntries(in: layout)
         for entry in entries {
             try assertUniversalExportedEntryContract(entry, rootURL: layout.rootURL, phase: .postRename)
-            if entry.classification == .uvPolyglot {
-                try assertUvPolyglotContract(entry, rootURL: layout.rootURL, phase: .postRename)
+            if entry.classification.isUvAuthored {
+                try assertUvAuthoredEntryContract(entry, rootURL: layout.rootURL, phase: .postRename)
             }
         }
 
@@ -596,35 +657,40 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
                     "entrypoint \(entry.name) target escapes final root: \(canonicalPath)"
                 }
             )
+            if let reference = relocatedStagingReference(in: entry.inspectedPrefix, rootURL: rootURL) {
+                throw RuntimeMaterializerError.verificationFailed(
+                    "entrypoint \(entry.name) references staging dir after relocation: \(reference)"
+                )
+            }
         }
     }
 
-    private func assertUvPolyglotContract(
+    private func assertUvAuthoredEntryContract(
         _ entry: ExportedEntry,
         rootURL: URL,
         phase: ExportedEntryContainmentPhase
     ) throws {
         let scriptText = try String(contentsOf: entry.resolved, encoding: .utf8)
         let lines = scriptText.components(separatedBy: "\n")
-        guard lines.first == "#!/bin/sh" else {
-            throw RuntimeMaterializerError.verificationFailed("entrypoint \(entry.name) lost its space-safe shebang")
-        }
-        if phase == .postRename, lines.contains(where: { containsStagingSegment(in: $0) }) {
-            throw RuntimeMaterializerError.verificationFailed("entrypoint \(entry.name) references staging dir after relocation")
-        }
-        guard lines.count >= 2,
-              let interpreterPath = uvPolyglotInterpreterPath(from: lines[1]) else {
-            throw RuntimeMaterializerError.verificationFailed("entrypoint \(entry.name) lost its uv python trampoline")
-        }
-        try assertContainedInterpreterPath(
-            interpreterPath,
-            rootURL: rootURL,
-            phase: phase,
-            what: "entrypoint \(entry.name) trampoline",
-            missingMessage: { path in
+        let interpreterPath: String
+        let what: String
+        let missingTarget: (String) -> String
+        let escapedTarget: (String) -> String
+        switch entry.classification {
+        case .uvPolyglot:
+            guard lines.first == "#!/bin/sh" else {
+                throw RuntimeMaterializerError.verificationFailed("entrypoint \(entry.name) lost its space-safe shebang")
+            }
+            guard lines.count >= 2,
+                  let path = uvPolyglotInterpreterPath(from: lines[1]) else {
+                throw RuntimeMaterializerError.verificationFailed("entrypoint \(entry.name) lost its uv python trampoline")
+            }
+            interpreterPath = path
+            what = "entrypoint \(entry.name) trampoline"
+            missingTarget = { path in
                 "entrypoint \(entry.name) trampoline target missing or dangling: \(path)"
-            },
-            escapeMessage: { reportedPath in
+            }
+            escapedTarget = { reportedPath in
                 switch phase {
                 case .staging:
                     return "entrypoint \(entry.name) trampoline escapes staging root: \(reportedPath)"
@@ -632,6 +698,37 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
                     return "entrypoint \(entry.name) trampoline escapes final root: \(reportedPath)"
                 }
             }
+        case .uvPlainShebang:
+            guard let line = lines.first,
+                  let path = uvPlainShebangInterpreterPath(from: line) else {
+                throw RuntimeMaterializerError.verificationFailed("entrypoint \(entry.name) lost its uv python shebang")
+            }
+            interpreterPath = path
+            what = "entrypoint \(entry.name) shebang"
+            missingTarget = { path in
+                "entrypoint \(entry.name) shebang target missing or dangling: \(path)"
+            }
+            escapedTarget = { reportedPath in
+                switch phase {
+                case .staging:
+                    return "entrypoint \(entry.name) shebang escapes staging root: \(reportedPath)"
+                case .postRename:
+                    return "entrypoint \(entry.name) shebang escapes final root: \(reportedPath)"
+                }
+            }
+        case .native:
+            return
+        }
+        if phase == .postRename, lines.contains(where: { containsStagingSegment(in: $0) }) {
+            throw RuntimeMaterializerError.verificationFailed("entrypoint \(entry.name) references staging dir after relocation")
+        }
+        try assertContainedInterpreterPath(
+            interpreterPath,
+            rootURL: rootURL,
+            phase: phase,
+            what: what,
+            missingMessage: missingTarget,
+            escapeMessage: escapedTarget
         )
     }
 
@@ -764,8 +861,100 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
         text.split(separator: "/").contains { $0.hasPrefix(".tmp-") }
     }
 
+    private func relocatedStagingReference(in data: Data, rootURL: URL) -> String? {
+        let roots = uniquePathSpellings(pathSpellings(for: runtimeRootURL) + pathSpellings(for: rootURL))
+        for root in roots {
+            let rootData = Data(root.utf8)
+            guard !rootData.isEmpty else { continue }
+            var searchStart = data.startIndex
+            while searchStart < data.endIndex,
+                  let range = data.range(of: rootData, options: [], in: searchStart..<data.endIndex) {
+                let reference = pathReference(in: data, startingAt: range.lowerBound)
+                if containsStagingSegment(inPathData: reference) {
+                    return printableReference(reference)
+                }
+                searchStart = range.upperBound
+            }
+        }
+        if let segment = firstStagingSegment(in: data) {
+            return printableReference(segment)
+        }
+        return nil
+    }
+
+    private func pathReference(in data: Data, startingAt start: Data.Index) -> Data {
+        var end = start
+        while end < data.endIndex, !isPathReferenceTerminator(data[end]) {
+            end = data.index(after: end)
+        }
+        return Data(data[start..<end])
+    }
+
+    private func isPathReferenceTerminator(_ byte: UInt8) -> Bool {
+        switch byte {
+        case 0x00, 0x0A, 0x22:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func firstStagingSegment(in data: Data) -> Data? {
+        var segmentStart = data.startIndex
+        var index = data.startIndex
+        while index < data.endIndex {
+            if data[index] == 0x2F {
+                let segment = data[segmentStart..<index]
+                if segmentHasStagingPrefix(segment) {
+                    return Data(segment)
+                }
+                segmentStart = data.index(after: index)
+            }
+            index = data.index(after: index)
+        }
+        let segment = data[segmentStart..<data.endIndex]
+        return segmentHasStagingPrefix(segment) ? Data(segment) : nil
+    }
+
+    private func containsStagingSegment(inPathData data: Data) -> Bool {
+        firstStagingSegment(in: data) != nil
+    }
+
+    private func segmentHasStagingPrefix(_ segment: Data.SubSequence) -> Bool {
+        let prefix: [UInt8] = [0x2E, 0x74, 0x6D, 0x70, 0x2D]
+        guard segment.count >= prefix.count else { return false }
+        for (offset, byte) in prefix.enumerated() {
+            if segment[segment.index(segment.startIndex, offsetBy: offset)] != byte {
+                return false
+            }
+        }
+        return true
+    }
+
+    private func printableReference(_ data: Data) -> String {
+        if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+            return text
+        }
+        return data.map { String(format: "%02x", $0) }.joined()
+    }
+
     private static func isUvPolyglot(_ lines: [String]) -> Bool {
         lines.count >= 2 && lines[0] == "#!/bin/sh" && lines[1].hasPrefix("'''exec' '")
+    }
+
+    private func uvPlainShebangInterpreterPath(from line: String) -> String? {
+        let prefix = "#!"
+        guard line.hasPrefix(prefix) else { return nil }
+        let path = String(line.dropFirst(prefix.count))
+        guard path.hasPrefix("/") else { return nil }
+        return path
+    }
+
+    private func pathIsLexicallyUnderRoot(_ path: String, rootURL: URL) -> Bool {
+        pathSpellings(for: rootURL).contains { root in
+            let prefix = root.hasSuffix("/") ? root : root + "/"
+            return path != root && path.hasPrefix(prefix)
+        }
     }
 
     private func uvPolyglotInterpreterPath(from line: String) -> String? {
@@ -1023,14 +1212,30 @@ public final class RuntimeMaterializer: RuntimeMaterializing, @unchecked Sendabl
     }
 
     private func runtimeRootPathSpellings() -> [String] {
+        pathSpellings(for: runtimeRootURL)
+    }
+
+    private func pathSpellings(for url: URL) -> [String] {
         var paths: [String] = []
         for path in [
-            runtimeRootURL.standardizedFileURL.path,
-            runtimeRootURL.resolvingSymlinksInPath().standardizedFileURL.path
+            url.standardizedFileURL.path,
+            url.resolvingSymlinksInPath().standardizedFileURL.path
         ] where !paths.contains(path) {
             paths.append(path)
         }
+        if let canonicalPath = try? canonicalExistingPath(url.path),
+           !paths.contains(canonicalPath) {
+            paths.append(canonicalPath)
+        }
         return paths
+    }
+
+    private func uniquePathSpellings(_ spellings: [String]) -> [String] {
+        var result: [String] = []
+        for spelling in spellings where !result.contains(spelling) {
+            result.append(spelling)
+        }
+        return result
     }
 
     private func referencedGenerationKeys(
