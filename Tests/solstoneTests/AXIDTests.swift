@@ -88,6 +88,7 @@ struct AXIDTests {
         expectTokensMatchGrammar(SettingsView.SidebarBadgeState.allCases.map(\.axToken))
         expectTokensMatchGrammar(AXPermissionState.allCases.map(\.axToken))
         expectTokensMatchGrammar(MenubarIconState.allCases.map(\.axToken))
+        expectTokensMatchGrammar(MenubarIconOverlayState.allCases.map(\.axToken))
         expectTokensMatchGrammar(MenubarStatusRowState.allCases.map(\.axToken))
         expectTokensMatchGrammar(SettingsObservationAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(SetupCheckRowAXState.allCases.map(\.axToken))

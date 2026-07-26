@@ -3003,14 +3003,13 @@ struct SettingsView: View {
 }
 
 func updatesSidebarBadge(for status: DurableUpdateStatus) -> SettingsView.SidebarBadgeState {
-    switch status {
-    case .deferred, .staged, .failedWithAvailable, .available, .failed:
-        return .attention
-    case .upToDate:
+    if status == .upToDate {
         return .done
-    case .idle:
-        return .blank
     }
+    if updateAttentionReason(for: status) != nil {
+        return .attention
+    }
+    return .blank
 }
 
 /// Row view for a microphone in the priority list

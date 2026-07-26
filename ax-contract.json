@@ -493,8 +493,7 @@
     ],
     "MenubarIconOverlayState" : [
       "none",
-      "journal_setup",
-      "chat_stale",
+      "attention",
       "chat_pending"
     ],
     "MenubarIconState" : [

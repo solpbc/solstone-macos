@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import Foundation
 import os
 import SolstoneCore
 import Testing
@@ -153,60 +154,60 @@ struct MenuContentTests {
         #expect(!source.contains("NSWorkspace.shared.open"))
     }
 
-    @Test func firstSettingsAttentionTruthTable() {
-        #expect(firstSettingsAttention(
+    @Test func menubarPresentationAttentionTruthTable() {
+        #expect(presentationAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: false,
             durableUpdateStatus: .idle
         ) == nil)
 
-        #expect(firstSettingsAttention(
+        #expect(presentationAttention(
             permissionsNeedAttention: true,
             journalNeedsAttention: false,
             durableUpdateStatus: .idle
         ) == .permissions)
-        #expect(firstSettingsAttention(
+        #expect(presentationAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: true,
             durableUpdateStatus: .idle
         ) == .journal)
-        #expect(firstSettingsAttention(
+        #expect(presentationAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: false,
             durableUpdateStatus: .available(version: "1.3.9", releaseNotes: nil)
         ) == .updateAvailable)
-        #expect(firstSettingsAttention(
+        #expect(presentationAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: false,
             durableUpdateStatus: .failed
         ) == .updateCheckFailed)
 
-        #expect(firstSettingsAttention(
+        #expect(presentationAttention(
             permissionsNeedAttention: true,
             journalNeedsAttention: true,
             durableUpdateStatus: .idle
         ) == .permissions)
-        #expect(firstSettingsAttention(
+        #expect(presentationAttention(
             permissionsNeedAttention: true,
             journalNeedsAttention: false,
             durableUpdateStatus: .available(version: "1.3.9", releaseNotes: nil)
         ) == .permissions)
-        #expect(firstSettingsAttention(
+        #expect(presentationAttention(
             permissionsNeedAttention: true,
             journalNeedsAttention: false,
             durableUpdateStatus: .failed
         ) == .permissions)
-        #expect(firstSettingsAttention(
+        #expect(presentationAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: true,
             durableUpdateStatus: .available(version: "1.3.9", releaseNotes: nil)
         ) == .journal)
-        #expect(firstSettingsAttention(
+        #expect(presentationAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: true,
             durableUpdateStatus: .failed
         ) == .journal)
-        #expect(firstSettingsAttention(
+        #expect(presentationAttention(
             permissionsNeedAttention: false,
             journalNeedsAttention: false,
             durableUpdateStatus: .failedWithAvailable(version: "1.3.9")
@@ -223,51 +224,91 @@ struct MenuContentTests {
         #expect(updatesSidebarBadge(for: .idle) == .blank)
     }
 
-    @Test func settingsAttentionSuffixToShowTruthTable() {
-        #expect(settingsAttentionSuffixToShow(
-            reason: .journal,
-            statusRowCarriesPermissions: false,
-            statusRowCarriesJournal: false
-        ) == .journal)
-        #expect(settingsAttentionSuffixToShow(
-            reason: .journal,
-            statusRowCarriesPermissions: false,
-            statusRowCarriesJournal: true
-        ) == nil)
+    @Test func attentionToSurfaceDerivesSuppressionFromObservationRow() {
+        #expect(attentionToSurface(.journal, alreadySaidBy: .observing) == .journal)
+        #expect(attentionToSurface(.journal, alreadySaidBy: .journalMigrationNeeded) == nil)
+        #expect(attentionToSurface(.journal, alreadySaidBy: .localOnly) == nil)
 
-        #expect(settingsAttentionSuffixToShow(
-            reason: .permissions,
-            statusRowCarriesPermissions: true,
-            statusRowCarriesJournal: false
-        ) == nil)
-        #expect(settingsAttentionSuffixToShow(
-            reason: .permissions,
-            statusRowCarriesPermissions: false,
-            statusRowCarriesJournal: false
-        ) == .permissions)
+        #expect(attentionToSurface(.permissions, alreadySaidBy: .permissions) == nil)
+        #expect(attentionToSurface(.permissions, alreadySaidBy: .observing) == .permissions)
 
-        #expect(settingsAttentionSuffixToShow(
-            reason: .updateAvailable,
-            statusRowCarriesPermissions: false,
-            statusRowCarriesJournal: false
-        ) == .updateAvailable)
-        #expect(settingsAttentionSuffixToShow(
-            reason: .updateCheckFailed,
-            statusRowCarriesPermissions: false,
-            statusRowCarriesJournal: false
-        ) == .updateCheckFailed)
+        #expect(attentionToSurface(.updateAvailable, alreadySaidBy: .permissions) == .updateAvailable)
+        #expect(attentionToSurface(.updateCheckFailed, alreadySaidBy: .localOnly) == .updateCheckFailed)
+        #expect(attentionToSurface(nil, alreadySaidBy: .observing) == nil)
+    }
 
-        #expect(settingsAttentionSuffixToShow(
-            reason: nil,
-            statusRowCarriesPermissions: false,
-            statusRowCarriesJournal: false
-        ) == nil)
+    @Test func statusAccessibilityLabelNamesEveryAttentionReason() {
+        for reason in AttentionReason.allCases {
+            let label = statusAccessibilityLabel(
+                presentation: MenubarPresentation(
+                    observation: .observing,
+                    attention: reason,
+                    message: nil
+                ),
+                errorMessage: nil,
+                solChatStale: false,
+                solChatPending: nil
+            )
+
+            #expect(label.contains(attentionSuffix(reason)))
+        }
+    }
+
+    @Test func statusAccessibilityLabelSuppressesAlreadySaidAttention() {
+        let permissions = statusAccessibilityLabel(
+            presentation: MenubarPresentation(observation: .permissions, attention: .permissions, message: nil),
+            errorMessage: nil,
+            solChatStale: false,
+            solChatPending: nil
+        )
+        let localOnly = statusAccessibilityLabel(
+            presentation: MenubarPresentation(observation: .localOnly, attention: .journal, message: nil),
+            errorMessage: nil,
+            solChatStale: false,
+            solChatPending: nil
+        )
+
+        #expect(permissions == UICopy.MENUBAR_A11Y_PERMISSIONS_NEEDED)
+        #expect(localOnly == UICopy.MENUBAR_A11Y_JOURNAL_SETUP_NEEDED)
+    }
+
+    @Test func statusAccessibilityLabelPreservesStaleOverPending() {
+        let pending = SolChatRequestSummary(
+            id: "req-test",
+            summary: "review the note",
+            day: "2026-05-09",
+            eventIndex: 42,
+            receivedAt: Date(timeIntervalSince1970: 0)
+        )
+        let label = statusAccessibilityLabel(
+            presentation: MenubarPresentation(observation: .observing, attention: .updateAvailable, message: .chatPending),
+            errorMessage: nil,
+            solChatStale: true,
+            solChatPending: pending
+        )
+
+        #expect(label == "\(UICopy.MENUBAR_A11Y_OBSERVING_CONNECTED) · \(UICopy.SETTINGS_ATTENTION_UPDATE_AVAILABLE) · \(SolChatLiterals.unreachableTooltip)")
+        #expect(!label.contains(pending.summary))
     }
 
     @Test func journalClientRowsUseExpectedAXTokens() {
         #expect(MenubarStatusRowState.journalMigrationNeeded.axToken == "journal_migration_needed")
         #expect(MenubarStatusRowState.connectionWaiting.axToken == "connection_waiting")
     }
+}
+
+private func presentationAttention(
+    permissionsNeedAttention: Bool,
+    journalNeedsAttention: Bool,
+    durableUpdateStatus: DurableUpdateStatus
+) -> AttentionReason? {
+    classifyMenubarPresentation(
+        observation: .observing,
+        permissionsNeedAttention: permissionsNeedAttention,
+        journalNeedsAttention: journalNeedsAttention,
+        durableUpdateStatus: durableUpdateStatus,
+        solChatPending: false
+    ).attention
 }
 
 private func classified(

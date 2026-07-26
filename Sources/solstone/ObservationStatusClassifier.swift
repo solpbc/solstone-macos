@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import SolstoneCore
+import UpdateKit
 
 internal func classifyObservationRowState(
     permissionsNeedAttention: Bool,
@@ -48,26 +49,97 @@ internal func classifyObservationRowState(
     }
 }
 
-/// Pure presentation for the menu-bar status-icon overlay badge.
-/// `.localOnly` always paints the journal-setup badge — it wins over the
-/// sol-chat inputs so the function stays total over the (production-unreachable)
-/// `.localOnly` + sol-chat combinations. Every other row state reproduces the
-/// view's historical overlay precedence exactly: stale, then pending, then none.
-internal func menubarIconOverlayState(
-    rowState: MenubarStatusRowState,
-    solChatStale: Bool,
+internal enum AttentionReason: Equatable, CaseIterable {
+    case permissions, journal, updateAvailable, updateCheckFailed
+}
+
+internal enum MenubarMessage: Equatable, CaseIterable {
+    case chatPending
+}
+
+internal struct MenubarPresentation: Equatable {
+    let observation: MenubarStatusRowState
+    let attention: AttentionReason?
+    let message: MenubarMessage?
+
+    var icon: MenubarIconState { observation.iconState }
+    var showsAttentionBadge: Bool { attention != nil }
+
+    var overlayState: MenubarIconOverlayState {
+        if showsAttentionBadge {
+            return .attention
+        }
+        guard let message else {
+            return .none
+        }
+        switch message {
+        case .chatPending:
+            return .chatPending
+        }
+    }
+}
+
+internal func classifyMenubarPresentation(
+    observation: MenubarStatusRowState,
+    permissionsNeedAttention: Bool,
+    journalNeedsAttention: Bool,
+    durableUpdateStatus: DurableUpdateStatus,
     solChatPending: Bool
-) -> MenubarIconOverlayState {
-    if rowState == .localOnly {
-        return .journalSetup
+) -> MenubarPresentation {
+    MenubarPresentation(
+        observation: observation,
+        attention: firstAttentionReason(
+            permissionsNeedAttention: permissionsNeedAttention,
+            journalNeedsAttention: journalNeedsAttention,
+            durableUpdateStatus: durableUpdateStatus
+        ),
+        message: solChatPending ? .chatPending : nil
+    )
+}
+
+private func firstAttentionReason(
+    permissionsNeedAttention: Bool,
+    journalNeedsAttention: Bool,
+    durableUpdateStatus: DurableUpdateStatus
+) -> AttentionReason? {
+    if permissionsNeedAttention { return .permissions }
+    if journalNeedsAttention { return .journal }
+    return updateAttentionReason(for: durableUpdateStatus)
+}
+
+internal func updateAttentionReason(for status: DurableUpdateStatus) -> AttentionReason? {
+    switch status {
+    case .deferred, .staged, .failedWithAvailable, .available:
+        return .updateAvailable
+    case .failed:
+        return .updateCheckFailed
+    case .upToDate, .idle:
+        return nil
     }
-    if solChatStale {
-        return .chatStale
+}
+
+internal func attentionToSurface(
+    _ reason: AttentionReason?,
+    alreadySaidBy observation: MenubarStatusRowState
+) -> AttentionReason? {
+    guard let reason else { return nil }
+    switch reason {
+    case .permissions:
+        return observation == .permissions ? nil : reason
+    case .journal:
+        return observation == .journalMigrationNeeded || observation == .localOnly ? nil : reason
+    case .updateAvailable, .updateCheckFailed:
+        return reason
     }
-    if solChatPending {
-        return .chatPending
+}
+
+internal func attentionSuffix(_ reason: AttentionReason) -> String {
+    switch reason {
+    case .permissions: return UICopy.SETTINGS_ATTENTION_PERMISSIONS
+    case .journal: return UICopy.SETTINGS_ATTENTION_JOURNAL
+    case .updateAvailable: return UICopy.SETTINGS_ATTENTION_UPDATE_AVAILABLE
+    case .updateCheckFailed: return UICopy.SETTINGS_ATTENTION_UPDATE_CHECK_FAILED
     }
-    return .none
 }
 
 internal struct ObservationRecoveryPresentation: Equatable {
@@ -105,6 +177,16 @@ extension AppState {
             syncPaused: config.syncPaused,
             isUploadConfigured: config.isUploadConfigured,
             uploadStatus: uploadCoordinator.status
+        )
+    }
+
+    internal func menubarPresentation(durableUpdateStatus: DurableUpdateStatus) -> MenubarPresentation {
+        classifyMenubarPresentation(
+            observation: observationRowState,
+            permissionsNeedAttention: permissionsNeedAttention,
+            journalNeedsAttention: serviceNeedsAttention,
+            durableUpdateStatus: durableUpdateStatus,
+            solChatPending: solChatPending != nil
         )
     }
 }

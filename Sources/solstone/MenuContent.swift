@@ -61,7 +61,7 @@ struct MenuContent: View {
                         Text("settings… — \(settingsAttentionSuffix(reason))")
                     } icon: {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(SolstoneColors.solOrange)
                     }
                 } else {
                     Text("settings…")
@@ -86,15 +86,14 @@ struct MenuContent: View {
 
     // MARK: - Status Row
 
-    private var settingsAttentionToShow: SettingsAttentionReason? {
-        settingsAttentionSuffixToShow(
-            reason: firstSettingsAttention(
-                permissionsNeedAttention: appState.permissionsNeedAttention,
-                journalNeedsAttention: appState.serviceNeedsAttention,
-                durableUpdateStatus: updateController.durableUpdateStatus
-            ),
-            statusRowCarriesPermissions: appState.permissionsNeedAttention,
-            statusRowCarriesJournal: appState.observationRowState == .journalMigrationNeeded
+    private var menubarPresentation: MenubarPresentation {
+        appState.menubarPresentation(durableUpdateStatus: updateController.durableUpdateStatus)
+    }
+
+    private var settingsAttentionToShow: AttentionReason? {
+        attentionToSurface(
+            menubarPresentation.attention,
+            alreadySaidBy: menubarPresentation.observation
         )
     }
 
@@ -186,7 +185,7 @@ struct MenuContent: View {
     }
 
     private var statusRowState: MenubarStatusRowState {
-        appState.observationRowState
+        menubarPresentation.observation
     }
 
     // MARK: - Pause Controls
@@ -243,46 +242,6 @@ func pausedHeaderText(timeRemaining: String?) -> String {
     return "paused, \(compact) left"
 }
 
-enum SettingsAttentionReason: Equatable {
-    case permissions, journal, updateAvailable, updateCheckFailed
-}
-
-func firstSettingsAttention(
-    permissionsNeedAttention: Bool,
-    journalNeedsAttention: Bool,
-    durableUpdateStatus: DurableUpdateStatus
-) -> SettingsAttentionReason? {
-    if permissionsNeedAttention { return .permissions }
-    if journalNeedsAttention { return .journal }
-
-    switch durableUpdateStatus {
-    case .deferred, .staged, .failedWithAvailable, .available:
-        return .updateAvailable
-    case .failed:
-        return .updateCheckFailed
-    case .upToDate, .idle:
-        return nil
-    }
-}
-
-func settingsAttentionSuffixToShow(
-    reason: SettingsAttentionReason?,
-    statusRowCarriesPermissions: Bool,
-    statusRowCarriesJournal: Bool
-) -> SettingsAttentionReason? {
-    guard let reason else { return nil }
-    switch reason {
-    case .permissions: return statusRowCarriesPermissions ? nil : reason
-    case .journal: return statusRowCarriesJournal ? nil : reason
-    case .updateAvailable, .updateCheckFailed: return reason
-    }
-}
-
-func settingsAttentionSuffix(_ reason: SettingsAttentionReason) -> String {
-    switch reason {
-    case .permissions: return UICopy.SETTINGS_ATTENTION_PERMISSIONS
-    case .journal: return UICopy.SETTINGS_ATTENTION_JOURNAL
-    case .updateAvailable: return UICopy.SETTINGS_ATTENTION_UPDATE_AVAILABLE
-    case .updateCheckFailed: return UICopy.SETTINGS_ATTENTION_UPDATE_CHECK_FAILED
-    }
+func settingsAttentionSuffix(_ reason: AttentionReason) -> String {
+    attentionSuffix(reason)
 }

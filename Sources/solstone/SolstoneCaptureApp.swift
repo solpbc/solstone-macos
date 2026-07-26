@@ -189,41 +189,6 @@ struct SolstoneCaptureApp: App {
         ))
     }
 
-    private func statusAccessibilityLabel(appState: AppState) -> String {
-        let baseLabel: String = switch appState.observationRowState {
-        case .permissions:
-            UICopy.MENUBAR_A11Y_PERMISSIONS_NEEDED
-        case .error:
-            appState.errorMessage == nil
-                ? UICopy.MENUBAR_A11Y_NEEDS_ATTENTION
-                : UICopy.MENUBAR_A11Y_ERROR
-        case .starting:
-            UICopy.MENUBAR_A11Y_STARTING
-        case .journalMigrationNeeded:
-            "sol — journal link needs attention"
-        case .connectionWaiting:
-            UICopy.MENUBAR_A11Y_WAITING_FOR_JOURNAL
-        case .localOnly:
-            UICopy.MENUBAR_A11Y_JOURNAL_SETUP_NEEDED
-        case .syncPaused:
-            UICopy.MENUBAR_A11Y_OBSERVING_SYNC_PAUSED
-        case .offline:
-            UICopy.MENUBAR_A11Y_OBSERVING_SAVED_LOCALLY
-        case .paused:
-            UICopy.MENUBAR_A11Y_PAUSED
-        case .observing:
-            UICopy.MENUBAR_A11Y_OBSERVING_CONNECTED
-        }
-
-        if appState.solChatStale {
-            return "\(baseLabel) · \(SolChatLiterals.unreachableTooltip)"
-        }
-        if let pending = appState.solChatPending {
-            return "\(baseLabel) · sol noticed: \(pending.summary)"
-        }
-        return baseLabel
-    }
-
     var body: some Scene {
         MenuBarExtra(isInserted: .constant(startup != nil)) {
             if let startup {
@@ -234,7 +199,6 @@ struct SolstoneCaptureApp: App {
         } label: {
             if let startup {
                 StatusIcon(appState: startup.appState, updateController: startup.updateController)
-                    .accessibilityLabel(statusAccessibilityLabel(appState: startup.appState))
             } else {
                 EmptyView()
             }
@@ -278,6 +242,49 @@ private struct SolstoneNormalStartup {
     let updateController: UpdateController
 }
 
+internal func statusAccessibilityLabel(
+    presentation: MenubarPresentation,
+    errorMessage: String?,
+    solChatStale: Bool,
+    solChatPending: SolChatRequestSummary?
+) -> String {
+    let baseLabel: String = switch presentation.observation {
+    case .permissions:
+        UICopy.MENUBAR_A11Y_PERMISSIONS_NEEDED
+    case .error:
+        errorMessage == nil
+            ? UICopy.MENUBAR_A11Y_NEEDS_ATTENTION
+            : UICopy.MENUBAR_A11Y_ERROR
+    case .starting:
+        UICopy.MENUBAR_A11Y_STARTING
+    case .journalMigrationNeeded:
+        "sol — journal link needs attention"
+    case .connectionWaiting:
+        UICopy.MENUBAR_A11Y_WAITING_FOR_JOURNAL
+    case .localOnly:
+        UICopy.MENUBAR_A11Y_JOURNAL_SETUP_NEEDED
+    case .syncPaused:
+        UICopy.MENUBAR_A11Y_OBSERVING_SYNC_PAUSED
+    case .offline:
+        UICopy.MENUBAR_A11Y_OBSERVING_SAVED_LOCALLY
+    case .paused:
+        UICopy.MENUBAR_A11Y_PAUSED
+    case .observing:
+        UICopy.MENUBAR_A11Y_OBSERVING_CONNECTED
+    }
+
+    var components = [baseLabel]
+    if let attention = attentionToSurface(presentation.attention, alreadySaidBy: presentation.observation) {
+        components.append(attentionSuffix(attention))
+    }
+    if solChatStale {
+        components.append(SolChatLiterals.unreachableTooltip)
+    } else if let pending = solChatPending {
+        components.append("sol noticed: \(pending.summary)")
+    }
+    return components.joined(separator: " · ")
+}
+
 private struct SettingsSceneRoot: View {
     let appState: AppState
     let updateController: UpdateController
@@ -317,6 +324,69 @@ func bundleImage(_ name: String, isTemplate: Bool = false) -> Image {
     return Image(nsImage: nsImage)
 }
 
+internal struct MenubarIconGlyphView: View {
+    let icon: MenubarIconState
+    let overlay: MenubarIconOverlayState
+
+    var body: some View {
+        let overlayPresentation = overlay.presentation
+
+        bundleImage(icon.iconName, isTemplate: true)
+            .overlay(alignment: .bottomTrailing) {
+                overlayBadge(overlayPresentation.badgeTreatment)
+                    .accessibilityIdentifier(AXID.Menubar.statusIconOverlayState)
+                    .accessibilityValue(overlayPresentation.axToken)
+            }
+            .accessibilityIdentifier(AXID.Menubar.statusIconState)
+            .accessibilityValue(icon.axToken)
+    }
+
+    @ViewBuilder
+    private func overlayBadge(_ treatment: MenubarBadgeTreatment?) -> some View {
+        if let treatment {
+            MenubarBadgeView(treatment: treatment)
+        }
+    }
+}
+
+private struct MenubarBadgeView: View {
+    let treatment: MenubarBadgeTreatment
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(color(for: treatment.haloTint))
+                .frame(width: treatment.haloDiameter, height: treatment.haloDiameter)
+            markView
+        }
+    }
+
+    @ViewBuilder
+    private var markView: some View {
+        switch treatment.mark {
+        case let .symbol(name, pointSize, tint):
+            Image(systemName: name)
+                .font(.system(size: pointSize))
+                .foregroundStyle(color(for: tint))
+        case let .dot(diameter, tint):
+            Circle()
+                .fill(color(for: tint))
+                .frame(width: diameter, height: diameter)
+        }
+    }
+
+    private func color(for tint: MenubarBadgeTreatment.Tint) -> Color {
+        switch tint {
+        case .adaptiveInk:
+            return .primary
+        case .solOrange:
+            return SolstoneColors.solOrange
+        case .accentColor:
+            return .accentColor
+        }
+    }
+}
+
 @MainActor
 enum FirstLaunchRouting {
     static func route(
@@ -346,29 +416,18 @@ private struct StatusIcon: View {
     @Environment(\.openWindow) private var openWindow
     @State private var hasCheckedSetup = false
 
-    private var iconState: MenubarIconState {
-        appState.observationRowState.iconState
-    }
-
-    private var overlayState: MenubarIconOverlayState {
-        menubarIconOverlayState(
-            rowState: appState.observationRowState,
-            solChatStale: appState.solChatStale,
-            solChatPending: appState.solChatPending != nil
-        )
-    }
-
-    private var iconName: String {
-        iconState.iconName
+    private var presentation: MenubarPresentation {
+        appState.menubarPresentation(durableUpdateStatus: updateController.durableUpdateStatus)
     }
 
     var body: some View {
-        bundleImage(iconName, isTemplate: true)
-            .overlay(alignment: .bottomTrailing) {
-                overlayView
-            }
-            .accessibilityIdentifier(AXID.Menubar.statusIconState)
-            .accessibilityValue(iconState.axToken)
+        iconContent
+            .accessibilityLabel(statusAccessibilityLabel(
+                presentation: presentation,
+                errorMessage: appState.errorMessage,
+                solChatStale: appState.solChatStale,
+                solChatPending: appState.solChatPending
+            ))
             .task {
                 guard !hasCheckedSetup else { return }
                 hasCheckedSetup = true
@@ -420,29 +479,12 @@ private struct StatusIcon: View {
     }
 
     @ViewBuilder
-    private var overlayBadge: some View {
-        switch overlayState {
-        case .journalSetup:
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 7))
-                .foregroundStyle(.orange)
-        case .chatStale:
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 7))
-                .foregroundStyle(.orange)
-                .help(SolChatLiterals.unreachableTooltip)
-        case .chatPending:
-            Circle()
-                .fill(Color.accentColor)
-                .frame(width: 6, height: 6)
-        case .none:
-            EmptyView()
+    private var iconContent: some View {
+        let content = MenubarIconGlyphView(icon: presentation.icon, overlay: presentation.overlayState)
+        if appState.solChatStale {
+            content.help(SolChatLiterals.unreachableTooltip)
+        } else {
+            content
         }
-    }
-
-    private var overlayView: some View {
-        overlayBadge
-            .accessibilityIdentifier(AXID.Menubar.statusIconOverlayState)
-            .accessibilityValue(overlayState.axToken)
     }
 }

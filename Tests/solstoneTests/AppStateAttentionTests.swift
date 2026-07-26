@@ -168,6 +168,32 @@ struct AppStateAttentionTests {
         #expect(done.permissionsAreDone)
     }
 
+    @Test func menubarPresentationComposesSnapshotAppStateInputs() {
+        let state = makeState(config: configuredExternal())
+        state.initialPermissionCheckComplete = true
+        state.screenRecordingGranted = true
+        state.microphoneGranted = true
+        state.isRecording = true
+        state.uploadCoordinator.status = .synced
+        state.solChatPending = SolChatRequestSummary(
+            id: "req-test",
+            summary: "review the note",
+            day: "2026-05-09",
+            eventIndex: 42,
+            receivedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let presentation = state.menubarPresentation(
+            durableUpdateStatus: .available(version: "1.3.9", releaseNotes: nil)
+        )
+
+        #expect(presentation.observation == .observing)
+        #expect(presentation.attention == .updateAvailable)
+        #expect(presentation.message == .chatPending)
+        #expect(presentation.icon == .recording)
+        #expect(presentation.overlayState == .attention)
+    }
+
     @Test func visitedSettingsTabsPersistAndRestore() {
         let key = "SolstoneVisitedSettingsTabs"
         UserDefaults.standard.removeObject(forKey: key)

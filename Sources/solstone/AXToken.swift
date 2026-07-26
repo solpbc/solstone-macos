@@ -37,9 +37,30 @@ internal enum MenubarIconState: CaseIterable {
 
 internal enum MenubarIconOverlayState: CaseIterable {
     case none
-    case journalSetup
-    case chatStale
+    case attention
     case chatPending
+}
+
+internal struct MenubarBadgeTreatment: Equatable {
+    enum Tint: Equatable {
+        case adaptiveInk
+        case solOrange
+        case accentColor
+    }
+
+    enum Mark: Equatable {
+        case symbol(name: String, pointSize: CGFloat, tint: Tint)
+        case dot(diameter: CGFloat, tint: Tint)
+    }
+
+    let haloDiameter: CGFloat
+    let haloTint: Tint
+    let mark: Mark
+}
+
+internal struct MenubarIconOverlayPresentation: Equatable {
+    let axToken: String
+    let badgeTreatment: MenubarBadgeTreatment?
 }
 
 internal enum MenubarStatusRowState: CaseIterable {
@@ -443,17 +464,40 @@ extension MenubarIconState {
 }
 
 extension MenubarIconOverlayState {
-    var axToken: String {
+    var presentation: MenubarIconOverlayPresentation {
         switch self {
         case .none:
-            return "none"
-        case .journalSetup:
-            return "journal_setup"
-        case .chatStale:
-            return "chat_stale"
+            return MenubarIconOverlayPresentation(
+                axToken: "none",
+                badgeTreatment: nil
+            )
+        case .attention:
+            return MenubarIconOverlayPresentation(
+                axToken: "attention",
+                badgeTreatment: MenubarBadgeTreatment(
+                    haloDiameter: 9.6,
+                    haloTint: .adaptiveInk,
+                    mark: .symbol(name: "exclamationmark.circle.fill", pointSize: 8, tint: .solOrange)
+                )
+            )
         case .chatPending:
-            return "chat_pending"
+            return MenubarIconOverlayPresentation(
+                axToken: "chat_pending",
+                badgeTreatment: MenubarBadgeTreatment(
+                    haloDiameter: 7.6,
+                    haloTint: .adaptiveInk,
+                    mark: .dot(diameter: 6, tint: .accentColor)
+                )
+            )
         }
+    }
+
+    var badgeTreatment: MenubarBadgeTreatment? {
+        presentation.badgeTreatment
+    }
+
+    var axToken: String {
+        presentation.axToken
     }
 }
 

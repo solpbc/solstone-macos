@@ -30,7 +30,8 @@ struct MenubarWireUpTests {
             ".accessibilityValue(statusRowAXValue)",
             "statusRowState.axToken",
             ".accessibilityValue(rowState.axToken)",
-            "appState.observationRowState",
+            "appState.menubarPresentation(",
+            "menubarPresentation.observation",
             "UICopy.MENUBAR_OBSERVATION_WEDGE_OPEN_SETTINGS",
             "UICopy.MENUBAR_LOCAL_ONLY_SETUP_JOURNAL",
             "UICopy.MENUBAR_SYNC_PAUSED",
@@ -63,14 +64,16 @@ struct MenubarWireUpTests {
     @Test func statusIconReferencesExpectedAXIDsAndState() throws {
         let source = try readWireUpSource("Sources/solstone/SolstoneCaptureApp.swift")
         let references = [
-            "MenubarIconState",
-            "iconState.iconName",
+            "MenubarIconGlyphView",
+            "MenubarPresentation",
+            "updateController.durableUpdateStatus",
+            "presentation.icon",
+            "presentation.overlayState",
+            "overlayPresentation.badgeTreatment",
             "AXID.Menubar.statusIconState",
             "AXID.Menubar.statusIconOverlayState",
-            "iconState.axToken",
-            ".accessibilityValue(overlayState.axToken)",
-            "menubarIconOverlayState(",
-            "appState.observationRowState.iconState"
+            "overlayPresentation.axToken",
+            "statusAccessibilityLabel("
         ]
 
         for reference in references {

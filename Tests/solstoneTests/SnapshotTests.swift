@@ -74,8 +74,14 @@ struct SnapshotTests {
         ) { _, _ in nil }
     }
 
-    private func render<V: View>(_ view: V, size: CGSize, to filename: String) throws {
+    private func render<V: View>(
+        _ view: V,
+        size: CGSize,
+        to filename: String,
+        appearance: NSAppearance? = nil
+    ) throws {
         let hostingView = NSHostingView(rootView: view)
+        hostingView.appearance = appearance
         hostingView.frame = NSRect(origin: .zero, size: size)
         hostingView.layoutSubtreeIfNeeded()
 
@@ -132,6 +138,91 @@ struct SnapshotTests {
         state.initialPermissionCheckComplete = true
         state.screenRecordingGranted = true
         state.microphoneGranted = true
+    }
+
+    private let statusIconSize = CGSize(width: 28, height: 28)
+
+    private func statusIconSnapshot(icon: MenubarIconState, overlay: MenubarIconOverlayState) -> some View {
+        MenubarIconGlyphView(icon: icon, overlay: overlay)
+            .frame(width: 20, height: 20)
+            .padding(4)
+            .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @Test func statusIconAttentionHaloLight() throws {
+        try render(
+            statusIconSnapshot(icon: .recording, overlay: .attention),
+            size: statusIconSize,
+            to: "status-icon-attention-light.png",
+            appearance: try #require(NSAppearance(named: .aqua))
+        )
+    }
+
+    @Test func statusIconAttentionHaloDark() throws {
+        try render(
+            statusIconSnapshot(icon: .recording, overlay: .attention),
+            size: statusIconSize,
+            to: "status-icon-attention-dark.png",
+            appearance: try #require(NSAppearance(named: .darkAqua))
+        )
+    }
+
+    @Test func statusIconMessageHalo() throws {
+        try render(
+            statusIconSnapshot(icon: .recording, overlay: .chatPending),
+            size: statusIconSize,
+            to: "status-icon-message.png",
+            appearance: try #require(NSAppearance(named: .aqua))
+        )
+    }
+
+    @Test func statusIconClear() throws {
+        try render(
+            statusIconSnapshot(icon: .recording, overlay: .none),
+            size: statusIconSize,
+            to: "status-icon-clear.png",
+            appearance: try #require(NSAppearance(named: .aqua))
+        )
+    }
+
+    @Test func statusIconBundledJournalBadging() throws {
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
+        markPermissionsReady(state)
+        state.isRecording = true
+        let presentation = state.menubarPresentation(durableUpdateStatus: .idle)
+        #expect(presentation.attention == .journal)
+        #expect(presentation.overlayState == .attention)
+
+        try render(
+            statusIconSnapshot(icon: presentation.icon, overlay: presentation.overlayState),
+            size: statusIconSize,
+            to: "status-icon-bundled-journal-badging.png",
+            appearance: try #require(NSAppearance(named: .aqua))
+        )
+    }
+
+    @Test func statusIconUpdateAvailableRecordingBadging() throws {
+        let state = AppState.forSnapshot(config: AppConfig(
+            serverURL: "https://solstone.example.com",
+            serverKey: "sk-test-key-1234",
+            serviceMode: .external
+        ))
+        markPermissionsReady(state)
+        state.isRecording = true
+        state.uploadCoordinator.status = .synced
+        let presentation = state.menubarPresentation(
+            durableUpdateStatus: .available(version: "1.3.9", releaseNotes: nil)
+        )
+        #expect(presentation.icon == .recording)
+        #expect(presentation.attention == .updateAvailable)
+        #expect(presentation.overlayState == .attention)
+
+        try render(
+            statusIconSnapshot(icon: presentation.icon, overlay: presentation.overlayState),
+            size: statusIconSize,
+            to: "status-icon-update-available-recording.png",
+            appearance: try #require(NSAppearance(named: .aqua))
+        )
     }
 
     @Test func menuStarting() throws {
