@@ -82,6 +82,27 @@ struct MenubarWireUpTests {
         }
     }
 
+    @Test func updateAnnouncementIsNotDrivenByDurableStatusViewModifiers() throws {
+        let paths = [
+            "Sources/solstone/SolstoneCaptureApp.swift",
+            "Sources/solstone/SettingsView.swift",
+            "Sources/UpdateKit/UpdatesTabView.swift"
+        ]
+        let forbiddenReferences = [
+            ".onChange(of: updateController.durableUpdateStatus)",
+            ".task(id: updateController.durableUpdateStatus)",
+            ".onChange(of: controller.durableUpdateStatus)",
+            ".task(id: controller.durableUpdateStatus)"
+        ]
+
+        for path in paths {
+            let source = try readWireUpSource(path)
+            for reference in forbiddenReferences {
+                #expect(!wireUpContains(source, reference))
+            }
+        }
+    }
+
     @Test func observationSurfacesDoNotUseStoppedLiteral() throws {
         let paths = [
             "Sources/solstone/MenuContent.swift",

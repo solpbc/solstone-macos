@@ -12,6 +12,13 @@ struct UpdatesCopyTests {
         #expect(UpdatesCopy(provider: .solstone).updateAvailableSubtitle(version: "1.1.0") == "sol 1.1.0 is ready to download.")
     }
 
+    @Test func updateNotificationCopyUsesProviderDisplayName() {
+        #expect(UpdatesCopy(provider: .solstone).updateNotificationTitle(version: "1.1.0") == "sol 1.1.0 is ready when you are")
+        #expect(UpdatesCopy(provider: .solstone).updateNotificationBody == "it'll be applied the next time you quit and reopen sol.")
+        #expect(UpdatesCopy(provider: .journal).updateNotificationTitle(version: "1.1.0") == "journal 1.1.0 is ready when you are")
+        #expect(UpdatesCopy(provider: .journal).updateNotificationBody == "it'll be applied the next time you quit and reopen journal.")
+    }
+
     @Test func downloadingTitleString() {
         #expect(UpdatesCopy(provider: .solstone).downloadingTitle(version: "1.1.0") == "downloading 1.1.0")
     }

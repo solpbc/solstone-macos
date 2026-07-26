@@ -35,6 +35,7 @@ public final class UpdateController {
     public typealias RunningVersionProvider = @MainActor () -> String
 
     private static let statusKey = "solstone.updates.status"
+    private static let lastAnnouncedUpdateVersionKey = "solstone.updates.lastAnnouncedUpdateVersion"
     private static let feedURLOverrideKey = "solstone.updates.feedURLOverride"
     private static let legacyLastCheckedAtKey = "solstone.updates.lastCheckedAt"
     private static let legacyLastCheckResultKey = "solstone.updates.lastCheckResult"
@@ -64,6 +65,7 @@ public final class UpdateController {
     private let postInstallRecoveryScheduler: PostInstallRecoveryScheduler
     private let terminationBegan: TerminationBeganPredicate
     private let defaults: UserDefaults
+    private let announceUpdateVersion: (@MainActor (String) -> Void)?
 
     private var updater: (any SparkleUpdating)?
     private var updaterStarted = false
@@ -120,6 +122,19 @@ public final class UpdateController {
 
     public var lastCheckedAt: Date? {
         reconciledStatus.lastCheck?.checkedAt
+    }
+
+    private var lastAnnouncedUpdateVersion: String? {
+        get {
+            defaults.string(forKey: Self.lastAnnouncedUpdateVersionKey)
+        }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: Self.lastAnnouncedUpdateVersionKey)
+            } else {
+                defaults.removeObject(forKey: Self.lastAnnouncedUpdateVersionKey)
+            }
+        }
     }
 
     public var hasLiveUpdateReply: Bool {
@@ -179,6 +194,7 @@ public final class UpdateController {
         installFailureRecovery: InstallFailureRecovery? = nil,
         postInstallRecoveryScheduler: PostInstallRecoveryScheduler? = nil,
         terminationBegan: TerminationBeganPredicate? = nil,
+        announce: (@MainActor (String) -> Void)? = nil,
         defaults: UserDefaults = .standard,
         updaterFactory: @escaping UpdaterFactory
     ) {
@@ -194,6 +210,7 @@ public final class UpdateController {
         self.postInstallRecoveryScheduler = postInstallRecoveryScheduler ?? Self.defaultPostInstallRecoveryScheduler
         self.terminationBegan = terminationBegan ?? { false }
         self.defaults = defaults
+        self.announceUpdateVersion = announce
         self.canCheckForUpdates = Self.validateSparkleConfig(
             feedURL: feedURL ?? info?["SUFeedURL"] as? String,
             publicKey: publicKey ?? info?["SUPublicEDKey"] as? String
@@ -231,6 +248,7 @@ public final class UpdateController {
         installFailureRecovery: InstallFailureRecovery? = nil,
         postInstallRecoveryScheduler: PostInstallRecoveryScheduler? = nil,
         terminationBegan: TerminationBeganPredicate? = nil,
+        announce: (@MainActor (String) -> Void)? = nil,
         defaults: UserDefaults = .standard
     ) {
         self.init(
@@ -241,6 +259,7 @@ public final class UpdateController {
             installFailureRecovery: installFailureRecovery,
             postInstallRecoveryScheduler: postInstallRecoveryScheduler,
             terminationBegan: terminationBegan,
+            announce: announce,
             defaults: defaults
         ) { userDriver, delegate in
             SPUUpdater(
@@ -669,6 +688,10 @@ public final class UpdateController {
         recordFoundUpdate(version: version, releaseNotes: releaseNotes)
     }
 
+    public func evaluatePendingUpdateAnnouncement() {
+        evaluateAnnouncement()
+    }
+
     func ingestBackgroundDownloadStarted(version: String?) {
         backgroundDownload = .downloading(version: version)
     }
@@ -857,6 +880,8 @@ public final class UpdateController {
     }
 
     private func recordFoundUpdate(version: String, releaseNotes: String?, now: Date = Date()) {
+        defer { evaluateAnnouncement() }
+
         if reconciledStatus.matches(availableVersion: version, outcome: .staged) {
             let notes = releaseNotes ?? (availableUpdate?.version == version ? availableUpdate?.releaseNotes : nil)
             availableUpdate = AvailableUpdate(version: version, releaseNotes: notes)
@@ -875,6 +900,8 @@ public final class UpdateController {
     }
 
     private func recordStagedUpdate(version: String, now: Date = Date()) {
+        defer { evaluateAnnouncement() }
+
         guard !reconciledStatus.matches(availableVersion: version, outcome: .staged) else { return }
 
         let releaseNotes = availableUpdate?.version == version ? availableUpdate?.releaseNotes : nil
@@ -882,6 +909,20 @@ public final class UpdateController {
         reconciledStatus.availableVersion = version
         reconciledStatus.lastCheck = ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .staged)
         persistStatus()
+    }
+
+    private func evaluateAnnouncement() {
+        guard let announceUpdateVersion else { return }
+        guard let version = updateAnnouncementVersion(
+            for: durableUpdateStatus,
+            lastAnnounced: lastAnnouncedUpdateVersion
+        ) else {
+            return
+        }
+
+        lastAnnouncedUpdateVersion = version
+        log.info("Update notification announcement recorded for version \(version, privacy: .public)")
+        announceUpdateVersion(version)
     }
 
     private func recordUpToDateCheck(now: Date = Date()) {

@@ -73,7 +73,7 @@ public struct SolChatRequestSummary: Sendable, Equatable, Codable {
 public protocol SolChatNotifying: Sendable {
     func currentAuthorizationStatus() async -> UNAuthorizationStatus
     func requestAuthorization(options: UNAuthorizationOptions) async -> Bool
-    func post(identifier: String, title: String, body: String) async
+    func post(identifier: String, title: String, body: String, sound: Bool) async
     func removeDelivered(identifier: String) async
 }
 
@@ -93,11 +93,11 @@ public final class UNUserNotificationSolChatNotifier: SolChatNotifying, @uncheck
         }
     }
 
-    public func post(identifier: String, title: String, body: String) async {
+    public func post(identifier: String, title: String, body: String, sound: Bool) async {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        content.sound = .default
+        content.sound = sound ? .default : nil
 
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         do {
@@ -117,7 +117,7 @@ public final class UNUserNotificationSolChatNotifier: SolChatNotifying, @uncheck
 struct NoopSolChatNotifier: SolChatNotifying {
     func currentAuthorizationStatus() async -> UNAuthorizationStatus { .authorized }
     func requestAuthorization(options: UNAuthorizationOptions) async -> Bool { true }
-    func post(identifier: String, title: String, body: String) async {}
+    func post(identifier: String, title: String, body: String, sound: Bool) async {}
     func removeDelivered(identifier: String) async {}
 }
 
@@ -409,7 +409,8 @@ public actor SolChatBridge {
                 await notifier.post(
                     identifier: summary.id,
                     title: SolChatLiterals.notificationTitle,
-                    body: summary.summary
+                    body: summary.summary,
+                    sound: true
                 )
             }
         case .superseded(let requestID), .open(let requestID), .dismissed(let requestID):
@@ -640,7 +641,18 @@ final class SolChatNotificationDelegate: NSObject, UNUserNotificationCenterDeleg
         let id = response.notification.request.identifier
         let completion = SolChatNotificationCompletion(completionHandler)
         Task { @MainActor in
-            await AppState.shared?.solChatBridge.handleClick(requestID: id)
+            switch userNotificationClickDestination(for: id) {
+            case .updatesSettings:
+                if let state = AppState.shared {
+                    state.pendingSettingsTab = "updates"
+                } else {
+                    Logger.general.error("AppState.shared nil in update notification click")
+                }
+                NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+                NSApp.activate(ignoringOtherApps: true)
+            case .solChat(let requestID):
+                await AppState.shared?.solChatBridge.handleClick(requestID: requestID)
+            }
             completion.call()
         }
     }
@@ -650,6 +662,6 @@ final class SolChatNotificationDelegate: NSObject, UNUserNotificationCenterDeleg
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .list, .sound])
+        completionHandler(userNotificationPresentationOptions(for: notification.request.identifier))
     }
 }

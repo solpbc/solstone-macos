@@ -13,6 +13,7 @@ private actor AppStateNotificationTestNotifier: SolChatNotifying {
     var statusAfterRequest: UNAuthorizationStatus?
     var statusReadDelayNanoseconds: UInt64 = 0
     private(set) var requestedOptions: [UNAuthorizationOptions] = []
+    private(set) var posts: [(identifier: String, title: String, body: String, sound: Bool)] = []
 
     init(
         status: UNAuthorizationStatus = .notDetermined,
@@ -39,7 +40,9 @@ private actor AppStateNotificationTestNotifier: SolChatNotifying {
         return requestResult
     }
 
-    func post(identifier: String, title: String, body: String) async {}
+    func post(identifier: String, title: String, body: String, sound: Bool) async {
+        posts.append((identifier: identifier, title: title, body: body, sound: sound))
+    }
     func removeDelivered(identifier: String) async {}
 }
 
@@ -132,6 +135,21 @@ struct AppStateNotificationTests {
         await waitUntil { await notifier.requestedOptions.count == 1 }
 
         #expect(await notifier.requestedOptions == [[.alert, .sound]])
+    }
+
+    @Test func updateAnnouncementDoesNotRequestNotificationAuthorization() async {
+        let notifier = AppStateNotificationTestNotifier(status: .notDetermined)
+        let announcer = UpdateNotificationAnnouncer(notifier: notifier)
+
+        announcer.announce(version: "1.3.9")
+        await waitUntil { await notifier.posts.count == 1 }
+
+        let posts = await notifier.posts
+        #expect(posts.first?.identifier == UpdateNotificationIdentifier.make(version: "1.3.9"))
+        #expect(posts.first?.title == "sol 1.3.9 is ready when you are")
+        #expect(posts.first?.body == "it'll be applied the next time you quit and reopen sol.")
+        #expect(posts.first?.sound == false)
+        #expect(await notifier.requestedOptions.isEmpty)
     }
 
     private func waitUntil(_ predicate: @MainActor @escaping () async -> Bool) async {

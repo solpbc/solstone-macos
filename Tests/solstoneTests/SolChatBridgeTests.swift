@@ -142,7 +142,7 @@ private actor SolChatTestNotifier: SolChatNotifying {
     var authorizationResult = true
     var status: UNAuthorizationStatus = .authorized
     private(set) var requestedOptions: [UNAuthorizationOptions] = []
-    private(set) var posts: [(identifier: String, title: String, body: String)] = []
+    private(set) var posts: [(identifier: String, title: String, body: String, sound: Bool)] = []
     private(set) var removed: [String] = []
 
     func currentAuthorizationStatus() async -> UNAuthorizationStatus {
@@ -154,8 +154,8 @@ private actor SolChatTestNotifier: SolChatNotifying {
         return authorizationResult
     }
 
-    func post(identifier: String, title: String, body: String) async {
-        posts.append((identifier: identifier, title: title, body: body))
+    func post(identifier: String, title: String, body: String, sound: Bool) async {
+        posts.append((identifier: identifier, title: title, body: body, sound: sound))
     }
 
     func removeDelivered(identifier: String) async {
@@ -466,7 +466,9 @@ struct SolChatBridgeTests {
         await enabledBridge.configure(serverKey: enabledStore.serverKey)
         _ = await waitForPending(enabledState)
         await enabledBridge.stop()
-        #expect(await enabledNotifier.posts.count == 1)
+        let enabledPosts = await enabledNotifier.posts
+        #expect(enabledPosts.count == 1)
+        #expect(enabledPosts.first?.sound == true)
 
         let staleStore = SolChatURLProtocolStore()
         staleStore.enqueue(body: requestFrame(id: "req-6", isStale: true))

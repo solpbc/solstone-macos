@@ -39,6 +39,20 @@ func routeOpenSettingsWindow(
     activate()
 }
 
+@MainActor
+private enum UpdateAnnouncementLaunchRegistry {
+    private static var controller: UpdateController?
+
+    static func register(_ updateController: UpdateController) {
+        controller = updateController
+    }
+
+    static func take() -> UpdateController? {
+        defer { controller = nil }
+        return controller
+    }
+}
+
 /// Handles app termination to ensure pending remixes complete
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -96,7 +110,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             solChatNotificationDelegate = delegate
             UNUserNotificationCenter.current().delegate = delegate
             state.startObservingActivation()
-            Task { await state.bootstrapNotificationAuthorization() }
+            Task { @MainActor in
+                await state.bootstrapNotificationAuthorization()
+                guard let updateController = UpdateAnnouncementLaunchRegistry.take() else {
+                    Logger.setup.error("Update notification launch evaluation skipped: update controller registry was nil")
+                    return
+                }
+                updateController.evaluatePendingUpdateAnnouncement()
+            }
 
             state.reevaluateActivationPolicy(debounced: false)
             state.startTunnelLifecycleOwner()
@@ -168,22 +189,28 @@ struct SolstoneCaptureApp: App {
             decision: AppPlacementGate.evaluate(),
             makeNormal: {
                 let appState = AppState()
+                let updateAnnouncer = UpdateNotificationAnnouncer()
+                let updateController = UpdateController(
+                    log: Logger.setup,
+                    errorDomain: "app.solstone.observer.updates",
+                    exclusivity: { appState.journalHandoffActive },
+                    preInstallFinalizer: { @MainActor in
+                        await appState.appQuitCoordinator.prepareForUpdaterInstall()
+                    },
+                    installFailureRecovery: { @MainActor in
+                        appState.appQuitCoordinator.resetAfterFailedUpdaterInstall()
+                    },
+                    terminationBegan: { @MainActor in
+                        appState.appKitTerminationBegan
+                    },
+                    announce: { version in
+                        updateAnnouncer.announce(version: version)
+                    }
+                )
+                UpdateAnnouncementLaunchRegistry.register(updateController)
                 return SolstoneNormalStartup(
                     appState: appState,
-                    updateController: UpdateController(
-                        log: Logger.setup,
-                        errorDomain: "app.solstone.observer.updates",
-                        exclusivity: { appState.journalHandoffActive },
-                        preInstallFinalizer: { @MainActor in
-                            await appState.appQuitCoordinator.prepareForUpdaterInstall()
-                        },
-                        installFailureRecovery: { @MainActor in
-                            appState.appQuitCoordinator.resetAfterFailedUpdaterInstall()
-                        },
-                        terminationBegan: { @MainActor in
-                            appState.appKitTerminationBegan
-                        }
-                    )
+                    updateController: updateController
                 )
             }
         ))

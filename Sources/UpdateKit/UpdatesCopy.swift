@@ -122,6 +122,14 @@ public struct UpdatesCopy: Sendable {
         "\(provider.appDisplayName) \(version) is ready to download."
     }
 
+    public func updateNotificationTitle(version: String) -> String {
+        "\(provider.appDisplayName) \(version) is ready when you are"
+    }
+
+    public var updateNotificationBody: String {
+        "it'll be applied the next time you quit and reopen \(provider.appDisplayName)."
+    }
+
     public func deferredTitle(version: String) -> String {
         version.isEmpty ? "deferred update" : "deferred update \(version)"
     }
