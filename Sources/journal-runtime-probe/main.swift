@@ -4,6 +4,7 @@
 import Darwin
 import Foundation
 import JournalRuntime
+import SolstoneCore
 
 private enum ProbeRegime: String {
     case production
@@ -501,17 +502,21 @@ enum JournalRuntimeProbe {
         }
     }
 
+    /// Parse the reported version rather than byte-matching the banner. Each entry prints its own
+    /// name first (`sol (solstone) 1.0.17`, `journal (solstone) 1.0.17`), so a byte-exact expectation
+    /// asserts the banner's wording — not that the relocated entry runs and reports the pin. This
+    /// uses the same oracle `assertRelocationSafe` uses, for the same reason.
     private static func assertVersionExecutable(_ executable: URL, name: String) throws {
         let result = try runExecutable(executable, arguments: ["--version"])
-        let expected = "solstone \(BundleConfig.solstonePinVersion)\n"
         guard result.status == 0 else {
             throw ProbeFailure(
                 message: "error: \(name) --version exited \(result.status)\nstderr:\n\(result.stderr)"
             )
         }
-        guard result.stdout == expected else {
+        guard let parsed = SolVersionParser.parse(result.stdout),
+              parsed == BundleConfig.solstonePinVersion else {
             throw ProbeFailure(
-                message: "error: \(name) --version stdout mismatch: expected \(String(reflecting: expected)), observed \(String(reflecting: result.stdout))"
+                message: "error: \(name) --version did not report the pinned version: expected \(BundleConfig.solstonePinVersion), observed \(String(reflecting: result.stdout))"
             )
         }
     }

@@ -62,7 +62,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "journal-runtime-probe",
-            dependencies: ["JournalRuntime"],
+            dependencies: ["JournalRuntime", "SolstoneCore"],
             path: "Sources/journal-runtime-probe",
             swiftSettings: [
                 .swiftLanguageMode(.v6)
