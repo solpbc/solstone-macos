@@ -1,15 +1,15 @@
-# solstone observer
+# sol for macOS
 
-solstone observer is a macOS status bar app — one of your observers, experiencing your screen and audio along with you. It takes in all connected displays at 1 FPS, plus system and microphone audio in 5-minute segments (per-source M4A files remixed at segment boundaries), then syncs to your journal automatically.
+sol is the macOS app in solstone. it lives on your mac, experiences your screen and audio alongside you, and keeps it all in your journal. on macOS, sol takes in all connected displays at 1 FPS plus system and microphone audio in five-minute segments, then sends each finished segment to your journal automatically.
 
 ## Key Features
 
-- Multi-display observation at 1 FPS
+- All connected displays at 1 FPS
 - Per-source audio: system audio + individual microphones
 - 5-minute segment rotation at clock boundaries
 - Pause with timed auto-resume
 - Journal sync with automatic upload and retry
-- Diagnostics-only observer health beacon on the existing journal heartbeat
+- Diagnostics-only connection-health beacon on the existing journal heartbeat
 - Window exclusion for password managers and private browsers
 - Dynamic microphone join/leave mid-segment
 - Auto-start at login
@@ -30,7 +30,7 @@ The health beacon carries operational sync state only. It intentionally excludes
 
 ## Install
 
-end users: install the signed + notarized DMG from <https://solstone.app/download/macos>. it installs the native observer and journal, opens the first-run wizard, and updates over a signed channel.
+for most people: install the signed + notarized DMG from <https://solstone.app/download/macos>. it installs sol, opens first-run setup, and updates over a signed channel. the journal is a separate app and download; install it too on the computer where you want to keep your journal: <https://solstone.app/download/journal>.
 
 Source build (requires sol pbc Apple Developer Program identities in the local keychain):
 
@@ -173,7 +173,7 @@ Pass `--expect-solstone <target-runtime-pin>` on every lane. On
 `journal-upgrade`, also pass `--expect-solstone-baseline <baseline-runtime-pin>`
 on that lane only; the harness rejects that flag everywhere else. The
 `fresh-acquire` and `discovered-adopt` lanes require `--journal-to-feed` set to
-the exact staging journal appcast (the observer's in-app acquire pulls the
+the exact staging journal appcast (sol's in-app journal setup pulls the
 staged candidate through its handoff feed override). Without the required pins,
 the harness either refuses the lane or reports a skipped runtime-pin check, and
 the verifier refuses the set.

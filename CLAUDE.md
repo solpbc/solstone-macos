@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-solstone observer is a macOS status bar application — one of the owner's observers, experiencing screen and audio along with the owner on macOS. It pairs with the owner's journal; sol is the keeper who lives in and tends that journal. It takes in all connected displays at 1 FPS and system/microphone audio in 5-minute segments (per-source M4A files remixed at segment boundaries), supports pause, and uploads automatically to the owner's journal.
+solstone-macos is the repository for sol on macOS. sol is the status bar app in the solstone platform. it lives on the owner's mac, experiences screen and audio alongside them, and keeps it all in their journal. it takes in all connected displays at 1 FPS and system/microphone audio in five-minute segments (per-source M4A files remixed at segment boundaries), supports pause, and sends each finished segment to the owner's journal automatically.
 
 ## Build Commands
 
@@ -123,8 +123,9 @@ Specialized knowledge packs in `skills/`, symlinked from `.claude/skills/` and `
 
 ## Brand
 
-- System-anatomy canon has two registers; do not collapse them. Owner-facing copy says solstone-macos is **one of the owner's observers** in the two-part owner model (`observers + journal`), and **sol is the keeper** who lives in and tends the journal. Never enumerate a three-part "trinity" or `observers + sol agent + journal` in owner-visible copy. Co-experience voice uses `experience along with`, `observe alongside`, and `take in`; banned surveillance verbs in owner-visible copy are `watch`, `capture`, `record`, `monitor`, `track`, and `collect`.
-- Architecture/engineering register: the system is `observers + sol agent + journal`. Use that register only in architecture statements, technical notes, code paths, and developer guidance. Branded surfaces (UI strings, README/INSTALL prose, log messages owners see) follow the owner-facing register; code identifiers (`CaptureManager`, the `captures/` directory, the `capture` log category, `app.solstone.observer`, Swift class/method names) stay verbatim — `capture` remains a code-only word here.
+- Owner-facing system anatomy is **solstone = sol + the journal**. sol is the app on the owner's devices; the journal is the memory sol keeps. Presence or experience copy must land the journal in the same breath: “sol lives on your devices, experiences your day with you, and keeps it all in your journal.” `observer`, `observe`, and the `keeper` title are retired from owner-facing copy.
+- Architecture/engineering register may retain observer protocol terms, repository and bundle identifiers, subsystem names, and code symbols. Branded surfaces (UI strings, README/INSTALL prose, and log messages owners see) use sol and the journal; code identifiers (`CaptureManager`, the `captures/` directory, the `capture` log category, `app.solstone.observer`, Swift class/method names) stay verbatim.
+- Co-experience voice uses `experiences alongside` and `takes in what you take in`. Owner-facing copy never uses `watch`, `capture`, `record`, `monitor`, `track`, `collect`, or `observe` for sol or the owner's material.
 - Boundary examples: Apple permission proper-names that point the owner at System Settings/TCC, accessibility labels/hints, and log-only `Logger.*` strings stay in their own registers and are not rewritten as owner copy.
 - Follow lowercase-first UI copy in visible product text.
 - Exceptions are limited to HIG cancel/destructive labels, `accessibilityHint` / `accessibilityLabel`, third-party proper nouns, OS-required path strings (e.g. `Application Support/Solstone/...`), protocol and URL literals, and AM/PM or date abbreviations.

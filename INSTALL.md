@@ -80,7 +80,7 @@ Apple may revise the exact wording, so follow the permission intent rather than 
 
 6. connect the app to your journal. launch the app and click **"connect your journal →"** in its settings — the app registers itself against the local journal at `http://localhost:5015` and starts syncing, with no key to copy or paste. this is the primary path.
 
-   once connected, macOS emits a diagnostics-only observer health beacon on the existing heartbeat. it carries operational sync state only and intentionally excludes screen/audio content and local segment file paths; journal-side ingest rejections remain a separate health source from the journal.
+   once connected, macOS emits a diagnostics-only connection-health beacon on the existing heartbeat. it carries operational sync state only and intentionally excludes screen/audio content and local segment file paths; journal-side ingest rejections remain a separate health source from the journal.
 
    **maintainer escape hatch (scripted installs only):** to wire the app without the wizard, mint a key on the journal host and write it into the app's UserDefaults directly — the app detects the change automatically and starts syncing:
    ```
@@ -98,7 +98,7 @@ Apple may revise the exact wording, so follow the permission intent rather than 
 
 7. your human needs to approve **screen recording** and **microphone** permission dialogs when macOS prompts for them.
 
-8. verify the menu bar icon appears and the observer is connected:
+8. verify the menu bar icon appears and sol is connected:
    ```
    journal observer list
    ```
