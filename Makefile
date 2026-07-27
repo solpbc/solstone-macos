@@ -372,8 +372,9 @@ release-preflight: signing-check
 #   VERSION  required, semver — sets CFBundleShortVersionString
 #   BUILD    required, integer — sets CFBundleVersion (must be > current)
 #
-# Side effects: sol Info.plist updated via plutil and CHANGELOG.md scaffold
-# prepended for the new version (date defaults to today). Does NOT commit.
+# Side effects: sol Info.plist updated via plutil; the staged CHANGELOG.md
+# Unreleased notes become the new dated version and one empty Unreleased
+# section remains above them. Does NOT commit.
 bump-release:
 	@test -n "$(VERSION)" || { echo "error: VERSION=... required (e.g. VERSION=1.1.4)"; exit 1; }
 	@test -n "$(BUILD)"   || { echo "error: BUILD=... required (e.g. BUILD=6)"; exit 1; }
@@ -381,21 +382,17 @@ bump-release:
 	@CURRENT_BUILD="$(DIST_BUILD)"; \
 		python3 -c "import sys; sys.exit(0 if int('$(BUILD)') > int('$$CURRENT_BUILD') else 1)" || \
 		{ echo "error: BUILD=$(BUILD) must be strictly greater than current $$CURRENT_BUILD (Sparkle uses CFBundleVersion for 'is newer?')"; exit 1; }
+	@python3 scripts/cut_changelog.py CHANGELOG.md "$(VERSION)" --check-only
 	@/usr/bin/plutil -replace CFBundleShortVersionString -string "$(VERSION)" Sources/solstone/Info.plist
 	@/usr/bin/plutil -replace CFBundleVersion -string "$(BUILD)" Sources/solstone/Info.plist
 	@echo "✓ Info.plist: CFBundleShortVersionString=$(VERSION), CFBundleVersion=$(BUILD)"
-	@if grep -q "^## \[$(VERSION)\]" CHANGELOG.md; then \
-		echo "note: CHANGELOG.md already has an entry for $(VERSION); leaving it alone"; \
-	else \
-		TODAY="$$(date +%Y-%m-%d)"; \
-		awk -v v="$(VERSION)" -v d="$$TODAY" 'NR==1 {print; next} /^## \[/ && !inserted {print "## [" v "] - " d "\n\n### Added\n- (describe new user-visible additions)\n\n### Changed\n- (describe behavior changes)\n\n### Fixed\n- (describe bug fixes)\n\n"; inserted=1} {print}' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md; \
-		echo "✓ CHANGELOG.md: scaffolded entry for [$(VERSION)] — $$TODAY (FILL IN BEFORE COMMIT)"; \
-	fi
+	@python3 scripts/cut_changelog.py CHANGELOG.md "$(VERSION)"
+	@echo "✓ CHANGELOG.md: cut staged [Unreleased] notes into [$(VERSION)]"
 	@echo ""
 	@echo "next steps:"
-	@echo "  1. edit CHANGELOG.md — replace scaffold bullets with real release notes"
+	@echo "  1. review CHANGELOG.md — confirm the staged release notes and contributor credits"
 	@echo "  2. git diff to review"
-	@echo "  3. git add Sources/solstone/Info.plist Makefile CHANGELOG.md"
+	@echo "  3. git add Sources/solstone/Info.plist CHANGELOG.md"
 	@echo "  4. git commit -m 'release: bump to $(VERSION) (build $(BUILD))'"
 	@echo "  5. git push origin main"
 	@echo "  6. make release-preflight && make release-dmg"
