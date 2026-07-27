@@ -39,7 +39,7 @@ struct CaptureManagerCommitTests {
         #expect(manager.state.isIdle)
     }
 
-    @Test func pauseRecordingFinishesAndEnqueuesActiveSegment() async throws {
+    @Test(.timeLimit(.minutes(1))) func pauseRecordingEnqueuesThenFinalizerWaitEnters() async throws {
         let finalizer = FakeFinalizer()
         let (manager, root) = try makeManager(finalizer: finalizer)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -53,9 +53,8 @@ struct CaptureManagerCommitTests {
         #expect(finalizer.enqueuedDirectories.all == [segment.outputDirectory])
         #expect(manager.currentSegmentForTesting == nil)
         #expect(manager.state.isPaused)
-        try await waitUntil(timeout: .seconds(5)) {
-            finalizer.events.all == ["enqueue", "wait"]
-        }
+        await finalizer.waitEntered.wait()
+        #expect(finalizer.events.all == ["enqueue", "wait"])
     }
 
     @Test func lifecyclePauseCaptureEnqueuesButDoesNotWait() async throws {
@@ -73,7 +72,7 @@ struct CaptureManagerCommitTests {
         #expect(manager.state.isPaused)
     }
 
-    @Test func lifecycleProcessSegmentSleepWaitsInsideActivity() async throws {
+    @Test(.timeLimit(.minutes(1))) func lifecycleProcessSegmentSleepEnqueuesThenFinalizerWaitEnters() async throws {
         let finalizer = FakeFinalizer()
         let (manager, root) = try makeManager(finalizer: finalizer)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -81,14 +80,14 @@ struct CaptureManagerCommitTests {
         let segment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111115.incomplete", isDirectory: true))
         manager.seedRecordingForTesting(currentSegment: segment)
 
-        let dir = await manager.lifecyclePauseCapture(reason: .sleep, stopAudio: true)
+        let dir = try #require(await manager.lifecyclePauseCapture(reason: .sleep, stopAudio: true))
+        #expect(finalizer.enqueuedDirectories.all == [segment.outputDirectory])
         #expect(finalizer.events.all == ["enqueue"])
 
-        manager.lifecycleProcessSegment(dir ?? root, useSleepActivity: true)
+        manager.lifecycleProcessSegment(dir, useSleepActivity: true)
 
-        try await waitUntil(timeout: .seconds(5)) {
-            finalizer.events.all.contains("wait")
-        }
+        await finalizer.waitEntered.wait()
+        #expect(finalizer.events.all == ["enqueue", "wait"])
     }
 
     @Test func stopRecordingWithNoActiveSegmentDoesNotEnqueue() async throws {

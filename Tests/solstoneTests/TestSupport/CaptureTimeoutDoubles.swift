@@ -97,6 +97,49 @@ final class LockedCounter: @unchecked Sendable {
     }
 }
 
+final class LatchedEvent: @unchecked Sendable {
+    private let lock = NSLock()
+    private var signaled = false
+    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
+    func signal() {
+        let continuations: [CheckedContinuation<Void, Never>] = lock.withLock {
+            guard !signaled else { return [] }
+            signaled = true
+            let ready = Array(waiters.values)
+            waiters.removeAll()
+            return ready
+        }
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
+
+    func wait() async {
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                var shouldResume = false
+                lock.withLock {
+                    if signaled || Task.isCancelled {
+                        shouldResume = true
+                    } else {
+                        waiters[id] = continuation
+                    }
+                }
+                if shouldResume {
+                    continuation.resume()
+                }
+            }
+        } onCancel: {
+            let continuation = lock.withLock {
+                waiters.removeValue(forKey: id)
+            }
+            continuation?.resume()
+        }
+    }
+}
+
 final class FakeScreenshotCapturer: SegmentScreenshotCapturing, @unchecked Sendable {
     enum Behavior: Sendable {
         case normal
@@ -347,6 +390,7 @@ final class CountingRecovery: IncompleteSegmentRecovering, @unchecked Sendable {
 final class FakeFinalizer: SegmentFinalizing, @unchecked Sendable {
     let enqueuedDirectories = LockedArray<URL>([])
     let events = LockedArray<String>([])
+    let waitEntered = LatchedEvent()
     private let inFlight: Set<String>
 
     init(inFlight: Set<String> = []) {
@@ -362,6 +406,7 @@ final class FakeFinalizer: SegmentFinalizing, @unchecked Sendable {
 
     func waitForCompletion() async {
         events.append("wait")
+        waitEntered.signal()
     }
 }
 
