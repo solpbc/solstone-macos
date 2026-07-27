@@ -5,6 +5,13 @@ All notable changes to solstone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- the permissions screen reads your real microphone setting instead of saying it couldn't check. a microphone sol has never asked about now offers to ask, and one that is off or restricted says which. reported by Dave Smith.
+- a microphone you have already allowed no longer makes "check my setup" report that some setup checks are unavailable. reported by Dave Smith.
+- change your microphone setting while sol is running and the menu bar icon and the permissions screen now agree about it, instead of one saying allowed while the other still asks for it.
+
 ## [1.4.9] - 2026-07-25
 
 ### Added
