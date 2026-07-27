@@ -129,10 +129,14 @@ public final class AppState {
         set { capture.screenRecordingGranted = newValue }
     }
 
-    /// Microphone permission — polled periodically.
-    public internal(set) var microphoneGranted: Bool {
-        get { capture.microphoneGranted }
-        set { capture.microphoneGranted = newValue }
+    /// Microphone permission — derived from the current authorization cause.
+    public var microphoneGranted: Bool {
+        capture.microphoneGranted
+    }
+
+    internal var microphoneAuthorizationCause: MicrophoneAuthorizationCause {
+        get { capture.microphoneAuthorizationCause }
+        set { capture.microphoneAuthorizationCause = newValue }
     }
 
     /// Set by SetupView to tell SettingsView which tab to open to
@@ -502,9 +506,15 @@ public final class AppState {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                await self?.refreshNotificationAuthorizationStatus()
+                guard let self else { return }
+                self.refreshMicrophoneAuthorization()
+                await self.refreshNotificationAuthorizationStatus()
             }
         }
+    }
+
+    internal func refreshMicrophoneAuthorization() {
+        capture.refreshMicrophoneAuthorization()
     }
 
     private func requestProvisionalNotificationAuthorizationIfNeeded() async {

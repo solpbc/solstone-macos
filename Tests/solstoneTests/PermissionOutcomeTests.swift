@@ -2,10 +2,24 @@
 // Copyright (c) 2026 sol pbc
 
 import Testing
+import AVFoundation
 @testable import solstone
 
 @Suite("Permission outcome")
 struct PermissionOutcomeTests {
+    @Test func microphoneAuthorizationCauseMapsAVAuthorizationStatus() {
+        let cases: [(AVAuthorizationStatus, MicrophoneAuthorizationCause)] = [
+            (.authorized, .authorized),
+            (.notDetermined, .notDetermined),
+            (.denied, .denied),
+            (.restricted, .restricted),
+        ]
+
+        for (status, expected) in cases {
+            #expect(PermissionChecker.microphoneAuthorizationCause(from: status) == expected)
+        }
+    }
+
     @Test func screenRecordingChecksAreCheckingBeforeInitialPass() {
         #expect(PermissionOutcome.screenRecording(
             initialPermissionCheckComplete: false,
@@ -56,32 +70,26 @@ struct PermissionOutcomeTests {
     @Test func microphoneOutcomesDistinguishCauses() {
         #expect(PermissionOutcome.microphone(
             initialPermissionCheckComplete: false,
-            microphoneGranted: false,
             cause: .notDetermined
         ) == .checking)
         #expect(PermissionOutcome.microphone(
             initialPermissionCheckComplete: true,
-            microphoneGranted: true,
-            cause: .unknown
+            cause: .authorized
         ) == .granted)
         #expect(PermissionOutcome.microphone(
             initialPermissionCheckComplete: true,
-            microphoneGranted: false,
             cause: .notDetermined
         ) == .notGranted)
         #expect(PermissionOutcome.microphone(
             initialPermissionCheckComplete: true,
-            microphoneGranted: false,
             cause: .denied
         ) == .notGranted)
         #expect(PermissionOutcome.microphone(
             initialPermissionCheckComplete: true,
-            microphoneGranted: false,
             cause: .restricted
         ) == .notGranted)
         #expect(PermissionOutcome.microphone(
             initialPermissionCheckComplete: true,
-            microphoneGranted: false,
             cause: .unknown
         ) == .unavailable)
     }

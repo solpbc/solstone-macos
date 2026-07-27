@@ -137,7 +137,7 @@ struct SnapshotTests {
     private func markPermissionsReady(_ state: AppState) {
         state.initialPermissionCheckComplete = true
         state.screenRecordingGranted = true
-        state.microphoneGranted = true
+        state.microphoneAuthorizationCause = .authorized
     }
 
     private let statusIconSize = CGSize(width: 28, height: 28)
@@ -361,7 +361,7 @@ struct SnapshotTests {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true
         state.screenRecordingGranted = false
-        state.microphoneGranted = false
+        state.microphoneAuthorizationCause = .denied
         let updateController = makeSnapshotUpdateController()
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-error-permissions.png")
     }
@@ -436,7 +436,7 @@ struct SnapshotTests {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true
         state.screenRecordingGranted = false
-        state.microphoneGranted = true
+        state.microphoneAuthorizationCause = .authorized
         let updateController = makeSnapshotUpdateController()
         try render(
             SettingsView(appState: state, updateController: updateController, selectedTab: .service, initialStorageUsedMB: 42),
@@ -701,8 +701,7 @@ struct SnapshotTests {
                     solAppPlacement: .ready,
                     journalAppInstalled: .ready,
                     solWrapperExecutable: .ready,
-                    journalWrapperExecutable: .ready,
-                    microphoneCause: .unknown
+                    journalWrapperExecutable: .ready
                 )
             ),
             size: settingsSize,
@@ -714,7 +713,7 @@ struct SnapshotTests {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true
         state.screenRecordingGranted = false
-        state.microphoneGranted = false
+        state.microphoneAuthorizationCause = .denied
         let updateController = makeSnapshotUpdateController()
         try render(
             SettingsView(
@@ -731,8 +730,7 @@ struct SnapshotTests {
                     screenDiagnostic: ScreenRecordingPermissionDiagnostic(
                         preflightSucceeded: false,
                         sckFailedAfterPositivePreflight: false
-                    ),
-                    microphoneCause: .denied
+                    )
                 )
             ),
             size: settingsSize,
@@ -748,7 +746,7 @@ struct SnapshotTests {
         ))
         state.initialPermissionCheckComplete = true
         state.screenRecordingGranted = false
-        state.microphoneGranted = true
+        state.microphoneAuthorizationCause = .authorized
         let updateController = makeSnapshotUpdateController()
         try render(
             SettingsView(
@@ -764,8 +762,7 @@ struct SnapshotTests {
                     screenDiagnostic: ScreenRecordingPermissionDiagnostic(
                         preflightSucceeded: true,
                         sckFailedAfterPositivePreflight: true
-                    ),
-                    microphoneCause: .unknown
+                    )
                 )
             ),
             size: settingsSize,
@@ -821,7 +818,7 @@ struct SnapshotTests {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true
         state.screenRecordingGranted = false
-        state.microphoneGranted = true
+        state.microphoneAuthorizationCause = .authorized
         let updateController = makeSnapshotUpdateController()
         try render(
             SettingsView(
@@ -833,8 +830,7 @@ struct SnapshotTests {
                     screenDiagnostic: ScreenRecordingPermissionDiagnostic(
                         preflightSucceeded: false,
                         sckFailedAfterPositivePreflight: false
-                    ),
-                    microphoneCause: .unknown
+                    )
                 )
             ),
             size: settingsSize,
@@ -864,8 +860,7 @@ struct SnapshotTests {
         solWrapperExecutable: SetupProbeOutcome = .ready,
         journalWrapperExecutable: SetupProbeOutcome = .ready,
         hasPromptedScreenRecording: Bool = false,
-        screenDiagnostic: ScreenRecordingPermissionDiagnostic? = nil,
-        microphoneCause: MicrophoneAuthorizationCause = .unknown
+        screenDiagnostic: ScreenRecordingPermissionDiagnostic? = nil
     ) -> SetupProbeSnapshot {
         SetupProbeSnapshot(
             solAppPlacement: solAppPlacement,
@@ -873,8 +868,7 @@ struct SnapshotTests {
             solWrapperExecutable: solWrapperExecutable,
             journalWrapperExecutable: journalWrapperExecutable,
             hasPromptedScreenRecording: hasPromptedScreenRecording,
-            screenDiagnostic: screenDiagnostic,
-            microphoneCause: microphoneCause
+            screenDiagnostic: screenDiagnostic
         )
     }
 

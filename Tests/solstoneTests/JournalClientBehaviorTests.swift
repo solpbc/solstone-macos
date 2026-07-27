@@ -189,7 +189,7 @@ struct JournalClientBehaviorTests {
         let state = bundledConfiguredState()
         state.initialPermissionCheckComplete = true
         state.screenRecordingGranted = true
-        state.microphoneGranted = true
+        state.microphoneAuthorizationCause = .authorized
         state.isRecording = true
 
         #expect(!state.captureQueuedForJournalReadiness)

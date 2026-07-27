@@ -127,6 +127,19 @@ struct AppStateNotificationTests {
         await waitUntil { state.notificationAuthorizationStatus == UNAuthorizationStatus.denied }
     }
 
+    @Test func activationObserverRefreshesMicrophoneAuthorizationThroughReader() async {
+        let notifier = AppStateNotificationTestNotifier(status: .authorized)
+        let state = AppState.forSnapshot(notificationStatus: .authorized, notifier: notifier)
+        state.capture.microphoneAuthorizationReader = { .denied }
+        state.refreshMicrophoneAuthorization()
+        #expect(state.microphoneAuthorizationCause == .denied)
+        state.startObservingActivation()
+
+        state.capture.microphoneAuthorizationReader = { .authorized }
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        await waitUntil { state.microphoneAuthorizationCause == .authorized }
+    }
+
     @Test func elevateNotificationsRequestsAlertAndSound() async {
         let notifier = AppStateNotificationTestNotifier(status: .provisional)
         let state = AppState.forSnapshot(notificationStatus: .provisional, notifier: notifier)

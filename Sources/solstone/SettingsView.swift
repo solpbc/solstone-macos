@@ -444,9 +444,6 @@ struct SettingsView: View {
         .onChange(of: appState.screenRecordingGranted) { _, _ in
             refreshSetupProbes()
         }
-        .onChange(of: appState.microphoneGranted) { _, _ in
-            refreshSetupProbes()
-        }
         .onChange(of: appState.config.serverURL) { _, _ in
             refreshSetupProbes()
         }
@@ -507,6 +504,7 @@ struct SettingsView: View {
         case .permissions:
             permissionsTab.onAppear {
                 appState.markSettingsTabVisited(.permissions)
+                appState.refreshMicrophoneAuthorization()
             }
         case .updates:
             UpdatesTabView(controller: updateController, copy: UpdatesCopy(provider: .solstone))
@@ -781,7 +779,9 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                         HStack {
                             Spacer()
-                            switch setupProbeSnapshot.microphoneCause {
+                            switch appState.microphoneAuthorizationCause {
+                            case .authorized:
+                                EmptyView()
                             case .denied:
                                 microphoneSettingsButton(message: UICopy.SETTINGS_PERMISSIONS_MIC_DENIED)
                             case .restricted:
@@ -790,8 +790,7 @@ struct SettingsView: View {
                                 Button("enable microphone") {
                                     Task {
                                         await PermissionChecker().requestMicrophone()
-                                        refreshSetupProbes()
-                                        appState.microphoneGranted = PermissionChecker().microphoneGranted
+                                        appState.refreshMicrophoneAuthorization()
                                     }
                                 }
                                 .accessibilityIdentifier(AXID.Settings.Permissions.microphoneGrantAccess)
@@ -896,8 +895,7 @@ struct SettingsView: View {
                 solWrapperExecutable: wrapperExecutableOutcome(named: "sol"),
                 journalWrapperExecutable: wrapperExecutableOutcome(named: "journal"),
                 hasPromptedScreenRecording: permissionChecker.hasPromptedScreenRecording,
-                screenDiagnostic: screenDiagnostic,
-                microphoneCause: permissionChecker.microphoneAuthorizationCause
+                screenDiagnostic: screenDiagnostic
             )
         }
     }
@@ -2478,8 +2476,7 @@ struct SettingsView: View {
         )
         let microphoneOutcome = PermissionOutcome.microphone(
             initialPermissionCheckComplete: appState.initialPermissionCheckComplete,
-            microphoneGranted: appState.microphoneGranted,
-            cause: setupProbeSnapshot.microphoneCause
+            cause: appState.microphoneAuthorizationCause
         )
         let lastSyncOutcome: SetupLastSyncOutcome = appState.serviceIsDone
             ? appState.uploadCoordinator.lastSuccessfulJournalContactOutcome

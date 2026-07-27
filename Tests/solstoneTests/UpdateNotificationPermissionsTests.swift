@@ -13,7 +13,7 @@ struct UpdateNotificationPermissionsTests {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true
         state.screenRecordingGranted = false
-        state.microphoneGranted = true
+        state.microphoneAuthorizationCause = .authorized
         var announcements: [String] = []
         let controller = UpdateController(
             feedURL: nil,

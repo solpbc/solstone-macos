@@ -33,6 +33,7 @@ internal func classifySetupTopology(
 }
 
 internal enum MicrophoneAuthorizationCause: Equatable, Sendable {
+    case authorized
     case notDetermined
     case denied
     case restricted
@@ -62,13 +63,13 @@ internal enum PermissionOutcome: Equatable, Sendable {
 
     static func microphone(
         initialPermissionCheckComplete: Bool,
-        microphoneGranted: Bool,
         cause: MicrophoneAuthorizationCause
     ) -> PermissionOutcome {
         guard initialPermissionCheckComplete else { return .checking }
-        if microphoneGranted { return .granted }
 
         switch cause {
+        case .authorized:
+            return .granted
         case .notDetermined, .denied, .restricted:
             return .notGranted
         case .unknown:
@@ -189,7 +190,6 @@ internal struct SetupProbeSnapshot: Equatable, Sendable {
     var journalWrapperExecutable: SetupProbeOutcome
     var hasPromptedScreenRecording: Bool
     var screenDiagnostic: ScreenRecordingPermissionDiagnostic?
-    var microphoneCause: MicrophoneAuthorizationCause
 
     static let checking = SetupProbeSnapshot(
         solAppPlacement: .checking,
@@ -197,8 +197,7 @@ internal struct SetupProbeSnapshot: Equatable, Sendable {
         solWrapperExecutable: .checking,
         journalWrapperExecutable: .checking,
         hasPromptedScreenRecording: false,
-        screenDiagnostic: nil,
-        microphoneCause: .unknown
+        screenDiagnostic: nil
     )
 }
 

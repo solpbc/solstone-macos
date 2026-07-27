@@ -43,19 +43,23 @@ struct PermissionChecker {
         return false
     }
 
-    var microphoneGranted: Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    var microphoneAuthorizationCause: MicrophoneAuthorizationCause {
+        Self.microphoneAuthorizationCause(from: AVCaptureDevice.authorizationStatus(for: .audio))
     }
 
-    var microphoneAuthorizationCause: MicrophoneAuthorizationCause {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    internal static func microphoneAuthorizationCause(from status: AVAuthorizationStatus) -> MicrophoneAuthorizationCause {
+        switch status {
+        case .authorized:
+            return .authorized
         case .notDetermined:
             return .notDetermined
         case .denied:
             return .denied
         case .restricted:
             return .restricted
-        default:
+        @unknown default:
+            // .unknown means the OS reported a status we do not understand;
+            // it never means we did not ask.
             return .unknown
         }
     }

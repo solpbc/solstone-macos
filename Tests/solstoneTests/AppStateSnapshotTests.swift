@@ -22,7 +22,7 @@ struct AppStateSnapshotTests {
         state.isRecording = true
         state.isPaused = true
         state.screenRecordingGranted = true
-        state.microphoneGranted = true
+        state.microphoneAuthorizationCause = .authorized
         state.initialPermissionCheckComplete = true
         state.captureQueuedForJournalReadiness = true
         state.audioReconciledCount = 3
@@ -30,6 +30,8 @@ struct AppStateSnapshotTests {
         #expect(state.capture.isRecording)
         #expect(state.capture.isPaused)
         #expect(state.capture.screenRecordingGranted)
+        #expect(state.capture.microphoneAuthorizationCause == .authorized)
+        #expect(state.microphoneGranted)
         #expect(state.capture.microphoneGranted)
         #expect(state.capture.initialPermissionCheckComplete)
         #expect(state.capture.captureQueuedForJournalReadiness)
@@ -65,7 +67,7 @@ struct AppStateSnapshotTests {
             "public internal(set) var audioReconciledCount: Int = 0",
             "public internal(set) var captureQueuedForJournalReadiness: Bool = false",
             "public internal(set) var screenRecordingGranted = false",
-            "public internal(set) var microphoneGranted = false",
+            "internal var microphoneAuthorizationCause: MicrophoneAuthorizationCause = .unknown",
             "public internal(set) var initialPermissionCheckComplete = false",
             "private var permissionPollTimer: Timer?",
             "private var isCheckingPermissions = false"
@@ -76,6 +78,7 @@ struct AppStateSnapshotTests {
         }
 
         #expect(coordinatorSource.contains("public internal(set) var isRecording = false"))
+        #expect(coordinatorSource.contains("internal var microphoneAuthorizationCause: MicrophoneAuthorizationCause = .unknown"))
         #expect(coordinatorSource.contains("private var permissionPollTimer: Timer?"))
         #expect(coordinatorSource.contains("private var isCheckingPermissions = false"))
     }

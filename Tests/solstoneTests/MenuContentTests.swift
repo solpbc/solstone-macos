@@ -41,7 +41,7 @@ struct MenuContentTests {
         let permissionsNeeded = AppState.forSnapshot()
         permissionsNeeded.initialPermissionCheckComplete = true
         permissionsNeeded.screenRecordingGranted = false
-        permissionsNeeded.microphoneGranted = false
+        permissionsNeeded.microphoneAuthorizationCause = .denied
         #expect(!MenuContent(appState: permissionsNeeded, updateController: updateController).hasPauseResumeControl)
 
         let wedge = AppState.forSnapshot()
@@ -308,7 +308,7 @@ struct MenuContentTests {
         ))
         state.initialPermissionCheckComplete = true
         state.screenRecordingGranted = true
-        state.microphoneGranted = true
+        state.microphoneAuthorizationCause = .authorized
         state.isRecording = true
         state.uploadCoordinator.status = .synced
         state.solChatStale = true

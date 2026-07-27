@@ -116,6 +116,57 @@ struct CaptureCoordinatorTests {
         #expect(bannerMessages.isEmpty)
     }
 
+    @Test func microphoneGrantedDerivesFromAuthorizationCause() throws {
+        let source = try readWireUpSource("Sources/solstone/CaptureCoordinator.swift")
+        #expect(!source.contains("public internal(set) var microphoneGranted = false"))
+
+        let (coordinator, root) = try makeCoordinator()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let cases: [(MicrophoneAuthorizationCause, Bool)] = [
+            (.authorized, true),
+            (.notDetermined, false),
+            (.denied, false),
+            (.restricted, false),
+            (.unknown, false),
+        ]
+
+        for (cause, granted) in cases {
+            coordinator.microphoneAuthorizationCause = cause
+            #expect(coordinator.microphoneGranted == granted)
+        }
+    }
+
+    @Test func refreshMicrophoneAuthorizationUsesReaderWithoutStartingOrPolling() throws {
+        let (coordinator, root) = try makeCoordinator()
+        defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.screenRecordingGranted = true
+        coordinator.microphoneAuthorizationReader = { .authorized }
+        let wasPolling = coordinator.isPermissionPollingActiveForTesting
+
+        coordinator.refreshMicrophoneAuthorization()
+
+        #expect(coordinator.microphoneGranted)
+        #expect(!coordinator.isRecording)
+        #expect(coordinator.isPermissionPollingActiveForTesting == wasPolling)
+    }
+
+    @Test func refreshMicrophoneAuthorizationWorksWhileRecordingWithoutPolling() throws {
+        let (coordinator, root) = try makeCoordinator()
+        defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.microphoneAuthorizationCause = .denied
+        coordinator.handleCaptureStateChange(.recording)
+        #expect(coordinator.isRecording)
+        #expect(!coordinator.isPermissionPollingActiveForTesting)
+        coordinator.microphoneAuthorizationReader = { .authorized }
+
+        coordinator.refreshMicrophoneAuthorization()
+
+        #expect(coordinator.microphoneAuthorizationCause == .authorized)
+        #expect(coordinator.microphoneGranted)
+        #expect(!coordinator.isPermissionPollingActiveForTesting)
+    }
+
     @Test func permissionReturnWhileInErrorStartsThroughInjectedOperation() async throws {
         let harness = StartOperationHarness()
         let (coordinator, root) = try makeCoordinator(startOperation: harness.operation)
@@ -124,7 +175,7 @@ struct CaptureCoordinatorTests {
         harness.lifecycleCurrentState = .error("permission denied")
         coordinator.handleCaptureStateChange(.error("permission denied"))
         coordinator.screenRecordingGranted = true
-        coordinator.microphoneGranted = true
+        coordinator.microphoneAuthorizationCause = .authorized
 
         await coordinator.startRecording(reason: .autoStart)
 
@@ -274,6 +325,19 @@ struct CaptureCoordinatorTests {
 
         #expect(firedStartCount.count == 1)
         #expect(firedCoordinator.initialPermissionCheckComplete)
+    }
+
+    @Test func livePermissionCheckReadsMicrophoneCauseBeforeScreenRecordingBranch() throws {
+        let source = try readWireUpSource("Sources/solstone/CaptureCoordinator.swift")
+        let functionStart = try #require(source.range(of: "private func checkPermissionsAndAutoStart("))
+        let functionEnd = try #require(
+            source[functionStart.upperBound...].range(of: "\n    internal var isPermissionPollingActiveForTesting")
+        )
+        let body = source[functionStart.lowerBound..<functionEnd.lowerBound]
+        let microphoneRead = try #require(body.range(of: "microphoneAuthorizationCause = microphoneAuthorizationReader()"))
+        let screenBranch = try #require(body.range(of: "if checker.hasPromptedScreenRecording"))
+
+        #expect(microphoneRead.lowerBound < screenBranch.lowerBound)
     }
 
     private func makeCoordinator(

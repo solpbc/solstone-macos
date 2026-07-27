@@ -91,6 +91,46 @@ struct SettingsViewTests {
         #expect(!banner.contains(removedAction))
     }
 
+    @Test func microphoneGroupUsesAppStateAuthorizationCause() throws {
+        let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
+        let group = try extract(
+            from: source,
+            start: "Text(\"microphone\")",
+            end: "Text(\"you can review or revoke these anytime in\")"
+        )
+        let removedProbeReference = "setupProbe" + "Snapshot"
+        let explanatoryCopy = "to take in conversations and meetings, " +
+            "sol needs mic access. same rules: stored locally, sent only to your journal. no third parties, no exceptions."
+
+        #expect(!group.contains(removedProbeReference))
+        #expect(group.contains("switch appState.microphoneAuthorizationCause"))
+        #expect(group.contains("UICopy.SETTINGS_PERMISSIONS_MIC_DENIED"))
+        #expect(group.contains(#"Text("\#(explanatoryCopy)")"#))
+        #expect(!group.contains("appState.microphoneGranted ="))
+        #expect(!group.contains("refreshSetupProbes()"))
+    }
+
+    @Test func microphoneRefreshSeamsStayScoped() throws {
+        let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
+        let permissionsCase = try extract(
+            from: source,
+            start: "case .permissions:",
+            end: "case .updates:"
+        )
+        let selectedTabHandler = try extract(
+            from: source,
+            start: ".onChange(of: selectedTab) { _, newValue in",
+            end: ".onChange(of: appState.initialPermissionCheckComplete) { _, _ in"
+        )
+
+        #expect(permissionsCase.contains("appState.refreshMicrophoneAuthorization()"))
+        #expect(!permissionsCase.contains("refreshSetupProbes()"))
+        #expect(selectedTabHandler.contains("if newValue == .status"))
+        #expect(selectedTabHandler.contains("refreshSetupProbes()"))
+        #expect(!selectedTabHandler.contains("refreshMicrophoneAuthorization()"))
+        #expect(!selectedTabHandler.contains(".permissions"))
+    }
+
     private func extract(from source: String, start: String, end: String) throws -> String {
         let startRange = try #require(source.range(of: start))
         let endRange = try #require(source[startRange.upperBound...].range(of: end))

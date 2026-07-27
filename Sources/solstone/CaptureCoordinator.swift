@@ -21,13 +21,22 @@ public final class CaptureCoordinator {
     public internal(set) var isUserPaused = false
     public internal(set) var captureError: String?
     public internal(set) var screenRecordingGranted = false
-    public internal(set) var microphoneGranted = false
+    internal var microphoneAuthorizationCause: MicrophoneAuthorizationCause = .unknown
     public internal(set) var initialPermissionCheckComplete = false
     public internal(set) var captureQueuedForJournalReadiness = false
     public internal(set) var audioReconciledCount: Int = 0
 
+    public var microphoneGranted: Bool {
+        microphoneAuthorizationCause == .authorized
+    }
+
     public let captureManager: CaptureManager
     public let pauseManager: PauseManager
+
+    @ObservationIgnored
+    internal var microphoneAuthorizationReader: @MainActor @Sendable () -> MicrophoneAuthorizationCause = {
+        PermissionChecker().microphoneAuthorizationCause
+    }
 
     private let audioDeviceMonitor: AudioDeviceMonitor
     private let isTerminating: IsTerminatingProvider
@@ -182,6 +191,10 @@ public final class CaptureCoordinator {
         }
     }
 
+    internal func refreshMicrophoneAuthorization() {
+        microphoneAuthorizationCause = microphoneAuthorizationReader()
+    }
+
     private func startPermissionPolling() {
         Task { @MainActor in
             await self.checkPermissionsAndAutoStart()
@@ -208,13 +221,13 @@ public final class CaptureCoordinator {
         await checkPermissionsAndAutoStart(
             permissionOverride: (
                 screenRecordingGranted: screenRecordingGranted,
-                microphoneGranted: microphoneGranted
+                microphoneAuthorizationCause: microphoneGranted ? .authorized : .denied
             )
         )
     }
 
     private func checkPermissionsAndAutoStart(
-        permissionOverride: (screenRecordingGranted: Bool, microphoneGranted: Bool)? = nil
+        permissionOverride: (screenRecordingGranted: Bool, microphoneAuthorizationCause: MicrophoneAuthorizationCause)? = nil
     ) async {
         guard !isCheckingPermissions else { return }
         isCheckingPermissions = true
@@ -222,9 +235,10 @@ public final class CaptureCoordinator {
 
         if let permissionOverride {
             screenRecordingGranted = permissionOverride.screenRecordingGranted
-            microphoneGranted = permissionOverride.microphoneGranted
+            microphoneAuthorizationCause = permissionOverride.microphoneAuthorizationCause
         } else {
             let checker = PermissionChecker()
+            microphoneAuthorizationCause = microphoneAuthorizationReader()
 
             if checker.hasPromptedScreenRecording {
                 // Gate on CGPreflightScreenCaptureAccess before touching SCShareableContent.
@@ -243,7 +257,6 @@ public final class CaptureCoordinator {
                 }
                 // else: no TCC entry yet — user hasn't granted in System Settings, wait silently
             }
-            microphoneGranted = checker.microphoneGranted
         }
 
         let allGranted = screenRecordingGranted && microphoneGranted
