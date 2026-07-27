@@ -32,12 +32,25 @@ internal func classifySetupTopology(
     return LoopbackHost.isLoopbackURL(parseableURL) ? .local : .remote
 }
 
-internal enum MicrophoneAuthorizationCause: Equatable, Sendable {
+internal enum MicrophoneAuthorizationCause: CaseIterable, Equatable, Sendable {
     case authorized
     case notDetermined
     case denied
     case restricted
     case unknown
+
+    var permissionAXState: AXPermissionState {
+        switch self {
+        case .authorized:
+            return .granted
+        case .notDetermined:
+            return .waiting
+        case .denied, .restricted:
+            return .denied
+        case .unknown:
+            return .unavailable
+        }
+    }
 }
 
 internal enum PermissionOutcome: Equatable, Sendable {

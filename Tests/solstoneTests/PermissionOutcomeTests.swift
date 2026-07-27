@@ -93,4 +93,21 @@ struct PermissionOutcomeTests {
             cause: .unknown
         ) == .unavailable)
     }
+
+    @Test func microphoneAuthorizationCausesMapToAXPermissionStates() throws {
+        let expected: [(cause: MicrophoneAuthorizationCause, state: AXPermissionState)] = [
+            (.authorized, .granted),
+            (.notDetermined, .waiting),
+            (.denied, .denied),
+            (.restricted, .denied),
+            (.unknown, .unavailable),
+        ]
+
+        #expect(expected.map(\.cause) == MicrophoneAuthorizationCause.allCases)
+
+        for cause in MicrophoneAuthorizationCause.allCases {
+            let expectedState = try #require(expected.first { $0.cause == cause }?.state)
+            #expect(cause.permissionAXState == expectedState)
+        }
+    }
 }

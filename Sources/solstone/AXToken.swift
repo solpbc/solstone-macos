@@ -13,6 +13,7 @@ internal enum AXPermissionState: CaseIterable {
     case granted
     case denied
     case waiting
+    case unavailable
 }
 
 internal enum MenubarIconState: CaseIterable {
@@ -414,6 +415,8 @@ extension AXPermissionState {
             return "denied"
         case .waiting:
             return "waiting"
+        case .unavailable:
+            return "unavailable"
         }
     }
 }

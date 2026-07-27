@@ -686,7 +686,7 @@ struct SettingsView: View {
     }
 
     private var microphonePermissionAXState: AXPermissionState {
-        appState.microphoneGranted ? .granted : .denied
+        appState.microphoneAuthorizationCause.permissionAXState
     }
 
     private var permissionsTab: some View {

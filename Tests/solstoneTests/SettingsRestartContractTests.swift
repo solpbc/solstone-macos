@@ -40,7 +40,7 @@ struct SettingsRestartContractTests {
 
     @Test func registryPinsAppRestartPseudoKeys() {
         #expect(SettingsReloadSemantics.semantic["screenRecordingGranted"] == .appRestart)
-        #expect(SettingsReloadSemantics.semantic["microphoneGranted"] == .appRestart)
+        #expect(SettingsReloadSemantics.semantic["microphoneGranted"] == .live)
     }
 
     @Test func productionSettingsNoLongerUsesRestartRequiredHookOrBanner() throws {

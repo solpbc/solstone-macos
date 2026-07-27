@@ -444,7 +444,8 @@
     "AXPermissionState" : [
       "granted",
       "denied",
-      "waiting"
+      "waiting",
+      "unavailable"
     ],
     "ConnectionTestState" : [
       "idle",
