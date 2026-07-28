@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.10] - 2026-07-28
+
 ### Added
 - the menu bar icon now shows an attention badge when an update is ready or an update check didn't go through, and settings marks a permission that still needs your ok the same way. one badge covers everything that needs your attention, and the menu names it without repeating itself.
 - sol now tells you once, quietly and without a sound, when a new version is available. it won't announce that same version again, and clicking the notification opens the updates tab in settings.
