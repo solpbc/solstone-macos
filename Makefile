@@ -1009,7 +1009,22 @@ release-dmg-smoke-both:
 journal-runtime-probe:
 	@test -d journal.app || { echo "error: journal.app not found — run make bundle-dist-journal first"; exit 1; }
 	@swift build --product journal-runtime-probe
-	@.build/debug/journal-runtime-probe --app journal.app --regime both
+	@# PYTHONDONTWRITEBYTECODE: this probe runs AFTER journal.app is signed, and it
+	@# works by executing the bundled interpreter. Without this, Python compiles
+	@# encodings/* into Contents/Resources/python/.../__pycache__, which adds and
+	@# modifies files inside the signed bundle and breaks its seal. Notarization then
+	@# rejects the DMG with "The signature of the binary is invalid" on
+	@# Contents/MacOS/journal -- a message that points at the signature rather than at
+	@# the mutation that invalidated it.
+	@PYTHONDONTWRITEBYTECODE=1 .build/debug/journal-runtime-probe --app journal.app --regime both
+	@# The probe is the only post-sign step that executes bundle contents, so assert
+	@# the seal here rather than discovering a mutation at notarization.
+	@codesign --verify --strict journal.app 2>/dev/null || { \
+		echo "error: journal.app seal broken after the runtime probe — something mutated the signed bundle:"; \
+		codesign --verify --strict --verbose=4 journal.app 2>&1 | grep -E "^(file |.*sealed resource)" | head -10; \
+		exit 1; \
+	}
+	@echo "✓ journal.app seal intact after runtime probe"
 
 # Install development dependencies needed for local build workflows
 install: check-dev-deps
