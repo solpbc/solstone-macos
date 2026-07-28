@@ -1264,7 +1264,20 @@ JA1R_HOST               ?= ja1r.local
 JA1R_HARNESS_DIR        ?= $$HOME/extro-tools/tools/solstone-macos-gate
 JA1R_PRODUCT_DIR        ?= $$HOME/projects/solstone-macos
 JA1R_GATE_SYNC_RECEIPT  ?= .ja1r-gate/sync-receipt.json
-JA1R_GATE_REPORT_DIR    ?= .ja1r-gate/reports
+
+# Report directories are scoped per profile AND published identity, so two cuts
+# can never share one. Lane filenames name the lane, not what it proves: five of
+# the six journal reports share a filename with a sol-profile member, and a
+# sol-only cut deliberately holds the journal pin at the RELEASED version — so
+# identically-named reports can assert a different journal identity. The verifier
+# binds every identity explicitly and would refuse a mismatched set anyway; what
+# scoping removes is the hand-clear before each run, which is the step where an
+# operator can go wrong. Set JA1R_GATE_REPORT_DIR to override for a one-off.
+JA1R_GATE_REPORTS_ROOT  ?= .ja1r-gate/reports
+JA1R_GATE_REPORT_DIR    ?=
+JA1R_GATE_REPORT_DIR_SOL     = $(JA1R_GATE_REPORTS_ROOT)/sol-$(DIST_VERSION)-$(DIST_BUILD)
+JA1R_GATE_REPORT_DIR_JOURNAL = $(JA1R_GATE_REPORTS_ROOT)/journal-$(JOURNAL_DIST_VERSION)-$(JOURNAL_DIST_BUILD)
+JA1R_GATE_REPORT_DIR_PAIRED  = $(JA1R_GATE_REPORTS_ROOT)/paired-sol-$(DIST_VERSION)-$(DIST_BUILD)-journal-$(JOURNAL_DIST_VERSION)-$(JOURNAL_DIST_BUILD)
 
 PRODUCT_HEAD := $(shell git rev-parse HEAD 2>/dev/null)
 
@@ -1304,7 +1317,7 @@ endef
 verify-ja1r-gate-sol: ja1r-gate-clean-tree
 	$(call require_gate_vars,sol,JA1R_GATE_JOURNAL_VERSION JA1R_GATE_JOURNAL_BUILD JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN)
 	$(VERIFY_JA1R) --profile sol \
-		--report-dir '$(JA1R_GATE_REPORT_DIR)' \
+		--report-dir '$(or $(JA1R_GATE_REPORT_DIR),$(JA1R_GATE_REPORT_DIR_SOL))' \
 		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
 		--product-commit '$(PRODUCT_HEAD)' \
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
@@ -1319,7 +1332,7 @@ verify-ja1r-gate-sol: ja1r-gate-clean-tree
 verify-ja1r-gate-journal: ja1r-gate-clean-tree
 	$(call require_gate_vars,journal,JA1R_GATE_SOL_VERSION JA1R_GATE_SOL_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)
 	$(VERIFY_JA1R) --profile journal \
-		--report-dir '$(JA1R_GATE_REPORT_DIR)' \
+		--report-dir '$(or $(JA1R_GATE_REPORT_DIR),$(JA1R_GATE_REPORT_DIR_JOURNAL))' \
 		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
 		--product-commit '$(PRODUCT_HEAD)' \
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
@@ -1337,7 +1350,7 @@ verify-ja1r-gate-journal: ja1r-gate-clean-tree
 verify-ja1r-gate-paired: ja1r-gate-clean-tree
 	$(call require_gate_vars,paired,JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)
 	$(VERIFY_JA1R) --profile paired \
-		--report-dir '$(JA1R_GATE_REPORT_DIR)' \
+		--report-dir '$(or $(JA1R_GATE_REPORT_DIR),$(JA1R_GATE_REPORT_DIR_PAIRED))' \
 		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
 		--product-commit '$(PRODUCT_HEAD)' \
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \

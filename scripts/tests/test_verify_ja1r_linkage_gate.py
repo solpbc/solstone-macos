@@ -528,6 +528,24 @@ class Completeness(GateTestCase):
     def test_empty_report_dir_is_refused(self):
         self.assert_refused()
 
+    def test_a_foreign_report_beside_a_complete_set_is_refused_by_name(self):
+        # The verifier only ever opens the profile's own filenames, so evidence
+        # from another cut sitting alongside them used to be silently ignored.
+        # A mixed directory is refused, and the offending file is named.
+        self.write_set("journal")
+        self.write_report("sol-upgrade.json", report_for("sol-upgrade.json", self.sol_dmg_sha))
+        err = self.assert_refused("journal")
+        self.assertIn("sol-upgrade.json", err)
+        self.assertIn("outside profile", err)
+
+    def test_non_report_files_beside_a_complete_set_are_ignored(self):
+        # Lanes write stderr logs next to their reports; only .json is evidence.
+        self.write_set("journal")
+        (self.reports / "journal-upgrade.stderr").write_text("[gate] OK\n")
+        (self.reports / "summary.txt").write_text("journal-upgrade rc=0 result=PASS\n")
+        code, _out, err = self.run_gate("journal")
+        self.assertEqual(code, 0, f"a stray log file must not refuse the gate: {err}")
+
 
 class SPLLinkCoordinatorReport(GateTestCase):
     def spl_path(self):

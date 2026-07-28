@@ -421,6 +421,39 @@ class GateFailure(Exception):
     """Any condition that must refuse the publish."""
 
 
+def verify_report_dir_holds_only_this_profile(report_dir, profile):
+    """Refuse a report directory that also holds another cut's evidence.
+
+    This verifier opens exactly the filenames in PROFILES, so a report left over
+    from a different cut sits alongside them and is never looked at. Identity
+    binding still makes a wrong publish impossible -- every report is checked
+    against an explicitly supplied identity and the product commit -- so this is
+    not a correctness hole. What a mixed directory actually costs is the analysis
+    to work out which set you are looking at, plus a hand-clear before the run,
+    which is the step where an operator can go wrong.
+
+    Lane filenames name the lane, not what it proves: five of the six journal
+    reports share a name with a sol-profile member, and a sol-only cut holds the
+    journal pin at the released version, so identically-named reports can assert
+    a different journal identity. With per-profile scoped report directories this
+    check is unreachable in normal use, which is exactly why it is worth
+    asserting rather than leaving implicit.
+    """
+    expected = set(PROFILES[profile])
+    try:
+        present = {entry.name for entry in report_dir.iterdir() if entry.suffix == ".json"}
+    except FileNotFoundError:
+        raise GateFailure(f"report dir {report_dir} does not exist")
+    unexpected = sorted(present - expected)
+    if unexpected:
+        raise GateFailure(
+            f"report dir {report_dir} holds {len(unexpected)} report(s) outside profile "
+            f"{profile!r}: {', '.join(unexpected)}. Evidence from two cuts must not share a "
+            "directory -- give each profile its own scoped report dir rather than clearing "
+            "one by hand."
+        )
+
+
 def required_identity_keys(profile):
     """Exactly the identities the profile's member lanes actually assert."""
     keys = set()
@@ -1346,6 +1379,7 @@ def main(argv=None, *, now=None):
 
         pin = read_pin()
         verify_receipt(args.sync_receipt, pin, args.product_commit)
+        verify_report_dir_holds_only_this_profile(args.report_dir, args.profile)
         for filename in PROFILES[args.profile]:
             if filename == SPL_LINK_REPORT_FILENAME:
                 verify_coordinator_report(
