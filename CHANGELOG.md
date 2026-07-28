@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- the menu bar icon now shows an attention badge when an update is ready or an update check didn't go through, and settings marks a permission that still needs your ok the same way. one badge covers everything that needs your attention, and the menu names it without repeating itself.
+- sol now tells you once, quietly and without a sound, when a new version is available. it won't announce that same version again, and clicking the notification opens the updates tab in settings.
+
+### Changed
+- sol now downloads updates in the background by default, so a new version is ready when you decide to install it. installing is still your call. if you turned background downloads off, they stay off. the setting lives in settings under updates.
+
 ### Fixed
 - the permissions screen reads your real microphone setting instead of saying it couldn't check. a microphone sol has never asked about now offers to ask, and one that is off or restricted says which. reported by Dave Smith.
 - a microphone you have already allowed no longer makes "check my setup" report that some setup checks are unavailable. reported by Dave Smith.
