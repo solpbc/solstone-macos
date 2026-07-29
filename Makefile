@@ -183,6 +183,9 @@ vendor-wheelhouse: check-versions vendor-uv vendor-python
 	    "$(PYTHON_VENDOR_DIR)/bin/python3.13" -m pip download "solstone-core==$(SOLSTONE_PIN_VERSION)" --no-deps --only-binary=:all: --dest "$(WHEELHOUSE_DIR)" --platform "$(WHEELHOUSE_PLATFORM_TAG)" --python-version "$(WHEELHOUSE_PYTHON_TAG)" --implementation cp --abi "$(WHEELHOUSE_ABI)" || { echo "error: solstone-core wheel download failed"; exit 1; }; \
 	    CORE_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone_core-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
 	    [ "$$CORE_COUNT" = "1" ] || { echo "error: expected exactly one solstone_core-$(SOLSTONE_PIN_VERSION)-*.whl in $(WHEELHOUSE_DIR)"; exit 1; }; \
+	    "$(PYTHON_VENDOR_DIR)/bin/python3.13" -m pip download "solstone-core-speakers-analyze==$(SOLSTONE_PIN_VERSION)" --no-deps --only-binary=:all: --dest "$(WHEELHOUSE_DIR)" --platform "$(WHEELHOUSE_PLATFORM_TAG)" --python-version "$(WHEELHOUSE_PYTHON_TAG)" --implementation cp --abi "$(WHEELHOUSE_ABI)" || { echo "error: solstone-core-speakers-analyze wheel download failed"; exit 1; }; \
+	    SPEAKERS_ANALYZE_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone_core_speakers_analyze-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
+	    [ "$$SPEAKERS_ANALYZE_COUNT" = "1" ] || { echo "error: expected exactly one solstone_core_speakers_analyze-$(SOLSTONE_PIN_VERSION)-*.whl in $(WHEELHOUSE_DIR)"; exit 1; }; \
 	    WHEEL_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name '*.whl' | wc -l | tr -d ' ')"; \
 	    [ "$$WHEEL_COUNT" -gt 1 ] || { echo "error: dependency wheel download produced no dependency wheels"; exit 1; }; \
 	    NON_WHEELS="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f ! -name '*.whl' -print)"; \
