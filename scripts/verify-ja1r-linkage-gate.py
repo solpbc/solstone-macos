@@ -113,14 +113,52 @@ COORDINATOR_PAIRING_TIMING_KEYS = frozenset(
 COORDINATOR_CLEANUP_STEPS = (
     "remote_lane",
     "synthetic_segment_remove",
-    "relay_revoke",
-    "private_link_disable",
     "sandbox_stop",
     "remote_run_dir_remove",
 )
 COORDINATOR_CLEANUP_ITEM_KEYS = frozenset(
     ("attempted", "required", "action_ok", "verified", "duration_s")
 )
+# remote_lane and remote_run_dir_remove carry the same five summary fields as
+# every other cleanup step, plus step-specific forensic detail the coordinator
+# records for that step. relay_revoke and private_link_disable no longer exist
+# as separate steps -- extro-sandbox stop now owns SPL disablement, relay
+# revocation, and Worker-secret removal internally (see sandbox_stop above).
+COORDINATOR_CLEANUP_REMOTE_LANE_KEYS = COORDINATOR_CLEANUP_ITEM_KEYS | frozenset(
+    (
+        "absence",
+        "child",
+        "child_cleanup",
+        "completion_record",
+        "exception",
+        "failed_phase",
+        "failure_reason",
+        "lifecycle",
+        "safe_recovery",
+        "survivors",
+        "tail_budget_s",
+        "transport_failures",
+        "work_deadline_exhausted",
+        "work_deadline_s",
+        "wrapper",
+    )
+)
+COORDINATOR_CLEANUP_REMOTE_RUN_DIR_REMOVE_KEYS = COORDINATOR_CLEANUP_ITEM_KEYS | frozenset(
+    (
+        "evidence_integrity",
+        "path",
+        "path_state",
+        "removal_attempted",
+        "removal_skipped_reason",
+        "safe_recovery",
+    )
+)
+COORDINATOR_CLEANUP_STEP_KEYS = {
+    "remote_lane": COORDINATOR_CLEANUP_REMOTE_LANE_KEYS,
+    "synthetic_segment_remove": COORDINATOR_CLEANUP_ITEM_KEYS,
+    "sandbox_stop": COORDINATOR_CLEANUP_ITEM_KEYS,
+    "remote_run_dir_remove": COORDINATOR_CLEANUP_REMOTE_RUN_DIR_REMOVE_KEYS,
+}
 SPL_LINK_LANE_KEYS = frozenset(
     (
         "result",
@@ -951,7 +989,7 @@ def verify_coordinator_cleanup(cleanup, filename):
     for name in COORDINATOR_CLEANUP_STEPS:
         item = cleanup[name]
         label = f"{filename}: cleanup.{name}"
-        require_exact_keys(item, COORDINATOR_CLEANUP_ITEM_KEYS, label)
+        require_exact_keys(item, COORDINATOR_CLEANUP_STEP_KEYS[name], label)
         require_true(item["attempted"], f"{label}.attempted")
         require_true(item["required"], f"{label}.required")
         require_true(item["action_ok"], f"{label}.action_ok")

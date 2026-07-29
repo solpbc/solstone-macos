@@ -119,16 +119,24 @@ def phase_report():
 
 
 def cleanup_report():
-    return {
-        name: {
+    report = {}
+    for name in verifier.COORDINATOR_CLEANUP_STEPS:
+        item = {
             "attempted": True,
             "required": True,
             "action_ok": True,
             "verified": True,
             "duration_s": 0.001,
         }
-        for name in verifier.COORDINATOR_CLEANUP_STEPS
-    }
+        # Some steps (remote_lane, remote_run_dir_remove) carry extra
+        # step-specific forensic keys beyond the five common fields above --
+        # schema-derived so this fixture tracks whatever the verifier expects,
+        # not a hand-copied snapshot.
+        extra_keys = verifier.COORDINATOR_CLEANUP_STEP_KEYS[name] - set(item)
+        for key in extra_keys:
+            item[key] = None
+        report[name] = item
+    return report
 
 
 def tier_b_expected():
