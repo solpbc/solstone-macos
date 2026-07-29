@@ -56,8 +56,13 @@ ISO_UTC_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}
 
 SPL_LINK_REPORT_FILENAME = "spl-link.json"
 
-# Schema-derived from extro-tools coordinator 122c5ba
-# tools/solstone-macos-gate/spl_link_coordinator.py.
+# Schema-derived from extro-tools coordinator spl_link_coordinator.py, verified
+# against a live sol 1.4.11 spl-link run 2026-07-29. The coordinator's
+# provisioning step was consolidated to a single `extro-sandbox create` call
+# (replacing five hand-driven phases: home_init, enroll, instance_read, grant,
+# setup_verify) without this list being updated -- every spl-link run since
+# that refactor landed a real "create" phase and could never satisfy the old
+# five-name set, so this check had been permanently unsatisfiable.
 PAIR_LINK_TTL_S = 300.0
 SPL_LINK_MAX_RUN_AGE_S = 24 * 60 * 60
 SPL_LINK_FUTURE_SKEW_S = 5 * 60
@@ -82,11 +87,6 @@ COORDINATOR_REPORT_KEYS = frozenset(
 )
 COORDINATOR_PHASE_NAMES = (
     "create",
-    "home_init",
-    "enroll",
-    "instance_read",
-    "grant",
-    "setup_verify",
     "home_baseline",
     "remote_prepare",
     "launch",
