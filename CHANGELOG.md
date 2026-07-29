@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.11] - 2026-07-29
+
 ### Fixed
 - your private link now recognizes when a connection has quietly gone dead, even though it still looks connected, and reconnects instead of hanging. reported by Dave Smith.
 
