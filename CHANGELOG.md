@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.12] - 2026-07-30
+
+### Changed
+- if sol can't reach a journal at an address you entered by hand, the message now says just that and asks you to check the journal is running and reachable. it used to send you to Local Network permission in System Settings, which was often the wrong place to look.
+
+### Fixed
+- pairing another Mac to your journal now works. some journals hand out a pairing link that connects directly over your local network instead of through the relay, and sol used to turn those down without trying.
+- clicking a link while viewing your journal in sol no longer leaves "opening your journal…" sitting on top of a page that had already loaded.
+
 ## [1.4.11] - 2026-07-29
 
 ### Fixed
