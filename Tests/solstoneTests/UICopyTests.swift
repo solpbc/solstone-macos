@@ -33,6 +33,7 @@ struct UICopyTests {
     }
 
     @Test func pairingRecoveryStrings() {
+        #expect(UICopy.PAIRING_LINK_PLACEHOLDER == "paste pairing link")
         #expect(UICopy.PAIRING_NOTENTITLED_RECOVERY == "your journal is paired, but it isn\u{0027}t on the paid plan, so it can\u{0027}t sync over the internet. on the same wi-fi as your journal, or over your own vpn, it connects directly without the plan.")
         #expect(UICopy.PAIRING_DISCONNECT_CONFIRM == "disconnect this Mac from your journal? your journal keeps everything. you can pair again anytime.")
     }

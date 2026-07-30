@@ -44,8 +44,6 @@ final class PairingCoordinator {
     typealias DeviceLabelSource = @Sendable () -> String
     typealias ClearLastSuccessfulJournalContact = @MainActor @Sendable () -> Void
 
-    private static let nonRelayPairingLinkReason = "pairing link is not a relay link"
-
     private(set) var state: PairingFlowState = .idle
 
     @ObservationIgnored
@@ -104,12 +102,9 @@ final class PairingCoordinator {
 
         let pairURL: PairURL
         do {
-            pairURL = try parseRelayPairURL(rawLink)
+            pairURL = try parsePairURL(rawLink)
         } catch let error as PairURLError {
             state = .failed(.invalidLink(Self.invalidLinkReason(error)))
-            return
-        } catch let failure as LocalPairingFailure {
-            state = .failed(failure.failure)
             return
         } catch {
             state = .failed(.invalidLink("pairing link is malformed"))
@@ -159,13 +154,9 @@ final class PairingCoordinator {
         state = .idle
     }
 
-    private func parseRelayPairURL(_ rawLink: String) throws -> PairURL {
+    private func parsePairURL(_ rawLink: String) throws -> PairURL {
         let trimmed = rawLink.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pairURL = try PairURL(string: trimmed)
-        guard pairURL.kind == .relay else {
-            throw LocalPairingFailure(.invalidLink(Self.nonRelayPairingLinkReason))
-        }
-        return pairURL
+        return try PairURL(string: trimmed)
     }
 
     private func runCeremony(_ pairURL: PairURL, stored: StoredPairing?) async {
@@ -244,7 +235,7 @@ final class PairingCoordinator {
         case .lanClosedBeforeResponse:
             return .connectionDropped
         case .directAddressNotLocal:
-            return .invalidLink(nonRelayPairingLinkReason)
+            return .invalidLink("this pairing link contains an address that can't be used for direct pairing. get a fresh link from your journal and try again.")
         case .lanCandidatesExhausted(let sawCAFingerprintMismatch):
             return sawCAFingerprintMismatch ? .instanceMismatch : .homeUnreachable
         case .relayRequestFailed(let underlying):
@@ -342,14 +333,6 @@ final class PairingCoordinator {
 
     private static func hexByte(_ value: UInt8) -> String {
         String(format: "0x%02x", value)
-    }
-}
-
-private struct LocalPairingFailure: Error {
-    let failure: PairingFailure
-
-    init(_ failure: PairingFailure) {
-        self.failure = failure
     }
 }
 

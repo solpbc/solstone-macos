@@ -148,7 +148,7 @@ public struct UploadClient: Sendable {
         if isLocalNetworkHost(host) {
             switch error.code {
             case .cannotConnectToHost, .notConnectedToInternet, .networkConnectionLost, .timedOut:
-                return "Can't reach local network. Open System Settings → Privacy & Security → Local Network and allow sol."
+                return "can't reach your journal at this address. check that it's running and reachable."
             default:
                 break
             }

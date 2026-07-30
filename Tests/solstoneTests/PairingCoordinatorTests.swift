@@ -152,9 +152,6 @@ struct PairingCoordinatorTests {
         await coordinator.submitPairingLink("not a url")
         #expect(coordinator.state == .failed(.invalidLink("pairing link must use https")))
 
-        await coordinator.submitPairingLink(directPairLink)
-        #expect(coordinator.state == .failed(.invalidLink("pairing link is not a relay link")))
-
         let cases: [(PairURLError, String)] = [
             (.wrongScheme(nil), "pairing link must use https"),
             (.wrongScheme("http"), "pairing link must use https, got http"),
@@ -175,6 +172,82 @@ struct PairingCoordinatorTests {
         for (error, expected) in cases {
             #expect(PairingCoordinator.invalidLinkReason(error) == expected)
         }
+    }
+
+    @Test func directSingleCandidatePairLinkRunsCeremonyAndSaves() async throws {
+        let saved = pairing(instanceID: "11111111-1111-1111-1111-111111111111")
+        let store = PairingStore(pairing: nil)
+        let script = PairScript([.success(saved)])
+        let reactivate = ReactivateRecorder()
+        let clear = ClearRecorder()
+        let coordinator = makeCoordinator(store: store, script: script, reactivate: reactivate, clear: clear)
+
+        await coordinator.submitPairingLink(directPairLink)
+
+        #expect(coordinator.state == .paired)
+        #expect(store.currentPairing == saved)
+        #expect(store.savedPairings == [saved])
+        #expect(store.saveCount == 1)
+        #expect(await script.callCount == 1)
+        #expect(await reactivate.count == 1)
+        #expect(clear.count == 1)
+
+        let calls = await script.calls
+        #expect(calls.count == 1)
+        let call = try #require(calls.first)
+        #expect(call.pairURL.kind == .direct)
+        #expect(call.pairURL.candidates == [
+            PairCandidate(address: "192.168.1.42", port: 7070),
+        ])
+    }
+
+    @Test func directMultiCandidatePairLinkPreservesParsedCandidateOrder() async throws {
+        let saved = pairing(instanceID: "11111111-1111-1111-1111-111111111111")
+        let store = PairingStore(pairing: nil)
+        let script = PairScript([.success(saved)])
+        let coordinator = makeCoordinator(store: store, script: script)
+
+        await coordinator.submitPairingLink(directMultiCandidatePairLink)
+
+        #expect(coordinator.state == .paired)
+        #expect(await script.callCount == 1)
+
+        let calls = await script.calls
+        #expect(calls.count == 1)
+        let call = try #require(calls.first)
+        #expect(call.pairURL.kind == .direct)
+        #expect(call.pairURL.candidates == [
+            PairCandidate(address: "10.0.0.7", port: 7070),
+            PairCandidate(address: "100.64.3.9", port: 7070),
+        ])
+    }
+
+    @Test func directDifferentInstanceIDRequiresSwitchConfirmBeforeOverwrite() async throws {
+        let prior = pairing(instanceID: "11111111-1111-1111-1111-111111111111")
+        let replacement = pairing(instanceID: "22222222-2222-2222-2222-222222222222")
+        let store = PairingStore(pairing: prior)
+        let script = PairScript([.success(replacement)])
+        let reactivate = ReactivateRecorder()
+        let clear = ClearRecorder()
+        let coordinator = makeCoordinator(store: store, script: script, reactivate: reactivate, clear: clear)
+
+        await coordinator.submitPairingLink(directPairLink)
+
+        #expect(coordinator.state == .switchConfirmPending(newInstanceID: replacement.instanceID))
+        #expect(store.currentPairing == prior)
+        #expect(store.saveCount == 0)
+        #expect(await reactivate.count == 0)
+        #expect(clear.count == 0)
+        #expect(await script.callCount == 1)
+
+        await coordinator.confirmSwitch()
+
+        #expect(coordinator.state == .switched)
+        #expect(store.currentPairing == replacement)
+        #expect(store.savedPairings == [replacement])
+        #expect(store.saveCount == 1)
+        #expect(await reactivate.count == 1)
+        #expect(clear.count == 1)
     }
 
     @Test func attestationRejected401MapsToStaleLink() async throws {
@@ -210,8 +283,11 @@ struct PairingCoordinatorTests {
         await expectCeremonyFailure(DialError.relayCloseUnauthorized, mapsTo: .staleLink)
     }
 
-    @Test func directAddressNotLocalMapsToExistingInvalidLinkCopy() async throws {
-        await expectCeremonyFailure(PairError.directAddressNotLocal, mapsTo: .invalidLink("pairing link is not a relay link"))
+    @Test func directAddressNotLocalMapsToDirectInvalidLinkCopy() async throws {
+        await expectCeremonyFailure(
+            PairError.directAddressNotLocal,
+            mapsTo: .invalidLink("this pairing link contains an address that can't be used for direct pairing. get a fresh link from your journal and try again.")
+        )
     }
 
     @Test func relayUnauthorizedMapsToRelayUnauthorized() async throws {
@@ -355,7 +431,11 @@ private final class ClearRecorder {
     }
 }
 
-private let directPairLink = "https://go.solstone.app/p#0G0W000258DSX8DJRFAEBXG7308J4CT4ANK7F26YNPZEZJQYQAZ028T5CY4TQKFF"
+// 0x04 direct: 192.168.1.42:7070.
+private let directPairLink = "https://go.solstone.app/p#0G0W1A0158DSW48H248H248H248H248H248H249248H248H248H248H248H248H2"
+
+// 0x05 direct: 10.0.0.7:7070, then 100.64.3.9:7070.
+private let directMultiCandidatePairLink = "https://go.solstone.app/p#0M0G46WY180001V4801GJ48H248H248H248H248H248H249248H248H248H248H248H248H2"
 
 private func relayPairLink(instanceID _: String) -> String {
     "https://go.solstone.app/p#0R0J6HB7H6NWVVR1VTPVXVYAZTXBW0938NKRKAYDXW00"

@@ -1533,7 +1533,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("pairing link").font(.caption).foregroundStyle(.secondary)
-                    TextField("paste relay pairing link", text: $pairingLink)
+                    TextField(UICopy.PAIRING_LINK_PLACEHOLDER, text: $pairingLink)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier(AXID.Settings.Service.pairingLink)
                 }

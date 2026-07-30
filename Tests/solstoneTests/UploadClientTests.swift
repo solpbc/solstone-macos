@@ -11,7 +11,7 @@ import SolstoneCore
 struct UploadClientTests {
     private let store = ObserverURLProtocolStore()
     private let client = UploadClient()
-    private let localNetworkMessage = "Can't reach local network. Open System Settings → Privacy & Security → Local Network and allow sol."
+    private let localAddressMessage = "can't reach your journal at this address. check that it's running and reachable."
 
     @Test func stripSegmentPrefixMatchesAndStrips() {
         let result = client.stripSegmentPrefix("143022_300_audio.m4a", segment: "143022_300")
@@ -74,11 +74,11 @@ struct UploadClientTests {
         #expect(!UploadClient.isLocalNetworkHost("999.1.1.1"))
     }
 
-    @Test func errorMessageUsesLocalNetworkMessageForLocalHosts() {
-        #expect(UploadClient.errorMessage(for: URLError(.cannotConnectToHost), host: "myserver") == localNetworkMessage)
-        #expect(UploadClient.errorMessage(for: URLError(.notConnectedToInternet), host: "192.168.1.20") == localNetworkMessage)
-        #expect(UploadClient.errorMessage(for: URLError(.networkConnectionLost), host: "fe80::1") == localNetworkMessage)
-        #expect(UploadClient.errorMessage(for: URLError(.timedOut), host: "nas.local") == localNetworkMessage)
+    @Test func errorMessageUsesLocalAddressMessageForLocalHosts() {
+        #expect(UploadClient.errorMessage(for: URLError(.cannotConnectToHost), host: "myserver") == localAddressMessage)
+        #expect(UploadClient.errorMessage(for: URLError(.notConnectedToInternet), host: "192.168.1.20") == localAddressMessage)
+        #expect(UploadClient.errorMessage(for: URLError(.networkConnectionLost), host: "fe80::1") == localAddressMessage)
+        #expect(UploadClient.errorMessage(for: URLError(.timedOut), host: "nas.local") == localAddressMessage)
     }
 
     @Test func errorMessagePreservesNonLocalStrings() {
