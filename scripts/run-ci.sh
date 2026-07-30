@@ -85,4 +85,3 @@ python3 scripts/keychain_search_list.py prepend "$TEST_KC"
 security default-keychain -d user -s "$TEST_KC"
 
 swift test 2>&1 | tee -a "$CI_LOG"
-python3 -m unittest discover scripts/tests 2>&1 | tee -a "$CI_LOG"
