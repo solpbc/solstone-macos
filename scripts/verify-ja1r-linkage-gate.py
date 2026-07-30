@@ -270,7 +270,8 @@ SPL_LINK_TIER_B_KEYS = frozenset(
 )
 
 # The canonical evidence-set filenames. README documents the producing command
-# for each.
+# for each; scripts/tests/test_verify_ja1r_linkage_gate.py asserts the README
+# list and this constant cannot drift apart.
 REPORT_FILENAMES = (
     "drag.json",
     "sparkle.json",
