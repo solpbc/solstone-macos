@@ -373,6 +373,10 @@ internal enum JournalWindowWebViewNavigationActionResult: Equatable {
 internal struct JournalWindowNavigationBindings {
     private struct Entry {
         let generation: UInt64
+        // Measured WebKit behavior: five sequential navigations in one WKWebView reused
+        // WKNavigation identities on page-driven loads and webView.load() returns. Terminal
+        // release is primary; retaining is the backstop for a registered load WebKit drops
+        // without start/failure, with the strictly-older prune bounding the leak.
         let navigation: AnyObject
     }
 
@@ -549,6 +553,8 @@ internal final class JournalWindowWebViewSeam {
     }
 
     func contentProcessTerminated() {
+        // Recovery comes from retry's generation bump plus the strictly-older prune; this
+        // is deliberately not another terminal cleanup path.
         session.handle(.contentProcessTerminated(generation: session.generation))
     }
 
