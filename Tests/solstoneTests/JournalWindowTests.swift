@@ -123,6 +123,298 @@ struct JournalWindowCompositionTests {
         #expect(composition.state == .loading)
     }
 
+    @Test func sameDocumentNavigationClassificationUsesFragmentPresenceAndStableURLParts() {
+        let rows: [(current: String?, target: String, expected: Bool)] = [
+            ("http://h/a", "http://h/a#s", true),
+            ("http://h/a#s", "http://h/a#t", true),
+            ("http://h/a#s", "http://h/a#s", true),
+            ("http://h/a", "http://h/a#", true),
+            ("http://h/a#s", "http://h/a", false),
+            ("http://h/a", "http://h/a", false),
+            ("http://h/a", "http://h/a?q=1#s", false),
+            ("http://h/a?q=1", "http://h/a#s", false),
+            ("http://h/a", "http://h/b#s", false),
+            ("http://h/a", "http://other/a#s", false),
+            (nil, "http://h/a#s", false),
+            ("http://h:80/a", "http://h/a#s", true)
+        ]
+
+        for row in rows {
+            let current = row.current.map { URL(string: $0)! }
+            let target = URL(string: row.target)!
+
+            #expect(JournalWindowPolicy.isSameDocumentNavigation(from: current, to: target) == row.expected)
+        }
+    }
+
+    @Test func applySameDocumentNavigationUpdatesDestinationAndBaseWithoutStateOrGeneration() {
+        var composition = JournalWindowComposition()
+        let command = composition.open(destination: .root, resolvedBase: .url("https://journal.example"))!
+        composition.handle(.finished(generation: command.generation))
+        let generation = composition.generation
+
+        composition.applySameDocumentNavigation(
+            url: URL(string: "https://journal.example/app/chat/2026-05-09#event-6")!,
+            baseURL: command.baseURL
+        )
+
+        #expect(composition.state == .loaded)
+        #expect(composition.generation == generation)
+        #expect(composition.destination == JournalWindowDestination(
+            path: "/app/chat/2026-05-09",
+            fragment: "event-6"
+        )!)
+        #expect(composition.currentBaseURL == command.baseURL)
+    }
+
+    @Test func seamSameDocumentLinkNavigationDoesNotTouchStateOrGeneration() async {
+        let session = JournalWindowSession(resolveHomeBase: { .url("https://journal.example") })
+        let seam = makeJournalWindowSeam(session: session)
+        let command = await session.open(destination: .root)!
+        completeJournalWindowLoad(command, seam: seam)
+        let generation = session.generation
+
+        let result = seam.decideNavigationAction(
+            requestURL: URL(string: "https://journal.example/#section")!,
+            targetFrameIsMainFrame: true,
+            targetFrameIsNil: false,
+            shouldPerformDownload: false,
+            isUserInitiated: true
+        )
+
+        #expect(result == .allow)
+        #expect(session.state == .loaded)
+        #expect(session.generation == generation)
+        #expect(session.destination == JournalWindowDestination(path: "/", fragment: "section")!)
+    }
+
+    @Test func seamSameDocumentOtherNavigationDoesNotTouchStateOrGeneration() async {
+        let session = JournalWindowSession(resolveHomeBase: { .url("https://journal.example") })
+        let seam = makeJournalWindowSeam(session: session)
+        let command = await session.open(destination: .root)!
+        completeJournalWindowLoad(command, seam: seam)
+        let generation = session.generation
+
+        let result = seam.decideNavigationAction(
+            requestURL: URL(string: "https://journal.example/#section")!,
+            targetFrameIsMainFrame: true,
+            targetFrameIsNil: false,
+            shouldPerformDownload: false,
+            isUserInitiated: false
+        )
+
+        #expect(result == .allow)
+        #expect(session.state == .loaded)
+        #expect(session.generation == generation)
+        #expect(session.destination == JournalWindowDestination(path: "/", fragment: "section")!)
+    }
+
+    @Test func seamCrossDocumentLinkNavigationStillBumpsGenerationAndLoads() async {
+        let session = JournalWindowSession(resolveHomeBase: { .url("https://journal.example") })
+        let seam = makeJournalWindowSeam(session: session)
+        let command = await session.open(destination: .root)!
+        completeJournalWindowLoad(command, seam: seam)
+        let generation = session.generation
+
+        let result = seam.decideNavigationAction(
+            requestURL: URL(string: "https://journal.example/app/home#section")!,
+            targetFrameIsMainFrame: true,
+            targetFrameIsNil: false,
+            shouldPerformDownload: false,
+            isUserInitiated: true
+        )
+
+        #expect(result == .allow)
+        #expect(session.state == .loading)
+        #expect(session.generation == generation + 1)
+        #expect(session.destination == JournalWindowDestination(path: "/app/home", fragment: "section")!)
+    }
+
+    @Test func seamRecycledNavigationIdentityRebindsAfterTerminalRelease() async {
+        let session = JournalWindowSession(resolveHomeBase: { .url("https://journal.example") })
+        let seam = makeJournalWindowSeam(session: session)
+        let command = await session.open(destination: .root)!
+        let navigation = NSObject()
+
+        seam.didStartProvisionalNavigation(navigation)
+        seam.didFinish(navigation: navigation)
+        #expect(session.state == .loaded)
+        #expect(seam.bindingCount == 0)
+
+        let result = seam.decideNavigationAction(
+            requestURL: URL(string: "https://journal.example/app/home")!,
+            targetFrameIsMainFrame: true,
+            targetFrameIsNil: false,
+            shouldPerformDownload: false,
+            isUserInitiated: true
+        )
+        #expect(result == .allow)
+        #expect(session.generation == command.generation + 1)
+        #expect(session.state == .loading)
+
+        seam.didStartProvisionalNavigation(navigation)
+        seam.didFinish(navigation: navigation)
+
+        #expect(session.state == .loaded)
+        #expect(seam.bindingCount == 0)
+    }
+
+    @Test func seamTerminalCallbacksReleaseBindingsAfterSettlingSession() async {
+        let finishedSession = JournalWindowSession(resolveHomeBase: { .url("https://journal.example") })
+        let finishedSeam = makeJournalWindowSeam(session: finishedSession)
+        _ = await finishedSession.open(destination: .root)!
+        let finishedNavigation = NSObject()
+        finishedSeam.didStartProvisionalNavigation(finishedNavigation)
+        finishedSeam.didFinish(navigation: finishedNavigation)
+        #expect(finishedSession.state == .loaded)
+        #expect(finishedSeam.bindingCount == 0)
+
+        let failedSession = JournalWindowSession(resolveHomeBase: { .url("https://journal.example") })
+        let failedSeam = makeJournalWindowSeam(session: failedSession)
+        _ = await failedSession.open(destination: .root)!
+        let failedNavigation = NSObject()
+        failedSeam.didStartProvisionalNavigation(failedNavigation)
+        failedSeam.didFail(navigation: failedNavigation, isSelfInflictedCancellation: false)
+        #expect(failedSession.state == .error)
+        #expect(failedSeam.bindingCount == 0)
+
+        let cancelledSession = JournalWindowSession(resolveHomeBase: { .url("https://journal.example") })
+        let cancelledSeam = makeJournalWindowSeam(session: cancelledSession)
+        _ = await cancelledSession.open(destination: .root)!
+        let cancelledNavigation = NSObject()
+        cancelledSeam.didStartProvisionalNavigation(cancelledNavigation)
+        cancelledSeam.didFail(navigation: cancelledNavigation, isSelfInflictedCancellation: true)
+        #expect(cancelledSession.state == .error)
+        #expect(cancelledSeam.bindingCount == 0)
+    }
+
+    @Test func seamCommitWithoutBindingStillLatchesDisplayedContentBeforeFailure() async {
+        let session = JournalWindowSession(resolveHomeBase: { .url("https://journal.example") })
+        let seam = makeJournalWindowSeam(session: session)
+        let command = await session.open(destination: .root)!
+        let boundNavigation = NSObject()
+        seam.registerAppInitiatedLoad(navigation: boundNavigation, generation: command.generation)
+
+        seam.didCommit(
+            navigation: NSObject(),
+            committedDocumentURL: URL(string: "https://journal.example/")!
+        )
+        seam.didFail(navigation: boundNavigation, isSelfInflictedCancellation: true)
+
+        #expect(session.state == .loaded)
+        #expect(seam.bindingCount == 0)
+    }
+
+    @Test func seamUpdateLoadRegistrationPreservesSwiftUIDedupe() async {
+        let session = JournalWindowSession(resolveHomeBase: { .url("https://journal.example") })
+        let seam = makeJournalWindowSeam(session: session)
+        let command = await session.open(destination: .root)!
+
+        #expect(seam.prepareLoadCommandForUpdate(command) == command)
+        seam.registerAppInitiatedLoad(navigation: NSObject(), generation: command.generation)
+        #expect(seam.prepareLoadCommandForUpdate(command) == nil)
+    }
+
+    @Test func seamDirectLoadInCurrentWindowRegistersGenerationForSwiftUIDedupe() async {
+        let session = JournalWindowSession(resolveHomeBase: { .url("https://journal.example/root") })
+        let seam = makeJournalWindowSeam(session: session)
+        _ = await session.open(destination: .root)!
+
+        let result = seam.decideNewWindowNavigationAction(
+            requestURL: URL(string: "https://journal.example/root/popout")!,
+            targetFrameIsMainFrame: nil,
+            targetFrameIsNil: true,
+            shouldPerformDownload: false
+        )
+
+        let command: JournalWindowLoadCommand
+        switch result {
+        case .loadInCurrentWindow(let value):
+            command = value
+        case .allow, .cancel:
+            Issue.record("expected load in current window")
+            return
+        }
+        #expect(session.loadCommand == command)
+        seam.registerAppInitiatedLoad(navigation: NSObject(), generation: command.generation)
+        #expect(seam.prepareLoadCommandForUpdate(session.loadCommand) == nil)
+    }
+
+    @Test func newWindowAllowedActionDoesNotBeginNavigation() async {
+        let session = JournalWindowSession(resolveHomeBase: { .url("https://journal.example") })
+        let seam = makeJournalWindowSeam(session: session)
+        let command = await session.open(destination: .root)!
+        completeJournalWindowLoad(command, seam: seam)
+        let generation = session.generation
+
+        let result = seam.decideNewWindowNavigationAction(
+            requestURL: URL(string: "https://outside.example/embed")!,
+            targetFrameIsMainFrame: false,
+            targetFrameIsNil: true,
+            shouldPerformDownload: false
+        )
+
+        #expect(result == .allow)
+        #expect(session.state == .loaded)
+        #expect(session.generation == generation)
+    }
+
+    @Test func navigationBindingsRetainRegisteredNavigationWithWeakControl() {
+        weak var control: NSObject?
+        do {
+            let navigation = NSObject()
+            control = navigation
+        }
+        #expect(control == nil)
+
+        var bindings = JournalWindowNavigationBindings()
+        weak var retained: NSObject?
+        do {
+            let navigation = NSObject()
+            retained = navigation
+            bindings.register(navigation, generation: 1)
+        }
+        #expect(retained != nil)
+        bindings.removeAll()
+        #expect(retained == nil)
+    }
+
+    @Test func navigationBindingsReleaseAndPruneOlderGenerations() {
+        var bindings = JournalWindowNavigationBindings()
+        let navigation = NSObject()
+
+        bindings.register(navigation, generation: 1)
+        #expect(bindings.generation(for: navigation) == 1)
+        #expect(bindings.count == 1)
+        bindings.release(navigation)
+        #expect(bindings.generation(for: navigation) == nil)
+        #expect(bindings.count == 0)
+
+        let firstOld = NSObject()
+        let secondOld = NSObject()
+        bindings.register(firstOld, generation: 2)
+        bindings.register(secondOld, generation: 2)
+        #expect(bindings.count == 2)
+
+        let registeredNew = NSObject()
+        bindings.register(registeredNew, generation: 3)
+        #expect(bindings.generation(for: firstOld) == nil)
+        #expect(bindings.generation(for: secondOld) == nil)
+        #expect(bindings.generation(for: registeredNew) == 3)
+        #expect(bindings.count == 1)
+
+        let boundExisting = NSObject()
+        #expect(bindings.bind(boundExisting, currentGeneration: 4) == 4)
+        #expect(bindings.bind(boundExisting, currentGeneration: 5) == 4)
+
+        let boundNew = NSObject()
+        #expect(bindings.bind(boundNew, currentGeneration: 5) == 5)
+        #expect(bindings.generation(for: registeredNew) == nil)
+        #expect(bindings.generation(for: boundExisting) == nil)
+        #expect(bindings.generation(for: boundNew) == 5)
+        #expect(bindings.count == 1)
+    }
+
     @Test func successiveProgrammaticLoadsToSameURLGetDistinctGenerations() {
         var composition = JournalWindowComposition()
         let first = composition.open(destination: .root, resolvedBase: .url("https://journal.example"))!
@@ -264,8 +556,32 @@ struct JournalWindowCompositionTests {
         #expect(composition.state == .loading)
         #expect(composition.loadCommand?.url == second.url)
 
-        composition.handle(.failed(generation: second.generation, failure: .selfInflictedCancellation))
+        composition.handle(.failed(
+            generation: first.generation,
+            failure: .selfInflictedCancellation(hasDisplayedContent: true)
+        ))
         #expect(composition.state == .loading)
+        #expect(composition.loadCommand?.url == second.url)
+
+        composition.handle(.failed(
+            generation: first.generation,
+            failure: .selfInflictedCancellation(hasDisplayedContent: false)
+        ))
+        #expect(composition.state == .loading)
+        #expect(composition.loadCommand?.url == second.url)
+
+        composition.handle(.failed(
+            generation: second.generation,
+            failure: .selfInflictedCancellation(hasDisplayedContent: false)
+        ))
+        #expect(composition.state == .error)
+
+        let third = composition.reload(resolvedBase: .url("https://c.example"))!
+        composition.handle(.failed(
+            generation: third.generation,
+            failure: .selfInflictedCancellation(hasDisplayedContent: true)
+        ))
+        #expect(composition.state == .loaded)
     }
 
     @Test func processTerminationEntersErrorState() {
@@ -543,6 +859,23 @@ struct JournalWindowWireUpTests {
         #expect(settingsSource.components(separatedBy: "NSWorkspace.shared.open").count - 1 == 6)
         #expect(repairSource.components(separatedBy: "NSWorkspace.shared.open").count - 1 == 1)
     }
+}
+
+@MainActor
+private func makeJournalWindowSeam(session: JournalWindowSession) -> JournalWindowWebViewSeam {
+    JournalWindowWebViewSeam(session: session, openExternalURL: { _ in })
+}
+
+@MainActor
+private func completeJournalWindowLoad(
+    _ command: JournalWindowLoadCommand,
+    seam: JournalWindowWebViewSeam,
+    committedURL: URL? = nil
+) {
+    let navigation = NSObject()
+    seam.registerAppInitiatedLoad(navigation: navigation, generation: command.generation)
+    seam.didCommit(navigation: navigation, committedDocumentURL: committedURL ?? command.url)
+    seam.didFinish(navigation: navigation)
 }
 
 private actor JournalWindowResolvedBaseSequence {

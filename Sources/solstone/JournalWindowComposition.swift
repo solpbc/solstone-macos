@@ -108,7 +108,7 @@ internal struct JournalWindowLoadCommand: Sendable, Equatable {
 }
 
 internal enum JournalWindowNavigationFailure: Sendable, Equatable {
-    case selfInflictedCancellation
+    case selfInflictedCancellation(hasDisplayedContent: Bool)
     case other
 }
 
@@ -184,6 +184,13 @@ internal struct JournalWindowComposition: Sendable, Equatable {
         applyNavigationContinuation(url: url, baseURL: baseURL)
     }
 
+    mutating func applySameDocumentNavigation(url: URL, baseURL: URL) {
+        if let derived = Self.destination(for: url, relativeTo: baseURL) {
+            destination = derived
+        }
+        currentBaseURL = baseURL
+    }
+
     mutating func handle(_ event: JournalWindowNavigationEvent) {
         guard event.generation == generation else { return }
 
@@ -194,8 +201,8 @@ internal struct JournalWindowComposition: Sendable, Equatable {
             state = .loaded
         case .failed(_, let failure):
             switch failure {
-            case .selfInflictedCancellation:
-                break
+            case .selfInflictedCancellation(let hasDisplayedContent):
+                state = hasDisplayedContent ? .loaded : .error
             case .other:
                 state = .error
             }
@@ -347,8 +354,234 @@ internal final class JournalWindowSession {
         composition.continueCurrentNavigation(url: url, baseURL: baseURL)
     }
 
+    func applySameDocumentNavigation(url: URL, baseURL: URL) {
+        composition.applySameDocumentNavigation(url: url, baseURL: baseURL)
+    }
+
     func handle(_ event: JournalWindowNavigationEvent) {
         composition.handle(event)
+    }
+}
+
+internal enum JournalWindowWebViewNavigationActionResult: Equatable {
+    case allow
+    case cancel
+    case loadInCurrentWindow(JournalWindowLoadCommand)
+}
+
+@MainActor
+internal struct JournalWindowNavigationBindings {
+    private struct Entry {
+        let generation: UInt64
+        let navigation: AnyObject
+    }
+
+    private var entries: [ObjectIdentifier: Entry] = [:]
+
+    var count: Int { entries.count }
+
+    mutating func register(_ navigation: AnyObject?, generation: UInt64) {
+        pruneEntries(olderThan: generation)
+        guard let navigation else { return }
+        entries[ObjectIdentifier(navigation)] = Entry(generation: generation, navigation: navigation)
+    }
+
+    mutating func bind(_ navigation: AnyObject?, currentGeneration: UInt64) -> UInt64? {
+        guard let navigation else { return nil }
+        let identifier = ObjectIdentifier(navigation)
+        if let entry = entries[identifier] {
+            return entry.generation
+        }
+        pruneEntries(olderThan: currentGeneration)
+        entries[identifier] = Entry(generation: currentGeneration, navigation: navigation)
+        return currentGeneration
+    }
+
+    func generation(for navigation: AnyObject?) -> UInt64? {
+        guard let navigation else { return nil }
+        return entries[ObjectIdentifier(navigation)]?.generation
+    }
+
+    mutating func release(_ navigation: AnyObject?) {
+        guard let navigation else { return }
+        entries.removeValue(forKey: ObjectIdentifier(navigation))
+    }
+
+    mutating func removeAll() {
+        entries.removeAll()
+    }
+
+    private mutating func pruneEntries(olderThan generation: UInt64) {
+        entries = entries.filter { $0.value.generation >= generation }
+    }
+}
+
+@MainActor
+internal final class JournalWindowWebViewSeam {
+    private var session: JournalWindowSession
+    private var openExternalURL: JournalWindowExternalURLOpener
+    private var bindings = JournalWindowNavigationBindings()
+    private var hasDisplayedContent = false
+    private var lastCommittedDocumentURL: URL?
+    private var lastLoadedGeneration: UInt64?
+
+    var bindingCount: Int { bindings.count }
+
+    init(
+        session: JournalWindowSession,
+        openExternalURL: @escaping JournalWindowExternalURLOpener
+    ) {
+        self.session = session
+        self.openExternalURL = openExternalURL
+    }
+
+    func update(
+        session: JournalWindowSession,
+        openExternalURL: @escaping JournalWindowExternalURLOpener
+    ) {
+        self.session = session
+        self.openExternalURL = openExternalURL
+    }
+
+    func prepareLoadCommandForUpdate(_ command: JournalWindowLoadCommand?) -> JournalWindowLoadCommand? {
+        guard let command,
+              lastLoadedGeneration != command.generation
+        else {
+            return nil
+        }
+        return command
+    }
+
+    func registerAppInitiatedLoad(navigation: AnyObject?, generation: UInt64) {
+        bindings.register(navigation, generation: generation)
+        lastLoadedGeneration = generation
+    }
+
+    func decideNavigationAction(
+        requestURL: URL?,
+        targetFrameIsMainFrame: Bool?,
+        targetFrameIsNil: Bool,
+        shouldPerformDownload: Bool,
+        isUserInitiated: Bool
+    ) -> JournalWindowWebViewNavigationActionResult {
+        let input = JournalWindowNavigationPolicyInput(
+            requestURL: requestURL,
+            targetFrameIsMainFrame: targetFrameIsMainFrame,
+            targetFrameIsNil: targetFrameIsNil,
+            shouldPerformDownload: shouldPerformDownload,
+            currentBaseURL: session.currentBaseURL
+        )
+
+        switch JournalWindowPolicy.decideNavigationAction(input) {
+        case .allow:
+            beginAllowedNavigationIfNeeded(input, isUserInitiated: isUserInitiated)
+            return .allow
+        case .cancel:
+            return .cancel
+        case .cancelAndOpenExternal(let url):
+            openExternalURL(url)
+            return .cancel
+        case .cancelAndLoadInWindow(let url):
+            return beginLoadInCurrentWindow(url)
+        }
+    }
+
+    func decideNewWindowNavigationAction(
+        requestURL: URL?,
+        targetFrameIsMainFrame: Bool?,
+        targetFrameIsNil: Bool,
+        shouldPerformDownload: Bool
+    ) -> JournalWindowWebViewNavigationActionResult {
+        let input = JournalWindowNavigationPolicyInput(
+            requestURL: requestURL,
+            targetFrameIsMainFrame: targetFrameIsMainFrame,
+            targetFrameIsNil: targetFrameIsNil,
+            shouldPerformDownload: shouldPerformDownload,
+            currentBaseURL: session.currentBaseURL
+        )
+
+        switch JournalWindowPolicy.decideNavigationAction(input) {
+        case .allow:
+            return .allow
+        case .cancel:
+            return .cancel
+        case .cancelAndOpenExternal(let url):
+            openExternalURL(url)
+            return .cancel
+        case .cancelAndLoadInWindow(let url):
+            return beginLoadInCurrentWindow(url)
+        }
+    }
+
+    func decideNavigationResponse(canShowMIMEType: Bool) -> Bool {
+        JournalWindowPolicy.allowsNavigationResponse(canShowMIMEType: canShowMIMEType)
+    }
+
+    func didStartProvisionalNavigation(_ navigation: AnyObject?) {
+        guard let generation = bindings.bind(navigation, currentGeneration: session.generation) else { return }
+        session.handle(.started(generation: generation))
+    }
+
+    func didCommit(navigation: AnyObject?, committedDocumentURL: URL?) {
+        hasDisplayedContent = true
+        lastCommittedDocumentURL = committedDocumentURL
+        guard let generation = bindings.generation(for: navigation) else { return }
+        session.handle(.committed(generation: generation))
+    }
+
+    func didFinish(navigation: AnyObject?) {
+        let generation = bindings.generation(for: navigation)
+        if let generation {
+            session.handle(.finished(generation: generation))
+        }
+        bindings.release(navigation)
+    }
+
+    func didFail(navigation: AnyObject?, isSelfInflictedCancellation: Bool) {
+        let generation = bindings.generation(for: navigation)
+        if let generation {
+            let failure: JournalWindowNavigationFailure = isSelfInflictedCancellation
+                ? .selfInflictedCancellation(hasDisplayedContent: hasDisplayedContent)
+                : .other
+            session.handle(.failed(generation: generation, failure: failure))
+        }
+        bindings.release(navigation)
+    }
+
+    func contentProcessTerminated() {
+        session.handle(.contentProcessTerminated(generation: session.generation))
+    }
+
+    func tearDown() {
+        bindings.removeAll()
+    }
+
+    private func beginAllowedNavigationIfNeeded(
+        _ input: JournalWindowNavigationPolicyInput,
+        isUserInitiated: Bool
+    ) {
+        guard input.targetFrameIsMainFrame != false,
+              let url = input.requestURL
+        else {
+            return
+        }
+        guard let baseURL = session.currentBaseURL else { return }
+        if JournalWindowPolicy.isSameDocumentNavigation(from: lastCommittedDocumentURL, to: url) {
+            // WebKit sends no terminal callback for same-document fragment changes.
+            session.applySameDocumentNavigation(url: url, baseURL: baseURL)
+            return
+        }
+        if isUserInitiated {
+            _ = session.beginUserInitiatedNavigation(url: url, baseURL: baseURL)
+        } else {
+            session.continueCurrentNavigation(url: url, baseURL: baseURL)
+        }
+    }
+
+    private func beginLoadInCurrentWindow(_ url: URL) -> JournalWindowWebViewNavigationActionResult {
+        guard let baseURL = session.currentBaseURL else { return .cancel }
+        let command = session.beginDirectLoad(url: url, baseURL: baseURL)
+        return .loadInCurrentWindow(command)
     }
 }
 
@@ -431,6 +664,22 @@ internal enum JournalWindowPolicy {
 
     static func allowsNavigationResponse(canShowMIMEType: Bool) -> Bool {
         canShowMIMEType
+    }
+
+    static func isSameDocumentNavigation(from currentDocumentURL: URL?, to target: URL) -> Bool {
+        guard let currentDocumentURL,
+              let targetComponents = URLComponents(url: target, resolvingAgainstBaseURL: false),
+              targetComponents.percentEncodedFragment != nil,
+              let currentComponents = URLComponents(url: currentDocumentURL, resolvingAgainstBaseURL: false),
+              let currentOrigin = JournalWindowOrigin(url: currentDocumentURL),
+              let targetOrigin = JournalWindowOrigin(url: target),
+              currentOrigin == targetOrigin
+        else {
+            return false
+        }
+
+        return currentComponents.percentEncodedPath == targetComponents.percentEncodedPath
+            && currentComponents.percentEncodedQuery == targetComponents.percentEncodedQuery
     }
 
     static func isSelfInflictedCancellation(_ error: Error) -> Bool {

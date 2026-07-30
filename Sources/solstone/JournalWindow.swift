@@ -172,17 +172,14 @@ private struct JournalWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        context.coordinator.session = session
-        context.coordinator.openExternalURL = openExternalURL
-        guard let loadCommand,
-              context.coordinator.lastLoadedGeneration != loadCommand.generation
-        else {
-            return
-        }
+        context.coordinator.seam.update(session: session, openExternalURL: openExternalURL)
+        guard let loadCommand = context.coordinator.seam.prepareLoadCommandForUpdate(loadCommand) else { return }
 
         let navigation = webView.load(URLRequest(url: loadCommand.url))
-        context.coordinator.register(navigation: navigation, generation: loadCommand.generation)
-        context.coordinator.lastLoadedGeneration = loadCommand.generation
+        context.coordinator.seam.registerAppInitiatedLoad(
+            navigation: navigation,
+            generation: loadCommand.generation
+        )
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -206,26 +203,17 @@ private struct JournalWebView: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
-        var session: JournalWindowSession
-        var openExternalURL: JournalWindowExternalURLOpener
-        var lastLoadedGeneration: UInt64?
-        private var generationByNavigation: [ObjectIdentifier: UInt64] = [:]
+        let seam: JournalWindowWebViewSeam
 
         init(
             session: JournalWindowSession,
             openExternalURL: @escaping JournalWindowExternalURLOpener
         ) {
-            self.session = session
-            self.openExternalURL = openExternalURL
-        }
-
-        func register(navigation: WKNavigation?, generation: UInt64) {
-            guard let navigation else { return }
-            generationByNavigation[ObjectIdentifier(navigation)] = generation
+            seam = JournalWindowWebViewSeam(session: session, openExternalURL: openExternalURL)
         }
 
         func tearDown() {
-            generationByNavigation.removeAll()
+            seam.tearDown()
         }
 
         func webView(
@@ -233,26 +221,21 @@ private struct JournalWebView: NSViewRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
         ) {
-            let input = JournalWindowNavigationPolicyInput(
+            let result = seam.decideNavigationAction(
                 requestURL: navigationAction.request.url,
                 targetFrameIsMainFrame: navigationAction.targetFrame?.isMainFrame,
                 targetFrameIsNil: navigationAction.targetFrame == nil,
                 shouldPerformDownload: navigationAction.shouldPerformDownload,
-                currentBaseURL: session.currentBaseURL
+                isUserInitiated: Self.isUserInitiatedNavigation(navigationAction.navigationType)
             )
-            let isUserInitiated = Self.isUserInitiatedNavigation(navigationAction.navigationType)
 
-            switch JournalWindowPolicy.decideNavigationAction(input) {
+            switch result {
             case .allow:
-                beginAllowedNavigationIfNeeded(input, isUserInitiated: isUserInitiated)
                 decisionHandler(.allow)
             case .cancel:
                 decisionHandler(.cancel)
-            case .cancelAndOpenExternal(let url):
-                openExternalURL(url)
-                decisionHandler(.cancel)
-            case .cancelAndLoadInWindow(let url):
-                loadInCurrentWindow(url, webView: webView)
+            case .loadInCurrentWindow(let command):
+                loadInCurrentWindow(command, webView: webView)
                 decisionHandler(.cancel)
             }
         }
@@ -263,25 +246,22 @@ private struct JournalWebView: NSViewRepresentable {
             decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
         ) {
             decisionHandler(
-                JournalWindowPolicy.allowsNavigationResponse(canShowMIMEType: navigationResponse.canShowMIMEType)
+                seam.decideNavigationResponse(canShowMIMEType: navigationResponse.canShowMIMEType)
                     ? .allow
                     : .cancel
             )
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            guard let generation = bindStartedNavigation(navigation) else { return }
-            session.handle(.started(generation: generation))
+            seam.didStartProvisionalNavigation(navigation)
         }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-            guard let generation = generation(for: navigation) else { return }
-            session.handle(.committed(generation: generation))
+            seam.didCommit(navigation: navigation, committedDocumentURL: webView.url)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            guard let generation = generation(for: navigation) else { return }
-            session.handle(.finished(generation: generation))
+            seam.didFinish(navigation: navigation)
         }
 
         func webView(
@@ -289,15 +269,21 @@ private struct JournalWebView: NSViewRepresentable {
             didFailProvisionalNavigation navigation: WKNavigation!,
             withError error: Error
         ) {
-            handleFailure(navigation: navigation, error: error)
+            seam.didFail(
+                navigation: navigation,
+                isSelfInflictedCancellation: JournalWindowPolicy.isSelfInflictedCancellation(error)
+            )
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            handleFailure(navigation: navigation, error: error)
+            seam.didFail(
+                navigation: navigation,
+                isSelfInflictedCancellation: JournalWindowPolicy.isSelfInflictedCancellation(error)
+            )
         }
 
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            session.handle(.contentProcessTerminated(generation: session.generation))
+            seam.contentProcessTerminated()
         }
 
         func webView(
@@ -306,18 +292,15 @@ private struct JournalWebView: NSViewRepresentable {
             for navigationAction: WKNavigationAction,
             windowFeatures: WKWindowFeatures
         ) -> WKWebView? {
-            let input = JournalWindowNavigationPolicyInput(
+            let result = seam.decideNewWindowNavigationAction(
                 requestURL: navigationAction.request.url,
                 targetFrameIsMainFrame: navigationAction.targetFrame?.isMainFrame,
                 targetFrameIsNil: true,
-                shouldPerformDownload: navigationAction.shouldPerformDownload,
-                currentBaseURL: session.currentBaseURL
+                shouldPerformDownload: navigationAction.shouldPerformDownload
             )
-            switch JournalWindowPolicy.decideNavigationAction(input) {
-            case .cancelAndLoadInWindow(let url):
-                loadInCurrentWindow(url, webView: webView)
-            case .cancelAndOpenExternal(let url):
-                openExternalURL(url)
+            switch result {
+            case .loadInCurrentWindow(let command):
+                loadInCurrentWindow(command, webView: webView)
             case .allow, .cancel:
                 break
             }
@@ -334,37 +317,9 @@ private struct JournalWebView: NSViewRepresentable {
             decisionHandler(.deny)
         }
 
-        private func beginAllowedNavigationIfNeeded(
-            _ input: JournalWindowNavigationPolicyInput,
-            isUserInitiated: Bool
-        ) {
-            guard input.targetFrameIsMainFrame != false,
-                  let url = input.requestURL
-            else {
-                return
-            }
-            guard let baseURL = session.currentBaseURL else { return }
-            if isUserInitiated {
-                _ = session.beginUserInitiatedNavigation(url: url, baseURL: baseURL)
-            } else {
-                session.continueCurrentNavigation(url: url, baseURL: baseURL)
-            }
-        }
-
-        private func loadInCurrentWindow(_ url: URL, webView: WKWebView) {
-            guard let baseURL = session.currentBaseURL else { return }
-            let command = session.beginDirectLoad(url: url, baseURL: baseURL)
+        private func loadInCurrentWindow(_ command: JournalWindowLoadCommand, webView: WKWebView) {
             let navigation = webView.load(URLRequest(url: command.url))
-            register(navigation: navigation, generation: command.generation)
-            lastLoadedGeneration = command.generation
-        }
-
-        private func handleFailure(navigation: WKNavigation!, error: Error) {
-            let failure: JournalWindowNavigationFailure = JournalWindowPolicy.isSelfInflictedCancellation(error)
-                ? .selfInflictedCancellation
-                : .other
-            guard let generation = generation(for: navigation) else { return }
-            session.handle(.failed(generation: generation, failure: failure))
+            seam.registerAppInitiatedLoad(navigation: navigation, generation: command.generation)
         }
 
         private static func isUserInitiatedNavigation(_ navigationType: WKNavigationType) -> Bool {
@@ -378,20 +333,5 @@ private struct JournalWebView: NSViewRepresentable {
             }
         }
 
-        private func bindStartedNavigation(_ navigation: WKNavigation?) -> UInt64? {
-            guard let navigation else { return nil }
-            let identifier = ObjectIdentifier(navigation)
-            if let generation = generationByNavigation[identifier] {
-                return generation
-            }
-            let generation = session.generation
-            generationByNavigation[identifier] = generation
-            return generation
-        }
-
-        private func generation(for navigation: WKNavigation?) -> UInt64? {
-            guard let navigation else { return nil }
-            return generationByNavigation[ObjectIdentifier(navigation)]
-        }
     }
 }
