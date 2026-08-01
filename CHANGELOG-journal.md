@@ -5,6 +5,16 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.21 (build 23)] - 2026-08-01
+
+### Changed
+- updated the bundled journal to [1.0.21](https://solstone.app/releases#v1.0.21) →
+
+### Fixed
+- two devices with the same name could look identical in the devices list, so it was easy to remove the wrong one. each device now shows when it last connected and when you paired it, and the remove confirmation names the device you picked.
+- renaming a device now starts from that device's own name, so a rename saves just the name you typed.
+
+
 ## [1.0.20 (build 22)] - 2026-07-31
 
 ### Changed
