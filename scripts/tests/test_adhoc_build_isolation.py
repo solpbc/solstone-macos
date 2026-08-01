@@ -10,7 +10,7 @@ FLAG = "-D" + "SPL_LOGIN" + "_KEYCHAIN"
 MARKER_KEY = "SolstoneSPLKeychainPlane"
 
 ADHOC_TARGETS = {
-    "release-universal-adhoc",
+    "release-arm64-adhoc",
     "bundle-adhoc",
     "bundle-adhoc-debug",
 }
@@ -18,8 +18,8 @@ ADHOC_TARGETS = {
 PRODUCTION_TARGETS = {
     "release",
     "release-preflight",
-    "release-universal",
-    "release-universal-journal",
+    "release-arm64",
+    "release-arm64-journal",
     "bundle-dist",
     "bundle-dist-journal",
     "dmg",
@@ -173,6 +173,28 @@ class AdhocBuildIsolationTest(unittest.TestCase):
         self.assertIn("codesign -d --entitlements", recipe)
         self.assertIn("grep -q", recipe)
         self.assertIn("keychain-access-group entitlement missing", recipe)
+
+    def test_distributed_builds_are_apple_silicon_only(self):
+        blocks = parse_makefile()
+
+        for target in (
+            "release-arm64",
+            "release-arm64-adhoc",
+            "release-arm64-journal",
+        ):
+            recipe = "\n".join(blocks[target]["recipe"])
+            self.assertIn("--arch arm64", recipe, target)
+            self.assertNotIn("--arch x86_64", recipe, target)
+
+        self.assertIn("release-arm64", blocks["bundle-dist"]["prereqs"])
+        self.assertIn("release-arm64-journal", blocks["bundle-dist-journal"]["prereqs"])
+
+        for target, executable in (
+            ("verify-notarization", "solstone.app/Contents/MacOS/solstone"),
+            ("verify-notarization-journal", "journal.app/Contents/MacOS/journal"),
+        ):
+            recipe = "\n".join(blocks[target]["recipe"])
+            self.assertIn(f'lipo -archs {executable})" = "arm64"', recipe, target)
 
 
 if __name__ == "__main__":

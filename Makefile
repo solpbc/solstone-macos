@@ -1,4 +1,4 @@
-.PHONY: build release release-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
+.PHONY: build release release-arm64 release-arm64-journal release-arm64-adhoc run clean test ax-contract snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist bundle-dist-journal bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
         vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-runtime-probe brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
@@ -241,20 +241,20 @@ build:
 release:
 	swift build -c release
 
-# Build universal binary (arm64 + x86_64)
-release-universal:
-	swift build -c release --arch arm64 --arch x86_64 --product solstone
-	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
+# Distributed macOS apps support Apple Silicon only.
+release-arm64:
+	swift build -c release --arch arm64 --product solstone
+	swift build -c release --arch arm64 --product solstone-watchdog
 
 # Local ad-hoc test builds only; never shipped; never set by any production target.
 # The binary matches production; bundle-adhoc selects the login-keychain SPL plane.
-release-universal-adhoc:
-	swift build -c release --arch arm64 --arch x86_64 --product solstone
-	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
+release-arm64-adhoc:
+	swift build -c release --arch arm64 --product solstone
+	swift build -c release --arch arm64 --product solstone-watchdog
 
-release-universal-journal:
-	swift build -c release --arch arm64 --arch x86_64 --product journal
-	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
+release-arm64-journal:
+	swift build -c release --arch arm64 --product journal
+	swift build -c release --arch arm64 --product solstone-watchdog
 
 # Run the built app from the source tree and stream all logs to a timestamped
 # file in scratch/. Run `make bundle-dist` first to produce solstone.app.
@@ -445,9 +445,9 @@ unlock-signing:
 		echo "warn: $(SIGNING_KC_PASS_FILE) missing — signing keychain may be locked"; \
 	fi
 
-# Build a universal .app bundle signed with Developer ID Application + hardened runtime.
+# Build an Apple-Silicon-only .app bundle signed with Developer ID Application + hardened runtime.
 # Separate from `bundle-adhoc`, which is the local-only unsigned/dev-cert path.
-bundle-dist: unlock-signing signing-check release-universal
+bundle-dist: unlock-signing signing-check release-arm64
 	@echo "Creating distribution app bundle..."
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
@@ -520,7 +520,7 @@ bundle-dist: unlock-signing signing-check release-universal
 
 # Local ad-hoc test bundle only; never shipped, never update-served, never production.
 # Keep in lockstep with bundle-dist; only signing/provisioning/keychain plane differ.
-bundle-adhoc: release-universal-adhoc
+bundle-adhoc: release-arm64-adhoc
 	@echo "Creating local ad-hoc app bundle..."
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
@@ -612,7 +612,7 @@ journal-app-dev:
 		echo "✓ Assembled: journal.app"; \
 		find journal.app/Contents -maxdepth 3 \( -path '*/Versions' -o -path '*/_CodeSignature' \) -prune -o \( -type f -o -type d \) -print | sort
 
-bundle-dist-journal: unlock-signing signing-check vendor-uv vendor-python vendor-wheelhouse generate-bundle-config release-universal-journal
+bundle-dist-journal: unlock-signing signing-check vendor-uv vendor-python vendor-wheelhouse generate-bundle-config release-arm64-journal
 	@echo "Creating journal distribution app bundle..."
 	@rm -rf journal.app
 	@mkdir -p journal.app/Contents/MacOS journal.app/Contents/Resources journal.app/Contents/Frameworks journal.app/Contents/Library/LaunchAgents
@@ -829,10 +829,10 @@ verify-notarization:
 		{ echo "watchdog missing hardened runtime flag"; exit 1; }
 	@codesign -dvvv solstone.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -q 'Identifier=app.solstone.observer.watchdog' || \
 		{ echo "watchdog identifier mismatch (expected app.solstone.observer.watchdog)"; exit 1; }
-	@lipo -archs solstone.app/Contents/MacOS/solstone-watchdog | grep -q 'arm64' || \
-		{ echo "watchdog missing arm64 slice"; exit 1; }
-	@lipo -archs solstone.app/Contents/MacOS/solstone-watchdog | grep -q 'x86_64' || \
-		{ echo "watchdog missing x86_64 slice"; exit 1; }
+	@test "$$(lipo -archs solstone.app/Contents/MacOS/solstone)" = "arm64" || \
+		{ echo "solstone executable must be arm64-only"; exit 1; }
+	@test "$$(lipo -archs solstone.app/Contents/MacOS/solstone-watchdog)" = "arm64" || \
+		{ echo "watchdog must be arm64-only"; exit 1; }
 	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
 		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
 	@echo "✓ $(DMG_NAME) notarized + stapled"
@@ -847,8 +847,8 @@ verify-notarization-journal:
 	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || { echo "journal watchdog missing Team ID 7QCG8V4M6H"; exit 1; }
 	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -q 'flags=0x10000(runtime)' || { echo "journal watchdog missing hardened runtime flag"; exit 1; }
 	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -q 'Identifier=app.solstone.journal.watchdog' || { echo "journal watchdog identifier mismatch"; exit 1; }
-	@lipo -archs journal.app/Contents/MacOS/solstone-watchdog | grep -q 'arm64' || { echo "journal watchdog missing arm64 slice"; exit 1; }
-	@lipo -archs journal.app/Contents/MacOS/solstone-watchdog | grep -q 'x86_64' || { echo "journal watchdog missing x86_64 slice"; exit 1; }
+	@test "$$(lipo -archs journal.app/Contents/MacOS/journal)" = "arm64" || { echo "journal executable must be arm64-only"; exit 1; }
+	@test "$$(lipo -archs journal.app/Contents/MacOS/solstone-watchdog)" = "arm64" || { echo "journal watchdog must be arm64-only"; exit 1; }
 	@test -x journal.app/Contents/Resources/uv || { echo "error: journal bundled uv missing"; exit 1; }
 	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/uv
 	@codesign -dvvv journal.app/Contents/Resources/uv 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || { echo "error: journal uv missing team id"; exit 1; }
