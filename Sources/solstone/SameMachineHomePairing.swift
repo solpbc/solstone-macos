@@ -222,9 +222,9 @@ func performSameMachineHomePairing(
 
     let finalState = await submitPairingLink(response.pairLink)
     switch finalState {
-    case .paired, .alreadyConnected, .switched:
+    case .paired, .alreadyConnected:
         return .pairingStarted
-    case .idle, .pairing, .switchConfirmPending, .saveFailed, .failed:
+    case .idle, .pairing, .switchConfirmPending, .switched, .saveFailed, .failed:
         return .failed(.ceremony(finalState))
     }
 }

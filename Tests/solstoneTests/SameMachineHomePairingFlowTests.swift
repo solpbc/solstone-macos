@@ -85,6 +85,32 @@ struct SameMachineHomePairingFlowTests {
         #expect(await submit.links == [loopbackDirectPairLink])
     }
 
+    @Test func switchStatesReportFailureWithoutSuccess() async {
+        for finalState in [
+            PairingFlowState.switchConfirmPending(newInstanceID: "new-home"),
+            .switched
+        ] {
+            let pairStart = PairStartRecorder(responses: [
+                .success(response(pairLink: loopbackDirectPairLink))
+            ])
+            let submit = PairLinkSubmitRecorder(result: finalState)
+
+            let result = await performSameMachineHomePairing(
+                baseURL: "http://127.0.0.1:5015",
+                existingPairing: .noneHeld,
+                startPairing: { baseURL, deviceLabel in
+                    await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
+                },
+                submitPairingLink: { link in
+                    await submit.submit(link)
+                }
+            )
+
+            #expect(result == .failed(.ceremony(finalState)))
+            #expect(await submit.links == [loopbackDirectPairLink])
+        }
+    }
+
     private func expectRejected(
         pairLink: String,
         rejection: SameMachinePairLinkRejection,

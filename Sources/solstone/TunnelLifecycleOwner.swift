@@ -220,8 +220,8 @@ final class TunnelLifecycleOwner {
 
     func reevaluatePairing() async {
         invalidatePairingCache()
+        refreshTunnelManagedFromStoredPairing()
         guard running else {
-            refreshTunnelManagedFromStoredPairing()
             return
         }
 

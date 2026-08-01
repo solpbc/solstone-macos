@@ -11,16 +11,12 @@ import SolstoneCore
 @Suite("Journal client behavior", .serialized)
 @MainActor
 struct JournalClientBehaviorTests {
-    @Test func localDiscoveryForkDoesNotRegisterWhenIdentityUncommittedOrAbsent() async {
+    @Test func localDiscoveryReturnsForkWhenIdentityUncommittedOrAbsent() async {
         let uncommitted = await discoverLocalJournal { _ in nil }
         let absent = await discoverLocalJournal { _ in nil }
-        let registerCalls = 0
 
         #expect(uncommitted == .fork)
         #expect(absent == .fork)
-        #expect(registerCalls == 0)
-
-        _ = registerCalls
     }
 
     @Test func localDiscoveryProbeRunsOnlyForUnconfiguredNonTunnelState() {

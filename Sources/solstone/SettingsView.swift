@@ -56,6 +56,27 @@ func journalLocationLabel(isPairedHome: Bool, serverURL: String?) -> String {
         : UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL
 }
 
+func journalConnectionPresentation(
+    serverURL: String?,
+    isUploadConfigured: Bool,
+    isPairedHome: Bool,
+    sameMachineHomeMigrationComplete: Bool,
+    uploadStatus: UploadCoordinator.Status,
+    heartbeat: AppState.JournalHeartbeatOutcome?,
+    pairingPresentation: PairingConnectionPresentation
+) -> PairingConnectionPresentation {
+    let canPresentBundledLocal = !isPairedHome || sameMachineHomeMigrationComplete
+    if canPresentBundledLocal,
+       BundledJournalEndpoint.isBundledServiceURL(serverURL),
+       isUploadConfigured {
+        return makeLocalJournalConnectionPresentation(
+            for: uploadStatus,
+            heartbeat: heartbeat
+        )
+    }
+    return pairingPresentation
+}
+
 func pairingResultText(
     for state: PairingFlowState,
     isPairedHome: Bool,
@@ -1414,14 +1435,15 @@ struct SettingsView: View {
     }
 
     private var journalConnectionPresentation: PairingConnectionPresentation {
-        if BundledJournalEndpoint.isBundledServiceURL(appState.config.serverURL),
-           appState.config.isUploadConfigured {
-            return makeLocalJournalConnectionPresentation(
-                for: appState.uploadCoordinator.status,
-                heartbeat: appState.journalHeartbeatLastOutcome
-            )
-        }
-        return pairingConnectionPresentation
+        solstone.journalConnectionPresentation(
+            serverURL: appState.config.serverURL,
+            isUploadConfigured: appState.config.isUploadConfigured,
+            isPairedHome: appState.isPairedHome,
+            sameMachineHomeMigrationComplete: appState.sameMachineHomeMigrationComplete,
+            uploadStatus: appState.uploadCoordinator.status,
+            heartbeat: appState.journalHeartbeatLastOutcome,
+            pairingPresentation: pairingConnectionPresentation
+        )
     }
 
     private var externalJournalSyncSection: some View {

@@ -295,6 +295,79 @@ struct SameMachineHomeMigrationTests {
             sameMachineHomeMigrationComplete: true
         ) == "paired ✓")
     }
+
+    @Test func sameMachineCeremonyRefreshesPairedHomeBeforeResultText() async throws {
+        let remotePairing = pairing(
+            instanceID: "remote-home",
+            localEndpoints: [
+                LocalEndpoint(host: "192.168.1.10", port: 7657, scope: "lan")
+            ]
+        )
+        let homePairing = pairing(instanceID: "home-instance")
+        let store = PairingStore(pairing: remotePairing)
+        let initialTransport = FakeTunnelTransport()
+        initialTransport.armConnectGate()
+        let replacementTransport = FakeTunnelTransport()
+        let transportFactory = FakeTransportFactory([initialTransport, replacementTransport])
+        let owner = TunnelLifecycleOwner(
+            loadPairing: { try store.load() },
+            savePairing: { try store.save($0) },
+            deletePairing: { try store.delete() },
+            tokenRefresher: FakeTokenRefresher(ifNeededResults: [.notNeeded(remotePairing)]).seam,
+            makeTransport: { transportFactory.make() },
+            pathMonitoringSource: NoopPathMonitoringSource()
+        )
+        let coordinator = PairingCoordinator(
+            pair: { _, _, _ in homePairing },
+            loadPairing: { try store.load() },
+            savePairing: { try store.save($0) },
+            deletePairing: { try store.delete() },
+            reactivate: { await owner.reevaluatePairing() },
+            ownerState: { owner.state },
+            relayEndpoint: { URL(string: "https://relay.test")! },
+            deviceLabel: { "test mac" }
+        )
+
+        owner.start()
+        try await waitUntil {
+            initialTransport.pendingConnectCount == 1
+        }
+        try store.delete()
+
+        await coordinator.submitPairingLink(loopbackDirectPairLink)
+
+        #expect(coordinator.state == .paired)
+        #expect(owner.isPairedHome)
+        #expect(pairingResultText(
+            for: coordinator.state,
+            isPairedHome: owner.isPairedHome,
+            sameMachineHomeMigrationComplete: false
+        ) == nil)
+
+        initialTransport.releaseNextConnect()
+        await owner.stop()
+    }
+
+    @Test func pairedHomeIncompleteMigrationUsesTunnelConnectionPresentation() {
+        let tunnelPresentation = PairingConnectionPresentation(
+            message: "connecting to your journal…",
+            severity: .warn,
+            axToken: PairingConnectionAXState.connecting.axToken
+        )
+        let presentation = journalConnectionPresentation(
+            serverURL: ServiceMode.bundledServiceURL,
+            isUploadConfigured: true,
+            isPairedHome: true,
+            sameMachineHomeMigrationComplete: false,
+            uploadStatus: .notSynced,
+            heartbeat: AppState.JournalHeartbeatOutcome(ok: true, at: Date(timeIntervalSince1970: 0)),
+            pairingPresentation: tunnelPresentation
+        )
+
+        #expect(presentation.message == tunnelPresentation.message)
+        #expect(presentation.severity == tunnelPresentation.severity)
+        #expect(presentation.axToken == tunnelPresentation.axToken)
+    }
 }
 
 private func loopbackRegisteredConfig() -> AppConfig {
