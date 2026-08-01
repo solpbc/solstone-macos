@@ -72,6 +72,8 @@ final class JournalDevicesModel {
     var pairingState: PairingState = .idle
     var pairingNow: Duration = .zero
 
+    private static let maxDraftLabelCharacters = 80
+
     init(
         client: any JournalDevicesClientProtocol = JournalDevicesClient(),
         clock: any MonotonicClock = SystemMonotonicClock(),
@@ -90,7 +92,7 @@ final class JournalDevicesModel {
         JournalDeviceGroup(
             id: "yourDevices",
             title: DevicesCopy.yourDevicesHeader,
-            rows: devices.filter { !isPeerJournal($0) }
+            rows: sortedDeviceRows(devices.filter { !isPeerJournal($0) })
         )
     }
 
@@ -98,7 +100,7 @@ final class JournalDevicesModel {
         JournalDeviceGroup(
             id: "peerJournals",
             title: DevicesCopy.peerJournalsHeader,
-            rows: devices.filter(isPeerJournal)
+            rows: sortedDeviceRows(devices.filter(isPeerJournal))
         )
     }
 
@@ -134,11 +136,11 @@ final class JournalDevicesModel {
     }
 
     func draftLabel(for row: DeviceRow) -> String {
-        draftLabels[row.fingerprint] ?? displayName(for: row)
+        draftLabels[row.fingerprint] ?? baseLabel(for: row)
     }
 
     func setDraftLabel(_ label: String, for row: DeviceRow) {
-        draftLabels[row.fingerprint] = label
+        writeDraft(label, for: row.fingerprint)
     }
 
     func displayName(for row: DeviceRow) -> String {
@@ -146,8 +148,25 @@ final class JournalDevicesModel {
             ?? (isPeerJournal(row) ? DevicesCopy.unnamedJournal : DevicesCopy.unnamedDevice)
     }
 
-    func subtitle(for row: DeviceRow) -> String? {
-        firstNonEmpty(row.network)
+    func baseLabel(for row: DeviceRow) -> String {
+        firstNonEmpty(row.deviceLabel, row.observerHandle, row.displayLabel)
+            ?? (isPeerJournal(row) ? DevicesCopy.unnamedJournal : DevicesCopy.unnamedDevice)
+    }
+
+    func detailLine(for row: DeviceRow, now: Date) -> String {
+        var parts: [String] = []
+        if let network = firstNonEmpty(row.network) {
+            parts.append(network)
+        }
+        parts.append(livenessDetail(for: row, now: now))
+        if let pairedAt = DeviceTimestampParser.parseDeviceTimestamp(row.pairedAt) {
+            parts.append("paired \(DeviceTimestampParser.pairedDateString(from: pairedAt))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    func neverConnected(_ row: DeviceRow) -> Bool {
+        row.lastSeenAt == nil
     }
 
     func isRenaming(_ row: DeviceRow) -> Bool {
@@ -167,7 +186,7 @@ final class JournalDevicesModel {
         renameErrors[fingerprint] = nil
         renamingFingerprints.insert(fingerprint)
         applyOptimisticLabel(newLabel, fingerprint: fingerprint)
-        draftLabels[fingerprint] = newLabel
+        writeDraft(newLabel, for: fingerprint)
 
         do {
             try await client.renameDevice(fingerprint: fingerprint, label: newLabel)
@@ -175,11 +194,11 @@ final class JournalDevicesModel {
             await loadDevices()
         } catch is CancellationError {
             devices = previousDevices
-            draftLabels[fingerprint] = previousDraft
+            writeDraft(previousDraft, for: fingerprint)
             renamingFingerprints.remove(fingerprint)
         } catch {
             devices = previousDevices
-            draftLabels[fingerprint] = previousDraft
+            writeDraft(previousDraft, for: fingerprint)
             renamingFingerprints.remove(fingerprint)
             renameErrors[fingerprint] = detail(for: error) ?? DevicesCopy.renameFailed
         }
@@ -343,7 +362,7 @@ final class JournalDevicesModel {
         let fingerprints = Set(loaded.map(\.fingerprint))
         draftLabels = draftLabels.filter { fingerprints.contains($0.key) }
         for row in loaded where draftLabels[row.fingerprint] == nil {
-            draftLabels[row.fingerprint] = displayName(for: row)
+            writeDraft(baseLabel(for: row), for: row.fingerprint)
         }
     }
 
@@ -365,6 +384,41 @@ final class JournalDevicesModel {
 
     private func isPeerJournal(_ row: DeviceRow) -> Bool {
         row.role?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "peer"
+    }
+
+    private func sortedDeviceRows(_ rows: [DeviceRow]) -> [DeviceRow] {
+        rows.sorted { lhs, rhs in
+            let lhsNeverConnected = neverConnected(lhs)
+            let rhsNeverConnected = neverConnected(rhs)
+            if lhsNeverConnected != rhsNeverConnected {
+                return !lhsNeverConnected && rhsNeverConnected
+            }
+            return lhs.fingerprint < rhs.fingerprint
+        }
+    }
+
+    private func livenessDetail(for row: DeviceRow, now: Date) -> String {
+        guard row.lastSeenAt != nil else {
+            return "never connected"
+        }
+        guard let lastSeenAt = DeviceTimestampParser.parseDeviceTimestamp(row.lastSeenAt) else {
+            return "last seen unknown"
+        }
+        if now.timeIntervalSince(lastSeenAt) < 60 {
+            return "last seen just now"
+        }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.dateTimeStyle = .named
+        formatter.unitsStyle = .full
+        return "last seen \(formatter.localizedString(for: lastSeenAt, relativeTo: now))"
+    }
+
+    private func writeDraft(_ label: String?, for fingerprint: String) {
+        guard let label else {
+            draftLabels[fingerprint] = nil
+            return
+        }
+        draftLabels[fingerprint] = String(label.prefix(Self.maxDraftLabelCharacters))
     }
 
     private func firstNonEmpty(_ values: String?...) -> String? {
@@ -409,5 +463,45 @@ final class JournalDevicesModel {
         let extraSecond: Int64 = components.attoseconds > 0 ? 1 : 0
         let seconds = max(0, components.seconds + extraSecond)
         return seconds > Int64(Int.max) ? Int.max : Int(seconds)
+    }
+}
+
+@MainActor
+private enum DeviceTimestampParser {
+    private static let internetDateTimeFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let fractionalInternetDateTimeFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let pairedDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "MMM d, yyyy"
+        return formatter
+    }()
+
+    // solstone-journal think/link/auth.py:119,148,200 writes strftime("%Y-%m-%dT%H:%M:%SZ").
+    fileprivate static func parseDeviceTimestamp(_ rawValue: String?) -> Date? {
+        guard let rawValue else {
+            return nil
+        }
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        return fractionalInternetDateTimeFormatter.date(from: trimmed) ??
+            internetDateTimeFormatter.date(from: trimmed)
+    }
+
+    fileprivate static func pairedDateString(from date: Date) -> String {
+        pairedDateFormatter.string(from: date)
     }
 }

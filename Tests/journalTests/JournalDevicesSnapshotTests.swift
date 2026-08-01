@@ -78,9 +78,21 @@ struct JournalDevicesSnapshotTests {
             devices: [
                 DeviceRow(
                     displayLabel: "iphone",
+                    deviceLabel: "iphone",
                     role: "phone",
                     network: "local",
+                    pairedAt: "2026-08-01T12:00:00Z",
+                    lastSeenAt: "2026-08-01T12:00:00Z",
                     fingerprint: "phone-a"
+                ),
+                DeviceRow(
+                    displayLabel: "iphone (2)",
+                    deviceLabel: "iphone",
+                    role: "phone",
+                    network: "local",
+                    pairedAt: "2026-07-30T12:00:00Z",
+                    lastSeenAt: nil,
+                    fingerprint: "phone-b"
                 ),
                 DeviceRow(
                     displayLabel: "kitchen journal",
@@ -152,7 +164,7 @@ struct JournalDevicesSnapshotTests {
         model.devices = devices
         model.loadState = state
         for row in devices {
-            model.draftLabels[row.fingerprint] = model.displayName(for: row)
+            model.setDraftLabel(model.baseLabel(for: row), for: row)
         }
         return model
     }

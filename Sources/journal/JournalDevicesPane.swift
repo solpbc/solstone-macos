@@ -121,11 +121,18 @@ struct JournalDevicesPane: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(model.displayName(for: row))
                         .font(.body.weight(.medium))
+                        .foregroundStyle(model.neverConnected(row) ? .secondary : .primary)
                         .accessibilityIdentifier(AXID.Journal.Devices.Row.label(row.fingerprint))
-                    if let subtitle = model.subtitle(for: row) {
-                        Text(subtitle)
+                    TimelineView(.periodic(from: .now, by: 60.0)) { context in
+                        let detail = model.detailLine(for: row, now: context.date)
+                        Text(detail)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        // Intentionally unwrapped so AX state does not contribute row height.
+                        AXStateCompanion(
+                            id: AXID.Journal.Devices.Row.detailState(row.fingerprint),
+                            value: detail
+                        )
                     }
                 }
 
@@ -190,12 +197,15 @@ struct JournalDevicesPane: View {
 private struct RevokeConfirmSheet: View {
     @Bindable var model: JournalDevicesModel
     let row: DeviceRow
+    @State private var now = Date()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(DevicesCopy.revokeTitle(model.displayName(for: row)))
+            let name = model.displayName(for: row)
+            let detail = model.detailLine(for: row, now: now)
+            Text(DevicesCopy.revokeTitle(name))
                 .font(.title3.weight(.semibold))
-            let message = DevicesCopy.revokeBody(model.displayName(for: row))
+            let message = DevicesCopy.revokeBody(name, detail: detail)
             Text(message)
                 .foregroundStyle(.secondary)
             AXStateCompanion(id: AXID.Journal.Devices.RevokeConfirm.messageState, value: message)

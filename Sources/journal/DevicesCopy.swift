@@ -9,7 +9,7 @@ enum DevicesCopy {
     static let peerJournalsHeader = "peer journals"
     static let loading = "loading devices..."
     static let emptyTitle = "no devices yet"
-    static let emptyBody = "add a device to keep it to this journal."
+    static let emptyBody = "add a device and it joins your journal."
     static let notRunningTitle = "journal is not running"
     static let notRunningBody = "start the journal, then try again."
     static let notReadyTitle = "devices are not ready"
@@ -42,8 +42,8 @@ enum DevicesCopy {
         "remove \(name)?"
     }
 
-    static func revokeBody(_ name: String) -> String {
-        "\(name) won't keep to this journal anymore. you can add it again later."
+    static func revokeBody(_ name: String, detail: String) -> String {
+        "\(name) loses access to your journal. you can add it again later.\n\(detail)"
     }
 
     static func countdown(seconds: Int) -> String {

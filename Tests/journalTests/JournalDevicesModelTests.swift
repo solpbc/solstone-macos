@@ -28,6 +28,77 @@ struct JournalDevicesModelTests {
         #expect(model.groups.map(\.title) == [DevicesCopy.yourDevicesHeader, DevicesCopy.peerJournalsHeader])
     }
 
+    @Test func sameBaseRowsRenderDifferentDetailLines() async throws {
+        let model = JournalDevicesModel(client: FakeDevicesClient())
+        let now = fixedDate("2026-08-01T12:04:00Z")
+        // Midday UTC keeps the paired date stable across realistic host time zones.
+        let pairedAt = "2026-08-01T12:00:00Z"
+        let live = device(
+            label: "iPhone (2)",
+            deviceLabel: "iPhone",
+            pairedAt: pairedAt,
+            lastSeenAt: "2026-08-01T12:00:00Z",
+            fingerprint: "live"
+        )
+        let never = device(
+            label: "iPhone",
+            deviceLabel: "iPhone",
+            pairedAt: pairedAt,
+            lastSeenAt: nil,
+            fingerprint: "never"
+        )
+
+        #expect(model.detailLine(for: live, now: now) == "last seen 4 minutes ago · paired Aug 1, 2026")
+        #expect(model.detailLine(for: never, now: now) == "never connected · paired Aug 1, 2026")
+    }
+
+    @Test func revokeConfirmBodiesDifferForSameBaseRows() {
+        let model = JournalDevicesModel(client: FakeDevicesClient())
+        let now = fixedDate("2026-08-01T12:04:00Z")
+        let live = device(
+            label: "iPhone",
+            deviceLabel: "iPhone",
+            pairedAt: "2026-08-01T12:00:00Z",
+            lastSeenAt: "2026-08-01T12:00:00Z",
+            fingerprint: "live"
+        )
+        let never = device(
+            label: "iPhone",
+            deviceLabel: "iPhone",
+            pairedAt: "2026-07-30T12:00:00Z",
+            lastSeenAt: nil,
+            fingerprint: "never"
+        )
+
+        let liveBody = DevicesCopy.revokeBody(
+            model.displayName(for: live),
+            detail: model.detailLine(for: live, now: now)
+        )
+        let neverBody = DevicesCopy.revokeBody(
+            model.displayName(for: never),
+            detail: model.detailLine(for: never, now: now)
+        )
+
+        #expect(liveBody != neverBody)
+    }
+
+    @Test func groupsSortConnectedThenUnknownThenNeverConnectedByFingerprint() async throws {
+        let client = FakeDevicesClient(listResults: [.success([
+            device(label: "never", lastSeenAt: nil, fingerprint: "z"),
+            device(label: "live", lastSeenAt: "2026-08-01T12:00:00Z", fingerprint: "b"),
+            device(label: "unknown", lastSeenAt: "123", fingerprint: "a"),
+            device(label: "peer never", role: "peer", lastSeenAt: nil, fingerprint: "peer-z"),
+            device(label: "peer live", role: "peer", lastSeenAt: "2026-08-01T12:00:00Z", fingerprint: "peer-b"),
+            device(label: "peer unknown", role: "peer", lastSeenAt: "now", fingerprint: "peer-a"),
+        ])])
+        let model = JournalDevicesModel(client: client)
+
+        await model.loadDevices()
+
+        #expect(model.yourDevicesGroup.rows.map(\.fingerprint) == ["a", "b", "z"])
+        #expect(model.peerJournalsGroup.rows.map(\.fingerprint) == ["peer-a", "peer-b", "peer-z"])
+    }
+
     @Test func loadStatesMapEmptyNotRunningAndNotReady() async throws {
         let empty = JournalDevicesModel(client: FakeDevicesClient(listResults: [.success([])]))
         await empty.loadDevices()
@@ -42,6 +113,39 @@ struct JournalDevicesModelTests {
         let notReady = JournalDevicesModel(client: FakeDevicesClient(listResults: [.failure(.notReady)]))
         await notReady.loadDevices()
         #expect(notReady.loadState == .notReady)
+    }
+
+    @Test func renameDraftPrefillsBaseDeviceLabelWhenDisplayLabelIsDisambiguated() async throws {
+        let client = FakeDevicesClient(listResults: [
+            .success([device(label: "iPhone (2)", deviceLabel: "iPhone", fingerprint: "a")]),
+        ])
+        let model = JournalDevicesModel(client: client)
+        await model.loadDevices()
+        let row = try #require(model.devices.first)
+
+        #expect(model.draftLabel(for: row) == "iPhone")
+    }
+
+    @Test func saveRenamePostsBaseDeviceLabelWithOwnerPrefix() async throws {
+        let client = FakeDevicesClient(
+            listResults: [
+                .success([device(label: "iPhone (2)", deviceLabel: "iPhone", fingerprint: "a")]),
+                .success([device(label: "Work iPhone", deviceLabel: "Work iPhone", fingerprint: "a")]),
+            ],
+            renameResults: [.success(())]
+        )
+        let model = JournalDevicesModel(client: client)
+        await model.loadDevices()
+        let row = try #require(model.devices.first)
+        model.setDraftLabel("Work \(model.draftLabel(for: row))", for: row)
+
+        await model.saveRename(for: row)
+        let requests = await client.renameRequests()
+
+        #expect(
+            requests == [RenameRequest(fingerprint: "a", label: "Work iPhone")],
+            "actual rename requests: \(requests)"
+        )
     }
 
     @Test func renameOptimisticallyCommitsAndRefreshesOnSuccess() async throws {
@@ -93,6 +197,87 @@ struct JournalDevicesModelTests {
 
         #expect(model.renameErrors["a"] == DevicesCopy.renameRequired)
         #expect(await client.renameRequests().isEmpty)
+    }
+
+    @Test func detailLineRendersWhenPartsAreMissingWithoutDanglingSeparators() {
+        let model = JournalDevicesModel(client: FakeDevicesClient())
+        let detail = model.detailLine(
+            for: device(label: "phone", pairedAt: nil, lastSeenAt: nil, fingerprint: "a"),
+            now: fixedDate("2026-08-01T12:04:00Z")
+        )
+
+        #expect(detail == "never connected")
+        #expect(!detail.hasPrefix(" · "))
+        #expect(!detail.hasSuffix(" · "))
+        #expect(!detail.contains(" ·  · "))
+    }
+
+    @Test func applyDevicesPrunesStaleDraftsAndClampsSeededDrafts() async throws {
+        let overlong = String(repeating: "x", count: 81)
+        let client = FakeDevicesClient(listResults: [
+            .success([device(label: overlong, deviceLabel: overlong, fingerprint: "seed")]),
+        ])
+        let model = JournalDevicesModel(client: client)
+
+        model.setDraftLabel(overlong, for: device(label: "phone", fingerprint: "setter"))
+        await model.loadDevices()
+
+        #expect(model.draftLabels["setter"] == nil)
+        #expect(model.draftLabels["seed"]?.count == 80)
+    }
+
+    @Test func setterClampUsesCharacterCount() {
+        let model = JournalDevicesModel(client: FakeDevicesClient())
+        let overlong = String(repeating: "x", count: 81)
+        let row = device(label: "phone", fingerprint: "a")
+
+        model.setDraftLabel(overlong, for: row)
+
+        #expect(model.draftLabel(for: row).count == 80)
+    }
+
+    @Test func parserAcceptsGroundedISOShapesAndRejectsLossyStringsAsUnknown() {
+        let model = JournalDevicesModel(client: FakeDevicesClient())
+        let now = fixedDate("2026-08-01T12:04:00Z")
+        let accepted = [
+            "2026-08-01T12:00:00Z",
+            "2026-08-01T12:00:00.000Z",
+            "2026-08-01T08:00:00-04:00",
+        ]
+        for value in accepted {
+            let detail = model.detailLine(
+                for: device(label: "phone", lastSeenAt: value, fingerprint: value),
+                now: now
+            )
+            #expect(detail == "last seen 4 minutes ago")
+        }
+
+        for value in ["123", "true", "now", "", "   "] {
+            let detail = model.detailLine(
+                for: device(label: "phone", lastSeenAt: value, fingerprint: value),
+                now: now
+            )
+            #expect(detail == "last seen unknown")
+        }
+
+        #expect(
+            model.detailLine(for: device(label: "phone", lastSeenAt: nil, fingerprint: "nil"), now: now)
+                == "never connected"
+        )
+    }
+
+    @Test func unparseableLastSeenIsUnknownAndDoesNotSortLast() async throws {
+        let client = FakeDevicesClient(listResults: [.success([
+            device(label: "never", lastSeenAt: nil, fingerprint: "z"),
+            device(label: "unknown", lastSeenAt: "123", fingerprint: "a"),
+        ])])
+        let model = JournalDevicesModel(client: client)
+        await model.loadDevices()
+        let now = fixedDate("2026-08-01T12:04:00Z")
+
+        #expect(model.detailLine(for: model.yourDevicesGroup.rows[0], now: now) == "last seen unknown")
+        #expect(model.detailLine(for: model.yourDevicesGroup.rows[1], now: now) == "never connected")
+        #expect(model.yourDevicesGroup.rows.map(\.fingerprint) == ["a", "z"])
     }
 
     @Test func revokeSuccessDismissesAndRefreshes() async throws {
@@ -270,8 +455,22 @@ struct JournalDevicesModelTests {
         #expect(await client.nonceCallCount() == 0)
     }
 
-    private func device(label: String, role: String? = nil, fingerprint: String) -> DeviceRow {
-        DeviceRow(displayLabel: label, role: role, fingerprint: fingerprint)
+    private func device(
+        label: String,
+        deviceLabel: String? = nil,
+        role: String? = nil,
+        pairedAt: String? = nil,
+        lastSeenAt: String? = nil,
+        fingerprint: String
+    ) -> DeviceRow {
+        DeviceRow(
+            displayLabel: label,
+            deviceLabel: deviceLabel,
+            role: role,
+            pairedAt: pairedAt,
+            lastSeenAt: lastSeenAt,
+            fingerprint: fingerprint
+        )
     }
 
     private func pair(nonce: String, link: String, expiresIn: Int) -> PairStartResponse {
@@ -282,6 +481,10 @@ struct JournalDevicesModelTests {
             deviceLabel: "",
             caFingerprint: "ca"
         )
+    }
+
+    private func fixedDate(_ value: String) -> Date {
+        ISO8601DateFormatter().date(from: value)!
     }
 }
 

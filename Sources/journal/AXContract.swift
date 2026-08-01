@@ -142,6 +142,11 @@ enum AXContract {
                 runtime: true
             ),
             ParameterizedIdentifier(
+                template: "journal.devices.row.fingerprint-{fingerprint}.detail.state",
+                key: "DeviceRow.fingerprint",
+                runtime: true
+            ),
+            ParameterizedIdentifier(
                 template: "journal.devices.row.fingerprint-{fingerprint}.rename.field",
                 key: "DeviceRow.fingerprint",
                 runtime: true
@@ -216,6 +221,7 @@ enum AXContract {
             AXID.Journal.Devices.loadState: .enum("JournalDevicesLoadState"),
             AXID.Journal.Devices.yourDevicesCountState: .numeric,
             AXID.Journal.Devices.peerJournalsCountState: .numeric,
+            "journal.devices.row.fingerprint-{fingerprint}.detail.state": .freeform,
             "journal.devices.row.fingerprint-{fingerprint}.rename.error.state": .freeform,
             AXID.Journal.Devices.Pairing.copyLinkCopiedState: .enum("JournalDevicesCopiedState"),
             AXID.Journal.Devices.Pairing.countdownState: .numeric,
@@ -253,6 +259,9 @@ enum AXContract {
         }
         if id.hasPrefix("journal.devices.row.fingerprint-"), id.hasSuffix(".rename.error.state") {
             return "journal.devices.row.fingerprint-{fingerprint}.rename.error.state"
+        }
+        if id.hasPrefix("journal.devices.row.fingerprint-"), id.hasSuffix(".detail.state") {
+            return "journal.devices.row.fingerprint-{fingerprint}.detail.state"
         }
         return id
     }

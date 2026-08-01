@@ -103,6 +103,10 @@ enum AXID {
                     "\(prefix(fingerprint)).label"
                 }
 
+                static func detailState(_ fingerprint: String) -> String {
+                    "\(prefix(fingerprint)).detail.state"
+                }
+
                 static func renameField(_ fingerprint: String) -> String {
                     "\(prefix(fingerprint)).rename.field"
                 }

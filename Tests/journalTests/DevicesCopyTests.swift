@@ -13,7 +13,7 @@ struct JournalDevicesCopyTests {
         #expect(DevicesCopy.peerJournalsHeader == "peer journals")
         #expect(DevicesCopy.loading == "loading devices...")
         #expect(DevicesCopy.emptyTitle == "no devices yet")
-        #expect(DevicesCopy.emptyBody == "add a device to keep it to this journal.")
+        #expect(DevicesCopy.emptyBody == "add a device and it joins your journal.")
         #expect(DevicesCopy.notRunningTitle == "journal is not running")
         #expect(DevicesCopy.notRunningBody == "start the journal, then try again.")
         #expect(DevicesCopy.notReadyTitle == "devices are not ready")
@@ -42,7 +42,10 @@ struct JournalDevicesCopyTests {
         #expect(DevicesCopy.pairingFailedTitle == "couldn't open pairing")
         #expect(DevicesCopy.close == "close")
         #expect(DevicesCopy.revokeTitle("laptop") == "remove laptop?")
-        #expect(DevicesCopy.revokeBody("laptop") == "laptop won't keep to this journal anymore. you can add it again later.")
+        #expect(
+            DevicesCopy.revokeBody("laptop", detail: "local · never connected")
+                == "laptop loses access to your journal. you can add it again later.\nlocal · never connected"
+        )
         #expect(DevicesCopy.countdown(seconds: 65) == "expires in 1:05")
         #expect(DevicesCopy.countdown(seconds: -1) == "expires in 0:00")
     }
@@ -83,7 +86,7 @@ struct JournalDevicesCopyTests {
             DevicesCopy.pairingFailedTitle,
             DevicesCopy.close,
             DevicesCopy.revokeTitle("laptop"),
-            DevicesCopy.revokeBody("laptop"),
+            DevicesCopy.revokeBody("laptop", detail: "local · never connected"),
             DevicesCopy.countdown(seconds: 65),
         ]
         let forbidden = [
