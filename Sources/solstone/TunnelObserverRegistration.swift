@@ -27,9 +27,11 @@ func performTunnelObserverRegistration(
     let result = await register(baseURL, descriptor)
     switch result {
     case .success(let registration):
-        if appState.config.serverKey == registration.key, appState.config.isUploadConfigured {
-            // Key identity is authoritative here: reconnects may resolve a new dynamic loopback port,
-            // and the persisted serverURL is intentionally left stale when the key already matches.
+        if appState.config.serverKey == registration.key,
+           appState.config.isUploadConfigured,
+           !BundledJournalEndpoint.isBundledServiceURL(appState.config.serverURL) {
+            // Key identity preserves dynamic-port reconnects once the persisted base has already moved.
+            // Bundled-base same-key adoption must still rewrite the base to the tunnel endpoint.
             return
         }
 

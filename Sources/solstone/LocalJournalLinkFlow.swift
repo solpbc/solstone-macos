@@ -209,36 +209,6 @@ func makeObserverRegistrationDescriptor(
 }
 
 @MainActor
-func persistLocalObserverRegistration(
-    _ registration: ObserverRegistration,
-    appState: AppState
-) {
-    var config = appState.config
-    config.serverURL = ServiceMode.bundledServiceURL
-    config.serverKey = registration.key
-    config.observerName = registration.streamName
-    config.serviceMode = .external
-    appState.clearLastSuccessfulJournalContact()
-    appState.updateConfig(config)
-}
-
-@MainActor
-func performLocalObserverRegistration(
-    appState: AppState,
-    register: @escaping @MainActor @Sendable (
-        _ baseURL: String,
-        _ descriptor: ObserverRegistrationDescriptor
-    ) async -> Result<ObserverRegistration, ObserverRegistrationFailure>
-) async -> Result<ObserverRegistration, ObserverRegistrationFailure> {
-    let descriptor = makeObserverRegistrationDescriptor()
-    let result = await register(ServiceMode.bundledServiceURL, descriptor)
-    if case .success(let registration) = result {
-        persistLocalObserverRegistration(registration, appState: appState)
-    }
-    return result
-}
-
-@MainActor
 func resetForJournalRelink(
     appState: AppState,
     journalMarkDriver: JournalMarkConfirmationDriver

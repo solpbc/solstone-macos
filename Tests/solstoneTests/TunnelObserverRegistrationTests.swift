@@ -69,6 +69,7 @@ struct TunnelObserverRegistrationTests {
     @Test func sameKeyRegistrationDoesNotRewriteDynamicPort() async {
         let firstBaseURL = "http://127.0.0.1:49152"
         let secondBaseURL = "http://127.0.0.1:49153"
+        #expect(!BundledJournalEndpoint.isBundledServiceURL(firstBaseURL))
         let registrar = FakeObserverRegistrar(results: [
             .success(ObserverRegistration(key: "stable-key", streamName: "first-stream")),
             .success(ObserverRegistration(key: "stable-key", streamName: "second-stream"))
@@ -97,6 +98,36 @@ struct TunnelObserverRegistrationTests {
         #expect(state.config.serverURL == firstBaseURL)
         #expect(state.config.serverKey == "stable-key")
         #expect(state.config.observerName == "first-stream")
+        #expect(state.config.serviceMode == .external)
+        #expect(state.config.isUploadConfigured)
+    }
+
+    @Test func sameKeyRegistrationRewritesBundledBaseToTunnelBase() async {
+        let linkBaseURL = "http://127.0.0.1:49152"
+        let registrar = FakeObserverRegistrar(result: .success(ObserverRegistration(
+            key: "stable-key",
+            streamName: "linked-stream"
+        )))
+        let state = AppState.forSnapshot(config: AppConfig(
+            serverURL: ServiceMode.bundledServiceURL,
+            serverKey: "stable-key",
+            serviceMode: .external
+        ))
+
+        await performTunnelObserverRegistration(
+            appState: state,
+            isTunnelManaged: true,
+            resolveBase: { .url(linkBaseURL) },
+            register: { baseURL, descriptor in
+                await registrar.register(baseURL: baseURL, descriptor: descriptor)
+            }
+        )
+
+        #expect(registrar.invocationCount == 1)
+        #expect(registrar.lastBaseURL == linkBaseURL)
+        #expect(state.config.serverURL == linkBaseURL)
+        #expect(state.config.serverKey == "stable-key")
+        #expect(state.config.observerName == "linked-stream")
         #expect(state.config.serviceMode == .external)
         #expect(state.config.isUploadConfigured)
     }
@@ -173,6 +204,25 @@ struct TunnelObserverRegistrationTests {
         #expect(state.config.serverURL == "http://127.0.0.1:49153")
         #expect(state.config.serverKey == "new-key")
         #expect(state.uploadCoordinator.lastSuccessfulJournalContactOutcome == .noSyncYet)
+    }
+
+    @Test func linkedRegistrationUsesExpectedObserverDescriptor() async throws {
+        let registrar = FakeObserverRegistrar(result: .success(ObserverRegistration(
+            key: "descriptor-key",
+            streamName: "descriptor-stream"
+        )))
+        let state = AppState.forSnapshot()
+
+        await performTunnelObserverRegistration(
+            appState: state,
+            isTunnelManaged: true,
+            resolveBase: { .url("http://127.0.0.1:49152") },
+            register: { baseURL, descriptor in
+                await registrar.register(baseURL: baseURL, descriptor: descriptor)
+            }
+        )
+
+        #expect(registrar.lastDescriptor == makeObserverRegistrationDescriptor())
     }
 
     @Test func heldTunnelRegistrationDoesNotPersistAndStillTriggersSync() async {

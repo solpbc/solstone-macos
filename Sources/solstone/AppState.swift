@@ -48,6 +48,7 @@ public final class AppState {
 
     func noteJournalHeartbeatOutcome(_ ok: Bool, at: Date = Date()) {
         journalHeartbeatLastOutcome = JournalHeartbeatOutcome(ok: ok, at: at)
+        triggerSameMachineMigrationAfterHeartbeatIfNeeded(ok: ok)
     }
 
     /// Shared instance for app-wide access (set during init)
@@ -80,6 +81,10 @@ public final class AppState {
         _ baseURL: String,
         _ descriptor: ObserverRegistrationDescriptor
     ) async -> Result<ObserverRegistration, ObserverRegistrationFailure>
+    private let sameMachinePairStart: @MainActor @Sendable (
+        _ baseURL: String,
+        _ deviceLabel: String
+    ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>
     // Test seam for observing tunnel-connected sync nudges when UploadCoordinator short-circuits.
     private let triggerTunnelConnectedSync: @MainActor @Sendable (AppState) -> Void
     private let notifier: any SolChatNotifying
@@ -90,6 +95,8 @@ public final class AppState {
     public private(set) var config: AppConfig
     private var debugAudioHolder: DebugSettingHolder!
     private var silenceMusicHolder: DebugSettingHolder!
+    private var didAttemptSameMachineMigration = false
+    internal private(set) var sameMachineMigrationLastResult: SameMachineHomePairingResult?
 
     // MARK: - State
 
@@ -424,7 +431,8 @@ public final class AppState {
         let topology = classifySetupTopology(
             serviceMode: config.serviceMode,
             serverURL: config.serverURL,
-            isTunnelManaged: tunnelLifecycleOwner.isTunnelManaged
+            isTunnelManaged: tunnelLifecycleOwner.isTunnelManaged,
+            isPairedHome: tunnelLifecycleOwner.isPairedHome
         )
         return journalConnectionFingerprint(
             config: config,
@@ -432,6 +440,67 @@ public final class AppState {
             isTunnelManaged: tunnelLifecycleOwner.isTunnelManaged,
             tunnelPairing: tunnelLifecycleOwner.cachedPairingIdentity
         )
+    }
+
+    internal var isPairedHome: Bool {
+        tunnelLifecycleOwner.isPairedHome
+    }
+
+    internal var sameMachineHomeMigrationComplete: Bool {
+        isPairedHome &&
+            config.isUploadConfigured &&
+            !BundledJournalEndpoint.isBundledServiceURL(config.serverURL)
+    }
+
+    private func triggerSameMachineMigrationAfterHeartbeatIfNeeded(ok: Bool) {
+        guard ok,
+              !didAttemptSameMachineMigration,
+              isEligibleForSameMachineHeartbeatMigration()
+        else {
+            return
+        }
+
+        didAttemptSameMachineMigration = true
+        Task { @MainActor [weak self] in
+            await self?.runSameMachineHomeMigration()
+        }
+    }
+
+    internal func isEligibleForSameMachineHeartbeatMigration() -> Bool {
+        guard !isSnapshot,
+              BundledJournalEndpoint.isBundledServiceURL(config.serverURL),
+              let serverKey = config.serverKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !serverKey.isEmpty,
+              config.serviceMode == .external,
+              config.isUploadConfigured,
+              !isPairedHome
+        else {
+            return false
+        }
+
+        return tunnelLifecycleOwner.sameMachineStoredPairingState == .noneHeld
+    }
+
+    private func runSameMachineHomeMigration() async {
+        guard let baseURL = config.serverURL else {
+            sameMachineMigrationLastResult = .notEligible
+            return
+        }
+
+        let result = await performSameMachineHomePairing(
+            baseURL: baseURL,
+            existingPairing: tunnelLifecycleOwner.sameMachineStoredPairingState,
+            startPairing: sameMachinePairStart,
+            submitPairingLink: { [pairingCoordinator] exactPairLink in
+                await pairingCoordinator.submitPairingLink(exactPairLink)
+                return pairingCoordinator.state
+            }
+        )
+        sameMachineMigrationLastResult = result
+
+        if case .failed(let failure) = result {
+            Logger.setup.debug("same-machine home migration did not complete: \(String(describing: failure), privacy: .public)")
+        }
     }
 
     internal func clearLastSuccessfulJournalContact() {
@@ -616,6 +685,9 @@ public final class AppState {
         self.isSnapshot = false
         self.config = config
         self.observerRegister = observerRegister
+        self.sameMachinePairStart = { baseURL, deviceLabel in
+            await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
+        }
         self.triggerTunnelConnectedSync = triggerTunnelConnectedSync
         self.notifier = notifier
         self.loginService = loginService
@@ -831,6 +903,12 @@ public final class AppState {
         ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> = { baseURL, descriptor in
             await ObserverRegistrationClient().register(baseURL: baseURL, descriptor: descriptor)
         },
+        sameMachinePairStart: @escaping @MainActor @Sendable (
+            _ baseURL: String,
+            _ deviceLabel: String
+        ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { baseURL, deviceLabel in
+            await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
+        },
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
             $0.uploadCoordinator.triggerSync()
         },
@@ -845,6 +923,7 @@ public final class AppState {
             notifier: notifier ?? NoopSolChatNotifier(),
             initialTunnelPairing: initialTunnelPairing,
             observerRegister: observerRegister,
+            sameMachinePairStart: sameMachinePairStart,
             triggerTunnelConnectedSync: triggerTunnelConnectedSync,
             lastContactStore: lastContactStore
         )
@@ -853,7 +932,17 @@ public final class AppState {
     /// Creates a side-effect-free AppState for login item migration tests.
     internal static func forLoginItemTest(
         config: AppConfig = AppConfig(),
-        loginService: any LoginItemService
+        loginService: any LoginItemService,
+        sameMachinePairStart: @escaping @MainActor @Sendable (
+            _ baseURL: String,
+            _ deviceLabel: String
+        ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { baseURL, deviceLabel in
+            await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
+        },
+        pairingOperation: PairingCoordinator.PairOperation? = nil,
+        pairingLoad: PairingCoordinator.LoadPairing? = nil,
+        pairingSave: PairingCoordinator.SavePairing? = nil,
+        pairingDelete: PairingCoordinator.DeletePairing? = nil
     ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
@@ -862,7 +951,12 @@ public final class AppState {
             notificationStatus: .authorized,
             isSnapshot: false,
             notifier: NoopSolChatNotifier(),
-            loginService: loginService
+            loginService: loginService,
+            sameMachinePairStart: sameMachinePairStart,
+            pairingOperation: pairingOperation,
+            pairingLoad: pairingLoad,
+            pairingSave: pairingSave,
+            pairingDelete: pairingDelete
         )
     }
 
@@ -880,10 +974,20 @@ public final class AppState {
         ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> = { baseURL, descriptor in
             await ObserverRegistrationClient().register(baseURL: baseURL, descriptor: descriptor)
         },
+        sameMachinePairStart: @escaping @MainActor @Sendable (
+            _ baseURL: String,
+            _ deviceLabel: String
+        ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { baseURL, deviceLabel in
+            await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
+        },
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
             $0.uploadCoordinator.triggerSync()
         },
-        lastContactStore providedLastContactStore: (any LastSuccessfulJournalContactStoring)? = nil
+        lastContactStore providedLastContactStore: (any LastSuccessfulJournalContactStoring)? = nil,
+        pairingOperation: PairingCoordinator.PairOperation? = nil,
+        pairingLoad: PairingCoordinator.LoadPairing? = nil,
+        pairingSave: PairingCoordinator.SavePairing? = nil,
+        pairingDelete: PairingCoordinator.DeletePairing? = nil
     ) {
         let pauseManager = PauseManager()
         let storageManager = StorageManager()
@@ -905,6 +1009,7 @@ public final class AppState {
         self.isSnapshot = isSnapshot
         self.config = config
         self.observerRegister = observerRegister
+        self.sameMachinePairStart = sameMachinePairStart
         self.triggerTunnelConnectedSync = triggerTunnelConnectedSync
         self.notifier = notifier
         self.loginService = loginService
@@ -951,14 +1056,21 @@ public final class AppState {
             postOpenJournalDestination: { _ in },
             notifier: notifier
         )
-        let tunnelLifecycleOwner = initialTunnelPairing
-            .map { pairing in TunnelLifecycleOwner.dormantForSnapshot(loadPairing: { pairing }) }
-            ?? TunnelLifecycleOwner.dormantForSnapshot()
+        let tunnelPairingLoad: @Sendable () throws -> StoredPairing?
+        if let pairingLoad {
+            tunnelPairingLoad = pairingLoad
+        } else if let initialTunnelPairing {
+            tunnelPairingLoad = { initialTunnelPairing }
+        } else {
+            tunnelPairingLoad = { nil }
+        }
+        let tunnelLifecycleOwner = TunnelLifecycleOwner.dormantForSnapshot(loadPairing: tunnelPairingLoad)
         self.tunnelLifecycleOwner = tunnelLifecycleOwner
         self.pairingCoordinator = PairingCoordinator(
-            loadPairing: { nil },
-            savePairing: { _ in },
-            deletePairing: {},
+            pair: pairingOperation,
+            loadPairing: pairingLoad ?? { nil },
+            savePairing: pairingSave ?? { _ in },
+            deletePairing: pairingDelete ?? {},
             reactivate: { [owner = tunnelLifecycleOwner] in
                 await owner.reevaluatePairing()
             },

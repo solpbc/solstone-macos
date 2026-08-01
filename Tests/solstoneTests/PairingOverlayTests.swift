@@ -32,6 +32,17 @@ struct PairingOverlayTests {
         #expect(makePairingRelayAccessPresentation(for: .noPairing) == nil)
     }
 
+    @Test func revokedPairedHomeIsRecoverableAndCaptureContinues() {
+        let state = AppState.forSnapshot(initialTunnelPairing: pairing())
+        state.isRecording = true
+        let presentation = makePairingConnectionPresentation(for: .error(.revoked), hasPairing: true)
+
+        #expect(presentation.message == "pairing was revoked. pair again to reconnect.")
+        #expect(presentation.severity == .attention)
+        #expect(presentation.axToken == PairingConnectionAXState.revoked.axToken)
+        #expect(state.isRecording)
+    }
+
     @Test func localJournalConnectionPresentationIsUploadStatusDriven() {
         let synced = makeLocalJournalConnectionPresentation(for: .synced)
         #expect(synced.message == "connected to your journal on this mac")

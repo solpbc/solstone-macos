@@ -11,76 +11,6 @@ import SolstoneCore
 @Suite("Journal client behavior", .serialized)
 @MainActor
 struct JournalClientBehaviorTests {
-    @Test func localLinkCommittedIdentityRegistersAndPersists() async throws {
-        let (identityFetcher, identityStore, identitySession) = makeIdentityFetcher()
-        defer { identitySession.invalidateAndCancel() }
-        identityStore.enqueue(body: identityBody(committed: true))
-
-        let discovery = await discoverLocalJournal { baseURL in
-            await identityFetcher.fetch(baseURL: baseURL)
-        }
-        #expect(discovery == .found(.uiTestSample))
-
-        let (registrationClient, registrationStore, registrationSession) = makeRegistrationClient()
-        defer { registrationSession.invalidateAndCancel() }
-        registrationStore.enqueue(body: fullRegistrationResponse)
-
-        let state = AppState.forSnapshot()
-        let result = await performLocalObserverRegistration(appState: state) { baseURL, descriptor in
-            await registrationClient.register(baseURL: baseURL, descriptor: descriptor)
-        }
-
-        let registration = try requireRegistrationSuccess(result)
-        #expect(registration.key == "observer-key")
-        #expect(registration.streamName == "observer-stream")
-        #expect(state.config.serverURL == ServiceMode.bundledServiceURL)
-        #expect(state.config.serverKey == "observer-key")
-        #expect(state.config.observerName == "observer-stream")
-        #expect(state.config.serviceMode == .external)
-
-        let request = try #require(registrationStore.snapshotRequests().first)
-        #expect(request.url?.path == "/app/observer/register")
-        #expect(request.httpMethod == "POST")
-
-        let body = try #require(registrationStore.requestBodies.first.flatMap { $0 })
-        let payload = try jsonObject(body)
-        #expect(Set(payload.keys) == ["platform", "hostname", "stream_type", "version"])
-        #expect(payload["platform"] as? String == "darwin")
-        #expect((payload["hostname"] as? String)?.isEmpty == false)
-        #expect(payload["stream_type"] as? String == "desktop")
-        #expect((payload["version"] as? String)?.isEmpty == false)
-    }
-
-    @Test func localRegistrationClearsDurableLastContactBeforePresentingNewConfig() {
-        let oldConfig = AppConfig(
-            serverURL: "https://old.example",
-            serverKey: "old-key",
-            serviceMode: .external
-        )
-        let store = InMemoryLastSuccessfulJournalContactStore(readResult: .found(
-            LastSuccessfulJournalContactPayload(
-                date: Date(timeIntervalSince1970: 123),
-                fingerprint: journalConnectionFingerprint(
-                    config: oldConfig,
-                    topology: .remote,
-                    isTunnelManaged: false,
-                    tunnelPairing: nil
-                )!.value
-            )
-        ))
-        let state = AppState.forSnapshot(config: oldConfig, lastContactStore: store)
-        #expect(state.uploadCoordinator.lastSuccessfulJournalContactOutcome == .synced(Date(timeIntervalSince1970: 123)))
-
-        persistLocalObserverRegistration(
-            ObserverRegistration(key: "new-key", streamName: "new-stream"),
-            appState: state
-        )
-
-        #expect(store.read() == .absent)
-        #expect(state.config.serverURL == ServiceMode.bundledServiceURL)
-        #expect(state.uploadCoordinator.lastSuccessfulJournalContactOutcome == .noSyncYet)
-    }
-
     @Test func localDiscoveryForkDoesNotRegisterWhenIdentityUncommittedOrAbsent() async {
         let uncommitted = await discoverLocalJournal { _ in nil }
         let absent = await discoverLocalJournal { _ in nil }
@@ -274,35 +204,16 @@ struct JournalClientBehaviorTests {
     }
 }
 
-private let fullRegistrationResponse = #"{"key":"observer-key","prefix":"captures","name":"observer-stream","ingest_url":"https://journal.example/app/observer/ingest","protocol_version":1}"#
-
 private func makeIdentityFetcher() -> (JournalIdentityFetcher, ObserverURLProtocolStore, URLSession) {
     let store = ObserverURLProtocolStore()
     let session = URLSession(configuration: observerURLProtocolConfiguration(store: store))
     return (JournalIdentityFetcher(session: session), store, session)
 }
 
-private func makeRegistrationClient() -> (ObserverRegistrationClient, ObserverURLProtocolStore, URLSession) {
-    let store = ObserverURLProtocolStore()
-    let session = URLSession(configuration: observerURLProtocolConfiguration(store: store))
-    return (ObserverRegistrationClient(session: session), store, session)
-}
-
 private func makeJournalNameFetcher() -> (JournalNameFetcher, ObserverURLProtocolStore, URLSession) {
     let store = ObserverURLProtocolStore()
     let session = URLSession(configuration: observerURLProtocolConfiguration(store: store))
     return (JournalNameFetcher(session: session), store, session)
-}
-
-private func requireRegistrationSuccess(
-    _ result: Result<ObserverRegistration, ObserverRegistrationFailure>
-) throws -> ObserverRegistration {
-    switch result {
-    case .success(let registration):
-        return registration
-    case .failure(let failure):
-        throw failure
-    }
 }
 
 private func identityBody(committed: Bool) -> String {

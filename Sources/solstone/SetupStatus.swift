@@ -13,8 +13,12 @@ internal enum SetupTopology: Equatable, Sendable {
 internal func classifySetupTopology(
     serviceMode: ServiceMode?,
     serverURL: String?,
-    isTunnelManaged: Bool
+    isTunnelManaged: Bool,
+    isPairedHome: Bool
 ) -> SetupTopology {
+    if isPairedHome {
+        return .local
+    }
     // A managed tunnel is the authoritative remote journal identity even when
     // the runtime URL is loopback or stale config still says bundled.
     if isTunnelManaged {

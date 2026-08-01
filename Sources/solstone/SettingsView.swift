@@ -50,6 +50,31 @@ struct PairingRelayAccessPresentation: Equatable {
     let axToken: String
 }
 
+func journalLocationLabel(isPairedHome: Bool, serverURL: String?) -> String {
+    isPairedHome || BundledJournalEndpoint.isBundledServiceURL(serverURL)
+        ? UICopy.JOURNAL_MODE_THIS_MAC_LABEL
+        : UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL
+}
+
+func pairingResultText(
+    for state: PairingFlowState,
+    isPairedHome: Bool,
+    sameMachineHomeMigrationComplete: Bool
+) -> String? {
+    switch state {
+    case .paired:
+        guard !isPairedHome || sameMachineHomeMigrationComplete else { return nil }
+        return "paired ✓"
+    case .alreadyConnected:
+        guard !isPairedHome || sameMachineHomeMigrationComplete else { return nil }
+        return "already paired ✓"
+    case .switched:
+        return "switched ✓"
+    case .idle, .pairing, .switchConfirmPending, .saveFailed, .failed:
+        return nil
+    }
+}
+
 /// Direct-URL mode (no tunnel manages the connection — local link or manual LAN
 /// address): connection health derives from real heartbeat outcomes, because the
 /// tunnel lifecycle never leaves .connecting when there is no tunnel at all.
@@ -281,10 +306,10 @@ struct SettingsView: View {
     private let journalNameFetch: @MainActor @Sendable (String) async -> String?
     private let localIdentityFetch: @MainActor @Sendable (String) async -> JournalMark?
     private let onDiskJournalDiscovery: @MainActor @Sendable () async -> OnDiskJournalDiscovery
-    private let observerRegister: @MainActor @Sendable (
+    private let sameMachinePairStart: @MainActor @Sendable (
         _ baseURL: String,
-        _ descriptor: ObserverRegistrationDescriptor
-    ) async -> Result<ObserverRegistration, ObserverRegistrationFailure>
+        _ deviceLabel: String
+    ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>
     private let markFetch: @MainActor @Sendable (String) async -> JournalMark?
     private let runningJournalController: any RunningJournalController
     private let setupFileManager: FileManager
@@ -310,11 +335,11 @@ struct SettingsView: View {
         onDiskJournalDiscovery: @escaping @MainActor @Sendable () async -> OnDiskJournalDiscovery = {
             await discoverOnDiskJournal()
         },
-        observerRegister: @escaping @MainActor @Sendable (
+        sameMachinePairStart: @escaping @MainActor @Sendable (
             _ baseURL: String,
-            _ descriptor: ObserverRegistrationDescriptor
-        ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> = { baseURL, descriptor in
-            await ObserverRegistrationClient().register(baseURL: baseURL, descriptor: descriptor)
+            _ deviceLabel: String
+        ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { baseURL, deviceLabel in
+            await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
         },
         markFetch: @escaping @MainActor @Sendable (String) async -> JournalMark? = { baseURL in
             await JournalIdentityFetcher().fetch(baseURL: baseURL)
@@ -328,7 +353,7 @@ struct SettingsView: View {
         self.journalNameFetch = journalNameFetch
         self.localIdentityFetch = localIdentityFetch
         self.onDiskJournalDiscovery = onDiskJournalDiscovery
-        self.observerRegister = observerRegister
+        self.sameMachinePairStart = sameMachinePairStart
         self.markFetch = markFetch
         self.runningJournalController = runningJournalController
         self.setupFileManager = setupFileManager
@@ -1382,9 +1407,10 @@ struct SettingsView: View {
     }
 
     private var journalLocationLabel: String {
-        BundledJournalEndpoint.isBundledServiceURL(appState.config.serverURL)
-            ? UICopy.JOURNAL_MODE_THIS_MAC_LABEL
-            : UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL
+        solstone.journalLocationLabel(
+            isPairedHome: appState.isPairedHome,
+            serverURL: appState.config.serverURL
+        )
     }
 
     private var journalConnectionPresentation: PairingConnectionPresentation {
@@ -1803,16 +1829,11 @@ struct SettingsView: View {
     }
 
     private var pairingResultText: String? {
-        switch appState.pairingCoordinator.state {
-        case .paired:
-            return "paired ✓"
-        case .alreadyConnected:
-            return "already paired ✓"
-        case .switched:
-            return "switched ✓"
-        case .idle, .pairing, .switchConfirmPending, .saveFailed, .failed:
-            return nil
-        }
+        solstone.pairingResultText(
+            for: appState.pairingCoordinator.state,
+            isPairedHome: appState.isPairedHome,
+            sameMachineHomeMigrationComplete: appState.sameMachineHomeMigrationComplete
+        )
     }
 
     private var pairingIsBusy: Bool {
@@ -2076,30 +2097,22 @@ struct SettingsView: View {
         resetForJournalRelink(appState: appState, journalMarkDriver: journalMarkDriver)
 
         Task { @MainActor in
-            let result = await performLocalObserverRegistration(
-                appState: appState,
-                register: observerRegister
+            let result = await performSameMachineHomePairing(
+                baseURL: ServiceMode.bundledServiceURL,
+                existingPairing: appState.tunnelLifecycleOwner.sameMachineStoredPairingState,
+                startPairing: sameMachinePairStart,
+                submitPairingLink: { exactPairLink in
+                    await appState.pairingCoordinator.submitPairingLink(exactPairLink)
+                    return appState.pairingCoordinator.state
+                }
             )
 
             switch result {
-            case .success(let registration):
-                observerURL = ServiceMode.bundledServiceURL
-                observerKey = registration.key
+            case .pairingStarted, .notEligible:
                 localLinkInProgress = false
                 localDiscoveryCompleted = true
-                showPairingFlow = false
-
-                journalMarkDriver.resetForNewPairAttempt()
-                journalMarkDriver.startIfNeeded(
-                    for: "local-link:\(registration.key)",
-                    resolveHomeBase: {
-                        .url(ServiceMode.bundledServiceURL)
-                    },
-                    fetchMark: { baseURL in
-                        await markFetch(baseURL)
-                    }
-                )
-            case .failure:
+                showPairingFlow = true
+            case .failed:
                 localLinkInProgress = false
                 localLinkError = "couldn't connect to your journal. try again."
             }
@@ -2462,7 +2475,8 @@ struct SettingsView: View {
         classifySetupTopology(
             serviceMode: appState.config.serviceMode,
             serverURL: appState.config.serverURL,
-            isTunnelManaged: appState.tunnelLifecycleOwner.isTunnelManaged
+            isTunnelManaged: appState.tunnelLifecycleOwner.isTunnelManaged,
+            isPairedHome: appState.isPairedHome
         )
     }
 

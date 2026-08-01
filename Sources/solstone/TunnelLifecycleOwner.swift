@@ -4,6 +4,7 @@
 import Foundation
 import AppKit
 import Observation
+import SolstoneCore
 import SPLTunnel
 import os
 
@@ -75,6 +76,7 @@ final class TunnelLifecycleOwner {
     private(set) var state: TunnelLifecycleState = .disconnected
     private(set) var health: TunnelHealth = .unknown
     private(set) var isTunnelManaged = false
+    private(set) var isPairedHome = false
     private(set) var relayAccessStatus: PairingRelayAccessStatus = .noPairing
 
     var localPort: Int? {
@@ -92,6 +94,17 @@ final class TunnelLifecycleOwner {
             instanceID: pairing.instanceID,
             fingerprint: pairing.fingerprint
         )
+    }
+
+    var sameMachineStoredPairingState: SameMachineStoredPairingState {
+        switch loadPairingCached() {
+        case .loaded(let pairing):
+            return Self.isHomePairing(pairing) ? .pairedHome : .differentHomeHeld
+        case .absent:
+            return .noneHeld
+        case .failed:
+            return .unavailable
+        }
     }
 
     @ObservationIgnored
@@ -763,6 +776,7 @@ final class TunnelLifecycleOwner {
     private func setCachedPairingOutcome(_ outcome: PairingLoadOutcome) {
         cachedPairingOutcome = outcome
         relayAccessStatus = Self.relayAccessStatus(for: outcome, preserving: relayAccessStatus)
+        refreshPairingDerivedState(from: outcome)
     }
 
     private static func relayAccessStatus(
@@ -788,16 +802,28 @@ final class TunnelLifecycleOwner {
         }
     }
 
+    private static func isHomePairing(_ pairing: StoredPairing) -> Bool {
+        pairing.localEndpoints.contains { endpoint in
+            LoopbackHost.isLoopbackHost(endpoint.host)
+        }
+    }
+
     private func invalidatePairingCache() {
         cachedPairingOutcome = nil
     }
 
     private func refreshTunnelManagedFromStoredPairing() {
-        switch loadPairingCached() {
+        refreshPairingDerivedState(from: loadPairingCached())
+    }
+
+    private func refreshPairingDerivedState(from outcome: PairingLoadOutcome) {
+        switch outcome {
         case .loaded(let pairing):
             isTunnelManaged = !usableCandidates(for: pairing).isEmpty
+            isPairedHome = Self.isHomePairing(pairing)
         case .absent:
             isTunnelManaged = false
+            isPairedHome = false
         case .failed:
             // Preserve the previous signal on transient keychain load failures.
             break
@@ -817,7 +843,6 @@ final class TunnelLifecycleOwner {
             splOwnerLog.error("pairing delete failed: \(String(describing: type(of: error)), privacy: .public)")
         }
         setCachedPairingOutcome(.absent)
-        isTunnelManaged = false
         await disconnectCurrentTransport()
         state = .error(.revoked)
         health = .unknown

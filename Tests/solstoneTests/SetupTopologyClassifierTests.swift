@@ -11,7 +11,8 @@ struct SetupTopologyClassifierTests {
         #expect(classifySetupTopology(
             serviceMode: .bundled,
             serverURL: nil,
-            isTunnelManaged: false
+            isTunnelManaged: false,
+            isPairedHome: false
         ) == .local)
     }
 
@@ -19,7 +20,8 @@ struct SetupTopologyClassifierTests {
         #expect(classifySetupTopology(
             serviceMode: .bundled,
             serverURL: ServiceMode.bundledServiceURL,
-            isTunnelManaged: true
+            isTunnelManaged: true,
+            isPairedHome: false
         ) == .remote)
     }
 
@@ -27,25 +29,38 @@ struct SetupTopologyClassifierTests {
         #expect(classifySetupTopology(
             serviceMode: .external,
             serverURL: "http://127.0.0.1:61234",
-            isTunnelManaged: true
+            isTunnelManaged: true,
+            isPairedHome: false
         ) == .remote)
+    }
+
+    @Test func pairedHomeIsLocalEvenWhenTunnelManaged() {
+        #expect(classifySetupTopology(
+            serviceMode: .external,
+            serverURL: "http://127.0.0.1:61234",
+            isTunnelManaged: true,
+            isPairedHome: true
+        ) == .local)
     }
 
     @Test func directExternalLoopbackURLIsLocal() {
         #expect(classifySetupTopology(
             serviceMode: .external,
             serverURL: "http://localhost:5015",
-            isTunnelManaged: false
+            isTunnelManaged: false,
+            isPairedHome: false
         ) == .local)
         #expect(classifySetupTopology(
             serviceMode: .external,
             serverURL: "http://127.77.0.9:5015",
-            isTunnelManaged: false
+            isTunnelManaged: false,
+            isPairedHome: false
         ) == .local)
         #expect(classifySetupTopology(
             serviceMode: .external,
             serverURL: "http://[::1]:5015",
-            isTunnelManaged: false
+            isTunnelManaged: false,
+            isPairedHome: false
         ) == .local)
     }
 
@@ -53,7 +68,8 @@ struct SetupTopologyClassifierTests {
         #expect(classifySetupTopology(
             serviceMode: .external,
             serverURL: "https://journal.example",
-            isTunnelManaged: false
+            isTunnelManaged: false,
+            isPairedHome: false
         ) == .remote)
     }
 
@@ -61,7 +77,8 @@ struct SetupTopologyClassifierTests {
         #expect(classifySetupTopology(
             serviceMode: .external,
             serverURL: nil,
-            isTunnelManaged: false
+            isTunnelManaged: false,
+            isPairedHome: false
         ) == .undecided)
     }
 
