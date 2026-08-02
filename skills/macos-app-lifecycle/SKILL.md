@@ -88,8 +88,8 @@ Two shutdown paths:
 ## Direct Distribution Packaging
 
 ```bash
-make release-arm64                        # Apple Silicon only
-make bundle-dist                          # signed Apple-Silicon-only .app with hardened runtime
+make release-universal                    # arm64 + x86_64
+make bundle-dist                          # signed universal .app with hardened runtime
 
 # Sign with hardened runtime (required for notarization)
 codesign --deep --force --options runtime \

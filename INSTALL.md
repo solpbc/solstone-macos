@@ -64,7 +64,7 @@ Apple may revise the exact wording, so follow the permission intent rather than 
    ```
    make bundle-dist
    ```
-   this builds an Apple-Silicon-only sol release binary, signs it under Developer ID Application with hardened runtime, and writes `solstone.app` in the source tree. Intel Macs are not supported. the journal runtime plane ships in `journal.app`, built with `make bundle-dist-journal`.
+   this builds a universal sol release binary, signs it under Developer ID Application with hardened runtime, and writes `solstone.app` in the source tree. the journal runtime plane ships in `journal.app`, built with `make bundle-dist-journal`.
 
 4. install to `/Applications` (optional — `make run` launches directly from the source tree):
    ```
