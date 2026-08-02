@@ -504,8 +504,12 @@ public final class AppState {
         // ⛔ Scope this to the automatic adoption, never to same-machine pairing generally — an
         // owner-initiated link, including a fresh one to a journal on this same Mac, must still
         // confirm its mark, and the release gate asserts exactly that.
+        // ⛔ Deliberately not cleared when this function returns. The ceremony's final state is
+        // observed asynchronously, so the mark driver runs *after* the await below completes —
+        // a `defer` here closes the window before the thing it is meant to cover ever happens,
+        // which is exactly how the first attempt at this failed on the rig while passing tests.
+        // The flag is cleared instead by the owner starting a pairing of their own.
         isAdoptingSameMachineHomeAutomatically = true
-        defer { isAdoptingSameMachineHomeAutomatically = false }
 
         let result = await performSameMachineHomePairing(
             baseURL: baseURL,

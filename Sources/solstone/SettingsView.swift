@@ -1891,6 +1891,9 @@ struct SettingsView: View {
         journalMarkRederiveStarted = false
         journalMarkDriver.resetForNewPairAttempt()
         appState.clearConfirmedMark()
+        // The owner is pairing on purpose, so the mark question is owed again. This is the only
+        // thing that re-arms it after an automatic same-machine adoption suppressed it.
+        appState.isAdoptingSameMachineHomeAutomatically = false
         Task {
             await appState.pairingCoordinator.submitPairingLink(pairingLink)
         }

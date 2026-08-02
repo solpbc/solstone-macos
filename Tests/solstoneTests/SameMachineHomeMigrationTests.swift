@@ -282,6 +282,12 @@ struct SameMachineHomeMigrationTests {
         #expect(store.savedPairings == [adoptedPairing])
         #expect(state.isPairedHome)
 
+        // The mark suppression must outlive the migration call. The ceremony's final state is
+        // observed asynchronously, so the mark driver runs after this point — clearing the flag
+        // when the migration returns closes the window before the thing it protects happens.
+        // That exact mistake passed its unit tests and still put the mark sheet on the rig.
+        #expect(state.isAdoptingSameMachineHomeAutomatically)
+
         await performTunnelObserverRegistration(
             appState: state,
             isTunnelManaged: true,
