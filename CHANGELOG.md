@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.13] - 2026-08-01
+
+### Changed
+- sol now requires a mac with Apple Silicon. Intel macs are not supported and this version will not run on one.
+- sol now reaches your journal on your own mac over your private network, the same way it reaches it on any other computer. if your journal was set up before this version, sol moves it over on its own the first time it connects after launch, and there is no pairing to redo.
+- your own mac is no longer listed as another device. when your journal lives on the same mac as sol, sol shows it as home.
+
+### Fixed
+- pairing your journal on your own mac no longer reports success before sol has actually switched over to it. if the switch does not go through, sol says so instead of showing a journal it is not using yet.
+
 ## [1.4.12] - 2026-07-30
 
 ### Changed
