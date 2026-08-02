@@ -102,6 +102,41 @@ struct SameMachineHomeMigrationTests {
         #expect(!remoteState.isPairedHome)
     }
 
+    @Test func sameMachineHomeIsNeverAskedToConfirmAMark() {
+        // Adopting an existing loopback install runs the pairing ceremony, and the ceremony ends
+        // by asking the owner to compare journal marks. On a journal reached over a verified
+        // loopback-only link there is no second home it could be, so the question has one
+        // possible answer — and asking it on upgrade parks the settings pane behind a modal the
+        // owner never asked for.
+        let driver = JournalMarkConfirmationDriver()
+        let homeState = AppState.forSnapshot(initialTunnelPairing: pairing(
+            localEndpoints: [
+                LocalEndpoint(host: "127.0.0.1", port: 5015, scope: "local")
+            ]
+        ))
+        #expect(homeState.isPairedHome)
+
+        driver.startIfNeeded(for: .paired, appState: homeState)
+
+        #expect(!driver.isPresented)
+    }
+
+    @Test func aJournalOnAnotherMachineStillConfirmsItsMark() {
+        // The guard above must not disarm the mark everywhere: a home reached over the network is
+        // exactly the case the comparison exists for.
+        let driver = JournalMarkConfirmationDriver()
+        let remoteState = AppState.forSnapshot(initialTunnelPairing: pairing(
+            localEndpoints: [
+                LocalEndpoint(host: "192.168.1.10", port: 7657, scope: "lan")
+            ]
+        ))
+        #expect(!remoteState.isPairedHome)
+
+        driver.startIfNeeded(for: .paired, appState: remoteState)
+
+        #expect(driver.isPresented)
+    }
+
     @Test func pairStartRefusedReportsNotYetPairedAndCaptureContinues() async {
         let state = AppState.forSnapshot(config: loopbackRegisteredConfig())
         state.isRecording = true
