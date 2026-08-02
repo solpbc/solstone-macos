@@ -5,6 +5,13 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.22 (build 24)] - 2026-08-01
+
+### Changed
+- updated the bundled journal to [1.0.22](https://solstone.app/releases#v1.0.22) →
+- the journal app now requires a mac with Apple Silicon. Intel macs are not supported.
+
+
 ## [1.0.21 (build 23)] - 2026-08-01
 
 ### Changed
