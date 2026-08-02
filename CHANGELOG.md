@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.4.14] - 2026-08-02
+## [1.4.15] - 2026-08-02
 
 ### Changed
 - sol now reaches your journal on your own mac over your private network, the same way it reaches it on any other computer. if your journal was set up before this version, sol moves it over on its own the first time it connects after launch, and there is no pairing to redo.
