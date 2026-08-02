@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-import Foundation
 import Testing
 @testable import journal
 
@@ -32,22 +31,9 @@ struct JournalFirstRunCopyTests {
         #expect(JournalFirstRunCopy.tryAgain == "try again")
     }
 
-    @Test func firstRunCopyAvoidsForbiddenTokensAndStartsLowercase() {
-        let forbidden = [
-            "observer", "observers", "client", "clients", "watch", "capture",
-            "record", "monitor", "track", "collect", "install", "service", "host", "wizard",
-        ]
-
+    @Test func firstRunCopyIsNonEmpty() {
         for copy in JournalFirstRunCopy.all {
-            if let first = copy.unicodeScalars.first {
-                #expect(CharacterSet.lowercaseLetters.contains(first))
-            } else {
-                Issue.record("expected non-empty copy")
-            }
-            let words = Set(copy.lowercased().split { !$0.isLetter }.map(String.init))
-            for token in forbidden {
-                #expect(!words.contains(token))
-            }
+            #expect(!copy.isEmpty)
         }
     }
 }

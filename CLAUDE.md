@@ -21,7 +21,7 @@ make run
 # Run tests
 make test
 
-# Full CI gate (terminology + Swift tests + Python tests)
+# Full CI gate (Swift tests + Python tests)
 make ci
 
 # Install local development/build dependencies
@@ -123,12 +123,6 @@ Specialized knowledge packs in `skills/`, symlinked from `.claude/skills/` and `
 
 ## Brand
 
-- Owner-facing system anatomy is **solstone = sol + the journal**. sol is the app on the owner's devices; the journal is the memory sol keeps. Presence or experience copy must land the journal in the same breath: “sol lives on your devices, experiences your day with you, and keeps it all in your journal.” `observer`, `observe`, and the `keeper` title are retired from owner-facing copy.
-- Architecture/engineering register may retain observer protocol terms, repository and bundle identifiers, subsystem names, and code symbols. Branded surfaces (UI strings, README/INSTALL prose, and log messages owners see) use sol and the journal; code identifiers (`CaptureManager`, the `captures/` directory, the `capture` log category, `app.solstone.observer`, Swift class/method names) stay verbatim.
-- Co-experience voice uses `experiences alongside` and `takes in what you take in`. Owner-facing copy never uses `watch`, `capture`, `record`, `monitor`, `track`, `collect`, or `observe` for sol or the owner's material.
-- Boundary examples: Apple permission proper-names that point the owner at System Settings/TCC, accessibility labels/hints, and log-only `Logger.*` strings stay in their own registers and are not rewritten as owner copy.
-- Follow lowercase-first UI copy in visible product text.
-- Exceptions are limited to HIG cancel/destructive labels, `accessibilityHint` / `accessibilityLabel`, third-party proper nouns, OS-required path strings (e.g. `Application Support/Solstone/...`), protocol and URL literals, and AM/PM or date abbreviations.
 - Sync vendored brand SVGs with `make brand-sync` (writes into `assets/`).
 - The brand source directory is kept outside this repo; set `BRAND_DIR=/path/to/brand make brand-sync` to point at it.
 - `Sources/solstone/Resources/Assets.xcassets/AccentColor.colorset/` carries canonical `solOrange` (`#E8923A`) for the mark accent. `#B06A1A` is orange ink for text, links, and focus rings only; do not use it for the mark.

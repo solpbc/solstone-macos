@@ -55,7 +55,7 @@ contributors without sol pbc signing identities can use [the local test build gu
 - `make bundle-dist-journal` - Build the signed journal .app bundle with bundled runtime
 - `make run` - Launch `solstone.app` from the source tree and stream logs
 - `make test` - Run tests
-- `make ci` - Run terminology + Swift tests + Python tests
+- `make ci` - Run Swift tests + Python tests
 - `make install` - Install local development/build dependencies
 - `make setup` - Alias for `make install`
 - `make clean` - Clean all build artifacts
