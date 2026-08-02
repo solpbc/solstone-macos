@@ -9,7 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - updated the bundled journal to [1.0.22](https://solstone.app/releases#v1.0.22) →
-- the journal app now requires a mac with Apple Silicon. Intel macs are not supported.
 
 
 ## [1.0.21 (build 23)] - 2026-08-01
