@@ -44,6 +44,10 @@ DMG_VOLNAME            ?= sol
 DMG_APP                ?= solstone.app
 DMG_ICON               ?= solstone.app
 SPARKLE_ARTIFACT_DIR   ?= .build/artifacts/sparkle/Sparkle
+# Distributed apps are Apple Silicon only, so swift build --arch arm64 writes here.
+# NOT .build/apple/Products/Release, which only a multi-arch build populates and
+# which therefore goes stale, silently bundling an older universal binary.
+RELEASE_PRODUCTS_DIR   ?= .build/arm64-apple-macosx/release
 SPARKLE_FRAMEWORK      ?= $(SPARKLE_ARTIFACT_DIR)/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
 JOURNAL_PIN_CHECK      = $(RELEASE_IDENTITY) check-journal-pin --journal-plist Sources/journal/Info.plist --makefile Makefile --bundle-config Sources/JournalRuntime/BundleConfig.swift --expected-version '$(JOURNAL_DIST_VERSION)'
 ENTITLEMENTS_PLIST     := Sources/solstone/entitlements.plist
@@ -451,8 +455,8 @@ bundle-dist: unlock-signing signing-check release-arm64
 	@echo "Creating distribution app bundle..."
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
-	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
-	@cp .build/apple/Products/Release/solstone-watchdog solstone.app/Contents/MacOS/
+	@cp $(RELEASE_PRODUCTS_DIR)/solstone solstone.app/Contents/MacOS/
+	@cp $(RELEASE_PRODUCTS_DIR)/solstone-watchdog solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@# Embedded Developer ID provisioning profile authorizes the keychain-access-groups
 	@# entitlement (Data Protection keychain for the SPL pairing bundle). Must be in place
@@ -461,8 +465,8 @@ bundle-dist: unlock-signing signing-check release-arm64
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@mkdir -p solstone.app/Contents/Library/LaunchAgents
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
-	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
-	@cp -r .build/apple/Products/Release/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
+	@cp -r $(RELEASE_PRODUCTS_DIR)/solstone_solstone.bundle solstone.app/Contents/Resources/
+	@cp -r $(RELEASE_PRODUCTS_DIR)/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
 	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
 	@codesign --force --options runtime --timestamp \
@@ -524,16 +528,16 @@ bundle-adhoc: release-arm64-adhoc
 	@echo "Creating local ad-hoc app bundle..."
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
-	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
-	@cp .build/apple/Products/Release/solstone-watchdog solstone.app/Contents/MacOS/
+	@cp $(RELEASE_PRODUCTS_DIR)/solstone solstone.app/Contents/MacOS/
+	@cp $(RELEASE_PRODUCTS_DIR)/solstone-watchdog solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@# Local ad-hoc test bundles only; never shipped; never set by any production target.
 	@/usr/bin/plutil -insert SolstoneSPLKeychainPlane -string login-keychain solstone.app/Contents/Info.plist
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@mkdir -p solstone.app/Contents/Library/LaunchAgents
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
-	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
-	@cp -r .build/apple/Products/Release/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
+	@cp -r $(RELEASE_PRODUCTS_DIR)/solstone_solstone.bundle solstone.app/Contents/Resources/
+	@cp -r $(RELEASE_PRODUCTS_DIR)/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
 	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
 	@codesign --force --options runtime --timestamp=none \
@@ -616,15 +620,15 @@ bundle-dist-journal: unlock-signing signing-check vendor-uv vendor-python vendor
 	@echo "Creating journal distribution app bundle..."
 	@rm -rf journal.app
 	@mkdir -p journal.app/Contents/MacOS journal.app/Contents/Resources journal.app/Contents/Frameworks journal.app/Contents/Library/LaunchAgents
-	@cp .build/apple/Products/Release/journal journal.app/Contents/MacOS/
-	@cp .build/apple/Products/Release/solstone-watchdog journal.app/Contents/MacOS/
+	@cp $(RELEASE_PRODUCTS_DIR)/journal journal.app/Contents/MacOS/
+	@cp $(RELEASE_PRODUCTS_DIR)/solstone-watchdog journal.app/Contents/MacOS/
 	@cp Sources/journal/Info.plist journal.app/Contents/
 	@cp Sources/journal/Resources/AppIcon.icns journal.app/Contents/Resources/
 	@cp Sources/journal/app.solstone.journal.watchdog.plist journal.app/Contents/Library/LaunchAgents/
-	@test -d .build/apple/Products/Release/solstone_JournalMarkKit.bundle || { echo "error: solstone_JournalMarkKit.bundle missing from .build/apple/Products/Release"; exit 1; }
-	@test -d .build/apple/Products/Release/solstone_journal.bundle || { echo "error: solstone_journal.bundle missing from .build/apple/Products/Release"; exit 1; }
-	@cp -r .build/apple/Products/Release/solstone_JournalMarkKit.bundle journal.app/Contents/Resources/
-	@cp -r .build/apple/Products/Release/solstone_journal.bundle journal.app/Contents/Resources/
+	@test -d $(RELEASE_PRODUCTS_DIR)/solstone_JournalMarkKit.bundle || { echo "error: solstone_JournalMarkKit.bundle missing from $(RELEASE_PRODUCTS_DIR)"; exit 1; }
+	@test -d $(RELEASE_PRODUCTS_DIR)/solstone_journal.bundle || { echo "error: solstone_journal.bundle missing from $(RELEASE_PRODUCTS_DIR)"; exit 1; }
+	@cp -r $(RELEASE_PRODUCTS_DIR)/solstone_JournalMarkKit.bundle journal.app/Contents/Resources/
+	@cp -r $(RELEASE_PRODUCTS_DIR)/solstone_journal.bundle journal.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" journal.app/Contents/Frameworks/
 	@RPATH_LOG="$$(mktemp -t journal-rpath)"; \
 		if install_name_tool -add_rpath "@executable_path/../Frameworks" journal.app/Contents/MacOS/journal 2>"$$RPATH_LOG"; then \

@@ -196,6 +196,21 @@ class AdhocBuildIsolationTest(unittest.TestCase):
             recipe = "\n".join(blocks[target]["recipe"])
             self.assertIn(f'lipo -archs {executable})" = "arm64"', recipe, target)
 
+    def test_bundles_copy_from_the_arch_specific_products_dir(self):
+        """The bundle steps must read the same output the arm64 build writes.
+
+        swift build --arch arm64 writes .build/arm64-apple-macosx/release. It does
+        NOT write .build/apple/Products/Release, which only a multi-arch build
+        populates. A bundle step still pointed at the multi-arch path copies
+        whatever a previous universal build left there, so the app ships a stale
+        universal binary while every --arch assertion above still passes.
+        """
+        blocks = parse_makefile()
+        for target in ("bundle-dist", "bundle-adhoc", "bundle-dist-journal"):
+            recipe = "\n".join(blocks[target]["recipe"])
+            self.assertNotIn(".build/apple/Products/Release", recipe, target)
+            self.assertIn("$(RELEASE_PRODUCTS_DIR)", recipe, target)
+
 
 if __name__ == "__main__":
     unittest.main()
