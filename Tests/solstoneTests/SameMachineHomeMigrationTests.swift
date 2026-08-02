@@ -102,37 +102,34 @@ struct SameMachineHomeMigrationTests {
         #expect(!remoteState.isPairedHome)
     }
 
-    @Test func sameMachineHomeIsNeverAskedToConfirmAMark() {
-        // Adopting an existing loopback install runs the pairing ceremony, and the ceremony ends
-        // by asking the owner to compare journal marks. On a journal reached over a verified
-        // loopback-only link there is no second home it could be, so the question has one
-        // possible answer — and asking it on upgrade parks the settings pane behind a modal the
-        // owner never asked for.
+    @Test func automaticAdoptionDoesNotAskTheOwnerToConfirmAMark() {
+        // The adoption runs off a heartbeat after an upgrade. It re-uses the pairing ceremony to
+        // take over a journal the owner already had linked here, so the mark question would land
+        // unrequested and hold settings behind a modal.
         let driver = JournalMarkConfirmationDriver()
-        let homeState = AppState.forSnapshot(initialTunnelPairing: pairing(
-            localEndpoints: [
-                LocalEndpoint(host: "127.0.0.1", port: 5015, scope: "local")
-            ]
+        let state = AppState.forSnapshot(initialTunnelPairing: pairing(
+            localEndpoints: [LocalEndpoint(host: "127.0.0.1", port: 5015, scope: "local")]
         ))
-        #expect(homeState.isPairedHome)
+        state.isAdoptingSameMachineHomeAutomatically = true
 
-        driver.startIfNeeded(for: .paired, appState: homeState)
+        driver.startIfNeeded(for: .paired, appState: state)
 
         #expect(!driver.isPresented)
     }
 
-    @Test func aJournalOnAnotherMachineStillConfirmsItsMark() {
-        // The guard above must not disarm the mark everywhere: a home reached over the network is
-        // exactly the case the comparison exists for.
+    @Test func ownerInitiatedSameMachinePairingStillConfirmsItsMark() {
+        // Regression guard. Keying the exemption on "is a same-machine home" instead of "is the
+        // automatic adoption" also silences the mark on a *fresh* local link, which is an
+        // owner-initiated pairing that must confirm — the release gate drives that confirmation
+        // and fails `pairing_mark_absent` without it.
         let driver = JournalMarkConfirmationDriver()
-        let remoteState = AppState.forSnapshot(initialTunnelPairing: pairing(
-            localEndpoints: [
-                LocalEndpoint(host: "192.168.1.10", port: 7657, scope: "lan")
-            ]
+        let state = AppState.forSnapshot(initialTunnelPairing: pairing(
+            localEndpoints: [LocalEndpoint(host: "127.0.0.1", port: 5015, scope: "local")]
         ))
-        #expect(!remoteState.isPairedHome)
+        #expect(state.isPairedHome)
+        #expect(!state.isAdoptingSameMachineHomeAutomatically)
 
-        driver.startIfNeeded(for: .paired, appState: remoteState)
+        driver.startIfNeeded(for: .paired, appState: state)
 
         #expect(driver.isPresented)
     }

@@ -97,6 +97,10 @@ public final class AppState {
     private var silenceMusicHolder: DebugSettingHolder!
     private var didAttemptSameMachineMigration = false
     internal private(set) var sameMachineMigrationLastResult: SameMachineHomePairingResult?
+    /// True only while the automatic same-machine adoption is driving the pairing ceremony.
+    /// Owner-initiated pairing never sets it, so the journal-mark confirmation still runs there.
+    /// Settable within the module so both branches can be exercised directly in tests.
+    internal var isAdoptingSameMachineHomeAutomatically = false
 
     // MARK: - State
 
@@ -486,6 +490,22 @@ public final class AppState {
             sameMachineMigrationLastResult = .notEligible
             return
         }
+
+        // This adoption runs by itself, on a heartbeat, for a journal the owner already had
+        // linked on this same Mac. It re-uses the pairing ceremony to adopt the existing record
+        // rather than re-mint one, and that ceremony ends by asking the owner to compare journal
+        // marks. Left alone, merely taking an update therefore raises a security question the
+        // owner never started and parks settings behind a modal until they answer it.
+        //
+        // No new trust decision is being made here: the journal is the one they were already
+        // using, on this machine, over a link sol verified as direct with exactly one loopback
+        // candidate. So suppress the mark for *this* ceremony only.
+        //
+        // ⛔ Scope this to the automatic adoption, never to same-machine pairing generally — an
+        // owner-initiated link, including a fresh one to a journal on this same Mac, must still
+        // confirm its mark, and the release gate asserts exactly that.
+        isAdoptingSameMachineHomeAutomatically = true
+        defer { isAdoptingSameMachineHomeAutomatically = false }
 
         let result = await performSameMachineHomePairing(
             baseURL: baseURL,

@@ -29,17 +29,16 @@ extension JournalMarkConfirmationDriver {
             Logger.journalMark.info("journal-mark fallback: proceeding without confirmed mark reason=\(reason.rawValue, privacy: .public)")
         }
     ) {
-        // Never ask for a mark on a journal running on this same Mac. sol reaches it over a link
-        // it has already verified as direct with exactly one loopback candidate, so there is no
-        // second home it could be and nothing for the owner to tell apart — the question has one
-        // possible answer.
+        // The automatic same-machine adoption re-uses this ceremony to take over a journal the
+        // owner already had linked on this Mac. It runs off a heartbeat, so leaving the mark
+        // question in place means an owner who merely took an update is asked to make a security
+        // decision they never started, with settings stuck behind the sheet until they do.
         //
-        // Establishing a same-machine link fresh never asked it. The upgrade migration did,
-        // because it adopts the existing record by running the pairing ceremony, so upgrading
-        // put an unrequested security decision in front of the owner and parked the settings
-        // pane behind a modal until they answered it.
-        guard !appState.isPairedHome else {
-            Logger.journalMark.info("journal-mark skipped: same-machine home needs no mark comparison")
+        // ⛔ Only the automatic adoption is exempt. Every owner-initiated pairing still confirms
+        // its mark, including a fresh link to a journal on this same Mac — the release gate
+        // drives that confirmation and fails `pairing_mark_absent` without it.
+        guard !appState.isAdoptingSameMachineHomeAutomatically else {
+            Logger.journalMark.info("journal-mark skipped: automatic same-machine adoption of an already-linked journal")
             return
         }
         startIfNeeded(
