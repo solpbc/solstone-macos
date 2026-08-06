@@ -41,8 +41,8 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
 
     /// Writes a fresh expected-exit marker for the current process before an intentional
     /// teardown. Best-effort: never throws into the caller, so a failed write can never
-    /// block termination. The marker is consumed by the watchdog (L3); until then it is
-    /// simply overwritten by the next quit.
+    /// block termination. The watchdog reads it without consuming it and invalidates it
+    /// only on suppression or when it is corrupt, stale, or PID-mismatched.
     public static func markExpectedExit(
         reason: String,
         now: Date = Date(),

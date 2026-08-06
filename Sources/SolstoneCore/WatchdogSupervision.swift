@@ -31,7 +31,6 @@ public struct WatchdogSupervisionTransition: Equatable, Sendable {
 }
 
 public enum WatchdogSupervisionPolicy {
-    public static let pollInterval: Duration = .milliseconds(1_500)
     public static let firstBackoff: Duration = .seconds(2)
     public static let backoffMultiplier = 3
     public static let backoffCeiling: Duration = .seconds(120)
