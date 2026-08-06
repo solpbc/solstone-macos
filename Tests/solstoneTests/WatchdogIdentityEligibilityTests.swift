@@ -417,7 +417,7 @@ struct WatchdogIdentityEligibilityTests {
             #expect(!content.contains("$TMPDIR"))
         }
         let watchdogURLs = swiftFiles(under: root.appendingPathComponent("Sources/solstone-watchdog"))
-            + swiftFiles(under: root.appendingPathComponent("Sources/SolstoneCore")).filter { $0.lastPathComponent.hasPrefix("Watchdog") }
+            + swiftFiles(under: root.appendingPathComponent("Sources/SolstoneCore"))
         for url in watchdogURLs {
             let content = try String(contentsOf: url, encoding: .utf8)
             #expect(!content.contains("terminate("))

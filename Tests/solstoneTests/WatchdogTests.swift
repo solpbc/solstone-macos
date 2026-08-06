@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import CoreFoundation
 import Foundation
 import Testing
 @testable import SolstoneCore
@@ -175,6 +176,41 @@ struct WatchdogTests {
         #expect(enclosingAppURL(from: start) == nil)
     }
 
+    @Test func cfURLFixtureDoesNotReachFixedPointWithin64Steps() {
+        var current = cfFileURL("/Applications/Foo.app/Contents/MacOS/bin")
+        // This confirms the CFURL fixture remains non-native.
+        for _ in 0..<64 {
+            let parent = current.deletingLastPathComponent()
+            #expect(parent.path != current.path)
+            current = parent
+        }
+    }
+
+    @Test func enclosingAppURLReturnsNilForCFURLWithoutAppAncestor() {
+        #expect(enclosingAppURL(from: cfFileURL("/usr/local/bin/tool")) == nil)
+    }
+
+    @Test func enclosingAppURLFindsCFURLBundleAncestorAsDirectory() {
+        let expected = URL(fileURLWithPath: "/Applications/Foo.app", isDirectory: true)
+
+        #expect(enclosingAppURL(from: cfFileURL("/Applications/Foo.app/Contents/MacOS/bin")) == expected)
+    }
+
+    @Test func enclosingAppURLFindsAppAfter4096NestedComponents() {
+        let components = (0..<4_095).map { "component-\($0)" } + ["Foo.app"]
+        let path = "/" + components.joined(separator: "/")
+        let expected = URL(fileURLWithPath: path, isDirectory: true)
+
+        #expect(enclosingAppURL(from: cfFileURL(path)) == expected)
+    }
+
+    @Test func enclosingAppURLStandardizesCFURLDotSegments() {
+        let expected = URL(fileURLWithPath: "/Applications/Foo.app", isDirectory: true)
+
+        #expect(enclosingAppURL(from: cfFileURL("/Applications/Foo.app/Contents/unused/../MacOS/bin")) == expected)
+        #expect(enclosingAppURL(from: cfFileURL("/Applications/Foo.app/../bin")) == nil)
+    }
+
     @Test func transitionPresentToAbsentReportsTermination() {
         let transition = observerPresenceTransition(lastKnownPID: pid, currentObserverPID: nil)
 
@@ -321,4 +357,8 @@ struct WatchdogTests {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
+}
+
+private func cfFileURL(_ path: String) -> URL {
+    CFURLCreateWithFileSystemPath(kCFAllocatorDefault, path as CFString, .cfurlposixPathStyle, false)! as URL
 }
