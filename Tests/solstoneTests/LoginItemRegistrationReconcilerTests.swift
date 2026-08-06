@@ -17,6 +17,7 @@ struct LoginItemRegistrationReconcilerTests {
         #expect(harness.fake.events == [
             .watchdogStatusRead,
             .unregisterWatchdogAwaitingCompletion,
+            .unregisterCompletionReleased,
             .registerWatchdog,
             .watchdogStatusRead
         ])
@@ -44,6 +45,7 @@ struct LoginItemRegistrationReconcilerTests {
 
         #expect(!harness.fake.events.contains(.registerWatchdog))
         #expect(!harness.fake.events.contains(.unregisterWatchdogAwaitingCompletion))
+        #expect(harness.receiptStore.writeEvents.isEmpty)
         #expect(harness.receiptStore.read() == read)
         #expect(state(in: harness.stateStore).cause == .skippedDeveloperBypass)
     }
@@ -73,18 +75,60 @@ struct LoginItemRegistrationReconcilerTests {
 
         assertNoRepair(harness)
         #expect(state(in: harness.stateStore).cause == .skippedNotFound)
+        #expect(state(in: harness.stateStore).registrationPresence == .unknown)
     }
 
     @Test func reconciliationStartsOnlyAfterMigrationReturns() async {
         let fake = FakeLoginItemService(watchdogStatus: .enabled, mainAppStatus: .enabled)
-        let appState = AppState.forLoginItemTest(loginService: fake, placementDecision: .allowed(.canonical))
-        let harness = makeHarness(fake: fake, receipt: .found(receipt(path: "/Applications/old.app", build: 1)))
+        let receiptStore = InMemoryLoginItemRegistrationReceiptStore(
+            readResult: .found(receipt(path: "/Applications/old.app", build: 1))
+        )
+        let stateStore = InMemoryLoginItemRegistrationReconciliationStateStore()
+        let appState = AppState.forLoginItemTest(
+            loginService: fake,
+            placementDecision: .allowed(.canonical),
+            receiptStore: receiptStore,
+            stateStore: stateStore,
+            runningBundleURL: runningBundleURL,
+            versionReader: { _ in runningVersion }
+        )
 
         appState.migrateLoginItemToWatchdogIfNeeded()
         #expect(fake.reconciliationUnregisterCountAtMainAppUnregister == [0])
 
-        await harness.reconciler.reconcileIfNeeded()
-        #expect(fake.events.contains(.unregisterWatchdogAwaitingCompletion))
+        await appState.reconcileLoginItemRegistrationAfterUpdateIfNeeded()
+        let mainAppUnregisterIndex = fake.events.firstIndex(of: .unregisterMainApp)
+        let reconciliationUnregisterIndex = fake.events.firstIndex(of: .unregisterWatchdogAwaitingCompletion)
+        #expect(mainAppUnregisterIndex != nil)
+        #expect(reconciliationUnregisterIndex != nil)
+        if let mainAppUnregisterIndex, let reconciliationUnregisterIndex {
+            #expect(mainAppUnregisterIndex < reconciliationUnregisterIndex)
+        }
+        #expect(state(in: stateStore).cause == .reconciled)
+    }
+
+    @Test func appStateRefreshesLoginItemEnabledAfterRegisterFailure() async {
+        let fake = FakeLoginItemService(watchdogStatus: .enabled, mainAppStatus: .notRegistered)
+        fake.registerWatchdogError = ReconciliationTestError.requested
+        let receiptStore = InMemoryLoginItemRegistrationReceiptStore(
+            readResult: .found(receipt(path: "/Applications/old.app", build: 1))
+        )
+        let stateStore = InMemoryLoginItemRegistrationReconciliationStateStore()
+        let appState = AppState.forLoginItemTest(
+            loginService: fake,
+            placementDecision: .allowed(.canonical),
+            receiptStore: receiptStore,
+            stateStore: stateStore,
+            runningBundleURL: runningBundleURL,
+            versionReader: { _ in runningVersion }
+        )
+
+        appState.migrateLoginItemToWatchdogIfNeeded()
+        #expect(appState.isLoginItemEnabled)
+        await appState.reconcileLoginItemRegistrationAfterUpdateIfNeeded()
+
+        #expect(state(in: stateStore).cause == .registerFailed)
+        #expect(!appState.isLoginItemEnabled)
     }
 
     @Test func oneReconcilerInstanceRunsOnlyOnce() async {
@@ -114,7 +158,7 @@ struct LoginItemRegistrationReconcilerTests {
 
         assertNoRepair(harness)
         #expect(harness.receiptStore.read() == .found(runningReceipt()))
-        #expect(state(in: harness.stateStore).cause == .adoptedExistingReceiptAbsent)
+        #expect(state(in: harness.stateStore).cause == .adoptedRegistrationWithoutReceipt)
     }
 
     @Test func differingBuildAtSameBundlePathReregistersInPlaceSparkleUpdate() async {
@@ -126,6 +170,7 @@ struct LoginItemRegistrationReconcilerTests {
         #expect(harness.fake.events == [
             .watchdogStatusRead,
             .unregisterWatchdogAwaitingCompletion,
+            .unregisterCompletionReleased,
             .registerWatchdog,
             .watchdogStatusRead
         ])
@@ -138,8 +183,13 @@ struct LoginItemRegistrationReconcilerTests {
 
         await harness.reconciler.reconcileIfNeeded()
 
-        #expect(harness.fake.events.contains(.unregisterWatchdogAwaitingCompletion))
-        #expect(harness.fake.events.contains(.registerWatchdog))
+        #expect(harness.fake.events == [
+            .watchdogStatusRead,
+            .unregisterWatchdogAwaitingCompletion,
+            .unregisterCompletionReleased,
+            .registerWatchdog,
+            .watchdogStatusRead
+        ])
         #expect(harness.receiptStore.read() == .found(current))
     }
 
@@ -190,6 +240,10 @@ struct LoginItemRegistrationReconcilerTests {
         #expect(state(in: harness.stateStore).cause == .unregisterTimedOut)
         #expect(state(in: harness.stateStore).registrationPresence == .unknown)
         #expect(!harness.fake.events.contains(.registerWatchdog))
+        harness.fake.releaseAwaitableUnregister()
+        await Task.yield()
+        #expect(!harness.fake.events.contains(.registerWatchdog))
+        #expect(harness.receiptStore.writeEvents.isEmpty)
     }
 
     @Test func registerFailureDoesNotWriteReceiptAndRecordsAbsentRegistration() async {
@@ -203,12 +257,33 @@ struct LoginItemRegistrationReconcilerTests {
         #expect(state(in: harness.stateStore).registrationPresence == .absent)
         #expect(harness.receiptStore.read() == .found(oldReceipt))
 
-        let existingRegistration = makeHarness(receipt: .found(runningReceipt()))
-        await existingRegistration.reconciler.reconcileIfNeeded()
-        #expect(
-            state(in: harness.stateStore).registrationPresence
-                != state(in: existingRegistration.stateStore).registrationPresence
-        )
+        let reconciled = makeHarness(receipt: .found(receipt(path: "/Applications/older.app", build: 1)))
+        await reconciled.reconciler.reconcileIfNeeded()
+        let adopted = makeHarness(receipt: .absent)
+        await adopted.reconciler.reconcileIfNeeded()
+        let matched = makeHarness(receipt: .found(runningReceipt()))
+        await matched.reconciler.reconcileIfNeeded()
+        let requiresApproval = makeHarness(receipt: .found(runningReceipt()), status: .requiresApproval)
+        await requiresApproval.reconciler.reconcileIfNeeded()
+        let unregisterFailed = makeHarness(receipt: .found(receipt(path: "/Applications/old.app", build: 1)))
+        unregisterFailed.fake.unregisterWatchdogAwaitingCompletionError = ReconciliationTestError.requested
+        await unregisterFailed.reconciler.reconcileIfNeeded()
+        let receiptWriteFailed = makeHarness(receipt: .found(receipt(path: "/Applications/old.app", build: 1)))
+        receiptWriteFailed.receiptStore.shouldSucceedWriting = false
+        await receiptWriteFailed.reconciler.reconcileIfNeeded()
+
+        let absentPresence = state(in: harness.stateStore).registrationPresence
+        for presentState in [
+            state(in: reconciled.stateStore),
+            state(in: adopted.stateStore),
+            state(in: matched.stateStore),
+            state(in: requiresApproval.stateStore),
+            state(in: unregisterFailed.stateStore),
+            state(in: receiptWriteFailed.stateStore)
+        ] {
+            #expect(presentState.registrationPresence == .present)
+            #expect(absentPresence != presentState.registrationPresence)
+        }
     }
 
     @Test func registerWithoutEnabledReadBackDoesNotWriteReceipt() async {
@@ -221,6 +296,35 @@ struct LoginItemRegistrationReconcilerTests {
         #expect(state(in: harness.stateStore).cause == .registerDidNotBecomeEnabled)
         #expect(state(in: harness.stateStore).registrationPresence == .unknown)
         #expect(harness.receiptStore.read() == .found(oldReceipt))
+        #expect(harness.fake.events == [
+            .watchdogStatusRead,
+            .unregisterWatchdogAwaitingCompletion,
+            .unregisterCompletionReleased,
+            .registerWatchdog,
+            .watchdogStatusRead
+        ])
+    }
+
+    @Test func receiptWriteFailuresNeverRecordSuccessfulOutcomes() async {
+        let oldReceipt = receipt(path: "/Applications/old.app", build: 1)
+        let reregistered = makeHarness(receipt: .found(oldReceipt))
+        reregistered.receiptStore.shouldSucceedWriting = false
+
+        await reregistered.reconciler.reconcileIfNeeded()
+
+        #expect(state(in: reregistered.stateStore).cause == .receiptWriteFailed)
+        #expect(state(in: reregistered.stateStore).registrationPresence == .present)
+        #expect(reregistered.receiptStore.read() == .found(oldReceipt))
+        #expect(reregistered.receiptStore.writeEvents == [runningReceipt()])
+
+        let adopted = makeHarness(receipt: .absent)
+        adopted.receiptStore.shouldSucceedWriting = false
+
+        await adopted.reconciler.reconcileIfNeeded()
+
+        #expect(state(in: adopted.stateStore).cause == .receiptWriteFailed)
+        #expect(adopted.receiptStore.read() == .absent)
+        #expect(adopted.receiptStore.writeEvents == [runningReceipt()])
     }
 
     @Test func terminalCausesArePairwiseDistinctWhenDriven() async {
@@ -233,6 +337,7 @@ struct LoginItemRegistrationReconcilerTests {
             causeFor(timeout: 0.001, holdUnregister: true),
             causeFor(registerError: ReconciliationTestError.requested),
             causeFor(statusAfterRegister: .requiresApproval),
+            causeFor(receiptWriteSucceeds: false),
             causeFor(receipt: .absent),
             causeFor(receipt: .found(runningReceipt()))
         ]
@@ -292,7 +397,7 @@ struct LoginItemRegistrationReconcilerTests {
             registrationPresence: .present
         )
 
-        UserDefaultsLoginItemRegistrationReceiptStore(defaults: isolated.defaults).write(receipt)
+        #expect(UserDefaultsLoginItemRegistrationReceiptStore(defaults: isolated.defaults).write(receipt))
         UserDefaultsLoginItemRegistrationReconciliationStateStore(defaults: isolated.defaults).write(state)
 
         #expect(UserDefaultsLoginItemRegistrationReceiptStore(defaults: isolated.defaults).read() == .found(receipt))
@@ -314,6 +419,16 @@ struct LoginItemRegistrationReconcilerTests {
         #expect(state(in: repair.stateStore).cause == .skippedPlacementRepair)
     }
 
+    @Test func unrecognizedStatusIsSkippedWithItsOwnCause() async {
+        let harness = makeHarness(status: SMAppService.Status(rawValue: -1)!)
+
+        await harness.reconciler.reconcileIfNeeded()
+
+        assertNoRepair(harness)
+        #expect(state(in: harness.stateStore).cause == .skippedUnrecognizedStatus)
+        #expect(state(in: harness.stateStore).registrationPresence == .unknown)
+    }
+
     private func causeFor(
         receipt: LoginItemRegistrationReceiptRead = .found(receipt(path: "/Applications/old.app", build: 1)),
         status: SMAppService.Status = .enabled,
@@ -321,6 +436,7 @@ struct LoginItemRegistrationReconcilerTests {
         unregisterError: Error? = nil,
         registerError: Error? = nil,
         statusAfterRegister: SMAppService.Status = .enabled,
+        receiptWriteSucceeds: Bool = true,
         timeout: TimeInterval = LoginItemRegistrationReconciler.unregisterTimeoutSeconds,
         holdUnregister: Bool = false
     ) async -> LoginItemRegistrationReconciliationCause {
@@ -329,6 +445,7 @@ struct LoginItemRegistrationReconcilerTests {
         harness.fake.registerWatchdogError = registerError
         harness.fake.watchdogStatusAfterRegister = statusAfterRegister
         harness.fake.holdAwaitableUnregister = holdUnregister
+        harness.receiptStore.shouldSucceedWriting = receiptWriteSucceeds
         await harness.reconciler.reconcileIfNeeded()
         return state(in: harness.stateStore).cause
     }

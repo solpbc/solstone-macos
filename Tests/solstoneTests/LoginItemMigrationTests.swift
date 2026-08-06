@@ -241,6 +241,7 @@ final class FakeLoginItemService: LoginItemService {
         }
         guard holdAwaitableUnregister else {
             storedWatchdogStatus = .notRegistered
+            events.append(.unregisterCompletionReleased)
             return
         }
         try await withCheckedThrowingContinuation { continuation in

@@ -18,8 +18,7 @@ internal enum LoginItemRegistrationReceiptRead: Equatable, Sendable {
 
 internal protocol LoginItemRegistrationReceiptStoring: Sendable {
     func read() -> LoginItemRegistrationReceiptRead
-    func write(_ receipt: LoginItemRegistrationReceipt)
-    func clear()
+    func write(_ receipt: LoginItemRegistrationReceipt) -> Bool
 }
 
 internal final class UserDefaultsLoginItemRegistrationReceiptStore: LoginItemRegistrationReceiptStoring, @unchecked Sendable {
@@ -42,18 +41,23 @@ internal final class UserDefaultsLoginItemRegistrationReceiptStore: LoginItemReg
         }
     }
 
-    func write(_ receipt: LoginItemRegistrationReceipt) {
-        guard let data = try? JSONEncoder().encode(receipt) else { return }
+    func write(_ receipt: LoginItemRegistrationReceipt) -> Bool {
+        let data: Data
+        do {
+            data = try JSONEncoder().encode(receipt)
+        } catch {
+            Logger.setup.error("Login item registration receipt write failed: \(String(describing: error), privacy: .public)")
+            return false
+        }
         defaults.set(data, forKey: Self.storageKey)
-    }
-
-    func clear() {
-        defaults.removeObject(forKey: Self.storageKey)
+        return true
     }
 }
 
 internal final class InMemoryLoginItemRegistrationReceiptStore: LoginItemRegistrationReceiptStoring, @unchecked Sendable {
     private var readResult: LoginItemRegistrationReceiptRead
+    private(set) var writeEvents: [LoginItemRegistrationReceipt] = []
+    var shouldSucceedWriting = true
 
     init(readResult: LoginItemRegistrationReceiptRead = .absent) {
         self.readResult = readResult
@@ -63,12 +67,11 @@ internal final class InMemoryLoginItemRegistrationReceiptStore: LoginItemRegistr
         readResult
     }
 
-    func write(_ receipt: LoginItemRegistrationReceipt) {
+    func write(_ receipt: LoginItemRegistrationReceipt) -> Bool {
+        writeEvents.append(receipt)
+        guard shouldSucceedWriting else { return false }
         readResult = .found(receipt)
-    }
-
-    func clear() {
-        readResult = .absent
+        return true
     }
 }
 
@@ -80,7 +83,7 @@ internal enum LoginItemRegistrationPresence: String, Codable, Equatable, Sendabl
 
 internal enum LoginItemRegistrationReconciliationCause: String, Codable, Equatable, Sendable {
     case reconciled
-    case adoptedExistingReceiptAbsent
+    case adoptedRegistrationWithoutReceipt
     case receiptMatches
     case skippedDeveloperBypass
     case skippedPlacementRepair
@@ -94,6 +97,7 @@ internal enum LoginItemRegistrationReconciliationCause: String, Codable, Equatab
     case unregisterTimedOut
     case registerFailed
     case registerDidNotBecomeEnabled
+    case receiptWriteFailed
 }
 
 internal struct LoginItemRegistrationReconciliationState: Codable, Equatable, Sendable {
@@ -114,7 +118,6 @@ internal enum LoginItemRegistrationReconciliationStateRead: Equatable, Sendable 
 internal protocol LoginItemRegistrationReconciliationStateStoring: Sendable {
     func read() -> LoginItemRegistrationReconciliationStateRead
     func write(_ state: LoginItemRegistrationReconciliationState)
-    func clear()
 }
 
 internal final class UserDefaultsLoginItemRegistrationReconciliationStateStore: LoginItemRegistrationReconciliationStateStoring, @unchecked Sendable {
@@ -138,12 +141,14 @@ internal final class UserDefaultsLoginItemRegistrationReconciliationStateStore: 
     }
 
     func write(_ state: LoginItemRegistrationReconciliationState) {
-        guard let data = try? JSONEncoder().encode(state) else { return }
+        let data: Data
+        do {
+            data = try JSONEncoder().encode(state)
+        } catch {
+            Logger.setup.error("Login item registration reconciliation state write failed: \(String(describing: error), privacy: .public)")
+            return
+        }
         defaults.set(data, forKey: Self.storageKey)
-    }
-
-    func clear() {
-        defaults.removeObject(forKey: Self.storageKey)
     }
 }
 
@@ -160,10 +165,6 @@ internal final class InMemoryLoginItemRegistrationReconciliationStateStore: Logi
 
     func write(_ state: LoginItemRegistrationReconciliationState) {
         readResult = .found(state)
-    }
-
-    func clear() {
-        readResult = .absent
     }
 }
 
@@ -213,16 +214,12 @@ internal final class LoginItemRegistrationReconciler {
             break
         }
 
-        let runningBundlePath = runningBundleURL.path
-        let runningVersion: SolstoneBundleVersion
-        do {
-            runningVersion = try versionReader(runningBundleURL)
-        } catch {
-            Logger.setup.error("Login item registration reconciliation skipped: running bundle version unavailable: \(String(describing: error), privacy: .public)")
+        let runningIdentity = readRunningBundleIdentity()
+        guard let runningVersion = runningIdentity.version else {
             record(
                 cause: .skippedRunningBundleUnversionable,
                 receipt: nil,
-                runningBundlePath: runningBundlePath,
+                runningBundlePath: runningIdentity.path,
                 runningVersion: nil,
                 presence: .unknown
             )
@@ -236,7 +233,7 @@ internal final class LoginItemRegistrationReconciler {
         case .absent:
             await reconcileEnabledRegistration(
                 receipt: nil,
-                runningBundlePath: runningBundlePath,
+                runningBundlePath: runningIdentity.path,
                 runningVersion: runningVersion
             )
             return
@@ -245,7 +242,7 @@ internal final class LoginItemRegistrationReconciler {
             record(
                 cause: .skippedReceiptUnreadable,
                 receipt: nil,
-                runningBundlePath: runningBundlePath,
+                runningBundlePath: runningIdentity.path,
                 runningVersion: runningVersion,
                 presence: .unknown
             )
@@ -254,7 +251,7 @@ internal final class LoginItemRegistrationReconciler {
 
         await reconcileEnabledRegistration(
             receipt: receipt,
-            runningBundlePath: runningBundlePath,
+            runningBundlePath: runningIdentity.path,
             runningVersion: runningVersion
         )
     }
@@ -271,12 +268,16 @@ internal final class LoginItemRegistrationReconciler {
         case .notRegistered:
             record(cause: .skippedNotRegistered, receipt: receipt, runningBundlePath: runningBundlePath, runningVersion: runningVersion, presence: .absent)
         case .notFound:
-            record(cause: .skippedNotFound, receipt: receipt, runningBundlePath: runningBundlePath, runningVersion: runningVersion, presence: .absent)
+            record(cause: .skippedNotFound, receipt: receipt, runningBundlePath: runningBundlePath, runningVersion: runningVersion, presence: .unknown)
         case .enabled:
             guard let receipt else {
                 let adopted = currentReceipt(bundlePath: runningBundlePath, version: runningVersion)
-                receiptStore.write(adopted)
-                record(cause: .adoptedExistingReceiptAbsent, receipt: adopted, runningBundlePath: runningBundlePath, runningVersion: runningVersion, presence: .present)
+                guard receiptStore.write(adopted) else {
+                    Logger.setup.error("Login item registration reconciliation failed to persist adopted receipt")
+                    record(cause: .receiptWriteFailed, receipt: adopted, runningBundlePath: runningBundlePath, runningVersion: runningVersion, presence: .present)
+                    return
+                }
+                record(cause: .adoptedRegistrationWithoutReceipt, receipt: adopted, runningBundlePath: runningBundlePath, runningVersion: runningVersion, presence: .present)
                 return
             }
             guard receipt.bundlePath != runningBundlePath || receipt.build != runningVersion.build else {
@@ -323,20 +324,33 @@ internal final class LoginItemRegistrationReconciler {
         }
 
         let updatedReceipt = currentReceipt(bundlePath: runningBundlePath, version: runningVersion)
-        receiptStore.write(updatedReceipt)
+        guard receiptStore.write(updatedReceipt) else {
+            Logger.setup.error("Login item registration reconciliation failed to persist updated receipt")
+            record(cause: .receiptWriteFailed, receipt: updatedReceipt, runningBundlePath: runningBundlePath, runningVersion: runningVersion, presence: .present)
+            return
+        }
         record(cause: .reconciled, receipt: updatedReceipt, runningBundlePath: runningBundlePath, runningVersion: runningVersion, presence: .present)
     }
 
     private func recordPlacementSkip(cause: LoginItemRegistrationReconciliationCause) {
-        let runningBundlePath = runningBundleURL.path
-        let runningVersion = try? versionReader(runningBundleURL)
+        let runningIdentity = readRunningBundleIdentity()
         let receipt: LoginItemRegistrationReceipt?
         if case .found(let found) = receiptStore.read() {
             receipt = found
         } else {
             receipt = nil
         }
-        record(cause: cause, receipt: receipt, runningBundlePath: runningBundlePath, runningVersion: runningVersion, presence: .unknown)
+        record(cause: cause, receipt: receipt, runningBundlePath: runningIdentity.path, runningVersion: runningIdentity.version, presence: .unknown)
+    }
+
+    private func readRunningBundleIdentity() -> (path: String, version: SolstoneBundleVersion?) {
+        let path = runningBundleURL.path
+        do {
+            return (path, try versionReader(runningBundleURL))
+        } catch {
+            Logger.setup.error("Login item registration reconciliation skipped: running bundle version unavailable: \(String(describing: error), privacy: .public)")
+            return (path, nil)
+        }
     }
 
     private func currentReceipt(bundlePath: String, version: SolstoneBundleVersion) -> LoginItemRegistrationReceipt {

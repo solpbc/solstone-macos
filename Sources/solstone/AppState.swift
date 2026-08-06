@@ -379,6 +379,7 @@ public final class AppState {
 
     internal func reconcileLoginItemRegistrationAfterUpdateIfNeeded() async {
         await loginItemRegistrationReconciler.reconcileIfNeeded()
+        refreshLoginItemStatus()
     }
 
     // MARK: - Configuration
@@ -966,11 +967,15 @@ public final class AppState {
         )
     }
 
-    /// Creates a side-effect-free AppState for login item migration tests.
+    /// Creates an AppState for login item tests.
     internal static func forLoginItemTest(
         config: AppConfig = AppConfig(),
         loginService: any LoginItemService,
         placementDecision: AppPlacementDecision = AppPlacementGate.evaluate(),
+        receiptStore: any LoginItemRegistrationReceiptStoring = UserDefaultsLoginItemRegistrationReceiptStore(),
+        stateStore: any LoginItemRegistrationReconciliationStateStoring = UserDefaultsLoginItemRegistrationReconciliationStateStore(),
+        runningBundleURL: URL = Bundle.main.bundleURL,
+        versionReader: @escaping (URL) throws -> SolstoneBundleVersion = SolstoneBundleVersionReader.read(fromBundleAt:),
         sameMachinePairStart: @escaping @MainActor @Sendable (
             _ baseURL: String,
             _ deviceLabel: String
@@ -991,6 +996,10 @@ public final class AppState {
             notifier: NoopSolChatNotifier(),
             loginService: loginService,
             placementDecision: placementDecision,
+            receiptStore: receiptStore,
+            stateStore: stateStore,
+            runningBundleURL: runningBundleURL,
+            versionReader: versionReader,
             sameMachinePairStart: sameMachinePairStart,
             pairingOperation: pairingOperation,
             pairingLoad: pairingLoad,
@@ -1008,6 +1017,10 @@ public final class AppState {
         initialTunnelPairing: StoredPairing? = nil,
         loginService: any LoginItemService = LiveLoginItemService(),
         placementDecision: AppPlacementDecision = AppPlacementGate.evaluate(),
+        receiptStore: any LoginItemRegistrationReceiptStoring = UserDefaultsLoginItemRegistrationReceiptStore(),
+        stateStore: any LoginItemRegistrationReconciliationStateStoring = UserDefaultsLoginItemRegistrationReconciliationStateStore(),
+        runningBundleURL: URL = Bundle.main.bundleURL,
+        versionReader: @escaping (URL) throws -> SolstoneBundleVersion = SolstoneBundleVersionReader.read(fromBundleAt:),
         observerRegister: @escaping @MainActor @Sendable (
             _ baseURL: String,
             _ descriptor: ObserverRegistrationDescriptor
@@ -1055,11 +1068,11 @@ public final class AppState {
         self.loginService = loginService
         self.loginItemRegistrationReconciler = LoginItemRegistrationReconciler(
             loginService: loginService,
-            receiptStore: UserDefaultsLoginItemRegistrationReceiptStore(),
-            stateStore: UserDefaultsLoginItemRegistrationReconciliationStateStore(),
+            receiptStore: receiptStore,
+            stateStore: stateStore,
             placementDecision: placementDecision,
-            runningBundleURL: Bundle.main.bundleURL,
-            versionReader: SolstoneBundleVersionReader.read(fromBundleAt:)
+            runningBundleURL: runningBundleURL,
+            versionReader: versionReader
         )
         let lastContactStore = providedLastContactStore ?? InMemoryLastSuccessfulJournalContactStore()
         self.lastContactStore = lastContactStore
