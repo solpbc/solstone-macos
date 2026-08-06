@@ -38,7 +38,3 @@ public func relaunchDecision(
 
     return .relaunch
 }
-
-public func shouldAdopt(runningBundleIDs: Set<String>, target: String) -> Bool {
-    runningBundleIDs.contains(target)
-}

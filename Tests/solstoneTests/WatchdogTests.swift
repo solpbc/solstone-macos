@@ -4,8 +4,9 @@
 import Foundation
 import Testing
 @testable import SolstoneCore
+@testable import solstone_watchdog
 
-@Suite("Watchdog")
+@Suite("Watchdog", .serialized)
 struct WatchdogTests {
     private let now = Date(timeIntervalSinceReferenceDate: 1_000)
     private let pid: Int32 = 42
@@ -129,9 +130,29 @@ struct WatchdogTests {
         #expect(relaunchDecision(marker: nil, terminatedPID: pid, now: now, recentRelaunches: expired) == .relaunch)
     }
 
-    @Test func adoptBranchUsesRunningBundleIDs() {
-        #expect(shouldAdopt(runningBundleIDs: ["app.solstone.observer"], target: "app.solstone.observer"))
-        #expect(!shouldAdopt(runningBundleIDs: ["com.other"], target: "app.solstone.observer"))
+    @Test func adoptionRequiresMatchingOwnerBundleURL() {
+        let ownerURL = URL(fileURLWithPath: "/Applications/solstone.app", isDirectory: true)
+        let adopted = watchdogAdoptionDecision(
+            product: .observer,
+            ownerBundleURL: ownerURL,
+            candidates: [WatchdogRunningCandidate(
+                bundleIdentifier: "app.solstone.observer",
+                processIdentifier: pid,
+                bundleURL: ownerURL
+            )]
+        )
+        let conflicting = watchdogAdoptionDecision(
+            product: .observer,
+            ownerBundleURL: ownerURL,
+            candidates: [WatchdogRunningCandidate(
+                bundleIdentifier: "app.solstone.observer",
+                processIdentifier: pid,
+                bundleURL: URL(fileURLWithPath: "/Applications/other.app", isDirectory: true)
+            )]
+        )
+
+        #expect(adopted == .adopt(pid: pid))
+        #expect(conflicting == .conflictingCopy(bundleURL: URL(fileURLWithPath: "/Applications/other.app", isDirectory: true), shortVersion: nil, buildVersion: nil))
     }
 
     @Test func enclosingAppURLFromExecutableInsideBundle() {
@@ -212,28 +233,18 @@ struct WatchdogTests {
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
-    @Test func defaultWatchdogConfigurationPreservesSolMarkerPath() {
-        let configuration = WatchdogConfiguration(environment: [:])
-
-        #expect(configuration.targetBundleID == "app.solstone.observer")
-        #expect(configuration.loggerSubsystem == "app.solstone.observer.watchdog")
-        #expect(configuration.markerDiscriminator == ExpectedExitMarker.solMarkerDiscriminator)
-        #expect(configuration.markerURL == ExpectedExitMarker.markerURL)
+    @Test func observerProductDefinesSolMarkerPath() {
+        #expect(WatchdogProduct.observer.targetBundleID == "app.solstone.observer")
+        #expect(WatchdogProduct.observer.loggerSubsystem == "app.solstone.observer.watchdog")
+        #expect(WatchdogProduct.observer.markerDiscriminator == ExpectedExitMarker.solMarkerDiscriminator)
         #expect(ExpectedExitMarker.markerURL == SolstoneIdentity.applicationSupportURL.appendingPathComponent("expected-exit.json"))
     }
 
-    @Test func journalWatchdogConfigurationDerivesDistinctMarkerPath() {
-        let configuration = WatchdogConfiguration(environment: [
-            WatchdogConfiguration.targetBundleIDEnvironmentKey: "app.solstone.journal",
-            WatchdogConfiguration.loggerSubsystemEnvironmentKey: "app.solstone.journal.watchdog",
-            WatchdogConfiguration.markerDiscriminatorEnvironmentKey: ExpectedExitMarker.journalMarkerDiscriminator
-        ])
-
-        #expect(configuration.targetBundleID == "app.solstone.journal")
-        #expect(configuration.loggerSubsystem == "app.solstone.journal.watchdog")
-        #expect(configuration.markerDiscriminator == ExpectedExitMarker.journalMarkerDiscriminator)
-        #expect(configuration.markerURL == ExpectedExitMarker.markerURL(for: ExpectedExitMarker.journalMarkerDiscriminator))
-        #expect(configuration.markerURL != ExpectedExitMarker.markerURL)
+    @Test func journalProductDefinesDistinctMarkerPath() {
+        #expect(WatchdogProduct.journal.targetBundleID == "app.solstone.journal")
+        #expect(WatchdogProduct.journal.loggerSubsystem == "app.solstone.journal.watchdog")
+        #expect(WatchdogProduct.journal.markerDiscriminator == ExpectedExitMarker.journalMarkerDiscriminator)
+        #expect(ExpectedExitMarker.markerURL(for: WatchdogProduct.journal.markerDiscriminator) != ExpectedExitMarker.markerURL)
     }
 
     @Test func expectedExitMarkerAtDerivedJournalPathSuppressesRelaunch() throws {
@@ -277,7 +288,7 @@ struct WatchdogTests {
         #expect(plist["AssociatedBundleIdentifiers"] as? [String] == ["app.solstone.observer"])
     }
 
-    @Test func journalPlistUsesStaticWatchdogEnvironmentDiscriminators() throws {
+    @Test func journalPlistKeepsInertWatchdogEnvironmentContract() throws {
         let plist = try loadWatchdogPlist("Sources/journal/app.solstone.journal.watchdog.plist")
 
         #expect(plist["Label"] as? String == "app.solstone.journal.watchdog")
@@ -287,9 +298,9 @@ struct WatchdogTests {
         #expect(plist["AssociatedBundleIdentifiers"] as? [String] == ["app.solstone.journal"])
 
         let environment = try #require(plist["EnvironmentVariables"] as? [String: String])
-        #expect(environment[WatchdogConfiguration.targetBundleIDEnvironmentKey] == "app.solstone.journal")
-        #expect(environment[WatchdogConfiguration.loggerSubsystemEnvironmentKey] == "app.solstone.journal.watchdog")
-        #expect(environment[WatchdogConfiguration.markerDiscriminatorEnvironmentKey] == ExpectedExitMarker.journalMarkerDiscriminator)
+        #expect(environment["SOLSTONE_WATCHDOG_TARGET_BUNDLE_ID"] == "app.solstone.journal")
+        #expect(environment["SOLSTONE_WATCHDOG_LOGGER_SUBSYSTEM"] == "app.solstone.journal.watchdog")
+        #expect(environment["SOLSTONE_WATCHDOG_MARKER_DISCRIMINATOR"] == ExpectedExitMarker.journalMarkerDiscriminator)
         #expect(!environment.values.contains { $0.hasPrefix("/") })
     }
 
