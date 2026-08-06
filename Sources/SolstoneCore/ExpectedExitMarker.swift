@@ -33,8 +33,6 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
     }
 
     public static let defaultFreshnessWindow: TimeInterval = 120
-    public static let defaultThrottleLimit = 3
-    public static let defaultThrottleWindow: TimeInterval = 60
 
     /// Uses JSONEncoder's default reference-date numeric Date strategy; round-trip safe with `decode(_:)`.
     public func encoded() throws -> Data {
@@ -136,7 +134,7 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
         return now.timeIntervalSince(marker.timestamp) <= freshnessWindow && marker.pid == terminatedPID
     }
 
-    public static func readAndConsume(
+    public static func read(
         at url: URL = markerURL,
         fileManager: FileManager = .default
     ) -> ExpectedExitMarker? {
@@ -144,15 +142,16 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
             return nil
         }
 
-        defer {
-            try? fileManager.removeItem(at: url)
-        }
-
         guard let data = try? Data(contentsOf: url) else {
+            invalidate(at: url, fileManager: fileManager)
             return nil
         }
 
-        return try? decode(data)
+        guard let marker = try? decode(data) else {
+            invalidate(at: url, fileManager: fileManager)
+            return nil
+        }
+        return marker
     }
 
     public static func invalidate(

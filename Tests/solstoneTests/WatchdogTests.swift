@@ -46,91 +46,6 @@ struct WatchdogTests {
         #expect(!ExpectedExitMarker.isExpectedExit(marker: nil, terminatedPID: pid, now: now))
     }
 
-    @Test func decisionSuppressesExpectedExit() {
-        let marker = ExpectedExitMarker(pid: pid, timestamp: now, reason: "quit")
-
-        let decision = relaunchDecision(
-            marker: marker,
-            terminatedPID: pid,
-            now: now,
-            recentRelaunches: []
-        )
-
-        #expect(decision == .suppress)
-    }
-
-    @Test func decisionRelaunchesWithoutMarker() {
-        let decision = relaunchDecision(
-            marker: nil,
-            terminatedPID: pid,
-            now: now,
-            recentRelaunches: []
-        )
-
-        #expect(decision == .relaunch)
-    }
-
-    @Test func decisionRelaunchesForStaleOrMismatchedMarker() {
-        let stale = ExpectedExitMarker(
-            pid: pid,
-            timestamp: now.addingTimeInterval(-200),
-            reason: "quit"
-        )
-        let mismatched = ExpectedExitMarker(pid: pid + 1, timestamp: now, reason: "quit")
-
-        #expect(relaunchDecision(marker: stale, terminatedPID: pid, now: now, recentRelaunches: []) == .relaunch)
-        #expect(relaunchDecision(marker: mismatched, terminatedPID: pid, now: now, recentRelaunches: []) == .relaunch)
-    }
-
-    @Test func decisionSuppressesFreshSettingsRestartMarkerAfterBoundedWait() {
-        let marker = ExpectedExitMarker(
-            pid: pid,
-            timestamp: now.addingTimeInterval(-30),
-            reason: "settings-restart"
-        )
-
-        let decision = relaunchDecision(
-            marker: marker,
-            terminatedPID: pid,
-            now: now,
-            recentRelaunches: []
-        )
-
-        #expect(decision == .suppress)
-    }
-
-    @Test func decisionRelaunchesForStaleOrMismatchedSettingsRestartMarker() {
-        let stale = ExpectedExitMarker(
-            pid: pid,
-            timestamp: now.addingTimeInterval(-200),
-            reason: "settings-restart"
-        )
-        let mismatched = ExpectedExitMarker(
-            pid: pid + 1,
-            timestamp: now.addingTimeInterval(-30),
-            reason: "settings-restart"
-        )
-
-        #expect(relaunchDecision(marker: stale, terminatedPID: pid, now: now, recentRelaunches: []) == .relaunch)
-        #expect(relaunchDecision(marker: mismatched, terminatedPID: pid, now: now, recentRelaunches: []) == .relaunch)
-    }
-
-    @Test func decisionThrottleStopsWithinWindowAndRecoversAfterWindow() {
-        let recent = [
-            now.addingTimeInterval(-1),
-            now.addingTimeInterval(-10),
-            now.addingTimeInterval(-59)
-        ]
-        let expired = [
-            now.addingTimeInterval(-61),
-            now.addingTimeInterval(-90),
-            now.addingTimeInterval(-120)
-        ]
-
-        #expect(relaunchDecision(marker: nil, terminatedPID: pid, now: now, recentRelaunches: recent) == .throttleStop)
-        #expect(relaunchDecision(marker: nil, terminatedPID: pid, now: now, recentRelaunches: expired) == .relaunch)
-    }
-
     @Test func adoptionRequiresMatchingOwnerBundleURL() {
         let ownerURL = URL(fileURLWithPath: "/Applications/solstone.app", isDirectory: true)
         let adopted = watchdogAdoptionDecision(
@@ -211,64 +126,6 @@ struct WatchdogTests {
         #expect(enclosingAppURL(from: cfFileURL("/Applications/Foo.app/../bin")) == nil)
     }
 
-    @Test func transitionPresentToAbsentReportsTermination() {
-        let transition = observerPresenceTransition(lastKnownPID: pid, currentObserverPID: nil)
-
-        #expect(transition.newLastKnownPID == nil)
-        #expect(transition.terminatedPID == pid)
-    }
-
-    @Test func transitionAbsentToAbsentReportsNothing() {
-        let transition = observerPresenceTransition(lastKnownPID: nil, currentObserverPID: nil)
-
-        #expect(transition.newLastKnownPID == nil)
-        #expect(transition.terminatedPID == nil)
-    }
-
-    @Test func transitionAbsentToPresentTracksWithoutEvent() {
-        let transition = observerPresenceTransition(lastKnownPID: nil, currentObserverPID: pid)
-
-        #expect(transition.newLastKnownPID == pid)
-        #expect(transition.terminatedPID == nil)
-    }
-
-    @Test func transitionPresentToPresentTracksWithoutEvent() {
-        let samePID = observerPresenceTransition(lastKnownPID: pid, currentObserverPID: pid)
-        let changedPID = observerPresenceTransition(lastKnownPID: pid, currentObserverPID: pid + 1)
-
-        #expect(samePID.newLastKnownPID == pid)
-        #expect(samePID.terminatedPID == nil)
-        #expect(changedPID.newLastKnownPID == pid + 1)
-        #expect(changedPID.terminatedPID == nil)
-    }
-
-    @Test func transitionDoesNotRefireWhileAbsent() {
-        var lastKnownPID: Int32? = pid
-
-        let first = observerPresenceTransition(lastKnownPID: lastKnownPID, currentObserverPID: nil)
-        #expect(first.terminatedPID == pid)
-
-        lastKnownPID = first.newLastKnownPID
-        let second = observerPresenceTransition(lastKnownPID: lastKnownPID, currentObserverPID: nil)
-
-        #expect(second.newLastKnownPID == nil)
-        #expect(second.terminatedPID == nil)
-    }
-
-    @Test func readAndConsumeRoundTripsAndDeletesMarker() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-
-        let url = directory.appendingPathComponent("expected-exit.json")
-        let marker = ExpectedExitMarker(pid: pid, timestamp: now, reason: "quit")
-        try marker.encoded().write(to: url)
-
-        let decoded = ExpectedExitMarker.readAndConsume(at: url)
-
-        #expect(decoded == marker)
-        #expect(!FileManager.default.fileExists(atPath: url.path))
-    }
-
     @Test func observerProductDefinesSolMarkerPath() {
         #expect(WatchdogProduct.observer.targetBundleID == "app.solstone.observer")
         #expect(WatchdogProduct.observer.loggerSubsystem == "app.solstone.observer.watchdog")
@@ -283,7 +140,7 @@ struct WatchdogTests {
         #expect(ExpectedExitMarker.markerURL(for: WatchdogProduct.journal.markerDiscriminator) != ExpectedExitMarker.markerURL)
     }
 
-    @Test func expectedExitMarkerAtDerivedJournalPathSuppressesRelaunch() throws {
+    @Test func expectedExitMarkerAtDerivedJournalPathReadsWithoutConsuming() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -298,16 +155,10 @@ struct WatchdogTests {
             at: markerURL
         )
 
-        let marker = ExpectedExitMarker.readAndConsume(at: markerURL)
-        let decision = relaunchDecision(
-            marker: marker,
-            terminatedPID: pid,
-            now: now,
-            recentRelaunches: []
-        )
+        let marker = ExpectedExitMarker.read(at: markerURL)
 
-        #expect(decision == .suppress)
-        #expect(!FileManager.default.fileExists(atPath: markerURL.path))
+        #expect(marker?.reason == "journal-test-quit")
+        #expect(FileManager.default.fileExists(atPath: markerURL.path))
     }
 
     @Test func plistKeysMatchLaunchAgentContract() throws {

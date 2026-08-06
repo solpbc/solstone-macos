@@ -26,6 +26,10 @@ final class WatchdogCoordinator {
         var writeStateRecord: (WatchdogStateRecord) throws -> Void
         var logBootstrapFault: (String) -> Void
         var terminator: (Int32) -> Void
+        var now: () -> Date
+        var markerURL: (String) -> URL
+        var clock: any MonotonicClock
+        var recordSupervisionTransition: @MainActor (WatchdogSupervisionTransition) -> Void
         var schedulePollTimer: (@escaping @MainActor @Sendable () -> Void) -> Timer
 
         static let live = Dependencies(
@@ -48,6 +52,10 @@ final class WatchdogCoordinator {
                 Logger.watchdogBootstrap.fault("\(message, privacy: .public)")
             },
             terminator: { status in exit(status) },
+            now: Date.init,
+            markerURL: { ExpectedExitMarker.markerURL(for: $0) },
+            clock: SystemMonotonicClock(),
+            recordSupervisionTransition: { _ in },
             schedulePollTimer: { callback in
                 Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
                     Task { @MainActor in callback() }
@@ -56,19 +64,18 @@ final class WatchdogCoordinator {
         )
     }
 
-    private enum AdoptionOrigin {
-        case startup
-        case poll
-        case launchCompletion
+    private struct ActiveAttempt {
+        let sequence: UInt64
+        let startedAt: Duration
     }
 
     private let dependencies: Dependencies
-    private var recentRelaunches: [Date] = []
     private var pollTimer: Timer?
-    private var lastKnownObserverPID: Int32?
     private var identity: WatchdogIdentity?
     private var productLogger: Logger?
-    private var isLaunchInFlight = false
+    private var supervisionState: WatchdogSupervisionState = .retrying(failureCount: 0, nextAttemptAt: .zero)
+    private var activeAttempt: ActiveAttempt?
+    private var nextAttemptSequence: UInt64 = 0
     private var lastConflictFingerprint: String?
 
     init(dependencies: Dependencies = .live) {
@@ -95,56 +102,13 @@ final class WatchdogCoordinator {
             return .terminated
         }
 
-        evaluateCandidates(dependencies.runningCandidates(), origin: .startup)
+        let now = dependencies.clock.now()
+        transition(to: .retrying(failureCount: 0, nextAttemptAt: now), cause: .startup)
+        reconcileCandidates(dependencies.runningCandidates())
         pollTimer = dependencies.schedulePollTimer { [weak self] in
             self?.pollObserverPresence()
         }
         return .polling
-    }
-
-    func launch() {
-        guard let identity, !isLaunchInFlight else { return }
-        isLaunchInFlight = true
-        activeLogger.info("supervised app not running; launching")
-        dependencies.openApplication(identity.enclosingBundleURL) { [weak self] app, error in
-            MainActor.assumeIsolated {
-                self?.handleLaunchCompletion(app: app, error: error)
-            }
-        }
-    }
-
-    func handleTermination(bundleIdentifier: String, terminatedPID: Int32) {
-        guard bundleIdentifier == identity?.product.targetBundleID else {
-            return
-        }
-
-        let now = Date()
-        activeLogger.info("supervised app terminated (pid \(terminatedPID, privacy: .public))")
-
-        pruneRelaunches(now: now)
-
-        guard let identity else { return }
-        let marker = ExpectedExitMarker.readAndConsume(at: ExpectedExitMarker.markerURL(for: identity.product.markerDiscriminator))
-        let decision = relaunchDecision(
-            marker: marker,
-            terminatedPID: terminatedPID,
-            now: now,
-            recentRelaunches: recentRelaunches
-        )
-
-        switch decision {
-        case .suppress:
-            activeLogger.info("expected exit; suppressing relaunch")
-        case .throttleStop:
-            activeLogger.error(
-                "relaunch throttle tripped (>= \(ExpectedExitMarker.defaultThrottleLimit, privacy: .public) within \(ExpectedExitMarker.defaultThrottleWindow, privacy: .public) s); not relaunching"
-            )
-        case .relaunch:
-            recentRelaunches.append(now)
-            pruneRelaunches(now: now)
-            activeLogger.info("relaunching supervised app")
-            launch()
-        }
     }
 
     private var activeLogger: Logger {
@@ -167,53 +131,223 @@ final class WatchdogCoordinator {
     }
 
     private func pollObserverPresence() {
-        evaluateCandidates(dependencies.runningCandidates(), origin: .poll)
+        reconcileCandidates(dependencies.runningCandidates())
     }
 
-    private func handleLaunchCompletion(app: NSRunningApplication?, error: Error?) {
-        isLaunchInFlight = false
+    private func handleLaunchCompletion(sequence: UInt64, app: NSRunningApplication?, error: Error?) {
+        guard activeAttempt?.sequence == sequence else { return }
         if let error {
             activeLogger.error("supervised app launch failed: \(error.localizedDescription, privacy: .public)")
+            recordAttemptFailure(cause: .attemptFailed, now: dependencies.clock.now())
             return
         }
-        evaluateCandidates(app.map { [Self.candidate(from: $0)] } ?? [], origin: .launchCompletion)
+        guard app != nil else {
+            activeLogger.error("supervised app launch completed without an app")
+            recordAttemptFailure(cause: .attemptFailed, now: dependencies.clock.now())
+            return
+        }
     }
 
-    private func evaluateCandidates(_ candidates: [WatchdogRunningCandidate], origin: AdoptionOrigin) {
+    private func reconcileCandidates(_ candidates: [WatchdogRunningCandidate]) {
         guard let identity else { return }
-        let decision = watchdogAdoptionDecision(
-            product: identity.product,
-            ownerBundleURL: identity.enclosingBundleURL,
-            candidates: candidates
-        )
+        let monotonicNow = dependencies.clock.now()
+        let matching = candidates.filter { $0.bundleIdentifier == identity.product.targetBundleID }
+        let normalizedOwner = WatchdogAppLocationEligibility.normalized(identity.enclosingBundleURL)
+        let owner = matching.first { candidate in
+            guard let bundleURL = candidate.bundleURL else { return false }
+            return WatchdogAppLocationEligibility.normalized(bundleURL) == normalizedOwner
+        }
+        let foreign = matching.first { candidate in
+            guard let bundleURL = candidate.bundleURL else { return true }
+            return WatchdogAppLocationEligibility.normalized(bundleURL) != normalizedOwner
+        }
 
-        switch decision {
-        case .adopt(let pid):
-            lastConflictFingerprint = nil
-            let transition = observerPresenceTransition(lastKnownPID: lastKnownObserverPID, currentObserverPID: pid)
-            lastKnownObserverPID = transition.newLastKnownPID
-            if let terminatedPID = transition.terminatedPID {
-                handleTermination(bundleIdentifier: identity.product.targetBundleID, terminatedPID: terminatedPID)
-            } else if origin != .poll {
-                activeLogger.info("adopting running supervised app (pid \(pid, privacy: .public))")
-            }
-        case .conflictingCopy(let bundleURL, let shortVersion, let buildVersion):
-            lastKnownObserverPID = nil
+        if let owner {
+            adoptOwner(pid: owner.processIdentifier, now: monotonicNow)
+        }
+
+        if let foreign {
             noteConflict(
-                bundleURL: bundleURL,
-                shortVersion: shortVersion,
-                buildVersion: buildVersion,
+                bundleURL: foreign.bundleURL,
+                shortVersion: foreign.shortVersion,
+                buildVersion: foreign.buildVersion,
                 identity: identity
             )
-        case .noCandidate:
+        } else {
             lastConflictFingerprint = nil
-            if let terminatedPID = lastKnownObserverPID {
-                lastKnownObserverPID = nil
-                handleTermination(bundleIdentifier: identity.product.targetBundleID, terminatedPID: terminatedPID)
-            } else if origin != .launchCompletion {
-                launch()
+        }
+
+        guard owner == nil else { return }
+
+        switch supervisionState {
+        case .supervising(let pid, let stableSince, let misses, let failureCount):
+            let updatedMisses = misses + 1
+            if updatedMisses < WatchdogSupervisionPolicy.confirmingReads {
+                supervisionState = .supervising(
+                    pid: pid,
+                    stableSince: stableSince,
+                    consecutiveMisses: updatedMisses,
+                    failureCount: failureCount
+                )
+                return
+            }
+            handleOwnerExit(
+                pid: pid,
+                stableSince: stableSince,
+                failureCount: failureCount,
+                now: monotonicNow,
+                allowAttempt: foreign == nil
+            )
+        case .suppressed(let deadline):
+            guard foreign == nil else { return }
+            guard let deadline, monotonicNow >= deadline else { return }
+            transition(
+                to: .retrying(failureCount: 0, nextAttemptAt: monotonicNow),
+                cause: .suppressionExpired
+            )
+            issueAttemptIfDue(now: monotonicNow)
+        case .retrying:
+            guard foreign == nil else { return }
+            settleTimedOutAttemptIfNeeded(now: monotonicNow)
+            issueAttemptIfDue(now: monotonicNow)
+        }
+    }
+
+    private func adoptOwner(pid: Int32, now: Duration) {
+        let nextState: WatchdogSupervisionState
+        let cause: WatchdogSupervisionTransitionCause
+        switch supervisionState {
+        case .supervising(let currentPID, let stableSince, _, let failureCount) where currentPID == pid:
+            let stableFailureCount = now - stableSince >= WatchdogSupervisionPolicy.stabilityWindow ? 0 : failureCount
+            supervisionState = .supervising(
+                pid: pid,
+                stableSince: stableSince,
+                consecutiveMisses: 0,
+                failureCount: stableFailureCount
+            )
+            return
+        case .supervising(_, _, _, let failureCount):
+            nextState = .supervising(pid: pid, stableSince: now, consecutiveMisses: 0, failureCount: failureCount)
+            cause = .ownerPIDChanged
+        case .retrying(let failureCount, _):
+            nextState = .supervising(pid: pid, stableSince: now, consecutiveMisses: 0, failureCount: failureCount)
+            cause = .ownerObserved
+        case .suppressed:
+            nextState = .supervising(pid: pid, stableSince: now, consecutiveMisses: 0, failureCount: 0)
+            cause = .ownerObserved
+        }
+        activeAttempt = nil
+        transition(to: nextState, cause: cause)
+    }
+
+    private func handleOwnerExit(
+        pid: Int32,
+        stableSince: Duration,
+        failureCount: Int,
+        now: Duration,
+        allowAttempt: Bool
+    ) {
+        guard let identity else { return }
+        activeLogger.info("supervised owner exited (pid \(pid, privacy: .public))")
+        let markerURL = dependencies.markerURL(identity.product.markerDiscriminator)
+        let marker = ExpectedExitMarker.read(at: markerURL)
+        guard ExpectedExitMarker.isExpectedExit(
+            marker: marker,
+            terminatedPID: pid,
+            now: dependencies.now()
+        ) else {
+            if marker != nil {
+                ExpectedExitMarker.invalidate(at: markerURL)
+            }
+            if now - stableSince >= WatchdogSupervisionPolicy.stabilityWindow {
+                transition(to: .retrying(failureCount: 0, nextAttemptAt: now), cause: .ownerExit)
+                if allowAttempt {
+                    issueAttemptIfDue(now: now)
+                }
+            } else {
+                recordAttemptFailure(cause: .unstableOwnerExit, now: now, currentFailureCount: failureCount)
+            }
+            return
+        }
+
+        let exitClass = ExitReason(markerString: marker!.reason)?.watchdogExitClass
+        switch exitClass {
+        case .ownerIntent:
+            transition(to: .suppressed(until: nil), cause: .ownerExit)
+        case .selfRelaunch(let bound):
+            transition(to: .suppressed(until: now + bound), cause: .ownerExit)
+        case nil:
+            transition(
+                to: .suppressed(until: now + WatchdogSupervisionPolicy.updaterOrUnrecognizedBound),
+                cause: .ownerExit
+            )
+        }
+        ExpectedExitMarker.invalidate(at: markerURL)
+    }
+
+    private func settleTimedOutAttemptIfNeeded(now: Duration) {
+        guard let activeAttempt,
+              now - activeAttempt.startedAt >= WatchdogSupervisionPolicy.inFlightTimeout else {
+            return
+        }
+        recordAttemptFailure(cause: .attemptTimedOut, now: now)
+    }
+
+    private func issueAttemptIfDue(now: Duration) {
+        guard activeAttempt == nil,
+              case .retrying(_, let nextAttemptAt) = supervisionState,
+              now >= nextAttemptAt,
+              let identity else {
+            return
+        }
+        nextAttemptSequence &+= 1
+        let sequence = nextAttemptSequence
+        activeAttempt = ActiveAttempt(sequence: sequence, startedAt: now)
+        activeLogger.info("supervised app not running; launching")
+        dependencies.openApplication(identity.enclosingBundleURL) { [weak self] app, error in
+            MainActor.assumeIsolated {
+                self?.handleLaunchCompletion(sequence: sequence, app: app, error: error)
             }
         }
+    }
+
+    private func recordAttemptFailure(
+        cause: WatchdogSupervisionTransitionCause,
+        now: Duration,
+        currentFailureCount: Int? = nil
+    ) {
+        let failureCount: Int
+        if let currentFailureCount {
+            failureCount = currentFailureCount
+        } else if case .retrying(let current, _) = supervisionState {
+            failureCount = current
+        } else {
+            failureCount = 0
+        }
+        let nextFailureCount = failureCount + 1
+        activeAttempt = nil
+        transition(
+            to: .retrying(
+                failureCount: nextFailureCount,
+                nextAttemptAt: now + backoffDelay(for: nextFailureCount)
+            ),
+            cause: cause
+        )
+    }
+
+    private func backoffDelay(for failureCount: Int) -> Duration {
+        var delay = WatchdogSupervisionPolicy.firstBackoff
+        for _ in 1..<failureCount {
+            delay = min(delay * WatchdogSupervisionPolicy.backoffMultiplier, WatchdogSupervisionPolicy.backoffCeiling)
+        }
+        return delay
+    }
+
+    private func transition(to destination: WatchdogSupervisionState, cause: WatchdogSupervisionTransitionCause) {
+        supervisionState = destination
+        let event = WatchdogSupervisionTransition(destination: destination, cause: cause)
+        activeLogger.info("watchdog supervision transition \(String(describing: event), privacy: .public)")
+        dependencies.recordSupervisionTransition(event)
     }
 
     nonisolated private static func candidate(from application: NSRunningApplication) -> WatchdogRunningCandidate {
@@ -257,12 +391,6 @@ final class WatchdogCoordinator {
         )
     }
 
-    private func pruneRelaunches(now: Date) {
-        recentRelaunches = recentRelaunches.filter { relaunchDate in
-            let age = now.timeIntervalSince(relaunchDate)
-            return age >= 0 && age <= ExpectedExitMarker.defaultThrottleWindow
-        }
-    }
 }
 
 @main

@@ -190,7 +190,7 @@ struct JournalSupervisorTests {
         )
 
         await supervisor.terminate(reason: "journal-test-quit")
-        let marker = ExpectedExitMarker.readAndConsume(at: markerURL)
+        let marker = ExpectedExitMarker.read(at: markerURL)
 
         #expect(await events.snapshot() == ["stopForTermination-after-marker"])
         #expect(marker?.reason == "journal-test-quit")

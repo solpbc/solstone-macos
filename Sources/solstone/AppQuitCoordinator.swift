@@ -4,26 +4,6 @@
 import Foundation
 import SolstoneCore
 
-enum ExitReason: Equatable {
-    case ordinaryQuit
-    case externalQuit
-    case settingsRestart
-    case updaterInstall
-
-    var markerString: String {
-        switch self {
-        case .ordinaryQuit:
-            return "ordinary-quit"
-        case .externalQuit:
-            return "external-quit"
-        case .settingsRestart:
-            return "settings-restart"
-        case .updaterInstall:
-            return "sparkle-update"
-        }
-    }
-}
-
 struct AppQuitStateMachine {
     enum Phase: Equatable {
         case notStarted

@@ -14,10 +14,12 @@ struct ExpectedExitMarkerWriterTests {
         let url = directory.appendingPathComponent("expected-exit.json")
         ExpectedExitMarker.markExpectedExit(reason: "test", at: url)
 
-        let marker = try #require(ExpectedExitMarker.readAndConsume(at: url))
+        let marker = try #require(ExpectedExitMarker.read(at: url))
         #expect(marker.reason == "test")
         #expect(marker.pid == getpid())
         #expect(ExpectedExitMarker.isExpectedExit(marker: marker, terminatedPID: getpid(), now: Date()))
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        ExpectedExitMarker.invalidate(at: url)
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
@@ -48,7 +50,7 @@ struct ExpectedExitMarkerWriterTests {
 
         ExpectedExitMarker.markExpectedExit(reason: "custom", now: now, pid: pid, at: url)
 
-        let marker = try #require(ExpectedExitMarker.readAndConsume(at: url))
+        let marker = try #require(ExpectedExitMarker.read(at: url))
         #expect(marker.reason == "custom")
         #expect(marker.pid == pid)
         #expect(marker.timestamp == now)
@@ -69,6 +71,16 @@ struct ExpectedExitMarkerWriterTests {
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
+    @Test func readRemovesUndecodableMarker() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("expected-exit.json")
+        try Data("not-json".utf8).write(to: url)
+
+        #expect(ExpectedExitMarker.read(at: url) == nil)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
     @Test func durableWriteVerifiesCurrentPIDAndLeavesMarkerUnconsumed() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -86,8 +98,10 @@ struct ExpectedExitMarkerWriterTests {
 
         #expect(marker == ExpectedExitMarker(pid: pid, timestamp: now, reason: "placement-repair"))
         #expect(FileManager.default.fileExists(atPath: url.path))
-        let consumed = try #require(ExpectedExitMarker.readAndConsume(at: url))
-        #expect(consumed == marker)
+        let readback = try #require(ExpectedExitMarker.read(at: url))
+        #expect(readback == marker)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        ExpectedExitMarker.invalidate(at: url)
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
