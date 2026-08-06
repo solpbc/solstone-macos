@@ -171,44 +171,107 @@ private enum FakeLoginItemError: Error {
 }
 
 @MainActor
-private final class FakeLoginItemService: LoginItemService {
+final class FakeLoginItemService: LoginItemService {
     enum Call: Equatable {
         case registerWatchdog
         case unregisterWatchdog
         case unregisterMainApp
     }
 
-    var watchdogStatus: SMAppService.Status
+    enum Event: Equatable {
+        case watchdogStatusRead
+        case registerWatchdog
+        case unregisterWatchdog
+        case unregisterWatchdogAwaitingCompletion
+        case unregisterCompletionReleased
+        case unregisterMainApp
+    }
+
+    private var storedWatchdogStatus: SMAppService.Status
     var mainAppStatus: SMAppService.Status
     var watchdogStatusAfterRegister: SMAppService.Status = .enabled
     var registerWatchdogError: Error?
     var unregisterWatchdogError: Error?
+    var unregisterWatchdogAwaitingCompletionError: Error?
     var unregisterMainAppError: Error?
     private(set) var calls: [Call] = []
+    private(set) var events: [Event] = []
+    private(set) var reconciliationUnregisterCountAtMainAppUnregister: [Int] = []
+    var holdAwaitableUnregister = false
+    private var pendingUnregisterContinuation: CheckedContinuation<Void, Error>?
+    private var unregisterEnteredContinuation: CheckedContinuation<Void, Never>?
+
+    var watchdogStatus: SMAppService.Status {
+        get {
+            events.append(.watchdogStatusRead)
+            return storedWatchdogStatus
+        }
+        set {
+            storedWatchdogStatus = newValue
+        }
+    }
 
     init(watchdogStatus: SMAppService.Status, mainAppStatus: SMAppService.Status) {
-        self.watchdogStatus = watchdogStatus
+        storedWatchdogStatus = watchdogStatus
         self.mainAppStatus = mainAppStatus
     }
 
     func registerWatchdog() throws {
         calls.append(.registerWatchdog)
+        events.append(.registerWatchdog)
         if let registerWatchdogError {
             throw registerWatchdogError
         }
-        watchdogStatus = watchdogStatusAfterRegister
+        storedWatchdogStatus = watchdogStatusAfterRegister
     }
 
     func unregisterWatchdog() throws {
         calls.append(.unregisterWatchdog)
+        events.append(.unregisterWatchdog)
         if let unregisterWatchdogError {
             throw unregisterWatchdogError
         }
-        watchdogStatus = .notRegistered
+        storedWatchdogStatus = .notRegistered
+    }
+
+    func unregisterWatchdogAwaitingCompletion() async throws {
+        events.append(.unregisterWatchdogAwaitingCompletion)
+        if let unregisterWatchdogAwaitingCompletionError {
+            throw unregisterWatchdogAwaitingCompletionError
+        }
+        guard holdAwaitableUnregister else {
+            storedWatchdogStatus = .notRegistered
+            return
+        }
+        try await withCheckedThrowingContinuation { continuation in
+            pendingUnregisterContinuation = continuation
+            let enteredContinuation = unregisterEnteredContinuation
+            unregisterEnteredContinuation = nil
+            enteredContinuation?.resume()
+        }
+    }
+
+    func waitForAwaitableUnregisterEntered() async {
+        guard !events.contains(.unregisterWatchdogAwaitingCompletion) else { return }
+        await withCheckedContinuation { continuation in
+            unregisterEnteredContinuation = continuation
+        }
+    }
+
+    func releaseAwaitableUnregister() {
+        events.append(.unregisterCompletionReleased)
+        storedWatchdogStatus = .notRegistered
+        let continuation = pendingUnregisterContinuation
+        pendingUnregisterContinuation = nil
+        continuation?.resume()
     }
 
     func unregisterMainApp() throws {
+        reconciliationUnregisterCountAtMainAppUnregister.append(
+            events.filter { $0 == .unregisterWatchdogAwaitingCompletion }.count
+        )
         calls.append(.unregisterMainApp)
+        events.append(.unregisterMainApp)
         if let unregisterMainAppError {
             throw unregisterMainAppError
         }

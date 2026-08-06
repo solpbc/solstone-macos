@@ -9,6 +9,7 @@ public protocol LoginItemService {
     var mainAppStatus: SMAppService.Status { get }
     func registerWatchdog() throws
     func unregisterWatchdog() throws
+    func unregisterWatchdogAwaitingCompletion() async throws
     func unregisterMainApp() throws
 }
 
@@ -32,6 +33,10 @@ public struct LiveLoginItemService: LoginItemService {
 
     public func unregisterWatchdog() throws {
         try watchdog.unregister()
+    }
+
+    public func unregisterWatchdogAwaitingCompletion() async throws {
+        try await watchdog.unregister()
     }
 
     public func unregisterMainApp() throws {

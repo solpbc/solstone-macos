@@ -89,6 +89,7 @@ public final class AppState {
     private let triggerTunnelConnectedSync: @MainActor @Sendable (AppState) -> Void
     private let notifier: any SolChatNotifying
     private let loginService: any LoginItemService
+    private let loginItemRegistrationReconciler: LoginItemRegistrationReconciler
     private let lastContactStore: any LastSuccessfulJournalContactStoring
     private let isSnapshot: Bool
     private let observerHealthSnapshotEnabled: Bool
@@ -374,6 +375,10 @@ public final class AppState {
         }
 
         refreshLoginItemStatus()
+    }
+
+    internal func reconcileLoginItemRegistrationAfterUpdateIfNeeded() async {
+        await loginItemRegistrationReconciler.reconcileIfNeeded()
     }
 
     // MARK: - Configuration
@@ -715,6 +720,14 @@ public final class AppState {
         self.triggerTunnelConnectedSync = triggerTunnelConnectedSync
         self.notifier = notifier
         self.loginService = loginService
+        self.loginItemRegistrationReconciler = LoginItemRegistrationReconciler(
+            loginService: loginService,
+            receiptStore: UserDefaultsLoginItemRegistrationReceiptStore(),
+            stateStore: UserDefaultsLoginItemRegistrationReconciliationStateStore(),
+            placementDecision: AppPlacementGate.evaluate(),
+            runningBundleURL: Bundle.main.bundleURL,
+            versionReader: SolstoneBundleVersionReader.read(fromBundleAt:)
+        )
         self.lastContactStore = lastContactStore
         self.observerHealthSnapshotEnabled = true
         self.recoveryCoordinator = recoveryCoordinator
@@ -957,6 +970,7 @@ public final class AppState {
     internal static func forLoginItemTest(
         config: AppConfig = AppConfig(),
         loginService: any LoginItemService,
+        placementDecision: AppPlacementDecision = AppPlacementGate.evaluate(),
         sameMachinePairStart: @escaping @MainActor @Sendable (
             _ baseURL: String,
             _ deviceLabel: String
@@ -976,6 +990,7 @@ public final class AppState {
             isSnapshot: false,
             notifier: NoopSolChatNotifier(),
             loginService: loginService,
+            placementDecision: placementDecision,
             sameMachinePairStart: sameMachinePairStart,
             pairingOperation: pairingOperation,
             pairingLoad: pairingLoad,
@@ -992,6 +1007,7 @@ public final class AppState {
         notifier: any SolChatNotifying,
         initialTunnelPairing: StoredPairing? = nil,
         loginService: any LoginItemService = LiveLoginItemService(),
+        placementDecision: AppPlacementDecision = AppPlacementGate.evaluate(),
         observerRegister: @escaping @MainActor @Sendable (
             _ baseURL: String,
             _ descriptor: ObserverRegistrationDescriptor
@@ -1037,6 +1053,14 @@ public final class AppState {
         self.triggerTunnelConnectedSync = triggerTunnelConnectedSync
         self.notifier = notifier
         self.loginService = loginService
+        self.loginItemRegistrationReconciler = LoginItemRegistrationReconciler(
+            loginService: loginService,
+            receiptStore: UserDefaultsLoginItemRegistrationReceiptStore(),
+            stateStore: UserDefaultsLoginItemRegistrationReconciliationStateStore(),
+            placementDecision: placementDecision,
+            runningBundleURL: Bundle.main.bundleURL,
+            versionReader: SolstoneBundleVersionReader.read(fromBundleAt:)
+        )
         let lastContactStore = providedLastContactStore ?? InMemoryLastSuccessfulJournalContactStore()
         self.lastContactStore = lastContactStore
         self.observerHealthSnapshotEnabled = false

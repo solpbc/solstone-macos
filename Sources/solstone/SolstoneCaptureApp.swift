@@ -105,6 +105,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let state = AppState.shared {
             state.migrateLoginItemToWatchdogIfNeeded()
+            Task { @MainActor in
+                await state.reconcileLoginItemRegistrationAfterUpdateIfNeeded()
+            }
 
             let delegate = SolChatNotificationDelegate()
             solChatNotificationDelegate = delegate

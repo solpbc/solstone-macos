@@ -433,5 +433,6 @@ private final class NoopLoginItemService: LoginItemService {
 
     func registerWatchdog() throws {}
     func unregisterWatchdog() throws {}
+    func unregisterWatchdogAwaitingCompletion() async throws {}
     func unregisterMainApp() throws {}
 }
