@@ -45,7 +45,12 @@ final class WatchdogCoordinator {
                 }
             },
             openApplication: { url, completion in
-                NSWorkspace.shared.openApplication(at: url, configuration: .init(), completionHandler: completion)
+                // LaunchServices fires this handler on its own background queue, and the
+                // coordinator handles completions on the main actor. Hop before calling
+                // back so every openApplication provider honors the same contract.
+                NSWorkspace.shared.openApplication(at: url, configuration: .init()) { app, error in
+                    DispatchQueue.main.async { completion(app, error) }
+                }
             },
             writeStateRecord: { try WatchdogStateRecordStore.write($0) },
             logBootstrapFault: { message in
