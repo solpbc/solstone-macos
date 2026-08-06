@@ -105,7 +105,7 @@ final class WatchdogCoordinator {
     func launch() {
         guard let identity, !isLaunchInFlight else { return }
         isLaunchInFlight = true
-        activeLogger.info("observer not running; launching")
+        activeLogger.info("supervised app not running; launching")
         dependencies.openApplication(identity.enclosingBundleURL) { [weak self] app, error in
             MainActor.assumeIsolated {
                 self?.handleLaunchCompletion(app: app, error: error)
@@ -119,7 +119,7 @@ final class WatchdogCoordinator {
         }
 
         let now = Date()
-        activeLogger.info("observer terminated (pid \(terminatedPID, privacy: .public))")
+        activeLogger.info("supervised app terminated (pid \(terminatedPID, privacy: .public))")
 
         pruneRelaunches(now: now)
 
@@ -142,7 +142,7 @@ final class WatchdogCoordinator {
         case .relaunch:
             recentRelaunches.append(now)
             pruneRelaunches(now: now)
-            activeLogger.info("relaunching observer")
+            activeLogger.info("relaunching supervised app")
             launch()
         }
     }
@@ -173,7 +173,7 @@ final class WatchdogCoordinator {
     private func handleLaunchCompletion(app: NSRunningApplication?, error: Error?) {
         isLaunchInFlight = false
         if let error {
-            activeLogger.error("observer launch failed: \(error.localizedDescription, privacy: .public)")
+            activeLogger.error("supervised app launch failed: \(error.localizedDescription, privacy: .public)")
             return
         }
         evaluateCandidates(app.map { [Self.candidate(from: $0)] } ?? [], origin: .launchCompletion)
@@ -195,7 +195,7 @@ final class WatchdogCoordinator {
             if let terminatedPID = transition.terminatedPID {
                 handleTermination(bundleIdentifier: identity.product.targetBundleID, terminatedPID: terminatedPID)
             } else if origin != .poll {
-                activeLogger.info("adopting running observer (pid \(pid, privacy: .public))")
+                activeLogger.info("adopting running supervised app (pid \(pid, privacy: .public))")
             }
         case .conflictingCopy(let bundleURL, let shortVersion, let buildVersion):
             lastKnownObserverPID = nil

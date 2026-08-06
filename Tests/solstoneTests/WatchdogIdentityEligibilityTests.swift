@@ -60,6 +60,7 @@ struct WatchdogIdentityEligibilityTests {
         let savedEnvironment = legacyWatchdogEnvironment()
         defer { restoreLegacyWatchdogEnvironment(savedEnvironment) }
         unsetLegacyWatchdogEnvironment()
+        // These keys survive only as inert plist entries; no Swift code reads them. Mutate them solely to prove identity resolution ignores them.
         setenv("SOLSTONE_WATCHDOG_TARGET_BUNDLE_ID", "app.solstone.journal", 1)
         setenv("SOLSTONE_WATCHDOG_LOGGER_SUBSYSTEM", "app.solstone.journal.watchdog", 1)
         setenv("SOLSTONE_WATCHDOG_MARKER_DISCRIMINATOR", "SolstoneJournal", 1)
@@ -277,8 +278,16 @@ struct WatchdogIdentityEligibilityTests {
         #expect(firstURL != secondURL)
         #expect(FileManager.default.fileExists(atPath: firstURL.path))
         #expect(FileManager.default.fileExists(atPath: secondURL.path))
-        #expect(try JSONDecoder().decode(WatchdogStateRecord.self, from: Data(contentsOf: firstURL)).writerExecutableURL == first.writerExecutableURL)
-        #expect(try JSONDecoder().decode(WatchdogStateRecord.self, from: Data(contentsOf: secondURL)).enclosingBundleURL == second.enclosingBundleURL)
+        let decodedFirst = try JSONDecoder().decode(WatchdogStateRecord.self, from: Data(contentsOf: firstURL))
+        let decodedSecond = try JSONDecoder().decode(WatchdogStateRecord.self, from: Data(contentsOf: secondURL))
+        #expect(decodedFirst.cause == first.cause)
+        #expect(decodedFirst.enclosingBundleURL == first.enclosingBundleURL)
+        #expect(decodedFirst.enclosingBundleIdentifier == first.enclosingBundleIdentifier)
+        #expect(decodedFirst.writerExecutableURL == first.writerExecutableURL)
+        #expect(decodedSecond.cause == second.cause)
+        #expect(decodedSecond.enclosingBundleURL == second.enclosingBundleURL)
+        #expect(decodedSecond.enclosingBundleIdentifier == second.enclosingBundleIdentifier)
+        #expect(decodedSecond.writerExecutableURL == second.writerExecutableURL)
     }
 
     @Test @MainActor func criterion12PermanentRefusalTerminatesBeforePollScheduling() throws {
