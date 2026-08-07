@@ -70,12 +70,7 @@ struct AppPlacementRepairCoordinatorTests {
         return AppPlacementContext(
             runningBundleURL: runningURL,
             canonicalBundleURL: canonicalURL,
-            applicationsURL: applicationsURL,
-            runningStandardizedURL: runningURL.standardizedFileURL,
-            runningResolvedURL: runningURL.standardizedFileURL.resolvingSymlinksInPath(),
-            canonicalStandardizedURL: canonicalURL.standardizedFileURL,
-            canonicalResolvedURL: canonicalURL.standardizedFileURL.resolvingSymlinksInPath(),
-            pathLooksTranslocated: false
+            applicationsURL: applicationsURL
         )
     }
 }

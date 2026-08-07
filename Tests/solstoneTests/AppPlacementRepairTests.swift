@@ -680,12 +680,7 @@ private final class FakePlacementRepairWorld {
         AppPlacementContext(
             runningBundleURL: sourceURL,
             canonicalBundleURL: canonicalURL,
-            applicationsURL: applicationsURL,
-            runningStandardizedURL: sourceURL.standardizedFileURL,
-            runningResolvedURL: sourceURL.standardizedFileURL.resolvingSymlinksInPath(),
-            canonicalStandardizedURL: canonicalURL.standardizedFileURL,
-            canonicalResolvedURL: canonicalURL.standardizedFileURL.resolvingSymlinksInPath(),
-            pathLooksTranslocated: false
+            applicationsURL: applicationsURL
         )
     }
 

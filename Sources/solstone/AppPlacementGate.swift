@@ -6,6 +6,7 @@ import os
 
 enum AppPlacementAllowedReason: Equatable {
     case canonical
+    case stableLocation
     case developerBypass
 }
 
@@ -13,11 +14,6 @@ struct AppPlacementContext: Equatable {
     let runningBundleURL: URL
     let canonicalBundleURL: URL
     let applicationsURL: URL
-    let runningStandardizedURL: URL
-    let runningResolvedURL: URL
-    let canonicalStandardizedURL: URL
-    let canonicalResolvedURL: URL
-    let pathLooksTranslocated: Bool
 }
 
 enum AppPlacementDecision: Equatable {
@@ -29,6 +25,11 @@ enum AppPlacementDiagnostic: Equatable {
     case appTranslocationPathObserved(String)
 }
 
+struct AppPlacementVolumeFacts: Equatable {
+    let isInternal: Bool?
+    let isLocal: Bool?
+}
+
 enum AppPlacementGate {
     static let developerLaunchEnvironmentKey = "SOLSTONE_DEV_LAUNCH"
     static let canonicalBundleName = "solstone.app"
@@ -37,12 +38,29 @@ enum AppPlacementGate {
         var bundleURL: URL
         var environment: [String: String]
         var applicationsURL: URL
+        var cachesURL: URL
+        var temporaryDirectoryURL: URL
+        var volumeFacts: (URL) -> AppPlacementVolumeFacts?
         var log: (AppPlacementDiagnostic) -> Void
 
         init(
             bundleURL: URL = Bundle.main.bundleURL,
             environment: [String: String] = ProcessInfo.processInfo.environment,
             applicationsURL: URL = FileManager.default.urls(for: .applicationDirectory, in: .localDomainMask)[0],
+            // Placement must exclude the current user's cache root, not /Library/Caches.
+            cachesURL: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0],
+            temporaryDirectoryURL: URL = FileManager.default.temporaryDirectory,
+            volumeFacts: @escaping (URL) -> AppPlacementVolumeFacts? = { url in
+                do {
+                    let values = try url.resourceValues(forKeys: [.volumeIsInternalKey, .volumeIsLocalKey])
+                    return AppPlacementVolumeFacts(
+                        isInternal: values.volumeIsInternal,
+                        isLocal: values.volumeIsLocal
+                    )
+                } catch {
+                    return nil
+                }
+            },
             log: @escaping (AppPlacementDiagnostic) -> Void = { diagnostic in
                 switch diagnostic {
                 case .appTranslocationPathObserved(let path):
@@ -53,6 +71,9 @@ enum AppPlacementGate {
             self.bundleURL = bundleURL
             self.environment = environment
             self.applicationsURL = applicationsURL
+            self.cachesURL = cachesURL
+            self.temporaryDirectoryURL = temporaryDirectoryURL
+            self.volumeFacts = volumeFacts
             self.log = log
         }
     }
@@ -60,29 +81,30 @@ enum AppPlacementGate {
     static func evaluate(dependencies: Dependencies = Dependencies()) -> AppPlacementDecision {
         let canonicalBundleURL = dependencies.applicationsURL
             .appendingPathComponent(canonicalBundleName, isDirectory: true)
-        let runningStandardizedURL = dependencies.bundleURL.standardizedFileURL
-        let runningResolvedURL = runningStandardizedURL.resolvingSymlinksInPath()
-        let canonicalStandardizedURL = canonicalBundleURL.standardizedFileURL
-        let canonicalResolvedURL = canonicalStandardizedURL.resolvingSymlinksInPath()
-        let pathLooksTranslocated = dependencies.bundleURL.path.contains("/AppTranslocation/")
+        let runningResolvedURL = normalized(dependencies.bundleURL)
+        let canonicalResolvedURL = normalized(canonicalBundleURL)
+        let isTranslocated = runningResolvedURL.pathComponents.contains("AppTranslocation")
 
-        if pathLooksTranslocated {
+        if isTranslocated {
             dependencies.log(.appTranslocationPathObserved(dependencies.bundleURL.path))
         }
 
         let context = AppPlacementContext(
             runningBundleURL: dependencies.bundleURL,
             canonicalBundleURL: canonicalBundleURL,
-            applicationsURL: dependencies.applicationsURL,
-            runningStandardizedURL: runningStandardizedURL,
-            runningResolvedURL: runningResolvedURL,
-            canonicalStandardizedURL: canonicalStandardizedURL,
-            canonicalResolvedURL: canonicalResolvedURL,
-            pathLooksTranslocated: pathLooksTranslocated
+            applicationsURL: dependencies.applicationsURL
         )
 
-        if isCanonical(context) {
-            return .allowed(.canonical)
+        if isStable(
+            runningResolvedURL: runningResolvedURL,
+            cachesURL: dependencies.cachesURL,
+            temporaryDirectoryURL: dependencies.temporaryDirectoryURL,
+            isTranslocated: isTranslocated,
+            volumeFacts: dependencies.volumeFacts(runningResolvedURL)
+        ) {
+            return .allowed(
+                runningResolvedURL == canonicalResolvedURL ? .canonical : .stableLocation
+            )
         }
 
         if dependencies.environment[developerLaunchEnvironmentKey] == "1" {
@@ -92,10 +114,34 @@ enum AppPlacementGate {
         return .repair(context)
     }
 
-    private static func isCanonical(_ context: AppPlacementContext) -> Bool {
-        context.canonicalStandardizedURL.path == context.canonicalResolvedURL.path
-            && context.runningStandardizedURL.path == context.canonicalStandardizedURL.path
-            && context.runningResolvedURL.path == context.canonicalResolvedURL.path
+    private static func isStable(
+        runningResolvedURL: URL,
+        cachesURL: URL,
+        temporaryDirectoryURL: URL,
+        isTranslocated: Bool,
+        volumeFacts: AppPlacementVolumeFacts?
+    ) -> Bool {
+        guard !isTranslocated,
+              !isContained(runningResolvedURL, by: normalized(cachesURL)),
+              !isContained(runningResolvedURL, by: normalized(temporaryDirectoryURL)),
+              !isContained(runningResolvedURL, by: normalized(URL(fileURLWithPath: "/private/tmp", isDirectory: true))),
+              !isContained(runningResolvedURL, by: normalized(URL(fileURLWithPath: "/private/var/tmp", isDirectory: true))),
+              volumeFacts?.isInternal == true,
+              volumeFacts?.isLocal == true else {
+            return false
+        }
+        return true
+    }
+
+    private static func normalized(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
+    private static func isContained(_ candidate: URL, by container: URL) -> Bool {
+        let candidateComponents = candidate.pathComponents
+        let containerComponents = container.pathComponents
+        guard candidateComponents.count > containerComponents.count else { return false }
+        return candidateComponents.starts(with: containerComponents)
     }
 }
 

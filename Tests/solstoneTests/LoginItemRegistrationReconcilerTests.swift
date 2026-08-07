@@ -24,6 +24,24 @@ struct LoginItemRegistrationReconcilerTests {
         #expect(state(in: harness.stateStore).cause == .reconciled)
     }
 
+    @Test func stableLocationDifferingReceiptReregistersWatchdog() async {
+        let harness = makeHarness(
+            receipt: .found(receipt(path: "/Applications/old.app", build: 1)),
+            placement: .allowed(.stableLocation)
+        )
+
+        await harness.reconciler.reconcileIfNeeded()
+
+        #expect(harness.fake.events == [
+            .watchdogStatusRead,
+            .unregisterWatchdogAwaitingCompletion,
+            .unregisterCompletionReleased,
+            .registerWatchdog,
+            .watchdogStatusRead
+        ])
+        #expect(state(in: harness.stateStore).cause == .reconciled)
+    }
+
     @Test(arguments: ["build", "url", "absent"])
     func developerBypassNeverRepairsAnyOtherwiseEligibleReceipt(_ kind: String) async {
         let running = runningReceipt()
@@ -529,11 +547,6 @@ private func placementContext() -> AppPlacementContext {
     return AppPlacementContext(
         runningBundleURL: running,
         canonicalBundleURL: canonical,
-        applicationsURL: canonical.deletingLastPathComponent(),
-        runningStandardizedURL: running,
-        runningResolvedURL: running,
-        canonicalStandardizedURL: canonical,
-        canonicalResolvedURL: canonical,
-        pathLooksTranslocated: false
+        applicationsURL: canonical.deletingLastPathComponent()
     )
 }

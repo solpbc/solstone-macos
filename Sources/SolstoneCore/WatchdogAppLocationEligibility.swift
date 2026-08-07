@@ -18,9 +18,9 @@ public enum WatchdogAppLocationEligibility {
             return false
         }
 
-        // Deliberately duplicated rather than extracted from frozen AppPlacementGate.swift:67.
-        // AppPlacementGate is intentionally left untouched by founder decision.
-        // Its isCanonical policy still repairs ~/Applications and renamed bundles even though this eligibility predicate permits them.
+        // Deliberately duplicated rather than extracted from the stricter app placement gate.
+        // Unifying the predicates would require editing this frozen core target.
+        // The app may reject locations this supervisor eligibility predicate permits.
         return !appURL.pathComponents.contains("AppTranslocation")
     }
 

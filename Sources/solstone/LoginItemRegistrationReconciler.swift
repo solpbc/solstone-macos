@@ -210,7 +210,7 @@ internal final class LoginItemRegistrationReconciler {
         case .repair:
             recordPlacementSkip(cause: .skippedPlacementRepair)
             return
-        case .allowed(.canonical):
+        case .allowed(.canonical), .allowed(.stableLocation):
             break
         }
 

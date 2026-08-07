@@ -948,7 +948,7 @@ struct SettingsView: View {
 
     private func solAppPlacementOutcome() -> SetupProbeOutcome {
         switch AppPlacementGate.evaluate() {
-        case .allowed:
+        case .allowed(.canonical), .allowed(.stableLocation), .allowed(.developerBypass):
             return .ready
         case .repair:
             return .needsAttention
