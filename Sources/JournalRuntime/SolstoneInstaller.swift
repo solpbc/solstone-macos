@@ -739,8 +739,11 @@ public final class SolstoneInstaller {
         return true
     }
 
-    public nonisolated static func defaultObserverRegister(descriptor: ObserverRegistrationDescriptor) async -> Result<ObserverRegistration, ObserverRegistrationFailure> {
-        let endpoint = ServiceMode.bundledServiceURL + "/app/observer/register"
+    public nonisolated static func defaultObserverRegister(
+        descriptor: ObserverRegistrationDescriptor,
+        session: URLSession? = nil
+    ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> {
+        let endpoint = ServiceMode.bundledServiceURL + "/app/devices/register"
         guard let url = URL(string: endpoint) else {
             return .failure(ObserverRegistrationFailure(
                 category: .unknown,
@@ -767,10 +770,11 @@ public final class SolstoneInstaller {
 
         let data: Data
         let response: URLResponse
+        let requestSession = session ?? URLSession(configuration: .ephemeral)
+        let ownedSession = session == nil ? requestSession : nil
         do {
-            let session = URLSession(configuration: .ephemeral)
-            defer { session.invalidateAndCancel() }
-            (data, response) = try await session.data(for: request)
+            defer { ownedSession?.invalidateAndCancel() }
+            (data, response) = try await requestSession.data(for: request)
         } catch let error as URLError {
             return .failure(ObserverRegistrationFailure(
                 category: .network,

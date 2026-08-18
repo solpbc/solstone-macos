@@ -313,7 +313,7 @@ struct UploadCoordinatorTests {
 
         let request = try #require(store.snapshotRequests().first)
         #expect(request.httpMethod == "GET")
-        #expect(request.url?.path == "/app/observer/ingest/segments/\(dayString(for: segment.date))")
+        #expect(request.url?.path == "/app/devices/ingest/segments/\(dayString(for: segment.date))")
     }
 
     private func makeSegment(

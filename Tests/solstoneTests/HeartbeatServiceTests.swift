@@ -370,7 +370,7 @@ struct HeartbeatServiceTests {
         let request = store.snapshotRequests().first
         #expect(request?.url?.host == "127.0.0.1")
         #expect(request?.url?.port == 24680)
-        #expect(request?.url?.path == "/app/observer/ingest/event")
+        #expect(request?.url?.path == "/app/devices/ingest/event")
     }
 
     @Test func heartbeatRealRequestUsesResolverStaticTarget() async {
@@ -399,7 +399,7 @@ struct HeartbeatServiceTests {
         let request = store.snapshotRequests().first
         #expect(request?.url?.host == "journal.example")
         #expect(request?.url?.port == 9443)
-        #expect(request?.url?.path == "/app/observer/ingest/event")
+        #expect(request?.url?.path == "/app/devices/ingest/event")
     }
 
     @Test func heartbeatHeldResolverSkipsPost() async {

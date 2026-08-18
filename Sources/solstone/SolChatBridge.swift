@@ -323,7 +323,7 @@ public actor SolChatBridge {
 
     private func subscribe(serverURL: String, serverKey: String) async throws {
         let baseURL = serverURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let urlString = "\(baseURL)/app/observer/\(SolChatLiterals.callosumPathComponent)"
+        let urlString = "\(baseURL)/app/devices/\(SolChatLiterals.callosumPathComponent)"
         guard let url = URL(string: urlString) else {
             throw BridgeError.invalidURL
         }

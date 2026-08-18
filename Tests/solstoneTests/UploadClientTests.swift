@@ -103,7 +103,7 @@ struct UploadClientTests {
             health: nil
         )
 
-        #expect(request.url?.absoluteString == "http://example.com/app/observer/ingest/event")
+        #expect(request.url?.absoluteString == "http://example.com/app/devices/ingest/event")
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer secret123")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")

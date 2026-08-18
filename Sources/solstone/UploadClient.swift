@@ -176,7 +176,7 @@ public struct UploadClient: Sendable {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyyMMdd"
         let today = dateFormatter.string(from: Date())
-        let urlString = "\(serverURL)/app/observer/ingest/segments/\(today)"
+        let urlString = "\(serverURL)/app/devices/ingest/segments/\(today)"
         Logger.upload.info("testConnection: GET \(urlString, privacy: .public)")
 
         guard let url = URL(string: urlString) else {
@@ -244,7 +244,7 @@ public struct UploadClient: Sendable {
         serverKey: String,
         day: String
     ) async throws -> [ServerSegmentInfo] {
-        let urlString = "\(serverURL)/app/observer/ingest/segments/\(day)"
+        let urlString = "\(serverURL)/app/devices/ingest/segments/\(day)"
         guard let url = URL(string: urlString) else {
             throw UploadError.invalidURL
         }
@@ -311,7 +311,7 @@ public struct UploadClient: Sendable {
         paused: Bool,
         health: ObserverHealthSnapshot?
     ) throws -> URLRequest {
-        let urlString = "\(serverURL)/app/observer/ingest/event"
+        let urlString = "\(serverURL)/app/devices/ingest/event"
         guard let url = URL(string: urlString) else {
             throw UploadError.invalidURL
         }
@@ -397,7 +397,7 @@ public struct UploadClient: Sendable {
         mediaFiles: [URL],
         metadataJSON: String? = nil
     ) async -> UploadResult {
-        let urlString = "\(serverURL)/app/observer/ingest"
+        let urlString = "\(serverURL)/app/devices/ingest"
         guard let url = URL(string: urlString) else {
             return .failure(UploadError.invalidURL)
         }

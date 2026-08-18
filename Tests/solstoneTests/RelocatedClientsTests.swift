@@ -9,13 +9,13 @@ import Testing
 @Suite("RelocatedClients", .serialized)
 struct RelocatedClientsTests {
     @Test func observerRegistrationHappyPathPostsPinnedRequestAndDecodesFullResponse() async throws {
-        let fullResponse = #"{"key":"observer-key","prefix":"captures","name":"observer-name","ingest_url":"https://journal.example/app/observer/ingest","protocol_version":1}"#
+        let fullResponse = #"{"key":"observer-key","prefix":"captures","name":"observer-name","ingest_url":"https://journal.example/app/devices/ingest","protocol_version":1}"#
         let responsePayload = try jsonObject(fullResponse)
         #expect(Set(responsePayload.keys) == ["key", "prefix", "name", "ingest_url", "protocol_version"])
         #expect(responsePayload["key"] as? String == "observer-key")
         #expect(responsePayload["prefix"] as? String == "captures")
         #expect(responsePayload["name"] as? String == "observer-name")
-        #expect(responsePayload["ingest_url"] as? String == "https://journal.example/app/observer/ingest")
+        #expect(responsePayload["ingest_url"] as? String == "https://journal.example/app/devices/ingest")
         #expect(responsePayload["protocol_version"] as? Int == 1)
 
         let (client, store, session) = makeRegistrationClient()
@@ -38,8 +38,8 @@ struct RelocatedClientsTests {
         #expect(registration.streamName == "observer-name")
 
         let request = try #require(store.snapshotRequests().first)
-        #expect(request.url?.absoluteString == "http://journal.example/app/observer/register")
-        #expect(request.url?.path == "/app/observer/register")
+        #expect(request.url?.absoluteString == "http://journal.example/app/devices/register")
+        #expect(request.url?.path == "/app/devices/register")
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")

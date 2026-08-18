@@ -17,8 +17,8 @@ struct ObserverURLProtocolIsolationTests {
             sessionB.invalidateAndCancel()
         }
 
-        let urlA = try #require(URL(string: "http://store-a.test/app/observer/ingest"))
-        let urlB = try #require(URL(string: "http://store-b.test/app/observer/ingest/segments/20260703"))
+        let urlA = try #require(URL(string: "http://store-a.test/app/devices/ingest"))
+        let urlB = try #require(URL(string: "http://store-b.test/app/devices/ingest/segments/20260703"))
 
         storeB.enqueue(statusCode: 200, body: #"{"store":"b"}"#)
 

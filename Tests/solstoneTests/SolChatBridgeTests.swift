@@ -262,7 +262,7 @@ struct SolChatBridgeTests {
         #expect(pending?.id == "req-1")
         #expect(pending?.summary == "open the journal")
         let request = store.requests.first
-        #expect(request?.url?.absoluteString == "https://example.com/app/observer/callosum")
+        #expect(request?.url?.absoluteString == "https://example.com/app/devices/callosum")
         #expect(request?.value(forHTTPHeaderField: "Authorization") == store.authorizationHeader)
     }
 
@@ -322,7 +322,7 @@ struct SolChatBridgeTests {
         let request = store.requests.first
         #expect(request?.url?.host == "127.0.0.1")
         #expect(request?.url?.port == 24681)
-        #expect(request?.url?.path == "/app/observer/callosum")
+        #expect(request?.url?.path == "/app/devices/callosum")
     }
 
     @Test func subscribeUsesResolverStaticTarget() async {
@@ -345,7 +345,7 @@ struct SolChatBridgeTests {
         let request = store.requests.first
         #expect(request?.url?.host == "journal.example")
         #expect(request?.url?.port == 9443)
-        #expect(request?.url?.path == "/app/observer/callosum")
+        #expect(request?.url?.path == "/app/devices/callosum")
     }
 
     @Test func heldResolverBacksOffWithoutCallosumRequest() async {

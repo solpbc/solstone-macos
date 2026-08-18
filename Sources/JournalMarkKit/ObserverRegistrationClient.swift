@@ -74,7 +74,7 @@ public struct ObserverRegistrationClient: Sendable {
         descriptor: ObserverRegistrationDescriptor
     ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> {
         let baseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let endpoint = "\(baseURL)/app/observer/register"
+        let endpoint = "\(baseURL)/app/devices/register"
         guard let url = URL(string: endpoint) else {
             return fail(.invalidURL, "observer registration unavailable: invalid-url \(endpoint)")
         }

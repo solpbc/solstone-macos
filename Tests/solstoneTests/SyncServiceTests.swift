@@ -31,11 +31,11 @@ struct SyncServiceTests {
         #expect(get.httpMethod == "GET")
         #expect(get.url?.host == "127.0.0.1")
         #expect(get.url?.port == 24682)
-        #expect(get.url?.path == "/app/observer/ingest/segments/\(dayString(for: segment.date))")
+        #expect(get.url?.path == "/app/devices/ingest/segments/\(dayString(for: segment.date))")
         #expect(post.httpMethod == "POST")
         #expect(post.url?.host == "127.0.0.1")
         #expect(post.url?.port == 24682)
-        #expect(post.url?.path == "/app/observer/ingest")
+        #expect(post.url?.path == "/app/devices/ingest")
     }
 
     @Test func staticResolverRoutesGetAndUploadToExternalTarget() async throws {
@@ -58,10 +58,10 @@ struct SyncServiceTests {
         let post = try #require(requests.dropFirst().first)
         #expect(get.url?.host == "journal.example")
         #expect(get.url?.port == 9443)
-        #expect(get.url?.path == "/app/observer/ingest/segments/\(dayString(for: segment.date))")
+        #expect(get.url?.path == "/app/devices/ingest/segments/\(dayString(for: segment.date))")
         #expect(post.url?.host == "journal.example")
         #expect(post.url?.port == 9443)
-        #expect(post.url?.path == "/app/observer/ingest")
+        #expect(post.url?.path == "/app/devices/ingest")
     }
 
     @Test func heldBeforeServerSegmentsMakesNoRequestAndNextURLProceeds() async throws {
@@ -91,7 +91,7 @@ struct SyncServiceTests {
 
         let requests = store.snapshotRequests()
         #expect(requests.count == 2)
-        #expect(requests.last?.url?.path == "/app/observer/ingest")
+        #expect(requests.last?.url?.path == "/app/devices/ingest")
     }
 
     @Test func sameJournalPortChangeRetriesAgainstNewLoopbackPort() async throws {
@@ -104,7 +104,7 @@ struct SyncServiceTests {
         _ = try makeSegment(root: root)
         let resolver = HomeBaseURLResolver {
             let uploads = store.snapshotRequests()
-                .filter { $0.url?.path == "/app/observer/ingest" }
+                .filter { $0.url?.path == "/app/devices/ingest" }
                 .count
             return .url(uploads == 0 ? "http://127.0.0.1:1111" : "http://127.0.0.1:2222")
         }
@@ -114,7 +114,7 @@ struct SyncServiceTests {
         await service.sync()
 
         let requests = store.snapshotRequests()
-        let uploadRequests = requests.filter { $0.url?.path == "/app/observer/ingest" }
+        let uploadRequests = requests.filter { $0.url?.path == "/app/devices/ingest" }
         #expect(uploadRequests.count == 2)
         #expect(uploadRequests.first?.url?.port == 1111)
         #expect(uploadRequests.last?.url?.port == 2222)
@@ -195,9 +195,9 @@ struct SyncServiceTests {
         await service.sync()
 
         let requests = store.snapshotRequests()
-        let uploadRequestCount = requests.filter { $0.url?.path == "/app/observer/ingest" }.count
+        let uploadRequestCount = requests.filter { $0.url?.path == "/app/devices/ingest" }.count
         let listingRequestCount = requests.filter {
-            $0.url?.path.contains("/app/observer/ingest/segments/") == true
+            $0.url?.path.contains("/app/devices/ingest/segments/") == true
         }.count
         #expect(!FileManager.default.fileExists(atPath: segment.url.path))
         #expect(uploadRequestCount == 0)
@@ -221,9 +221,9 @@ struct SyncServiceTests {
         await service.sync()
 
         let requests = store.snapshotRequests()
-        let uploadRequestCount = requests.filter { $0.url?.path == "/app/observer/ingest" }.count
+        let uploadRequestCount = requests.filter { $0.url?.path == "/app/devices/ingest" }.count
         let listingRequestCount = requests.filter {
-            $0.url?.path.contains("/app/observer/ingest/segments/") == true
+            $0.url?.path.contains("/app/devices/ingest/segments/") == true
         }.count
         #expect(FileManager.default.fileExists(atPath: segment.sentinelURL.path))
         #expect((try? Data(contentsOf: segment.sentinelURL)) == segment.sentinelBytes)
@@ -286,7 +286,7 @@ struct SyncServiceTests {
         await freshService.sync()
 
         #expect(FileManager.default.fileExists(atPath: freshSegment.url.path))
-        #expect(store.snapshotRequests().filter { $0.url?.path == "/app/observer/ingest" }.count == 1)
+        #expect(store.snapshotRequests().filter { $0.url?.path == "/app/devices/ingest" }.count == 1)
     }
 
     @Test(arguments: [401, 403, 500])
@@ -449,8 +449,8 @@ struct SyncServiceTests {
 
         let requests = store.snapshotRequests()
         #expect(FileManager.default.fileExists(atPath: segment.url.path))
-        #expect(requests.filter { $0.url?.path == "/app/observer/ingest" }.count == 1)
-        #expect(requests.filter { $0.url?.path.contains("/app/observer/ingest/segments/") == true }.count == 1)
+        #expect(requests.filter { $0.url?.path == "/app/devices/ingest" }.count == 1)
+        #expect(requests.filter { $0.url?.path.contains("/app/devices/ingest/segments/") == true }.count == 1)
     }
 
     private func assertDayQueryFailure(
