@@ -60,6 +60,7 @@ struct CaptureManagerRotationWatchdogTests {
         #expect(timeoutFailure.message == "Segment rotation timed out")
         #expect(manager.state.isError)
         #expect(manager.isRecoveryScheduled)
+        #expect(scheduler.scheduledDelays == [5])
         #expect(finalizer.enqueuedDirectories.all == [oldDir])
         #expect(try findDirs(root: root, suffix: ".failed").count == 1)
         #expect(current.finishCaptureCount.count == 1)
@@ -782,6 +783,44 @@ struct CaptureManagerRotationWatchdogTests {
         #expect(try findDirs(root: root, suffix: ".failed").count == 1)
     }
 
+    @Test func rotateSegmentThrowBeforeAssignmentDoesNotDoubleEnqueueOldSegment() async throws {
+        let root = try makeTempDirectory("capture-rotation-throw-before-assign")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "666661.incomplete")
+        let current = FakeCaptureSegment(outputDirectory: oldDir, finishBehaviors: [.normal(oldDir)])
+        let finalizer = FakeFinalizer()
+        let factoryCalls = LockedCounter()
+
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                factoryCalls.increment()
+                return FakeCaptureSegment(outputDirectory: outputDirectory)
+            },
+            finalizer: finalizer
+        )
+        manager.seedRecordingForTesting(currentSegment: current)
+
+        let outcome = await rotate(manager)
+        guard case .threw(let failure) = outcome else {
+            Issue.record("expected rotate to throw before assigning a new segment")
+            return
+        }
+        #expect(failure.message == CaptureManager.CaptureError.notInitialized.localizedDescription)
+        #expect(factoryCalls.count == 0)
+        #expect(manager.currentSegmentForTesting == nil)
+        #expect(finalizer.enqueuedDirectories.all == [oldDir])
+
+        let stopOutcome = await manager.enqueueTransition(.stop(reason: .user))
+        guard case .committed = stopOutcome else {
+            Issue.record("expected stop from error to commit")
+            return
+        }
+        #expect(finalizer.enqueuedDirectories.all == [oldDir])
+        #expect(current.finishCaptureCount.count == 1)
+    }
+
     private func makeSegmentDir(root: URL, name: String) throws -> URL {
         let dir = root.appendingPathComponent("2026-05-26", isDirectory: true)
             .appendingPathComponent(name, isDirectory: true)
@@ -796,16 +835,6 @@ struct CaptureManagerRotationWatchdogTests {
         return enumerator.compactMap { item in
             guard let url = item as? URL else { return nil }
             return url.lastPathComponent.hasSuffix(suffix) ? url : nil
-        }
-    }
-
-    private func findDirs(root: URL, prefix: String) throws -> [URL] {
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey]) else {
-            return []
-        }
-        return enumerator.compactMap { item in
-            guard let url = item as? URL else { return nil }
-            return url.lastPathComponent.hasPrefix(prefix) ? url : nil
         }
     }
 

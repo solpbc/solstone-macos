@@ -603,8 +603,8 @@ public final class CaptureManager {
         }
     }
 
-    private func reapAbandonedStart(generation: Int, abandonedDir: URL) async {
-        guard segmentStartGeneration == generation else { return }
+    private func reapAbandonedStart(generationAtSpawn: Int, abandonedDir: URL) async {
+        guard segmentStartGeneration == generationAtSpawn + 1 else { return }
         _ = await discardCurrentSegmentWithoutEnqueue(matching: abandonedDir)
         await stopPersistentAudioForDiscard()
     }
@@ -872,6 +872,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
             return .superseded
         }
 
+        let generationAtSpawn = segmentStartGeneration
         let startTask = Task { @MainActor in
             let availableMics = MicrophoneMonitor.listInputDevices()
                 .filter {
@@ -895,8 +896,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
             }
         } catch is TimeoutError {
             startTask.cancel()
-            let generation = segmentStartGeneration
-            Logger.capture.error("Segment rotation timed out after \(Int(self.rotationTimeoutSeconds), privacy: .public)s; tearing down abandoned start and arming recovery (trigger: rotation_timeout)")
+            Logger.capture.error("[Rotation] Segment rotation timed out after \(Int(self.rotationTimeoutSeconds), privacy: .public)s; tearing down abandoned start and arming recovery (trigger: rotation_timeout)")
             _ = await discardCurrentSegmentWithoutEnqueue(matching: newSegmentDir)
             currentSegment = nil
             await stopPersistentAudioForDiscard()
@@ -908,7 +908,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
             )
             Task { @MainActor [weak self] in
                 _ = await startTask.result
-                await self?.reapAbandonedStart(generation: generation, abandonedDir: newSegmentDir)
+                await self?.reapAbandonedStart(generationAtSpawn: generationAtSpawn, abandonedDir: newSegmentDir)
             }
             if let oldResult {
                 await enqueueRemix(oldResult)
@@ -917,6 +917,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         } catch {
             transitionToError("Failed to start new segment: \(error.localizedDescription)", error: error, trigger: "rotation_failed")
             Logger.capture.error("Failed to start new segment: \(error, privacy: .public)")
+            currentSegment = nil
             if let oldResult {
                 await enqueueRemix(oldResult)
             }
