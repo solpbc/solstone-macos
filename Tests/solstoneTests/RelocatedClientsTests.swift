@@ -113,6 +113,29 @@ struct RelocatedClientsTests {
         #expect(failure.kind == .decode)
     }
 
+    @Test func observerRegistrationSuccessLogMessageContainsHostnameAndStreamName() {
+        let message = ObserverRegistrationClient.successLogMessage(
+            hostname: "Davids-Mac-Studio.local",
+            streamName: "davids-mac-studio"
+        )
+        #expect(message.contains("Davids-Mac-Studio.local"))
+        #expect(message.contains("davids-mac-studio"))
+    }
+
+    @Test func observerRegistrationSuccessLogMessageDiffersByHostnameAndStreamName() {
+        let messageA = ObserverRegistrationClient.successLogMessage(
+            hostname: "Davids-Mac-Studio.local",
+            streamName: "davids-mac-studio"
+        )
+        let messageB = ObserverRegistrationClient.successLogMessage(
+            hostname: "boron.local",
+            streamName: "archon"
+        )
+        #expect(messageB.contains("boron.local"))
+        #expect(messageB.contains("archon"))
+        #expect(messageA != messageB)
+    }
+
     @Test func journalNameFetcherReturnsTrimmedName() async throws {
         let (fetcher, store, session) = makeJournalNameFetcher()
         defer { session.invalidateAndCancel() }

@@ -129,7 +129,13 @@ public struct ObserverRegistrationClient: Sendable {
             return fail(.emptyName, "observer registration response name was empty")
         }
 
+        let message = Self.successLogMessage(hostname: descriptor.hostname, streamName: streamName)
+        Logger.setup.notice("\(message, privacy: .public)")
         return .success(ObserverRegistration(key: key, streamName: streamName))
+    }
+
+    public static func successLogMessage(hostname: String, streamName: String) -> String {
+        "observer registration succeeded hostname=\(hostname) streamName=\(streamName)"
     }
 
     private func fail(
