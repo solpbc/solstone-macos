@@ -233,26 +233,31 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
     enum FinishCaptureBehavior: Sendable {
         case normal(URL?)
         case hang
+        case delayed(URL?, duration: Duration)
     }
 
     let outputDirectory: URL
     let finishBehaviors: LockedArray<FinishCaptureBehavior>
     let startBehavior: FakeSegmentStartBehavior
+    let startsPersistentSystemAudio: PersistentAudioStart
     let startGate: OneShotContinuationGate?
     let finishGate: OneShotContinuationGate?
     let startCount = LockedCounter()
     let finishCaptureCount = LockedCounter()
+    private var retainedSystemAudioCaptureManager: SystemAudioCaptureManager?
 
     init(
         outputDirectory: URL,
         finishBehaviors: [FinishCaptureBehavior] = [.normal(nil)],
         startBehavior: FakeSegmentStartBehavior = .normal,
+        startsPersistentSystemAudio: PersistentAudioStart = .no,
         startGate: OneShotContinuationGate? = nil,
         finishGate: OneShotContinuationGate? = nil
     ) {
         self.outputDirectory = outputDirectory
         self.finishBehaviors = LockedArray(finishBehaviors)
         self.startBehavior = startBehavior
+        self.startsPersistentSystemAudio = startsPersistentSystemAudio
         self.startGate = startGate
         self.finishGate = finishGate
     }
@@ -266,7 +271,18 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         systemAudioCaptureManager: SystemAudioCaptureManager?
     ) async throws {
         startCount.increment()
+        retainedSystemAudioCaptureManager = systemAudioCaptureManager
+        let startBeforeGate = startsPersistentSystemAudio == .beforeGate
+            || startsPersistentSystemAudio == .bothSides
+        let startAfterGate = startsPersistentSystemAudio == .afterGate
+            || startsPersistentSystemAudio == .bothSides
+        if startBeforeGate {
+            try await systemAudioCaptureManager?.start(filter: SCContentFilter())
+        }
         await startGate?.wait()
+        if startAfterGate {
+            try await systemAudioCaptureManager?.start(filter: SCContentFilter())
+        }
         if case .throwPartway = startBehavior {
             throw FakeCaptureError.startFailed
         }
@@ -282,18 +298,24 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
                 try? await Task.sleep(for: .milliseconds(100))
             }
             return nil
+        case .delayed(let directory, let duration):
+            try? await Task.sleep(for: duration)
+            return Self.normalResult(directory: directory ?? outputDirectory)
         case .normal(let directory):
-            let dir = directory ?? outputDirectory
-            return SegmentCaptureResult(
-                segmentDirectory: dir,
-                timePrefix: String(dir.lastPathComponent.prefix(6)),
-                capturedDurationSeconds: 1,
-                audioInputs: [],
-                debugKeepRejected: false,
-                silenceMusic: true,
-                micMetadataJSON: nil
-            )
+            return Self.normalResult(directory: directory ?? outputDirectory)
         }
+    }
+
+    private static func normalResult(directory: URL) -> SegmentCaptureResult {
+        SegmentCaptureResult(
+            segmentDirectory: directory,
+            timePrefix: String(directory.lastPathComponent.prefix(6)),
+            capturedDurationSeconds: 1,
+            audioInputs: [],
+            debugKeepRejected: false,
+            silenceMusic: true,
+            micMetadataJSON: nil
+        )
     }
 
     func updateContentFilter(_ filters: [CGDirectDisplayID: SCContentFilter]) async throws {}
@@ -306,6 +328,13 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
 enum FakeSegmentStartBehavior: Sendable {
     case normal
     case throwPartway
+}
+
+enum PersistentAudioStart: Sendable, Equatable {
+    case no
+    case beforeGate
+    case afterGate
+    case bothSides
 }
 
 final class FakeRemixer: AudioRemixing, @unchecked Sendable {

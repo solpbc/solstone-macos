@@ -15,27 +15,40 @@ struct CaptureManagerRotationWatchdogTests {
         let oldDir = try makeSegmentDir(root: root, name: "111111.incomplete")
         let current = FakeCaptureSegment(
             outputDirectory: oldDir,
-            finishBehaviors: [.hang, .normal(oldDir)]
+            finishBehaviors: [.normal(oldDir)]
         )
         let recovery = CountingRecovery()
         let coordinator = IncompleteSegmentRecoveryCoordinator(recoveryFactory: { recovery })
-        let newStartCount = LockedCounter()
+        let scheduler = FakeRecoveryScheduler()
+        let finalizer = FakeFinalizer()
+        let startGate = OneShotContinuationGate()
+        let factoryCalls = LockedCounter()
         let now = LockedValue<Date>()
         let firstNow = fixedDate(second: 0)
         now.set(firstNow)
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, timePrefix, _, _, _ in
-                let segment = FakeCaptureSegment(outputDirectory: outputDirectory)
-                segment.startCount.increment()
-                newStartCount.increment()
-                return segment
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                factoryCalls.increment()
+                if factoryCalls.count == 1 {
+                    return FakeCaptureSegment(
+                        outputDirectory: outputDirectory,
+                        startGate: startGate
+                    )
+                }
+                return FakeCaptureSegment(outputDirectory: outputDirectory)
             },
             recoveryCoordinator: coordinator,
+            finalizer: finalizer,
             rotationTimeoutSeconds: 1.0,
             now: { now.current ?? firstNow },
-            allowsEmptyDisplayConfigurationForTesting: true
+            allowsEmptyDisplayConfigurationForTesting: true,
+            streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: { delay, fire in
+                scheduler.schedule(delay: delay, fire: fire)
+            },
+            isScreenLocked: { false }
         )
         manager.seedRecordingForTesting(currentSegment: current)
 
@@ -45,18 +58,26 @@ struct CaptureManagerRotationWatchdogTests {
             return
         }
         #expect(timeoutFailure.message == "Segment rotation timed out")
+        #expect(manager.state.isError)
+        #expect(manager.isRecoveryScheduled)
+        #expect(finalizer.enqueuedDirectories.all == [oldDir])
+        #expect(try findDirs(root: root, suffix: ".failed").count == 1)
         #expect(current.finishCaptureCount.count == 1)
-        await recovery.waitForRecoverAll(1)
+        expectNoPendingRotate(manager)
 
-        now.set(fixedDate(second: 1))
         let followupOutcome = await rotate(manager)
-        guard case .committed = followupOutcome else {
-            Issue.record("expected follow-up rotate to commit")
+        guard case .dropped = followupOutcome else {
+            Issue.record("expected follow-up rotate to drop while in error")
             return
         }
+        #expect(manager.state.isError)
+        #expect(manager.isRecoveryScheduled)
 
-        #expect(current.finishCaptureCount.count == 2)
-        #expect(newStartCount.count >= 1)
+        await scheduler.fireNext()
+        #expect(manager.state.isRecording)
+        #expect(!manager.isRecoveryScheduled)
+        startGate.release()
+        await recovery.waitForRecoverAll(1)
     }
 
     @Test func rotateSegmentSupersededAfterOldFinishBailsWithoutStartingNewSegment() async throws {
@@ -119,7 +140,7 @@ struct CaptureManagerRotationWatchdogTests {
         #expect(manager.currentSegmentForTesting == nil)
         #expect(manager.state.isPaused)
         #expect(manager.lastVetoReasonForTesting == .queuedTerminalIntent)
-        #expect(manager.hasPendingRotationRetryForTesting == false)
+        expectNoPendingRotate(manager)
         #expect(manager.isSystemAudioRunningForTesting == false)
         await recovery.waitForRecoverAll(1)
         #expect(try findDirs(root: root, suffix: ".failed").count == 1)
@@ -189,7 +210,7 @@ struct CaptureManagerRotationWatchdogTests {
         #expect(manager.currentSegmentForTesting == nil)
         #expect(manager.state.isPaused)
         #expect(manager.lastVetoReasonForTesting == .queuedTerminalIntent)
-        #expect(manager.hasPendingRotationRetryForTesting == false)
+        expectNoPendingRotate(manager)
         #expect(manager.isSystemAudioRunningForTesting == false)
         await recovery.waitForRecoverAll(1)
         #expect(try findDirs(root: root, suffix: ".failed").count == 1)
@@ -260,7 +281,7 @@ struct CaptureManagerRotationWatchdogTests {
         #expect(manager.currentSegmentForTesting == nil)
         #expect(manager.state.isPaused)
         #expect(manager.lastVetoReasonForTesting == .queuedTerminalIntent)
-        #expect(manager.hasPendingRotationRetryForTesting == false)
+        expectNoPendingRotate(manager)
         await recovery.waitForRecoverAll(1)
         #expect(try findDirs(root: root, suffix: ".failed").count == 1)
     }
@@ -320,7 +341,7 @@ struct CaptureManagerRotationWatchdogTests {
         #expect(manager.state.isIdle)
         #expect(manager.currentSegmentForTesting == nil)
         #expect(!manager.hasSegmentTimerForTesting)
-        #expect(!manager.hasPendingRotationRetryForTesting)
+        expectNoPendingRotate(manager)
         #expect(finalizer.enqueuedDirectories.all.filter { $0 == oldDir }.count <= 1)
         #expect(manager.lastVetoReasonForTesting == .queuedTerminalIntent)
         await recovery.waitForRecoverAll(1)
@@ -467,6 +488,7 @@ struct CaptureManagerRotationWatchdogTests {
         let oldDir = try makeSegmentDir(root: root, name: "222222.incomplete")
         let current = FakeCaptureSegment(outputDirectory: oldDir, finishBehaviors: [.normal(oldDir)])
         let nextStartCount = LockedCounter()
+        let finalizer = FakeFinalizer()
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
@@ -479,6 +501,7 @@ struct CaptureManagerRotationWatchdogTests {
                 return segment
             },
             recoveryCoordinator: IncompleteSegmentRecoveryCoordinator(recoveryFactory: { CountingRecovery() }),
+            finalizer: finalizer,
             allowsEmptyDisplayConfigurationForTesting: true
         )
         manager.seedRecordingForTesting(currentSegment: current)
@@ -492,6 +515,7 @@ struct CaptureManagerRotationWatchdogTests {
         #expect(failure.message == FakeCaptureError.startFailed.localizedDescription)
         #expect(manager.currentSegmentForTesting == nil)
         #expect(nextStartCount.count == 1)
+        #expect(finalizer.enqueuedDirectories.all == [oldDir])
         let failedDirs = try findDirs(root: root, suffix: ".failed")
         #expect(!failedDirs.isEmpty)
     }
@@ -504,8 +528,10 @@ struct CaptureManagerRotationWatchdogTests {
         let first = FakeCaptureSegment(outputDirectory: firstDir, finishBehaviors: [.normal(firstDir)])
         let recovery = CountingRecovery()
         let coordinator = IncompleteSegmentRecoveryCoordinator(recoveryFactory: { recovery })
+        let scheduler = FakeRecoveryScheduler()
+        let finalizer = FakeFinalizer()
+        let startGate = OneShotContinuationGate()
         let factoryCalls = LockedCounter()
-        let cycle2Segment = LockedValue<FakeCaptureSegment>()
         let now = LockedValue<Date>()
         let firstNow = fixedDate(second: 0)
         now.set(firstNow)
@@ -514,17 +540,24 @@ struct CaptureManagerRotationWatchdogTests {
             storageManager: StorageManager(baseDirectory: root),
             segmentFactory: { outputDirectory, _, _, _, _ in
                 factoryCalls.increment()
-                if factoryCalls.count == 1 {
-                    let segment = FakeCaptureSegment(outputDirectory: outputDirectory, finishBehaviors: [.hang, .normal(outputDirectory)])
-                    cycle2Segment.set(segment)
-                    return segment
+                if factoryCalls.count == 2 {
+                    return FakeCaptureSegment(
+                        outputDirectory: outputDirectory,
+                        startGate: startGate
+                    )
                 }
                 return FakeCaptureSegment(outputDirectory: outputDirectory, finishBehaviors: [.normal(outputDirectory)])
             },
             recoveryCoordinator: coordinator,
+            finalizer: finalizer,
             rotationTimeoutSeconds: 1.0,
             now: { now.current ?? firstNow },
-            allowsEmptyDisplayConfigurationForTesting: true
+            allowsEmptyDisplayConfigurationForTesting: true,
+            streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: { delay, fire in
+                scheduler.schedule(delay: delay, fire: fire)
+            },
+            isScreenLocked: { false }
         )
         manager.seedRecordingForTesting(currentSegment: first)
 
@@ -533,12 +566,8 @@ struct CaptureManagerRotationWatchdogTests {
             Issue.record("expected first rotate to commit")
             return
         }
-        await RemixQueue.shared.waitForCompletion()
-        #expect(try findDirs(root: root, prefix: "333331_").count == 1)
-        let cycle2 = try #require(cycle2Segment.current)
-        let currentAfterCycle1 = try #require(manager.currentSegmentForTesting)
-        #expect(ObjectIdentifier(currentAfterCycle1) == ObjectIdentifier(cycle2))
-        let cycle2TimePrefix = String(cycle2.outputDirectory.lastPathComponent.prefix(6))
+        #expect(finalizer.enqueuedDirectories.all == [firstDir])
+        #expect(manager.state.isRecording)
 
         now.set(fixedDate(second: 1))
         let timeoutOutcome = await rotate(manager)
@@ -547,21 +576,210 @@ struct CaptureManagerRotationWatchdogTests {
             return
         }
         #expect(timeoutFailure.message == "Segment rotation timed out")
-        let currentAfterCycle2 = try #require(manager.currentSegmentForTesting)
-        #expect(ObjectIdentifier(currentAfterCycle2) == ObjectIdentifier(cycle2))
-        #expect(cycle2.finishCaptureCount.count == 1)
-        await recovery.waitForRecoverAll(1)
+        #expect(manager.state.isError)
+        #expect(manager.isRecoveryScheduled)
+        expectNoPendingRotate(manager)
 
-        now.set(fixedDate(second: 2))
-        let finalOutcome = await rotate(manager)
-        guard case .committed = finalOutcome else {
-            Issue.record("expected final rotate to commit")
+        let followupOutcome = await rotate(manager)
+        guard case .dropped = followupOutcome else {
+            Issue.record("expected follow-up rotate to drop while in error")
             return
         }
-        #expect(cycle2.finishCaptureCount.count == 2)
-        await RemixQueue.shared.waitForCompletion()
-        #expect(try findDirs(root: root, prefix: "\(cycle2TimePrefix)_").count == 1)
-        #expect(factoryCalls.count == 2)
+
+        await scheduler.fireNext()
+        #expect(manager.state.isRecording)
+        #expect(!manager.isRecoveryScheduled)
+        startGate.release()
+        await recovery.waitForRecoverAll(1)
+    }
+
+    @Test func rotateSegmentTimeoutStopsAlreadyRunningPersistentStream() async throws {
+        let root = try makeTempDirectory("capture-rotation-timeout-audio")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "555551.incomplete")
+        let current = FakeCaptureSegment(outputDirectory: oldDir, finishBehaviors: [.normal(oldDir)])
+        let startGate = OneShotContinuationGate()
+        let stream = FakeCaptureStream()
+        let streamFactory = FakeCaptureStreamFactory([stream])
+        let scheduler = FakeRecoveryScheduler()
+
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                FakeCaptureSegment(
+                    outputDirectory: outputDirectory,
+                    startsPersistentSystemAudio: .beforeGate,
+                    startGate: startGate
+                )
+            },
+            rotationTimeoutSeconds: 1.0,
+            allowsEmptyDisplayConfigurationForTesting: true,
+            streamFactory: streamFactory.factory,
+            recoveryScheduler: { delay, fire in
+                scheduler.schedule(delay: delay, fire: fire)
+            }
+        )
+        manager.seedRecordingForTesting(currentSegment: current)
+
+        let rotateTask = Task { @MainActor in
+            await rotate(manager)
+        }
+        try await waitUntil(timeout: .seconds(5)) {
+            await MainActor.run { manager.isSystemAudioRunningForTesting }
+        }
+        #expect(manager.isSystemAudioRunningForTesting)
+        #expect(stream.stopCount.count == 0)
+
+        let timeoutOutcome = await rotateTask.value
+        guard case .threw(let timeoutFailure) = timeoutOutcome else {
+            Issue.record("expected timed-out rotate to throw")
+            return
+        }
+        #expect(timeoutFailure.message == "Segment rotation timed out")
+        #expect(stream.stopCount.count == 1)
+        #expect(!manager.isSystemAudioRunningForTesting)
+        startGate.release()
+    }
+
+    @Test func rotateSegmentSlowFinishWithPromptStartCommits() async throws {
+        let root = try makeTempDirectory("capture-rotation-slow-finish")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "555552.incomplete")
+        let current = FakeCaptureSegment(
+            outputDirectory: oldDir,
+            finishBehaviors: [.delayed(oldDir, duration: .milliseconds(500))]
+        )
+        let finalizer = FakeFinalizer()
+        let scheduler = FakeRecoveryScheduler()
+
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                FakeCaptureSegment(outputDirectory: outputDirectory)
+            },
+            finalizer: finalizer,
+            rotationTimeoutSeconds: 0.2,
+            allowsEmptyDisplayConfigurationForTesting: true,
+            streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: { delay, fire in
+                scheduler.schedule(delay: delay, fire: fire)
+            }
+        )
+        manager.seedRecordingForTesting(currentSegment: current)
+
+        let outcome = await rotate(manager)
+        guard case .committed = outcome else {
+            Issue.record("expected slow finish with prompt start to commit")
+            return
+        }
+        #expect(manager.state.isRecording)
+        #expect(!manager.isRecoveryScheduled)
+        #expect(finalizer.enqueuedDirectories.all == [oldDir])
+        #expect(try findDirs(root: root, suffix: ".failed").isEmpty)
+    }
+
+    @Test func rotateSegmentTimeoutReaperStopsLatePersistentStart() async throws {
+        let root = try makeTempDirectory("capture-rotation-timeout-reaper")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "555553.incomplete")
+        let current = FakeCaptureSegment(outputDirectory: oldDir, finishBehaviors: [.normal(oldDir)])
+        let startGate = OneShotContinuationGate()
+        let firstStream = FakeCaptureStream()
+        let secondStream = FakeCaptureStream()
+        let streamFactory = FakeCaptureStreamFactory([firstStream, secondStream])
+        let scheduler = FakeRecoveryScheduler()
+
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                FakeCaptureSegment(
+                    outputDirectory: outputDirectory,
+                    startsPersistentSystemAudio: .bothSides,
+                    startGate: startGate
+                )
+            },
+            rotationTimeoutSeconds: 1.0,
+            allowsEmptyDisplayConfigurationForTesting: true,
+            streamFactory: streamFactory.factory,
+            recoveryScheduler: { delay, fire in
+                scheduler.schedule(delay: delay, fire: fire)
+            }
+        )
+        manager.seedRecordingForTesting(currentSegment: current)
+
+        let rotateTask = Task { @MainActor in
+            await rotate(manager)
+        }
+        try await waitUntil(timeout: .seconds(5)) {
+            await MainActor.run { manager.isSystemAudioRunningForTesting }
+        }
+        #expect(streamFactory.createdStreams.count == 1)
+
+        let timeoutOutcome = await rotateTask.value
+        guard case .threw = timeoutOutcome else {
+            Issue.record("expected timed-out rotate to throw")
+            return
+        }
+        #expect(manager.state.isError)
+        #expect(!manager.isSystemAudioRunningForTesting)
+        #expect(firstStream.stopCount.count == 1)
+
+        startGate.release()
+        try await waitUntil(timeout: .seconds(5)) {
+            await MainActor.run {
+                secondStream.startCount.count == 1 && !manager.isSystemAudioRunningForTesting
+            }
+        }
+        #expect(streamFactory.createdStreams.count == 2)
+        #expect(secondStream.startCount.count == 1)
+        #expect(manager.state.isError)
+        #expect(manager.currentSegmentForTesting == nil)
+        #expect(!manager.isSystemAudioRunningForTesting)
+    }
+
+    @Test func rotateSegmentThrowingStartStopsRunningPersistentStream() async throws {
+        let root = try makeTempDirectory("capture-rotation-throw-audio")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "555554.incomplete")
+        let current = FakeCaptureSegment(outputDirectory: oldDir, finishBehaviors: [.normal(oldDir)])
+        let stream = FakeCaptureStream()
+        let streamFactory = FakeCaptureStreamFactory([stream])
+        let finalizer = FakeFinalizer()
+        let scheduler = FakeRecoveryScheduler()
+
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _, _ in
+                FakeCaptureSegment(
+                    outputDirectory: outputDirectory,
+                    startBehavior: .throwPartway,
+                    startsPersistentSystemAudio: .beforeGate
+                )
+            },
+            finalizer: finalizer,
+            allowsEmptyDisplayConfigurationForTesting: true,
+            streamFactory: streamFactory.factory,
+            recoveryScheduler: { delay, fire in
+                scheduler.schedule(delay: delay, fire: fire)
+            }
+        )
+        manager.seedRecordingForTesting(currentSegment: current)
+
+        let outcome = await rotate(manager)
+        guard case .threw(let failure) = outcome else {
+            Issue.record("expected failed rotate to throw")
+            return
+        }
+        #expect(failure.message == FakeCaptureError.startFailed.localizedDescription)
+        #expect(stream.stopCount.count == 1)
+        #expect(!manager.isSystemAudioRunningForTesting)
+        #expect(manager.currentSegmentForTesting == nil)
+        #expect(finalizer.enqueuedDirectories.all == [oldDir])
+        #expect(try findDirs(root: root, suffix: ".failed").count == 1)
     }
 
     private func makeSegmentDir(root: URL, name: String) throws -> URL {
@@ -621,5 +839,17 @@ struct CaptureManagerRotationWatchdogTests {
 
     private func rotate(_ manager: CaptureManager) async -> TransitionOutcome {
         await manager.enqueueTransition(.rotate(reason: .boundary))
+    }
+
+    private func expectNoPendingRotate(_ manager: CaptureManager) {
+        #expect(
+            !manager.queuedIntentSnapshotForTesting.contains { snapshot in
+                if case .rotate = snapshot.kind { return true }
+                return false
+            }
+        )
+        if case .rotate = manager.inFlightIntentForTesting?.kind {
+            Issue.record("expected in-flight intent to not be rotate")
+        }
     }
 }

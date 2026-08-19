@@ -80,14 +80,12 @@ enum RotateReason: Sendable, Equatable {
     case boundary
     case displayChange
     case debugToggle
-    case retry
 
     var trigger: String {
         switch self {
         case .boundary: "boundary"
         case .displayChange: "displayChange"
         case .debugToggle: "debugToggle"
-        case .retry: "retry"
         }
     }
 }

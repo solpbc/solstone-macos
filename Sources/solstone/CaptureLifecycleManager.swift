@@ -100,7 +100,7 @@ final class CaptureLifecycleManager {
         )
     }
 
-    private static func liveRecoveryScheduler(
+    internal static func liveRecoveryScheduler(
         delay: TimeInterval,
         fire: @escaping @MainActor @Sendable () async -> Void
     ) -> any RecoveryTimerToken {
@@ -310,7 +310,7 @@ final class CaptureLifecycleManager {
         executor.scheduleUnlockResume()
     }
 
-    private static func defaultIsScreenLocked() -> Bool {
+    internal static func defaultIsScreenLocked() -> Bool {
         guard let dict = CGSessionCopyCurrentDictionary() as? [String: Any],
               let locked = dict["CGSSessionScreenIsLocked"] as? Bool else {
             return false

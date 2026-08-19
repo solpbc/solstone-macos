@@ -48,7 +48,15 @@ struct CaptureManagerDisplayRecoveryTests {
         #expect(!manager.state.isIdle)
         #expect(!manager.hasSegmentTimerForTesting)
         #expect(!manager.hasHeartbeatTimerForTesting)
-        #expect(!manager.hasPendingRotationRetryForTesting)
+        #expect(
+            !manager.queuedIntentSnapshotForTesting.contains { snapshot in
+                if case .rotate = snapshot.kind { return true }
+                return false
+            }
+        )
+        if case .rotate = manager.inFlightIntentForTesting?.kind {
+            Issue.record("expected in-flight intent to not be rotate")
+        }
 
         _ = await manager.enqueueTransition(.stop(reason: .user))
     }
