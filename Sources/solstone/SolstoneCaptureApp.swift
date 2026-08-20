@@ -331,12 +331,16 @@ private struct SettingsSceneRoot: View {
 /// Prefers PDF (vector, resolution-independent — renders crisp at any
 /// menu-bar density and on any Retina factor) and falls back to PNG for
 /// raster-only assets like the wordmark.
+enum SolstoneResources {
+    static var bundle: Bundle { .module }
+}
+
 func bundleImage(_ name: String, isTemplate: Bool = false) -> Image {
     let nsImage: NSImage
-    if let pdfPath = Bundle.module.path(forResource: name, ofType: "pdf", inDirectory: "Resources"),
+    if let pdfPath = SolstoneResources.bundle.path(forResource: name, ofType: "pdf", inDirectory: "Resources"),
        let img = NSImage(contentsOfFile: pdfPath) {
         nsImage = img
-    } else if let pngPath = Bundle.module.path(forResource: name, ofType: "png", inDirectory: "Resources"),
+    } else if let pngPath = SolstoneResources.bundle.path(forResource: name, ofType: "png", inDirectory: "Resources"),
               let img = NSImage(contentsOfFile: pngPath) {
         nsImage = img
     } else {

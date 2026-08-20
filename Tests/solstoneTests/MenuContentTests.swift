@@ -50,23 +50,33 @@ struct MenuContentTests {
     }
 
     @Test func menubarStatusRowIconMappingIsExhaustive() {
-        let cases: [(MenubarStatusRowState, MenubarIconState)] = [
-            (.permissions, .error),
-            (.error, .error),
-            (.starting, .offline),
-            (.journalMigrationNeeded, .offline),
-            (.connectionWaiting, .offline),
-            (.localOnly, .offline),
-            (.syncPaused, .offline),
-            (.offline, .offline),
-            (.paused, .paused),
-            (.observing, .recording),
+        let cases: [(MenubarStatusRowState, String)] = [
+            (.observing, "sol-ring-template"),
+            (.starting, "sol-ring-icon-connecting-template"),
+            (.connectionWaiting, "sol-ring-icon-connecting-template"),
+            (.paused, "sol-ring-icon-paused-template"),
+            (.syncPaused, "sol-ring-icon-paused-template"),
+            (.localOnly, "sol-ring-icon-paused-template"),
+            (.journalMigrationNeeded, "sol-ring-icon-attention-template"),
+            (.permissions, "sol-ring-icon-attention-template"),
+            (.offline, "sol-ring-icon-offline-template"),
+            (.error, "sol-ring-icon-error-template"),
         ]
 
         #expect(cases.count == MenubarStatusRowState.allCases.count)
-        for (rowState, iconState) in cases {
-            #expect(rowState.iconState.axToken == iconState.axToken)
+        for (rowState, iconName) in cases {
+            #expect(rowState.iconState.iconName == iconName)
         }
+    }
+
+    @Test func menubarStatusRowIconMappingNegativeTwins() {
+        #expect(MenubarStatusRowState.permissions.iconState.iconName == "sol-ring-icon-attention-template")
+        #expect(MenubarStatusRowState.permissions.iconState.iconName != "sol-ring-icon-error-template")
+        #expect(MenubarStatusRowState.journalMigrationNeeded.iconState.iconName != "sol-ring-icon-offline-template")
+        #expect(MenubarStatusRowState.localOnly.iconState.iconName == "sol-ring-icon-paused-template")
+        #expect(MenubarStatusRowState.syncPaused.iconState.iconName == "sol-ring-icon-paused-template")
+        #expect(MenubarStatusRowState.starting.iconState.iconName == "sol-ring-icon-connecting-template")
+        #expect(MenubarStatusRowState.connectionWaiting.iconState.iconName == "sol-ring-icon-connecting-template")
     }
 
     @Test func settingsObservationAXStateMapsFromRowState() {

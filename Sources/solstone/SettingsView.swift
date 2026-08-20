@@ -2991,35 +2991,16 @@ struct SettingsView: View {
             }
 
             GroupBox("icon states") {
-                HStack(spacing: 24) {
-                    HStack(spacing: 6) {
-                        bundleImage("sol-ring-template", isTemplate: true)
-                            .frame(width: 16, height: 16)
-                        Text(UICopy.SETTINGS_HELP_ICON_FULL)
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(MenubarIconState.helpLegend, id: \.state.axToken) { entry in
+                        HStack(spacing: 6) {
+                            bundleImage(entry.state.iconName, isTemplate: true)
+                                .frame(width: 22, height: 22)
+                            Text(entry.label)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier(entry.accessibilityIdentifier)
                     }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier(AXID.Settings.Help.iconStateRecording)
-                    HStack(spacing: 6) {
-                        bundleImage("sol-ring-icon-half-template", isTemplate: true)
-                            .frame(width: 16, height: 16)
-                        Text(UICopy.SETTINGS_HELP_ICON_HALF)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier(AXID.Settings.Help.iconStateOffline)
-                    HStack(spacing: 6) {
-                        bundleImage("sol-ring-icon-paused-template", isTemplate: true)
-                            .frame(width: 16, height: 16)
-                        Text(UICopy.SETTINGS_HELP_ICON_PAUSED)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier(AXID.Settings.Help.iconStatePaused)
-                    HStack(spacing: 6) {
-                        bundleImage("sol-ring-icon-error-template", isTemplate: true)
-                            .frame(width: 16, height: 16)
-                        Text(UICopy.SETTINGS_HELP_ICON_ERROR)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier(AXID.Settings.Help.iconStateError)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)

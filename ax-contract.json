@@ -100,6 +100,8 @@
       "menubar.status.row.state",
       "settings.help.agentInstructions",
       "settings.help.agentInstructions.copy",
+      "settings.help.iconState.attention",
+      "settings.help.iconState.connecting",
       "settings.help.iconState.error",
       "settings.help.iconState.offline",
       "settings.help.iconState.paused",
@@ -498,7 +500,9 @@
       "recording",
       "offline",
       "paused",
-      "error"
+      "error",
+      "connecting",
+      "attention"
     ],
     "MenubarStatusRowState" : [
       "permissions",

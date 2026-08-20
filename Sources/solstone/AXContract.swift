@@ -137,6 +137,8 @@ enum AXContract {
         AXID.Settings.Help.iconStateOffline,
         AXID.Settings.Help.iconStatePaused,
         AXID.Settings.Help.iconStateError,
+        AXID.Settings.Help.iconStateConnecting,
+        AXID.Settings.Help.iconStateAttention,
         AXID.Settings.Help.supportSite,
         AXID.Settings.Help.supportEmail,
         AXID.Settings.Help.versionState,

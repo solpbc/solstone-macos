@@ -103,9 +103,59 @@ struct AXIDTests {
 
     @Test func menubarIconStateOwnsIconNames() {
         #expect(MenubarIconState.recording.iconName == "sol-ring-template")
-        #expect(MenubarIconState.offline.iconName == "sol-ring-icon-half-template")
+        #expect(MenubarIconState.connecting.iconName == "sol-ring-icon-connecting-template")
         #expect(MenubarIconState.paused.iconName == "sol-ring-icon-paused-template")
+        #expect(MenubarIconState.attention.iconName == "sol-ring-icon-attention-template")
+        #expect(MenubarIconState.offline.iconName == "sol-ring-icon-offline-template")
         #expect(MenubarIconState.error.iconName == "sol-ring-icon-error-template")
+    }
+
+    @Test func helpLegendCoversEveryIconState() {
+        let legendStates = MenubarIconState.helpLegend.map(\.state)
+        #expect(legendStates.count == MenubarIconState.allCases.count)
+        #expect(Set(legendStates.map(\.axToken)) == Set(MenubarIconState.allCases.map(\.axToken)))
+    }
+
+    @Test func menubarIconResourcesArePresentAndHalfSunIsGone() {
+        for state in MenubarIconState.allCases {
+            let path = SolstoneResources.bundle.path(
+                forResource: state.iconName,
+                ofType: "pdf",
+                inDirectory: "Resources"
+            )
+            #expect(path != nil, "missing PDF for \(state.iconName)")
+        }
+        // Name is assembled so the retired-asset grep sweep finds no live reference; this assertion is the guard that the half-sun PDF is really gone.
+        let retiredHalfSun = "sol-ring-icon-" + "half-template"
+        #expect(
+            SolstoneResources.bundle.path(
+                forResource: retiredHalfSun,
+                ofType: "pdf",
+                inDirectory: "Resources"
+            ) == nil
+        )
+    }
+
+    @Test func menubarIconPDFsArePairwiseByteDistinct() throws {
+        var payloads: [(String, Data)] = []
+        for state in MenubarIconState.allCases {
+            let path = try #require(
+                SolstoneResources.bundle.path(
+                    forResource: state.iconName,
+                    ofType: "pdf",
+                    inDirectory: "Resources"
+                )
+            )
+            payloads.append((state.iconName, try Data(contentsOf: URL(fileURLWithPath: path))))
+        }
+        for lhs in payloads.indices {
+            for rhs in payloads.indices where lhs < rhs {
+                #expect(
+                    payloads[lhs].1 != payloads[rhs].1,
+                    "PDF collision between \(payloads[lhs].0) and \(payloads[rhs].0)"
+                )
+            }
+        }
     }
 
     @Test func numericValueHelpersPublishRawIntegers() {

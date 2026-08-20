@@ -1108,7 +1108,7 @@ reset-full:
 # SOURCE_DATE_EPOCH pins Cairo's PDF /CreationDate + /ID so `rsvg-convert -f pdf`
 # is byte-deterministic. Without it, every run rewrites ALL template PDFs (Cairo
 # embeds a live timestamp + a date-derived /ID), so a one-icon SVG change shows
-# all four PDFs as modified. Value is arbitrary but MUST stay constant forever.
+# all six PDFs as modified. Value is arbitrary but MUST stay constant forever.
 icons: export SOURCE_DATE_EPOCH := 1700000000
 icons: check-icons-deps
 	@echo "Generating icons from SVG sources..."
@@ -1170,15 +1170,21 @@ icons: check-icons-deps
 			-o Sources/solstone/Resources/sol-ring-template.pdf && \
 		echo "  ✓ sol-ring-template.pdf" && \
 		echo "  Rendering status bar variant icons..." && \
-		rsvg-convert -f pdf assets/sol-ring-mb-error.svg \
-			-o Sources/solstone/Resources/sol-ring-icon-error-template.pdf && \
-		echo "  ✓ sol-ring-icon-error-template.pdf" && \
+		rsvg-convert -f pdf assets/sol-ring-mb-connecting.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-connecting-template.pdf && \
+		echo "  ✓ sol-ring-icon-connecting-template.pdf" && \
 		rsvg-convert -f pdf assets/sol-ring-mb-paused.svg \
 			-o Sources/solstone/Resources/sol-ring-icon-paused-template.pdf && \
 		echo "  ✓ sol-ring-icon-paused-template.pdf" && \
-		rsvg-convert -f pdf assets/sol-ring-mb-half.svg \
-			-o Sources/solstone/Resources/sol-ring-icon-half-template.pdf && \
-	echo "  ✓ sol-ring-icon-half-template.pdf" && \
+		rsvg-convert -f pdf assets/sol-ring-mb-attention.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-attention-template.pdf && \
+		echo "  ✓ sol-ring-icon-attention-template.pdf" && \
+		rsvg-convert -f pdf assets/sol-ring-mb-offline.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-offline-template.pdf && \
+		echo "  ✓ sol-ring-icon-offline-template.pdf" && \
+		rsvg-convert -f pdf assets/sol-ring-mb-error.svg \
+			-o Sources/solstone/Resources/sol-ring-icon-error-template.pdf && \
+		echo "  ✓ sol-ring-icon-error-template.pdf" && \
 	\
 	echo "  Rendering wordmark for UI..." && \
 	rsvg-convert -w 128 -h 128 assets/sol-wordmark.svg \
