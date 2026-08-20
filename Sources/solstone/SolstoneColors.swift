@@ -12,10 +12,10 @@ internal struct SRGBAColorComponents: Equatable {
 
 internal enum SolstoneColors {
     // Canonical source: Sources/solstone/Resources/Assets.xcassets/AccentColor.colorset
-    // solOrange #E8923A is the mark accent; #B06A1A is text/link/focus ink only.
+    // solOrange #E8913A is the mark accent; #B06A1A is text/link/focus ink only.
     static let solOrangeComponents = SRGBAColorComponents(
         red: 232.0 / 255.0,
-        green: 146.0 / 255.0,
+        green: 145.0 / 255.0,
         blue: 58.0 / 255.0,
         alpha: 1.0
     )

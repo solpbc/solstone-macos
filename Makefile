@@ -213,16 +213,17 @@ generate-bundle-config: check-versions
 # Re-vendor brand SVGs from the canonical source. CI verifies the committed
 # output (it does not run brand-sync) — run this locally when the brand spec
 # updates, then commit the diff.
+# dest:source — dest names stay because callers still load them. The word mark is
+# dropped; dest sol-wordmark.svg now vendors mark.svg. half has no successor and
+# is not copied. Menubar template SVGs (sol-ring-mb-*) are a separate template
+# family, already on the ruled construction, and are not overwritten here.
+BRAND_SVGS = sol-wordmark:mark sol-wordmark-white:mark-white sol-ring:mark sol-ring-icon:mark sol-ring-icon-error:mark-error sol-ring-icon-paused:mark-paused
 brand-sync:
 	@test -n "$(BRAND_DIR)" || { echo "brand: BRAND_DIR is required — point it at your sol brand asset directory (BRAND_DIR=/path/to/brand make brand-sync)"; exit 1; }
 	@test -d "$(BRAND_DIR)" || { echo "brand: BRAND_DIR=$(BRAND_DIR) not found"; exit 1; }
-	cp "$(BRAND_DIR)/sol-wordmark.svg"          assets/sol-wordmark.svg
-	cp "$(BRAND_DIR)/sol-wordmark-white.svg"    assets/sol-wordmark-white.svg
-	cp "$(BRAND_DIR)/sol-ring.svg"              assets/sol-ring.svg
-	cp "$(BRAND_DIR)/sol-ring-icon.svg"         assets/sol-ring-icon.svg
-	cp "$(BRAND_DIR)/sol-ring-icon-error.svg"   assets/sol-ring-icon-error.svg
-	cp "$(BRAND_DIR)/sol-ring-icon-paused.svg"  assets/sol-ring-icon-paused.svg
-	cp "$(BRAND_DIR)/sol-ring-icon-half.svg"    assets/sol-ring-icon-half.svg
+	@set -e; for pair in $(BRAND_SVGS); do \
+	  cp "$(BRAND_DIR)/$${pair#*:}.svg" "assets/$${pair%%:*}.svg"; \
+	done
 	# macOS app icon uses the macOS-convention squircle source (inset rounded-rect
 	# plate on a transparent canvas — macOS does NOT auto-mask icons). iOS keeps the
 	# full-bleed cream master in solstone-swift (iOS auto-masks). Do NOT point this
@@ -230,7 +231,7 @@ brand-sync:
 	# the Dock. The unified wordmark direction (locked 2026-06-25) is ONE mark at all
 	# sizes — no per-size hand-tuned 16/32 variants; `make icons` renders icon-app.svg
 	# at every iconset size. See records/decisions/260625-cmo-sol-app-icon-unified-wordmark.md.
-	cp "$(BRAND_DIR)/app-icon/sol-app-icon-macos.svg" assets/icon-app.svg
+	cp "$(BRAND_DIR)/app-icon/app-icon-macos.svg" assets/icon-app.svg
 	@echo "brand: synced from $(BRAND_DIR)"
 
 # Build debug version

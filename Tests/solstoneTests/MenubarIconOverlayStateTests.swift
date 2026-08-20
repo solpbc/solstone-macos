@@ -77,7 +77,7 @@ struct MenubarIconOverlayStateTests {
     @Test func solOrangeComponentsMatchCanonicalHex() {
         #expect(SolstoneColors.solOrangeComponents == SRGBAColorComponents(
             red: 232.0 / 255.0,
-            green: 146.0 / 255.0,
+            green: 145.0 / 255.0,
             blue: 58.0 / 255.0,
             alpha: 1.0
         ))

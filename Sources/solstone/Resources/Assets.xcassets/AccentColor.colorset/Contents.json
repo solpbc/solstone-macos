@@ -6,7 +6,7 @@
         "components" : {
           "alpha" : "1.000",
           "blue" : "0.227",
-          "green" : "0.573",
+          "green" : "0.569",
           "red" : "0.910"
         }
       },
@@ -15,7 +15,7 @@
   ],
   "info" : {
     "author" : "xcode",
-    "comment" : "sol brand canon — solOrange #E8923A for the mark accent; orange ink #B06A1A is text/link/focus only",
+    "comment" : "sol brand canon — solOrange #E8913A for the mark accent; orange ink #B06A1A is text/link/focus only",
     "version" : 1
   }
 }
