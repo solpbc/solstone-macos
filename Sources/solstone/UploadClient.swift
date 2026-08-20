@@ -26,8 +26,6 @@ struct ServerSegmentInfo: Sendable {
 enum UploadResult: Sendable {
     case success(UploadSuccessInfo)
     case failure(Error)
-    case skipped
-    case notConfigured
 }
 
 struct UploadSuccessInfo: Sendable, Equatable {

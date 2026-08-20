@@ -136,12 +136,17 @@ enum IngestProtocolV3 {
             guard protocolVersion == 3, total >= 0, total == items.count else {
                 throw UploadError.invalidResponse
             }
-            var keys: Set<String> = []
+            var canonicalKeys: Set<String> = []
             for item in items {
-                guard !item.key.isEmpty, keys.insert(item.key).inserted else {
+                guard !item.key.isEmpty, canonicalKeys.insert(item.key).inserted else {
                     throw UploadError.invalidResponse
                 }
-                if let originalKey = item.originalKey, originalKey.isEmpty {
+            }
+
+            var allKeys = canonicalKeys
+            for item in items {
+                if let originalKey = item.originalKey,
+                   (originalKey.isEmpty || !allKeys.insert(originalKey).inserted) {
                     throw UploadError.invalidResponse
                 }
             }

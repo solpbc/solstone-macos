@@ -173,6 +173,83 @@ struct SyncServiceTests {
         )
     }
 
+    @Test func duplicateOriginalKeyFailsClosedBeforeReconciliation() async throws {
+        let date = try #require(Calendar.current.date(byAdding: .day, value: -2, to: Date()))
+        let root = try makeTempDirectory("sync-duplicate-original-key")
+        let segment = try makeSegment(root: root, date: date)
+        let day = dayString(for: segment.date)
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: segment.url.appendingPathComponent(filename))
+        let duplicateItems = segmentsDayJSON(entries: [
+            ("120001_300", "120000_300", filename, sha, 5, "present"),
+            ("120002_300", "120000_300", filename, sha, 5, "present"),
+        ])
+
+        try await assertMalformedSegmentsDayFailsClosed(
+            root: root,
+            segment: segment,
+            day: day,
+            filename: filename,
+            sha: sha,
+            malformedSegmentsDay: duplicateItems
+        )
+    }
+
+    @Test func originalKeyEqualToCanonicalKeyFailsClosedBeforeReconciliation() async throws {
+        let date = try #require(Calendar.current.date(byAdding: .day, value: -2, to: Date()))
+        let root = try makeTempDirectory("sync-original-key-canonical-key")
+        let segment = try makeSegment(root: root, date: date)
+        let day = dayString(for: segment.date)
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: segment.url.appendingPathComponent(filename))
+        let ambiguousItems = segmentsDayJSON(entries: [
+            ("120001_300", "120002_300", filename, sha, 5, "present"),
+            ("120002_300", nil, filename, sha, 5, "present"),
+        ])
+
+        try await assertMalformedSegmentsDayFailsClosed(
+            root: root,
+            segment: segment,
+            day: day,
+            filename: filename,
+            sha: sha,
+            malformedSegmentsDay: ambiguousItems
+        )
+    }
+
+    @Test func noSelectableFilesBlockDaySyncedMark() async throws {
+        resetSyncedDaysCache()
+        store.reset()
+        let date = try #require(Calendar.current.date(byAdding: .day, value: -2, to: Date()))
+        let root = try makeTempDirectory("sync-no-selectable-files")
+        let segment = try makeSegment(root: root, date: date)
+        try FileManager.default.removeItem(at: segment.url.appendingPathComponent("120000_300_audio.m4a"))
+        let day = dayString(for: segment.date)
+        store.enqueue(statusCode: 200, body: manifestJSON(day: day))
+        store.enqueue(statusCode: 200, body: manifestDayJSON(
+            day: day,
+            key: "120000_300",
+            filename: "120000_300_audio.m4a",
+            sha: "server-sha",
+            size: 5
+        ))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(
+            key: "120000_300",
+            filename: "120000_300_audio.m4a",
+            sha: "server-sha",
+            size: 5
+        ))
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24690") })
+        await configure(service, cacheRetentionDays: 0)
+
+        await service.sync()
+
+        #expect(FileManager.default.fileExists(atPath: segment.url.path))
+        #expect(store.snapshotRequests().count == 3)
+        #expect(store.snapshotRequests().contains { $0.url?.path == IngestProtocolV3.uploadPath } == false)
+        #expect(syncedDays().contains(day) == false)
+    }
+
     @Test func duplicateAliasConfirmsWithinServiceAndFreshServiceFailsClosed() async throws {
         resetSyncedDaysCache()
         store.reset()

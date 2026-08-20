@@ -34,6 +34,13 @@ enum IngestV3LiveProbe {
 
     private static var launch: Launch = .inactive
 
+    static var permitsTunnelLifecycle: Bool {
+        if case .refused = launch {
+            return false
+        }
+        return true
+    }
+
     static func configure(environment: [String: String] = ProcessInfo.processInfo.environment) -> Launch {
         guard environment[modeEnvironmentKey] == "1" else {
             launch = .inactive
@@ -52,8 +59,9 @@ enum IngestV3LiveProbe {
             return launch
         }
         let fixtureURL = URL(fileURLWithPath: fixturePath)
-        guard FileManager.default.fileExists(atPath: fixtureURL.path) else {
-            launch = .refused("refusing v3 live probe: fixture does not exist")
+        guard let values = try? fixtureURL.resourceValues(forKeys: [.isRegularFileKey]),
+              values.isRegularFile == true else {
+            launch = .refused("refusing v3 live probe: fixture must be a regular file")
             return launch
         }
         let expectedRoute: TunnelConnectionRoute
@@ -81,6 +89,18 @@ enum IngestV3LiveProbe {
         }
     }
 
+    static func startTunnelLifecycleIfPermitted(
+        appState: AppState,
+        startTunnelLifecycle: () -> Void
+    ) -> Bool {
+        guard permitsTunnelLifecycle else {
+            startIfRequested(appState: appState)
+            return false
+        }
+        startTunnelLifecycle()
+        return true
+    }
+
     private static func run(request: Request, appState: AppState) async {
         guard let route = await waitForConnectedRoute(appState: appState) else {
             report("v3 live probe refused: paired loopback did not connect within 30 seconds")
@@ -101,15 +121,9 @@ enum IngestV3LiveProbe {
             .appendingPathComponent("v3-live-probe", isDirectory: true)
             .appendingPathComponent(day, isDirectory: true)
             .appendingPathComponent(segment, isDirectory: true)
-        let stagedFixture = directory.appendingPathComponent("\(segment)_audio.m4a")
 
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            do {
-                try FileManager.default.linkItem(at: request.fixtureURL, to: stagedFixture)
-            } catch {
-                try FileManager.default.copyItem(at: request.fixtureURL, to: stagedFixture)
-            }
+            _ = try stageFixture(request.fixtureURL, in: directory, segment: segment)
             defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent().deletingLastPathComponent()) }
 
             let file = try await appState.uploadCoordinator.runLiveIngestProbe(
@@ -121,6 +135,18 @@ enum IngestV3LiveProbe {
         } catch {
             report("v3 live probe failed: \(error.localizedDescription)")
         }
+    }
+
+    static func stageFixture(_ fixtureURL: URL, in directory: URL, segment: String) throws -> URL {
+        let stagedFixture = directory.appendingPathComponent("\(segment)_audio.m4a")
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try fileManager.linkItem(at: fixtureURL, to: stagedFixture)
+        } catch {
+            try fileManager.copyItem(at: fixtureURL, to: stagedFixture)
+        }
+        return stagedFixture
     }
 
     private static func waitForConnectedRoute(appState: AppState) async -> TunnelConnectionRoute? {

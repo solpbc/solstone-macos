@@ -650,14 +650,26 @@ public final class AppState {
             await MainActor.run {
                 guard let state = target.state else { return .held }
                 let owner = state.tunnelLifecycleOwner
-                guard case .connected = owner.state,
-                      let localPort = owner.localPort,
-                      owner.cachedPairingIdentity != nil else {
-                    return .held
-                }
-                return .url("http://127.0.0.1:\(localPort)")
+                return Self.ingestBaseURL(
+                    lifecycleState: owner.state,
+                    localPort: owner.localPort,
+                    pairingIdentity: owner.cachedPairingIdentity
+                )
             }
         }
+    }
+
+    internal static func ingestBaseURL(
+        lifecycleState: TunnelLifecycleState,
+        localPort: Int?,
+        pairingIdentity: TunnelPairingIdentity?
+    ) -> ResolvedHomeBase {
+        guard case .connected = lifecycleState,
+              let localPort,
+              pairingIdentity != nil else {
+            return .held
+        }
+        return .url("http://127.0.0.1:\(localPort)")
     }
 
     internal var isPairedIngestReady: Bool {
@@ -677,6 +689,10 @@ public final class AppState {
 
     internal func resolveHomeBase() async -> ResolvedHomeBase {
         await homeBaseURLResolver.resolve()
+    }
+
+    internal func resolveIngestBase() async -> ResolvedHomeBase {
+        await ingestBaseURLResolver.resolve()
     }
 
     internal func setConfirmedMark(_ mark: JournalMark) {

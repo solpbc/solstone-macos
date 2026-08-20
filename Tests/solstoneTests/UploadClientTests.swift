@@ -212,17 +212,43 @@ struct UploadClientTests {
         }
     }
 
+    @Test func segmentsDayRequiresProtocolVersionThree() async throws {
+        for body in [
+            #"{"total":1,"items":[{"key":"120000_300","observed":true,"files":[{"name":"audio.m4a","submitted_name":"120000_300_audio.m4a","sha256":"abc","size":5,"status":"present"}]}]}"#,
+            #"{"protocol_version":2,"total":1,"items":[{"key":"120000_300","observed":true,"files":[{"name":"audio.m4a","submitted_name":"120000_300_audio.m4a","sha256":"abc","size":5,"status":"present"}]}]}"#,
+        ] {
+            store.reset()
+            store.enqueue(statusCode: 200, body: body)
+            let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
+            await #expect(throws: UploadError.self) {
+                _ = try await uploadClient.getSegmentsDay(serverURL: "http://journal.example", day: "20260703")
+            }
+        }
+    }
+
+    @Test func segmentsDayPreservesOutOfContractCustodyForFailClosedProof() async throws {
+        store.reset()
+        store.enqueue(statusCode: 200, body: #"{"protocol_version":3,"total":1,"items":[{"key":"120000_300","observed":true,"files":[{"name":"audio.m4a","submitted_name":"120000_300_audio.m4a","sha256":"abc","size":5,"status":"elsewhere"}]}]}"#)
+        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
+
+        let response = try await uploadClient.getSegmentsDay(serverURL: "http://journal.example", day: "20260703")
+
+        #expect(response.items.first?.files.first?.status == .outOfContract("elsewhere"))
+    }
+
     @Test func multipartBuilderMakesEnvelopeCorrespondToFileParts() throws {
         let root = try makeTempDirectory("v3-upload-builder")
         defer { try? FileManager.default.removeItem(at: root) }
-        let file = root.appendingPathComponent("120000_300_audio.m4a")
-        try Data("audio".utf8).write(to: file)
+        let audio = root.appendingPathComponent("120000_300_audio.m4a")
+        let video = root.appendingPathComponent("120000_300_screen.mp4")
+        try Data("audio".utf8).write(to: audio)
+        try Data("video".utf8).write(to: video)
         let bodyURL = root.appendingPathComponent("body.tmp")
         let prepared = try IngestV3UploadRequestBuilder.build(
             baseURL: "http://journal.example",
             day: "20260703",
             segment: "120000_300",
-            selectedFiles: [file],
+            selectedFiles: [audio, video],
             meta: ["source": .string("probe")],
             boundary: "fixed-boundary",
             bodyURL: bodyURL
@@ -234,8 +260,11 @@ struct UploadClientTests {
         #expect(body.contains("name=\"envelope\""))
         #expect(body.contains("\"day\":\"20260703\""))
         #expect(body.contains("\"segment\":\"120000_300\""))
-        #expect(body.contains("\"submitted\":\"120000_300_audio.m4a\""))
-        #expect(body.contains("name=\"files\"; filename=\"120000_300_audio.m4a\""))
+        for filename in [audio.lastPathComponent, video.lastPathComponent] {
+            #expect(body.contains("\"submitted\":\"\(filename)\""))
+            #expect(body.contains("name=\"files\"; filename=\"\(filename)\""))
+        }
+        #expect(body.components(separatedBy: "name=\"files\"; filename=").count == 3)
         #expect(!body.contains("name=\"platform\""))
     }
 
@@ -245,7 +274,7 @@ struct UploadClientTests {
         let duplicate = try await uploadResult(body: #"{"status":"duplicate","existing_segment":"115959_300"}"#)
         #expect(duplicate == UploadSuccessInfo(status: .duplicate, storedSegmentKey: "115959_300"))
 
-        for body in ["", "not-json", #"{"status":"failed","error":"no"}"#, #"{"status":"conflict","error":"no"}"#, #"{"status":"ok"}"#] {
+        for body in ["", "not-json", #"{"status":"failed","error":"no"}"#, #"{"status":"conflict","error":"no"}"#, #"{"status":"unknown","segment":"120000_300"}"#, #"{"status":"ok"}"#] {
             let result = try await uploadRawResult(body: body)
             guard case .failure = result else {
                 Issue.record("Expected failed v3 upload body")

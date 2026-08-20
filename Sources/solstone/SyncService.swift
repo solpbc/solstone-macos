@@ -406,10 +406,10 @@ public actor SyncService {
         filesToUpload: [URL],
         serverSegment: ServerSegmentInfo?
     ) -> Bool {
-        // No local files cannot earn a synced-day or cleanup decision without a
-        // matching server segment. It is retained until a future reconciliation.
+        // No local files cannot earn a synced-day or cleanup decision. Retain
+        // the segment until a future reconciliation can establish a file proof.
         guard !filesToUpload.isEmpty else {
-            return serverSegment == nil
+            return true
         }
 
         guard let localFilesByFilename = localFilesByFilename(for: filesToUpload) else {
@@ -527,9 +527,6 @@ public actor SyncService {
                 }
                 progressContinuation.yield(.uploadSucceeded(segment: segment))
                 return .succeeded
-            case .skipped:
-                progressContinuation.yield(.uploadSucceeded(segment: segment))
-                return .succeeded
             case .failure(let error):
                 let healthReason = observerHealthFailureReason(from: error)
                 Logger.upload.info("Attempt \(attempts, privacy: .public) failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
@@ -553,13 +550,6 @@ public actor SyncService {
 
                 Logger.upload.info("Retrying in \(Int(delay), privacy: .public)s...")
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            case .notConfigured:
-                progressContinuation.yield(.uploadFailed(
-                    segment: segment,
-                    error: "Not configured",
-                    healthReason: .notConfigured
-                ))
-                return .failed(error: "Not configured", healthReason: .notConfigured)
             }
         }
         return .failed(error: "retry exhausted", healthReason: .uploadFailed)

@@ -123,9 +123,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             state.reevaluateActivationPolicy(debounced: false)
-            state.startTunnelLifecycleOwner()
 #if DEBUG
+            guard IngestV3LiveProbe.startTunnelLifecycleIfPermitted(
+                appState: state,
+                startTunnelLifecycle: { state.startTunnelLifecycleOwner() }
+            ) else {
+                NSApp.terminate(nil)
+                return
+            }
             IngestV3LiveProbe.startIfRequested(appState: state)
+#else
+            state.startTunnelLifecycleOwner()
 #endif
         } else {
             Logger.general.error("AppState.shared nil in applicationDidFinishLaunching")
