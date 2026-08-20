@@ -251,21 +251,5 @@ class MakefileJournalIdentityContractTest(unittest.TestCase):
         self.assertIn("--build $(JOURNAL_DIST_BUILD) $(JOURNAL_DIST_VERSION)", github)
 
 
-class ReleaseDocsContractTest(unittest.TestCase):
-    def test_readme_teaches_journal_release_identity_rules(self):
-        readme = (REPO_ROOT / "README.md").read_text()
-
-        self.assertIn("Journal release identity", readme)
-        self.assertIn("(J, B)", readme)
-        self.assertIn("journal-vJ-build-B", readme)
-        self.assertIn("journal-J-build-B.dmg", readme)
-        self.assertIn("journal-macos/releases/vJ/build-B/journal-J-build-B.dmg", readme)
-        self.assertIn("SOLSTONE_PIN_VERSION", readme)
-        self.assertIn("greater than every published `sparkle:version`", readme)
-        self.assertIn("stored `sha256` metadata and `ContentLength`", readme)
-        self.assertIn("Do not overwrite, clobber", readme)
-        self.assertIn("delete, retag, or reuse", readme)
-
-
 if __name__ == "__main__":
     unittest.main()

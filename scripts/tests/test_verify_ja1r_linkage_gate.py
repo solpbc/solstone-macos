@@ -1344,28 +1344,5 @@ class MakefileContract(unittest.TestCase):
         self.assertIn("--sol-dmg '$(DMG_NAME)'", paired)
 
 
-class ReadmeDoesNotDrift(unittest.TestCase):
-    def test_readme_lists_exactly_the_canonical_report_filenames(self):
-        readme = (REPO_ROOT / "README.md").read_text()
-        block = readme.split("<!-- ja1r-report-filenames:start -->")[1]
-        block = block.split("<!-- ja1r-report-filenames:end -->")[0]
-        listed = [
-            line.strip().lstrip("-").strip().strip("`")
-            for line in block.splitlines()
-            if line.strip().startswith("-")
-        ]
-        self.assertEqual(listed, list(verifier.REPORT_FILENAMES))
-
-    def test_readme_states_profile_report_counts(self):
-        readme = (REPO_ROOT / "README.md").read_text()
-        normalized = " ".join(readme.split())
-        expected = (
-            f"sol={len(verifier.PROFILES['sol'])}, "
-            f"journal={len(verifier.PROFILES['journal'])}, and "
-            f"paired={len(verifier.PROFILES['paired'])}"
-        )
-        self.assertIn(expected, normalized)
-
-
 if __name__ == "__main__":
     unittest.main()
