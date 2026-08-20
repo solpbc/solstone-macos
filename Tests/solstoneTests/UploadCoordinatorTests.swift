@@ -290,30 +290,28 @@ struct UploadCoordinatorTests {
         let sha = try #require(UploadClient().sha256(
             of: segment.url.appendingPathComponent("\(segment.url.lastPathComponent)_audio.m4a")
         ))
-        store.enqueue(
-            statusCode: 200,
-            body: listingJSON(
-                key: segment.url.lastPathComponent,
-                submittedName: "\(segment.url.lastPathComponent)_audio.m4a",
-                sha: sha
-            )
-        )
+        let day = dayString(for: segment.date)
+        let filename = "\(segment.url.lastPathComponent)_audio.m4a"
+        store.enqueue(statusCode: 200, body: #"{"days":{"\#(day)":{"segments":1}}}"#)
+        store.enqueue(statusCode: 200, body: #"{"version":1,"day":"\#(day)","segments":{"\#(segment.url.lastPathComponent)":{"files":[{"name":"audio.m4a","submitted_name":"\#(filename)","sha256":"\#(sha)","size":5,"status":"present"}]}}}"#)
+        store.enqueue(statusCode: 200, body: #"{"protocol_version":3,"total":1,"items":[{"key":"\#(segment.url.lastPathComponent)","observed":true,"files":[{"name":"audio.m4a","submitted_name":"\#(filename)","sha256":"\#(sha)","size":5,"status":"present"}]}]}"#)
         let coordinator = UploadCoordinator(
             storageManager: StorageManager(baseDirectory: root),
             config: AppConfig(serverURL: "https://configured.example", serverKey: "secret"),
             client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
-            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24692") }
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24692") },
+            pairedIngestIdentity: TunnelPairingIdentity(instanceID: "instance", fingerprint: "fingerprint")
         )
 
         let syncTask = Task {
             await coordinator.syncOnStartup()
         }
-        await store.waitForRequestCount(1)
+        await store.waitForRequestCount(3)
         await syncTask.value
 
         let request = try #require(store.snapshotRequests().first)
         #expect(request.httpMethod == "GET")
-        #expect(request.url?.path == "/app/devices/ingest/segments/\(dayString(for: segment.date))")
+        #expect(request.url?.path == IngestProtocolV3.manifestPath)
     }
 
     private func makeSegment(
@@ -327,10 +325,6 @@ struct UploadCoordinatorTests {
         let audioURL = segmentURL.appendingPathComponent("\(segmentName)_audio.m4a")
         try Data("audio".utf8).write(to: audioURL)
         return (segmentURL, date)
-    }
-
-    private func listingJSON(key: String, submittedName: String, sha: String) -> String {
-        #"[{"key":"\#(key)","files":[{"name":"audio.m4a","size":5,"submitted_name":"\#(submittedName)","sha256":"\#(sha)","status":"present"}]}]"#
     }
 
     private func dateFolderString(for date: Date) -> String {

@@ -23,15 +23,15 @@ struct ServerSegmentProofTests {
                     submittedName: "120000_300_display_1_screen.mp4",
                     sha256: "bbb",
                     size: 3,
-                    status: .unknown
+                    status: .outOfContract("relocated")
                 ),
             ]
         )
 
         let verdict = proveServerHoldsUploadFiles(
-            localSHAByFilename: [
-                "120000_300_audio.m4a": "aaa",
-                "120000_300_display_1_screen.mp4": "bbb",
+            localFilesByFilename: [
+                "120000_300_audio.m4a": LocalUploadFileProof(sha256: "aaa", size: 3),
+                "120000_300_display_1_screen.mp4": LocalUploadFileProof(sha256: "bbb", size: 3),
             ],
             serverSegment: segment
         )
@@ -55,7 +55,7 @@ struct ServerSegmentProofTests {
         )
 
         let verdict = proveServerHoldsUploadFiles(
-            localSHAByFilename: ["120000_300_audio.m4a": "local-sha"],
+            localFilesByFilename: ["120000_300_audio.m4a": LocalUploadFileProof(sha256: "local-sha", size: 3)],
             serverSegment: segment
         )
 
@@ -86,9 +86,9 @@ struct ServerSegmentProofTests {
         )
 
         let verdict = proveServerHoldsUploadFiles(
-            localSHAByFilename: [
-                "120000_300_display_1_screen.mp4": "video-sha",
-                "120000_300_audio.m4a": "audio-sha",
+            localFilesByFilename: [
+                "120000_300_display_1_screen.mp4": LocalUploadFileProof(sha256: "video-sha", size: 3),
+                "120000_300_audio.m4a": LocalUploadFileProof(sha256: "audio-sha", size: 3),
             ],
             serverSegment: segment
         )
@@ -97,7 +97,7 @@ struct ServerSegmentProofTests {
     }
 
     @Test func adversarialListingsAreNotHeld() {
-        #expect(!proveServerHoldsUploadFiles(localSHAByFilename: [:], serverSegment: nil).isHeld)
+        #expect(!proveServerHoldsUploadFiles(localFilesByFilename: [:], serverSegment: nil).isHeld)
 
         let crossed = ServerSegmentInfo(
             key: "120000_300",
@@ -108,7 +108,10 @@ struct ServerSegmentProofTests {
             ]
         )
         #expect(!proveServerHoldsUploadFiles(
-            localSHAByFilename: ["a.mp4": "aaa", "b.m4a": "bbb"],
+            localFilesByFilename: [
+                "a.mp4": LocalUploadFileProof(sha256: "aaa", size: 3),
+                "b.m4a": LocalUploadFileProof(sha256: "bbb", size: 3),
+            ],
             serverSegment: crossed
         ).isHeld)
 
@@ -119,7 +122,7 @@ struct ServerSegmentProofTests {
                 ServerFileInfo(name: "a.mp4", submittedName: "a.mp4", sha256: "", size: 3, status: .present),
             ]
         )
-        #expect(!proveServerHoldsUploadFiles(localSHAByFilename: ["a.mp4": "aaa"], serverSegment: emptySHA).isHeld)
+        #expect(!proveServerHoldsUploadFiles(localFilesByFilename: ["a.mp4": LocalUploadFileProof(sha256: "aaa", size: 3)], serverSegment: emptySHA).isHeld)
 
         let missingStatus = ServerSegmentInfo(
             key: "120000_300",
@@ -128,22 +131,22 @@ struct ServerSegmentProofTests {
                 ServerFileInfo(name: "a.mp4", submittedName: "a.mp4", sha256: "aaa", size: 3, status: .missing),
             ]
         )
-        #expect(!proveServerHoldsUploadFiles(localSHAByFilename: ["a.mp4": "aaa"], serverSegment: missingStatus).isHeld)
+        #expect(!proveServerHoldsUploadFiles(localFilesByFilename: ["a.mp4": LocalUploadFileProof(sha256: "aaa", size: 3)], serverSegment: missingStatus).isHeld)
 
         let unknownStatus = ServerSegmentInfo(
             key: "120000_300",
             originalKey: nil,
             files: [
-                ServerFileInfo(name: "a.mp4", submittedName: "a.mp4", sha256: "aaa", size: 3, status: .unknown),
+                ServerFileInfo(name: "a.mp4", submittedName: "a.mp4", sha256: "aaa", size: 3, status: .outOfContract("unknown")),
             ]
         )
-        #expect(!proveServerHoldsUploadFiles(localSHAByFilename: ["a.mp4": "aaa"], serverSegment: unknownStatus).isHeld)
+        #expect(!proveServerHoldsUploadFiles(localFilesByFilename: ["a.mp4": LocalUploadFileProof(sha256: "aaa", size: 3)], serverSegment: unknownStatus).isHeld)
     }
 
     @Test func emptyLocalFileSetIsNotHeld() {
         let segment = ServerSegmentInfo(key: "120000_300", originalKey: nil, files: [])
 
-        let verdict = proveServerHoldsUploadFiles(localSHAByFilename: [:], serverSegment: segment)
+        let verdict = proveServerHoldsUploadFiles(localFilesByFilename: [:], serverSegment: segment)
 
         #expect(!verdict.isHeld)
     }

@@ -190,6 +190,14 @@ struct MenuContentTests {
         #expect(classified(isPaused: true, serviceMode: .bundled) == .journalMigrationNeeded)
     }
 
+    @Test func pairedKeylessClientIsNotPresentedAsLocalOnly() {
+        #expect(classified(
+            isUploadConfigured: false,
+            isPairedIngestReady: true,
+            uploadStatus: .syncing(checked: 0, total: 1)
+        ) == .observing)
+    }
+
     @Test func pausedHeaderShowsAutoResumeCountdown() {
         #expect(pausedHeaderText(timeRemaining: "8 mins") == "paused, 8 min left")
         #expect(pausedHeaderText(timeRemaining: "1 min") == "paused, 1 min left")
@@ -361,6 +369,7 @@ private func classified(
     serviceMode: ServiceMode? = .external,
     syncPaused: Bool = false,
     isUploadConfigured: Bool = true,
+    isPairedIngestReady: Bool = false,
     uploadStatus: UploadCoordinator.Status = .synced
 ) -> MenubarStatusRowState {
     classifyObservationRowState(
@@ -372,6 +381,7 @@ private func classified(
         serviceMode: serviceMode,
         syncPaused: syncPaused,
         isUploadConfigured: isUploadConfigured,
+        isPairedIngestReady: isPairedIngestReady,
         uploadStatus: uploadStatus
     )
 }

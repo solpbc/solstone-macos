@@ -13,21 +13,6 @@ struct UploadClientTests {
     private let client = UploadClient()
     private let localAddressMessage = "can't reach your journal at this address. check that it's running and reachable."
 
-    @Test func stripSegmentPrefixMatchesAndStrips() {
-        let result = client.stripSegmentPrefix("143022_300_audio.m4a", segment: "143022_300")
-        #expect(result == "audio.m4a")
-    }
-
-    @Test func stripSegmentPrefixNoMatchPassesThrough() {
-        let result = client.stripSegmentPrefix("other_file.m4a", segment: "143022_300")
-        #expect(result == "other_file.m4a")
-    }
-
-    @Test func stripSegmentPrefixHandlesMultiComponentSegment() {
-        let result = client.stripSegmentPrefix("143022_300_display_1_screen.mp4", segment: "143022_300")
-        #expect(result == "display_1_screen.mp4")
-    }
-
     @Test func isLocalNetworkHostRecognizesHostnameForms() {
         #expect(UploadClient.isLocalNetworkHost("nas.local"))
         #expect(UploadClient.isLocalNetworkHost("NAS.LOCAL."))
@@ -206,191 +191,80 @@ struct UploadClientTests {
         #expect(payload["last_error_reason"] == nil)
     }
 
-    @Test(arguments: [401, 403, 500])
-    func getServerSegmentsThrowsServerErrorForHTTPFailure(statusCode: Int) async throws {
+    @Test func manifestReadUsesProtocolHeaderWithoutBearer() async throws {
         store.reset()
-        store.enqueue(statusCode: statusCode, body: #"{"error":"sensitive"}"#)
+        store.enqueue(statusCode: 200, body: #"{"days":{}}"#)
         let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
+        let manifest = try await uploadClient.getManifest(serverURL: "http://journal.example")
+        #expect(manifest.days.isEmpty)
+        let request = try #require(store.snapshotRequests().first)
+        #expect(request.url?.path == IngestProtocolV3.manifestPath)
+        #expect(request.value(forHTTPHeaderField: IngestProtocolV3.headerName) == "3")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+    }
 
-        do {
-            _ = try await uploadClient.getServerSegments(
-                serverURL: "http://journal.example",
-                serverKey: "secret",
-                day: "20260703"
-            )
-            Issue.record("Expected UploadError.serverError")
-        } catch let error as UploadError {
-            guard case .serverError(let actualStatusCode, let message) = error else {
-                Issue.record("Expected UploadError.serverError, got \(error)")
-                return
-            }
-            #expect(actualStatusCode == statusCode)
-            #expect(message == "segment listing")
-        } catch {
-            Issue.record("Expected UploadError.serverError, got \(error)")
+    @Test func malformedV3ReadFailsWholeResponse() async throws {
+        store.reset()
+        store.enqueue(statusCode: 200, body: #"{"protocol_version":3,"total":1,"items":[{"key":"120000_300"}]}"#)
+        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
+        await #expect(throws: UploadError.self) {
+            _ = try await uploadClient.getSegmentsDay(serverURL: "http://journal.example", day: "20260703")
         }
     }
 
-    @Test(arguments: ["{}", "not json"])
-    func getServerSegmentsThrowsInvalidResponseForMalformedSuccessBody(body: String) async throws {
-        store.reset()
-        store.enqueue(statusCode: 200, body: body)
-        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
-
-        do {
-            _ = try await uploadClient.getServerSegments(
-                serverURL: "http://journal.example",
-                serverKey: "secret",
-                day: "20260703"
-            )
-            Issue.record("Expected UploadError.invalidResponse")
-        } catch let error as UploadError {
-            guard case .invalidResponse = error else {
-                Issue.record("Expected UploadError.invalidResponse, got \(error)")
-                return
-            }
-        } catch {
-            Issue.record("Expected UploadError.invalidResponse, got \(error)")
-        }
+    @Test func multipartBuilderMakesEnvelopeCorrespondToFileParts() throws {
+        let root = try makeTempDirectory("v3-upload-builder")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("120000_300_audio.m4a")
+        try Data("audio".utf8).write(to: file)
+        let bodyURL = root.appendingPathComponent("body.tmp")
+        let prepared = try IngestV3UploadRequestBuilder.build(
+            baseURL: "http://journal.example",
+            day: "20260703",
+            segment: "120000_300",
+            selectedFiles: [file],
+            meta: ["source": .string("probe")],
+            boundary: "fixed-boundary",
+            bodyURL: bodyURL
+        )
+        let body = try String(contentsOf: bodyURL)
+        #expect(prepared.request.url?.path == IngestProtocolV3.uploadPath)
+        #expect(prepared.request.value(forHTTPHeaderField: IngestProtocolV3.headerName) == "3")
+        #expect(prepared.request.value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(body.contains("name=\"envelope\""))
+        #expect(body.contains("\"day\":\"20260703\""))
+        #expect(body.contains("\"segment\":\"120000_300\""))
+        #expect(body.contains("\"submitted\":\"120000_300_audio.m4a\""))
+        #expect(body.contains("name=\"files\"; filename=\"120000_300_audio.m4a\""))
+        #expect(!body.contains("name=\"platform\""))
     }
 
-    @Test func getServerSegmentsReturnsEmptyArrayForEmptyDay() async throws {
-        store.reset()
-        store.enqueue(statusCode: 200, body: "[]")
-        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
-
-        let segments = try await uploadClient.getServerSegments(
-            serverURL: "http://journal.example",
-            serverKey: "secret",
-            day: "20260703"
-        )
-
-        #expect(segments.isEmpty)
-    }
-
-    @Test func getServerSegmentsParsesValidListing() async throws {
-        store.reset()
-        store.enqueue(statusCode: 200, body: #"""
-        [{
-          "key": "120000_300-1",
-          "original_key": "120000_300",
-          "files": [{
-            "name": "audio.m4a",
-            "submitted_name": "120000_300_audio.m4a",
-            "sha256": "abc123",
-            "size": 5,
-            "status": "relocated",
-            "current_path": "segments/audio.m4a"
-          }]
-        }]
-        """#)
-        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
-
-        let segments = try await uploadClient.getServerSegments(
-            serverURL: "http://journal.example",
-            serverKey: "secret",
-            day: "20260703"
-        )
-
-        let segment = try #require(segments.first)
-        #expect(segments.count == 1)
-        #expect(segment.key == "120000_300-1")
-        #expect(segment.originalKey == "120000_300")
-        let file = try #require(segment.files.first)
-        #expect(segment.files.count == 1)
-        #expect(file.name == "audio.m4a")
-        #expect(file.submittedName == "120000_300_audio.m4a")
-        #expect(file.sha256 == "abc123")
-        #expect(file.size == 5)
-        #expect(file.status == .unknown)
-    }
-
-    @Test func getServerSegmentsDecodedTerminalStatusCanProveHeld() async throws {
-        store.reset()
-        store.enqueue(statusCode: 200, body: #"""
-        [{
-          "key": "120000_300",
-          "original_key": null,
-          "files": [{
-            "name": "audio.m4a",
-            "submitted_name": "120000_300_audio.m4a",
-            "sha256": "abc123",
-            "size": 5,
-            "status": "processed"
-          }]
-        }]
-        """#)
-        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
-
-        let segments = try await uploadClient.getServerSegments(
-            serverURL: "http://journal.example",
-            serverKey: "secret",
-            day: "20260703"
-        )
-
-        let segment = try #require(segments.first)
-        let verdict = proveServerHoldsUploadFiles(
-            localSHAByFilename: ["120000_300_audio.m4a": "abc123"],
-            serverSegment: segment
-        )
-        #expect(verdict.isHeld == true)
-    }
-
-    @Test func getServerSegmentsDropsMalformedElementsInsideValidArray() async throws {
-        store.reset()
-        store.enqueue(statusCode: 200, body: #"""
-        [
-          {"files": []},
-          {"key": "120000_300", "files": [{"name": "audio.m4a", "size": 5}]}
-        ]
-        """#)
-        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
-
-        let segments = try await uploadClient.getServerSegments(
-            serverURL: "http://journal.example",
-            serverKey: "secret",
-            day: "20260703"
-        )
-
-        let segment = try #require(segments.first)
-        #expect(segments.count == 1)
-        #expect(segment.key == "120000_300")
-        #expect(segment.files.count == 1)
-    }
-
-    @Test func uploadSegmentParsesSuccessfulIngestBodies() async throws {
-        let ok = try await uploadResult(body: #"{"status":"ok","segment":{"key":"120000_300"}}"#)
+    @Test func uploadAcceptsOnlyDocumentedSuccessBodies() async throws {
+        let ok = try await uploadResult(body: #"{"status":"ok","segment":"120000_300"}"#)
         #expect(ok == UploadSuccessInfo(status: .ok, storedSegmentKey: "120000_300"))
-
-        let collision = try await uploadResult(body: #"{"status":"collision","segment":{"key":"120000_300-1"}}"#)
-        #expect(collision == UploadSuccessInfo(status: .collision, storedSegmentKey: "120000_300-1"))
-
-        let duplicate = try await uploadResult(body: #"{"status":"duplicate","existing_segment":{"key":"115959_300"}}"#)
+        let duplicate = try await uploadResult(body: #"{"status":"duplicate","existing_segment":"115959_300"}"#)
         #expect(duplicate == UploadSuccessInfo(status: .duplicate, storedSegmentKey: "115959_300"))
 
-        let duplicateString = try await uploadResult(body: #"{"status":"duplicate","existing_segment":"115959_300"}"#)
-        #expect(duplicateString == UploadSuccessInfo(status: .duplicate, storedSegmentKey: "115959_300"))
-
-        let empty = try await uploadResult(body: "")
-        #expect(empty == UploadSuccessInfo(status: .ok, storedSegmentKey: nil))
-
-        let garbage = try await uploadResult(body: "not-json")
-        #expect(garbage == UploadSuccessInfo(status: .ok, storedSegmentKey: nil))
-
-        let noStatus = try await uploadResult(body: #"{"segment":{"key":"ignored"}}"#)
-        #expect(noStatus == UploadSuccessInfo(status: .ok, storedSegmentKey: nil))
-
-        let okMissingSegment = try await uploadResult(body: #"{"status":"ok"}"#)
-        #expect(okMissingSegment == UploadSuccessInfo(status: .ok, storedSegmentKey: nil))
-
-        let duplicateMissingExistingSegment = try await uploadResult(body: #"{"status":"duplicate"}"#)
-        #expect(duplicateMissingExistingSegment == UploadSuccessInfo(status: .duplicate, storedSegmentKey: nil))
-
-        let unknownMissingSegment = try await uploadResult(body: #"{"status":"surprise"}"#)
-        #expect(unknownMissingSegment == UploadSuccessInfo(status: .unknown("surprise"), storedSegmentKey: nil))
+        for body in ["", "not-json", #"{"status":"failed","error":"no"}"#, #"{"status":"conflict","error":"no"}"#, #"{"status":"ok"}"#] {
+            let result = try await uploadRawResult(body: body)
+            guard case .failure = result else {
+                Issue.record("Expected failed v3 upload body")
+                continue
+            }
+        }
     }
 
     private func uploadResult(body: String) async throws -> UploadSuccessInfo {
+        let result = try await uploadRawResult(body: body)
+
+        guard case .success(let info) = result else {
+            Issue.record("Expected successful upload result")
+            throw UploadClientTestError.unexpectedResult
+        }
+        return info
+    }
+
+    private func uploadRawResult(body: String) async throws -> UploadResult {
         UploadClientURLProtocol.store.reset()
         UploadClientURLProtocol.store.enqueue(statusCode: 200, body: body)
         let uploadClient = UploadClient(sessionConfiguration: uploadClientURLProtocolConfiguration())
@@ -401,18 +275,12 @@ struct UploadClientTests {
 
         let result = await uploadClient.uploadSegment(
             serverURL: "http://journal.example",
-            serverKey: "secret",
-            segmentURL: root,
             day: "20260703",
             segment: "120000_300",
-            mediaFiles: [file]
+            mediaFiles: [file],
+            metadata: nil
         )
-
-        guard case .success(let info) = result else {
-            Issue.record("Expected successful upload result")
-            throw UploadClientTestError.unexpectedResult
-        }
-        return info
+        return result
     }
 }
 

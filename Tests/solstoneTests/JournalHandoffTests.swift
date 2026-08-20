@@ -348,17 +348,11 @@ struct JournalHandoffTests {
     @Test func migrationWriterOverwritesDiscoveryProvenanceHandoff() async throws {
         let world = installedWorld()
         world.initProbe.replies = [.result(.incomplete), .result(.complete)]
-        var inserted = false
-        world.connectionTester.onCall = {
-            if !inserted {
-                inserted = true
-                try? writeHandoff(
-                    at: world.dependencies.handoffFileURL,
-                    journalRootPath: "/leftover-discovery",
-                    provenance: JournalHandoffProvenance.observerDiscovery
-                )
-            }
-        }
+        try writeHandoff(
+            at: world.dependencies.handoffFileURL,
+            journalRootPath: "/leftover-discovery",
+            provenance: JournalHandoffProvenance.observerDiscovery
+        )
 
         let result = await world.run()
         let handoff = try readHandoff(at: world.dependencies.handoffFileURL)
@@ -391,17 +385,11 @@ struct JournalHandoffTests {
     @Test func migrationWriterKeepsExistingMigrationProvenanceHandoff() async throws {
         let world = installedWorld()
         world.initProbe.replies = [.result(.incomplete), .result(.complete)]
-        var inserted = false
-        world.connectionTester.onCall = {
-            if !inserted {
-                inserted = true
-                try? writeHandoff(
-                    at: world.dependencies.handoffFileURL,
-                    journalRootPath: "/existing-migration",
-                    provenance: JournalHandoffProvenance.bundledMigration
-                )
-            }
-        }
+        try writeHandoff(
+            at: world.dependencies.handoffFileURL,
+            journalRootPath: "/existing-migration",
+            provenance: JournalHandoffProvenance.bundledMigration
+        )
 
         let result = await world.run()
         let handoff = try readHandoff(at: world.dependencies.handoffFileURL)
@@ -829,8 +817,7 @@ struct JournalHandoffTests {
             installedTrusted: true,
             running: false,
             existingHandoff: .none,
-            setupComplete: true,
-            storedKeyAuthValid: false
+            setupComplete: true
         )) == .authGate)
     }
 
@@ -1228,11 +1215,11 @@ private final class FakeInitProbe: InitProbe {
 @MainActor
 private final class FakeConnectionTester: ConnectionTester {
     var failure: String?
-    var calls: [(url: String, key: String)] = []
+    var calls = 0
     var onCall: (() -> Void)?
 
-    func testConnection(serverURL: String, serverKey: String) async -> String? {
-        calls.append((serverURL, serverKey))
+    func testPairedIngestConnection(appState _: AppState) async -> String? {
+        calls += 1
         onCall?()
         return failure
     }

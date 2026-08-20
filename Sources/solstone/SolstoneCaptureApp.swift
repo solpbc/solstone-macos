@@ -124,6 +124,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             state.reevaluateActivationPolicy(debounced: false)
             state.startTunnelLifecycleOwner()
+#if DEBUG
+            IngestV3LiveProbe.startIfRequested(appState: state)
+#endif
         } else {
             Logger.general.error("AppState.shared nil in applicationDidFinishLaunching")
         }
@@ -187,10 +190,19 @@ struct SolstoneCaptureApp: App {
         Stderr.setUnbuffered()
         SPLLogging.configure(subsystem: "app.solstone.observer.spl")
 
+#if DEBUG
+        let liveProbeLaunch = IngestV3LiveProbe.configure()
+        let automaticObservationPipelineEnabled = !liveProbeLaunch.suppressesNormalPipeline
+#else
+        let automaticObservationPipelineEnabled = true
+#endif
+
         _startup = State(initialValue: SolstoneStartupPlanner.planStartup(
             decision: AppPlacementGate.evaluate(),
             makeNormal: {
-                let appState = AppState()
+                let appState = AppState(
+                    automaticObservationPipelineEnabled: automaticObservationPipelineEnabled
+                )
                 let updateAnnouncer = UpdateNotificationAnnouncer()
                 let updateController = UpdateController(
                     log: Logger.setup,

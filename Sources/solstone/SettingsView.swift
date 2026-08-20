@@ -302,7 +302,6 @@ struct SettingsView: View {
     @State private var observerURL = ""
     @State private var observerKey = ""
     @State private var pairingLink = ""
-    @State private var preserveNextServiceFieldChange = false
     @State private var inFlightTestID: UUID?
     @State private var disconnectConfirmPending = false
     @State private var journalMarkDriver = JournalMarkConfirmationDriver()
@@ -1455,7 +1454,7 @@ struct SettingsView: View {
                         appState.updateConfig(config)
                     }
                 ))
-                .disabled(!appState.config.isUploadConfigured)
+                .disabled(!appState.isPairedIngestReady)
                 .help("keeps sol running locally but stops sending to your journal")
                 .accessibilityIdentifier(AXID.Settings.Status.pauseSync)
                 if let lastSynced = appState.uploadCoordinator.lastSyncedAt {
@@ -1930,7 +1929,7 @@ struct SettingsView: View {
                     Button("test connection") {
                         testServiceConnection()
                     }
-                    .disabled(observerURL.isEmpty || observerKey.isEmpty || appState.connectionTestState == .testing)
+                    .disabled(!appState.isPairedIngestReady || appState.connectionTestState == .testing)
                     .accessibilityIdentifier(AXID.Settings.Service.externalTestConnection)
 
                     Button("connect") {
@@ -1989,13 +1988,11 @@ struct SettingsView: View {
     // MARK: - Service Connection Logic
 
     private func testServiceConnection() {
-        let url = normalizeServerURL(observerURL)
-        let key = observerKey
         let testGeneration = UUID()
         inFlightTestID = testGeneration
         appState.connectionTestState = .testing
         Task {
-            let error = await UploadCoordinator.testConnection(serverURL: url, serverKey: key)
+            let error = await appState.uploadCoordinator.testPairedIngestConnection()
             await MainActor.run {
                 guard shouldApplyConnectionTestCompletion(
                     inFlightTestID: inFlightTestID,
@@ -2007,10 +2004,6 @@ struct SettingsView: View {
                 if let error {
                     appState.connectionTestState = .failure(error)
                 } else {
-                    if observerURL != url {
-                        preserveNextServiceFieldChange = true
-                    }
-                    observerURL = url
                     appState.connectionTestState = .success
                 }
             }
@@ -2018,10 +2011,6 @@ struct SettingsView: View {
     }
 
     private func invalidateConnectionTestState() {
-        if preserveNextServiceFieldChange {
-            preserveNextServiceFieldChange = false
-            return
-        }
         inFlightTestID = nil
         appState.connectionTestState = .idle
     }

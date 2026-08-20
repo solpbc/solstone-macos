@@ -22,9 +22,8 @@ public actor SyncService {
         case awaitingTunnel
     }
 
-    private struct SyncJournalIdentity: Sendable, Equatable {
-        let configuredServerURL: String
-        let serverKey: String
+    private struct PairedIngestIdentity: Sendable, Equatable {
+        let pairing: TunnelPairingIdentity
     }
 
     private struct SegmentAliasKey: Hashable, Sendable {
@@ -47,8 +46,7 @@ public actor SyncService {
 
     // MARK: - Configuration
 
-    private var serverKey: String?
-    private var journalIdentity: SyncJournalIdentity?
+    private var journalIdentity: PairedIngestIdentity?
     private var cacheRetentionDays: Int = AppConfig.Defaults.cacheRetentionDays
     private var syncPaused: Bool = false
 
@@ -99,23 +97,14 @@ public actor SyncService {
 
     // MARK: - Configuration
 
-    /// Update server configuration
-    public func configure(
-        serverURL: String?,
-        serverKey: String?,
+    /// Update paired-ingest configuration. The pairing fingerprint is the sync
+    /// identity: changing it invalidates aliases and stops in-flight retries.
+    func configure(
+        pairingIdentity: TunnelPairingIdentity?,
         cacheRetentionDays: Int,
         syncPaused: Bool
     ) {
-        self.serverKey = serverKey
-        let newIdentity: SyncJournalIdentity?
-        if let serverURL, let serverKey {
-            newIdentity = SyncJournalIdentity(
-                configuredServerURL: serverURL,
-                serverKey: serverKey
-            )
-        } else {
-            newIdentity = nil
-        }
+        let newIdentity = pairingIdentity.map(PairedIngestIdentity.init(pairing:))
         if journalIdentity != newIdentity {
             storedSegmentKeyBySubmittedKey.removeAll()
         }
@@ -126,7 +115,7 @@ public actor SyncService {
 
     /// Check if sync is configured and not paused
     public var isConfigured: Bool {
-        journalIdentity != nil && serverKey != nil && !syncPaused
+        journalIdentity != nil && !syncPaused
     }
 
     // MARK: - Sync Trigger
@@ -157,7 +146,7 @@ public actor SyncService {
             return
         }
 
-        guard let journalIdentity, let serverKey else {
+        guard let journalIdentity else {
             Logger.upload.info("Sync not configured, skipping")
             return
         }
@@ -193,6 +182,20 @@ public actor SyncService {
         }()
 
         var terminalUploadFailure: (error: String, healthReason: ObserverHealthFailureReason)?
+        let manifest: IngestProtocolV3.Manifest
+        do {
+            manifest = try await fetchManifest()
+        } catch SyncReadError.held {
+            progressContinuation.yield(.awaitingTunnel)
+            return
+        } catch {
+            let healthReason = observerHealthFailureReason(from: error)
+            Logger.upload.info("Manifest query failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
+            progressContinuation.yield(.offline(error: error.localizedDescription, healthReason: healthReason))
+            return
+        }
+        progressContinuation.yield(.journalContactSucceeded)
+        var reconciledDays: [String: [String: ServerSegmentInfo]] = [:]
 
         // Walk days from newest to oldest
         for (day, localSegments) in segmentsByDay.sorted(by: { $0.key > $1.key }) {
@@ -206,37 +209,34 @@ public actor SyncService {
 
             progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
 
-            // Query server for all segments on this day
-            let serverSegments: [ServerSegmentInfo]
-            do {
-                let serverURL: String
-                switch await resolver.resolve() {
-                case .url(let resolved):
-                    serverURL = resolved
-                case .held:
+            let serverByKey: [String: ServerSegmentInfo]
+            switch manifest.days[day] {
+            case .error:
+                Logger.upload.info("Day \(day, privacy: .public): manifest reported an error")
+                progressContinuation.yield(.offline(error: "journal manifest rejected \(day)", healthReason: .uploadFailed))
+                return
+            case .segments:
+                do {
+                    serverByKey = try await fetchReconciledDay(day)
+                    reconciledDays[day] = serverByKey
+                    progressContinuation.yield(.journalContactSucceeded)
+                } catch SyncReadError.held {
                     progressContinuation.yield(.awaitingTunnel)
                     return
+                } catch {
+                    let healthReason = observerHealthFailureReason(from: error)
+                    Logger.upload.info("Day \(day, privacy: .public) query failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
+                    progressContinuation.yield(.offline(error: error.localizedDescription, healthReason: healthReason))
+                    return
                 }
-                serverSegments = try await client.getServerSegments(
-                    serverURL: serverURL,
-                    serverKey: serverKey,
-                    day: day
-                )
-            } catch {
-                let healthReason = observerHealthFailureReason(from: error)
-                Logger.upload.info("Network error querying server: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
-                progressContinuation.yield(.offline(
-                    error: error.localizedDescription,
-                    healthReason: healthReason
-                ))
-                return
+            case nil:
+                // The manifest omits days with zero segments. No per-day request is
+                // useful: every local segment must be uploaded and cannot be marked
+                // synced until a later proof confirms it.
+                serverByKey = [:]
             }
-            progressContinuation.yield(.journalContactSucceeded)
 
-            Logger.upload.info("Day \(day, privacy: .public): \(localSegments.count, privacy: .public) local, \(serverSegments.count, privacy: .public) on server")
-
-            // Build lookup for server segments (by both key and original_key)
-            let serverByKey = buildServerByKey(serverSegments)
+            Logger.upload.info("Day \(day, privacy: .public): \(localSegments.count, privacy: .public) local")
 
             // Track if any segments needed upload this day
             var anyNeededUpload = false
@@ -248,17 +248,28 @@ public actor SyncService {
                 // Check if segment exists on server (by key, original_key, or an in-session duplicate alias)
                 let serverSegment = serverSegmentForLocalKey(day: day, segment: segment, serverByKey: serverByKey)
 
-                if segmentNeedsUpload(segmentURL: segmentURL, segment: segment, serverSegment: serverSegment) {
+                let filesToUpload = selectFilesForUpload(segmentDirectory: segmentURL)
+                let needsUpload = segmentNeedsUpload(
+                    segment: segment,
+                    filesToUpload: filesToUpload,
+                    serverSegment: serverSegment
+                )
+                if needsUpload {
                     anyNeededUpload = true
+                    guard !filesToUpload.isEmpty else {
+                        Logger.upload.info("Segment \(segment, privacy: .public): no files available to establish a hold")
+                        checked += 1
+                        progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
+                        continue
+                    }
                     Logger.upload.info("Segment \(segment, privacy: .public) needs upload...")
-                    let metadataJSON = readSegmentMetadataJSON(segmentURL: segmentURL, segment: segment)
+                    let metadata = readSegmentMetadata(segmentURL: segmentURL, segment: segment)
                     let outcome = await uploadSegmentWithRetry(
                         identity: journalIdentity,
-                        serverKey: serverKey,
                         segmentURL: segmentURL,
                         day: day,
                         segment: segment,
-                        metadataJSON: metadataJSON
+                        metadata: metadata
                     )
                     switch outcome {
                     case .succeeded:
@@ -283,7 +294,7 @@ public actor SyncService {
             }
         }
 
-        guard await cleanupSyncedSegments(identity: journalIdentity, serverKey: serverKey) else {
+        guard await cleanupSyncedSegments(identity: journalIdentity, reconciledDays: reconciledDays) else {
             return
         }
 
@@ -299,44 +310,121 @@ public actor SyncService {
 
     // MARK: - File Comparison
 
-    /// Check if a segment needs upload by comparing files
-    private func segmentNeedsUpload(
-        segmentURL: URL,
-        segment: String,
-        serverSegment: ServerSegmentInfo?
-    ) -> Bool {
-        // Get files we would actually upload (video + combined audio only)
-        let filesToUpload = selectFilesForUpload(segmentDirectory: segmentURL)
+    private enum SyncReadError: Error {
+        case held
+    }
 
-        // If no files to upload, segment is "complete" (nothing to do)
-        guard !filesToUpload.isEmpty else {
-            return false
+    private func fetchManifest() async throws -> IngestProtocolV3.Manifest {
+        let serverURL = try await resolvedServerURL()
+        return try await client.getManifest(serverURL: serverURL)
+    }
+
+    private func fetchReconciledDay(_ day: String) async throws -> [String: ServerSegmentInfo] {
+        let manifestURL = try await resolvedServerURL()
+        let manifestDay = try await client.getManifestDay(serverURL: manifestURL, day: day)
+        let segmentsURL = try await resolvedServerURL()
+        let segmentsDay = try await client.getSegmentsDay(serverURL: segmentsURL, day: day)
+        return mergeServerDay(manifestDay: manifestDay, segmentsDay: segmentsDay)
+    }
+
+    private func resolvedServerURL() async throws -> String {
+        switch await resolver.resolve() {
+        case .url(let resolved):
+            return resolved
+        case .held:
+            throw SyncReadError.held
+        }
+    }
+
+    /// Only file facts repeated identically by both v3 per-day reads can prove
+    /// a local file. Extra or changed remote files are ignored for proof rather
+    /// than preventing unrelated segments from reconciling.
+    private func mergeServerDay(
+        manifestDay: IngestProtocolV3.ManifestDay,
+        segmentsDay: IngestProtocolV3.SegmentsDay
+    ) -> [String: ServerSegmentInfo] {
+        let segmentsByKey = Dictionary(uniqueKeysWithValues: segmentsDay.items.map { ($0.key, $0) })
+        var result: [String: ServerSegmentInfo] = [:]
+
+        for key in segmentsByKey.keys where manifestDay.segments[key] == nil {
+            Logger.upload.info("v3 reconcile \(key, privacy: .public): \(sanitizedObserverHealthErrorReason(.uploadInvalidResponse), privacy: .public)")
         }
 
-        guard let localSHAByFilename = localSHAByFilename(for: filesToUpload) else {
+        for (key, manifestSegment) in manifestDay.segments {
+            guard let segment = segmentsByKey[key] else {
+                Logger.upload.info("v3 reconcile \(key, privacy: .public): \(sanitizedObserverHealthErrorReason(.uploadInvalidResponse), privacy: .public)")
+                continue
+            }
+            let manifestByName = Dictionary(uniqueKeysWithValues: manifestSegment.files.map { ($0.effectiveName, $0) })
+            let segmentsByName = Dictionary(uniqueKeysWithValues: segment.files.map { ($0.effectiveName, $0) })
+            var matchingFiles: [ServerFileInfo] = []
+            var hasDisagreement = false
+
+            for (name, manifestFile) in manifestByName {
+                guard let segmentFile = segmentsByName[name] else {
+                    hasDisagreement = true
+                    continue
+                }
+                guard manifestFile.name == segmentFile.name,
+                      manifestFile.sha256 == segmentFile.sha256,
+                      manifestFile.size == segmentFile.size,
+                      manifestFile.status == segmentFile.status else {
+                    hasDisagreement = true
+                    continue
+                }
+                matchingFiles.append(ServerFileInfo(
+                    name: manifestFile.name,
+                    submittedName: manifestFile.effectiveName,
+                    sha256: manifestFile.sha256,
+                    size: manifestFile.size,
+                    status: manifestFile.status
+                ))
+            }
+            if manifestByName.count != segmentsByName.count {
+                hasDisagreement = true
+            }
+            if hasDisagreement {
+                Logger.upload.info("v3 reconcile \(key, privacy: .public): \(sanitizedObserverHealthErrorReason(.uploadInvalidResponse), privacy: .public)")
+            }
+
+            let serverSegment = ServerSegmentInfo(
+                key: key,
+                originalKey: segment.originalKey,
+                files: matchingFiles
+            )
+            result[key] = serverSegment
+            if let originalKey = segment.originalKey {
+                result[originalKey] = serverSegment
+            }
+        }
+        return result
+    }
+
+    /// Check if a segment needs upload by comparing files
+    private func segmentNeedsUpload(
+        segment: String,
+        filesToUpload: [URL],
+        serverSegment: ServerSegmentInfo?
+    ) -> Bool {
+        // No local files cannot earn a synced-day or cleanup decision without a
+        // matching server segment. It is retained until a future reconciliation.
+        guard !filesToUpload.isEmpty else {
+            return serverSegment == nil
+        }
+
+        guard let localFilesByFilename = localFilesByFilename(for: filesToUpload) else {
             Logger.upload.info("Segment \(segment, privacy: .public): unable to hash local upload file")
             return true
         }
 
         // Unproven files must heal through upload, which prevents day-synced marking and cleanup.
-        let verdict = proveServerHoldsUploadFiles(localSHAByFilename: localSHAByFilename, serverSegment: serverSegment)
+        let verdict = proveServerHoldsUploadFiles(localFilesByFilename: localFilesByFilename, serverSegment: serverSegment)
         guard verdict.isHeld else {
             Logger.upload.info("Segment \(segment, privacy: .public): \(verdict.reason, privacy: .public)")
             return true
         }
 
         return false
-    }
-
-    private func buildServerByKey(_ serverSegments: [ServerSegmentInfo]) -> [String: ServerSegmentInfo] {
-        var serverByKey: [String: ServerSegmentInfo] = [:]
-        for seg in serverSegments {
-            serverByKey[seg.key] = seg
-            if let originalKey = seg.originalKey {
-                serverByKey[originalKey] = seg
-            }
-        }
-        return serverByKey
     }
 
     private func serverSegmentForLocalKey(
@@ -354,26 +442,32 @@ public actor SyncService {
         return serverByKey[storedSegmentKey]
     }
 
-    private func localSHAByFilename(for files: [URL]) -> [String: String]? {
-        var localSHAByFilename: [String: String] = [:]
+    private func localFilesByFilename(for files: [URL]) -> [String: LocalUploadFileProof]? {
+        var localFilesByFilename: [String: LocalUploadFileProof] = [:]
         for file in files {
             guard let sha = client.sha256(of: file) else {
                 return nil
             }
-            localSHAByFilename[file.lastPathComponent] = sha
+            guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                  size >= 0 else {
+                return nil
+            }
+            localFilesByFilename[file.lastPathComponent] = LocalUploadFileProof(
+                sha256: sha,
+                size: UInt64(size)
+            )
         }
-        return localSHAByFilename
+        return localFilesByFilename
     }
 
     // MARK: - Upload with Retry
 
     private func uploadSegmentWithRetry(
-        identity: SyncJournalIdentity,
-        serverKey: String,
+        identity: PairedIngestIdentity,
         segmentURL: URL,
         day: String,
         segment: String,
-        metadataJSON: String?
+        metadata: [String: IngestJSONValue]?
     ) async -> UploadRetryOutcome {
         var attempts = 0
 
@@ -418,20 +512,18 @@ public actor SyncService {
 
             let result = await client.uploadSegment(
                 serverURL: serverURL,
-                serverKey: serverKey,
-                segmentURL: segmentURL,
                 day: day,
                 segment: segment,
                 mediaFiles: mediaFiles,
-                metadataJSON: metadataJSON
+                metadata: metadata
             )
 
             switch result {
             case .success(let info):
-                if let storedSegmentKey = info.storedSegmentKey, storedSegmentKey != segment {
+                if info.storedSegmentKey != segment {
                     storedSegmentKeyBySubmittedKey[
                         SegmentAliasKey(day: day, submittedKey: segment)
-                    ] = storedSegmentKey
+                    ] = info.storedSegmentKey
                 }
                 progressContinuation.yield(.uploadSucceeded(segment: segment))
                 return .succeeded
@@ -577,9 +669,9 @@ public actor SyncService {
         return (day, segmentFolder)
     }
 
-    /// Read metadata file from segment directory as JSON string
-    /// Returns nil if no metadata file exists or if reading fails
-    private func readSegmentMetadataJSON(segmentURL: URL, segment: String) -> String? {
+    /// Read metadata as an object for the v3 envelope. A malformed metadata file
+    /// is omitted rather than copied as an invalid nested JSON value.
+    private func readSegmentMetadata(segmentURL: URL, segment: String) -> [String: IngestJSONValue]? {
         // Metadata file is named SEGMENT_meta.json
         let metaURL = segmentURL.appendingPathComponent("\(segment)_meta.json")
 
@@ -589,8 +681,7 @@ public actor SyncService {
 
         do {
             let data = try Data(contentsOf: metaURL)
-            // Return as string (already JSON formatted)
-            return String(data: data, encoding: .utf8)
+            return try JSONDecoder().decode([String: IngestJSONValue].self, from: data)
         } catch {
             Logger.upload.info("Failed to read metadata file: \(error, privacy: .public)")
         }
@@ -602,7 +693,10 @@ public actor SyncService {
 
     /// Delete synced segments older than cacheRetentionDays.
     /// Safety gates: (1) day in syncedDays, (2) age check, (3) server reachable, (4) per-segment server confirmation.
-    private func cleanupSyncedSegments(identity: SyncJournalIdentity, serverKey: String) async -> Bool {
+    private func cleanupSyncedSegments(
+        identity: PairedIngestIdentity,
+        reconciledDays: [String: [String: ServerSegmentInfo]]
+    ) async -> Bool {
         guard cacheRetentionDays >= 0 else {
             Logger.upload.info("Cache retention: keep forever, skipping cleanup")
             return true
@@ -618,8 +712,9 @@ public actor SyncService {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyyMMdd"
 
-        // Cache server segments per day to avoid redundant requests
-        var serverSegmentsCache: [String: [String: ServerSegmentInfo]] = [:]
+        // Reuse only reads from this sync. A prior sync's response never proves
+        // custody after the journal may have changed.
+        var serverSegmentsCache = reconciledDays
 
         for (day, segments) in segmentsByDay.sorted(by: { $0.key < $1.key }) {
             // Gate 1: day must be fully synced
@@ -645,20 +740,10 @@ public actor SyncService {
                     guard !syncPaused, journalIdentity == identity else {
                         return false
                     }
-                    let serverURL: String
-                    switch await resolver.resolve() {
-                    case .url(let resolved):
-                        serverURL = resolved
-                    case .held:
-                        progressContinuation.yield(.awaitingTunnel)
-                        return false
-                    }
-                    let serverSegments = try await client.getServerSegments(
-                        serverURL: serverURL,
-                        serverKey: serverKey,
-                        day: day
-                    )
-                    serverSegmentsCache[day] = buildServerByKey(serverSegments)
+                    serverSegmentsCache[day] = try await fetchReconciledDay(day)
+                } catch SyncReadError.held {
+                    progressContinuation.yield(.awaitingTunnel)
+                    return false
                 } catch {
                     Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - server query failed: \(error.localizedDescription, privacy: .public)")
                     continue
@@ -676,13 +761,13 @@ public actor SyncService {
                 }
 
                 let filesToUpload = selectFilesForUpload(segmentDirectory: segmentURL)
-                guard let localSHAByFilename = localSHAByFilename(for: filesToUpload) else {
+                guard let localFilesByFilename = localFilesByFilename(for: filesToUpload) else {
                     Logger.upload.info("Cleanup: keeping \(segment, privacy: .public) - unable to hash local upload file")
                     continue
                 }
 
                 let verdict = proveServerHoldsUploadFiles(
-                    localSHAByFilename: localSHAByFilename,
+                    localFilesByFilename: localFilesByFilename,
                     serverSegment: serverSegment
                 )
                 guard verdict.isHeld else {
@@ -730,4 +815,48 @@ public actor SyncService {
         UserDefaults.standard.removeObject(forKey: syncedDaysKey)
         Logger.upload.info("Cleared synced days cache")
     }
+
+#if DEBUG
+    /// Debug-only, explicit-fixture entry point. It uses the normal upload retry,
+    /// three-read reconciliation, and hold proof without walking stored captures.
+    func runLiveProbe(segmentURL: URL, day: String, segment: String) async throws -> ServerFileInfo {
+        guard let identity = journalIdentity, !syncPaused else {
+            throw UploadError.invalidResponse
+        }
+        let filesToUpload = selectFilesForUpload(segmentDirectory: segmentURL)
+        guard !filesToUpload.isEmpty,
+              let localFiles = localFilesByFilename(for: filesToUpload) else {
+            throw UploadError.noFiles
+        }
+
+        let outcome = await uploadSegmentWithRetry(
+            identity: identity,
+            segmentURL: segmentURL,
+            day: day,
+            segment: segment,
+            metadata: nil
+        )
+        guard case .succeeded = outcome else {
+            throw UploadError.invalidResponse
+        }
+
+        let serverByKey = try await fetchReconciledDay(day)
+        guard let serverSegment = serverSegmentForLocalKey(
+            day: day,
+            segment: segment,
+            serverByKey: serverByKey
+        ), proveServerHoldsUploadFiles(
+            localFilesByFilename: localFiles,
+            serverSegment: serverSegment
+        ).isHeld else {
+            throw UploadError.invalidResponse
+        }
+
+        let filename = filesToUpload[0].lastPathComponent
+        guard let file = serverSegment.files.first(where: { $0.submittedName == filename }) else {
+            throw UploadError.invalidResponse
+        }
+        return file
+    }
+#endif
 }

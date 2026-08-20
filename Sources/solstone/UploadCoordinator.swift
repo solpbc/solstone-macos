@@ -27,6 +27,8 @@ internal func observerHealthFailureReason(from error: Error) -> ObserverHealthFa
             return .uploadInvalidURL
         case .noFiles:
             return .uploadNoFiles
+        case .invalidRequest:
+            return .uploadFailed
         case .invalidResponse:
             return .uploadInvalidResponse
         case .serverError(let statusCode, _):
@@ -108,9 +110,13 @@ public final class UploadCoordinator {
     // MARK: - Private State
 
     private let syncService: SyncService
+    private let client: UploadClient
+    private let resolver: HomeBaseURLResolver
     private let lastContactStore: any LastSuccessfulJournalContactStoring
     private let journalFingerprintProvider: @MainActor @Sendable () -> JournalConnectionFingerprint?
     private var config: AppConfig
+    private var pairedIngestIdentity: TunnelPairingIdentity?
+    private let automaticSyncEnabled: Bool
     private var eventTask: Task<Void, Never>?
     private var configurationTask: Task<Void, Never>?
 
@@ -121,10 +127,16 @@ public final class UploadCoordinator {
         config: AppConfig,
         client: UploadClient = UploadClient(),
         resolver: HomeBaseURLResolver,
+        pairedIngestIdentity: TunnelPairingIdentity? = nil,
+        automaticSyncEnabled: Bool = true,
         lastContactStore: any LastSuccessfulJournalContactStoring = UserDefaultsLastSuccessfulJournalContactStore(),
         journalFingerprintProvider: @escaping @MainActor @Sendable () -> JournalConnectionFingerprint? = { nil }
     ) {
         self.config = config
+        self.client = client
+        self.resolver = resolver
+        self.pairedIngestIdentity = pairedIngestIdentity
+        self.automaticSyncEnabled = automaticSyncEnabled
         self.lastContactStore = lastContactStore
         self.journalFingerprintProvider = journalFingerprintProvider
         self.syncService = SyncService(
@@ -136,8 +148,7 @@ public final class UploadCoordinator {
         // Configure sync service with initial settings
         configurationTask = Task {
             await syncService.configure(
-                serverURL: config.serverURL,
-                serverKey: config.serverKey,
+                pairingIdentity: pairedIngestIdentity,
                 cacheRetentionDays: config.cacheRetentionDays,
                 syncPaused: config.syncPaused
             )
@@ -158,19 +169,18 @@ public final class UploadCoordinator {
         journalFingerprintProvider: @escaping @MainActor @Sendable () -> JournalConnectionFingerprint? = { nil }
     ) {
         self.config = config
+        self.client = client
         self.lastContactStore = lastContactStore
         self.journalFingerprintProvider = journalFingerprintProvider
-        let resolvedBase = config.serverURL
+        let snapshotResolver = resolver ?? HomeBaseURLResolver { .held }
         self.syncService = SyncService(
             storageManager: storageManager,
             client: client,
-            resolver: resolver ?? HomeBaseURLResolver {
-                if let resolvedBase {
-                    return .url(resolvedBase)
-                }
-                return .held
-            }
+            resolver: snapshotResolver
         )
+        self.resolver = snapshotResolver
+        self.pairedIngestIdentity = nil
+        self.automaticSyncEnabled = false
         refreshLastSuccessfulJournalContact()
     }
 
@@ -186,18 +196,35 @@ public final class UploadCoordinator {
 
         Task {
             await syncService.configure(
-                serverURL: newConfig.serverURL,
-                serverKey: newConfig.serverKey,
+                pairingIdentity: pairedIngestIdentity,
                 cacheRetentionDays: newConfig.cacheRetentionDays,
                 syncPaused: newConfig.syncPaused
             )
 
             // If sync was re-enabled, trigger a sync
-            if wasPaused && !newConfig.syncPaused {
+            if automaticSyncEnabled, wasPaused && !newConfig.syncPaused {
                 await syncService.triggerSync()
             }
         }
         refreshLastSuccessfulJournalContact()
+    }
+
+    /// The paired tunnel identity is the only readiness credential for v3 sync.
+    /// This snapshot is supplied by AppState's existing tunnel-state observation.
+    func updatePairedIngestIdentity(_ identity: TunnelPairingIdentity?) {
+        guard pairedIngestIdentity != identity else { return }
+        pairedIngestIdentity = identity
+        Task {
+            await syncService.configure(
+                pairingIdentity: identity,
+                cacheRetentionDays: config.cacheRetentionDays,
+                syncPaused: config.syncPaused
+            )
+        }
+    }
+
+    var isPairedIngestReady: Bool {
+        pairedIngestIdentity != nil
     }
 
     internal func refreshLastSuccessfulJournalContact() {
@@ -214,12 +241,15 @@ public final class UploadCoordinator {
 
     /// Trigger sync on startup
     public func syncOnStartup() async {
+        guard automaticSyncEnabled else {
+            return
+        }
         guard !syncPaused else {
             Logger.upload.info("Sync paused, skipping startup sync")
             return
         }
 
-        guard config.isUploadConfigured else {
+        guard isPairedIngestReady else {
             Logger.upload.info("Not configured, skipping startup sync")
             return
         }
@@ -230,7 +260,7 @@ public final class UploadCoordinator {
 
     /// Trigger sync (called when segment completes)
     public func triggerSync() {
-        guard !syncPaused, config.isUploadConfigured else {
+        guard automaticSyncEnabled, !syncPaused, isPairedIngestReady else {
             return
         }
 
@@ -241,7 +271,7 @@ public final class UploadCoordinator {
 
     /// Force a full re-sync, clearing cached synced days
     public func forceFullSync() {
-        guard config.isUploadConfigured else {
+        guard automaticSyncEnabled, isPairedIngestReady else {
             return
         }
 
@@ -251,19 +281,32 @@ public final class UploadCoordinator {
         }
     }
 
-    /// Test connection to server (for settings UI)
-    public func testConnection() async -> String? {
-        guard let serverURL = config.serverURL,
-              let serverKey = config.serverKey else {
+    /// Validates the currently connected paired loopback journal, not the
+    /// editable legacy external-service fields.
+    public func testPairedIngestConnection() async -> String? {
+        guard pairedIngestIdentity != nil else { return "Not configured" }
+        switch await resolver.resolve() {
+        case .url(let serverURL):
+            return await client.testPairedIngestConnection(serverURL: serverURL)
+        case .held:
             return "Not configured"
         }
-        return await UploadClient().testConnection(serverURL: serverURL, serverKey: serverKey)
     }
 
-    /// Test connection with explicit URL and key (for settings validation)
-    public static func testConnection(serverURL: String, serverKey: String) async -> String? {
-        return await UploadClient().testConnection(serverURL: serverURL, serverKey: serverKey)
+#if DEBUG
+    func runLiveIngestProbe(segmentURL: URL, day: String, segment: String) async throws -> ServerFileInfo {
+        guard let pairedIngestIdentity else {
+            throw UploadError.invalidResponse
+        }
+        await configurationTask?.value
+        await syncService.configure(
+            pairingIdentity: pairedIngestIdentity,
+            cacheRetentionDays: config.cacheRetentionDays,
+            syncPaused: config.syncPaused
+        )
+        return try await syncService.runLiveProbe(segmentURL: segmentURL, day: day, segment: segment)
     }
+#endif
 
     // MARK: - Event Handling
 
