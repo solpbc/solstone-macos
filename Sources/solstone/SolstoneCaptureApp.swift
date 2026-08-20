@@ -320,6 +320,11 @@ private struct SettingsSceneRoot: View {
     }
 }
 
+/// Single access point for the solstone target's resource bundle; tests reach it via `@testable import`.
+enum SolstoneResources {
+    static var bundle: Bundle { .module }
+}
+
 /// Loads an image from the SPM resource bundle (not an asset catalog).
 /// `Image(_:bundle:)` only searches asset catalogs; this uses an explicit
 /// path lookup against the bundle's `Resources/` subdirectory because
@@ -331,10 +336,6 @@ private struct SettingsSceneRoot: View {
 /// Prefers PDF (vector, resolution-independent — renders crisp at any
 /// menu-bar density and on any Retina factor) and falls back to PNG for
 /// raster-only assets like the wordmark.
-enum SolstoneResources {
-    static var bundle: Bundle { .module }
-}
-
 func bundleImage(_ name: String, isTemplate: Bool = false) -> Image {
     let nsImage: NSImage
     if let pdfPath = SolstoneResources.bundle.path(forResource: name, ofType: "pdf", inDirectory: "Resources"),
