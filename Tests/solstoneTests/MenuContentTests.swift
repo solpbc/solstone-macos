@@ -246,12 +246,9 @@ struct MenuContentTests {
             let label = statusAccessibilityLabel(
                 presentation: MenubarPresentation(
                     observation: .observing,
-                    attention: reason,
-                    message: nil
+                    attention: reason
                 ),
-                errorMessage: nil,
-                solChatStale: false,
-                solChatPending: nil
+                errorMessage: nil
             )
 
             #expect(!suffix.isEmpty, "\(String(describing: reason)) should have a non-empty suffix")
@@ -265,68 +262,16 @@ struct MenuContentTests {
 
     @Test func statusAccessibilityLabelSuppressesAlreadySaidAttention() {
         let permissions = statusAccessibilityLabel(
-            presentation: MenubarPresentation(observation: .permissions, attention: .permissions, message: nil),
-            errorMessage: nil,
-            solChatStale: false,
-            solChatPending: nil
+            presentation: MenubarPresentation(observation: .permissions, attention: .permissions),
+            errorMessage: nil
         )
         let localOnly = statusAccessibilityLabel(
-            presentation: MenubarPresentation(observation: .localOnly, attention: .journal, message: nil),
-            errorMessage: nil,
-            solChatStale: false,
-            solChatPending: nil
+            presentation: MenubarPresentation(observation: .localOnly, attention: .journal),
+            errorMessage: nil
         )
 
         #expect(permissions == UICopy.MENUBAR_A11Y_PERMISSIONS_NEEDED)
         #expect(localOnly == UICopy.MENUBAR_A11Y_JOURNAL_SETUP_NEEDED)
-    }
-
-    @Test func statusAccessibilityLabelPreservesStaleOverPending() {
-        let pending = SolChatRequestSummary(
-            id: "req-test",
-            summary: "review the note",
-            day: "2026-05-09",
-            eventIndex: 42,
-            receivedAt: Date(timeIntervalSince1970: 0)
-        )
-        let label = statusAccessibilityLabel(
-            presentation: MenubarPresentation(observation: .observing, attention: .updateAvailable, message: .chatPending),
-            errorMessage: nil,
-            solChatStale: true,
-            solChatPending: pending
-        )
-
-        #expect(label == "\(UICopy.MENUBAR_A11Y_OBSERVING_CONNECTED) · \(UICopy.SETTINGS_ATTENTION_UPDATE_AVAILABLE) · \(SolChatLiterals.unreachableTooltip)")
-        #expect(!label.contains(pending.summary))
-    }
-
-    @Test @MainActor func staleChatDrawsNoBadgeButStaysInA11yLabel() {
-        let state = AppState.forSnapshot(config: AppConfig(
-            serverURL: "https://example.com",
-            serverKey: "key",
-            serviceMode: .external
-        ))
-        state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = true
-        state.microphoneAuthorizationCause = .authorized
-        state.isRecording = true
-        state.uploadCoordinator.status = .synced
-        state.solChatStale = true
-        state.solChatPending = nil
-
-        let presentation = state.menubarPresentation(durableUpdateStatus: .idle)
-        let label = statusAccessibilityLabel(
-            presentation: presentation,
-            errorMessage: nil,
-            solChatStale: state.solChatStale,
-            solChatPending: state.solChatPending
-        )
-
-        #expect(!presentation.showsAttentionBadge)
-        #expect(presentation.message == nil)
-        #expect(presentation.overlayState == .none)
-        #expect(presentation.overlayState.badgeTreatment == nil)
-        #expect(label.contains(SolChatLiterals.unreachableTooltip))
     }
 
     @Test func journalClientRowsUseExpectedAXTokens() {
@@ -344,8 +289,7 @@ private func presentationAttention(
         observation: .observing,
         permissionsNeedAttention: permissionsNeedAttention,
         journalNeedsAttention: journalNeedsAttention,
-        durableUpdateStatus: durableUpdateStatus,
-        solChatPending: false
+        durableUpdateStatus: durableUpdateStatus
     ).attention
 }
 

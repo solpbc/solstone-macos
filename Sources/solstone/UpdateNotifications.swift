@@ -10,35 +10,26 @@ enum UpdateNotificationIdentifier {
     static func make(version: String) -> String {
         prefix + version
     }
-}
 
-enum UserNotificationClickDestination: Equatable {
-    case updatesSettings
-    case solChat(requestID: String)
-}
-
-func userNotificationClickDestination(for identifier: String) -> UserNotificationClickDestination {
-    if identifier.hasPrefix(UpdateNotificationIdentifier.prefix) {
-        return .updatesSettings
+    static func isUpdateNotification(_ identifier: String) -> Bool {
+        identifier.hasPrefix(prefix)
     }
-    return .solChat(requestID: identifier)
 }
 
 func userNotificationPresentationOptions(for identifier: String) -> UNNotificationPresentationOptions {
-    switch userNotificationClickDestination(for: identifier) {
-    case .updatesSettings:
+    if UpdateNotificationIdentifier.isUpdateNotification(identifier) {
         [.list]
-    case .solChat:
-        [.banner, .list, .sound]
+    } else {
+        []
     }
 }
 
 struct UpdateNotificationAnnouncer: Sendable {
-    private let notifier: any SolChatNotifying
+    private let notifier: any UserNotifying
     private let copy: UpdatesCopy
 
     init(
-        notifier: any SolChatNotifying = UNUserNotificationSolChatNotifier(),
+        notifier: any UserNotifying = UNUserNotificationCenterNotifier(),
         copy: UpdatesCopy = UpdatesCopy(provider: .solstone)
     ) {
         self.notifier = notifier

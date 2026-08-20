@@ -176,13 +176,6 @@ struct AppStateAttentionTests {
         state.microphoneAuthorizationCause = .authorized
         state.isRecording = true
         state.uploadCoordinator.status = .synced
-        state.solChatPending = SolChatRequestSummary(
-            id: "req-test",
-            summary: "review the note",
-            day: "2026-05-09",
-            eventIndex: 42,
-            receivedAt: Date(timeIntervalSince1970: 0)
-        )
 
         let presentation = state.menubarPresentation(
             durableUpdateStatus: .available(version: "1.3.9", releaseNotes: nil)
@@ -190,7 +183,6 @@ struct AppStateAttentionTests {
 
         #expect(presentation.observation == .observing)
         #expect(presentation.attention == .updateAvailable)
-        #expect(presentation.message == .chatPending)
         #expect(presentation.icon == .recording)
         #expect(presentation.overlayState == .attention)
     }

@@ -12,27 +12,6 @@ struct MenuContent: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        if let pending = appState.solChatPending {
-            Section {
-                Button {
-                    Task {
-                        await AppState.shared?.solChatBridge.handleClick(requestID: pending.id)
-                    }
-                } label: {
-                    Label {
-                        Text(pending.summary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    } icon: {
-                        bundleImage("sol-ring-template", isTemplate: true)
-                    }
-                }
-                .accessibilityIdentifier(AXID.Menubar.pendingChatButton)
-            }
-
-            Divider()
-        }
-
         // Status + pause/resume controls (single section — no internal divider)
         Section {
             statusRow

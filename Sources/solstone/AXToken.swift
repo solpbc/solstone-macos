@@ -39,7 +39,6 @@ internal enum MenubarIconState: CaseIterable {
 internal enum MenubarIconOverlayState: CaseIterable {
     case none
     case attention
-    case chatPending
 }
 
 internal struct MenubarBadgeTreatment: Equatable {
@@ -481,15 +480,6 @@ extension MenubarIconOverlayState {
                     haloDiameter: 9.6,
                     haloTint: .adaptiveInk,
                     mark: .symbol(name: "exclamationmark.circle.fill", pointSize: 8, tint: .solOrange)
-                )
-            )
-        case .chatPending:
-            return MenubarIconOverlayPresentation(
-                axToken: "chat_pending",
-                badgeTreatment: MenubarBadgeTreatment(
-                    haloDiameter: 7.6,
-                    haloTint: .adaptiveInk,
-                    mark: .dot(diameter: 6, tint: .accentColor)
                 )
             )
         }

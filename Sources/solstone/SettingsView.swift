@@ -977,8 +977,6 @@ struct SettingsView: View {
 
             GroupBox("notifications") {
                 VStack(alignment: .leading, spacing: 6) {
-                    Toggle("notify me when sol reaches out", isOn: solChatNotificationsBinding)
-                        .accessibilityIdentifier(AXID.Settings.Observer.solChatNotifications)
                     notificationAuthorizationDetails
                 }
                 .padding(.vertical, 4)
@@ -990,13 +988,6 @@ struct SettingsView: View {
         .onAppear {
             appState.refreshNotificationAuthorizationStatusSoon()
         }
-    }
-
-    private var solChatNotificationsBinding: Binding<Bool> {
-        Binding(
-            get: { appState.config.solInitiatedChatNotificationsEnabled },
-            set: { newValue in appState.setSolChatNotificationPreference(newValue) }
-        )
     }
 
     @ViewBuilder

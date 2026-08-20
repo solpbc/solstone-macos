@@ -58,7 +58,7 @@ private enum UpdateAnnouncementLaunchRegistry {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuTrackingObserver: Any?
     private var notificationObservers: [Any] = []
-    private var solChatNotificationDelegate: SolChatNotificationDelegate?
+    private var userNotificationDelegate: UserNotificationCenterDelegate?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppPlacementRepairCoordinator.shared.signalReadiness()
@@ -109,8 +109,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await state.reconcileLoginItemRegistrationAfterUpdateIfNeeded()
             }
 
-            let delegate = SolChatNotificationDelegate()
-            solChatNotificationDelegate = delegate
+            let delegate = UserNotificationCenterDelegate()
+            userNotificationDelegate = delegate
             UNUserNotificationCenter.current().delegate = delegate
             state.startObservingActivation()
             Task { @MainActor in
@@ -169,7 +169,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.isTerminating = true
             state.appKitTerminationBegan = true
             Task { await state.heartbeatService.stop() }
-            Task { await state.solChatBridge.stop() }
             state.stopTunnelLifecycleOwner()
         } else {
             Logger.general.error("AppState.shared nil in applicationWillTerminate")
@@ -274,9 +273,7 @@ private struct SolstoneNormalStartup {
 
 internal func statusAccessibilityLabel(
     presentation: MenubarPresentation,
-    errorMessage: String?,
-    solChatStale: Bool,
-    solChatPending: SolChatRequestSummary?
+    errorMessage: String?
 ) -> String {
     let baseLabel: String = switch presentation.observation {
     case .permissions:
@@ -306,11 +303,6 @@ internal func statusAccessibilityLabel(
     var components = [baseLabel]
     if let attention = attentionToSurface(presentation.attention, alreadySaidBy: presentation.observation) {
         components.append(attentionSuffix(attention))
-    }
-    if solChatStale {
-        components.append(SolChatLiterals.unreachableTooltip)
-    } else if let pending = solChatPending {
-        components.append("sol noticed: \(pending.summary)")
     }
     return components.joined(separator: " · ")
 }
@@ -454,9 +446,7 @@ private struct StatusIcon: View {
         iconContent
             .accessibilityLabel(statusAccessibilityLabel(
                 presentation: presentation,
-                errorMessage: appState.errorMessage,
-                solChatStale: appState.solChatStale,
-                solChatPending: appState.solChatPending
+                errorMessage: appState.errorMessage
             ))
             .task {
                 guard !hasCheckedSetup else { return }
@@ -510,11 +500,6 @@ private struct StatusIcon: View {
 
     @ViewBuilder
     private var iconContent: some View {
-        let content = MenubarIconGlyphView(icon: presentation.icon, overlay: presentation.overlayState)
-        if appState.solChatStale {
-            content.help(SolChatLiterals.unreachableTooltip)
-        } else {
-            content
-        }
+        MenubarIconGlyphView(icon: presentation.icon, overlay: presentation.overlayState)
     }
 }

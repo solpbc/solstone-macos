@@ -100,13 +100,13 @@ struct JournalWindowCompositionTests {
         state.requestOpenJournal(.root)
         let firstIntent = state.journalOpenIntent!
         let first = await session.open(destination: firstIntent.destination)
-        state.requestOpenJournal(.chat(day: "2026-05-09", eventIndex: 5))
+        state.requestOpenJournal(JournalWindowDestination(path: "/app/home", fragment: "section")!)
         let secondIntent = state.journalOpenIntent!
         let second = await session.open(destination: secondIntent.destination)
 
         #expect(secondIntent.id > firstIntent.id)
         #expect(first?.url.absoluteString == "https://journal.example/")
-        #expect(second?.url.absoluteString == "https://journal.example/app/chat/2026-05-09#event-5")
+        #expect(second?.url.absoluteString == "https://journal.example/app/home#section")
         #expect(second?.generation == 2)
     }
 
@@ -601,14 +601,14 @@ struct JournalWindowCompositionTests {
         let session = JournalWindowSession(resolveHomeBase: {
             await resolver.next()
         })
-        let first = await session.open(destination: .chat(day: "2026-05-09", eventIndex: 3))
+        let first = await session.open(destination: JournalWindowDestination(path: "/app/home", fragment: "section")!)
         session.handle(.failed(generation: first!.generation, failure: .other))
 
         let retried = await session.retry()
 
         #expect(await resolver.callCount == 2)
         #expect(session.state == .loading)
-        #expect(retried?.url.absoluteString == "https://second.example/app/chat/2026-05-09#event-3")
+        #expect(retried?.url.absoluteString == "https://second.example/app/home#section")
     }
 
     @Test func selfInflictedCancellationErrorsAreRecognizedByDomainAndCode() {
@@ -842,14 +842,9 @@ struct JournalWindowWireUpTests {
 
     @Test func formerJournalCallSitesDoNotUseNSWorkspaceOpen() throws {
         let menuSource = try readWireUpSource("Sources/solstone/MenuContent.swift")
-        let bridgeSource = try readWireUpSource("Sources/solstone/SolChatBridge.swift")
 
         #expect(!menuSource.contains("NSWorkspace.shared.open"))
-        #expect(!bridgeSource.contains("NSWorkspace.shared.open"))
-        #expect(!bridgeSource.contains("postOpenChatIfConfigured"))
-        #expect(!bridgeSource.contains("/app/chat/\\("))
         #expect(wireUpContains(menuSource, "appState.requestOpenJournal(.root)"))
-        #expect(wireUpContains(bridgeSource, "await postOpenJournalDestination(Self.destination(summary: summary))"))
     }
 
     @Test func legitimateNonJournalNSWorkspaceOpenSitesRemain() throws {

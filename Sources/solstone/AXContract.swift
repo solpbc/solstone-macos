@@ -13,7 +13,6 @@ enum AXContract {
         "DO NOT EDIT. Generated from AXID.swift + AXToken.swift. Run `make ax-contract` to regenerate; `make ci` fails on drift."
 
     static let staticIDs: [String] = [
-        AXID.Menubar.pendingChatButton,
         AXID.Menubar.statusIconState,
         AXID.Menubar.statusIconOverlayState,
         AXID.Menubar.statusRowState,
@@ -45,7 +44,6 @@ enum AXContract {
         AXID.Settings.Permissions.systemSettingsOpen,
         AXID.Settings.Permissions.nextConnectJournal,
         AXID.Settings.Observer.startAtLogin,
-        AXID.Settings.Observer.solChatNotifications,
         AXID.Settings.Observer.notificationDeniedState,
         AXID.Settings.Observer.storageUsedState,
         AXID.Settings.Observer.cacheRetentionPicker,

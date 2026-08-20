@@ -80,7 +80,6 @@
       "journal.browser.retry",
       "journal.browser.webView",
       "menubar.app.quit",
-      "menubar.chat.pending",
       "menubar.navigation.about",
       "menubar.navigation.openJournal",
       "menubar.navigation.settings",
@@ -114,7 +113,6 @@
       "settings.microphones.priority.list",
       "settings.observer.general.startAtLogin",
       "settings.observer.notifications.denied.state",
-      "settings.observer.notifications.solChat",
       "settings.observer.storage.cacheFolder.open",
       "settings.observer.storage.cacheRetention",
       "settings.observer.storage.cacheRetention.state",
@@ -494,8 +492,7 @@
     ],
     "MenubarIconOverlayState" : [
       "none",
-      "attention",
-      "chat_pending"
+      "attention"
     ],
     "MenubarIconState" : [
       "recording",

@@ -10,7 +10,6 @@ struct MenubarIconOverlayStateTests {
         let cases: [(MenubarIconOverlayState, String)] = [
             (.none, "none"),
             (.attention, "attention"),
-            (.chatPending, "chat_pending"),
         ]
 
         #expect(cases.count == MenubarIconOverlayState.allCases.count)
@@ -45,29 +44,25 @@ struct MenubarIconOverlayStateTests {
 
     @Test func renderedMeaningCrossProductMatchesContract() {
         let attentionOptions: [AttentionReason?] = [nil] + AttentionReason.allCases.map(Optional.some)
-        let messageOptions: [MenubarMessage?] = [nil, .chatPending]
         var checked = 0
 
         for rowState in MenubarStatusRowState.allCases {
             for attention in attentionOptions {
-                for message in messageOptions {
-                    let presentation = MenubarPresentation(
-                        observation: rowState,
-                        attention: attention,
-                        message: message
-                    )
-                    let expectedOverlay: MenubarIconOverlayState = attention != nil
-                        ? .attention
-                        : (message == nil ? .none : .chatPending)
+                let presentation = MenubarPresentation(
+                    observation: rowState,
+                    attention: attention
+                )
+                let expectedOverlay: MenubarIconOverlayState = attention != nil
+                    ? .attention
+                    : .none
 
-                    #expect(presentation.icon == rowState.iconState)
-                    #expect(presentation.overlayState == expectedOverlay)
-                    checked += 1
-                }
+                #expect(presentation.icon == rowState.iconState)
+                #expect(presentation.overlayState == expectedOverlay)
+                checked += 1
             }
         }
 
-        #expect(checked == MenubarStatusRowState.allCases.count * (AttentionReason.allCases.count + 1) * (MenubarMessage.allCases.count + 1))
+        #expect(checked == MenubarStatusRowState.allCases.count * (AttentionReason.allCases.count + 1))
     }
 
     @Test func badgeTreatmentsMatchApprovedGeometry() {
@@ -76,11 +71,6 @@ struct MenubarIconOverlayStateTests {
             haloDiameter: 9.6,
             haloTint: .adaptiveInk,
             mark: .symbol(name: "exclamationmark.circle.fill", pointSize: 8, tint: .solOrange)
-        ))
-        #expect(MenubarIconOverlayState.chatPending.badgeTreatment == MenubarBadgeTreatment(
-            haloDiameter: 7.6,
-            haloTint: .adaptiveInk,
-            mark: .dot(diameter: 6, tint: .accentColor)
         ))
     }
 

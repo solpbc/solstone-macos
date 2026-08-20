@@ -167,15 +167,6 @@ struct SnapshotTests {
         )
     }
 
-    @Test func statusIconMessageHalo() throws {
-        try render(
-            statusIconSnapshot(icon: .recording, overlay: .chatPending),
-            size: statusIconSize,
-            to: "status-icon-message.png",
-            appearance: try #require(NSAppearance(named: .aqua))
-        )
-    }
-
     @Test func statusIconClear() throws {
         try render(
             statusIconSnapshot(icon: .recording, overlay: .none),
@@ -229,19 +220,6 @@ struct SnapshotTests {
         let state = AppState.forSnapshot()
         let updateController = makeSnapshotUpdateController()
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-starting.png")
-    }
-
-    @Test func menuSolPinged() throws {
-        let state = AppState.forSnapshot()
-        state.solChatPending = SolChatRequestSummary(
-            id: "req-test",
-            summary: "let's pick up where we left off on the recorder",
-            day: "2026-05-09",
-            eventIndex: 42,
-            receivedAt: Date(timeIntervalSince1970: 0)
-        )
-        let updateController = makeSnapshotUpdateController()
-        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-sol-pinged.png")
     }
 
     @Test func menuObservingFullExternal() throws {
@@ -387,9 +365,7 @@ struct SnapshotTests {
     }
 
     @Test func settingsObserverAuthorizedNotifications() throws {
-        var config = AppConfig()
-        config.solInitiatedChatNotificationsEnabled = true
-        let state = AppState.forSnapshot(config: config, notificationStatus: .authorized)
+        let state = AppState.forSnapshot(notificationStatus: .authorized)
         let updateController = makeSnapshotUpdateController()
         try render(
             SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),
@@ -399,9 +375,7 @@ struct SnapshotTests {
     }
 
     @Test func settingsObserverDeniedNotifications() throws {
-        var config = AppConfig()
-        config.solInitiatedChatNotificationsEnabled = true
-        let state = AppState.forSnapshot(config: config, notificationStatus: .denied)
+        let state = AppState.forSnapshot(notificationStatus: .denied)
         let updateController = makeSnapshotUpdateController()
         try render(
             SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),
@@ -411,9 +385,7 @@ struct SnapshotTests {
     }
 
     @Test func settingsObserverProvisionalNotifications() throws {
-        var config = AppConfig()
-        config.solInitiatedChatNotificationsEnabled = true
-        let state = AppState.forSnapshot(config: config, notificationStatus: .provisional)
+        let state = AppState.forSnapshot(notificationStatus: .provisional)
         let updateController = makeSnapshotUpdateController()
         try render(
             SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),

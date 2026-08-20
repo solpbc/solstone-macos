@@ -7,7 +7,7 @@ import UserNotifications
 import SolstoneCore
 @testable import solstone
 
-private actor AppStateNotificationTestNotifier: SolChatNotifying {
+private actor AppStateNotificationTestNotifier: UserNotifying {
     var status: UNAuthorizationStatus
     var requestResult: Bool
     var statusAfterRequest: UNAuthorizationStatus?
@@ -43,7 +43,6 @@ private actor AppStateNotificationTestNotifier: SolChatNotifying {
     func post(identifier: String, title: String, body: String, sound: Bool) async {
         posts.append((identifier: identifier, title: title, body: body, sound: sound))
     }
-    func removeDelivered(identifier: String) async {}
 }
 
 @Suite("AppState notifications", .serialized)
@@ -53,55 +52,32 @@ struct AppStateNotificationTests {
         _ = NSApplication.shared
     }
 
-    @Test func falseGrantLeavesPreferenceUnchanged() async {
+    @Test func bootstrapRequestsAuthorizationWhenNotDeterminedAndDenied() async {
         let notifier = AppStateNotificationTestNotifier(
             status: .notDetermined,
             requestResult: false,
             statusAfterRequest: .denied
         )
-        var config = AppConfig()
-        config.solInitiatedChatNotificationsEnabled = false
-        let state = AppState.forSnapshot(config: config, notificationStatus: .notDetermined, notifier: notifier)
+        let state = AppState.forSnapshot(notificationStatus: .notDetermined, notifier: notifier)
 
-        state.setSolChatNotificationPreference(true)
+        await state.bootstrapNotificationAuthorization()
         await waitUntil { state.notificationAuthorizationStatus == UNAuthorizationStatus.denied }
 
-        #expect(state.config.solInitiatedChatNotificationsEnabled)
         #expect(state.notificationAuthorizationStatus == UNAuthorizationStatus.denied)
         #expect(await notifier.requestedOptions.count == 1)
     }
 
-    @Test func preferenceTrueReflectsDeniedStatusWithoutBecomingAuthorized() async {
-        let notifier = AppStateNotificationTestNotifier(
-            status: .notDetermined,
-            requestResult: false,
-            statusAfterRequest: .denied
-        )
-        var config = AppConfig()
-        config.solInitiatedChatNotificationsEnabled = true
-        let state = AppState.forSnapshot(config: config, notificationStatus: .notDetermined, notifier: notifier)
-
-        state.setSolChatNotificationPreference(true)
-        await waitUntil { state.notificationAuthorizationStatus == UNAuthorizationStatus.denied }
-
-        #expect(state.config.solInitiatedChatNotificationsEnabled)
-        #expect(state.notificationAuthorizationStatus != UNAuthorizationStatus.authorized)
-    }
-
-    @Test func preferenceTrueReflectsNotDeterminedStatusWithoutBecomingAuthorized() async {
+    @Test func bootstrapReflectsNotDeterminedStatusWithoutBecomingAuthorized() async {
         let notifier = AppStateNotificationTestNotifier(
             status: .notDetermined,
             requestResult: false,
             statusAfterRequest: .notDetermined
         )
-        var config = AppConfig()
-        config.solInitiatedChatNotificationsEnabled = true
-        let state = AppState.forSnapshot(config: config, notificationStatus: .authorized, notifier: notifier)
+        let state = AppState.forSnapshot(notificationStatus: .authorized, notifier: notifier)
 
-        state.setSolChatNotificationPreference(true)
+        await state.bootstrapNotificationAuthorization()
         await waitUntil { state.notificationAuthorizationStatus == UNAuthorizationStatus.notDetermined }
 
-        #expect(state.config.solInitiatedChatNotificationsEnabled)
         #expect(state.notificationAuthorizationStatus != UNAuthorizationStatus.authorized)
     }
 
@@ -110,7 +86,7 @@ struct AppStateNotificationTests {
         await notifier.setStatusReadDelay(nanoseconds: 100_000_000)
         let state = AppState.forSnapshot(notificationStatus: .notDetermined, notifier: notifier)
 
-        state.setSolChatNotificationPreference(true)
+        Task { await state.bootstrapNotificationAuthorization() }
         await notifier.setStatus(.denied)
         await waitUntil { state.notificationAuthorizationStatus == UNAuthorizationStatus.denied }
 

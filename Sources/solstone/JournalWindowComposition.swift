@@ -32,15 +32,6 @@ public struct JournalWindowDestination: Sendable, Equatable {
         self.init(validatedPath: normalizedPath, query: normalizedQuery, fragment: normalizedFragment)
     }
 
-    public static func chat(day: String, eventIndex: Int) -> JournalWindowDestination {
-        let encodedDay = encodePathSegment(day)
-        return JournalWindowDestination(
-            validatedPath: "/app/chat/\(encodedDay)",
-            query: nil,
-            fragment: "event-\(eventIndex)"
-        )
-    }
-
     private init(validatedPath path: String, query: String?, fragment: String?) {
         self.path = path
         self.query = query
@@ -80,12 +71,6 @@ public struct JournalWindowDestination: Sendable, Equatable {
         }
         guard !value.contains("#") else { return nil }
         return value.isEmpty ? nil : value
-    }
-
-    private static func encodePathSegment(_ value: String) -> String {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "/?#")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 }
 
