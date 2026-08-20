@@ -199,7 +199,6 @@ struct JournalHandoffResumeProbes: Equatable, Sendable {
     var running: Bool
     var existingHandoff: ExistingHandoff
     var setupComplete: Bool
-    var storedKeyAuthValid: Bool?
 
     init(
         serviceMode: ServiceMode?,
@@ -207,8 +206,7 @@ struct JournalHandoffResumeProbes: Equatable, Sendable {
         installedTrusted: Bool,
         running: Bool,
         existingHandoff: ExistingHandoff,
-        setupComplete: Bool,
-        storedKeyAuthValid: Bool? = nil
+        setupComplete: Bool
     ) {
         self.serviceMode = serviceMode
         self.journalPath = journalPath
@@ -216,7 +214,6 @@ struct JournalHandoffResumeProbes: Equatable, Sendable {
         self.running = running
         self.existingHandoff = existingHandoff
         self.setupComplete = setupComplete
-        self.storedKeyAuthValid = storedKeyAuthValid
     }
 }
 
@@ -278,7 +275,7 @@ protocol InitProbe {
 
 @MainActor
 protocol ConnectionTester {
-    func testConnection(serverURL: String, serverKey: String) async -> String?
+    func testPairedIngestConnection(appState: AppState) async -> String?
 }
 
 @MainActor
@@ -542,22 +539,13 @@ final class JournalHandoffOrchestrator {
         } else {
             existingHandoff = .none
         }
-        let authValid: Bool?
-        if let serverURL = appState.config.serverURL,
-           let serverKey = appState.config.serverKey {
-            authValid = await dependencies.connectionTester.testConnection(serverURL: serverURL, serverKey: serverKey) == nil
-        } else {
-            authValid = nil
-        }
-
         return solstone.deriveResumeState(probes: JournalHandoffResumeProbes(
             serviceMode: appState.config.serviceMode,
             journalPath: appState.config.journalPath,
             installedTrusted: installedTrusted,
             running: running,
             existingHandoff: existingHandoff,
-            setupComplete: setupComplete,
-            storedKeyAuthValid: authValid
+            setupComplete: setupComplete
         ))
     }
 
@@ -699,14 +687,8 @@ final class JournalHandoffOrchestrator {
 
     private func performAuthGate(appState: AppState) async throws {
         step = .authGate
-        guard let serverURL = appState.config.serverURL,
-              let serverKey = appState.config.serverKey
-        else {
-            throw JournalHandoffFailure.authenticationFailed("not configured")
-        }
-
-        Logger.upload.info("journal handoff: checking stored journal key before external flip")
-        if let failure = await dependencies.connectionTester.testConnection(serverURL: serverURL, serverKey: serverKey) {
+        Logger.upload.info("journal handoff: checking paired ingest connection before external flip")
+        if let failure = await dependencies.connectionTester.testPairedIngestConnection(appState: appState) {
             Logger.upload.error("journal handoff: auth gate failed: \(failure, privacy: .public)")
             throw JournalHandoffFailure.authenticationFailed(failure)
         }
@@ -1043,8 +1025,8 @@ struct LiveInitProbe: InitProbe {
 }
 
 struct LiveConnectionTester: ConnectionTester {
-    func testConnection(serverURL: String, serverKey: String) async -> String? {
-        await UploadCoordinator.testConnection(serverURL: serverURL, serverKey: serverKey)
+    func testPairedIngestConnection(appState: AppState) async -> String? {
+        await appState.uploadCoordinator.testPairedIngestConnection()
     }
 }
 

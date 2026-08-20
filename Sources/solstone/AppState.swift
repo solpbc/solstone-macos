@@ -76,6 +76,7 @@ public final class AppState {
     internal let tunnelLifecycleOwner: TunnelLifecycleOwner
     internal let pairingCoordinator: PairingCoordinator
     private let homeBaseURLResolver: HomeBaseURLResolver
+    private let ingestBaseURLResolver: HomeBaseURLResolver
     private let observerRegister: @MainActor @Sendable (
         _ baseURL: String,
         _ descriptor: ObserverRegistrationDescriptor
@@ -91,6 +92,7 @@ public final class AppState {
     private let loginItemRegistrationReconciler: LoginItemRegistrationReconciler
     private let lastContactStore: any LastSuccessfulJournalContactStoring
     private let isSnapshot: Bool
+    private let automaticObservationPipelineEnabled: Bool
     private let observerHealthSnapshotEnabled: Bool
     public private(set) var config: AppConfig
     private var debugAudioHolder: DebugSettingHolder!
@@ -386,6 +388,7 @@ public final class AppState {
         let oldConfig = config
         config = newConfig
         uploadCoordinator.updateConfig(newConfig)
+        uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
         if newConfig.isUploadConfigured,
            let serverKey = newConfig.serverKey {
             Task { [heartbeatService] in
@@ -640,8 +643,56 @@ public final class AppState {
         }
     }
 
+    /// Ingest never falls back to the configured external server. Journal v3 is
+    /// available only over an established paired loopback tunnel.
+    private static func makeIngestBaseURLResolver(target: AppStateBridgeTarget) -> HomeBaseURLResolver {
+        HomeBaseURLResolver { [target] in
+            await MainActor.run {
+                guard let state = target.state else { return .held }
+                let owner = state.tunnelLifecycleOwner
+                return Self.ingestBaseURL(
+                    lifecycleState: owner.state,
+                    localPort: owner.localPort,
+                    pairingIdentity: owner.cachedPairingIdentity
+                )
+            }
+        }
+    }
+
+    internal static func ingestBaseURL(
+        lifecycleState: TunnelLifecycleState,
+        localPort: Int?,
+        pairingIdentity: TunnelPairingIdentity?
+    ) -> ResolvedHomeBase {
+        guard case .connected = lifecycleState,
+              let localPort,
+              pairingIdentity != nil else {
+            return .held
+        }
+        return .url("http://127.0.0.1:\(localPort)")
+    }
+
+    internal var isPairedIngestReady: Bool {
+        let owner = tunnelLifecycleOwner
+        guard case .connected = owner.state,
+              owner.localPort != nil,
+              owner.cachedPairingIdentity != nil else {
+            return false
+        }
+        return true
+    }
+
+    private func currentPairedIngestIdentity() -> TunnelPairingIdentity? {
+        guard isPairedIngestReady else { return nil }
+        return tunnelLifecycleOwner.cachedPairingIdentity
+    }
+
     internal func resolveHomeBase() async -> ResolvedHomeBase {
         await homeBaseURLResolver.resolve()
+    }
+
+    internal func resolveIngestBase() async -> ResolvedHomeBase {
+        await ingestBaseURLResolver.resolve()
     }
 
     internal func setConfirmedMark(_ mark: JournalMark) {
@@ -655,6 +706,7 @@ public final class AppState {
     public init(
         notifier: any UserNotifying = UNUserNotificationCenterNotifier(),
         loginService: any LoginItemService = LiveLoginItemService(),
+        automaticObservationPipelineEnabled: Bool = true,
         observerRegister: @escaping @MainActor @Sendable (
             _ baseURL: String,
             _ descriptor: ObserverRegistrationDescriptor
@@ -682,6 +734,7 @@ public final class AppState {
         self.storageManager = storageManager
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isSnapshot = false
+        self.automaticObservationPipelineEnabled = automaticObservationPipelineEnabled
         self.config = config
         self.observerRegister = observerRegister
         self.sameMachinePairStart = { baseURL, deviceLabel in
@@ -727,6 +780,8 @@ public final class AppState {
         )
         let homeBaseURLResolver = Self.makeHomeBaseURLResolver(target: homeBaseURLTarget)
         self.homeBaseURLResolver = homeBaseURLResolver
+        let ingestBaseURLResolver = Self.makeIngestBaseURLResolver(target: homeBaseURLTarget)
+        self.ingestBaseURLResolver = ingestBaseURLResolver
 
         // Apply debug segments setting if enabled
         if config.debugSegments {
@@ -793,7 +848,9 @@ public final class AppState {
         uploadCoordinator = UploadCoordinator(
             storageManager: storageManager,
             config: config,
-            resolver: homeBaseURLResolver,
+            resolver: ingestBaseURLResolver,
+            pairedIngestIdentity: nil,
+            automaticSyncEnabled: automaticObservationPipelineEnabled,
             lastContactStore: lastContactStore,
             journalFingerprintProvider: { [fingerprintTarget] in
                 fingerprintTarget.state?.currentJournalConnectionFingerprint()
@@ -815,19 +872,21 @@ public final class AppState {
         )
         captureTarget.state = self
 
-        // Single segment-completion nudge for rotation, recovery, stop/pause, sleep, and lock.
-        Task {
-            await RemixQueue.shared.setOnSegmentComplete { [weak self] _, reconciliation in
-                await MainActor.run {
-                    guard let self else { return }
-                    switch reconciliation {
-                    case .normal:
-                        self.uploadCoordinator.triggerSync()
-                    case .recovered:
-                        self.audioReconciledCount += 1
-                        self.uploadCoordinator.triggerSync()
-                    case .failed(let message):
-                        self.errorMessage = message
+        if automaticObservationPipelineEnabled {
+            // Single segment-completion nudge for rotation, recovery, stop/pause, sleep, and lock.
+            Task {
+                await RemixQueue.shared.setOnSegmentComplete { [weak self] _, reconciliation in
+                    await MainActor.run {
+                        guard let self else { return }
+                        switch reconciliation {
+                        case .normal:
+                            self.uploadCoordinator.triggerSync()
+                        case .recovered:
+                            self.audioReconciledCount += 1
+                            self.uploadCoordinator.triggerSync()
+                        case .failed(let message):
+                            self.errorMessage = message
+                        }
                     }
                 }
             }
@@ -841,13 +900,14 @@ public final class AppState {
         // Sync microphone priority list with available devices
         syncMicrophonePriorityList()
 
-        // Recover any incomplete segments from previous sessions
-        recoveryCoordinator.scheduleDetached()
+        if automaticObservationPipelineEnabled {
+            // Recover any incomplete segments from previous sessions.
+            recoveryCoordinator.scheduleDetached()
+            configureJournalServicesIfNeeded()
 
-        configureJournalServicesIfNeeded()
-
-        // Start polling permissions — auto-starts recording when ready
-        capture.activate()
+            // Start polling permissions — auto-starts recording when ready.
+            capture.activate()
+        }
 
         // Listen for external defaults changes (e.g. `defaults write` from terminal)
         visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
@@ -864,6 +924,7 @@ public final class AppState {
         heartbeatTarget.state = self
         homeBaseURLTarget.state = self
         fingerprintTarget.state = self
+        uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
         uploadCoordinator.refreshLastSuccessfulJournalContact()
         AppState.shared = self
     }
@@ -1007,11 +1068,19 @@ public final class AppState {
             return .url(serverURL)
         }
         self.homeBaseURLResolver = snapshotResolver
+        let snapshotIngestResolver = HomeBaseURLResolver { .held }
+        self.ingestBaseURLResolver = snapshotIngestResolver
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isSnapshot = isSnapshot
+        // Only the live-probe launch suppresses the automatic pipeline, and it
+        // always comes through the designated initializer. This initializer
+        // starts no capture, recovery, or startup sync of its own, so the flag
+        // reaches only the tunnel-connected sync trigger — which a snapshot
+        // state is expected to fire.
+        self.automaticObservationPipelineEnabled = true
         self.config = config
         self.observerRegister = observerRegister
         self.sameMachinePairStart = sameMachinePairStart
@@ -1090,7 +1159,7 @@ public final class AppState {
         uploadCoordinator = UploadCoordinator(
             forSnapshot: storageManager,
             config: config,
-            resolver: snapshotResolver,
+            resolver: snapshotIngestResolver,
             lastContactStore: lastContactStore,
             journalFingerprintProvider: { [fingerprintTarget] in
                 fingerprintTarget.state?.currentJournalConnectionFingerprint()
@@ -1149,6 +1218,7 @@ public final class AppState {
         let previousState = previousTunnelLifecycleState
         previousTunnelLifecycleState = newState
         journalHomeBaseChangeToken += 1
+        uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
         guard isConnected(newState), !isConnected(previousState) else { return }
 
         let registrationTask: Task<Void, Never>
@@ -1175,6 +1245,7 @@ public final class AppState {
         Task { @MainActor [weak self, registrationTask] in
             await registrationTask.value
             guard let self else { return }
+            guard self.automaticObservationPipelineEnabled else { return }
             self.triggerTunnelConnectedSync(self)
         }
     }
@@ -1210,7 +1281,7 @@ public final class AppState {
     }
 
     private func scheduleStartupUploadSyncIfNeeded() {
-        guard config.serverURL != nil else { return }
+        guard isPairedIngestReady else { return }
         Task.detached { [uploadCoordinator] in
             await uploadCoordinator?.syncOnStartup()
         }
@@ -1323,7 +1394,7 @@ public final class AppState {
         }
         updateConfig(fresh)
 
-        if fresh.isUploadConfigured {
+        if isPairedIngestReady {
             Task.detached { [uploadCoordinator] in
                 await uploadCoordinator?.syncOnStartup()
             }

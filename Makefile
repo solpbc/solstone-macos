@@ -1,5 +1,5 @@
-.PHONY: build release release-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
-        signing-check notary-restore unlock-signing bundle-dist bundle-dist-journal bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
+.PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
+        signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
         vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-runtime-probe brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
 
@@ -56,6 +56,8 @@ APP_ENTITLEMENTS_PLIST := Sources/solstone/entitlements-app.plist
 # else "-" (pure ad-hoc). Expanded lazily — only the bundle-adhoc recipe references it.
 ADHOC_SIGN_ID      ?= $(shell scripts/adhoc-dev-cert.sh identity 2>/dev/null || echo -)
 ADHOC_ENTITLEMENTS ?= $(ENTITLEMENTS_PLIST)
+BUNDLE_BUILD_TARGET ?= release-universal
+BUNDLE_CONFIGURATION ?= Release
 
 # uv vendoring
 UV_VERSION ?= 0.11.13
@@ -246,6 +248,12 @@ release:
 release-universal:
 	swift build -c release --arch arm64 --arch x86_64 --product solstone
 	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
+
+# Debug executable with the production Developer ID signing and keychain plane.
+# This is used only by the explicit v3 live-probe bundle target below.
+debug-universal:
+	swift build -c debug --arch arm64 --arch x86_64 --product solstone
+	swift build -c debug --arch arm64 --arch x86_64 --product solstone-watchdog
 
 # Local ad-hoc test builds only; never shipped; never set by any production target.
 # The binary matches production; bundle-adhoc selects the login-keychain SPL plane.
@@ -448,12 +456,12 @@ unlock-signing:
 
 # Build a universal .app bundle signed with Developer ID Application + hardened runtime.
 # Separate from `bundle-adhoc`, which is the local-only unsigned/dev-cert path.
-bundle-dist: unlock-signing signing-check release-universal
+bundle-dist: unlock-signing signing-check $(BUNDLE_BUILD_TARGET)
 	@echo "Creating distribution app bundle..."
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
-	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
-	@cp .build/apple/Products/Release/solstone-watchdog solstone.app/Contents/MacOS/
+	@cp .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone solstone.app/Contents/MacOS/
+	@cp .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone-watchdog solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@# Embedded Developer ID provisioning profile authorizes the keychain-access-groups
 	@# entitlement (Data Protection keychain for the SPL pairing bundle). Must be in place
@@ -462,8 +470,8 @@ bundle-dist: unlock-signing signing-check release-universal
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@mkdir -p solstone.app/Contents/Library/LaunchAgents
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
-	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
-	@cp -r .build/apple/Products/Release/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
+	@cp -r .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone_solstone.bundle solstone.app/Contents/Resources/
+	@cp -r .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
 	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
 	@codesign --force --options runtime --timestamp \
@@ -518,6 +526,12 @@ bundle-dist: unlock-signing signing-check release-universal
 	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
 		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
 	@echo "✓ Signed: solstone.app (keychain-access-group + embedded profile verified)"
+
+# Debug-only app bundle for the live v3 fixture probe. It intentionally keeps
+# the production Developer ID signature, provisioning profile, and Data
+# Protection keychain entitlement so it can read the normal paired identity.
+bundle-dist-debug:
+	@$(MAKE) bundle-dist BUNDLE_BUILD_TARGET=debug-universal BUNDLE_CONFIGURATION=Debug
 
 # Local ad-hoc test bundle only; never shipped, never update-served, never production.
 # Keep in lockstep with bundle-dist; only signing/provisioning/keychain plane differ.

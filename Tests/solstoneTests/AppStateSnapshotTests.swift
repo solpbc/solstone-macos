@@ -57,6 +57,34 @@ struct AppStateSnapshotTests {
         state.pauseManager.resume()
     }
 
+    @Test func ingestResolverRequiresConnectedPairedLoopbackAndSnapshotNeverUsesConfiguredURL() async {
+        let pairing = TunnelPairingIdentity(instanceID: "instance", fingerprint: "fingerprint")
+
+        #expect(AppState.ingestBaseURL(
+            lifecycleState: .disconnected,
+            localPort: 24680,
+            pairingIdentity: pairing
+        ) == .held)
+        #expect(AppState.ingestBaseURL(
+            lifecycleState: .connected(localPort: 24680, via: .lan),
+            localPort: nil,
+            pairingIdentity: pairing
+        ) == .held)
+        #expect(AppState.ingestBaseURL(
+            lifecycleState: .connected(localPort: 24680, via: .lan),
+            localPort: 24680,
+            pairingIdentity: nil
+        ) == .held)
+        #expect(AppState.ingestBaseURL(
+            lifecycleState: .connected(localPort: 24680, via: .lan),
+            localPort: 24680,
+            pairingIdentity: pairing
+        ) == .url("http://127.0.0.1:24680"))
+
+        let state = AppState.forSnapshot(config: AppConfig(serverURL: "https://journal.example"))
+        #expect(await state.resolveIngestBase() == .held)
+    }
+
     @Test func appStateDoesNotStoreCaptureTruthMirrors() throws {
         let appStateSource = try readWireUpSource("Sources/solstone/AppState.swift")
         let coordinatorSource = try readWireUpSource("Sources/solstone/CaptureCoordinator.swift")

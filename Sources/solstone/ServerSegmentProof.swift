@@ -8,19 +8,24 @@ internal struct SegmentHoldVerdict: Sendable, Equatable {
     let reason: String
 }
 
+internal struct LocalUploadFileProof: Sendable, Equatable {
+    let sha256: String
+    let size: UInt64
+}
+
 /// Terminal statuses that prove reconcile convergence after name and SHA match.
 /// `.processed` means the journal intentionally consumed the raw byte after verified
 /// processing and deliberately does not keep that raw file on journal disk; it makes the
 /// segment eligible for configured local cache cleanup, but does not mean the raw byte is
 /// still stored.
 internal func proveServerHoldsUploadFiles(
-    localSHAByFilename: [String: String],
+    localFilesByFilename: [String: LocalUploadFileProof],
     serverSegment: ServerSegmentInfo?
 ) -> SegmentHoldVerdict {
     guard let serverSegment else {
         return SegmentHoldVerdict(isHeld: false, reason: "not on server")
     }
-    guard !localSHAByFilename.isEmpty else {
+    guard !localFilesByFilename.isEmpty else {
         return SegmentHoldVerdict(isHeld: false, reason: "no local files to prove")
     }
 
@@ -30,21 +35,24 @@ internal func proveServerHoldsUploadFiles(
         serverFilesByEffectiveName[effectiveName] = file
     }
 
-    for filename in localSHAByFilename.keys.sorted() {
-        guard let localSHA = localSHAByFilename[filename], !localSHA.isEmpty else {
+    for filename in localFilesByFilename.keys.sorted() {
+        guard let localFile = localFilesByFilename[filename], !localFile.sha256.isEmpty else {
             return SegmentHoldVerdict(isHeld: false, reason: "\(filename): empty local sha")
         }
         guard let serverFile = serverFilesByEffectiveName[filename] else {
             return SegmentHoldVerdict(isHeld: false, reason: "\(filename): missing on server")
         }
-        guard serverFile.status == .present || serverFile.status == .processed else {
-            return SegmentHoldVerdict(isHeld: false, reason: "\(filename): \(serverFile.status.rawValue) status")
+        guard serverFile.status.provesHold else {
+            return SegmentHoldVerdict(isHeld: false, reason: "\(filename): non-held custody")
         }
         guard !serverFile.sha256.isEmpty else {
             return SegmentHoldVerdict(isHeld: false, reason: "\(filename): empty server sha")
         }
-        guard serverFile.sha256 == localSHA else {
+        guard serverFile.sha256 == localFile.sha256 else {
             return SegmentHoldVerdict(isHeld: false, reason: "\(filename): sha mismatch")
+        }
+        guard serverFile.size == localFile.size else {
+            return SegmentHoldVerdict(isHeld: false, reason: "\(filename): size mismatch")
         }
     }
 

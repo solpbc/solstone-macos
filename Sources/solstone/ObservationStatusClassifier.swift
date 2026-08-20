@@ -13,6 +13,7 @@ internal func classifyObservationRowState(
     serviceMode: ServiceMode?,
     syncPaused: Bool,
     isUploadConfigured: Bool,
+    isPairedIngestReady: Bool,
     uploadStatus: UploadCoordinator.Status
 ) -> MenubarStatusRowState {
     if permissionsNeedAttention {
@@ -36,7 +37,7 @@ internal func classifyObservationRowState(
     if syncPaused {
         return .syncPaused
     }
-    if !isUploadConfigured {
+    if !isUploadConfigured && !isPairedIngestReady {
         return .localOnly
     }
     switch uploadStatus {
@@ -160,6 +161,7 @@ extension AppState {
             serviceMode: config.serviceMode,
             syncPaused: config.syncPaused,
             isUploadConfigured: config.isUploadConfigured,
+            isPairedIngestReady: isPairedIngestReady,
             uploadStatus: uploadCoordinator.status
         )
     }

@@ -57,7 +57,7 @@ This is a single-package Swift repository using Swift Package Manager with Swift
 - **CaptureManager.swift** - Orchestrates continuous recording with segment rotation
 - **SegmentWriter.swift** - Manages individual 5-minute recording segments
 - **PerSourceAudioManager.swift** - Manages per-source audio writers, handles dynamic mic join/leave
-- **UploadService.swift** - Handles segment upload with sync and retry logic
+- **UploadClient.swift**, **SyncService.swift**, **UploadCoordinator.swift** - Handle segment upload, reconciliation, and retry coordination
 - **PauseManager.swift** - Tracks pause state with timed auto-resume
 - **StorageManager.swift** - File organization and segment directory creation
 - **AudioDeviceMonitor.swift** - Monitors audio device additions/removals

@@ -7,52 +7,37 @@ import os
 import SolstoneCore
 
 /// File info returned by the server for a segment
-public struct ServerFileInfo: Sendable {
-    public let name: String           // Simplified name, e.g., "audio.m4a"
-    public let submittedName: String  // Original filename as uploaded
-    public let sha256: String
-    public let size: Int
-    public let status: ServerFileStatus
-}
-
-public enum ServerFileStatus: String, Sendable {
-    case present
-    case missing
-    case processed
-    case unknown
+struct ServerFileInfo: Sendable {
+    let name: String           // Simplified name, e.g., "audio.m4a"
+    let submittedName: String  // Original filename as uploaded
+    let sha256: String
+    let size: UInt64
+    let status: IngestProtocolV3.Custody
 }
 
 /// Segment info from server including collision resolution
-public struct ServerSegmentInfo: Sendable {
-    public let key: String           // Actual key on server (may differ if collision)
-    public let originalKey: String?  // Original submitted key (if collision occurred)
-    public let files: [ServerFileInfo]
+struct ServerSegmentInfo: Sendable {
+    let key: String           // Actual key on server (may differ if collision)
+    let originalKey: String?  // Original submitted key (if collision occurred)
+    let files: [ServerFileInfo]
 }
 
 /// Result of an upload attempt
-public enum UploadResult: Sendable {
+enum UploadResult: Sendable {
     case success(UploadSuccessInfo)
     case failure(Error)
-    case skipped
-    case notConfigured
 }
 
-public struct UploadSuccessInfo: Sendable, Equatable {
-    public let status: IngestUploadStatus
-    public let storedSegmentKey: String?
-}
-
-public enum IngestUploadStatus: Sendable, Equatable {
-    case ok
-    case collision
-    case duplicate
-    case unknown(String)
+struct UploadSuccessInfo: Sendable, Equatable {
+    let status: IngestProtocolV3.UploadStatus
+    let storedSegmentKey: String
 }
 
 /// Upload errors
 public enum UploadError: Error, LocalizedError {
     case invalidURL
     case noFiles
+    case invalidRequest
     case invalidResponse
     case serverError(statusCode: Int, message: String)
 
@@ -62,6 +47,8 @@ public enum UploadError: Error, LocalizedError {
             return "invalid journal address"
         case .noFiles:
             return "No files to upload"
+        case .invalidRequest:
+            return "upload exceeds journal limits"
         case .invalidResponse:
             return "invalid journal response"
         case .serverError(let code, let message):
@@ -168,140 +155,80 @@ public struct UploadClient: Sendable {
         }
     }
 
-    // MARK: - Connection Test
+    // MARK: - Protocol v3 reads
 
-    /// Test connection to server, returns error message if failed, nil on success
-    public func testConnection(serverURL: String, serverKey: String) async -> String? {
-        // Use segments endpoint with current date to test connection
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyyMMdd"
-        let today = dateFormatter.string(from: Date())
-        let urlString = "\(serverURL)/app/devices/ingest/segments/\(today)"
-        Logger.upload.info("testConnection: GET \(urlString, privacy: .public)")
+    func getManifest(serverURL: String) async throws -> IngestProtocolV3.Manifest {
+        try await get(serverURL: serverURL, path: IngestProtocolV3.manifestPath, as: IngestProtocolV3.Manifest.self)
+    }
 
-        guard let url = URL(string: urlString) else {
-            Logger.upload.info("testConnection: invalid URL")
+    func getManifestDay(serverURL: String, day: String) async throws -> IngestProtocolV3.ManifestDay {
+        let response = try await get(
+            serverURL: serverURL,
+            path: IngestProtocolV3.manifestDayPath(day),
+            as: IngestProtocolV3.ManifestDay.self
+        )
+        try response.validate(expectedDay: day)
+        return response
+    }
+
+    func getSegmentsDay(serverURL: String, day: String) async throws -> IngestProtocolV3.SegmentsDay {
+        try await get(
+            serverURL: serverURL,
+            path: IngestProtocolV3.segmentsDayPath(day),
+            as: IngestProtocolV3.SegmentsDay.self
+        )
+    }
+
+    /// Checks the paired journal's v3 read route. This intentionally has no
+    /// bearer credential: linked-device access is authenticated by the tunnel.
+    public func testPairedIngestConnection(serverURL: String) async -> String? {
+        guard let url = URL(string: "\(serverURL)\(IngestProtocolV3.manifestPath)") else {
             return "Invalid URL"
         }
-        let host = url.host ?? ""
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(serverKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 10  // Quick timeout for connection test
-        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-
-        // Use ephemeral session for connection test (no caching)
-        let testSession = URLSession(configuration: .ephemeral)
-        defer { testSession.invalidateAndCancel() }
-
         do {
-            Logger.upload.info("testConnection: sending request...")
-            let (data, response) = try await testSession.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse {
-                let bodyPreview = String(data: data.prefix(500), encoding: .utf8) ?? "<binary>"
-                let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "<none>"
-                Logger.upload.info("testConnection: HTTP \(httpResponse.statusCode, privacy: .public)")
-                Logger.upload.info("testConnection: Content-Type: \(contentType, privacy: .public)")
-                Logger.upload.info("testConnection: Body: \(bodyPreview, privacy: .public)")
-
-                // Check if response is JSON (not HTML login page)
-                if contentType.contains("text/html") || bodyPreview.contains("<!DOCTYPE") || bodyPreview.contains("<html") {
-                    Logger.upload.info("testConnection: got HTML instead of JSON - endpoint may not exist")
-                    return "journal returned a login page (restart sol?)"
-                }
-
-                switch httpResponse.statusCode {
-                case 200:
-                    Logger.upload.info("testConnection: SUCCESS")
-                    return nil  // Success
-                case 401:
-                    return "Invalid API key"
-                case 403:
-                    return "this Mac is disabled"
-                case 404:
-                    return "journal endpoint not found (update sol?)"
-                default:
-                    return "journal error (\(httpResponse.statusCode))"
-                }
-            }
-            return "Invalid response"
+            _ = try await getManifest(serverURL: serverURL)
+            return nil
         } catch let error as URLError {
-            Logger.upload.info("testConnection: URLError \(error.code.rawValue, privacy: .public) - \(error.localizedDescription, privacy: .public)")
-            return Self.errorMessage(for: error, host: host)
+            return Self.errorMessage(for: error, host: url.host ?? "")
+        } catch let UploadError.serverError(statusCode, _) {
+            switch statusCode {
+            case 403:
+                return "this Mac is disabled"
+            case 404:
+                return "journal endpoint not found (update sol?)"
+            default:
+                return "journal error (\(statusCode))"
+            }
+        } catch let error as UploadError {
+            return error.errorDescription ?? "Invalid response"
         } catch {
-            Logger.upload.info("testConnection: error \(error, privacy: .public)")
             return error.localizedDescription
         }
     }
 
-    // MARK: - Server Queries
-
-    /// Get all segments with file info for a given day from the server
-    /// Throws on non-200 or unparseable responses; returns empty array if day legitimately has no segments.
-    public func getServerSegments(
-        serverURL: String,
-        serverKey: String,
-        day: String
-    ) async throws -> [ServerSegmentInfo] {
-        let urlString = "\(serverURL)/app/devices/ingest/segments/\(day)"
-        guard let url = URL(string: urlString) else {
+    private func get<Response: Decodable>(serverURL: String, path: String, as _: Response.Type) async throws -> Response {
+        guard let url = URL(string: "\(serverURL)\(path)") else {
             throw UploadError.invalidURL
         }
-
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(serverKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(IngestProtocolV3.headerValue, forHTTPHeaderField: IngestProtocolV3.headerName)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
 
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw UploadError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw UploadError.serverError(
+                statusCode: httpResponse.statusCode,
+                message: String(data: data, encoding: .utf8) ?? "Unknown error"
+            )
+        }
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw UploadError.serverError(statusCode: -1, message: "segment listing")
-            }
-            guard httpResponse.statusCode == 200 else {
-                throw UploadError.serverError(statusCode: httpResponse.statusCode, message: "segment listing")
-            }
-            guard let segments = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                throw UploadError.invalidResponse
-            }
-
-            // Parse JSON: [{"key": "...", "original_key": "...", "files": [...]}]
-            return segments.compactMap { seg -> ServerSegmentInfo? in
-                guard let segmentKey = seg["key"] as? String,
-                      let files = seg["files"] as? [[String: Any]] else {
-                    return nil
-                }
-
-                let originalKey = seg["original_key"] as? String
-
-                let fileInfos = files.compactMap { file -> ServerFileInfo? in
-                    guard let name = file["name"] as? String,
-                          let size = file["size"] as? Int else {
-                        return nil
-                    }
-                    let submittedName = file["submitted_name"] as? String ?? name
-                    let sha256 = file["sha256"] as? String ?? ""
-                    let status = ServerFileStatus(rawValue: file["status"] as? String ?? "") ?? .unknown
-                    return ServerFileInfo(
-                        name: name,
-                        submittedName: submittedName,
-                        sha256: sha256,
-                        size: size,
-                        status: status
-                    )
-                }
-
-                return ServerSegmentInfo(
-                    key: segmentKey,
-                    originalKey: originalKey,
-                    files: fileInfos
-                )
-            }
-        } catch let error as URLError {
-            throw error
+            return try JSONDecoder().decode(Response.self, from: data)
         } catch {
-            Logger.upload.info("getServerSegments failed: \(error, privacy: .public)")
-            throw error
+            throw UploadError.invalidResponse
         }
     }
 
@@ -388,92 +315,39 @@ public struct UploadClient: Sendable {
     // MARK: - Upload
 
     /// Upload a segment to the server
-    public func uploadSegment(
+    func uploadSegment(
         serverURL: String,
-        serverKey: String,
-        segmentURL: URL,
         day: String,
         segment: String,
         mediaFiles: [URL],
-        metadataJSON: String? = nil
+        metadata: [String: IngestJSONValue]?,
+        boundary: String = UUID().uuidString
     ) async -> UploadResult {
-        let urlString = "\(serverURL)/app/devices/ingest"
-        guard let url = URL(string: urlString) else {
-            return .failure(UploadError.invalidURL)
-        }
-
         guard !mediaFiles.isEmpty else {
             return .failure(UploadError.noFiles)
         }
 
         let fm = FileManager.default
-
-        // Debug logging
         let fileNames = mediaFiles.map { $0.lastPathComponent }.joined(separator: ", ")
-        Logger.upload.info("POST day=\(day, privacy: .public) segment=\(segment, privacy: .public) platform=darwin files=[\(fileNames, privacy: .public)]")
-
-        // Build multipart form data in a temporary file to avoid memory pressure
-        let boundary = UUID().uuidString
+        Logger.upload.info("POST day=\(day, privacy: .public) segment=\(segment, privacy: .public) files=[\(fileNames, privacy: .public)]")
         let tempURL = fm.temporaryDirectory.appendingPathComponent("upload-\(UUID().uuidString).tmp")
 
         do {
-            fm.createFile(atPath: tempURL.path, contents: nil)
-            let fileHandle = try FileHandle(forWritingTo: tempURL)
-            defer {
-                try? fileHandle.close()
-                try? fm.removeItem(at: tempURL)
-            }
-
-            // Write form fields
-            try fileHandle.writeMultipartField(boundary: boundary, name: "segment", value: segment)
-            try fileHandle.writeMultipartField(boundary: boundary, name: "day", value: day)
-            try fileHandle.writeMultipartField(boundary: boundary, name: "platform", value: "darwin")
-
-            // Write metadata if provided
-            if let metadataJSON = metadataJSON {
-                try fileHandle.writeMultipartField(boundary: boundary, name: "meta", value: metadataJSON)
-                Logger.upload.info("  + meta: \(metadataJSON.prefix(200), privacy: .public)...")
-            }
-
-            // Stream each file to temp file
-            for fileURL in mediaFiles {
-                let filename = fileURL.lastPathComponent
-                let mimeType = fileURL.pathExtension == "mp4" ? "video/mp4" : "audio/mp4"
-
-                let attrs = try? fm.attributesOfItem(atPath: fileURL.path)
-                let fileSize = attrs?[.size] as? Int ?? 0
-                Logger.upload.info("  + \(filename, privacy: .public) (\(fileSize, privacy: .public) bytes)")
-
-                try fileHandle.writeMultipartFileHeader(boundary: boundary, filename: filename, mimeType: mimeType)
-
-                // Stream file contents in chunks
-                let sourceHandle = try FileHandle(forReadingFrom: fileURL)
-                defer { try? sourceHandle.close() }
-
-                let chunkSize = 1024 * 1024  // 1 MB chunks
-                while true {
-                    let chunk = sourceHandle.readData(ofLength: chunkSize)
-                    if chunk.isEmpty { break }
-                    try fileHandle.write(contentsOf: chunk)
-                }
-
-                try fileHandle.write(contentsOf: "\r\n".data(using: .utf8)!)
-            }
-
-            // Write closing boundary
-            try fileHandle.write(contentsOf: "--\(boundary)--\r\n".data(using: .utf8)!)
-            try fileHandle.synchronize()
+            let prepared = try IngestV3UploadRequestBuilder.build(
+                baseURL: serverURL,
+                day: day,
+                segment: segment,
+                selectedFiles: mediaFiles,
+                meta: metadata,
+                boundary: boundary,
+                bodyURL: tempURL
+            )
+            defer { try? fm.removeItem(at: tempURL) }
 
             let totalSize = try fm.attributesOfItem(atPath: tempURL.path)[.size] as? Int ?? 0
             Logger.upload.info("Total request body: \(totalSize, privacy: .public) bytes")
 
-            // Create request and upload
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(serverKey)", forHTTPHeaderField: "Authorization")
-
-            let (data, response) = try await session.upload(for: request, fromFile: tempURL)
+            let (data, response) = try await session.upload(for: prepared.request, fromFile: prepared.bodyURL)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 return .failure(UploadError.invalidResponse)
@@ -482,8 +356,9 @@ public struct UploadClient: Sendable {
             let responseBody = String(data: data.prefix(500), encoding: .utf8) ?? "<binary>"
             Logger.upload.info("Response: HTTP \(httpResponse.statusCode, privacy: .public) - \(responseBody, privacy: .public)")
 
-            if httpResponse.statusCode == 200 {
-                return .success(Self.parseUploadSuccessInfo(from: data))
+            if (200...299).contains(httpResponse.statusCode) {
+                let parsed = try JSONDecoder().decode(IngestProtocolV3.UploadResponse.self, from: data)
+                return .success(UploadSuccessInfo(status: parsed.status, storedSegmentKey: parsed.storedSegmentKey))
             } else {
                 let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
                 return .failure(UploadError.serverError(statusCode: httpResponse.statusCode, message: errorMessage))
@@ -492,17 +367,6 @@ public struct UploadClient: Sendable {
             try? fm.removeItem(at: tempURL)
             return .failure(error)
         }
-    }
-
-    // MARK: - File Comparison
-
-    /// Strip segment prefix from filename (e.g., "143022_300_audio.m4a" -> "audio.m4a")
-    public func stripSegmentPrefix(_ filename: String, segment: String) -> String {
-        let prefix = "\(segment)_"
-        if filename.hasPrefix(prefix) {
-            return String(filename.dropFirst(prefix.count))
-        }
-        return filename
     }
 
     /// Compute SHA256 hash of a file using incremental streaming (no full-file memory load)
@@ -521,63 +385,4 @@ public struct UploadClient: Sendable {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func parseUploadSuccessInfo(from data: Data) -> UploadSuccessInfo {
-        guard !data.isEmpty,
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return UploadSuccessInfo(status: .ok, storedSegmentKey: nil)
-        }
-
-        guard let rawStatus = object["status"] as? String else {
-            return UploadSuccessInfo(status: .ok, storedSegmentKey: nil)
-        }
-
-        switch rawStatus {
-        case "ok":
-            return UploadSuccessInfo(
-                status: .ok,
-                storedSegmentKey: extractSegmentKey(from: object["segment"])
-            )
-        case "collision":
-            return UploadSuccessInfo(
-                status: .collision,
-                storedSegmentKey: extractSegmentKey(from: object["segment"])
-            )
-        case "duplicate":
-            return UploadSuccessInfo(
-                status: .duplicate,
-                storedSegmentKey: extractSegmentKey(from: object["existing_segment"])
-            )
-        default:
-            return UploadSuccessInfo(
-                status: .unknown(rawStatus),
-                storedSegmentKey: extractSegmentKey(from: object["segment"]) ?? extractSegmentKey(from: object["existing_segment"])
-            )
-        }
-    }
-
-    private static func extractSegmentKey(from value: Any?) -> String? {
-        if let key = value as? String, !key.isEmpty {
-            return key
-        }
-        if let object = value as? [String: Any],
-           let key = object["key"] as? String,
-           !key.isEmpty {
-            return key
-        }
-        return nil
-    }
-}
-
-// MARK: - FileHandle Extension for Multipart
-
-private extension FileHandle {
-    func writeMultipartField(boundary: String, name: String, value: String) throws {
-        let header = "--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n"
-        try write(contentsOf: header.data(using: .utf8)!)
-    }
-
-    func writeMultipartFileHeader(boundary: String, filename: String, mimeType: String) throws {
-        let header = "--\(boundary)\r\nContent-Disposition: form-data; name=\"files\"; filename=\"\(filename)\"\r\nContent-Type: \(mimeType)\r\n\r\n"
-        try write(contentsOf: header.data(using: .utf8)!)
-    }
 }
