@@ -22,7 +22,6 @@ struct SettingsRestartContractTests {
             "cacheRetentionDays",
             "microphoneGain",
             "silenceMusic",
-            "solInitiatedChatNotificationsEnabled",
             "microphonePriority",
             "excludedApps",
             "excludedTitlePatterns",

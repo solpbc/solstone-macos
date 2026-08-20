@@ -50,43 +50,102 @@ struct MenuContentTests {
     }
 
     @Test func menubarStatusRowIconMappingIsExhaustive() {
-        let cases: [(MenubarStatusRowState, MenubarIconState)] = [
-            (.permissions, .error),
-            (.error, .error),
-            (.starting, .offline),
-            (.journalMigrationNeeded, .offline),
-            (.connectionWaiting, .offline),
-            (.localOnly, .offline),
-            (.syncPaused, .offline),
-            (.offline, .offline),
-            (.paused, .paused),
-            (.observing, .recording),
+        let cases: [(MenubarStatusRowState, String)] = [
+            (.observing, "sol-ring-template"),
+            (.starting, "sol-ring-icon-connecting-template"),
+            (.connectionWaiting, "sol-ring-icon-connecting-template"),
+            (.paused, "sol-ring-icon-paused-template"),
+            (.syncPaused, "sol-ring-icon-paused-template"),
+            (.localOnly, "sol-ring-icon-paused-template"),
+            (.journalMigrationNeeded, "sol-ring-icon-attention-template"),
+            (.permissions, "sol-ring-icon-attention-template"),
+            (.offline, "sol-ring-icon-offline-template"),
+            (.error, "sol-ring-icon-error-template"),
         ]
 
         #expect(cases.count == MenubarStatusRowState.allCases.count)
-        for (rowState, iconState) in cases {
-            #expect(rowState.iconState.axToken == iconState.axToken)
+        for (rowState, iconName) in cases {
+            #expect(rowState.iconState.iconName == iconName)
         }
+    }
+
+    @Test func menubarStatusRowIconMappingNegativeTwins() {
+        #expect(MenubarStatusRowState.permissions.iconState.iconName == "sol-ring-icon-attention-template")
+        #expect(MenubarStatusRowState.permissions.iconState.iconName != "sol-ring-icon-error-template")
+        #expect(MenubarStatusRowState.journalMigrationNeeded.iconState.iconName != "sol-ring-icon-offline-template")
+        #expect(MenubarStatusRowState.localOnly.iconState.iconName == "sol-ring-icon-paused-template")
+        #expect(MenubarStatusRowState.syncPaused.iconState.iconName == "sol-ring-icon-paused-template")
+        #expect(MenubarStatusRowState.starting.iconState.iconName == "sol-ring-icon-connecting-template")
+        #expect(MenubarStatusRowState.connectionWaiting.iconState.iconName == "sol-ring-icon-connecting-template")
     }
 
     @Test func settingsObservationAXStateMapsFromRowState() {
         let cases: [(MenubarStatusRowState, SettingsObservationAXState)] = [
-            (.permissions, .error),
-            (.error, .error),
-            (.starting, .starting),
-            (.journalMigrationNeeded, .observing),
-            (.connectionWaiting, .observing),
-            (.localOnly, .observing),
-            (.syncPaused, .observing),
-            (.offline, .observing),
-            (.paused, .paused),
             (.observing, .observing),
+            (.starting, .connecting),
+            (.connectionWaiting, .connecting),
+            (.paused, .paused),
+            (.syncPaused, .notReaching),
+            (.localOnly, .noJournal),
+            (.journalMigrationNeeded, .attention),
+            (.permissions, .attention),
+            (.offline, .savedLocally),
+            (.error, .error),
         ]
 
         #expect(cases.count == MenubarStatusRowState.allCases.count)
         for (rowState, settingsState) in cases {
             #expect(SettingsObservationAXState(rowState).axToken == settingsState.axToken)
         }
+    }
+
+    @Test func settingsObservationAXStateNegativeTwins() {
+        let localOnly = SettingsObservationAXState(.localOnly).axToken
+        let syncPaused = SettingsObservationAXState(.syncPaused).axToken
+        #expect(localOnly != "on")
+        #expect(localOnly != "paused")
+        #expect(localOnly != syncPaused)
+        #expect(syncPaused != "on")
+        #expect(syncPaused != "paused")
+        #expect(SettingsObservationAXState(.journalMigrationNeeded).axToken != "on")
+        #expect(SettingsObservationAXState(.connectionWaiting).axToken != "on")
+        #expect(SettingsObservationAXState(.offline).axToken != "on")
+        #expect(SettingsObservationAXState(.permissions).axToken != "error")
+        #expect(SettingsObservationAXState(.error).axToken == "error")
+        #expect(SettingsObservationAXState(.error).axToken != "attention")
+    }
+
+    @Test func settingsObservationAXStateVocabularyDropsStarting() {
+        let tokens = SettingsObservationAXState.allCases.map(\.axToken)
+        #expect(tokens.count == 8)
+        #expect(!tokens.contains("starting"))
+        #expect(SettingsObservationAXState(.starting).axToken == "connecting")
+        #expect(SettingsObservationAXState(.connectionWaiting).axToken == "connecting")
+    }
+
+    @Test func settingsObservationHeadlinesDistinguishCaptureAndJournalAxes() {
+        let paused = SettingsObservationAXState(.paused).headline
+        let syncPaused = SettingsObservationAXState(.syncPaused).headline
+        let localOnly = SettingsObservationAXState(.localOnly).headline
+        let observing = SettingsObservationAXState(.observing).headline
+        #expect(paused != syncPaused)
+        #expect(paused != localOnly)
+        #expect(paused != observing)
+        #expect(syncPaused != localOnly)
+        #expect(syncPaused != observing)
+        #expect(localOnly != observing)
+
+        #expect(
+            SettingsObservationAXState(.starting).headline
+                == SettingsObservationAXState(.connectionWaiting).headline
+        )
+
+        let permissions = SettingsObservationAXState(.permissions).headline
+        let journalMigrationNeeded = SettingsObservationAXState(.journalMigrationNeeded).headline
+        let error = SettingsObservationAXState(.error).headline
+        #expect(permissions == journalMigrationNeeded)
+        #expect(permissions != error)
+        #expect(journalMigrationNeeded != error)
     }
 
     @Test func observationClassifierPrecedenceTable() {
@@ -246,12 +305,9 @@ struct MenuContentTests {
             let label = statusAccessibilityLabel(
                 presentation: MenubarPresentation(
                     observation: .observing,
-                    attention: reason,
-                    message: nil
+                    attention: reason
                 ),
-                errorMessage: nil,
-                solChatStale: false,
-                solChatPending: nil
+                errorMessage: nil
             )
 
             #expect(!suffix.isEmpty, "\(String(describing: reason)) should have a non-empty suffix")
@@ -265,68 +321,16 @@ struct MenuContentTests {
 
     @Test func statusAccessibilityLabelSuppressesAlreadySaidAttention() {
         let permissions = statusAccessibilityLabel(
-            presentation: MenubarPresentation(observation: .permissions, attention: .permissions, message: nil),
-            errorMessage: nil,
-            solChatStale: false,
-            solChatPending: nil
+            presentation: MenubarPresentation(observation: .permissions, attention: .permissions),
+            errorMessage: nil
         )
         let localOnly = statusAccessibilityLabel(
-            presentation: MenubarPresentation(observation: .localOnly, attention: .journal, message: nil),
-            errorMessage: nil,
-            solChatStale: false,
-            solChatPending: nil
+            presentation: MenubarPresentation(observation: .localOnly, attention: .journal),
+            errorMessage: nil
         )
 
         #expect(permissions == UICopy.MENUBAR_A11Y_PERMISSIONS_NEEDED)
         #expect(localOnly == UICopy.MENUBAR_A11Y_JOURNAL_SETUP_NEEDED)
-    }
-
-    @Test func statusAccessibilityLabelPreservesStaleOverPending() {
-        let pending = SolChatRequestSummary(
-            id: "req-test",
-            summary: "review the note",
-            day: "2026-05-09",
-            eventIndex: 42,
-            receivedAt: Date(timeIntervalSince1970: 0)
-        )
-        let label = statusAccessibilityLabel(
-            presentation: MenubarPresentation(observation: .observing, attention: .updateAvailable, message: .chatPending),
-            errorMessage: nil,
-            solChatStale: true,
-            solChatPending: pending
-        )
-
-        #expect(label == "\(UICopy.MENUBAR_A11Y_OBSERVING_CONNECTED) · \(UICopy.SETTINGS_ATTENTION_UPDATE_AVAILABLE) · \(SolChatLiterals.unreachableTooltip)")
-        #expect(!label.contains(pending.summary))
-    }
-
-    @Test @MainActor func staleChatDrawsNoBadgeButStaysInA11yLabel() {
-        let state = AppState.forSnapshot(config: AppConfig(
-            serverURL: "https://example.com",
-            serverKey: "key",
-            serviceMode: .external
-        ))
-        state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = true
-        state.microphoneAuthorizationCause = .authorized
-        state.isRecording = true
-        state.uploadCoordinator.status = .synced
-        state.solChatStale = true
-        state.solChatPending = nil
-
-        let presentation = state.menubarPresentation(durableUpdateStatus: .idle)
-        let label = statusAccessibilityLabel(
-            presentation: presentation,
-            errorMessage: nil,
-            solChatStale: state.solChatStale,
-            solChatPending: state.solChatPending
-        )
-
-        #expect(!presentation.showsAttentionBadge)
-        #expect(presentation.message == nil)
-        #expect(presentation.overlayState == .none)
-        #expect(presentation.overlayState.badgeTreatment == nil)
-        #expect(label.contains(SolChatLiterals.unreachableTooltip))
     }
 
     @Test func journalClientRowsUseExpectedAXTokens() {
@@ -344,8 +348,7 @@ private func presentationAttention(
         observation: .observing,
         permissionsNeedAttention: permissionsNeedAttention,
         journalNeedsAttention: journalNeedsAttention,
-        durableUpdateStatus: durableUpdateStatus,
-        solChatPending: false
+        durableUpdateStatus: durableUpdateStatus
     ).attention
 }
 

@@ -72,4 +72,20 @@ struct ObservationRecoveryPresentationTests {
         #expect(second.reason == "second failure message")
         #expect(first.reason != second.reason)
     }
+
+    @Test func tryAgainShownOnlyForErrorRowState() {
+        let message = "screen stream failed after wake"
+        for rowState in MenubarStatusRowState.allCases {
+            let presentation = observationRecoveryPresentation(
+                observationRowState: rowState,
+                errorMessage: message,
+                tryAgainInFlight: false
+            )
+            if rowState == .error {
+                #expect(presentation != nil)
+            } else {
+                #expect(presentation == nil)
+            }
+        }
+    }
 }

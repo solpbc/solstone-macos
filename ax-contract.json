@@ -80,7 +80,6 @@
       "journal.browser.retry",
       "journal.browser.webView",
       "menubar.app.quit",
-      "menubar.chat.pending",
       "menubar.navigation.about",
       "menubar.navigation.openJournal",
       "menubar.navigation.settings",
@@ -101,6 +100,8 @@
       "menubar.status.row.state",
       "settings.help.agentInstructions",
       "settings.help.agentInstructions.copy",
+      "settings.help.iconState.attention",
+      "settings.help.iconState.connecting",
       "settings.help.iconState.error",
       "settings.help.iconState.offline",
       "settings.help.iconState.paused",
@@ -114,7 +115,6 @@
       "settings.microphones.priority.list",
       "settings.observer.general.startAtLogin",
       "settings.observer.notifications.denied.state",
-      "settings.observer.notifications.solChat",
       "settings.observer.storage.cacheFolder.open",
       "settings.observer.storage.cacheRetention",
       "settings.observer.storage.cacheRetention.state",
@@ -494,14 +494,15 @@
     ],
     "MenubarIconOverlayState" : [
       "none",
-      "attention",
-      "chat_pending"
+      "attention"
     ],
     "MenubarIconState" : [
       "recording",
       "offline",
       "paused",
-      "error"
+      "error",
+      "connecting",
+      "attention"
     ],
     "MenubarStatusRowState" : [
       "permissions",
@@ -549,8 +550,12 @@
     ],
     "SettingsObservationAXState" : [
       "on",
+      "connecting",
       "paused",
-      "starting",
+      "on_not_reaching",
+      "on_no_journal",
+      "attention",
+      "on_saved_locally",
       "error"
     ],
     "SetupCheckRowAXState" : [

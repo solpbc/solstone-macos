@@ -83,7 +83,7 @@ Teardown wiring:
 
 - In `AppDelegate.applicationWillTerminate`, inside the existing `if let state = AppState.shared` block, call an `AppState` method such as `stopTunnelLifecycleOwner()`.
 - It should stop path monitoring, liveness probing, loopback proxy, and the active session.
-- This follows existing `heartbeatService.stop()` and `solChatBridge.stop()` patterns.
+- This follows the existing `heartbeatService.stop()` pattern.
 
 ## Owner Type
 
@@ -611,7 +611,7 @@ This avoids an error storm and preserves the single reconnect cadence.
 
 `AppDelegate.applicationWillTerminate`:
 
-- In the existing `if let state = AppState.shared` block, call `state.stopTunnelLifecycleOwner()` near the existing heartbeat and chat shutdown calls.
+- In the existing `if let state = AppState.shared` block, call `state.stopTunnelLifecycleOwner()` near the existing heartbeat shutdown call.
 
 No scene phase hooks.
 

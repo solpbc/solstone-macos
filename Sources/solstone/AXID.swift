@@ -5,7 +5,6 @@ import Foundation
 
 enum AXID {
     enum Menubar {
-        static let pendingChatButton = "menubar.chat.pending"
         static let statusIconState = "menubar.status.icon.state"
         static let statusIconOverlayState = "menubar.status.icon.overlay.state"
         static let statusRowState = "menubar.status.row.state"
@@ -59,7 +58,6 @@ enum AXID {
 
         enum Observer {
             static let startAtLogin = "settings.observer.general.startAtLogin"
-            static let solChatNotifications = "settings.observer.notifications.solChat"
             static let notificationDeniedState = "settings.observer.notifications.denied.state"
             static let storageUsedState = "settings.observer.storage.used.state"
             static let cacheRetentionPicker = "settings.observer.storage.cacheRetention"
@@ -196,6 +194,8 @@ enum AXID {
             static let iconStateOffline = "settings.help.iconState.offline"
             static let iconStatePaused = "settings.help.iconState.paused"
             static let iconStateError = "settings.help.iconState.error"
+            static let iconStateConnecting = "settings.help.iconState.connecting"
+            static let iconStateAttention = "settings.help.iconState.attention"
             static let supportSite = "settings.help.support.site"
             static let supportEmail = "settings.help.support.email"
             static let versionState = "settings.help.version.state"

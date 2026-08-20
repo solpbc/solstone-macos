@@ -53,29 +53,15 @@ internal enum AttentionReason: Equatable, CaseIterable {
     case permissions, journal, updateAvailable, updateCheckFailed
 }
 
-internal enum MenubarMessage: Equatable, CaseIterable {
-    case chatPending
-}
-
 internal struct MenubarPresentation: Equatable {
     let observation: MenubarStatusRowState
     let attention: AttentionReason?
-    let message: MenubarMessage?
 
     var icon: MenubarIconState { observation.iconState }
     var showsAttentionBadge: Bool { attention != nil }
 
     var overlayState: MenubarIconOverlayState {
-        if showsAttentionBadge {
-            return .attention
-        }
-        guard let message else {
-            return .none
-        }
-        switch message {
-        case .chatPending:
-            return .chatPending
-        }
+        showsAttentionBadge ? .attention : .none
     }
 }
 
@@ -83,8 +69,7 @@ internal func classifyMenubarPresentation(
     observation: MenubarStatusRowState,
     permissionsNeedAttention: Bool,
     journalNeedsAttention: Bool,
-    durableUpdateStatus: DurableUpdateStatus,
-    solChatPending: Bool
+    durableUpdateStatus: DurableUpdateStatus
 ) -> MenubarPresentation {
     MenubarPresentation(
         observation: observation,
@@ -92,8 +77,7 @@ internal func classifyMenubarPresentation(
             permissionsNeedAttention: permissionsNeedAttention,
             journalNeedsAttention: journalNeedsAttention,
             durableUpdateStatus: durableUpdateStatus
-        ),
-        message: solChatPending ? .chatPending : nil
+        )
     )
 }
 
@@ -185,8 +169,7 @@ extension AppState {
             observation: observationRowState,
             permissionsNeedAttention: permissionsNeedAttention,
             journalNeedsAttention: serviceNeedsAttention,
-            durableUpdateStatus: durableUpdateStatus,
-            solChatPending: solChatPending != nil
+            durableUpdateStatus: durableUpdateStatus
         )
     }
 }

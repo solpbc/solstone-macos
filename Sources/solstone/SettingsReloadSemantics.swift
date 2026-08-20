@@ -17,7 +17,6 @@ public enum SettingsReloadSemantics {
         "microphoneGain": .live,
         "microphoneGranted": .live,
         "silenceMusic": .live,
-        "solInitiatedChatNotificationsEnabled": .live,
         "microphonePriority": .live,
         "excludedApps": .live,
         "excludedTitlePatterns": .live,

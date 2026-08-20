@@ -21,25 +21,71 @@ internal enum MenubarIconState: CaseIterable {
     case offline
     case paused
     case error
+    case connecting
+    case attention
 
     var iconName: String {
         switch self {
         case .recording:
             return "sol-ring-template"
         case .offline:
-            return "sol-ring-icon-half-template"
+            return "sol-ring-icon-offline-template"
         case .paused:
             return "sol-ring-icon-paused-template"
         case .error:
             return "sol-ring-icon-error-template"
+        case .connecting:
+            return "sol-ring-icon-connecting-template"
+        case .attention:
+            return "sol-ring-icon-attention-template"
         }
     }
+}
+
+internal struct MenubarHelpLegendEntry: Equatable {
+    let state: MenubarIconState
+    let accessibilityIdentifier: String
+    let label: String
+}
+
+extension MenubarIconState {
+    static let helpLegend: [MenubarHelpLegendEntry] = [
+        MenubarHelpLegendEntry(
+            state: .recording,
+            accessibilityIdentifier: AXID.Settings.Help.iconStateRecording,
+            label: UICopy.SETTINGS_HELP_ICON_RECORDING
+        ),
+        MenubarHelpLegendEntry(
+            state: .connecting,
+            accessibilityIdentifier: AXID.Settings.Help.iconStateConnecting,
+            label: UICopy.SETTINGS_HELP_ICON_CONNECTING
+        ),
+        MenubarHelpLegendEntry(
+            state: .paused,
+            accessibilityIdentifier: AXID.Settings.Help.iconStatePaused,
+            label: UICopy.SETTINGS_HELP_ICON_PAUSED
+        ),
+        MenubarHelpLegendEntry(
+            state: .attention,
+            accessibilityIdentifier: AXID.Settings.Help.iconStateAttention,
+            label: UICopy.SETTINGS_HELP_ICON_ATTENTION
+        ),
+        MenubarHelpLegendEntry(
+            state: .offline,
+            accessibilityIdentifier: AXID.Settings.Help.iconStateOffline,
+            label: UICopy.SETTINGS_HELP_ICON_OFFLINE
+        ),
+        MenubarHelpLegendEntry(
+            state: .error,
+            accessibilityIdentifier: AXID.Settings.Help.iconStateError,
+            label: UICopy.SETTINGS_HELP_ICON_ERROR
+        )
+    ]
 }
 
 internal enum MenubarIconOverlayState: CaseIterable {
     case none
     case attention
-    case chatPending
 }
 
 internal struct MenubarBadgeTreatment: Equatable {
@@ -79,25 +125,36 @@ internal enum MenubarStatusRowState: CaseIterable {
 
 internal enum SettingsObservationAXState: CaseIterable {
     case observing
+    case connecting
     case paused
-    case starting
+    case notReaching
+    case noJournal
+    case attention
+    case savedLocally
     case error
 
     init(_ rowState: MenubarStatusRowState) {
         switch rowState {
+        case .observing:
+            self = .observing
         case .starting:
-            self = .starting
+            self = .connecting
+        case .connectionWaiting:
+            self = .connecting
         case .paused:
             self = .paused
-        default:
-            switch rowState.iconState {
-            case .error:
-                self = .error
-            case .paused:
-                self = .paused
-            case .recording, .offline:
-                self = .observing
-            }
+        case .syncPaused:
+            self = .notReaching
+        case .localOnly:
+            self = .noJournal
+        case .journalMigrationNeeded:
+            self = .attention
+        case .permissions:
+            self = .attention
+        case .offline:
+            self = .savedLocally
+        case .error:
+            self = .error
         }
     }
 }
@@ -462,6 +519,10 @@ extension MenubarIconState {
             return "paused"
         case .error:
             return "error"
+        case .connecting:
+            return "connecting"
+        case .attention:
+            return "attention"
         }
     }
 }
@@ -483,15 +544,6 @@ extension MenubarIconOverlayState {
                     mark: .symbol(name: "exclamationmark.circle.fill", pointSize: 8, tint: .solOrange)
                 )
             )
-        case .chatPending:
-            return MenubarIconOverlayPresentation(
-                axToken: "chat_pending",
-                badgeTreatment: MenubarBadgeTreatment(
-                    haloDiameter: 7.6,
-                    haloTint: .adaptiveInk,
-                    mark: .dot(diameter: 6, tint: .accentColor)
-                )
-            )
         }
     }
 
@@ -507,19 +559,18 @@ extension MenubarIconOverlayState {
 extension MenubarStatusRowState {
     var iconState: MenubarIconState {
         switch self {
-        case .permissions, .error:
-            return .error
-        case .starting,
-             .journalMigrationNeeded,
-             .connectionWaiting,
-             .localOnly,
-             .syncPaused,
-             .offline:
-            return .offline
-        case .paused:
-            return .paused
         case .observing:
             return .recording
+        case .starting, .connectionWaiting:
+            return .connecting
+        case .paused, .syncPaused, .localOnly:
+            return .paused
+        case .journalMigrationNeeded, .permissions:
+            return .attention
+        case .offline:
+            return .offline
+        case .error:
+            return .error
         }
     }
 }
@@ -556,12 +607,41 @@ extension SettingsObservationAXState {
         switch self {
         case .observing:
             return "on"
+        case .connecting:
+            return "connecting"
         case .paused:
             return "paused"
-        case .starting:
-            return "starting"
+        case .notReaching:
+            return "on_not_reaching"
+        case .noJournal:
+            return "on_no_journal"
+        case .attention:
+            return "attention"
+        case .savedLocally:
+            return "on_saved_locally"
         case .error:
             return "error"
+        }
+    }
+
+    var headline: String {
+        switch self {
+        case .observing:
+            return UICopy.SETTINGS_OBSERVATION_OBSERVING
+        case .connecting:
+            return UICopy.SETTINGS_OBSERVATION_CONNECTING
+        case .paused:
+            return UICopy.SETTINGS_OBSERVATION_PAUSED
+        case .notReaching:
+            return UICopy.SETTINGS_OBSERVATION_NOT_REACHING
+        case .noJournal:
+            return UICopy.SETTINGS_OBSERVATION_NO_JOURNAL
+        case .attention:
+            return UICopy.SETTINGS_OBSERVATION_ATTENTION
+        case .savedLocally:
+            return UICopy.SETTINGS_OBSERVATION_SAVED_LOCALLY
+        case .error:
+            return UICopy.SETTINGS_OBSERVATION_ERROR
         }
     }
 }

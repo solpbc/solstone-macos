@@ -54,7 +54,6 @@ public struct AppConfig: Sendable {
 
     public enum Defaults {
         public static let cacheRetentionDays = 7
-        public static let solInitiatedChatNotificationsEnabled = true
     }
 
     public static let knownKeys: [String] = [
@@ -62,7 +61,7 @@ public struct AppConfig: Sendable {
         "excludePrivateBrowsing", "serverURL", "serverKey",
         "cacheRetentionDays", "syncPaused", "debugSegments",
         "debugKeepRejectedAudio", "microphoneGain", "silenceMusic",
-        "solInitiatedChatNotificationsEnabled", "serviceMode", "journalPath",
+        "serviceMode", "journalPath",
         "observerName"
     ]
 
@@ -79,12 +78,10 @@ public struct AppConfig: Sendable {
         static let debugKeepRejectedAudio = "debugKeepRejectedAudio"
         static let microphoneGain = "microphoneGain"
         static let silenceMusic = "silenceMusic"
-        static let solInitiatedChatNotificationsEnabled = "solInitiatedChatNotificationsEnabled"
         static let serviceMode = "serviceMode"
         static let journalPath = "journalPath"
         static let observerName = "observerName"
         static let didMigrateFromJSON = "didMigrateFromJSON"
-        static let didReseedNotificationPreference = "didReseedNotificationPreference"
         static let didReseedOptInMicrophones = "didReseedOptInMicrophones"
     }
 
@@ -133,9 +130,6 @@ public struct AppConfig: Sendable {
     /// When true, silence music-only portions of system audio during remix. Default: true
     public var silenceMusic: Bool
 
-    /// When true, show system notifications for sol-initiated chat requests. Default: true
-    public var solInitiatedChatNotificationsEnabled: Bool
-
     /// Configured service mode. Nil means no mode has been explicitly selected yet.
     public var serviceMode: ServiceMode?
 
@@ -165,7 +159,6 @@ public struct AppConfig: Sendable {
         debugKeepRejectedAudio: Bool = false,
         microphoneGain: Float = 2.0,
         silenceMusic: Bool = true,
-        solInitiatedChatNotificationsEnabled: Bool = Defaults.solInitiatedChatNotificationsEnabled,
         serviceMode: ServiceMode? = nil,
         journalPath: String? = nil,
         observerName: String? = nil
@@ -182,7 +175,6 @@ public struct AppConfig: Sendable {
         self.debugKeepRejectedAudio = debugKeepRejectedAudio
         self.microphoneGain = microphoneGain
         self.silenceMusic = silenceMusic
-        self.solInitiatedChatNotificationsEnabled = solInitiatedChatNotificationsEnabled
         self.serviceMode = serviceMode
         self.journalPath = journalPath
         self.observerName = observerName
@@ -240,8 +232,6 @@ public struct AppConfig: Sendable {
             debugKeepRejectedAudio: defaults.bool(forKey: Keys.debugKeepRejectedAudio),
             microphoneGain: defaults.object(forKey: Keys.microphoneGain) as? Float ?? 2.0,
             silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true,
-            solInitiatedChatNotificationsEnabled: defaults.object(forKey: Keys.solInitiatedChatNotificationsEnabled) as? Bool
-                ?? Defaults.solInitiatedChatNotificationsEnabled,
             serviceMode: serviceMode,
             journalPath: defaults.string(forKey: Keys.journalPath),
             observerName: defaults.string(forKey: Keys.observerName)
@@ -267,12 +257,12 @@ public struct AppConfig: Sendable {
         }
 
         if let config {
-            return reseedNotificationPreferenceIfNeeded(config)
+            return config
         }
 
         // Check if we have any config stored
         if defaults.object(forKey: Keys.excludePrivateBrowsing) != nil {
-            return reseedNotificationPreferenceIfNeeded(load())
+            return load()
         }
 
         // Create default config
@@ -280,7 +270,7 @@ public struct AppConfig: Sendable {
         defaultConfig.excludedApps = defaultExclusions
         try? defaultConfig.save()
         Logger.general.info("Created default config in UserDefaults")
-        return reseedNotificationPreferenceIfNeeded(defaultConfig)
+        return defaultConfig
     }
 
     /// Saves config to UserDefaults
@@ -320,7 +310,6 @@ public struct AppConfig: Sendable {
         defaults.set(debugKeepRejectedAudio, forKey: Keys.debugKeepRejectedAudio)
         defaults.set(microphoneGain, forKey: Keys.microphoneGain)
         defaults.set(silenceMusic, forKey: Keys.silenceMusic)
-        defaults.set(solInitiatedChatNotificationsEnabled, forKey: Keys.solInitiatedChatNotificationsEnabled)
     }
 
     // MARK: - Migration from JSON
@@ -338,24 +327,6 @@ public struct AppConfig: Sendable {
 
     private static var productionLegacyConfigPaths: [URL] {
         [legacyConfigPath, legacySckCliPath]
-    }
-
-    private static func reseedNotificationPreferenceIfNeeded(_ config: AppConfig) -> AppConfig {
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: Keys.didReseedNotificationPreference) else {
-            return config
-        }
-
-        var reseeded = config
-        reseeded.solInitiatedChatNotificationsEnabled = true
-        do {
-            try reseeded.save()
-            defaults.set(true, forKey: Keys.didReseedNotificationPreference)
-            return reseeded
-        } catch {
-            Logger.general.warning("Failed to re-seed notification preference: \(error.localizedDescription, privacy: .public)")
-            return config
-        }
     }
 
     /// Migrates from legacy JSON config if present
@@ -383,8 +354,7 @@ public struct AppConfig: Sendable {
                     debugSegments: legacyConfig.debugSegments ?? false,
                     debugKeepRejectedAudio: legacyConfig.debugKeepRejectedAudio ?? false,
                     microphoneGain: legacyConfig.microphoneGain ?? 2.0,
-                    silenceMusic: legacyConfig.silenceMusic ?? true,
-                    solInitiatedChatNotificationsEnabled: Defaults.solInitiatedChatNotificationsEnabled
+                    silenceMusic: legacyConfig.silenceMusic ?? true
                 )
 
                 try config.save()

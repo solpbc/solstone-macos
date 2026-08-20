@@ -73,7 +73,6 @@ public final class AppState {
     internal private(set) var appQuitCoordinator: AppQuitCoordinator!
     public let heartbeatService: HeartbeatService
     public let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
-    internal let solChatBridge: SolChatBridge
     internal let tunnelLifecycleOwner: TunnelLifecycleOwner
     internal let pairingCoordinator: PairingCoordinator
     private let homeBaseURLResolver: HomeBaseURLResolver
@@ -87,7 +86,7 @@ public final class AppState {
     ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>
     // Test seam for observing tunnel-connected sync nudges when UploadCoordinator short-circuits.
     private let triggerTunnelConnectedSync: @MainActor @Sendable (AppState) -> Void
-    private let notifier: any SolChatNotifying
+    private let notifier: any UserNotifying
     private let loginService: any LoginItemService
     private let loginItemRegistrationReconciler: LoginItemRegistrationReconciler
     private let lastContactStore: any LastSuccessfulJournalContactStoring
@@ -126,8 +125,6 @@ public final class AppState {
         set { capture.captureQueuedForJournalReadiness = newValue }
     }
 
-    public internal(set) var solChatPending: SolChatRequestSummary?
-    public internal(set) var solChatStale = false
     internal private(set) var journalOpenIntent: JournalOpenIntent?
     internal private(set) var journalHomeBaseChangeToken: UInt64 = 0
     public internal(set) var connectionTestState: ConnectionTestState = .idle
@@ -394,20 +391,9 @@ public final class AppState {
             Task { [heartbeatService] in
                 await heartbeatService.configure(serverKey: serverKey)
             }
-            Task { [solChatBridge] in
-                await solChatBridge.configure(serverKey: serverKey)
-            }
         } else {
             Task { [heartbeatService] in
                 await heartbeatService.stop()
-            }
-            Task { [solChatBridge] in
-                await solChatBridge.stop()
-            }
-        }
-        if oldConfig.solInitiatedChatNotificationsEnabled != newConfig.solInitiatedChatNotificationsEnabled {
-            Task { [solChatBridge] in
-                await solChatBridge.setNotificationsEnabled(newConfig.solInitiatedChatNotificationsEnabled)
             }
         }
         debugAudioHolder.value = newConfig.debugKeepRejectedAudio
@@ -556,22 +542,6 @@ public final class AppState {
         )
     }
 
-    public func setSolChatNotificationPreference(_ enabled: Bool) {
-        var newConfig = config
-        newConfig.solInitiatedChatNotificationsEnabled = enabled
-        updateConfig(newConfig)
-
-        notificationRequestTask?.cancel()
-        notificationRequestTask = Task { [weak self] in
-            guard let self else { return }
-            if enabled {
-                await self.requestProvisionalNotificationAuthorizationIfNeeded()
-            } else {
-                await self.refreshNotificationAuthorizationStatus()
-            }
-        }
-    }
-
     public func refreshNotificationAuthorizationStatus() async {
         notificationAuthorizationStatus = await notifier.currentAuthorizationStatus()
     }
@@ -683,7 +653,7 @@ public final class AppState {
     }
 
     public init(
-        notifier: any SolChatNotifying = UNUserNotificationSolChatNotifier(),
+        notifier: any UserNotifying = UNUserNotificationCenterNotifier(),
         loginService: any LoginItemService = LiveLoginItemService(),
         observerRegister: @escaping @MainActor @Sendable (
             _ baseURL: String,
@@ -701,7 +671,6 @@ public final class AppState {
         let storageManager = StorageManager()
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
         let uploadClient = UploadClient()
-        let solChatTarget = AppStateBridgeTarget()
         let heartbeatTarget = AppStateBridgeTarget()
         let captureTarget = AppStateBridgeTarget()
         let homeBaseURLTarget = AppStateBridgeTarget()
@@ -820,22 +789,6 @@ public final class AppState {
                 }
             }
         )
-        self.solChatBridge = SolChatBridge(
-            notificationsEnabled: config.solInitiatedChatNotificationsEnabled,
-            resolver: homeBaseURLResolver,
-            setPending: { [solChatTarget] pending in
-                solChatTarget.state?.solChatPending = pending
-            },
-            setStale: { [solChatTarget] stale in
-                solChatTarget.state?.solChatStale = stale
-            },
-            postOpenJournalDestination: { [solChatTarget] destination in
-                await MainActor.run {
-                    solChatTarget.state?.requestOpenJournal(destination)
-                }
-            },
-            notifier: notifier
-        )
 
         uploadCoordinator = UploadCoordinator(
             storageManager: storageManager,
@@ -908,7 +861,6 @@ public final class AppState {
         }
 
         // Set shared instance for app-wide access (e.g., termination handler)
-        solChatTarget.state = self
         heartbeatTarget.state = self
         homeBaseURLTarget.state = self
         fingerprintTarget.state = self
@@ -933,7 +885,7 @@ public final class AppState {
     static func forSnapshot(
         config: AppConfig = AppConfig(),
         notificationStatus: UNAuthorizationStatus = .authorized,
-        notifier: (any SolChatNotifying)? = nil,
+        notifier: (any UserNotifying)? = nil,
         initialTunnelPairing: StoredPairing? = nil,
         observerRegister: @escaping @MainActor @Sendable (
             _ baseURL: String,
@@ -958,7 +910,7 @@ public final class AppState {
             snapshotConfig: config,
             notificationStatus: notificationStatus,
             isSnapshot: true,
-            notifier: notifier ?? NoopSolChatNotifier(),
+            notifier: notifier ?? NoopUserNotifier(),
             initialTunnelPairing: initialTunnelPairing,
             observerRegister: observerRegister,
             sameMachinePairStart: sameMachinePairStart,
@@ -993,7 +945,7 @@ public final class AppState {
             snapshotConfig: config,
             notificationStatus: .authorized,
             isSnapshot: false,
-            notifier: NoopSolChatNotifier(),
+            notifier: NoopUserNotifier(),
             loginService: loginService,
             placementDecision: placementDecision,
             receiptStore: receiptStore,
@@ -1013,7 +965,7 @@ public final class AppState {
         snapshotConfig config: AppConfig,
         notificationStatus: UNAuthorizationStatus,
         isSnapshot: Bool,
-        notifier: any SolChatNotifying,
+        notifier: any UserNotifying,
         initialTunnelPairing: StoredPairing? = nil,
         loginService: any LoginItemService = LiveLoginItemService(),
         placementDecision: AppPlacementDecision = AppPlacementGate.evaluate(),
@@ -1108,14 +1060,6 @@ public final class AppState {
             isPaused: capture.heartbeatIsPausedProvider(),
             healthProvider: { nil },
             postHeartbeat: { _, _, _, _ in }
-        )
-        self.solChatBridge = SolChatBridge(
-            notificationsEnabled: config.solInitiatedChatNotificationsEnabled,
-            resolver: snapshotResolver,
-            setPending: { _ in },
-            setStale: { _ in },
-            postOpenJournalDestination: { _ in },
-            notifier: notifier
         )
         let tunnelPairingLoad: @Sendable () throws -> StoredPairing?
         if let pairingLoad {
@@ -1261,9 +1205,6 @@ public final class AppState {
         if config.isUploadConfigured, let serverKey = config.serverKey {
             Task { [heartbeatService] in
                 await heartbeatService.configure(serverKey: serverKey)
-            }
-            Task { [solChatBridge] in
-                await solChatBridge.configure(serverKey: serverKey)
             }
         }
     }
