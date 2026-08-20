@@ -145,6 +145,7 @@ struct AppConfigMigrationTests {
         for key in AppConfig.knownKeys + [
             "didMigrateFromJSON",
             "didReseedNotificationPreference",
+            "solInitiatedChatNotificationsEnabled",
             "didReseedOptInMicrophones",
             "localRetentionMB"
         ] {
