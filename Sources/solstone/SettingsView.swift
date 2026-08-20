@@ -2446,16 +2446,7 @@ struct SettingsView: View {
     }
 
     private var renderedObservationText: String {
-        switch renderedObservationAXState {
-        case .observing:
-            return UICopy.SETTINGS_OBSERVATION_OBSERVING
-        case .paused:
-            return UICopy.SETTINGS_OBSERVATION_PAUSED
-        case .starting:
-            return UICopy.SETTINGS_OBSERVATION_STARTING
-        case .error:
-            return UICopy.SETTINGS_OBSERVATION_ERROR
-        }
+        renderedObservationAXState.headline
     }
 
     private func retentionGlanceLabel(_ days: Int) -> String {

@@ -550,8 +550,12 @@
     ],
     "SettingsObservationAXState" : [
       "on",
+      "connecting",
       "paused",
-      "starting",
+      "on_not_reaching",
+      "on_no_journal",
+      "attention",
+      "on_saved_locally",
       "error"
     ],
     "SetupCheckRowAXState" : [

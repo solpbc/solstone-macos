@@ -125,32 +125,36 @@ internal enum MenubarStatusRowState: CaseIterable {
 
 internal enum SettingsObservationAXState: CaseIterable {
     case observing
+    case connecting
     case paused
-    case starting
+    case notReaching
+    case noJournal
+    case attention
+    case savedLocally
     case error
 
     init(_ rowState: MenubarStatusRowState) {
         switch rowState {
-        case .permissions:
-            self = .error
-        case .error:
-            self = .error
-        case .starting:
-            self = .starting
-        case .journalMigrationNeeded:
-            self = .observing
-        case .connectionWaiting:
-            self = .observing
-        case .localOnly:
-            self = .observing
-        case .syncPaused:
-            self = .observing
-        case .offline:
-            self = .observing
-        case .paused:
-            self = .paused
         case .observing:
             self = .observing
+        case .starting:
+            self = .connecting
+        case .connectionWaiting:
+            self = .connecting
+        case .paused:
+            self = .paused
+        case .syncPaused:
+            self = .notReaching
+        case .localOnly:
+            self = .noJournal
+        case .journalMigrationNeeded:
+            self = .attention
+        case .permissions:
+            self = .attention
+        case .offline:
+            self = .savedLocally
+        case .error:
+            self = .error
         }
     }
 }
@@ -603,12 +607,41 @@ extension SettingsObservationAXState {
         switch self {
         case .observing:
             return "on"
+        case .connecting:
+            return "connecting"
         case .paused:
             return "paused"
-        case .starting:
-            return "starting"
+        case .notReaching:
+            return "on_not_reaching"
+        case .noJournal:
+            return "on_no_journal"
+        case .attention:
+            return "attention"
+        case .savedLocally:
+            return "on_saved_locally"
         case .error:
             return "error"
+        }
+    }
+
+    var headline: String {
+        switch self {
+        case .observing:
+            return UICopy.SETTINGS_OBSERVATION_OBSERVING
+        case .connecting:
+            return UICopy.SETTINGS_OBSERVATION_CONNECTING
+        case .paused:
+            return UICopy.SETTINGS_OBSERVATION_PAUSED
+        case .notReaching:
+            return UICopy.SETTINGS_OBSERVATION_NOT_REACHING
+        case .noJournal:
+            return UICopy.SETTINGS_OBSERVATION_NO_JOURNAL
+        case .attention:
+            return UICopy.SETTINGS_OBSERVATION_ATTENTION
+        case .savedLocally:
+            return UICopy.SETTINGS_OBSERVATION_SAVED_LOCALLY
+        case .error:
+            return UICopy.SETTINGS_OBSERVATION_ERROR
         }
     }
 }

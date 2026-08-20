@@ -81,22 +81,71 @@ struct MenuContentTests {
 
     @Test func settingsObservationAXStateMapsFromRowState() {
         let cases: [(MenubarStatusRowState, SettingsObservationAXState)] = [
-            (.permissions, .error),
-            (.error, .error),
-            (.starting, .starting),
-            (.journalMigrationNeeded, .observing),
-            (.connectionWaiting, .observing),
-            (.localOnly, .observing),
-            (.syncPaused, .observing),
-            (.offline, .observing),
-            (.paused, .paused),
             (.observing, .observing),
+            (.starting, .connecting),
+            (.connectionWaiting, .connecting),
+            (.paused, .paused),
+            (.syncPaused, .notReaching),
+            (.localOnly, .noJournal),
+            (.journalMigrationNeeded, .attention),
+            (.permissions, .attention),
+            (.offline, .savedLocally),
+            (.error, .error),
         ]
 
         #expect(cases.count == MenubarStatusRowState.allCases.count)
         for (rowState, settingsState) in cases {
             #expect(SettingsObservationAXState(rowState).axToken == settingsState.axToken)
         }
+    }
+
+    @Test func settingsObservationAXStateNegativeTwins() {
+        let localOnly = SettingsObservationAXState(.localOnly).axToken
+        let syncPaused = SettingsObservationAXState(.syncPaused).axToken
+        #expect(localOnly != "on")
+        #expect(localOnly != "paused")
+        #expect(localOnly != syncPaused)
+        #expect(syncPaused != "on")
+        #expect(syncPaused != "paused")
+        #expect(SettingsObservationAXState(.journalMigrationNeeded).axToken != "on")
+        #expect(SettingsObservationAXState(.connectionWaiting).axToken != "on")
+        #expect(SettingsObservationAXState(.offline).axToken != "on")
+        #expect(SettingsObservationAXState(.permissions).axToken != "error")
+        #expect(SettingsObservationAXState(.error).axToken == "error")
+        #expect(SettingsObservationAXState(.error).axToken != "attention")
+    }
+
+    @Test func settingsObservationAXStateVocabularyDropsStarting() {
+        let tokens = SettingsObservationAXState.allCases.map(\.axToken)
+        #expect(tokens.count == 8)
+        #expect(!tokens.contains("starting"))
+        #expect(SettingsObservationAXState(.starting).axToken == "connecting")
+        #expect(SettingsObservationAXState(.connectionWaiting).axToken == "connecting")
+    }
+
+    @Test func settingsObservationHeadlinesDistinguishCaptureAndJournalAxes() {
+        let paused = SettingsObservationAXState(.paused).headline
+        let syncPaused = SettingsObservationAXState(.syncPaused).headline
+        let localOnly = SettingsObservationAXState(.localOnly).headline
+        let observing = SettingsObservationAXState(.observing).headline
+        #expect(paused != syncPaused)
+        #expect(paused != localOnly)
+        #expect(paused != observing)
+        #expect(syncPaused != localOnly)
+        #expect(syncPaused != observing)
+        #expect(localOnly != observing)
+
+        #expect(
+            SettingsObservationAXState(.starting).headline
+                == SettingsObservationAXState(.connectionWaiting).headline
+        )
+
+        let permissions = SettingsObservationAXState(.permissions).headline
+        let journalMigrationNeeded = SettingsObservationAXState(.journalMigrationNeeded).headline
+        let error = SettingsObservationAXState(.error).headline
+        #expect(permissions == journalMigrationNeeded)
+        #expect(permissions != error)
+        #expect(journalMigrationNeeded != error)
     }
 
     @Test func observationClassifierPrecedenceTable() {
