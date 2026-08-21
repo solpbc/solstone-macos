@@ -214,18 +214,14 @@ generate-bundle-config: check-versions
 
 # Re-vendor brand SVGs from the canonical source. CI verifies the committed
 # output (it does not run brand-sync) — run this locally when the brand spec
-# updates, then commit the diff.
-# dest:source — dest names stay because callers still load them. The word mark is
-# dropped; dest sol-wordmark.svg now vendors mark.svg. half has no successor and
-# is not copied. Menubar template SVGs (sol-ring-mb-*) are a separate template
-# family, already on the ruled construction, and are not overwritten here.
-BRAND_SVGS = sol-wordmark:mark sol-wordmark-white:mark-white sol-ring:mark sol-ring-icon:mark sol-ring-icon-error:mark-error sol-ring-icon-paused:mark-paused
+# updates, then commit the diff. G2 retired the wordmark and icon-tier aliases;
+# vendor the one current mark under its current name. Menubar template SVGs
+# (sol-ring-mb-*) are a separate template family, already on the ruled
+# construction, and are not overwritten here.
 brand-sync:
 	@test -n "$(BRAND_DIR)" || { echo "brand: BRAND_DIR is required — point it at your sol brand asset directory (BRAND_DIR=/path/to/brand make brand-sync)"; exit 1; }
 	@test -d "$(BRAND_DIR)" || { echo "brand: BRAND_DIR=$(BRAND_DIR) not found"; exit 1; }
-	@set -e; for pair in $(BRAND_SVGS); do \
-	  cp "$(BRAND_DIR)/$${pair#*:}.svg" "assets/$${pair%%:*}.svg"; \
-	done
+	cp "$(BRAND_DIR)/mark.svg" assets/mark.svg
 	# macOS app icon uses the macOS-convention squircle source (inset rounded-rect
 	# plate on a transparent canvas — macOS does NOT auto-mask icons). iOS keeps the
 	# full-bleed cream master in solstone-swift (iOS auto-masks). Do NOT point this
@@ -1201,10 +1197,10 @@ icons: check-icons-deps
 			-o Sources/solstone/Resources/sol-ring-icon-error-template.pdf && \
 		echo "  ✓ sol-ring-icon-error-template.pdf" && \
 	\
-	echo "  Rendering wordmark for UI..." && \
-	rsvg-convert -w 128 -h 128 assets/sol-wordmark.svg \
+	echo "  Rendering mark for UI..." && \
+	rsvg-convert -w 128 -h 128 assets/mark.svg \
 		-o Sources/solstone/Resources/sol-wordmark.png && \
-	rsvg-convert -w 256 -h 256 assets/sol-wordmark.svg \
+	rsvg-convert -w 256 -h 256 assets/mark.svg \
 		-o Sources/solstone/Resources/sol-wordmark@2x.png && \
 	echo "  ✓ sol-wordmark.png + @2x" && \
 	\
