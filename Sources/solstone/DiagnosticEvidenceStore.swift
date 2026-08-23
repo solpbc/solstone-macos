@@ -29,15 +29,16 @@ internal struct DiagnosticEvidenceEntry: Equatable, Sendable {
     var lastAt: Date
     var repeatCount: Int
 
-    static let allowedKeys: Set<String> = ["code", "firstAt", "lastAt", "repeatCount"]
     static let maxRepeatCount = 999
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case code
         case firstAt
         case lastAt
         case repeatCount
     }
+
+    static let allowedKeys = Set(CodingKeys.allCases.map(\.rawValue))
 }
 
 extension DiagnosticEvidenceEntry: Codable {
@@ -96,12 +97,13 @@ internal struct DiagnosticEvidenceEnvelope: Equatable, Sendable {
     static let currentSchemaVersion = 1
     static let maxEntries = 128
     static let retentionInterval: TimeInterval = 7 * 86_400
-    static let allowedKeys: Set<String> = ["schemaVersion", "entries"]
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case schemaVersion
         case entries
     }
+
+    static let allowedKeys = Set(CodingKeys.allCases.map(\.rawValue))
 
     static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
@@ -109,16 +111,12 @@ internal struct DiagnosticEvidenceEnvelope: Equatable, Sendable {
         return encoder
     }
 
-    static func makeDecoder() -> JSONDecoder {
-        JSONDecoder()
-    }
-
     func encoded() throws -> Data {
         try Self.makeEncoder().encode(self)
     }
 
     static func decoded(from data: Data, now: Date) throws -> DiagnosticEvidenceEnvelope {
-        let envelope = try makeDecoder().decode(DiagnosticEvidenceEnvelope.self, from: data)
+        let envelope = try JSONDecoder().decode(DiagnosticEvidenceEnvelope.self, from: data)
         try envelope.validate(now: now)
         return envelope
     }
@@ -218,17 +216,14 @@ internal protocol DiagnosticEvidenceBytesStoring: Sendable {
 /// UserDefaults cannot host this seam: `data(forKey:)` maps both never-written and non-Data values to nil, so it cannot implement `DiagnosticEvidenceBytesRead`.
 internal final class FileDiagnosticEvidenceBytesStore: DiagnosticEvidenceBytesStoring, @unchecked Sendable {
     let fileURL: URL
-    private let fileManager: FileManager
 
     init(
         applicationSupportBaseURL: URL = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        )[0],
-        fileManager: FileManager = .default
+        )[0]
     ) {
         self.fileURL = Self.fileURL(applicationSupportBaseURL: applicationSupportBaseURL)
-        self.fileManager = fileManager
     }
 
     static func fileURL(applicationSupportBaseURL: URL) -> URL {
@@ -238,7 +233,7 @@ internal final class FileDiagnosticEvidenceBytesStore: DiagnosticEvidenceBytesSt
     }
 
     func read() -> DiagnosticEvidenceBytesRead {
-        guard fileManager.fileExists(atPath: fileURL.path) else {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return .absent
         }
         do {
@@ -250,7 +245,7 @@ internal final class FileDiagnosticEvidenceBytesStore: DiagnosticEvidenceBytesSt
 
     func write(_ data: Data) -> DiagnosticEvidenceBytesWriteResult {
         do {
-            try fileManager.createDirectory(
+            try FileManager.default.createDirectory(
                 at: fileURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
@@ -355,10 +350,10 @@ internal actor DiagnosticEvidenceStore {
     }
 
     func read() -> DiagnosticEvidenceRead {
-        let currentTime = now()
         if persistenceFailed {
             return .unavailable
         }
+        let currentTime = now()
 
         switch bytesStore.read() {
         case .failed:

@@ -5,7 +5,6 @@ import Foundation
 import Testing
 @testable import solstone
 
-private let inspectURL = URL(fileURLWithPath: "/var/tmp/solstone-diagnostic-evidence-inspect.json")
 private let sevenDays: TimeInterval = 7 * 86_400
 
 final class TestClock: @unchecked Sendable {
@@ -71,8 +70,6 @@ struct DiagnosticEvidenceStoreTests {
             return
         }
         #expect(readBack == envelope)
-
-        try encoded.write(to: inspectURL, options: .atomic)
     }
 
     @Test("AC2 rejection matrix leaves planted bytes identical")
@@ -229,6 +226,12 @@ struct DiagnosticEvidenceStoreTests {
         #expect(envelope.entries.count == 1)
         #expect(envelope.entries[0].code == .captureOff)
         #expect(envelope.entries[0].lastAt == exact)
+        let persisted = try DiagnosticEvidenceEnvelope.decoded(
+            from: try #require(bytes.stored),
+            now: now
+        )
+        #expect(persisted == envelope)
+        #expect(!persisted.entries.contains { $0.code == .captureOn })
     }
 
     @Test("AC5 compaction write failure returns unavailable and does not change stored bytes")
@@ -457,12 +460,16 @@ struct DiagnosticEvidenceStoreTests {
         let clock = TestClock(now)
         let bytes = InMemoryDiagnosticEvidenceBytesStore()
         let store = DiagnosticEvidenceStore(bytesStore: bytes, now: { clock.now })
-        let time = Date(timeIntervalSince1970: 999_000)
         let codes = DiagnosticEvidenceCode.allCases
+        let injectedTimes = Dictionary(
+            uniqueKeysWithValues: codes.enumerated().map { index, code in
+                (code, Date(timeIntervalSince1970: 999_000 + Double(index)))
+            }
+        )
         await withTaskGroup(of: Void.self) { group in
             for code in codes {
                 group.addTask {
-                    _ = await store.record(code, at: time)
+                    _ = await store.record(code, at: injectedTimes[code]!)
                 }
             }
             group.addTask {
@@ -477,8 +484,8 @@ struct DiagnosticEvidenceStoreTests {
         #expect(Set(envelope.entries.map(\.code)) == Set(codes))
         #expect(envelope.entries.count == codes.count)
         #expect(envelope.entries.allSatisfy { $0.repeatCount == 1 })
-        let firstAts = envelope.entries.map(\.firstAt)
-        #expect(firstAts == firstAts.sorted())
+        let firstAts = Set(envelope.entries.map(\.firstAt))
+        #expect(firstAts == Set(injectedTimes.values))
         for entry in envelope.entries {
             #expect(entry.firstAt <= entry.lastAt)
             #expect(entry.lastAt <= now)
@@ -490,6 +497,7 @@ struct DiagnosticEvidenceStoreTests {
         let keyToken = "sk-test-key"
         let filenameToken = "120000_audio_system.m4a"
         let deviceToken = "MacBook Pro Microphone"
+        // Path tokens are reachable through applicationSupportBaseURL; the rest document the covenant.
         let unreachableMarkers = [
             "https://journal.example",
             "/Users/example/journal",
