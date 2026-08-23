@@ -12,56 +12,18 @@ import SolstoneCore
 struct UploadCoordinatorTests {
     private let store = ObserverURLProtocolStore()
 
-    @Test func bundledAvailableUploadSucceededRecordsLastIngestAt() throws {
-        let fixed = Date(timeIntervalSince1970: 1_700_000_000)
-        let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: true)
-
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x"))
-
-        #expect(coordinator.bundledJournalLastIngestAt == fixed)
-    }
-
-    @Test func bundledAvailableBeforeAnyUploadHasNoLastIngestAt() throws {
-        let fixed = Date(timeIntervalSince1970: 1_700_000_000)
-        let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: true)
-
-        #expect(coordinator.bundledJournalLastIngestAt == nil)
-    }
-
-    @Test func unavailableUploadSucceededDoesNotExposeLastIngestAt() throws {
-        let fixed = Date(timeIntervalSince1970: 1_700_000_000)
-        let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: false)
-
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x"))
-
-        #expect(coordinator.bundledJournalLastIngestAt == nil)
-
-        coordinator.bundledAvailabilityProvider = { true }
-        #expect(coordinator.bundledJournalLastIngestAt == nil)
-    }
-
-    @Test func syncCompleteWithoutUploadDoesNotSetBundledLastIngestAt() throws {
-        let fixed = Date(timeIntervalSince1970: 1_700_000_000)
-        let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: true)
-
-        coordinator.handleProgressEvent(.syncComplete)
-
-        #expect(coordinator.bundledJournalLastIngestAt == nil)
-    }
-
     @Test func syncCompleteDoesNotUpdateLastSyncedAt() throws {
         let fixed = Date(timeIntervalSince1970: 1_700_000_000)
-        let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: false)
+        let coordinator = try makeCoordinator(now: fixed)
 
         coordinator.handleProgressEvent(.syncComplete)
 
-        #expect(coordinator.bundledJournalLastIngestAt == nil)
         #expect(coordinator.lastSyncedAt == nil)
     }
 
     @Test func journalContactSucceededUpdatesLastSyncedAtAndResetsHealthErrors() throws {
         let fixed = Date(timeIntervalSince1970: 1_700_000_000)
-        let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: false)
+        let coordinator = try makeCoordinator(now: fixed)
 
         coordinator.handleProgressEvent(.uploadFailed(
             segment: "x",
@@ -85,7 +47,7 @@ struct UploadCoordinatorTests {
             forSnapshot: StorageManager(baseDirectory: root),
             config: AppConfig(serverURL: "https://journal.example", serverKey: "secret", serviceMode: .external),
             lastContactStore: store,
-            journalFingerprintProvider: { fingerprint }
+            journalIdentityProvider: { .identified(fingerprint) }
         )
         coordinator.nowProvider = { fixed }
 
@@ -98,62 +60,9 @@ struct UploadCoordinatorTests {
         #expect(coordinator.lastSuccessfulJournalContactOutcome == .synced(fixed))
     }
 
-    @Test func uploadFailedDoesNotSetBundledLastIngestAt() throws {
-        let fixed = Date(timeIntervalSince1970: 1_700_000_000)
-        let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: true)
-
-        coordinator.handleProgressEvent(.uploadFailed(
-            segment: "x",
-            error: "offline",
-            healthReason: .uploadFailed
-        ))
-
-        #expect(coordinator.bundledJournalLastIngestAt == nil)
-    }
-
-    @Test func uploadFailedAfterSuccessDoesNotClearLastIngestAt() throws {
-        let fixed = Date(timeIntervalSince1970: 1_700_000_000)
-        let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: true)
-
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x"))
-        coordinator.handleProgressEvent(.uploadFailed(
-            segment: "x",
-            error: "offline",
-            healthReason: .uploadFailed
-        ))
-
-        #expect(coordinator.bundledJournalLastIngestAt == fixed)
-    }
-
-    @Test func gateFlipHidesAndReExposesStoredLastIngestAt() throws {
-        let fixed = Date(timeIntervalSince1970: 1_700_000_000)
-        let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: true)
-
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x"))
-        #expect(coordinator.bundledJournalLastIngestAt == fixed)
-
-        coordinator.bundledAvailabilityProvider = { false }
-        #expect(coordinator.bundledJournalLastIngestAt == nil)
-
-        coordinator.bundledAvailabilityProvider = { true }
-        #expect(coordinator.bundledJournalLastIngestAt == fixed)
-    }
-
-    @Test func laterUploadSucceededAdvancesLastIngestAt() throws {
-        let first = Date(timeIntervalSince1970: 1_700_000_000)
-        let second = Date(timeIntervalSince1970: 1_700_000_060)
-        let coordinator = try makeCoordinator(now: first, isBundledAvailable: true)
-
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x"))
-        coordinator.nowProvider = { second }
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "y"))
-
-        #expect(coordinator.bundledJournalLastIngestAt == second)
-    }
-
     @Test func recentErrorCountIncrementsClampsAndResetsOnJournalContact() throws {
         let fixed = Date(timeIntervalSince1970: 1_700_000_000)
-        let coordinator = try makeCoordinator(now: fixed, isBundledAvailable: false)
+        let coordinator = try makeCoordinator(now: fixed)
 
         coordinator.handleProgressEvent(.uploadFailed(
             segment: "x",
@@ -185,8 +94,7 @@ struct UploadCoordinatorTests {
 
     @Test func lastErrorReasonUsesTypedSanitizedTokens() throws {
         let coordinator = try makeCoordinator(
-            now: Date(timeIntervalSince1970: 1_700_000_000),
-            isBundledAvailable: false
+            now: Date(timeIntervalSince1970: 1_700_000_000)
         )
 
         coordinator.handleProgressEvent(.offline(
@@ -217,8 +125,7 @@ struct UploadCoordinatorTests {
 
     @Test func awaitingTunnelDoesNotChangeErrorStateOrRetryBudget() throws {
         let coordinator = try makeCoordinator(
-            now: Date(timeIntervalSince1970: 1_700_000_000),
-            isBundledAvailable: false
+            now: Date(timeIntervalSince1970: 1_700_000_000)
         )
         coordinator.recentErrorCount = 7
         coordinator.lastError = "existing error"
@@ -234,8 +141,7 @@ struct UploadCoordinatorTests {
 
     @Test func observerHealthPayloadDoesNotLeakRawFailureDetails() throws {
         let coordinator = try makeCoordinator(
-            now: Date(timeIntervalSince1970: 1_700_000_000),
-            isBundledAvailable: false
+            now: Date(timeIntervalSince1970: 1_700_000_000)
         )
         coordinator.handleProgressEvent(.uploadFailed(
             segment: "143022_300",
@@ -314,6 +220,250 @@ struct UploadCoordinatorTests {
         #expect(request.url?.path == IngestProtocolV3.manifestPath)
     }
 
+    @Test func nonDeliveryEventsNeverCreateDeliveryFact() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fingerprint = canonicalDeliveryFingerprint()
+        let delivery = InMemoryLastJournalDeliveryStore()
+        let contact = InMemoryLastSuccessfulJournalContactStore()
+        let coordinator = try makeDeliveryCoordinator(
+            now: now,
+            delivery: delivery,
+            identity: .identified(fingerprint),
+            contact: contact
+        )
+
+        #expect(delivery.read() == .absent)
+        #expect(coordinator.lastJournalDeliveryOutcome == .noDeliveryYet)
+
+        for event in Self.nonDeliveryProgressEvents {
+            coordinator.handleProgressEvent(event)
+            #expect(delivery.read() == .absent)
+            #expect(coordinator.lastJournalDeliveryOutcome == .noDeliveryYet)
+            if case .journalContactSucceeded = event {
+                #expect(contact.read() == .found(LastSuccessfulJournalContactPayload(
+                    date: now,
+                    fingerprint: fingerprint.value
+                )))
+                #expect(coordinator.lastSuccessfulJournalContactOutcome == .synced(now))
+            }
+        }
+    }
+
+    @Test func nonDeliveryEventsPreserveEstablishedDelivery() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fingerprint = canonicalDeliveryFingerprint()
+        let delivery = InMemoryLastJournalDeliveryStore()
+        let coordinator = try makeDeliveryCoordinator(
+            now: now,
+            delivery: delivery,
+            identity: .identified(fingerprint)
+        )
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        let established = LastJournalDeliveryPayload(date: now, fingerprint: fingerprint.value)
+        #expect(delivery.read() == .found(established))
+        #expect(coordinator.lastJournalDeliveryOutcome == .delivered(now))
+
+        for event in Self.nonDeliveryProgressEvents {
+            coordinator.handleProgressEvent(event)
+            #expect(delivery.read() == .found(established))
+            #expect(coordinator.lastJournalDeliveryOutcome == .delivered(now))
+        }
+    }
+
+    @Test func contactAndSyncCompleteDoNotClearWriteFailureFlag() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fingerprint = canonicalDeliveryFingerprint()
+        let delivery = InMemoryLastJournalDeliveryStore(writeResult: .failed)
+        let coordinator = try makeDeliveryCoordinator(
+            now: now,
+            delivery: delivery,
+            identity: .identified(fingerprint)
+        )
+
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        #expect(coordinator.lastJournalDeliveryWriteFailed == true)
+        #expect(coordinator.lastJournalDeliveryOutcome == .unavailable)
+        #expect(delivery.read() == .absent)
+
+        coordinator.handleProgressEvent(.journalContactSucceeded)
+        #expect(coordinator.lastJournalDeliveryWriteFailed == true)
+        #expect(coordinator.lastJournalDeliveryOutcome == .unavailable)
+        #expect(delivery.read() == .absent)
+
+        coordinator.handleProgressEvent(.syncComplete)
+        #expect(coordinator.lastJournalDeliveryWriteFailed == true)
+        #expect(coordinator.lastJournalDeliveryOutcome == .unavailable)
+        #expect(delivery.read() == .absent)
+
+        delivery.writeResult = .confirmed
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        #expect(coordinator.lastJournalDeliveryWriteFailed == false)
+        #expect(coordinator.lastJournalDeliveryOutcome == .delivered(now))
+    }
+
+    @Test func matchingProofWritesDeliveryPayload() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fingerprint = canonicalDeliveryFingerprint()
+        let delivery = InMemoryLastJournalDeliveryStore()
+        let coordinator = try makeDeliveryCoordinator(
+            now: now,
+            delivery: delivery,
+            identity: .identified(fingerprint)
+        )
+
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+
+        #expect(delivery.read() == .found(LastJournalDeliveryPayload(
+            date: now,
+            fingerprint: fingerprint.value
+        )))
+        #expect(coordinator.lastJournalDeliveryOutcome == .delivered(now))
+        #expect(coordinator.lastJournalDeliveryWriteFailed == false)
+    }
+
+    @Test func mismatchedOrFailedIdentityDoesNotWrite() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let stored = canonicalDeliveryFingerprint("stored")
+        let current = canonicalDeliveryFingerprint("current")
+        let prior = LastJournalDeliveryPayload(date: Date(timeIntervalSince1970: 50), fingerprint: stored.value)
+        let delivery = InMemoryLastJournalDeliveryStore(readResult: .found(prior))
+        let coordinator = try makeDeliveryCoordinator(
+            now: now,
+            delivery: delivery,
+            identity: .identified(current)
+        )
+
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: stored.value))
+        #expect(delivery.read() == .found(prior))
+        #expect(coordinator.lastJournalDeliveryOutcome == .noDeliveryYet)
+
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: nil))
+        #expect(delivery.read() == .found(prior))
+
+        let failedDelivery = InMemoryLastJournalDeliveryStore(readResult: .found(prior))
+        let failedCoordinator = try makeDeliveryCoordinator(
+            now: now,
+            delivery: failedDelivery,
+            identity: .failed
+        )
+        failedCoordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: stored.value))
+        #expect(failedDelivery.read() == .found(prior))
+        #expect(failedCoordinator.lastJournalDeliveryOutcome == .unavailable)
+
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: current.value))
+        #expect(delivery.read() == .found(LastJournalDeliveryPayload(date: now, fingerprint: current.value)))
+    }
+
+    @Test func rejectedWriteSetsFailureFlagUntilConfirmedWrite() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fingerprint = canonicalDeliveryFingerprint()
+        let delivery = InMemoryLastJournalDeliveryStore(writeResult: .failed)
+        let coordinator = try makeDeliveryCoordinator(
+            now: now,
+            delivery: delivery,
+            identity: .identified(fingerprint)
+        )
+
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+
+        #expect(delivery.read() == .absent)
+        #expect(coordinator.lastJournalDeliveryWriteFailed == true)
+        #expect(coordinator.lastJournalDeliveryOutcome == .unavailable)
+
+        delivery.writeResult = .confirmed
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+
+        #expect(coordinator.lastJournalDeliveryWriteFailed == false)
+        #expect(coordinator.lastJournalDeliveryOutcome == .delivered(now))
+    }
+
+    @Test func confirmedUserDefaultsDeliverySurvivesRestartWithFixedClock() throws {
+        let isolated = IsolatedUserDefaults()
+        defer { isolated.clear() }
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fingerprint = canonicalDeliveryFingerprint()
+        let store = UserDefaultsLastJournalDeliveryStore(defaults: isolated.defaults)
+        let root = try makeTempDirectory("upload-coordinator-delivery-restart")
+        let coordinator = UploadCoordinator(
+            forSnapshot: StorageManager(baseDirectory: root),
+            config: AppConfig(),
+            lastDeliveryStore: store,
+            journalIdentityProvider: { .identified(fingerprint) }
+        )
+        coordinator.nowProvider = { now }
+        coordinator.refreshLastJournalDelivery()
+
+        #expect(coordinator.lastJournalDeliveryOutcome == .noDeliveryYet)
+
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        #expect(coordinator.lastJournalDeliveryOutcome == .delivered(now))
+        #expect(store.read() == .found(LastJournalDeliveryPayload(date: now, fingerprint: fingerprint.value)))
+
+        let restarted = UploadCoordinator(
+            forSnapshot: StorageManager(baseDirectory: root),
+            config: AppConfig(),
+            lastDeliveryStore: UserDefaultsLastJournalDeliveryStore(defaults: isolated.defaults),
+            journalIdentityProvider: { .identified(fingerprint) }
+        )
+        restarted.nowProvider = { now }
+        restarted.refreshLastJournalDelivery()
+        #expect(restarted.lastJournalDeliveryOutcome == .delivered(now))
+    }
+
+    @Test func invalidStorageStaysUnavailableUntilProvenDelivery() throws {
+        let now = Date(timeIntervalSince1970: 100)
+        let later = Date(timeIntervalSince1970: 200)
+        let fingerprint = canonicalDeliveryFingerprint()
+        let stale = LastJournalDeliveryPayload(date: later, fingerprint: fingerprint.value)
+        let delivery = InMemoryLastJournalDeliveryStore(readResult: .found(stale))
+        let coordinator = try makeDeliveryCoordinator(
+            now: now,
+            delivery: delivery,
+            identity: .identified(fingerprint)
+        )
+
+        #expect(coordinator.lastJournalDeliveryOutcome == .unavailable)
+        coordinator.refreshLastJournalDelivery()
+        #expect(coordinator.lastJournalDeliveryOutcome == .unavailable)
+        #expect(delivery.read() == .found(stale))
+
+        coordinator.nowProvider = { later }
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        #expect(delivery.read() == .found(LastJournalDeliveryPayload(date: later, fingerprint: fingerprint.value)))
+        #expect(coordinator.lastJournalDeliveryOutcome == .delivered(later))
+    }
+
+    private static let nonDeliveryProgressEvents: [SyncService.ProgressEvent] = [
+        .syncStarted,
+        .syncProgress(checked: 1, total: 2),
+        .uploadStarted(segment: "x"),
+        .uploadRetrying(segment: "x", attempt: 2),
+        .uploadFailed(segment: "x", error: "failed", healthReason: .uploadFailed),
+        .journalContactSucceeded,
+        .syncComplete,
+        .offline(error: "offline", healthReason: .urlErrorCode(-1009)),
+        .awaitingTunnel
+    ]
+
+    private func makeDeliveryCoordinator(
+        now: Date,
+        delivery: InMemoryLastJournalDeliveryStore,
+        identity: JournalIdentityRead,
+        contact: InMemoryLastSuccessfulJournalContactStore = InMemoryLastSuccessfulJournalContactStore()
+    ) throws -> UploadCoordinator {
+        let root = try makeTempDirectory("upload-coordinator-delivery")
+        let coordinator = UploadCoordinator(
+            forSnapshot: StorageManager(baseDirectory: root),
+            config: AppConfig(),
+            lastContactStore: contact,
+            lastDeliveryStore: delivery,
+            journalIdentityProvider: { identity }
+        )
+        coordinator.nowProvider = { now }
+        coordinator.refreshLastJournalDelivery()
+        return coordinator
+    }
+
     private func makeSegment(
         root: URL,
         date: Date = Date(),
@@ -341,14 +491,26 @@ struct UploadCoordinatorTests {
         UserDefaults.standard.removeObject(forKey: "syncedDays")
     }
 
-    private func makeCoordinator(now: Date, isBundledAvailable: Bool) throws -> UploadCoordinator {
+    private func makeCoordinator(now: Date) throws -> UploadCoordinator {
         let root = try makeTempDirectory("upload-coordinator")
         let coordinator = UploadCoordinator(
             forSnapshot: StorageManager(baseDirectory: root),
             config: AppConfig()
         )
         coordinator.nowProvider = { now }
-        coordinator.bundledAvailabilityProvider = { isBundledAvailable }
         return coordinator
+    }
+
+    private func canonicalDeliveryFingerprint(_ distinct: String = "a") -> JournalConnectionFingerprint {
+        journalConnectionFingerprint(
+            config: AppConfig(
+                serverURL: "https://\(distinct).example.test",
+                serverKey: "key-\(distinct)",
+                serviceMode: .external
+            ),
+            topology: .remote,
+            isTunnelManaged: false,
+            tunnelPairing: nil
+        )!
     }
 }

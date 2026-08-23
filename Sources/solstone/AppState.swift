@@ -426,19 +426,36 @@ public final class AppState {
         }
     }
 
-    internal func currentJournalConnectionFingerprint() -> JournalConnectionFingerprint? {
+    internal func currentJournalIdentity() -> JournalIdentityRead {
+        let pairing: TunnelPairingIdentity?
+        switch tunnelLifecycleOwner.pairingIdentityRead {
+        case .failed:
+            return .failed
+        case .found(let identity):
+            pairing = identity
+        case .absent:
+            pairing = nil
+        }
         let topology = classifySetupTopology(
             serviceMode: config.serviceMode,
             serverURL: config.serverURL,
             isTunnelManaged: tunnelLifecycleOwner.isTunnelManaged,
             isPairedHome: tunnelLifecycleOwner.isPairedHome
         )
-        return journalConnectionFingerprint(
+        guard let fingerprint = journalConnectionFingerprint(
             config: config,
             topology: topology,
             isTunnelManaged: tunnelLifecycleOwner.isTunnelManaged,
-            tunnelPairing: tunnelLifecycleOwner.cachedPairingIdentity
-        )
+            tunnelPairing: pairing
+        ) else {
+            return .absent
+        }
+        return .identified(fingerprint)
+    }
+
+    internal func reevaluateTunnelPairing() async {
+        await tunnelLifecycleOwner.reevaluatePairing()
+        uploadCoordinator.refreshLastJournalDelivery()
     }
 
     internal var isPairedHome: Bool {
@@ -525,6 +542,7 @@ public final class AppState {
     internal func clearLastSuccessfulJournalContact() {
         lastContactStore.clear()
         uploadCoordinator?.refreshLastSuccessfulJournalContact()
+        uploadCoordinator?.refreshLastJournalDelivery()
     }
 
     internal func observerHealthSnapshot() -> ObserverHealthSnapshot? {
@@ -729,6 +747,7 @@ public final class AppState {
         let fingerprintTarget = AppStateBridgeTarget()
         let recoveryCoordinator = IncompleteSegmentRecoveryCoordinator.shared
         let lastContactStore = UserDefaultsLastSuccessfulJournalContactStore()
+        let lastDeliveryStore = UserDefaultsLastJournalDeliveryStore()
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager
@@ -764,8 +783,8 @@ public final class AppState {
         self.pairingCoordinator = PairingCoordinator(
             clientInfo: splClientInfo,
             keychainStore: splKeychainStore,
-            reactivate: { [owner = tunnelLifecycleOwner] in
-                await owner.reevaluatePairing()
+            reactivate: { [fingerprintTarget] in
+                await fingerprintTarget.state?.reevaluateTunnelPairing()
             },
             ownerState: { [owner = tunnelLifecycleOwner] in
                 owner.state
@@ -852,8 +871,9 @@ public final class AppState {
             pairedIngestIdentity: nil,
             automaticSyncEnabled: automaticObservationPipelineEnabled,
             lastContactStore: lastContactStore,
-            journalFingerprintProvider: { [fingerprintTarget] in
-                fingerprintTarget.state?.currentJournalConnectionFingerprint()
+            lastDeliveryStore: lastDeliveryStore,
+            journalIdentityProvider: { [fingerprintTarget] in
+                fingerprintTarget.state?.currentJournalIdentity() ?? .absent
             }
         )
         appQuitCoordinator = makeAppQuitCoordinator(
@@ -926,6 +946,7 @@ public final class AppState {
         fingerprintTarget.state = self
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
         uploadCoordinator.refreshLastSuccessfulJournalContact()
+        uploadCoordinator.refreshLastJournalDelivery()
         AppState.shared = self
     }
 
@@ -963,7 +984,8 @@ public final class AppState {
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
             $0.uploadCoordinator.triggerSync()
         },
-        lastContactStore: (any LastSuccessfulJournalContactStoring)? = nil
+        lastContactStore: (any LastSuccessfulJournalContactStoring)? = nil,
+        lastDeliveryStore: (any LastJournalDeliveryStoring)? = nil
     ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
@@ -976,7 +998,8 @@ public final class AppState {
             observerRegister: observerRegister,
             sameMachinePairStart: sameMachinePairStart,
             triggerTunnelConnectedSync: triggerTunnelConnectedSync,
-            lastContactStore: lastContactStore
+            lastContactStore: lastContactStore,
+            lastDeliveryStore: lastDeliveryStore
         )
     }
 
@@ -1050,6 +1073,7 @@ public final class AppState {
             $0.uploadCoordinator.triggerSync()
         },
         lastContactStore providedLastContactStore: (any LastSuccessfulJournalContactStoring)? = nil,
+        lastDeliveryStore providedLastDeliveryStore: (any LastJournalDeliveryStoring)? = nil,
         pairingOperation: PairingCoordinator.PairOperation? = nil,
         pairingLoad: PairingCoordinator.LoadPairing? = nil,
         pairingSave: PairingCoordinator.SavePairing? = nil,
@@ -1097,6 +1121,7 @@ public final class AppState {
         )
         let lastContactStore = providedLastContactStore ?? InMemoryLastSuccessfulJournalContactStore()
         self.lastContactStore = lastContactStore
+        let lastDeliveryStore = providedLastDeliveryStore ?? InMemoryLastJournalDeliveryStore()
         self.observerHealthSnapshotEnabled = false
         self.notificationAuthorizationStatus = notificationStatus
         self.recoveryCoordinator = .shared
@@ -1145,8 +1170,8 @@ public final class AppState {
             loadPairing: pairingLoad ?? { nil },
             savePairing: pairingSave ?? { _ in },
             deletePairing: pairingDelete ?? {},
-            reactivate: { [owner = tunnelLifecycleOwner] in
-                await owner.reevaluatePairing()
+            reactivate: { [fingerprintTarget] in
+                await fingerprintTarget.state?.reevaluateTunnelPairing()
             },
             ownerState: { [owner = tunnelLifecycleOwner] in
                 owner.state
@@ -1161,8 +1186,9 @@ public final class AppState {
             config: config,
             resolver: snapshotIngestResolver,
             lastContactStore: lastContactStore,
-            journalFingerprintProvider: { [fingerprintTarget] in
-                fingerprintTarget.state?.currentJournalConnectionFingerprint()
+            lastDeliveryStore: lastDeliveryStore,
+            journalIdentityProvider: { [fingerprintTarget] in
+                fingerprintTarget.state?.currentJournalIdentity() ?? .absent
             }
         )
         appQuitCoordinator = makeAppQuitCoordinator(
@@ -1175,6 +1201,7 @@ public final class AppState {
         captureTarget.state = self
         fingerprintTarget.state = self
         uploadCoordinator.refreshLastSuccessfulJournalContact()
+        uploadCoordinator.refreshLastJournalDelivery()
 
         // No pause restore, no segment recovery,
         // no startRecording, no upload sync, no AppState.shared assignment.

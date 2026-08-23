@@ -107,6 +107,20 @@ final class TunnelLifecycleOwner {
         }
     }
 
+    var pairingIdentityRead: PairingIdentityRead {
+        switch loadPairingCached() {
+        case .loaded(let pairing):
+            return .found(TunnelPairingIdentity(
+                instanceID: pairing.instanceID,
+                fingerprint: pairing.fingerprint
+            ))
+        case .absent:
+            return .absent
+        case .failed:
+            return .failed
+        }
+    }
+
     @ObservationIgnored
     private let loadPairing: @Sendable () throws -> StoredPairing?
     @ObservationIgnored

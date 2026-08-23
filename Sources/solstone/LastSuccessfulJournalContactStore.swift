@@ -14,6 +14,27 @@ internal struct TunnelPairingIdentity: Equatable, Sendable {
     let fingerprint: String
 }
 
+internal enum PairingIdentityRead: Equatable, Sendable {
+    case found(TunnelPairingIdentity)
+    case absent
+    case failed
+}
+
+internal enum JournalIdentityRead: Equatable, Sendable {
+    case identified(JournalConnectionFingerprint)
+    case absent
+    case failed
+
+    var fingerprint: JournalConnectionFingerprint? {
+        switch self {
+        case .identified(let fingerprint):
+            return fingerprint
+        case .absent, .failed:
+            return nil
+        }
+    }
+}
+
 internal struct LastSuccessfulJournalContactPayload: Codable, Equatable, Sendable {
     let date: Date
     let fingerprint: String
@@ -137,11 +158,26 @@ internal func journalConnectionFingerprint(
     ])
 }
 
+internal func isJournalConnectionFingerprintValue(_ value: String) -> Bool {
+    guard value.hasPrefix("sha256:") else {
+        return false
+    }
+    let hex = value.dropFirst("sha256:".count)
+    guard hex.count == 64 else {
+        return false
+    }
+    return hex.allSatisfy { character in
+        ("0"..."9").contains(character) || ("a"..."f").contains(character)
+    }
+}
+
 private func makeJournalConnectionFingerprint(_ parts: [String]) -> JournalConnectionFingerprint {
     let canonical = parts.joined(separator: "\u{1F}")
     let digest = SHA256.hash(data: Data(canonical.utf8))
     let hex = digest.map { String(format: "%02x", $0) }.joined()
-    return JournalConnectionFingerprint(value: "sha256:\(hex)")
+    let value = "sha256:\(hex)"
+    precondition(isJournalConnectionFingerprintValue(value))
+    return JournalConnectionFingerprint(value: value)
 }
 
 private extension String {

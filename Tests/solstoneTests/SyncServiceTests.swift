@@ -333,6 +333,7 @@ struct SyncServiceTests {
     private func configure(_ service: SyncService, cacheRetentionDays: Int = -1) async {
         await service.configure(
             pairingIdentity: TunnelPairingIdentity(instanceID: "instance", fingerprint: "fingerprint"),
+            journalFingerprint: nil,
             cacheRetentionDays: cacheRetentionDays,
             syncPaused: false
         )

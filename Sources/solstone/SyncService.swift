@@ -14,7 +14,7 @@ public actor SyncService {
         case syncProgress(checked: Int, total: Int)
         case uploadStarted(segment: String)
         case uploadRetrying(segment: String, attempt: Int)
-        case uploadSucceeded(segment: String)
+        case uploadSucceeded(segment: String, journalFingerprint: String?)
         case uploadFailed(segment: String, error: String, healthReason: ObserverHealthFailureReason)
         case journalContactSucceeded
         case syncComplete
@@ -47,6 +47,7 @@ public actor SyncService {
     // MARK: - Configuration
 
     private var journalIdentity: PairedIngestIdentity?
+    private var activeJournalFingerprint: JournalConnectionFingerprint?
     private var cacheRetentionDays: Int = AppConfig.Defaults.cacheRetentionDays
     private var syncPaused: Bool = false
 
@@ -101,6 +102,7 @@ public actor SyncService {
     /// identity: changing it invalidates aliases and stops in-flight retries.
     func configure(
         pairingIdentity: TunnelPairingIdentity?,
+        journalFingerprint: JournalConnectionFingerprint?,
         cacheRetentionDays: Int,
         syncPaused: Bool
     ) {
@@ -109,6 +111,7 @@ public actor SyncService {
             storedSegmentKeyBySubmittedKey.removeAll()
         }
         self.journalIdentity = newIdentity
+        self.activeJournalFingerprint = journalFingerprint
         self.cacheRetentionDays = cacheRetentionDays
         self.syncPaused = syncPaused
     }
@@ -510,6 +513,7 @@ public actor SyncService {
                 return .failed(error: "No files", healthReason: .uploadNoFiles)
             }
 
+            let proof = activeJournalFingerprint?.value
             let result = await client.uploadSegment(
                 serverURL: serverURL,
                 day: day,
@@ -525,7 +529,7 @@ public actor SyncService {
                         SegmentAliasKey(day: day, submittedKey: segment)
                     ] = info.storedSegmentKey
                 }
-                progressContinuation.yield(.uploadSucceeded(segment: segment))
+                progressContinuation.yield(.uploadSucceeded(segment: segment, journalFingerprint: proof))
                 return .succeeded
             case .failure(let error):
                 let healthReason = observerHealthFailureReason(from: error)

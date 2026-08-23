@@ -658,7 +658,7 @@ struct SnapshotTests {
         state.isRecording = true
         state.uploadCoordinator.status = .synced
         let recentDate = Date(timeIntervalSinceNow: -120)
-        let fingerprint = try #require(state.currentJournalConnectionFingerprint()?.value)
+        let fingerprint = try #require(state.currentJournalIdentity().fingerprint?.value)
         store.write(LastSuccessfulJournalContactPayload(date: recentDate, fingerprint: fingerprint))
         state.uploadCoordinator.refreshLastSuccessfulJournalContact()
         #expect(state.uploadCoordinator.lastSuccessfulJournalContactOutcome == .synced(recentDate))

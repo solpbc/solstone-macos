@@ -87,16 +87,10 @@ public final class UploadCoordinator {
     public internal(set) var recentErrorCount: Int = 0
     public internal(set) var lastErrorReason: String?
     internal private(set) var lastSuccessfulJournalContactOutcome: SetupLastSyncOutcome = .notLinked
-    private var bundledLastIngestAt: Date?
+    internal private(set) var lastJournalDeliveryOutcome: LastJournalDeliveryOutcome = .notLinked
+    internal private(set) var lastJournalDeliveryWriteFailed: Bool = false
 
     internal var nowProvider: @MainActor () -> Date = { Date() }
-    internal var bundledAvailabilityProvider: @MainActor () -> Bool = { false }
-
-    /// Time the app last handled a successful segment upload into the active bundled journal.
-    /// nil whenever the bundled status surface is unavailable (external mode, or bundled before installed).
-    public var bundledJournalLastIngestAt: Date? {
-        bundledAvailabilityProvider() ? bundledLastIngestAt : nil
-    }
 
     // MARK: - Retry State
 
@@ -113,9 +107,11 @@ public final class UploadCoordinator {
     private let client: UploadClient
     private let resolver: HomeBaseURLResolver
     private let lastContactStore: any LastSuccessfulJournalContactStoring
-    private let journalFingerprintProvider: @MainActor @Sendable () -> JournalConnectionFingerprint?
+    private let lastDeliveryStore: any LastJournalDeliveryStoring
+    private let journalIdentityProvider: @MainActor @Sendable () -> JournalIdentityRead
     private var config: AppConfig
     private var pairedIngestIdentity: TunnelPairingIdentity?
+    private var pushedJournalFingerprint: JournalConnectionFingerprint?
     private let automaticSyncEnabled: Bool
     private var eventTask: Task<Void, Never>?
     private var configurationTask: Task<Void, Never>?
@@ -130,7 +126,8 @@ public final class UploadCoordinator {
         pairedIngestIdentity: TunnelPairingIdentity? = nil,
         automaticSyncEnabled: Bool = true,
         lastContactStore: any LastSuccessfulJournalContactStoring = UserDefaultsLastSuccessfulJournalContactStore(),
-        journalFingerprintProvider: @escaping @MainActor @Sendable () -> JournalConnectionFingerprint? = { nil }
+        lastDeliveryStore: any LastJournalDeliveryStoring = UserDefaultsLastJournalDeliveryStore(),
+        journalIdentityProvider: @escaping @MainActor @Sendable () -> JournalIdentityRead = { .absent }
     ) {
         self.config = config
         self.client = client
@@ -138,17 +135,22 @@ public final class UploadCoordinator {
         self.pairedIngestIdentity = pairedIngestIdentity
         self.automaticSyncEnabled = automaticSyncEnabled
         self.lastContactStore = lastContactStore
-        self.journalFingerprintProvider = journalFingerprintProvider
+        self.lastDeliveryStore = lastDeliveryStore
+        self.journalIdentityProvider = journalIdentityProvider
         self.syncService = SyncService(
             storageManager: storageManager,
             client: client,
             resolver: resolver
         )
 
+        let initialFingerprint = journalIdentityProvider().fingerprint
+        self.pushedJournalFingerprint = initialFingerprint
+
         // Configure sync service with initial settings
         configurationTask = Task {
             await syncService.configure(
                 pairingIdentity: pairedIngestIdentity,
+                journalFingerprint: initialFingerprint,
                 cacheRetentionDays: config.cacheRetentionDays,
                 syncPaused: config.syncPaused
             )
@@ -156,6 +158,7 @@ public final class UploadCoordinator {
 
         // Start listening to sync events
         refreshLastSuccessfulJournalContact()
+        refreshLastJournalDelivery()
         startEventListener()
     }
 
@@ -166,12 +169,14 @@ public final class UploadCoordinator {
         client: UploadClient = UploadClient(),
         resolver: HomeBaseURLResolver? = nil,
         lastContactStore: any LastSuccessfulJournalContactStoring = InMemoryLastSuccessfulJournalContactStore(),
-        journalFingerprintProvider: @escaping @MainActor @Sendable () -> JournalConnectionFingerprint? = { nil }
+        lastDeliveryStore: any LastJournalDeliveryStoring = InMemoryLastJournalDeliveryStore(),
+        journalIdentityProvider: @escaping @MainActor @Sendable () -> JournalIdentityRead = { .absent }
     ) {
         self.config = config
         self.client = client
         self.lastContactStore = lastContactStore
-        self.journalFingerprintProvider = journalFingerprintProvider
+        self.lastDeliveryStore = lastDeliveryStore
+        self.journalIdentityProvider = journalIdentityProvider
         let snapshotResolver = resolver ?? HomeBaseURLResolver { .held }
         self.syncService = SyncService(
             storageManager: storageManager,
@@ -182,6 +187,7 @@ public final class UploadCoordinator {
         self.pairedIngestIdentity = nil
         self.automaticSyncEnabled = false
         refreshLastSuccessfulJournalContact()
+        refreshLastJournalDelivery()
     }
 
     // MARK: - Public API
@@ -194,9 +200,12 @@ public final class UploadCoordinator {
         }
         self.config = newConfig
 
+        let fingerprint = journalIdentityProvider().fingerprint
+        pushedJournalFingerprint = fingerprint
         Task {
             await syncService.configure(
                 pairingIdentity: pairedIngestIdentity,
+                journalFingerprint: fingerprint,
                 cacheRetentionDays: newConfig.cacheRetentionDays,
                 syncPaused: newConfig.syncPaused
             )
@@ -207,16 +216,23 @@ public final class UploadCoordinator {
             }
         }
         refreshLastSuccessfulJournalContact()
+        refreshLastJournalDelivery()
     }
 
     /// The paired tunnel identity is the only readiness credential for v3 sync.
     /// This snapshot is supplied by AppState's existing tunnel-state observation.
     func updatePairedIngestIdentity(_ identity: TunnelPairingIdentity?) {
-        guard pairedIngestIdentity != identity else { return }
+        refreshLastJournalDelivery()
+        let fingerprint = journalIdentityProvider().fingerprint
+        guard pairedIngestIdentity != identity || pushedJournalFingerprint != fingerprint else {
+            return
+        }
         pairedIngestIdentity = identity
+        pushedJournalFingerprint = fingerprint
         Task {
             await syncService.configure(
                 pairingIdentity: identity,
+                journalFingerprint: fingerprint,
                 cacheRetentionDays: config.cacheRetentionDays,
                 syncPaused: config.syncPaused
             )
@@ -230,7 +246,16 @@ public final class UploadCoordinator {
     internal func refreshLastSuccessfulJournalContact() {
         lastSuccessfulJournalContactOutcome = resolveLastSuccessfulJournalContactOutcome(
             read: lastContactStore.read(),
-            currentFingerprint: journalFingerprintProvider()
+            currentFingerprint: journalIdentityProvider().fingerprint
+        )
+    }
+
+    internal func refreshLastJournalDelivery() {
+        lastJournalDeliveryOutcome = resolveLastJournalDeliveryOutcome(
+            read: lastDeliveryStore.read(),
+            identity: journalIdentityProvider(),
+            now: nowProvider(),
+            persistenceFailed: lastJournalDeliveryWriteFailed
         )
     }
 
@@ -301,6 +326,7 @@ public final class UploadCoordinator {
         await configurationTask?.value
         await syncService.configure(
             pairingIdentity: pairedIngestIdentity,
+            journalFingerprint: journalIdentityProvider().fingerprint,
             cacheRetentionDays: config.cacheRetentionDays,
             syncPaused: config.syncPaused
         )
@@ -340,10 +366,8 @@ public final class UploadCoordinator {
         case .uploadRetrying(let segment, let attempt):
             status = .retrying(segment: segment, attempts: attempt)
 
-        case .uploadSucceeded:
-            if bundledAvailabilityProvider() {
-                bundledLastIngestAt = nowProvider()
-            }
+        case .uploadSucceeded(_, let proof):
+            handleProvenDelivery(proof: proof.map { JournalConnectionFingerprint(value: $0) })
 
         case .uploadFailed(_, let error, let healthReason):
             let sanitizedReason = sanitizedObserverHealthErrorReason(healthReason)
@@ -356,7 +380,7 @@ public final class UploadCoordinator {
         case .journalContactSucceeded:
             let now = nowProvider()
             lastSyncedAt = now
-            if let fingerprint = journalFingerprintProvider() {
+            if let fingerprint = journalIdentityProvider().fingerprint {
                 lastContactStore.write(LastSuccessfulJournalContactPayload(
                     date: now,
                     fingerprint: fingerprint.value
@@ -388,6 +412,24 @@ public final class UploadCoordinator {
             retryTask = nil
             status = .awaitingTunnel
         }
+    }
+
+    private func handleProvenDelivery(proof: JournalConnectionFingerprint?) {
+        let identity = journalIdentityProvider()
+        if case .identified(let current) = identity, proof == current {
+            let payload = LastJournalDeliveryPayload(
+                date: nowProvider(),
+                fingerprint: current.value
+            )
+            switch lastDeliveryStore.write(payload) {
+            case .confirmed:
+                lastJournalDeliveryWriteFailed = false
+            case .failed:
+                lastJournalDeliveryWriteFailed = true
+                Logger.upload.error("delivery_write_failed")
+            }
+        }
+        refreshLastJournalDelivery()
     }
 
     private func incrementRecentErrorCount() {

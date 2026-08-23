@@ -273,6 +273,8 @@ struct UploadClientTests {
         #expect(ok == UploadSuccessInfo(status: .ok, storedSegmentKey: "120000_300"))
         let duplicate = try await uploadResult(body: #"{"status":"duplicate","existing_segment":"115959_300"}"#)
         #expect(duplicate == UploadSuccessInfo(status: .duplicate, storedSegmentKey: "115959_300"))
+        let collision = try await uploadResult(body: #"{"status":"collision","segment":"120000_300"}"#)
+        #expect(collision == UploadSuccessInfo(status: .collision, storedSegmentKey: "120000_300"))
 
         for body in ["", "not-json", #"{"status":"failed","error":"no"}"#, #"{"status":"conflict","error":"no"}"#, #"{"status":"unknown","segment":"120000_300"}"#, #"{"status":"ok"}"#] {
             let result = try await uploadRawResult(body: body)

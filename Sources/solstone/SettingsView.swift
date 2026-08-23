@@ -1823,7 +1823,7 @@ struct SettingsView: View {
            !coordinatorShowsPairingRetry {
             HStack {
                 Button("retry") {
-                    Task { await appState.tunnelLifecycleOwner.reevaluatePairing() }
+                    Task { await appState.reevaluateTunnelPairing() }
                 }
                 .disabled(pairingIsBusy)
                 .accessibilityIdentifier(AXID.Settings.Service.pairingRetry)

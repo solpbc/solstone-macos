@@ -128,5 +128,21 @@ struct JournalConnectionFingerprintTests {
         ))
 
         #expect(withoutPath != withPath)
+        #expect(isJournalConnectionFingerprintValue(withoutPath.value))
+        #expect(isJournalConnectionFingerprintValue(withPath.value))
+    }
+
+    @Test func fingerprintPredicateAcceptsMintedValuesAndRejectsNoncanonical() throws {
+        let minted = try #require(journalConnectionFingerprint(
+            config: AppConfig(serverURL: "https://journal.example", serverKey: "secret", serviceMode: .external),
+            topology: .remote,
+            isTunnelManaged: false,
+            tunnelPairing: nil
+        ))
+        #expect(isJournalConnectionFingerprintValue(minted.value))
+        #expect(!isJournalConnectionFingerprintValue("sha256:test"))
+        #expect(!isJournalConnectionFingerprintValue("sha256:" + String(repeating: "A", count: 64)))
+        #expect(!isJournalConnectionFingerprintValue("sha256:" + String(repeating: "a", count: 63)))
+        #expect(!isJournalConnectionFingerprintValue(String(repeating: "a", count: 64)))
     }
 }
