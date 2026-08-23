@@ -413,6 +413,7 @@ struct SyncServiceTests {
         resetSyncedDaysCache()
         store.reset()
         SyncServiceHoldingURLProtocol.reset()
+        defer { SyncServiceHoldingURLProtocol.releaseHold() }
         let root = try makeTempDirectory("sync-post-response-\(variant)-\(status.rawValue)")
         let segment = try makeSegment(root: root)
         let day = dayString(for: segment.date)
@@ -442,7 +443,7 @@ struct SyncServiceTests {
         }
         let syncTask = Task { await service.sync() }
         await holdingStore.waitForRequestCount(2)
-        SyncServiceHoldingURLProtocol.hold.waitUntilWaiting()
+        #expect(SyncServiceHoldingURLProtocol.hold.waitUntilWaiting())
         #expect(holdingStore.snapshotRequests().contains { $0.url?.path == IngestProtocolV3.uploadPath })
 
         await applyStaleness(variant, to: service)
@@ -453,6 +454,11 @@ struct SyncServiceTests {
 
         #expect(collector.containsConfigChangedFailure)
         #expect(collector.containsUploadSucceeded == false)
+
+        // .ok stores the submitted key, so it never writes an alias; that row
+        // is the no-success-event proof above. collision/duplicate isolate the
+        // alias cache.
+        guard status != .ok else { return }
 
         holdingStore.reset()
         await configure(service)
@@ -529,6 +535,20 @@ struct SyncServiceTests {
             cacheRetentionDays: -1,
             syncPaused: false
         )
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: #"{"status":"ok","segment":"120000_300"}"#)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForUploadSucceeded()
+        listen.cancel()
+        #expect(collector.uploadSucceededFingerprint == tunnelJournalConnectionFingerprint(for: pairingB).value)
+
+        store.reset()
         await configure(service)
         store.enqueue(statusCode: 200, body: manifestJSON())
         store.enqueue(statusCode: 200, body: #"{"status":"ok","segment":"120000_300"}"#)
@@ -792,15 +812,6 @@ private final class SyncServiceUploadHoldGate: @unchecked Sendable {
     private var released = false
     private var waiterCount = 0
 
-    func reset() {
-        condition.lock()
-        released = true
-        condition.broadcast()
-        released = false
-        waiterCount = 0
-        condition.unlock()
-    }
-
     func release() {
         condition.lock()
         released = true
@@ -808,12 +819,16 @@ private final class SyncServiceUploadHoldGate: @unchecked Sendable {
         condition.unlock()
     }
 
-    func waitUntilWaiting() {
+    func waitUntilWaiting(timeout: TimeInterval = 10) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
         condition.lock()
-        while waiterCount == 0 {
-            condition.wait()
+        defer { condition.unlock() }
+        while waiterCount == 0, !released {
+            if !condition.wait(until: deadline) {
+                return false
+            }
         }
-        condition.unlock()
+        return waiterCount > 0
     }
 
     func wait() {
@@ -828,9 +843,30 @@ private final class SyncServiceUploadHoldGate: @unchecked Sendable {
     }
 }
 
+private final class SyncServiceHoldSlot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var gate = SyncServiceUploadHoldGate()
+
+    var current: SyncServiceUploadHoldGate {
+        lock.withLock { gate }
+    }
+
+    func rotate() {
+        lock.lock()
+        let previous = gate
+        gate = SyncServiceUploadHoldGate()
+        lock.unlock()
+        previous.release()
+    }
+}
+
 private final class SyncServiceHoldingURLProtocol: URLProtocol, @unchecked Sendable {
     static let store = ObserverURLProtocolStore()
-    static let hold = SyncServiceUploadHoldGate()
+    private static let slot = SyncServiceHoldSlot()
+
+    static var hold: SyncServiceUploadHoldGate {
+        slot.current
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -842,8 +878,10 @@ private final class SyncServiceHoldingURLProtocol: URLProtocol, @unchecked Senda
             return
         }
 
+        let gate = Self.hold
         DispatchQueue.global().async { [self] in
-            Self.hold.wait()
+            gate.wait()
+            guard gate === Self.hold else { return }
             Self.deliver(next, from: self)
         }
     }
@@ -854,7 +892,7 @@ private final class SyncServiceHoldingURLProtocol: URLProtocol, @unchecked Senda
 
     static func reset() {
         store.reset()
-        hold.reset()
+        slot.rotate()
     }
 
     static func releaseHold() {

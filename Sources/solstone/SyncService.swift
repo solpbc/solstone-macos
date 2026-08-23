@@ -93,8 +93,8 @@ public actor SyncService {
 
     // MARK: - Configuration
 
-    /// Update paired-ingest configuration. The pairing fingerprint is the sync
-    /// identity: changing it invalidates aliases and stops in-flight retries.
+    /// Update paired-ingest configuration. The coherent journal upload context
+    /// is the sync identity: changing it invalidates aliases and stops in-flight retries.
     func configure(
         pairingIdentity: TunnelPairingIdentity?,
         journalFingerprint: JournalConnectionFingerprint?,
