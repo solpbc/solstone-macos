@@ -175,9 +175,7 @@ private func makeJournalConnectionFingerprint(_ parts: [String]) -> JournalConne
     let canonical = parts.joined(separator: "\u{1F}")
     let digest = SHA256.hash(data: Data(canonical.utf8))
     let hex = digest.map { String(format: "%02x", $0) }.joined()
-    let value = "sha256:\(hex)"
-    precondition(isJournalConnectionFingerprintValue(value))
-    return JournalConnectionFingerprint(value: value)
+    return JournalConnectionFingerprint(value: "sha256:\(hex)")
 }
 
 private extension String {

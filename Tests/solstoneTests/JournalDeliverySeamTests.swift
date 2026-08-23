@@ -14,7 +14,7 @@ private enum DeliveryPairingLoadError: Error {
 @Suite("Journal delivery seams")
 @MainActor
 struct JournalDeliverySeamTests {
-    @Test func contactClearDoesNotClearDeliveryPayload() throws {
+    @Test func unlinkDoesNotClearDeliveryPayload() throws {
         let config = linkedConfig()
         let fingerprint = try #require(directFingerprint(config))
         let payload = LastJournalDeliveryPayload(

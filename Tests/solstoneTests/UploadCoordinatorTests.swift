@@ -270,7 +270,7 @@ struct UploadCoordinatorTests {
         }
     }
 
-    @Test func contactAndSyncCompleteDoNotClearWriteFailureFlag() throws {
+    @Test func nonSuccessEventsDoNotClearWriteFailureFlag() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let fingerprint = canonicalDeliveryFingerprint()
         let delivery = InMemoryLastJournalDeliveryStore(writeResult: .failed)
