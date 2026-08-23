@@ -118,6 +118,12 @@ public actor SyncService {
         journalContext != nil
     }
 
+    /// Bounded structural visibility for race-regression tests. This deliberately
+    /// exposes neither submitted nor stored segment keys.
+    var storedSegmentAliasCountForTesting: Int {
+        storedSegmentKeyBySubmittedKey.count
+    }
+
     // MARK: - Sync Trigger
 
     /// Trigger a sync (debounced - coalesces rapid calls)
