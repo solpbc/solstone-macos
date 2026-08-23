@@ -14,16 +14,12 @@ public actor SyncService {
         case syncProgress(checked: Int, total: Int)
         case uploadStarted(segment: String)
         case uploadRetrying(segment: String, attempt: Int)
-        case uploadSucceeded(segment: String, journalFingerprint: String?)
+        case uploadSucceeded(segment: String, journalFingerprint: String)
         case uploadFailed(segment: String, error: String, healthReason: ObserverHealthFailureReason)
         case journalContactSucceeded
         case syncComplete
         case offline(error: String, healthReason: ObserverHealthFailureReason)
         case awaitingTunnel
-    }
-
-    private struct PairedIngestIdentity: Sendable, Equatable {
-        let pairing: TunnelPairingIdentity
     }
 
     private struct SegmentAliasKey: Hashable, Sendable {
@@ -46,8 +42,7 @@ public actor SyncService {
 
     // MARK: - Configuration
 
-    private var journalIdentity: PairedIngestIdentity?
-    private var activeJournalFingerprint: JournalConnectionFingerprint?
+    private var journalContext: JournalUploadContext?
     private var cacheRetentionDays: Int = AppConfig.Defaults.cacheRetentionDays
     private var syncPaused: Bool = false
 
@@ -106,19 +101,21 @@ public actor SyncService {
         cacheRetentionDays: Int,
         syncPaused: Bool
     ) {
-        let newIdentity = pairingIdentity.map(PairedIngestIdentity.init(pairing:))
-        if journalIdentity != newIdentity {
+        let newContext = JournalUploadContext(
+            pairing: pairingIdentity,
+            suppliedFingerprint: journalFingerprint
+        )
+        if journalContext != newContext {
             storedSegmentKeyBySubmittedKey.removeAll()
         }
-        self.journalIdentity = newIdentity
-        self.activeJournalFingerprint = journalFingerprint
+        self.journalContext = newContext
         self.cacheRetentionDays = cacheRetentionDays
         self.syncPaused = syncPaused
     }
 
-    /// Check if sync is configured and not paused
+    /// Check if sync has a coherent journal upload context
     public var isConfigured: Bool {
-        journalIdentity != nil && !syncPaused
+        journalContext != nil
     }
 
     // MARK: - Sync Trigger
@@ -149,7 +146,7 @@ public actor SyncService {
             return
         }
 
-        guard let journalIdentity else {
+        guard let context = journalContext else {
             Logger.upload.info("Sync not configured, skipping")
             return
         }
@@ -268,7 +265,6 @@ public actor SyncService {
                     Logger.upload.info("Segment \(segment, privacy: .public) needs upload...")
                     let metadata = readSegmentMetadata(segmentURL: segmentURL, segment: segment)
                     let outcome = await uploadSegmentWithRetry(
-                        identity: journalIdentity,
                         segmentURL: segmentURL,
                         day: day,
                         segment: segment,
@@ -297,7 +293,7 @@ public actor SyncService {
             }
         }
 
-        guard await cleanupSyncedSegments(identity: journalIdentity, reconciledDays: reconciledDays) else {
+        guard await cleanupSyncedSegments(context: context, reconciledDays: reconciledDays) else {
             return
         }
 
@@ -466,7 +462,6 @@ public actor SyncService {
     // MARK: - Upload with Retry
 
     private func uploadSegmentWithRetry(
-        identity: PairedIngestIdentity,
         segmentURL: URL,
         day: String,
         segment: String,
@@ -475,14 +470,10 @@ public actor SyncService {
         var attempts = 0
 
         while attempts < maxRetries {
-            guard !syncPaused, journalIdentity == identity else {
-                Logger.upload.info("Config changed during retry, aborting")
-                progressContinuation.yield(.uploadFailed(
-                    segment: segment,
-                    error: "Config changed",
-                    healthReason: .configChanged
-                ))
-                return .stopped
+            // Capture before the attempt's first suspension so a later reconfigure
+            // cannot relabel this attempt's bytes.
+            guard !syncPaused, let attemptContext = journalContext else {
+                return failClosedForConfigChange(segment: segment)
             }
 
             let serverURL: String
@@ -491,6 +482,11 @@ public actor SyncService {
                 serverURL = resolved
             case .held:
                 return .held
+            }
+
+            // Resolution suspended; a reconfigure must not proceed to POST.
+            guard !syncPaused, journalContext == attemptContext else {
+                return failClosedForConfigChange(segment: segment)
             }
 
             attempts += 1
@@ -513,7 +509,6 @@ public actor SyncService {
                 return .failed(error: "No files", healthReason: .uploadNoFiles)
             }
 
-            let proof = activeJournalFingerprint?.value
             let result = await client.uploadSegment(
                 serverURL: serverURL,
                 day: day,
@@ -522,6 +517,12 @@ public actor SyncService {
                 metadata: metadata
             )
 
+            // Revalidate before alias mutation or a success event; remaining retries
+            // belong to a journal that is gone.
+            guard !syncPaused, journalContext == attemptContext else {
+                return failClosedForConfigChange(segment: segment)
+            }
+
             switch result {
             case .success(let info):
                 if info.storedSegmentKey != segment {
@@ -529,7 +530,10 @@ public actor SyncService {
                         SegmentAliasKey(day: day, submittedKey: segment)
                     ] = info.storedSegmentKey
                 }
-                progressContinuation.yield(.uploadSucceeded(segment: segment, journalFingerprint: proof))
+                progressContinuation.yield(.uploadSucceeded(
+                    segment: segment,
+                    journalFingerprint: attemptContext.fingerprint.value
+                ))
                 return .succeeded
             case .failure(let error):
                 let healthReason = observerHealthFailureReason(from: error)
@@ -557,6 +561,16 @@ public actor SyncService {
             }
         }
         return .failed(error: "retry exhausted", healthReason: .uploadFailed)
+    }
+
+    private func failClosedForConfigChange(segment: String) -> UploadRetryOutcome {
+        Logger.upload.info("Config changed during retry, aborting: \(sanitizedObserverHealthErrorReason(.configChanged), privacy: .public)")
+        progressContinuation.yield(.uploadFailed(
+            segment: segment,
+            error: "Config changed",
+            healthReason: .configChanged
+        ))
+        return .stopped
     }
 
     // MARK: - File Selection
@@ -688,7 +702,7 @@ public actor SyncService {
     /// Delete synced segments older than cacheRetentionDays.
     /// Safety gates: (1) day in syncedDays, (2) age check, (3) server reachable, (4) per-segment server confirmation.
     private func cleanupSyncedSegments(
-        identity: PairedIngestIdentity,
+        context: JournalUploadContext,
         reconciledDays: [String: [String: ServerSegmentInfo]]
     ) async -> Bool {
         guard cacheRetentionDays >= 0 else {
@@ -731,7 +745,7 @@ public actor SyncService {
             // Gate 3: server must be reachable and return segment data
             if serverSegmentsCache[day] == nil {
                 do {
-                    guard !syncPaused, journalIdentity == identity else {
+                    guard !syncPaused, journalContext == context else {
                         return false
                     }
                     serverSegmentsCache[day] = try await fetchReconciledDay(day)
@@ -814,7 +828,7 @@ public actor SyncService {
     /// Debug-only, explicit-fixture entry point. It uses the normal upload retry,
     /// three-read reconciliation, and hold proof without walking stored captures.
     func runLiveProbe(segmentURL: URL, day: String, segment: String) async throws -> ServerFileInfo {
-        guard let identity = journalIdentity, !syncPaused else {
+        guard journalContext != nil, !syncPaused else {
             throw UploadError.invalidResponse
         }
         let filesToUpload = selectFilesForUpload(segmentDirectory: segmentURL)
@@ -824,7 +838,6 @@ public actor SyncService {
         }
 
         let outcome = await uploadSegmentWithRetry(
-            identity: identity,
             segmentURL: segmentURL,
             day: day,
             segment: segment,

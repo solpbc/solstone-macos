@@ -8,6 +8,20 @@ import Testing
 
 @Suite("SyncService", .serialized)
 struct SyncServiceTests {
+    enum ContextStaleness: String, Sendable, CaseIterable {
+        case switchToB
+        case pairingAFingerprintNil
+        case pairingAFingerprintMalformed
+        case pairingAFingerprintEqualsB
+    }
+
+    enum IncoherentConfigure: String, Sendable, CaseIterable {
+        case pairingAFingerprintB
+        case pairingAFingerprintNil
+        case nilPairingWithFingerprint
+        case bothNil
+    }
+
     private let store = ObserverURLProtocolStore()
 
     @Test func heldBeforeServerSegmentsMakesNoRequestAndNextURLProceeds() async throws {
@@ -296,6 +310,30 @@ struct SyncServiceTests {
         )
     }
 
+    private func makeHoldingService(root: URL, resolver: HomeBaseURLResolver) -> SyncService {
+        SyncService(
+            storageManager: StorageManager(baseDirectory: root),
+            client: UploadClient(sessionConfiguration: holdingURLProtocolConfiguration()),
+            resolver: resolver,
+            retryDelays: [0]
+        )
+    }
+
+    private func uploadResponseJSON(
+        status: IngestProtocolV3.UploadStatus,
+        submitted: String,
+        stored: String
+    ) -> String {
+        switch status {
+        case .ok:
+            #"{"status":"ok","segment":"\#(submitted)"}"#
+        case .collision:
+            #"{"status":"collision","segment":"\#(stored)"}"#
+        case .duplicate:
+            #"{"status":"duplicate","existing_segment":"\#(stored)"}"#
+        }
+    }
+
     private func assertMalformedSegmentsDayFailsClosed(
         root: URL,
         segment: (url: URL, date: Date),
@@ -330,13 +368,255 @@ struct SyncServiceTests {
         #expect(syncedDays().contains(day) == false)
     }
 
+    @Test(arguments: ContextStaleness.allCases)
+    func postResolveContextChangeFailsClosed(_ variant: ContextStaleness) async throws {
+        resetSyncedDaysCache()
+        store.reset()
+        let root = try makeTempDirectory("sync-post-resolve-\(variant)")
+        _ = try makeSegment(root: root)
+        let resolver = ResolverScript(
+            [.url("http://127.0.0.1:24701")],
+            parkAfterImmediateCount: 1
+        )
+        let service = makeService(root: root, resolver: resolver.resolver)
+        await configure(service)
+        store.enqueue(statusCode: 200, body: manifestJSON())
+
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        let syncTask = Task { await service.sync() }
+        await resolver.waitUntilParked()
+        await store.waitForRequestCount(1)
+        #expect(store.snapshotRequests().contains { $0.url?.path == IngestProtocolV3.manifestPath })
+        #expect(store.snapshotRequests().contains { $0.url?.path == IngestProtocolV3.uploadPath } == false)
+
+        await applyStaleness(variant, to: service)
+        await resolver.releasePark()
+        await syncTask.value
+        await collector.waitForConfigChangedFailure()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().contains { $0.url?.path == IngestProtocolV3.uploadPath } == false)
+        #expect(collector.containsConfigChangedFailure)
+        #expect(collector.containsUploadSucceeded == false)
+    }
+
+    @Test(arguments: ContextStaleness.allCases, [IngestProtocolV3.UploadStatus.ok, .collision, .duplicate])
+    func postResponseContextChangeFailsClosed(
+        _ variant: ContextStaleness,
+        _ status: IngestProtocolV3.UploadStatus
+    ) async throws {
+        resetSyncedDaysCache()
+        store.reset()
+        SyncServiceHoldingURLProtocol.reset()
+        let root = try makeTempDirectory("sync-post-response-\(variant)-\(status.rawValue)")
+        let segment = try makeSegment(root: root)
+        let day = dayString(for: segment.date)
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: segment.url.appendingPathComponent(filename))
+        let submitted = "120000_300"
+        let storedKey = "120001_300"
+        let service = makeHoldingService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24702") }
+        )
+        await configure(service)
+
+        let holdingStore = SyncServiceHoldingURLProtocol.store
+        holdingStore.enqueue(statusCode: 200, body: manifestJSON())
+        holdingStore.enqueue(statusCode: 200, body: uploadResponseJSON(
+            status: status,
+            submitted: submitted,
+            stored: storedKey
+        ))
+
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        let syncTask = Task { await service.sync() }
+        await holdingStore.waitForRequestCount(2)
+        SyncServiceHoldingURLProtocol.hold.waitUntilWaiting()
+        #expect(holdingStore.snapshotRequests().contains { $0.url?.path == IngestProtocolV3.uploadPath })
+
+        await applyStaleness(variant, to: service)
+        SyncServiceHoldingURLProtocol.releaseHold()
+        await syncTask.value
+        await collector.waitForConfigChangedFailure()
+        listen.cancel()
+
+        #expect(collector.containsConfigChangedFailure)
+        #expect(collector.containsUploadSucceeded == false)
+
+        holdingStore.reset()
+        await configure(service)
+        holdingStore.enqueue(statusCode: 200, body: manifestJSON(day: day))
+        holdingStore.enqueue(statusCode: 200, body: manifestDayJSON(
+            day: day,
+            key: storedKey,
+            filename: filename,
+            sha: sha,
+            size: 5
+        ))
+        holdingStore.enqueue(statusCode: 200, body: segmentsDayJSON(
+            key: storedKey,
+            filename: filename,
+            sha: sha,
+            size: 5
+        ))
+        holdingStore.enqueue(statusCode: 200, body: uploadResponseJSON(
+            status: .ok,
+            submitted: submitted,
+            stored: submitted
+        ))
+        await service.sync()
+        #expect(holdingStore.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+    }
+
+    @Test func coherentUploadYieldsCapturedFingerprint() async throws {
+        resetSyncedDaysCache()
+        store.reset()
+        let root = try makeTempDirectory("sync-captured-fingerprint")
+        _ = try makeSegment(root: root)
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: #"{"status":"ok","segment":"120000_300"}"#)
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24703") })
+        await configure(service)
+
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForUploadSucceeded()
+        listen.cancel()
+
+        let expected = tunnelJournalConnectionFingerprint(for: pairingA).value
+        #expect(collector.uploadSucceededFingerprint == expected)
+    }
+
+    @Test(arguments: IncoherentConfigure.allCases)
+    func incoherentConfigureMakesNoRequests(_ combo: IncoherentConfigure) async throws {
+        resetSyncedDaysCache()
+        store.reset()
+        let root = try makeTempDirectory("sync-incoherent-\(combo)")
+        _ = try makeSegment(root: root)
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24704") })
+        await configureIncoherent(combo, on: service)
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        await service.sync()
+        #expect(store.snapshotRequests().isEmpty)
+    }
+
+    @Test func reconfigureAToBToARestoresUpload() async throws {
+        resetSyncedDaysCache()
+        store.reset()
+        let root = try makeTempDirectory("sync-a-b-a")
+        _ = try makeSegment(root: root)
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24705") })
+        await configure(service)
+        await service.configure(
+            pairingIdentity: pairingB,
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingB),
+            cacheRetentionDays: -1,
+            syncPaused: false
+        )
+        await configure(service)
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: #"{"status":"ok","segment":"120000_300"}"#)
+        await service.sync()
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+    }
+
+    private var pairingA: TunnelPairingIdentity {
+        TunnelPairingIdentity(instanceID: "instance", fingerprint: "fingerprint")
+    }
+
+    private var pairingB: TunnelPairingIdentity {
+        TunnelPairingIdentity(instanceID: "other-instance", fingerprint: "other-fingerprint")
+    }
+
     private func configure(_ service: SyncService, cacheRetentionDays: Int = -1) async {
         await service.configure(
-            pairingIdentity: TunnelPairingIdentity(instanceID: "instance", fingerprint: "fingerprint"),
-            journalFingerprint: nil,
+            pairingIdentity: pairingA,
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA),
             cacheRetentionDays: cacheRetentionDays,
             syncPaused: false
         )
+    }
+
+    private func applyStaleness(_ variant: ContextStaleness, to service: SyncService) async {
+        switch variant {
+        case .switchToB:
+            await service.configure(
+                pairingIdentity: pairingB,
+                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingB),
+                cacheRetentionDays: -1,
+                syncPaused: false
+            )
+        case .pairingAFingerprintNil:
+            await service.configure(
+                pairingIdentity: pairingA,
+                journalFingerprint: nil,
+                cacheRetentionDays: -1,
+                syncPaused: false
+            )
+        case .pairingAFingerprintMalformed:
+            await service.configure(
+                pairingIdentity: pairingA,
+                journalFingerprint: JournalConnectionFingerprint(value: "not-a-fingerprint"),
+                cacheRetentionDays: -1,
+                syncPaused: false
+            )
+        case .pairingAFingerprintEqualsB:
+            await service.configure(
+                pairingIdentity: pairingA,
+                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingB),
+                cacheRetentionDays: -1,
+                syncPaused: false
+            )
+        }
+    }
+
+    private func configureIncoherent(_ combo: IncoherentConfigure, on service: SyncService) async {
+        switch combo {
+        case .pairingAFingerprintB:
+            await service.configure(
+                pairingIdentity: pairingA,
+                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingB),
+                cacheRetentionDays: -1,
+                syncPaused: false
+            )
+        case .pairingAFingerprintNil:
+            await service.configure(
+                pairingIdentity: pairingA,
+                journalFingerprint: nil,
+                cacheRetentionDays: -1,
+                syncPaused: false
+            )
+        case .nilPairingWithFingerprint:
+            await service.configure(
+                pairingIdentity: nil,
+                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA),
+                cacheRetentionDays: -1,
+                syncPaused: false
+            )
+        case .bothNil:
+            await service.configure(
+                pairingIdentity: nil,
+                journalFingerprint: nil,
+                cacheRetentionDays: -1,
+                syncPaused: false
+            )
+        }
     }
 
     private func makeSegment(root: URL, date: Date = Date(), segmentName: String = "120000_300") throws -> (url: URL, date: Date) {
@@ -407,18 +687,203 @@ struct SyncServiceTests {
 
 private actor ResolverScript {
     private var values: [ResolvedHomeBase]
+    private let parkAfterImmediateCount: Int?
+    private var immediateRemaining: Int
+    private var parkedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var parkResume: CheckedContinuation<Void, Never>?
+    private var isParked = false
 
     nonisolated var resolver: HomeBaseURLResolver {
         HomeBaseURLResolver { await self.next() }
     }
 
-    init(_ values: [ResolvedHomeBase]) { self.values = values }
+    init(_ values: [ResolvedHomeBase], parkAfterImmediateCount: Int? = nil) {
+        self.values = values
+        self.parkAfterImmediateCount = parkAfterImmediateCount
+        self.immediateRemaining = parkAfterImmediateCount ?? 0
+    }
 
     func replace(with values: [ResolvedHomeBase]) { self.values = values }
 
-    private func next() -> ResolvedHomeBase {
+    func waitUntilParked() async {
+        if isParked { return }
+        await withCheckedContinuation { parkedWaiters.append($0) }
+    }
+
+    func releasePark() {
+        isParked = false
+        parkResume?.resume()
+        parkResume = nil
+    }
+
+    private func next() async -> ResolvedHomeBase {
+        if parkAfterImmediateCount != nil, immediateRemaining <= 0 {
+            isParked = true
+            let waiters = parkedWaiters
+            parkedWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+            await withCheckedContinuation { continuation in
+                parkResume = continuation
+            }
+        } else if parkAfterImmediateCount != nil {
+            immediateRemaining -= 1
+        }
         guard !values.isEmpty else { return .held }
         if values.count == 1 { return values[0] }
         return values.removeFirst()
     }
+}
+
+private final class ProgressCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [SyncService.ProgressEvent] = []
+
+    func append(_ event: SyncService.ProgressEvent) {
+        lock.withLock { events.append(event) }
+    }
+
+    var containsUploadSucceeded: Bool {
+        lock.withLock {
+            events.contains { if case .uploadSucceeded = $0 { return true }; return false }
+        }
+    }
+
+    var containsConfigChangedFailure: Bool {
+        lock.withLock {
+            events.contains {
+                if case .uploadFailed(_, _, let reason) = $0, reason == .configChanged {
+                    return true
+                }
+                return false
+            }
+        }
+    }
+
+    var uploadSucceededFingerprint: String? {
+        lock.withLock {
+            for event in events {
+                if case .uploadSucceeded(_, let fingerprint) = event {
+                    return fingerprint
+                }
+            }
+            return nil
+        }
+    }
+
+    func waitForUploadSucceeded(timeout: Duration = .seconds(10)) async {
+        await waitUntil(timeout: timeout) { containsUploadSucceeded }
+    }
+
+    func waitForConfigChangedFailure(timeout: Duration = .seconds(10)) async {
+        await waitUntil(timeout: timeout) { containsConfigChangedFailure }
+    }
+
+    private func waitUntil(timeout: Duration, _ condition: () -> Bool) async {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if condition() { return }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
+private final class SyncServiceUploadHoldGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var released = false
+    private var waiterCount = 0
+
+    func reset() {
+        condition.lock()
+        released = true
+        condition.broadcast()
+        released = false
+        waiterCount = 0
+        condition.unlock()
+    }
+
+    func release() {
+        condition.lock()
+        released = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func waitUntilWaiting() {
+        condition.lock()
+        while waiterCount == 0 {
+            condition.wait()
+        }
+        condition.unlock()
+    }
+
+    func wait() {
+        condition.lock()
+        waiterCount += 1
+        condition.broadcast()
+        while !released {
+            condition.wait()
+        }
+        waiterCount -= 1
+        condition.unlock()
+    }
+}
+
+private final class SyncServiceHoldingURLProtocol: URLProtocol, @unchecked Sendable {
+    static let store = ObserverURLProtocolStore()
+    static let hold = SyncServiceUploadHoldGate()
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let next = Self.store.next(for: request)
+        guard request.url?.path == IngestProtocolV3.uploadPath else {
+            Self.deliver(next, from: self)
+            return
+        }
+
+        DispatchQueue.global().async { [self] in
+            Self.hold.wait()
+            Self.deliver(next, from: self)
+        }
+    }
+
+    // URLSession invokes stopLoading before a held POST is released; tests
+    // open the gate explicitly so a cancel cannot deliver the response early.
+    override func stopLoading() {}
+
+    static func reset() {
+        store.reset()
+        hold.reset()
+    }
+
+    static func releaseHold() {
+        hold.release()
+    }
+
+    private static func deliver(_ next: ObserverURLProtocolStore.Response, from urlProtocol: URLProtocol) {
+        if let error = next.error {
+            urlProtocol.client?.urlProtocol(urlProtocol, didFailWithError: error)
+            return
+        }
+        let response = HTTPURLResponse(
+            url: urlProtocol.request.url!,
+            statusCode: next.statusCode,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        urlProtocol.client?.urlProtocol(urlProtocol, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if !next.data.isEmpty {
+            urlProtocol.client?.urlProtocol(urlProtocol, didLoad: next.data)
+        }
+        urlProtocol.client?.urlProtocolDidFinishLoading(urlProtocol)
+    }
+}
+
+private func holdingURLProtocolConfiguration() -> URLSessionConfiguration {
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [SyncServiceHoldingURLProtocol.self]
+    config.timeoutIntervalForRequest = 60
+    config.timeoutIntervalForResource = 120
+    return config
 }

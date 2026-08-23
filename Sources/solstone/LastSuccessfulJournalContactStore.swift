@@ -35,6 +35,19 @@ internal enum JournalIdentityRead: Equatable, Sendable {
     }
 }
 
+internal struct JournalUploadContext: Sendable, Equatable {
+    let pairing: TunnelPairingIdentity
+    let fingerprint: JournalConnectionFingerprint
+
+    init?(pairing: TunnelPairingIdentity?, suppliedFingerprint: JournalConnectionFingerprint?) {
+        guard let pairing else { return nil }
+        let derived = tunnelJournalConnectionFingerprint(for: pairing)
+        guard let suppliedFingerprint, suppliedFingerprint == derived else { return nil }
+        self.pairing = pairing
+        self.fingerprint = derived
+    }
+}
+
 internal struct LastSuccessfulJournalContactPayload: Codable, Equatable, Sendable {
     let date: Date
     let fingerprint: String
@@ -130,11 +143,7 @@ internal func journalConnectionFingerprint(
 ) -> JournalConnectionFingerprint? {
     if isTunnelManaged {
         guard let tunnelPairing else { return nil }
-        return makeJournalConnectionFingerprint([
-            "tunnel",
-            tunnelPairing.instanceID,
-            tunnelPairing.fingerprint
-        ])
+        return tunnelJournalConnectionFingerprint(for: tunnelPairing)
     }
 
     if config.serviceMode == .bundled {
@@ -155,6 +164,14 @@ internal func journalConnectionFingerprint(
         "direct",
         serverURL,
         serverKey
+    ])
+}
+
+internal func tunnelJournalConnectionFingerprint(for pairing: TunnelPairingIdentity) -> JournalConnectionFingerprint {
+    makeJournalConnectionFingerprint([
+        "tunnel",
+        pairing.instanceID,
+        pairing.fingerprint
     ])
 }
 

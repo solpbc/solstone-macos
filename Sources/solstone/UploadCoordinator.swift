@@ -367,7 +367,7 @@ public final class UploadCoordinator {
             status = .retrying(segment: segment, attempts: attempt)
 
         case .uploadSucceeded(_, let proof):
-            handleProvenDelivery(proof: proof.map { JournalConnectionFingerprint(value: $0) })
+            handleProvenDelivery(proof: JournalConnectionFingerprint(value: proof))
 
         case .uploadFailed(_, let error, let healthReason):
             let sanitizedReason = sanitizedObserverHealthErrorReason(healthReason)
@@ -414,7 +414,7 @@ public final class UploadCoordinator {
         }
     }
 
-    private func handleProvenDelivery(proof: JournalConnectionFingerprint?) {
+    private func handleProvenDelivery(proof: JournalConnectionFingerprint) {
         let identity = journalIdentityProvider()
         if case .identified(let current) = identity, proof == current {
             let payload = LastJournalDeliveryPayload(

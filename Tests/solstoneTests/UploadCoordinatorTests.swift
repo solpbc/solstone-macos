@@ -201,12 +201,14 @@ struct UploadCoordinatorTests {
         store.enqueue(statusCode: 200, body: #"{"days":{"\#(day)":{"segments":1}}}"#)
         store.enqueue(statusCode: 200, body: #"{"version":1,"day":"\#(day)","segments":{"\#(segment.url.lastPathComponent)":{"files":[{"name":"audio.m4a","submitted_name":"\#(filename)","sha256":"\#(sha)","size":5,"status":"present"}]}}}"#)
         store.enqueue(statusCode: 200, body: #"{"protocol_version":3,"total":1,"items":[{"key":"\#(segment.url.lastPathComponent)","observed":true,"files":[{"name":"audio.m4a","submitted_name":"\#(filename)","sha256":"\#(sha)","size":5,"status":"present"}]}]}"#)
+        let pairing = TunnelPairingIdentity(instanceID: "instance", fingerprint: "fingerprint")
         let coordinator = UploadCoordinator(
             storageManager: StorageManager(baseDirectory: root),
             config: AppConfig(serverURL: "https://configured.example", serverKey: "secret"),
             client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
             resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24692") },
-            pairedIngestIdentity: TunnelPairingIdentity(instanceID: "instance", fingerprint: "fingerprint")
+            pairedIngestIdentity: pairing,
+            journalIdentityProvider: { .identified(tunnelJournalConnectionFingerprint(for: pairing)) }
         )
 
         let syncTask = Task {
@@ -336,9 +338,6 @@ struct UploadCoordinatorTests {
         coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: stored.value))
         #expect(delivery.read() == .found(prior))
         #expect(coordinator.lastJournalDeliveryOutcome == .noDeliveryYet)
-
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: nil))
-        #expect(delivery.read() == .found(prior))
 
         let failedDelivery = InMemoryLastJournalDeliveryStore(readResult: .found(prior))
         let failedCoordinator = try makeDeliveryCoordinator(
