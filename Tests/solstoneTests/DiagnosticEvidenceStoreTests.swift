@@ -374,6 +374,93 @@ struct DiagnosticEvidenceStoreTests {
         }
     }
 
+    @Test("every pre-commit failure recovers explicitly without resurrecting the failed event")
+    func everyPrecommitFailureRecoversWithoutResurrection() async throws {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let mismatchedStagedBytes = try DiagnosticEvidenceEnvelope(schemaVersion: 1, entries: []).encoded()
+        let failedCode = DiagnosticEvidenceCode.appLaunch
+        let recoveredCode = DiagnosticEvidenceCode.terminationCommitted
+        let recoveredAt = now.addingTimeInterval(-1)
+
+        for starting in DiagnosticEvidenceCanonicalStartingState.allCases {
+            for failure in DiagnosticEvidenceInjectedFailure.allCases {
+                do {
+                    let fixture = try makeFileFixture(starting: starting, now: now)
+                    defer { try? FileManager.default.removeItem(at: fixture.directory) }
+                    let parent = fixture.canonicalURL.deletingLastPathComponent()
+                    defer { _ = Darwin.chmod(parent.path, 0o700) }
+
+                    let decorated = DecoratingDiagnosticEvidenceBytesStore(
+                        base: FileDiagnosticEvidenceBytesStore(applicationSupportBaseURL: fixture.directory)
+                    )
+                    decorated.injectedFailure = failure
+                    decorated.mismatchedStagedBytes = mismatchedStagedBytes
+                    let store = DiagnosticEvidenceStore(bytesStore: decorated, now: { now })
+
+                    #expect(await store.record(failedCode, at: now.addingTimeInterval(-5)) == .unavailable)
+                    try assertFixtureUnchanged(fixture)
+
+                    if failure == .rename {
+                        #expect(Darwin.chmod(parent.path, 0o700) == 0)
+                    }
+                    decorated.injectedFailure = nil
+
+                    #expect(await store.record(recoveredCode, at: recoveredAt) == .recorded)
+                    guard case .available(let recovered) = await store.read() else {
+                        Issue.record("recovery should be available for \(starting) after \(failure)")
+                        continue
+                    }
+
+                    let expectedEntries: [DiagnosticEvidenceEntry]
+                    switch starting {
+                    case .existingValid:
+                        expectedEntries = [
+                            DiagnosticEvidenceEntry(
+                                code: .captureOn,
+                                firstAt: now.addingTimeInterval(-20),
+                                lastAt: now.addingTimeInterval(-20),
+                                repeatCount: 1
+                            ),
+                            DiagnosticEvidenceEntry(
+                                code: recoveredCode,
+                                firstAt: recoveredAt,
+                                lastAt: recoveredAt,
+                                repeatCount: 1
+                            )
+                        ]
+                    case .absent, .corrupt:
+                        expectedEntries = [
+                            DiagnosticEvidenceEntry(
+                                code: recoveredCode,
+                                firstAt: recoveredAt,
+                                lastAt: recoveredAt,
+                                repeatCount: 1
+                            )
+                        ]
+                    case .expiredPlusEligible:
+                        expectedEntries = [
+                            DiagnosticEvidenceEntry(
+                                code: .captureOff,
+                                firstAt: now.addingTimeInterval(-10),
+                                lastAt: now.addingTimeInterval(-10),
+                                repeatCount: 1
+                            ),
+                            DiagnosticEvidenceEntry(
+                                code: recoveredCode,
+                                firstAt: recoveredAt,
+                                lastAt: recoveredAt,
+                                repeatCount: 1
+                            )
+                        ]
+                    }
+                    #expect(recovered == DiagnosticEvidenceEnvelope(schemaVersion: 1, entries: expectedEntries))
+                    #expect(!recovered.entries.contains { $0.code == failedCode })
+                    try assertOrphanUnchanged(in: fixture)
+                }
+            }
+        }
+    }
+
     @Test("read-triggered compaction failures preserve canonical bytes")
     func readTriggeredCompactionFailuresPreserveCanonicalBytes() async throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
