@@ -64,6 +64,75 @@ struct DiagnosticEvidenceLoggingTests {
         ]
         #expect(deltas == [1, 0, 0, 1])
     }
+
+    @Test func terminatingSkipsLogEveryOccurrenceWhileEvidenceCoalesces() async throws {
+        let harness = DiagnosticEvidenceHarness()
+        let events = DiagnosticLoggingEvents()
+        let (coordinator, root) = try makeEvidenceCoordinator(
+            recorder: harness.recorder,
+            screenPermissionProvider: makeScreenPermissionProvider(),
+            isTerminating: { true },
+            logAdapter: DiagnosticEvidenceLoggingAdapter { events.events.append($0) }
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.microphoneAuthorizationReader = { .authorized }
+
+        let passes = 3
+        for _ in 0..<passes {
+            harness.clock.now = harness.clock.now.addingTimeInterval(1)
+            await coordinator.checkPermissionsAndAutoStart()
+        }
+
+        let entries = await harness.entries()
+        #expect(events.events == Array(repeating: .permissionAutoStartSkipped, count: passes))
+        #expect(evidenceCodes(entries) == [.screenRecordingGranted, .microphoneGranted, .permissionAutoStartSkipped])
+        #expect(entries[2].repeatCount == passes)
+    }
+
+    @Test func ordinaryOutcomesDoNotReachTheDiagnosticAdapter() async throws {
+        let harness = DiagnosticEvidenceHarness()
+        let events = DiagnosticLoggingEvents()
+        let target = DiagnosticLoggingCaptureTarget()
+        let (coordinator, root) = try makeEvidenceCoordinator(
+            recorder: harness.recorder,
+            screenPermissionProvider: makeScreenPermissionProvider(),
+            startOperation: { _, _ in
+                target.coordinator?.captureManager.onStateChanged?(.recording)
+                return .committed
+            },
+            logAdapter: DiagnosticEvidenceLoggingAdapter { events.events.append($0) }
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        target.coordinator = coordinator
+        coordinator.captureManager.onStateChanged = { [weak coordinator] state in
+            coordinator?.handleCaptureStateChange(state)
+        }
+        coordinator.microphoneAuthorizationReader = { .authorized }
+
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
+        harness.recorder.enqueue(.appLaunch)
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
+        await coordinator.checkPermissionsAndAutoStart()
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
+        coordinator.captureManager.onStateChanged?(.paused(reasons: [.user]))
+        _ = await harness.entries()
+
+        #expect(events.events.isEmpty)
+    }
+
+    @Test func existingProductLogsRemainOutsideTheDiagnosticAdapter() throws {
+        let coordinator = try readWireUpSource("Sources/solstone/CaptureCoordinator.swift")
+        let adapter = try readWireUpSource("Sources/solstone/DiagnosticEvidenceLoggingAdapter.swift")
+
+        #expect(wireUpContains(coordinator, "Logger.general.info(\"[Permissions] all granted, auto-starting observation\")"))
+        #expect(wireUpContains(coordinator, "Logger.general.info(\"startRecording() ignored because app is terminating\")"))
+        #expect(wireUpContains(coordinator, "Logger.general.info(\"startRecording() vetoed\")"))
+        #expect(wireUpContains(coordinator, "Logger.general.info(\"startRecording() dropped\")"))
+        #expect(wireUpContains(coordinator, "Logger.general.info(\"[Permissions] Recording denied, screen recording permission not granted\")"))
+        #expect(wireUpContains(coordinator, "Logger.general.error(\"Recording failed to start:"))
+        #expect(!adapter.contains("Logger.general"))
+        #expect(adapter.components(separatedBy: "Logger.setup.").count == 3)
+    }
 }
 
 @MainActor
@@ -76,4 +145,9 @@ private final class MutableScreenPermissionValues {
 @MainActor
 private final class DiagnosticLoggingEvents {
     var events: [DiagnosticEvidenceLogEvent] = []
+}
+
+@MainActor
+private final class DiagnosticLoggingCaptureTarget {
+    weak var coordinator: CaptureCoordinator?
 }

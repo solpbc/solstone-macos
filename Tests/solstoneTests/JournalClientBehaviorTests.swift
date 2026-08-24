@@ -114,7 +114,7 @@ struct JournalClientBehaviorTests {
     @Test func bundledStubCaptureNeverQueuesAndShowsMigrationRow() {
         let state = bundledConfiguredState()
         state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = true
+        state.capture.publishScreenRecordingPermission(.granted)
         state.microphoneAuthorizationCause = .authorized
         state.isRecording = true
 

@@ -23,8 +23,8 @@ struct DiagnosticEvidenceNormalCompositionTests {
 
         #expect(evidenceCodes(await harness.entries()) == [
             .appLaunch,
-            .microphoneGranted,
             .screenRecordingGranted,
+            .microphoneGranted,
             .permissionAutoStartSkipped,
         ])
     }
@@ -56,6 +56,7 @@ struct DiagnosticEvidenceNormalCompositionTests {
             evidenceNow: { harness.clock.now },
             makeEvidenceStore: { _ in harness.store },
             makeRecorder: { _, _ in harness.recorder },
+            registerSharedState: { _ in },
             makeStartup: { _, _ in () }
         )
 
@@ -70,35 +71,6 @@ struct DiagnosticEvidenceNormalCompositionTests {
         _ = AppState.forSnapshot()
 
         #expect((await harness.entries()).isEmpty)
-    }
-
-    @Test func synchronousLaunchEnqueuePrecedesMainActorScheduledPermissionWork() async throws {
-        let harness = DiagnosticEvidenceHarness()
-        let defaultsName = "DiagnosticEvidenceNormalCompositionOrdering.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: defaultsName))
-        defer { defaults.removePersistentDomain(forName: defaultsName) }
-
-        let startup = SolstoneStartupComposition.makeNormalStartup(
-            decision: .allowed(.developerBypass),
-            automaticObservationPipelineEnabled: true,
-            evidenceNow: { harness.clock.now },
-            makeEvidenceStore: { _ in harness.store },
-            makeRecorder: { _, _ in harness.recorder },
-            makeState: { recorder, _ in
-                // Like startPermissionPolling(), this cannot run until the main actor yields.
-                Task { @MainActor in
-                    recorder.enqueue(.captureOn)
-                }
-                return AppState.forSnapshot(recorder: recorder)
-            },
-            makeUpdateController: { _ in makeTestUpdateController(defaults) },
-            registerUpdateAnnouncement: { _ in },
-            makeStartup: { state, _ in state }
-        )
-        _ = try #require(startup)
-        await Task.yield()
-
-        #expect(evidenceCodes(await harness.entries()) == [.appLaunch, .captureOn])
     }
 
     private func makeNormalState(
@@ -118,6 +90,7 @@ struct DiagnosticEvidenceNormalCompositionTests {
                     screenPermissionProvider: makeScreenPermissionProvider()
                 )
             },
+            registerSharedState: { _ in },
             makeUpdateController: { _ in makeTestUpdateController(defaults) },
             registerUpdateAnnouncement: { _ in },
             makeStartup: { state, _ in state }

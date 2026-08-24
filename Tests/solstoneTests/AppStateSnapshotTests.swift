@@ -16,12 +16,12 @@ struct AppStateSnapshotTests {
         #expect(state.observationRowState == .starting)
     }
 
-    @Test func captureTruthSettersForwardToCoordinator() {
+    @Test func captureTruthProjectionsForwardToCoordinator() {
         let state = AppState.forSnapshot()
 
         state.isRecording = true
         state.isPaused = true
-        state.screenRecordingGranted = true
+        state.capture.publishScreenRecordingPermission(.granted)
         state.microphoneAuthorizationCause = .authorized
         state.initialPermissionCheckComplete = true
         state.captureQueuedForJournalReadiness = true
@@ -97,7 +97,7 @@ struct AppStateSnapshotTests {
             "public internal(set) var screenRecordingGranted = false",
             "internal var microphoneAuthorizationCause: MicrophoneAuthorizationCause = .unknown",
             "public internal(set) var initialPermissionCheckComplete = false",
-            "private var permissionPollTimer: Timer?",
+            "private var permissionPollCancellation: PermissionPollScheduler.Cancellation?",
             "private var isCheckingPermissions = false"
         ]
 
@@ -107,7 +107,7 @@ struct AppStateSnapshotTests {
 
         #expect(coordinatorSource.contains("public internal(set) var isRecording = false"))
         #expect(coordinatorSource.contains("internal var microphoneAuthorizationCause: MicrophoneAuthorizationCause = .unknown"))
-        #expect(coordinatorSource.contains("private var permissionPollTimer: Timer?"))
+        #expect(coordinatorSource.contains("private var permissionPollCancellation: PermissionPollScheduler.Cancellation?"))
         #expect(coordinatorSource.contains("private var isCheckingPermissions = false"))
     }
 

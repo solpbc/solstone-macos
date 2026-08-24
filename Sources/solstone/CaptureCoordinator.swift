@@ -40,10 +40,7 @@ public final class CaptureCoordinator {
     public internal(set) var isUserPaused = false
     public internal(set) var captureError: String?
     private var storedScreenRecordingGranted = false
-    public internal(set) var screenRecordingGranted: Bool {
-        get { storedScreenRecordingGranted }
-        set { storedScreenRecordingGranted = newValue }
-    }
+    public var screenRecordingGranted: Bool { storedScreenRecordingGranted }
     internal var microphoneAuthorizationCause: MicrophoneAuthorizationCause = .unknown
     public internal(set) var initialPermissionCheckComplete = false
     public internal(set) var captureQueuedForJournalReadiness = false
@@ -68,9 +65,10 @@ public final class CaptureCoordinator {
     private let startOperation: StartOperation
     private let recorder: DiagnosticEvidenceRecorder
     private let screenPermissionProvider: ScreenRecordingPermissionProvider
+    private let permissionPollScheduler: PermissionPollScheduler
     private let logAdapter: DiagnosticEvidenceLoggingAdapter
 
-    private var permissionPollTimer: Timer?
+    private var permissionPollCancellation: PermissionPollScheduler.Cancellation?
     private var isCheckingPermissions = false
     private var lastScreenPermissionEvidence: ScreenRecordingPermissionEvidence?
     private var lastMicrophonePermissionEvidence: MicrophonePermissionEvidence?
@@ -86,6 +84,7 @@ public final class CaptureCoordinator {
         startOperation: StartOperation? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
+        permissionPollScheduler: PermissionPollScheduler = .live(),
         logAdapter: DiagnosticEvidenceLoggingAdapter = .live
     ) {
         self.captureManager = captureManager
@@ -96,6 +95,7 @@ public final class CaptureCoordinator {
         self.bannerSink = bannerSink
         self.recorder = recorder
         self.screenPermissionProvider = screenPermissionProvider
+        self.permissionPollScheduler = permissionPollScheduler
         self.logAdapter = logAdapter
         self.startOperation = startOperation ?? { [captureManager] reason, config in
             await captureManager.enqueueTransition(
@@ -110,7 +110,7 @@ public final class CaptureCoordinator {
 
     deinit {
         MainActor.assumeIsolated {
-            permissionPollTimer?.invalidate()
+            permissionPollCancellation?()
         }
     }
 
@@ -151,7 +151,7 @@ public final class CaptureCoordinator {
             isRecording = false
             isPaused = false
             isUserPaused = false
-            if permissionPollTimer == nil {
+            if permissionPollCancellation == nil {
                 startPermissionPolling()
             }
         case .recording:
@@ -171,7 +171,7 @@ public final class CaptureCoordinator {
             isUserPaused = false
             captureError = message
             bannerSink(message)
-            if permissionPollTimer == nil {
+            if permissionPollCancellation == nil {
                 startPermissionPolling()
             }
         }
@@ -236,32 +236,21 @@ public final class CaptureCoordinator {
     }
 
     private func startPermissionPolling() {
-        Task { @MainActor in
-            await self.checkPermissionsAndAutoStart()
+        permissionPollCancellation?()
+        permissionPollCancellation = permissionPollScheduler.armPolling { [weak self] in
+            await self?.checkPermissionsAndAutoStart()
         }
-
-        permissionPollTimer?.invalidate()
-        permissionPollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.checkPermissionsAndAutoStart()
-            }
-        }
-        permissionPollTimer?.tolerance = 2.0
     }
 
     private func stopPermissionPolling() {
-        permissionPollTimer?.invalidate()
-        permissionPollTimer = nil
+        permissionPollCancellation?()
+        permissionPollCancellation = nil
     }
 
     internal func checkPermissionsAndAutoStart() async {
         guard !isCheckingPermissions else { return }
         isCheckingPermissions = true
         defer { isCheckingPermissions = false }
-
-        let microphoneCause = microphoneAuthorizationReader()
-        microphoneAuthorizationCause = microphoneCause
-        publishMicrophoneAuthorization(microphoneCause)
 
         if screenPermissionProvider.hasPrompted() {
             // Gate on CGPreflightScreenCaptureAccess before touching SCShareableContent.
@@ -287,6 +276,10 @@ public final class CaptureCoordinator {
             publishScreenRecordingPermission(.unavailable)
         }
 
+        let microphoneCause = microphoneAuthorizationReader()
+        microphoneAuthorizationCause = microphoneCause
+        publishMicrophoneAuthorization(microphoneCause)
+
         let allGranted = screenRecordingGranted && microphoneGranted
 
         // Auto-start if permissions are ready, not paused, not already recording, and recovery is not scheduled
@@ -309,11 +302,11 @@ public final class CaptureCoordinator {
     }
 
     internal var isPermissionPollingActiveForTesting: Bool {
-        permissionPollTimer != nil
+        permissionPollCancellation != nil
     }
 
     internal func publishScreenRecordingPermission(_ evidence: ScreenRecordingPermissionEvidence) {
-        screenRecordingGranted = evidence == .granted
+        storedScreenRecordingGranted = evidence == .granted
         guard lastScreenPermissionEvidence != evidence else { return }
         lastScreenPermissionEvidence = evidence
 

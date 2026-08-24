@@ -24,6 +24,7 @@ internal enum SolstoneStartupComposition {
                 recorder: recorder
             )
         },
+        registerSharedState: @escaping @MainActor (AppState) -> Void = { AppState.shared = $0 },
         makeUpdateController: @escaping @MainActor (AppState) -> UpdateController = { appState in
             let updateAnnouncer = UpdateNotificationAnnouncer()
             return UpdateController(
@@ -56,7 +57,11 @@ internal enum SolstoneStartupComposition {
             let store = makeEvidenceStore(evidenceNow)
             let recorder = makeRecorder(store, evidenceNow)
             let appState = makeState(recorder, automaticObservationPipelineEnabled)
+            registerSharedState(appState)
             recorder.enqueue(.appLaunch)
+            if automaticObservationPipelineEnabled {
+                appState.capture.activate()
+            }
             let updateController = makeUpdateController(appState)
             registerUpdateAnnouncement(updateController)
             return makeStartup(appState, updateController)

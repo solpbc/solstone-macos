@@ -140,7 +140,7 @@ struct CaptureCoordinatorTests {
     @Test func refreshMicrophoneAuthorizationUsesReaderWithoutStartingOrPolling() throws {
         let (coordinator, root) = try makeCoordinator()
         defer { try? FileManager.default.removeItem(at: root) }
-        coordinator.screenRecordingGranted = true
+        coordinator.publishScreenRecordingPermission(.granted)
         coordinator.microphoneAuthorizationReader = { .authorized }
         let wasPolling = coordinator.isPermissionPollingActiveForTesting
 
@@ -174,7 +174,7 @@ struct CaptureCoordinatorTests {
 
         harness.lifecycleCurrentState = .error("permission denied")
         coordinator.handleCaptureStateChange(.error("permission denied"))
-        coordinator.screenRecordingGranted = true
+        coordinator.publishScreenRecordingPermission(.granted)
         coordinator.microphoneAuthorizationCause = .authorized
 
         await coordinator.startRecording(reason: .autoStart)
@@ -187,26 +187,34 @@ struct CaptureCoordinatorTests {
 
     @Test func captureStateIngestionControlsPermissionPollingAndBanner() throws {
         var bannerMessages: [String?] = []
-        let (coordinator, root) = try makeCoordinator(bannerSink: { bannerMessages.append($0) })
+        let scheduler = PermissionPollTestScheduler()
+        let (coordinator, root) = try makeCoordinator(
+            bannerSink: { bannerMessages.append($0) },
+            permissionPollScheduler: scheduler.scheduler
+        )
         defer { try? FileManager.default.removeItem(at: root) }
 
         #expect(!coordinator.isPermissionPollingActiveForTesting)
 
         coordinator.handleCaptureStateChange(.idle)
         #expect(coordinator.isPermissionPollingActiveForTesting)
+        #expect(scheduler.armCount == 1)
         #expect(bannerMessages.isEmpty)
 
         coordinator.handleCaptureStateChange(.recording)
         #expect(!coordinator.isPermissionPollingActiveForTesting)
+        #expect(scheduler.cancellationCount == 1)
         #expect(bannerMessages == [nil])
 
         coordinator.handleCaptureStateChange(.error("boom"))
         #expect(coordinator.isPermissionPollingActiveForTesting)
+        #expect(scheduler.armCount == 2)
         #expect(bannerMessages == [nil, "boom"])
         #expect(coordinator.captureError == "boom")
 
         coordinator.handleCaptureStateChange(.recording)
         #expect(!coordinator.isPermissionPollingActiveForTesting)
+        #expect(scheduler.cancellationCount == 2)
     }
 
     @Test func startWhileUserPausedClearsPausePolicyWithoutResumeCallback() async throws {
@@ -325,17 +333,35 @@ struct CaptureCoordinatorTests {
         #expect(firedCoordinator.initialPermissionCheckComplete)
     }
 
-    @Test func livePermissionCheckReadsMicrophoneCauseBeforeScreenRecordingBranch() throws {
-        let source = try readWireUpSource("Sources/solstone/CaptureCoordinator.swift")
-        let functionStart = try #require(source.range(of: "internal func checkPermissionsAndAutoStart("))
-        let functionEnd = try #require(
-            source[functionStart.upperBound...].range(of: "\n    internal var isPermissionPollingActiveForTesting")
+    @Test func livePermissionPollSchedulerContract() throws {
+        let spy = LivePermissionPollTimerSpy()
+        var immediateCount = 0
+        let scheduler = PermissionPollScheduler.live(
+            scheduleTimer: { interval, repeats, fire in
+                spy.interval = interval
+                spy.repeats = repeats
+                spy.fire = fire
+                let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: repeats) { _ in
+                    fire()
+                }
+                spy.timer = timer
+                return timer
+            },
+            startImmediatePass: { _ in immediateCount += 1 }
         )
-        let body = source[functionStart.lowerBound..<functionEnd.lowerBound]
-        let microphoneRead = try #require(body.range(of: "let microphoneCause = microphoneAuthorizationReader()"))
-        let screenBranch = try #require(body.range(of: "if screenPermissionProvider.hasPrompted()"))
 
-        #expect(microphoneRead.lowerBound < screenBranch.lowerBound)
+        let cancel = scheduler.armPolling {}
+        let timer = try #require(spy.timer)
+
+        #expect(immediateCount == 1)
+        #expect(spy.interval == 5.0)
+        #expect(spy.repeats == true)
+        #expect(timer.tolerance == 2.0)
+        #expect(timer.isValid)
+
+        cancel()
+
+        #expect(!timer.isValid)
     }
 
     private func makeCoordinator(
@@ -346,7 +372,8 @@ struct CaptureCoordinatorTests {
         },
         bannerSink: @escaping CaptureCoordinator.BannerSink = { _ in },
         startOperation: CaptureCoordinator.StartOperation? = nil,
-        screenPermissionProvider: ScreenRecordingPermissionProvider = .live
+        screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
+        permissionPollScheduler: PermissionPollScheduler? = nil
     ) throws -> (CaptureCoordinator, URL) {
         let root = try makeTempDirectory("capture-coordinator")
         let captureManager = CaptureManager(storageManager: StorageManager(baseDirectory: root))
@@ -358,7 +385,8 @@ struct CaptureCoordinatorTests {
             configProvider: configProvider,
             bannerSink: bannerSink,
             startOperation: startOperation,
-            screenPermissionProvider: screenPermissionProvider
+            screenPermissionProvider: screenPermissionProvider,
+            permissionPollScheduler: permissionPollScheduler ?? PermissionPollTestScheduler().scheduler
         )
         return (coordinator, root)
     }
@@ -371,6 +399,14 @@ struct CaptureCoordinatorTests {
             resetPromptedFlag: {}
         )
     }
+}
+
+@MainActor
+private final class LivePermissionPollTimerSpy {
+    var interval: TimeInterval?
+    var repeats: Bool?
+    var fire: (@MainActor @Sendable () -> Void)?
+    var timer: Timer?
 }
 
 @MainActor

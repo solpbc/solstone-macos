@@ -1,91 +1,46 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-import Dispatch
 import Foundation
+import SolstoneCore
 import Testing
 @testable import solstone
-
-private final class GatedDiagnosticEvidenceBytesStore: DiagnosticEvidenceBytesStoring, @unchecked Sendable {
-    private let base = InMemoryDiagnosticEvidenceBytesStore()
-    private let lock = NSLock()
-    private let firstRead = DispatchSemaphore(value: 0)
-    private let releaseRead = DispatchSemaphore(value: 0)
-    private var shouldGateFirstRead = true
-    private(set) var readCanonicalCount = 0
-    private(set) var commitCount = 0
-
-    func readCanonical() -> DiagnosticEvidenceBytesRead {
-        let shouldBlock = lock.withLock {
-            readCanonicalCount += 1
-            defer { shouldGateFirstRead = false }
-            return shouldGateFirstRead
-        }
-        if shouldBlock {
-            firstRead.signal()
-            releaseRead.wait()
-        }
-        return base.readCanonical()
-    }
-
-    func encode(_ envelope: DiagnosticEvidenceEnvelope) -> DiagnosticEvidenceEncodingResult {
-        base.encode(envelope)
-    }
-
-    func stage(_ data: Data) -> DiagnosticEvidenceStagingResult {
-        base.stage(data)
-    }
-
-    func readStaged(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceBytesRead {
-        base.readStaged(staging)
-    }
-
-    func commit(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceCommitResult {
-        let result = base.commit(staging)
-        if result == .committed {
-            lock.withLock { commitCount += 1 }
-        }
-        return result
-    }
-
-    func removeStaging(_ staging: DiagnosticEvidenceStagingHandle) {
-        base.removeStaging(staging)
-    }
-
-    func waitForFirstRead() -> Bool {
-        firstRead.wait(timeout: .now() + 2) == .success
-    }
-
-    func releaseFirstRead() {
-        releaseRead.signal()
-    }
-
-    func counts() -> (reads: Int, commits: Int) {
-        lock.withLock { (readCanonicalCount, commitCount) }
-    }
-}
 
 @MainActor
 @Suite("Diagnostic evidence recorder")
 struct DiagnosticEvidenceRecorderTests {
-    @Test func enqueueStartsAutonomousOrderedWorkAndDrainIsReadOnly() async throws {
+    @Test func multiEnqueueAutonomyAndProducerTimestamps() async throws {
         let clock = TestClock(Date(timeIntervalSince1970: 1_700_000_000))
         let bytes = GatedDiagnosticEvidenceBytesStore()
         let store = DiagnosticEvidenceStore(bytesStore: bytes, now: { clock.now })
-        var taskStartCount = 0
+        let taskStarts = LockedCounter()
         let recorder = DiagnosticEvidenceRecorder(
             store: store,
             now: { clock.now },
-            taskStarted: { taskStartCount += 1 }
+            taskStarted: { taskStarts.increment() }
         )
 
         recorder.enqueue(.appLaunch)
         #expect(await Task.detached { bytes.waitForFirstRead() }.value)
-        #expect(taskStartCount == 1)
+        #expect(taskStarts.count == 1)
         #expect(bytes.counts().reads == 1)
 
-        let producerTime = clock.now
-        clock.now = producerTime.addingTimeInterval(60)
+        let firstTime = clock.now
+        let secondTime = firstTime.addingTimeInterval(1)
+        let thirdTime = secondTime.addingTimeInterval(1)
+        let fourthTime = thirdTime.addingTimeInterval(1)
+        clock.now = secondTime
+        recorder.enqueue(.screenRecordingGranted)
+        clock.now = thirdTime
+        recorder.enqueue(.microphoneGranted)
+        clock.now = fourthTime
+        recorder.enqueue(.captureOn)
+        // This waits only for MainActor task scheduling; 2s was contention-bound behind full-suite snapshot work, not tail ordering.
+        try await withTimeout(seconds: 10) {
+            await taskStarts.waitUntilCount(4)
+        }
+        #expect(bytes.counts().reads == 1)
+
         bytes.releaseFirstRead()
         await recorder.drain()
 
@@ -94,12 +49,16 @@ struct DiagnosticEvidenceRecorderTests {
             return
         }
         #expect(envelope.entries == [
-            DiagnosticEvidenceEntry(code: .appLaunch, firstAt: producerTime, lastAt: producerTime, repeatCount: 1),
+            DiagnosticEvidenceEntry(code: .appLaunch, firstAt: firstTime, lastAt: firstTime, repeatCount: 1),
+            DiagnosticEvidenceEntry(code: .screenRecordingGranted, firstAt: secondTime, lastAt: secondTime, repeatCount: 1),
+            DiagnosticEvidenceEntry(code: .microphoneGranted, firstAt: thirdTime, lastAt: thirdTime, repeatCount: 1),
+            DiagnosticEvidenceEntry(code: .captureOn, firstAt: fourthTime, lastAt: fourthTime, repeatCount: 1),
         ])
 
         let beforeSecondDrain = bytes.counts()
         await recorder.drain()
         #expect(bytes.counts() == beforeSecondDrain)
+        #expect(taskStarts.count == 4)
     }
 
     @Test func dormantRecorderDoesNothing() async {

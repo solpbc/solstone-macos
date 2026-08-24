@@ -12,7 +12,7 @@ struct UpdateNotificationPermissionsTests {
     @Test func permissionsAttentionWithoutUpdateDoesNotAnnounce() {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = false
+        state.capture.publishScreenRecordingPermission(.notGranted)
         state.microphoneAuthorizationCause = .authorized
         var announcements: [String] = []
         let controller = UpdateController(

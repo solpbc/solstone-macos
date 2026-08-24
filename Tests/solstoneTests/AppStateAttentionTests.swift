@@ -13,7 +13,7 @@ struct AppStateAttentionTests {
     @Test func permissionsNeedAttentionFalseWhenBothPermissionsGranted() {
         let state = makeState()
         state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = true
+        state.capture.publishScreenRecordingPermission(.granted)
         state.microphoneAuthorizationCause = .authorized
 
         #expect(!state.permissionsNeedAttention)
@@ -22,7 +22,7 @@ struct AppStateAttentionTests {
     @Test func permissionsNeedAttentionTrueWhenScreenMissing() {
         let state = makeState()
         state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = false
+        state.capture.publishScreenRecordingPermission(.notGranted)
         state.microphoneAuthorizationCause = .authorized
 
         #expect(state.permissionsNeedAttention)
@@ -31,7 +31,7 @@ struct AppStateAttentionTests {
     @Test func permissionsNeedAttentionTrueWhenMicrophoneMissing() {
         let state = makeState()
         state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = true
+        state.capture.publishScreenRecordingPermission(.granted)
         state.microphoneAuthorizationCause = .denied
 
         #expect(state.permissionsNeedAttention)
@@ -40,7 +40,7 @@ struct AppStateAttentionTests {
     @Test func permissionsNeedAttentionFalseBeforeInitialPermissionCheck() {
         let state = makeState()
         state.initialPermissionCheckComplete = false
-        state.screenRecordingGranted = false
+        state.capture.publishScreenRecordingPermission(.notGranted)
         state.microphoneAuthorizationCause = .denied
 
         #expect(!state.permissionsNeedAttention)
@@ -146,25 +146,25 @@ struct AppStateAttentionTests {
     @Test func permissionsAreDoneRequiresAllPermissionInputs() {
         let missingInitialCheck = makeState()
         missingInitialCheck.initialPermissionCheckComplete = false
-        missingInitialCheck.screenRecordingGranted = true
+        missingInitialCheck.capture.publishScreenRecordingPermission(.granted)
         missingInitialCheck.microphoneAuthorizationCause = .authorized
         #expect(!missingInitialCheck.permissionsAreDone)
 
         let missingScreen = makeState()
         missingScreen.initialPermissionCheckComplete = true
-        missingScreen.screenRecordingGranted = false
+        missingScreen.capture.publishScreenRecordingPermission(.notGranted)
         missingScreen.microphoneAuthorizationCause = .authorized
         #expect(!missingScreen.permissionsAreDone)
 
         let missingMicrophone = makeState()
         missingMicrophone.initialPermissionCheckComplete = true
-        missingMicrophone.screenRecordingGranted = true
+        missingMicrophone.capture.publishScreenRecordingPermission(.granted)
         missingMicrophone.microphoneAuthorizationCause = .denied
         #expect(!missingMicrophone.permissionsAreDone)
 
         let done = makeState()
         done.initialPermissionCheckComplete = true
-        done.screenRecordingGranted = true
+        done.capture.publishScreenRecordingPermission(.granted)
         done.microphoneAuthorizationCause = .authorized
         #expect(done.permissionsAreDone)
     }
@@ -172,7 +172,7 @@ struct AppStateAttentionTests {
     @Test func menubarPresentationComposesSnapshotAppStateInputs() {
         let state = makeState(config: configuredExternal())
         state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = true
+        state.capture.publishScreenRecordingPermission(.granted)
         state.microphoneAuthorizationCause = .authorized
         state.isRecording = true
         state.uploadCoordinator.status = .synced
@@ -199,7 +199,7 @@ struct AppStateAttentionTests {
         for (name, status) in statuses {
             let state = makeState(config: configuredExternal())
             state.initialPermissionCheckComplete = true
-            state.screenRecordingGranted = true
+            state.capture.publishScreenRecordingPermission(.granted)
             state.microphoneAuthorizationCause = .authorized
             state.isRecording = true
             state.uploadCoordinator.status = .synced
@@ -223,7 +223,7 @@ struct AppStateAttentionTests {
         for (cause, expectsPermissionsAttention) in cases {
             let state = makeState(config: configuredExternal())
             state.initialPermissionCheckComplete = true
-            state.screenRecordingGranted = true
+            state.capture.publishScreenRecordingPermission(.granted)
             state.microphoneAuthorizationCause = cause
             state.isRecording = true
             state.uploadCoordinator.status = .synced

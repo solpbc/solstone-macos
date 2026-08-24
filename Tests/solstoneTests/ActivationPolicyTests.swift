@@ -3,7 +3,6 @@
 
 import AppKit
 import Testing
-import XCTest
 @testable import solstone
 
 @Suite("Activation Policy")
@@ -52,8 +51,4 @@ struct ActivationPolicyTests {
         #expect(state.computeDesiredPolicy(now: now.addingTimeInterval(2)) == .regular)
     }
 
-    @Test func testAppStateSharedBridgeWiring() async {
-        let state = AppState()
-        XCTAssertTrue(AppState.shared === state, "AppState.shared must reference the instance after full init")
-    }
 }

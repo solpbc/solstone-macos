@@ -16,7 +16,11 @@ struct DiagnosticEvidenceWireUpTests {
         #expect(wireUpContains(composition, "let store = makeEvidenceStore(evidenceNow)"))
         #expect(wireUpContains(composition, "let recorder = makeRecorder(store, evidenceNow)"))
         #expect(wireUpContains(composition, "let appState = makeState(recorder, automaticObservationPipelineEnabled)"))
+        #expect(wireUpContains(composition, "registerSharedState: @escaping @MainActor (AppState) -> Void = { AppState.shared = $0 }"))
+        #expect(wireUpContains(composition, "registerSharedState(appState)"))
         #expect(wireUpContains(composition, "recorder.enqueue(.appLaunch)"))
+        #expect(wireUpContains(composition, "if automaticObservationPipelineEnabled {"))
+        #expect(wireUpContains(composition, "appState.capture.activate()"))
         #expect(wireUpContains(app, "SolstoneStartupComposition.makeNormalStartup("))
         #expect(!wireUpContains(coordinator, "DiagnosticEvidenceStore("))
         #expect(!wireUpContains(coordinator, "Task { await store.record"))
@@ -32,24 +36,33 @@ struct DiagnosticEvidenceWireUpTests {
             .filter { $0.pathExtension == "swift" }
             .sorted { $0.path < $1.path }
         let sources = try sourceURLs.map { try readWireUpSource($0.path) }
-        let assignmentPattern = #"screenRecordingGranted\s*=\s*[^=]"#
-        let sourceLines = sources
+        let publicAssignmentPattern = #"(?<![A-Za-z])screenRecordingGranted\s*=\s*[^=]"#
+        let publicAssignments = sources
             .flatMap { $0.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) }
             .filter { line in
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 return !trimmed.hasPrefix("case ")
-                    && trimmed.range(of: assignmentPattern, options: .regularExpression) != nil
+                    && trimmed.range(of: publicAssignmentPattern, options: .regularExpression) != nil
             }
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .sorted()
 
-        #expect(sourceLines == [
-            "screenRecordingGranted = evidence == .granted",
-            "set { capture.screenRecordingGranted = newValue }",
-        ])
+        #expect(publicAssignments.isEmpty)
+
+        let privateMutationPattern = #"storedScreenRecordingGranted\s*=\s*[^=]"#
+        let privateMutations = sources
+            .flatMap { $0.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) }
+            .filter { line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                return !trimmed.hasPrefix("private var ")
+                    && trimmed.range(of: privateMutationPattern, options: .regularExpression) != nil
+            }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .sorted()
+
+        #expect(privateMutations == ["storedScreenRecordingGranted = evidence == .granted"])
         let allSources = sources.joined(separator: "\n")
-        #expect(!allSources.contains("appState.screenRecordingGranted ="))
-        #expect(!allSources.contains("state.screenRecordingGranted ="))
+        #expect(!allSources.contains("set { capture.screenRecordingGranted"))
     }
 
     @Test func captureCallbackAndSettingsWriterUsePublicationSeam() throws {

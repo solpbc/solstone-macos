@@ -136,7 +136,7 @@ struct SnapshotTests {
 
     private func markPermissionsReady(_ state: AppState) {
         state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = true
+        state.capture.publishScreenRecordingPermission(.granted)
         state.microphoneAuthorizationCause = .authorized
     }
 
@@ -338,7 +338,7 @@ struct SnapshotTests {
     @Test func menuErrorPermissions() throws {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = false
+        state.capture.publishScreenRecordingPermission(.notGranted)
         state.microphoneAuthorizationCause = .denied
         let updateController = makeSnapshotUpdateController()
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-error-permissions.png")
@@ -407,7 +407,7 @@ struct SnapshotTests {
     @Test func settingsServicePermissionsAttention() throws {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = false
+        state.capture.publishScreenRecordingPermission(.notGranted)
         state.microphoneAuthorizationCause = .authorized
         let updateController = makeSnapshotUpdateController()
         try render(
@@ -684,7 +684,7 @@ struct SnapshotTests {
     @Test func settingsStatusSetupNeedsAttention() throws {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = false
+        state.capture.publishScreenRecordingPermission(.notGranted)
         state.microphoneAuthorizationCause = .denied
         let updateController = makeSnapshotUpdateController()
         try render(
@@ -717,7 +717,7 @@ struct SnapshotTests {
             serviceMode: .external
         ))
         state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = false
+        state.capture.publishScreenRecordingPermission(.notGranted)
         state.microphoneAuthorizationCause = .authorized
         let updateController = makeSnapshotUpdateController()
         try render(
@@ -789,7 +789,7 @@ struct SnapshotTests {
     @Test func settingsPermissionsRecovery() throws {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true
-        state.screenRecordingGranted = false
+        state.capture.publishScreenRecordingPermission(.notGranted)
         state.microphoneAuthorizationCause = .authorized
         let updateController = makeSnapshotUpdateController()
         try render(

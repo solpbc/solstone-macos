@@ -40,7 +40,7 @@ struct MenuContentTests {
 
         let permissionsNeeded = AppState.forSnapshot()
         permissionsNeeded.initialPermissionCheckComplete = true
-        permissionsNeeded.screenRecordingGranted = false
+        permissionsNeeded.capture.publishScreenRecordingPermission(.notGranted)
         permissionsNeeded.microphoneAuthorizationCause = .denied
         #expect(!MenuContent(appState: permissionsNeeded, updateController: updateController).hasPauseResumeControl)
 

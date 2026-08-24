@@ -51,7 +51,7 @@ public final class AppState {
         triggerSameMachineMigrationAfterHeartbeatIfNeeded(ok: ok)
     }
 
-    /// Shared instance for app-wide access (set during init)
+    /// Shared instance for app-wide access (registered by normal startup composition).
     nonisolated(unsafe) public static var shared: AppState?
     private static var snapshotAudioMonitorMode = false
 
@@ -135,10 +135,7 @@ public final class AppState {
     public private(set) var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
 
     /// Screen recording permission — polled periodically via SCShareableContent.
-    public internal(set) var screenRecordingGranted: Bool {
-        get { capture.screenRecordingGranted }
-        set { capture.screenRecordingGranted = newValue }
-    }
+    public var screenRecordingGranted: Bool { capture.screenRecordingGranted }
 
     /// Microphone permission — derived from the current authorization cause.
     public var microphoneGranted: Bool {
@@ -930,9 +927,6 @@ public final class AppState {
             // Recover any incomplete segments from previous sessions.
             recoveryCoordinator.scheduleDetached()
             configureJournalServicesIfNeeded()
-
-            // Start polling permissions — auto-starts recording when ready.
-            capture.activate()
         }
 
         // Listen for external defaults changes (e.g. `defaults write` from terminal)
@@ -946,14 +940,13 @@ public final class AppState {
             }
         }
 
-        // Set shared instance for app-wide access (e.g., termination handler)
+        // Complete manager bridge wiring. Normal startup composition registers AppState.shared.
         heartbeatTarget.state = self
         homeBaseURLTarget.state = self
         fingerprintTarget.state = self
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
         uploadCoordinator.refreshLastSuccessfulJournalContact()
         uploadCoordinator.refreshLastJournalDelivery()
-        AppState.shared = self
     }
 
     deinit {
@@ -994,6 +987,7 @@ public final class AppState {
         lastDeliveryStore: (any LastJournalDeliveryStoring)? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
+        permissionPollScheduler: PermissionPollScheduler = .live(),
         logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
         captureStartOperation: CaptureCoordinator.StartOperation? = nil
     ) -> AppState {
@@ -1012,6 +1006,7 @@ public final class AppState {
             lastDeliveryStore: lastDeliveryStore,
             recorder: recorder,
             screenPermissionProvider: screenPermissionProvider,
+            permissionPollScheduler: permissionPollScheduler,
             logAdapter: logAdapter,
             captureStartOperation: captureStartOperation
         )
@@ -1094,6 +1089,7 @@ public final class AppState {
         pairingDelete: PairingCoordinator.DeletePairing? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
+        permissionPollScheduler: PermissionPollScheduler = .live(),
         logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
         captureStartOperation: CaptureCoordinator.StartOperation? = nil
     ) {
@@ -1119,9 +1115,8 @@ public final class AppState {
         self.isSnapshot = isSnapshot
         // Only the live-probe launch suppresses the automatic pipeline, and it
         // always comes through the designated initializer. This initializer
-        // starts no capture, recovery, or startup sync of its own, so the flag
-        // reaches only the tunnel-connected sync trigger — which a snapshot
-        // state is expected to fire.
+        // starts no capture, recovery, or startup sync of its own; normal
+        // startup composition owns activation after it creates the state.
         self.automaticObservationPipelineEnabled = true
         self.config = config
         self.observerRegister = observerRegister
@@ -1168,6 +1163,7 @@ public final class AppState {
             startOperation: captureStartOperation,
             recorder: recorder,
             screenPermissionProvider: screenPermissionProvider,
+            permissionPollScheduler: permissionPollScheduler,
             logAdapter: logAdapter
         )
         self.capture = capture
