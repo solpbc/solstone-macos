@@ -51,7 +51,7 @@ struct DiagnosticEvidenceEndToEndTests {
 
         await state.capture.checkPermissionsAndAutoStart()
 
-        // CaptureCoordinator.swift:240 reads microphone truth before the SCK await at :249,
+        // CaptureCoordinator.swift:262 reads microphone truth before the SCK await at :272,
         // so honest enqueue order is microphone before screen recording.
         #expect(evidenceCodes(await harness.entries()) == [
             .appLaunch,
