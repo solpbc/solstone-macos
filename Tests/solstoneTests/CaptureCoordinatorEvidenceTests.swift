@@ -124,21 +124,47 @@ struct CaptureCoordinatorEvidenceTests {
         defer { try? FileManager.default.removeItem(at: root) }
         coordinator.microphoneAuthorizationReader = { .denied }
 
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
         await coordinator.checkPermissionsAndAutoStart()
-        await coordinator.checkPermissionsAndAutoStart()
-        values.prompted = true
-        await coordinator.checkPermissionsAndAutoStart()
+        #expect(values.resetCount == 1)
+        #expect(events.events == [.screenRecordingCDHashMismatch])
+        let afterFirstMismatch = await harness.entries()
 
-        let entries = await harness.entries()
-        #expect(!coordinator.screenRecordingGranted)
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
+        await coordinator.checkPermissionsAndAutoStart()
+        #expect(values.resetCount == 1)
+        #expect(events.events == [.screenRecordingCDHashMismatch])
+        let beforeReprompt = try #require(await harness.canonicalBytes())
+        values.prompted = true
+        #expect(await harness.canonicalBytes() == beforeReprompt)
+
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
+        await coordinator.checkPermissionsAndAutoStart()
         #expect(values.resetCount == 2)
         #expect(events.events == [.screenRecordingCDHashMismatch, .screenRecordingCDHashMismatch])
+
+        let entries = await harness.entries()
+        let canonicalBytes = try #require(await harness.canonicalBytes())
+        let document = try #require(
+            try? JSONSerialization.jsonObject(with: canonicalBytes) as? [String: Any]
+        )
+        let rawEntries = try #require(document["entries"] as? [[String: Any]])
+        #expect(!coordinator.screenRecordingGranted)
+        #expect(evidenceCodes(afterFirstMismatch) == [
+            .screenRecordingCDHashMismatch,
+            .screenRecordingUnavailable,
+            .microphoneNotGranted,
+        ])
         #expect(evidenceCodes(entries) == [
             .screenRecordingCDHashMismatch,
             .screenRecordingUnavailable,
             .microphoneNotGranted,
             .screenRecordingCDHashMismatch,
         ])
+        #expect(Set(document.keys) == Set(["entries", "schemaVersion"]))
+        #expect(rawEntries.allSatisfy {
+            Set($0.keys) == Set(["code", "firstAt", "lastAt", "repeatCount"])
+        })
     }
 
     @Test func microphoneAndCaptureFamiliesDeduplicateIndependently() async throws {
@@ -253,10 +279,15 @@ struct CaptureCoordinatorEvidenceTests {
     @Test func autoStartSkipIsRecurringAndCoalesces() async throws {
         let terminatingHarness = DiagnosticEvidenceHarness()
         let terminatingEvents = EvidenceLogEvents()
+        let terminatingStart = EvidenceStartSpy()
         let (terminating, terminatingRoot) = try makeEvidenceCoordinator(
             recorder: terminatingHarness.recorder,
             screenPermissionProvider: makeScreenPermissionProvider(),
             isTerminating: { true },
+            startOperation: { _, _ in
+                terminatingStart.count += 1
+                return .committed
+            },
             logAdapter: DiagnosticEvidenceLoggingAdapter { terminatingEvents.events.append($0) }
         )
         defer { try? FileManager.default.removeItem(at: terminatingRoot) }
@@ -276,6 +307,7 @@ struct CaptureCoordinatorEvidenceTests {
             lastAt: secondSkipTime,
             repeatCount: 2
         ))
+        #expect(terminatingStart.count == 0)
         #expect(terminatingEvents.events == [.permissionAutoStartSkipped, .permissionAutoStartSkipped])
 
         let nonterminatingHarness = DiagnosticEvidenceHarness()
@@ -476,12 +508,15 @@ struct CaptureCoordinatorEvidenceTests {
         defer { try? FileManager.default.removeItem(at: root) }
         coordinator.microphoneAuthorizationReader = { initial }
 
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
         let check = Task { @MainActor in
             await coordinator.checkPermissionsAndAutoStart()
         }
         await gate.waitUntilEntered()
         coordinator.microphoneAuthorizationReader = { refreshed }
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
         coordinator.refreshMicrophoneAuthorization()
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
         await gate.release()
         await check.value
 
@@ -489,7 +524,9 @@ struct CaptureCoordinatorEvidenceTests {
         #expect(coordinator.microphoneGranted == (refreshed == .authorized))
         #expect(start.count == expectedStarts)
         let expectedMicrophone: DiagnosticEvidenceCode = refreshed == .authorized ? .microphoneGranted : .microphoneNotGranted
-        #expect(evidenceCodes(await harness.entries()) == [expectedMicrophone, .screenRecordingGranted])
+        let entries = await harness.entries()
+        #expect(evidenceCodes(entries) == [expectedMicrophone, .screenRecordingGranted])
+        #expect(entries[0].firstAt < entries[1].firstAt)
     }
 }
 

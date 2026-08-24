@@ -159,7 +159,6 @@ final class EvidenceStartSpy {
 final class PermissionPollTestScheduler {
     private(set) var armCount = 0
     private(set) var cancellationCount = 0
-    private(set) var foundationTimerCount = 0
     private var passes: [UUID: PermissionPollScheduler.Pass] = [:]
 
     var outstandingArmCount: Int { passes.count }
@@ -225,7 +224,6 @@ func makeEvidenceCoordinator(
     screenPermissionProvider: ScreenRecordingPermissionProvider,
     isTerminating: @escaping CaptureCoordinator.IsTerminatingProvider = { false },
     startOperation: CaptureCoordinator.StartOperation? = nil,
-    permissionPollScheduler: PermissionPollScheduler? = nil,
     logAdapter: DiagnosticEvidenceLoggingAdapter = DiagnosticEvidenceLoggingAdapter()
 ) throws -> (CaptureCoordinator, URL) {
     let root = URL(fileURLWithPath: "/var/tmp", isDirectory: true)
@@ -241,7 +239,7 @@ func makeEvidenceCoordinator(
         startOperation: startOperation,
         recorder: recorder,
         screenPermissionProvider: screenPermissionProvider,
-        permissionPollScheduler: permissionPollScheduler ?? PermissionPollTestScheduler().scheduler,
+        permissionPollScheduler: PermissionPollTestScheduler().scheduler,
         logAdapter: logAdapter
     )
     return (coordinator, root)

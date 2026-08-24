@@ -340,7 +340,6 @@ struct CaptureCoordinatorTests {
             scheduleTimer: { interval, repeats, fire in
                 spy.interval = interval
                 spy.repeats = repeats
-                spy.fire = fire
                 let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: repeats) { _ in
                     fire()
                 }
@@ -405,7 +404,6 @@ struct CaptureCoordinatorTests {
 private final class LivePermissionPollTimerSpy {
     var interval: TimeInterval?
     var repeats: Bool?
-    var fire: (@MainActor @Sendable () -> Void)?
     var timer: Timer?
 }
 

@@ -43,16 +43,20 @@ struct DiagnosticEvidenceLoggingTests {
         coordinator.microphoneAuthorizationReader = { .denied }
 
         values.granted = false
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
         await coordinator.checkPermissionsAndAutoStart()
         let afterMismatch = events.events.count
         values.granted = true
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
         await coordinator.checkPermissionsAndAutoStart()
         let afterSuccess = events.events.count
         values.preflight = false
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
         await coordinator.checkPermissionsAndAutoStart()
         let afterPreflight = events.events.count
         values.preflight = true
         values.granted = false
+        harness.clock.now = harness.clock.now.addingTimeInterval(1)
         await coordinator.checkPermissionsAndAutoStart()
         let afterSecondMismatch = events.events.count
 

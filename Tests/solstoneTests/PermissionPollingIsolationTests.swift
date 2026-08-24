@@ -224,7 +224,6 @@ struct PermissionPollingIsolationTests {
         #expect(!canonicalText.contains("error-b"))
         #expect(!canonicalText.contains("user"))
         #expect(!canonicalText.contains("lock"))
-        #expect(scheduler.foundationTimerCount == 0)
         #expect(scheduler.outstandingArmCount == 1, "Repeated idle correctly leaves the inert poll arm active.")
     }
 
@@ -273,7 +272,9 @@ struct PermissionPollingIsolationTests {
         target.coordinator = state.capture
         state.capture.microphoneAuthorizationReader = { .authorized }
 
+        clock.now = clock.now.addingTimeInterval(1)
         await scheduler.fireOutstandingPasses()
+        clock.now = clock.now.addingTimeInterval(1)
         state.capture.publishScreenRecordingPermission(.granted)
 
         #expect(registrations == 1)

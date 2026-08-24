@@ -43,7 +43,7 @@ struct DiagnosticEvidenceNormalCompositionTests {
         #expect(evidenceCodes(await harness.entries()) == [.appLaunch])
     }
 
-    @Test func repairBranchRegistersWithoutRecordingLaunch() async {
+    @Test func repairBranchSignalsRepairWithoutRecordingLaunch() async {
         let harness = DiagnosticEvidenceHarness()
         let context = repairContext()
         var registered: [AppPlacementContext] = []
