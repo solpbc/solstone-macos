@@ -9,7 +9,7 @@
 import SwiftUI
 import SolstoneCore
 
-internal enum AXPermissionState: CaseIterable {
+internal enum AXPermissionState: CaseIterable, Equatable, Sendable {
     case granted
     case denied
     case waiting
@@ -171,6 +171,33 @@ internal enum SetupGroupVerdictAXState: CaseIterable {
     case ready
     case needsAttention
     case someUnavailable
+}
+
+internal enum LastJournalDeliveryAXState: CaseIterable, Equatable, Sendable {
+    case delivered
+    case noDeliveryYet
+    case notLinked
+    case unavailable
+}
+
+internal enum LastJournalContactAXState: CaseIterable, Equatable, Sendable {
+    case connected
+    case noConnectionYet
+    case notLinked
+    case unavailable
+}
+
+internal enum DiagnosticCaptureAXState: CaseIterable, Equatable, Sendable {
+    case on
+    case paused
+    case off
+    case error
+}
+
+internal enum DiagnosticCopyAXState: CaseIterable, Equatable, Sendable {
+    case idle
+    case copied
+    case failed
 }
 
 internal enum PairingConnectionAXState: CaseIterable {
@@ -504,6 +531,64 @@ extension SetupGroupVerdictAXState {
             return "needs_attention"
         case .someUnavailable:
             return "some_unavailable"
+        }
+    }
+}
+
+extension LastJournalDeliveryAXState {
+    var axToken: String {
+        switch self {
+        case .delivered:
+            return "delivered"
+        case .noDeliveryYet:
+            return "no_delivery_yet"
+        case .notLinked:
+            return "not_linked"
+        case .unavailable:
+            return "unavailable"
+        }
+    }
+}
+
+extension LastJournalContactAXState {
+    var axToken: String {
+        switch self {
+        case .connected:
+            return "connected"
+        case .noConnectionYet:
+            return "no_connection_yet"
+        case .notLinked:
+            return "not_linked"
+        case .unavailable:
+            return "unavailable"
+        }
+    }
+}
+
+extension DiagnosticCaptureAXState {
+    var axToken: String {
+        switch self {
+        case .on:
+            return "on"
+        case .paused:
+            return "paused"
+        case .off:
+            return "off"
+        case .error:
+            return "error"
+        }
+    }
+}
+
+extension DiagnosticCopyAXState {
+    var axToken: String {
+        switch self {
+        case .idle:
+            return "idle"
+        case .copied:
+            return "copied"
+        case .failed:
+            return "failed"
         }
     }
 }

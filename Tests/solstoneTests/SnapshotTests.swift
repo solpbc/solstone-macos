@@ -649,19 +649,26 @@ struct SnapshotTests {
 
     @Test func settingsStatusSetupReady() throws {
         let store = InMemoryLastSuccessfulJournalContactStore()
+        let deliveryStore = InMemoryLastJournalDeliveryStore()
         let state = AppState.forSnapshot(config: AppConfig(
             serverURL: ServiceMode.bundledServiceURL,
             serverKey: "observer-key",
             serviceMode: .external
-        ), lastContactStore: store)
+        ), lastContactStore: store, lastDeliveryStore: deliveryStore)
         markPermissionsReady(state)
         state.isRecording = true
         state.uploadCoordinator.status = .synced
         let recentDate = Date(timeIntervalSinceNow: -120)
         let fingerprint = try #require(state.currentJournalIdentity().fingerprint?.value)
         store.write(LastSuccessfulJournalContactPayload(date: recentDate, fingerprint: fingerprint))
+        #expect(deliveryStore.write(LastJournalDeliveryPayload(
+            date: recentDate,
+            fingerprint: fingerprint
+        )) == .confirmed)
         state.uploadCoordinator.refreshLastSuccessfulJournalContact()
+        state.uploadCoordinator.refreshLastJournalDelivery()
         #expect(state.uploadCoordinator.lastSuccessfulJournalContactOutcome == .synced(recentDate))
+        #expect(state.uploadCoordinator.lastJournalDeliveryOutcome == .delivered(recentDate))
         let updateController = makeSnapshotUpdateController()
         try render(
             SettingsView(
@@ -810,6 +817,30 @@ struct SnapshotTests {
         )
     }
 
+    @Test func settingsPermissionsCDHashRecovery() throws {
+        let state = AppState.forSnapshot()
+        state.initialPermissionCheckComplete = true
+        state.capture.publishScreenRecordingPermission(.notGranted)
+        state.microphoneAuthorizationCause = .authorized
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .permissions,
+                initialSetupProbeSnapshot: setupProbeSnapshot(
+                    hasPromptedScreenRecording: false,
+                    screenDiagnostic: ScreenRecordingPermissionDiagnostic(
+                        preflightSucceeded: true,
+                        sckFailedAfterPositivePreflight: true
+                    )
+                )
+            ),
+            size: settingsSize,
+            to: "settings-permissions-cdhash-recovery.png"
+        )
+    }
+
     @Test func settingsHelp() throws {
         let state = AppState.forSnapshot()
         let updateController = makeSnapshotUpdateController()
@@ -817,6 +848,51 @@ struct SnapshotTests {
             SettingsView(appState: state, updateController: updateController, selectedTab: .help),
             size: settingsSize,
             to: "settings-help.png"
+        )
+    }
+
+    @Test func settingsHelpDiagnosticsExpanded() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let report = buildDiagnosticReport(DiagnosticReportInput(
+            appVersion: AppVersion.short,
+            screenRecording: .granted,
+            microphone: .granted,
+            isRecording: true,
+            isPaused: false,
+            hasError: false,
+            lastDelivery: .delivered(now.addingTimeInterval(-120)),
+            lastJournalContact: .synced(now.addingTimeInterval(-30)),
+            evidence: .available(DiagnosticEvidenceEnvelope(
+                schemaVersion: DiagnosticEvidenceEnvelope.currentSchemaVersion,
+                entries: [
+                    DiagnosticEvidenceEntry(
+                        code: .appLaunch,
+                        firstAt: now.addingTimeInterval(-300),
+                        lastAt: now.addingTimeInterval(-300),
+                        repeatCount: 1
+                    ),
+                    DiagnosticEvidenceEntry(
+                        code: .captureOn,
+                        firstAt: now.addingTimeInterval(-60),
+                        lastAt: now.addingTimeInterval(-60),
+                        repeatCount: 1
+                    )
+                ]
+            )),
+            now: now
+        ))
+        let state = AppState.forSnapshot()
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .help,
+                initialDiagnosticsExpanded: true,
+                initialDiagnosticReport: report
+            ),
+            size: settingsSize,
+            to: "settings-help-diagnostics-expanded.png"
         )
     }
 

@@ -29,7 +29,7 @@ struct SetupSnapshotBuilderTests {
         ))
 
         #expect(presentation.verdict == .needsAttention(count: 3))
-        #expect(row(.lastSync, in: presentation).votes == false)
+        #expect(row(.lastDelivery, in: presentation).votes == false)
     }
 
     @Test func unavailableRequiredRowTakesPrecedenceOverMissingRows() {
@@ -127,19 +127,30 @@ struct SetupSnapshotBuilderTests {
         #expect(!row(.commandLineTools, in: presentation).votes)
     }
 
-    @Test func lastSyncNeverVotesAndUsesCoarseFormatter() {
-        let synced = now.addingTimeInterval(-120)
+    @Test func lastDeliveryNeverVotesAndOnlyConfirmedDeliveryIsGreen() {
+        let deliveredAt = now.addingTimeInterval(-120)
         let presentation = buildSetupSnapshot(input(
-            lastSyncOutcome: .synced(synced)
+            lastDeliveryOutcome: .delivered(deliveredAt)
         ))
 
         #expect(presentation.verdict == .ready)
-        #expect(row(.lastSync, in: presentation).value == "2m ago")
-        #expect(row(.lastSync, in: presentation).votes == false)
+        #expect(row(.lastDelivery, in: presentation).label == UICopy.SETTINGS_LAST_DELIVERY_LABEL)
+        #expect(row(.lastDelivery, in: presentation).value == "2m ago")
+        #expect(row(.lastDelivery, in: presentation).state == .ready)
+        #expect(row(.lastDelivery, in: presentation).votes == false)
 
-        let never = buildSetupSnapshot(input(lastSyncOutcome: .noSyncYet))
+        let never = buildSetupSnapshot(input(lastDeliveryOutcome: .noDeliveryYet))
         #expect(never.verdict == .ready)
-        #expect(row(.lastSync, in: never).value == UICopy.SETTINGS_SETUP_LAST_SYNC_NEVER)
+        #expect(row(.lastDelivery, in: never).value == UICopy.SETTINGS_LAST_DELIVERY_NEVER)
+        #expect(row(.lastDelivery, in: never).state == .notRequired)
+
+        let notLinked = buildSetupSnapshot(input(lastDeliveryOutcome: .notLinked))
+        #expect(row(.lastDelivery, in: notLinked).value == UICopy.SETTINGS_LAST_DELIVERY_NOT_LINKED)
+        #expect(row(.lastDelivery, in: notLinked).state == .notRequired)
+
+        let unavailable = buildSetupSnapshot(input(lastDeliveryOutcome: .unavailable))
+        #expect(row(.lastDelivery, in: unavailable).value == UICopy.SETTINGS_DIAGNOSTICS_COULD_NOT_CHECK)
+        #expect(row(.lastDelivery, in: unavailable).state == .unavailable)
     }
 
     private func input(
@@ -151,7 +162,7 @@ struct SetupSnapshotBuilderTests {
         journalWrapperExecutable: SetupProbeOutcome = .ready,
         screenRecording: PermissionOutcome = .granted,
         microphone: PermissionOutcome = .granted,
-        lastSyncOutcome: SetupLastSyncOutcome = .noSyncYet
+        lastDeliveryOutcome: LastJournalDeliveryOutcome = .noDeliveryYet
     ) -> SetupSnapshotInput {
         SetupSnapshotInput(
             topology: topology,
@@ -162,7 +173,7 @@ struct SetupSnapshotBuilderTests {
             journalWrapperExecutable: journalWrapperExecutable,
             screenRecording: screenRecording,
             microphone: microphone,
-            lastSyncOutcome: lastSyncOutcome,
+            lastDeliveryOutcome: lastDeliveryOutcome,
             now: now
         )
     }

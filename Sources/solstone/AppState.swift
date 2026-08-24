@@ -559,6 +559,10 @@ public final class AppState {
         uploadCoordinator?.refreshLastJournalDelivery()
     }
 
+    internal func readDiagnosticEvidence() async -> DiagnosticEvidenceRead {
+        await recorder.read()
+    }
+
     internal func observerHealthSnapshot() -> ObserverHealthSnapshot? {
         guard observerHealthSnapshotEnabled else { return nil }
         guard config.isUploadConfigured else { return nil }

@@ -3,12 +3,14 @@ import SwiftUI
 import SolstoneCore
 
 internal enum StatusDotSeverity: Equatable, Sendable {
-    case good, warn, attention
+    case good, calm, warn, attention
 
     var color: Color {
         switch self {
         case .good:
             return .green
+        case .calm:
+            return .secondary
         case .warn:
             return .orange
         case .attention:
@@ -72,7 +74,7 @@ extension StatusHealthSummary {
         isPaused: Bool,
         uploadStatus: UploadCoordinator.Status,
         pendingCount: Int,
-        lastSyncedAt: Date?,
+        lastDeliveryOutcome: LastJournalDeliveryOutcome,
         serverURL: String?,
         now: Date,
         setupVerdict: SetupGroupVerdict? = nil
@@ -83,7 +85,7 @@ extension StatusHealthSummary {
             isPaused: isPaused,
             uploadStatus: uploadStatus,
             pendingCount: pendingCount,
-            lastSyncedAt: lastSyncedAt,
+            lastDeliveryOutcome: lastDeliveryOutcome,
             serverURL: serverURL,
             now: now
         )
@@ -104,7 +106,7 @@ extension StatusHealthSummary {
         isPaused: Bool,
         uploadStatus: UploadCoordinator.Status,
         pendingCount: Int,
-        lastSyncedAt: Date?,
+        lastDeliveryOutcome: LastJournalDeliveryOutcome,
         serverURL: String?,
         now: Date
     ) -> StatusHealthSummary {
@@ -218,19 +220,37 @@ extension StatusHealthSummary {
                 ) {
                     return summary
                 }
-                let subtitle: String
-                if let lastSyncedAt {
-                    subtitle = "last synced \(coarseRelativeTime(lastSyncedAt, now: now))"
-                        + (pendingCount == 0 ? " · nothing waiting" : " · \(pendingCount) waiting")
-                } else {
-                    subtitle = "just connected to \(host)"
+                let waiting = pendingCount == 0 ? " · nothing waiting" : " · \(pendingCount) waiting"
+                switch lastDeliveryOutcome {
+                case .delivered(let date):
+                    return .init(
+                        severity: .good,
+                        title: "all good · on, synced to \(host)",
+                        subtitle: "\(UICopy.SETTINGS_LAST_DELIVERY_LABEL) \(coarseRelativeTime(date, now: now))\(waiting)",
+                        axValue: "external_synced"
+                    )
+                case .noDeliveryYet:
+                    return .init(
+                        severity: .calm,
+                        title: UICopy.SETTINGS_OBSERVATION_OBSERVING,
+                        subtitle: "\(UICopy.SETTINGS_LAST_DELIVERY_NEVER)\(waiting)",
+                        axValue: "external_no_delivery_yet"
+                    )
+                case .notLinked:
+                    return .init(
+                        severity: .calm,
+                        title: UICopy.SETTINGS_OBSERVATION_OBSERVING,
+                        subtitle: UICopy.SETTINGS_LAST_DELIVERY_NOT_LINKED,
+                        axValue: "external_delivery_not_linked"
+                    )
+                case .unavailable:
+                    return .init(
+                        severity: .warn,
+                        title: UICopy.SETTINGS_OBSERVATION_OBSERVING,
+                        subtitle: UICopy.SETTINGS_DIAGNOSTICS_COULD_NOT_CHECK,
+                        axValue: "external_delivery_unavailable"
+                    )
                 }
-                return .init(
-                    severity: .good,
-                    title: "all good · on, synced to \(host)",
-                    subtitle: subtitle,
-                    axValue: "external_synced"
-                )
             }
         }
     }

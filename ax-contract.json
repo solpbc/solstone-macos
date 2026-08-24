@@ -100,6 +100,24 @@
       "menubar.status.row.state",
       "settings.help.agentInstructions",
       "settings.help.agentInstructions.copy",
+      "settings.help.diagnostics.appVersion.row",
+      "settings.help.diagnostics.copy",
+      "settings.help.diagnostics.copyResult.state",
+      "settings.help.diagnostics.disclosure",
+      "settings.help.diagnostics.lastDelivery.row",
+      "settings.help.diagnostics.lastDelivery.state",
+      "settings.help.diagnostics.lastDelivery.timestamp.state",
+      "settings.help.diagnostics.lastJournalConnection.row",
+      "settings.help.diagnostics.lastJournalConnection.state",
+      "settings.help.diagnostics.lastJournalConnection.timestamp.state",
+      "settings.help.diagnostics.microphone.row",
+      "settings.help.diagnostics.microphone.state",
+      "settings.help.diagnostics.preview",
+      "settings.help.diagnostics.recentStateCodes.row",
+      "settings.help.diagnostics.screenAndAudio.row",
+      "settings.help.diagnostics.screenAndAudio.state",
+      "settings.help.diagnostics.screenRecording.row",
+      "settings.help.diagnostics.screenRecording.state",
       "settings.help.iconState.attention",
       "settings.help.iconState.connecting",
       "settings.help.iconState.error",
@@ -123,6 +141,7 @@
       "settings.permissions.microphone.state",
       "settings.permissions.next.connectJournal",
       "settings.permissions.screenRecording.enable",
+      "settings.permissions.screenRecording.resetHint",
       "settings.permissions.screenRecording.restartCountdown.state",
       "settings.permissions.screenRecording.restartNow",
       "settings.permissions.screenRecording.state",
@@ -185,7 +204,8 @@
       "settings.status.setup.journalApp.state",
       "settings.status.setup.journalLink.action",
       "settings.status.setup.journalLink.state",
-      "settings.status.setup.lastSync.state",
+      "settings.status.setup.lastDelivery.state",
+      "settings.status.setup.lastDelivery.timestamp.state",
       "settings.status.setup.manageJournal",
       "settings.status.setup.microphone.action",
       "settings.status.setup.microphone.state",
@@ -198,8 +218,9 @@
       "settings.status.tryAgain",
       "settings.status.upload.checked.state",
       "settings.status.upload.journal.state",
+      "settings.status.upload.lastDelivery.state",
+      "settings.status.upload.lastDelivery.timestamp.state",
       "settings.status.upload.lastError.state",
-      "settings.status.upload.lastSynced.state",
       "settings.status.upload.pauseSync",
       "settings.status.upload.pending.state",
       "settings.status.upload.resyncAll",
@@ -256,6 +277,36 @@
     "menubar.status.row.state" : {
       "kind" : "enum",
       "vocabulary" : "MenubarStatusRowState"
+    },
+    "settings.help.diagnostics.copyResult.state" : {
+      "kind" : "enum",
+      "vocabulary" : "DiagnosticCopyAXState"
+    },
+    "settings.help.diagnostics.lastDelivery.state" : {
+      "kind" : "enum",
+      "vocabulary" : "LastJournalDeliveryAXState"
+    },
+    "settings.help.diagnostics.lastDelivery.timestamp.state" : {
+      "kind" : "numeric"
+    },
+    "settings.help.diagnostics.lastJournalConnection.state" : {
+      "kind" : "enum",
+      "vocabulary" : "LastJournalContactAXState"
+    },
+    "settings.help.diagnostics.lastJournalConnection.timestamp.state" : {
+      "kind" : "numeric"
+    },
+    "settings.help.diagnostics.microphone.state" : {
+      "kind" : "enum",
+      "vocabulary" : "AXPermissionState"
+    },
+    "settings.help.diagnostics.screenAndAudio.state" : {
+      "kind" : "enum",
+      "vocabulary" : "DiagnosticCaptureAXState"
+    },
+    "settings.help.diagnostics.screenRecording.state" : {
+      "kind" : "enum",
+      "vocabulary" : "AXPermissionState"
     },
     "settings.help.version.state" : {
       "kind" : "freeform"
@@ -357,9 +408,12 @@
       "kind" : "enum",
       "vocabulary" : "SetupCheckRowAXState"
     },
-    "settings.status.setup.lastSync.state" : {
+    "settings.status.setup.lastDelivery.state" : {
       "kind" : "enum",
-      "vocabulary" : "SetupCheckRowAXState"
+      "vocabulary" : "LastJournalDeliveryAXState"
+    },
+    "settings.status.setup.lastDelivery.timestamp.state" : {
+      "kind" : "numeric"
     },
     "settings.status.setup.microphone.state" : {
       "kind" : "enum",
@@ -383,11 +437,15 @@
     "settings.status.upload.journal.state" : {
       "kind" : "freeform"
     },
+    "settings.status.upload.lastDelivery.state" : {
+      "kind" : "enum",
+      "vocabulary" : "LastJournalDeliveryAXState"
+    },
+    "settings.status.upload.lastDelivery.timestamp.state" : {
+      "kind" : "numeric"
+    },
     "settings.status.upload.lastError.state" : {
       "kind" : "freeform"
-    },
-    "settings.status.upload.lastSynced.state" : {
-      "kind" : "numeric"
     },
     "settings.status.upload.pending.state" : {
       "kind" : "numeric"
@@ -453,6 +511,17 @@
       "success",
       "failure"
     ],
+    "DiagnosticCaptureAXState" : [
+      "on",
+      "paused",
+      "off",
+      "error"
+    ],
+    "DiagnosticCopyAXState" : [
+      "idle",
+      "copied",
+      "failed"
+    ],
     "FrequencyOption" : [
       "day",
       "week",
@@ -485,6 +554,18 @@
       "loading",
       "loaded",
       "error"
+    ],
+    "LastJournalContactAXState" : [
+      "connected",
+      "no_connection_yet",
+      "not_linked",
+      "unavailable"
+    ],
+    "LastJournalDeliveryAXState" : [
+      "delivered",
+      "no_delivery_yet",
+      "not_linked",
+      "unavailable"
     ],
     "LocalJournalDiscoveryAXState" : [
       "searching",

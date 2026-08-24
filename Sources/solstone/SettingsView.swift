@@ -290,6 +290,13 @@ struct SettingsView: View {
     @State private var tryAgainInFlight = false
     @State private var setupProbeSnapshot = SetupProbeSnapshot.checking
 
+    // Help diagnostics are read only after the owner opens the disclosure.
+    @State private var diagnosticsExpanded = false
+    @State private var diagnosticsLoading = false
+    @State private var diagnosticLoadGeneration: UInt = 0
+    @State private var diagnosticReport: DiagnosticReport?
+    @State private var diagnosticCopyFeedback: DiagnosticCopyFeedback?
+
     // Permissions tab state
     @State private var screenRecordingPrompted = false
     @State private var restartCountdown: Int? = nil
@@ -333,6 +340,8 @@ struct SettingsView: View {
     private let markFetch: @MainActor @Sendable (String) async -> JournalMark?
     private let runningJournalController: any RunningJournalController
     private let setupFileManager: FileManager
+    private let diagnosticClipboardWrite: @MainActor (String) -> Bool
+    private let diagnosticAnnouncement: @MainActor (String) -> Void
 
     init(
         appState: AppState,
@@ -366,7 +375,21 @@ struct SettingsView: View {
         },
         runningJournalController: any RunningJournalController = LiveRunningJournalController(),
         setupFileManager: FileManager = .default,
-        initialSetupProbeSnapshot: SetupProbeSnapshot = .checking
+        initialSetupProbeSnapshot: SetupProbeSnapshot = .checking,
+        initialDiagnosticsExpanded: Bool = false,
+        initialDiagnosticReport: DiagnosticReport? = nil,
+        diagnosticClipboardWrite: @escaping @MainActor (String) -> Bool = { text in
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            return pasteboard.setString(text, forType: .string)
+        },
+        diagnosticAnnouncement: @escaping @MainActor (String) -> Void = { message in
+            NSAccessibility.post(
+                element: NSApp as Any,
+                notification: .announcementRequested,
+                userInfo: [.announcement: message]
+            )
+        }
     ) {
         self.appState = appState
         self.updateController = updateController
@@ -377,9 +400,13 @@ struct SettingsView: View {
         self.markFetch = markFetch
         self.runningJournalController = runningJournalController
         self.setupFileManager = setupFileManager
+        self.diagnosticClipboardWrite = diagnosticClipboardWrite
+        self.diagnosticAnnouncement = diagnosticAnnouncement
         self._selectedTab = State(initialValue: selectedTab)
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
         self._setupProbeSnapshot = State(initialValue: initialSetupProbeSnapshot)
+        self._diagnosticsExpanded = State(initialValue: initialDiagnosticsExpanded)
+        self._diagnosticReport = State(initialValue: initialDiagnosticReport)
         self._journalHandoffOrchestrator = State(initialValue: journalHandoffOrchestrator)
         self._freshFlow = State(initialValue: freshFlow)
         self._onDiskJournalAdoptionFlow = State(initialValue: onDiskJournalAdoptionFlow)
@@ -759,10 +786,15 @@ struct SettingsView: View {
                         Text("this is how you get searchable memory of every meeting, document, and idea. sol takes in your screen alongside you and keeps everything on your Mac, sent only to your journal.")
                             .font(.body)
                             .foregroundStyle(.secondary)
-                        if setupProbeSnapshot.hasPromptedScreenRecording && restartCountdown == nil {
+                        if shouldShowScreenRecordingResetHint(
+                            hasPromptedScreenRecording: setupProbeSnapshot.hasPromptedScreenRecording,
+                            sckFailedAfterPositivePreflight: setupProbeSnapshot.screenDiagnostic?.sckFailedAfterPositivePreflight ?? false,
+                            restartCountdown: restartCountdown
+                        ) {
                             Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingResetHint)
                         }
                         HStack {
                             if let countdown = restartCountdown {
@@ -1457,14 +1489,7 @@ struct SettingsView: View {
                 .disabled(!appState.isPairedIngestReady)
                 .help("keeps sol running locally but stops sending to your journal")
                 .accessibilityIdentifier(AXID.Settings.Status.pauseSync)
-                if let lastSynced = appState.uploadCoordinator.lastSyncedAt {
-                    LabeledContent("last synced") {
-                        Text(lastSynced, style: .relative)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier(AXID.Settings.Status.lastSyncedState)
-                            .accessibilityValue(axIntegerString(Int(lastSynced.timeIntervalSince1970)))
-                    }
-                }
+                lastDeliveryDetailRow
                 if let error = appState.uploadCoordinator.lastError {
                     Text(error)
                         .font(.caption)
@@ -1479,6 +1504,26 @@ struct SettingsView: View {
                 .accessibilityIdentifier(AXID.Settings.Status.resyncAll)
             }
             .padding(.vertical, 4)
+        }
+    }
+
+    private var lastDeliveryDetailRow: some View {
+        let outcome = appState.uploadCoordinator.lastJournalDeliveryOutcome
+        return VStack(alignment: .leading, spacing: 2) {
+            LabeledContent(UICopy.SETTINGS_LAST_DELIVERY_LABEL) {
+                Text(diagnosticDeliveryValue(outcome, now: Date()))
+                    .foregroundStyle(.secondary)
+            }
+            AXStateCompanion(
+                id: AXID.Settings.Status.lastDeliveryState,
+                value: outcome.diagnosticAXState.axToken
+            )
+            if case .delivered(let date) = outcome {
+                AXStateCompanion(
+                    id: AXID.Settings.Status.lastDeliveryTimestamp,
+                    value: axIntegerString(Int(date.timeIntervalSince1970))
+                )
+            }
         }
     }
 
@@ -2488,10 +2533,6 @@ struct SettingsView: View {
             initialPermissionCheckComplete: appState.initialPermissionCheckComplete,
             cause: appState.microphoneAuthorizationCause
         )
-        let lastSyncOutcome: SetupLastSyncOutcome = appState.serviceIsDone
-            ? appState.uploadCoordinator.lastSuccessfulJournalContactOutcome
-            : .notLinked
-
         return buildSetupSnapshot(SetupSnapshotInput(
             topology: setupTopology,
             solAppPlacement: setupProbeSnapshot.solAppPlacement,
@@ -2501,9 +2542,13 @@ struct SettingsView: View {
             journalWrapperExecutable: setupProbeSnapshot.journalWrapperExecutable,
             screenRecording: screenOutcome,
             microphone: microphoneOutcome,
-            lastSyncOutcome: lastSyncOutcome,
+            lastDeliveryOutcome: primaryLastDeliveryOutcome,
             now: Date()
         ))
+    }
+
+    private var primaryLastDeliveryOutcome: LastJournalDeliveryOutcome {
+        appState.serviceIsDone ? appState.uploadCoordinator.lastJournalDeliveryOutcome : .notLinked
     }
 
     private var statusHealthSummary: StatusHealthSummary {
@@ -2514,7 +2559,7 @@ struct SettingsView: View {
             isPaused: appState.isPaused,
             uploadStatus: appState.uploadCoordinator.status,
             pendingCount: appState.uploadCoordinator.pendingCount,
-            lastSyncedAt: appState.uploadCoordinator.lastSyncedAt,
+            lastDeliveryOutcome: appState.uploadCoordinator.lastJournalDeliveryOutcome,
             serverURL: appState.config.serverURL,
             now: Date(),
             setupVerdict: setupPresentation.verdict
@@ -2621,10 +2666,24 @@ struct SettingsView: View {
             } label: {
                 Text(row.label)
             }
-            AXStateCompanion(
-                id: setupStateAXID(for: row.id),
-                value: row.state.axToken
-            )
+            if row.id == .lastDelivery {
+                let outcome = primaryLastDeliveryOutcome
+                AXStateCompanion(
+                    id: AXID.Settings.Status.setupLastDeliveryState,
+                    value: outcome.diagnosticAXState.axToken
+                )
+                if case .delivered(let date) = outcome {
+                    AXStateCompanion(
+                        id: AXID.Settings.Status.setupLastDeliveryTimestamp,
+                        value: axIntegerString(Int(date.timeIntervalSince1970))
+                    )
+                }
+            } else {
+                AXStateCompanion(
+                    id: setupStateAXID(for: row.id),
+                    value: row.state.axToken
+                )
+            }
         }
     }
 
@@ -2642,8 +2701,8 @@ struct SettingsView: View {
             return AXID.Settings.Status.setupScreenRecordingState
         case .microphone:
             return AXID.Settings.Status.setupMicrophoneState
-        case .lastSync:
-            return AXID.Settings.Status.setupLastSyncState
+        case .lastDelivery:
+            return AXID.Settings.Status.setupLastDeliveryState
         }
     }
 
@@ -2661,7 +2720,7 @@ struct SettingsView: View {
             return AXID.Settings.Status.setupScreenRecordingAction
         case .microphone:
             return AXID.Settings.Status.setupMicrophoneAction
-        case .lastSync:
+        case .lastDelivery:
             return nil
         }
     }
@@ -2986,6 +3045,67 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
+            GroupBox(UICopy.SETTINGS_DIAGNOSTICS_TITLE) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(UICopy.SETTINGS_DIAGNOSTICS_INTRO)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button(diagnosticsExpanded
+                        ? UICopy.SETTINGS_DIAGNOSTICS_HIDE
+                        : UICopy.SETTINGS_DIAGNOSTICS_SHOW
+                    ) {
+                        toggleDiagnostics()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Help.diagnosticsDisclosure)
+
+                    if diagnosticsExpanded {
+                        if diagnosticsLoading {
+                            Text(UICopy.SETTINGS_DIAGNOSTICS_CHECKING)
+                                .foregroundStyle(.secondary)
+                        } else if let diagnosticReport {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(diagnosticReport.rows) { row in
+                                    LabeledContent(row.label) {
+                                        Text(row.value)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .multilineTextAlignment(.trailing)
+                                            .textSelection(.enabled)
+                                    }
+                                    .accessibilityIdentifier(diagnosticRowAXID(row.id))
+                                    .accessibilityValue(row.value)
+                                }
+                            }
+                            .accessibilityElement(children: .contain)
+                            .accessibilityIdentifier(AXID.Settings.Help.diagnosticsPreview)
+
+                            diagnosticAXCompanions(diagnosticReport)
+
+                            HStack(spacing: 8) {
+                                Spacer(minLength: 0)
+                                if let diagnosticCopyFeedback {
+                                    Text(diagnosticCopyFeedback.text)
+                                        .font(.caption)
+                                        .foregroundStyle(
+                                            diagnosticCopyFeedback == .copied ? Color.secondary : Color.red
+                                        )
+                                }
+                                Button(UICopy.SETTINGS_DIAGNOSTICS_COPY) {
+                                    copyDiagnostics(diagnosticReport)
+                                }
+                                .accessibilityIdentifier(AXID.Settings.Help.diagnosticsCopy)
+                                AXStateCompanion(
+                                    id: AXID.Settings.Help.diagnosticsCopyResultState,
+                                    value: (diagnosticCopyFeedback?.axState ?? .idle).axToken
+                                )
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+
             GroupBox("agent instructions") {
                 VStack(alignment: .trailing, spacing: 8) {
                     Text("working with a coding agent? hand it this context.")
@@ -3011,6 +3131,122 @@ struct SettingsView: View {
             }
 
             Spacer()
+        }
+    }
+
+    private func toggleDiagnostics() {
+        diagnosticLoadGeneration &+= 1
+        let loadGeneration = diagnosticLoadGeneration
+        diagnosticCopyFeedback = nil
+        if diagnosticsExpanded {
+            diagnosticsExpanded = false
+            diagnosticsLoading = false
+            diagnosticReport = nil
+            return
+        }
+
+        diagnosticsExpanded = true
+        diagnosticsLoading = true
+        Task { @MainActor in
+            let evidence = await appState.readDiagnosticEvidence()
+            guard shouldPublishDiagnosticLoad(
+                loadGeneration,
+                activeGeneration: diagnosticLoadGeneration,
+                diagnosticsExpanded: diagnosticsExpanded
+            ) else { return }
+            diagnosticReport = buildDiagnosticReport(DiagnosticReportInput(
+                appVersion: AppVersion.short,
+                screenRecording: currentScreenPermissionOutcome,
+                microphone: currentMicrophonePermissionOutcome,
+                isRecording: appState.isRecording,
+                isPaused: appState.isPaused,
+                hasError: appState.errorMessage != nil,
+                lastDelivery: appState.uploadCoordinator.lastJournalDeliveryOutcome,
+                lastJournalContact: appState.uploadCoordinator.lastSuccessfulJournalContactOutcome,
+                evidence: evidence,
+                now: Date()
+            ))
+            diagnosticsLoading = false
+        }
+    }
+
+    private var currentScreenPermissionOutcome: PermissionOutcome {
+        PermissionOutcome.screenRecording(
+            initialPermissionCheckComplete: appState.initialPermissionCheckComplete,
+            screenRecordingGranted: appState.screenRecordingGranted,
+            hasPromptedScreenRecording: setupProbeSnapshot.hasPromptedScreenRecording,
+            preflightSucceeded: setupProbeSnapshot.screenDiagnostic?.preflightSucceeded,
+            sckFailedAfterPositivePreflight: setupProbeSnapshot.screenDiagnostic?.sckFailedAfterPositivePreflight ?? false
+        )
+    }
+
+    private var currentMicrophonePermissionOutcome: PermissionOutcome {
+        PermissionOutcome.microphone(
+            initialPermissionCheckComplete: appState.initialPermissionCheckComplete,
+            cause: appState.microphoneAuthorizationCause
+        )
+    }
+
+    private func copyDiagnostics(_ report: DiagnosticReport) {
+        diagnosticCopyFeedback = performDiagnosticCopy(
+            report,
+            write: diagnosticClipboardWrite,
+            announce: diagnosticAnnouncement
+        )
+    }
+
+    @ViewBuilder
+    private func diagnosticAXCompanions(_ report: DiagnosticReport) -> some View {
+        AXStateCompanion(
+            id: AXID.Settings.Help.diagnosticsScreenRecordingState,
+            value: report.screenRecordingState.axToken
+        )
+        AXStateCompanion(
+            id: AXID.Settings.Help.diagnosticsMicrophoneState,
+            value: report.microphoneState.axToken
+        )
+        AXStateCompanion(
+            id: AXID.Settings.Help.diagnosticsCaptureState,
+            value: report.captureState.axToken
+        )
+        AXStateCompanion(
+            id: AXID.Settings.Help.diagnosticsLastDeliveryState,
+            value: report.lastDeliveryState.axToken
+        )
+        if let date = report.lastDeliveryTimestamp {
+            AXStateCompanion(
+                id: AXID.Settings.Help.diagnosticsLastDeliveryTimestamp,
+                value: axIntegerString(Int(date.timeIntervalSince1970))
+            )
+        }
+        AXStateCompanion(
+            id: AXID.Settings.Help.diagnosticsLastJournalConnectionState,
+            value: report.lastJournalContactState.axToken
+        )
+        if let date = report.lastJournalContactTimestamp {
+            AXStateCompanion(
+                id: AXID.Settings.Help.diagnosticsLastJournalConnectionTimestamp,
+                value: axIntegerString(Int(date.timeIntervalSince1970))
+            )
+        }
+    }
+
+    private func diagnosticRowAXID(_ rowID: DiagnosticReportRowID) -> String {
+        switch rowID {
+        case .appVersion:
+            return AXID.Settings.Help.diagnosticsAppVersionRow
+        case .screenRecording:
+            return AXID.Settings.Help.diagnosticsScreenRecordingRow
+        case .microphone:
+            return AXID.Settings.Help.diagnosticsMicrophoneRow
+        case .screenAndAudio:
+            return AXID.Settings.Help.diagnosticsCaptureRow
+        case .lastDelivery:
+            return AXID.Settings.Help.diagnosticsLastDeliveryRow
+        case .lastJournalConnection:
+            return AXID.Settings.Help.diagnosticsLastJournalConnectionRow
+        case .recentStateCodes:
+            return AXID.Settings.Help.diagnosticsRecentStateCodesRow
         }
     }
 

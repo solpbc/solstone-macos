@@ -4,7 +4,7 @@ import SolstoneCore
 @testable import solstone
 
 private let statusSummaryNow = Date(timeIntervalSince1970: 1_000_000)
-private let statusSummaryRecentSync = statusSummaryNow.addingTimeInterval(-120)
+private let statusSummaryRecentDelivery = statusSummaryNow.addingTimeInterval(-120)
 private let statusSummaryServerURL = "https://x.example:5015"
 
 @Suite("StatusHealthSummary")
@@ -87,10 +87,16 @@ struct StatusHealthSummaryTests {
         #expect(connecting.subtitle == "reaching x.example")
     }
 
-    @Test func externalSyncedOnlyComesFromSyncedUploadStatus() {
+    @Test func externalGreenRequiresBothSyncedUploadStatusAndConfirmedDelivery() {
         let synced = makeSummary(uploadStatus: .synced)
         #expect(synced.severity == .good)
         #expect(synced.axValue == "external_synced")
+
+        let contactOnly = makeSummary(uploadStatus: .synced, lastDeliveryOutcome: .noDeliveryYet)
+        #expect(contactOnly.severity == .calm)
+        #expect(contactOnly.axValue == "external_no_delivery_yet")
+        #expect(contactOnly.title == UICopy.SETTINGS_OBSERVATION_OBSERVING)
+        #expect(contactOnly.subtitle == "nothing added yet · nothing waiting")
 
         let notSynced = makeSummary(uploadStatus: .notSynced)
         #expect(notSynced.severity == .warn)
@@ -105,15 +111,24 @@ struct StatusHealthSummaryTests {
         #expect(retrying.axValue == "external_retrying")
     }
 
-    @Test func externalHealthySubtitleDoesNotFabricateTimeOrBytes() {
-        let justConnected = makeSummary(uploadStatus: .synced, lastSyncedAt: nil)
-        #expect(justConnected.subtitle == "just connected to x.example")
+    @Test func externalHealthySubtitleUsesDeliveryNotContact() {
+        let nothingWaiting = makeSummary(
+            uploadStatus: .synced,
+            pendingCount: 0,
+            lastDeliveryOutcome: .delivered(statusSummaryRecentDelivery)
+        )
+        #expect(nothingWaiting.subtitle == "last added to your journal 2m ago · nothing waiting")
 
-        let nothingWaiting = makeSummary(uploadStatus: .synced, pendingCount: 0, lastSyncedAt: statusSummaryRecentSync)
-        #expect(nothingWaiting.subtitle?.hasSuffix(" · nothing waiting") == true)
+        let waiting = makeSummary(
+            uploadStatus: .synced,
+            pendingCount: 5,
+            lastDeliveryOutcome: .delivered(statusSummaryRecentDelivery)
+        )
+        #expect(waiting.subtitle == "last added to your journal 2m ago · 5 waiting")
 
-        let waiting = makeSummary(uploadStatus: .synced, pendingCount: 5, lastSyncedAt: statusSummaryRecentSync)
-        #expect(waiting.subtitle?.contains(" · 5 waiting") == true)
+        let unavailable = makeSummary(uploadStatus: .synced, lastDeliveryOutcome: .unavailable)
+        #expect(unavailable.severity == .warn)
+        #expect(unavailable.subtitle == "couldn't check")
     }
 
     @Test func setupReadyPreservesOperationalSummary() {
@@ -179,7 +194,7 @@ struct StatusHealthSummaryTests {
         isPaused: Bool = false,
         uploadStatus: UploadCoordinator.Status = .synced,
         pendingCount: Int = 0,
-        lastSyncedAt: Date? = nil,
+        lastDeliveryOutcome: LastJournalDeliveryOutcome = .delivered(statusSummaryRecentDelivery),
         serverURL: String? = statusSummaryServerURL,
         now: Date = statusSummaryNow,
         setupVerdict: SetupGroupVerdict? = nil
@@ -190,7 +205,7 @@ struct StatusHealthSummaryTests {
             isPaused: isPaused,
             uploadStatus: uploadStatus,
             pendingCount: pendingCount,
-            lastSyncedAt: lastSyncedAt,
+            lastDeliveryOutcome: lastDeliveryOutcome,
             serverURL: serverURL,
             now: now,
             setupVerdict: setupVerdict

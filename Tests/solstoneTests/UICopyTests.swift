@@ -103,9 +103,25 @@ struct UICopyTests {
         #expect(UICopy.SETTINGS_SETUP_SCREEN_RECORDING_ACTION == "grant access →")
         #expect(UICopy.SETTINGS_SETUP_MICROPHONE_LABEL == "microphone")
         #expect(UICopy.SETTINGS_SETUP_MICROPHONE_ACTION == "grant access →")
-        #expect(UICopy.SETTINGS_SETUP_LAST_SYNC_LABEL == "last sync")
-        #expect(UICopy.SETTINGS_SETUP_LAST_SYNC_NEVER == "no sync yet")
-        #expect(UICopy.SETTINGS_SETUP_LAST_SYNC_NOT_LINKED == "your journal isn't linked")
+        #expect(UICopy.SETTINGS_LAST_DELIVERY_LABEL == "last added to your journal")
+        #expect(UICopy.SETTINGS_LAST_DELIVERY_NEVER == "nothing added yet")
+        #expect(UICopy.SETTINGS_LAST_DELIVERY_NOT_LINKED == "your journal isn't linked")
+    }
+
+    @Test func diagnosticsCopyStrings() {
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_TITLE == "diagnostics")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_INTRO == "a short summary for troubleshooting.")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_SHOW == "show diagnostics")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_HIDE == "hide diagnostics")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_COPY == "copy diagnostics")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_COPIED == "copied")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_COPY_ANNOUNCEMENT == "diagnostics copied to the clipboard")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_COPY_FAILED == "couldn't copy diagnostics")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_SCREEN_AND_AUDIO == "screen and audio")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_LAST_JOURNAL_CONNECTION == "last journal connection")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_RECENT_STATE_CODES == "recent state codes")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_NO_CONNECTION == "no connection yet")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_NO_RECENT_CODES == "no recent state codes")
     }
 
     @Test func settingsSetupSharedAndPermissionPaneCopyStrings() {

@@ -49,4 +49,12 @@ internal final class DiagnosticEvidenceRecorder {
         let pending = tail
         await pending?.value
     }
+
+    /// Returns a stable owner-triggered snapshot after all evidence already
+    /// accepted by this recorder has reached the bounded store.
+    func read() async -> DiagnosticEvidenceRead {
+        guard let store else { return .unavailable }
+        await drain()
+        return await store.read()
+    }
 }

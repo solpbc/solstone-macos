@@ -65,5 +65,25 @@ struct DiagnosticEvidenceRecorderTests {
         let recorder = DiagnosticEvidenceRecorder.dormant
         recorder.enqueue(.appLaunch)
         await recorder.drain()
+        #expect(await recorder.read() == .unavailable)
+    }
+
+    @Test func ownerReadIncludesEveryAlreadyEnqueuedEventInOrder() async {
+        let clock = TestClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let store = DiagnosticEvidenceStore(
+            bytesStore: InMemoryDiagnosticEvidenceBytesStore(),
+            now: { clock.now }
+        )
+        let recorder = DiagnosticEvidenceRecorder(store: store, now: { clock.now })
+
+        recorder.enqueue(.appLaunch)
+        clock.now = clock.now.addingTimeInterval(1)
+        recorder.enqueue(.captureOn)
+
+        guard case .available(let envelope) = await recorder.read() else {
+            Issue.record("expected available owner diagnostics")
+            return
+        }
+        #expect(envelope.entries.map(\.code) == [.appLaunch, .captureOn])
     }
 }

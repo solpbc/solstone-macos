@@ -115,6 +115,9 @@ internal enum SetupProbeOutcome: Equatable, Sendable {
     }
 }
 
+/// Diagnostics-only journal contact outcome. Primary owner surfaces use
+/// `LastJournalDeliveryOutcome` instead so a responsive journal cannot look
+/// like it accepted a segment.
 internal enum SetupLastSyncOutcome: Equatable, Sendable {
     case synced(Date)
     case noSyncYet
@@ -129,7 +132,7 @@ internal enum SetupCheckRowID: CaseIterable, Hashable, Sendable {
     case commandLineTools
     case screenRecording
     case microphone
-    case lastSync
+    case lastDelivery
 }
 
 internal enum SetupCheckAction: Equatable, Sendable {
@@ -196,7 +199,7 @@ internal struct SetupSnapshotInput: Equatable, Sendable {
     let journalWrapperExecutable: SetupProbeOutcome
     let screenRecording: PermissionOutcome
     let microphone: PermissionOutcome
-    let lastSyncOutcome: SetupLastSyncOutcome
+    let lastDeliveryOutcome: LastJournalDeliveryOutcome
     let now: Date
 }
 
@@ -268,7 +271,7 @@ internal func buildSetupSnapshot(_ input: SetupSnapshotInput) -> SetupSnapshotPr
             outcome: input.microphone,
             actionLabel: UICopy.SETTINGS_SETUP_MICROPHONE_ACTION
         ),
-        lastSyncRow(input.lastSyncOutcome, now: input.now)
+        lastDeliveryRow(input.lastDeliveryOutcome, now: input.now)
     ]
 
     return SetupSnapshotPresentation(verdict: rollupVerdict(rows), rows: rows)
@@ -455,27 +458,27 @@ private func permissionRow(
     )
 }
 
-private func lastSyncRow(_ outcome: SetupLastSyncOutcome, now: Date) -> SetupCheckRow {
+private func lastDeliveryRow(_ outcome: LastJournalDeliveryOutcome, now: Date) -> SetupCheckRow {
     let value: String
     let state: SetupCheckRowAXState
     switch outcome {
-    case .synced(let date):
+    case .delivered(let date):
         value = coarseRelativeTime(date, now: now)
         state = .ready
-    case .noSyncYet:
-        value = UICopy.SETTINGS_SETUP_LAST_SYNC_NEVER
+    case .noDeliveryYet:
+        value = UICopy.SETTINGS_LAST_DELIVERY_NEVER
         state = .notRequired
     case .notLinked:
-        value = UICopy.SETTINGS_SETUP_LAST_SYNC_NOT_LINKED
+        value = UICopy.SETTINGS_LAST_DELIVERY_NOT_LINKED
         state = .notRequired
-    case .couldNotCheck:
+    case .unavailable:
         value = UICopy.SETTINGS_SETUP_SHARED_COULD_NOT_CHECK
         state = .unavailable
     }
 
     return SetupCheckRow(
-        id: .lastSync,
-        label: UICopy.SETTINGS_SETUP_LAST_SYNC_LABEL,
+        id: .lastDelivery,
+        label: UICopy.SETTINGS_LAST_DELIVERY_LABEL,
         value: value,
         state: state,
         systemImage: setupSystemImage(for: state),
