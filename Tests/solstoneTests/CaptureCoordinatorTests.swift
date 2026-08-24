@@ -371,6 +371,7 @@ struct CaptureCoordinatorTests {
         #expect(passStarts.count == 1)
 
         timer.fire()
+        timer.fireDate = .distantFuture
 
         #expect(deliveries.count == 1)
         await passStarts.waitUntilCount(2)
