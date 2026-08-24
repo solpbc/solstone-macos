@@ -27,6 +27,8 @@ struct TimeoutInjectionDefaultsTests {
             allowsEmptyDisplayConfigurationForTesting: true
         )
         #expect(manager.rotationTimeoutSecondsForTesting == 30)
+        #expect(AppQuitCoordinator.diagnosticEvidenceDrainCutoffSeconds == 2)
+        #expect(AppState.terminationRemixDrainTimeoutSeconds == 30)
 
         let before = Date()
         let observed = manager.nowForTesting()

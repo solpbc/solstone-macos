@@ -53,12 +53,40 @@ enum UpdateAnnouncementLaunchRegistry {
     }
 }
 
+@MainActor
+struct AppKitTerminationSeam {
+    private let coordinatorLookup: @MainActor () -> AppQuitCoordinator?
+    private let reply: @MainActor (Bool) -> Void
+
+    init(
+        coordinatorLookup: @escaping @MainActor () -> AppQuitCoordinator? = {
+            AppState.shared?.appQuitCoordinator
+        },
+        reply: @escaping @MainActor (Bool) -> Void = {
+            NSApp.reply(toApplicationShouldTerminate: $0)
+        }
+    ) {
+        self.coordinatorLookup = coordinatorLookup
+        self.reply = reply
+    }
+
+    func applicationShouldTerminate() -> NSApplication.TerminateReply {
+        guard let coordinator = coordinatorLookup() else {
+            reply(true)
+            return .terminateLater
+        }
+        coordinator.requestAppKitTermination(reply: reply)
+        return .terminateLater
+    }
+}
+
 /// Handles app termination to ensure pending remixes complete
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuTrackingObserver: Any?
     private var notificationObservers: [Any] = []
     private var userNotificationDelegate: UserNotificationCenterDelegate?
+    private var appKitTerminationSeam = AppKitTerminationSeam()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppPlacementRepairCoordinator.shared.signalReadiness()
@@ -164,14 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let coordinator = AppState.shared?.appQuitCoordinator else {
-            return .terminateNow
-        }
-        if coordinator.isPrepared { return .terminateNow }
-        coordinator.requestExternalTermination { proceed in
-            NSApp.reply(toApplicationShouldTerminate: proceed)
-        }
-        return .terminateLater
+        appKitTerminationSeam.applicationShouldTerminate()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -303,6 +303,95 @@ struct UploadCoordinatorTests {
         #expect(coordinator.lastJournalDeliveryOutcome == .delivered(now))
     }
 
+    @Test func failedDeliveryAlwaysRecordsAndNoticeRearmsAfterConfirmedWrite() async throws {
+        let harness = DiagnosticEvidenceHarness()
+        let events = UploadDiagnosticEvents()
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fingerprint = canonicalDeliveryFingerprint()
+        let delivery = InMemoryLastJournalDeliveryStore(writeResult: .failed)
+        let coordinator = try makeDeliveryCoordinator(
+            now: now,
+            delivery: delivery,
+            identity: .identified(fingerprint),
+            recorder: harness.recorder,
+            logAdapter: DiagnosticEvidenceLoggingAdapter { events.events.append($0) }
+        )
+
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+
+        var entries = await harness.entries()
+        #expect(evidenceCodes(entries) == [.deliveryWriteFailed])
+        #expect(entries[0].repeatCount == 2)
+        #expect(events.events == [.deliveryWriteFailed])
+
+        delivery.writeResult = .confirmed
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        delivery.writeResult = .failed
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+
+        entries = await harness.entries()
+        #expect(evidenceCodes(entries) == [.deliveryWriteFailed])
+        #expect(entries[0].repeatCount == 3)
+        #expect(events.events == [.deliveryWriteFailed, .deliveryWriteFailed])
+    }
+
+    @Test func absentAndMismatchedProofDoNotConsumeDeliveryFailureEdge() async throws {
+        let harness = DiagnosticEvidenceHarness()
+        let events = UploadDiagnosticEvents()
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let matching = canonicalDeliveryFingerprint()
+        let mismatched = canonicalDeliveryFingerprint("mismatched")
+        let identity = MutableJournalIdentityRead(.absent)
+        let delivery = InMemoryLastJournalDeliveryStore(writeResult: .failed)
+
+        let coordinator = try makeDeliveryCoordinator(
+            now: now,
+            delivery: delivery,
+            identity: .absent,
+            identityProvider: { identity.value },
+            recorder: harness.recorder,
+            logAdapter: DiagnosticEvidenceLoggingAdapter { events.events.append($0) }
+        )
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "segment", journalFingerprint: matching.value))
+        #expect(!coordinator.lastJournalDeliveryWriteFailed)
+        #expect(evidenceCodes(await harness.entries()).isEmpty)
+        #expect(events.events.isEmpty)
+
+        identity.value = .identified(matching)
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "segment", journalFingerprint: mismatched.value))
+        #expect(!coordinator.lastJournalDeliveryWriteFailed)
+        #expect(evidenceCodes(await harness.entries()).isEmpty)
+        #expect(events.events.isEmpty)
+
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "segment", journalFingerprint: matching.value))
+        #expect(coordinator.lastJournalDeliveryWriteFailed)
+        #expect(evidenceCodes(await harness.entries()) == [.deliveryWriteFailed])
+        #expect(events.events == [.deliveryWriteFailed])
+    }
+
+    @Test func nonDeliveryAndConfirmedDeliveryEventsStaySilentInAdapter() throws {
+        let events = UploadDiagnosticEvents()
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fingerprint = canonicalDeliveryFingerprint()
+        let delivery = InMemoryLastJournalDeliveryStore()
+        let coordinator = try makeDeliveryCoordinator(
+            now: now,
+            delivery: delivery,
+            identity: .identified(fingerprint),
+            logAdapter: DiagnosticEvidenceLoggingAdapter { events.events.append($0) }
+        )
+
+        coordinator.handleProgressEvent(.journalContactSucceeded)
+        coordinator.handleProgressEvent(.syncComplete)
+        coordinator.handleProgressEvent(.uploadRetrying(segment: "x", attempt: 1))
+        coordinator.handleProgressEvent(.offline(error: "offline", healthReason: .urlErrorCode(-1009)))
+        coordinator.handleProgressEvent(.uploadFailed(segment: "x", error: "failed", healthReason: .uploadFailed))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+
+        #expect(events.events.isEmpty)
+    }
+
     @Test func matchingProofWritesDeliveryPayload() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let fingerprint = canonicalDeliveryFingerprint()
@@ -448,7 +537,10 @@ struct UploadCoordinatorTests {
         now: Date,
         delivery: InMemoryLastJournalDeliveryStore,
         identity: JournalIdentityRead,
-        contact: InMemoryLastSuccessfulJournalContactStore = InMemoryLastSuccessfulJournalContactStore()
+        identityProvider: (@MainActor @Sendable () -> JournalIdentityRead)? = nil,
+        contact: InMemoryLastSuccessfulJournalContactStore = InMemoryLastSuccessfulJournalContactStore(),
+        recorder: DiagnosticEvidenceRecorder = .dormant,
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live
     ) throws -> UploadCoordinator {
         let root = try makeTempDirectory("upload-coordinator-delivery")
         let coordinator = UploadCoordinator(
@@ -456,7 +548,9 @@ struct UploadCoordinatorTests {
             config: AppConfig(),
             lastContactStore: contact,
             lastDeliveryStore: delivery,
-            journalIdentityProvider: { identity }
+            journalIdentityProvider: identityProvider ?? { identity },
+            recorder: recorder,
+            logAdapter: logAdapter
         )
         coordinator.nowProvider = { now }
         coordinator.refreshLastJournalDelivery()
@@ -511,5 +605,19 @@ struct UploadCoordinatorTests {
             isTunnelManaged: false,
             tunnelPairing: nil
         )!
+    }
+}
+
+@MainActor
+private final class UploadDiagnosticEvents {
+    var events: [DiagnosticEvidenceLogEvent] = []
+}
+
+@MainActor
+private final class MutableJournalIdentityRead {
+    var value: JournalIdentityRead
+
+    init(_ value: JournalIdentityRead) {
+        self.value = value
     }
 }

@@ -115,39 +115,56 @@ final class GatedDiagnosticEvidenceBytesStore: DiagnosticEvidenceBytesStoring, @
     private let lock = NSLock()
     private let firstRead = DispatchSemaphore(value: 0)
     private let releaseRead = DispatchSemaphore(value: 0)
-    private var shouldGateFirstRead = true
+    private let gatedReadNumber: Int
     private(set) var readCanonicalCount = 0
     private(set) var commitCount = 0
+
+    init(gatedReadNumber: Int = 1) {
+        self.gatedReadNumber = gatedReadNumber
+    }
 
     func readCanonical() -> DiagnosticEvidenceBytesRead {
         let shouldBlock = lock.withLock {
             readCanonicalCount += 1
-            defer { shouldGateFirstRead = false }
-            return shouldGateFirstRead
+            return readCanonicalCount == gatedReadNumber
         }
         if shouldBlock {
             firstRead.signal()
             releaseRead.wait()
         }
-        return base.readCanonical()
+        return lock.withLock { base.readCanonical() }
     }
 
-    func encode(_ envelope: DiagnosticEvidenceEnvelope) -> DiagnosticEvidenceEncodingResult { base.encode(envelope) }
-    func stage(_ data: Data) -> DiagnosticEvidenceStagingResult { base.stage(data) }
-    func readStaged(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceBytesRead { base.readStaged(staging) }
-    func removeStaging(_ staging: DiagnosticEvidenceStagingHandle) { base.removeStaging(staging) }
+    func encode(_ envelope: DiagnosticEvidenceEnvelope) -> DiagnosticEvidenceEncodingResult {
+        lock.withLock { base.encode(envelope) }
+    }
+
+    func stage(_ data: Data) -> DiagnosticEvidenceStagingResult {
+        lock.withLock { base.stage(data) }
+    }
+
+    func readStaged(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceBytesRead {
+        lock.withLock { base.readStaged(staging) }
+    }
+
+    func removeStaging(_ staging: DiagnosticEvidenceStagingHandle) {
+        lock.withLock { base.removeStaging(staging) }
+    }
 
     func commit(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceCommitResult {
-        let result = base.commit(staging)
-        if result == .committed {
-            lock.withLock { commitCount += 1 }
+        lock.withLock {
+            let result = base.commit(staging)
+            if result == .committed {
+                commitCount += 1
+            }
+            return result
         }
-        return result
     }
 
     func waitForFirstRead() -> Bool { firstRead.wait(timeout: .now() + 2) == .success }
     func releaseFirstRead() { releaseRead.signal() }
     func counts() -> (reads: Int, commits: Int) { lock.withLock { (readCanonicalCount, commitCount) } }
+    var stored: Data? { lock.withLock { base.stored } }
 }
 
 @MainActor

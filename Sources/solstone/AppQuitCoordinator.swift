@@ -46,6 +46,8 @@ struct AppQuitStateMachine {
 
 @MainActor
 final class AppQuitCoordinator {
+    internal static let diagnosticEvidenceDrainCutoffSeconds: Double = 2
+
     struct Dependencies {
         let setCommitted: @MainActor (Bool) -> Void
         let writeMarker: @MainActor (ExitReason) -> Void
@@ -90,21 +92,39 @@ final class AppQuitCoordinator {
     private var committedIntent: ExitIntent?
     private var finalActionPerformed = false
     private var externalReplies: [@MainActor (Bool) -> Void] = []
+    private var hasRecordedAppKitTerminationAttempt = false
+    private var externalReplyDrainInFlight = false
     private let dependencies: Dependencies
+    private let recorder: DiagnosticEvidenceRecorder
+    private let logAdapter: DiagnosticEvidenceLoggingAdapter
+    private let evidenceDrainCutoffSeconds: Double
 
     var isPrepared: Bool {
         stateMachine.isPrepared
     }
 
-    init(dependencies: Dependencies) {
+    init(
+        dependencies: Dependencies,
+        recorder: DiagnosticEvidenceRecorder = .dormant,
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
+        evidenceDrainCutoffSeconds: Double = AppQuitCoordinator.diagnosticEvidenceDrainCutoffSeconds
+    ) {
         self.dependencies = dependencies
+        self.recorder = recorder
+        self.logAdapter = logAdapter
+        self.evidenceDrainCutoffSeconds = evidenceDrainCutoffSeconds
     }
 
     func requestAppOwnedQuit() {
         begin(intent: appOwnedQuitIntent())
     }
 
-    func requestExternalTermination(reply: @escaping @MainActor (Bool) -> Void) {
+    func requestAppKitTermination(reply: @escaping @MainActor (Bool) -> Void) {
+        if !hasRecordedAppKitTerminationAttempt {
+            hasRecordedAppKitTerminationAttempt = true
+            recorder.enqueue(.terminationAppKitBegan)
+            logAdapter.terminationAppKitBegan()
+        }
         begin(intent: externalTerminationIntent(), externalReply: reply)
     }
 
@@ -122,6 +142,8 @@ final class AppQuitCoordinator {
         dependencies.setCommitted(false)
         stateMachine.reset()
         preparationGeneration &+= 1
+        hasRecordedAppKitTerminationAttempt = false
+        externalReplyDrainInFlight = false
         committedIntent = nil
         preparationTask = nil
         finalActionPerformed = false
@@ -145,6 +167,8 @@ final class AppQuitCoordinator {
             preparationGeneration &+= 1
             let generation = preparationGeneration
             dependencies.setCommitted(true)
+            recorder.enqueue(.terminationCommitted)
+            logAdapter.terminationCommitted()
             let task = Task { @MainActor [weak self] in
                 guard let self else { return }
                 await self.performPreparation(generation: generation)
@@ -155,7 +179,7 @@ final class AppQuitCoordinator {
             return preparationTask
         case .alreadyPrepared:
             if externalReply != nil {
-                drainExternalReplies(proceed: true)
+                scheduleExternalReplyDrainIfNeeded(generation: preparationGeneration)
             }
             if let finalize = intent.finalize, !finalActionPerformed {
                 finalActionPerformed = true
@@ -172,7 +196,10 @@ final class AppQuitCoordinator {
         dependencies.writeMarker(intent.reason)
         stateMachine.markPrepared()
         preparationTask = nil
-        drainExternalReplies(proceed: true)
+        if claimExternalReplyDrainIfNeeded() {
+            await drainClaimedExternalReplies(generation: generation)
+        }
+        guard generation == preparationGeneration else { return }
         if let finalize = intent.finalize {
             finalActionPerformed = true
             finalize()
@@ -185,6 +212,39 @@ final class AppQuitCoordinator {
         for reply in replies {
             reply(proceed)
         }
+    }
+
+    private func claimExternalReplyDrainIfNeeded() -> Bool {
+        guard !externalReplies.isEmpty, !externalReplyDrainInFlight else { return false }
+        externalReplyDrainInFlight = true
+        return true
+    }
+
+    private func scheduleExternalReplyDrainIfNeeded(generation: Int) {
+        guard claimExternalReplyDrainIfNeeded() else { return }
+        Task { @MainActor [weak self] in
+            await self?.drainClaimedExternalReplies(generation: generation)
+        }
+    }
+
+    private func drainClaimedExternalReplies(generation: Int) async {
+        defer { releaseExternalReplyDrainClaim(generation: generation) }
+        guard generation == preparationGeneration else { return }
+
+        let drainTask = Task { @MainActor in
+            await recorder.drain()
+        }
+        _ = try? await withTimeout(seconds: evidenceDrainCutoffSeconds) {
+            await drainTask.value
+        }
+
+        guard generation == preparationGeneration else { return }
+        drainExternalReplies(proceed: true)
+    }
+
+    private func releaseExternalReplyDrainClaim(generation: Int) {
+        guard generation == preparationGeneration else { return }
+        externalReplyDrainInFlight = false
     }
 
     private func appOwnedQuitIntent() -> ExitIntent {

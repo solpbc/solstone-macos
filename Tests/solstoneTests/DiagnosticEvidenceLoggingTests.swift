@@ -8,20 +8,35 @@ import Testing
 @Suite("Diagnostic evidence logging")
 @MainActor
 struct DiagnosticEvidenceLoggingTests {
-    @Test func adapterMapsOnlyTheTwoPayloadFreeEvents() {
+    @Test func adapterMapsPayloadFreeEvents() {
         var events: [DiagnosticEvidenceLogEvent] = []
         let adapter = DiagnosticEvidenceLoggingAdapter { events.append($0) }
 
         adapter.screenRecordingCDHashMismatch()
         adapter.permissionAutoStartSkipped()
+        adapter.terminationCommitted()
+        adapter.terminationAppKitBegan()
+        adapter.terminationDrainTimeout()
+        adapter.deliveryWriteFailed()
 
-        #expect(events == [.screenRecordingCDHashMismatch, .permissionAutoStartSkipped])
+        #expect(events == [
+            .screenRecordingCDHashMismatch,
+            .permissionAutoStartSkipped,
+            .terminationCommitted,
+            .terminationAppKitBegan,
+            .terminationDrainTimeout,
+            .deliveryWriteFailed,
+        ])
     }
 
     @Test func liveMappingUsesExactSetupTokens() throws {
         let source = try readWireUpSource("Sources/solstone/DiagnosticEvidenceLoggingAdapter.swift")
         #expect(wireUpContains(source, "Logger.setup.notice(\"screen_recording.cdhash_mismatch\")"))
         #expect(wireUpContains(source, "Logger.setup.debug(\"permission.auto_start_skipped\")"))
+        #expect(wireUpContains(source, "Logger.setup.notice(\"termination.committed\")"))
+        #expect(wireUpContains(source, "Logger.setup.notice(\"termination.appkit_began\")"))
+        #expect(wireUpContains(source, "Logger.setup.notice(\"termination.drain_timeout\")"))
+        #expect(wireUpContains(source, "Logger.setup.notice(\"delivery.write_failed\")"))
     }
 
     @Test func mismatchBranchHasNoticeDeltasPlusOneZeroZeroPlusOne() async throws {
@@ -135,7 +150,7 @@ struct DiagnosticEvidenceLoggingTests {
         #expect(wireUpContains(coordinator, "Logger.general.info(\"[Permissions] Recording denied, screen recording permission not granted\")"))
         #expect(wireUpContains(coordinator, "Logger.general.error(\"Recording failed to start:"))
         #expect(!adapter.contains("Logger.general"))
-        #expect(adapter.components(separatedBy: "Logger.setup.").count == 3)
+        #expect(adapter.components(separatedBy: "Logger.setup.").count == 7)
     }
 }
 

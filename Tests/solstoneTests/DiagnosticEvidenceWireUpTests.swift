@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import UpdateKit
 @testable import solstone
 
 @Suite("Diagnostic evidence wire-up")
@@ -110,5 +111,63 @@ struct DiagnosticEvidenceWireUpTests {
         #expect(wireUpContains(coordinator, "captureManager.onStateChanged = { [weak self] state in"))
         #expect(wireUpContains(coordinator, "self?.handleCaptureStateChange(state)"))
         #expect(wireUpContains(settings, "appState.capture.publishScreenRecordingPermission(.granted)"))
+    }
+
+    @Test @MainActor func terminationAndDeliveryEvidenceUseStateOwnedDependencies() throws {
+        let app = try readWireUpSource("Sources/solstone/SolstoneCaptureApp.swift")
+        let appState = try readWireUpSource("Sources/solstone/AppState.swift")
+        let quit = try readWireUpSource("Sources/solstone/AppQuitCoordinator.swift")
+        let upload = try readWireUpSource("Sources/solstone/UploadCoordinator.swift")
+
+        #expect(wireUpContains(app, "private var appKitTerminationSeam = AppKitTerminationSeam()"))
+        #expect(wireUpContains(app, "appKitTerminationSeam.applicationShouldTerminate()"))
+        #expect(!app.contains("terminateNow"))
+        #expect(wireUpContains(app, "AppState.shared?.appQuitCoordinator"))
+        #expect(wireUpContains(app, "NSApp.reply(toApplicationShouldTerminate: $0)"))
+        #expect(wireUpContains(appState, "private let recorder: DiagnosticEvidenceRecorder"))
+        #expect(wireUpContains(appState, "private let logAdapter: DiagnosticEvidenceLoggingAdapter"))
+
+        func constructionSlice(startingAt start: String, endingBefore end: String) -> String? {
+            guard let startRange = appState.range(of: start),
+                  let endRange = appState[startRange.upperBound...].range(of: end) else {
+                return nil
+            }
+            return String(appState[startRange.lowerBound..<endRange.lowerBound])
+        }
+
+        let productionUpload = try #require(constructionSlice(
+            startingAt: "        uploadCoordinator = UploadCoordinator(\n            storageManager:",
+            endingBefore: "        appQuitCoordinator = makeAppQuitCoordinator("
+        ))
+        #expect(wireUpContains(productionUpload, "recorder: recorder,"))
+        #expect(wireUpContains(productionUpload, "logAdapter: logAdapter"))
+
+        let productionQuit = try #require(constructionSlice(
+            startingAt: "        appQuitCoordinator = makeAppQuitCoordinator(\n            setCommitted: { [weak self] committed in",
+            endingBefore: "        captureTarget.state = self"
+        ))
+        #expect(wireUpContains(productionQuit, "recorder: recorder,"))
+        #expect(wireUpContains(productionQuit, "logAdapter: logAdapter"))
+
+        let snapshotUpload = try #require(constructionSlice(
+            startingAt: "        uploadCoordinator = UploadCoordinator(\n            forSnapshot: storageManager,",
+            endingBefore: "        appQuitCoordinator = makeAppQuitCoordinator("
+        ))
+        #expect(wireUpContains(snapshotUpload, "recorder: recorder,"))
+        #expect(wireUpContains(snapshotUpload, "logAdapter: logAdapter"))
+
+        let snapshotQuit = try #require(constructionSlice(
+            startingAt: "        appQuitCoordinator = makeAppQuitCoordinator(\n            setCommitted: { _ in },",
+            endingBefore: "        visitedSettingsTabs ="
+        ))
+        #expect(wireUpContains(snapshotQuit, "recorder: recorder,"))
+        #expect(wireUpContains(snapshotQuit, "logAdapter: logAdapter"))
+
+        #expect(!wireUpContains(appState, "evidenceDrainCutoffSeconds:"))
+        #expect(wireUpContains(quit, "diagnosticEvidenceDrainCutoffSeconds: Double = 2"))
+        #expect(wireUpContains(upload, "recorder: DiagnosticEvidenceRecorder = .dormant"))
+        #expect(wireUpContains(upload, "logAdapter: DiagnosticEvidenceLoggingAdapter = .live"))
+        #expect(UpdateController.stagedInstallRecoveryDelay == .seconds(30))
+        #expect(AppQuitCoordinator.diagnosticEvidenceDrainCutoffSeconds < 30)
     }
 }

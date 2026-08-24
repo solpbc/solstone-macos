@@ -109,6 +109,8 @@ public final class UploadCoordinator {
     private let lastContactStore: any LastSuccessfulJournalContactStoring
     private let lastDeliveryStore: any LastJournalDeliveryStoring
     private let journalIdentityProvider: @MainActor @Sendable () -> JournalIdentityRead
+    private let recorder: DiagnosticEvidenceRecorder
+    private let logAdapter: DiagnosticEvidenceLoggingAdapter
     private var config: AppConfig
     private var pairedIngestIdentity: TunnelPairingIdentity?
     private var pushedJournalFingerprint: JournalConnectionFingerprint?
@@ -127,7 +129,9 @@ public final class UploadCoordinator {
         automaticSyncEnabled: Bool = true,
         lastContactStore: any LastSuccessfulJournalContactStoring = UserDefaultsLastSuccessfulJournalContactStore(),
         lastDeliveryStore: any LastJournalDeliveryStoring = UserDefaultsLastJournalDeliveryStore(),
-        journalIdentityProvider: @escaping @MainActor @Sendable () -> JournalIdentityRead = { .absent }
+        journalIdentityProvider: @escaping @MainActor @Sendable () -> JournalIdentityRead = { .absent },
+        recorder: DiagnosticEvidenceRecorder = .dormant,
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live
     ) {
         self.config = config
         self.client = client
@@ -137,6 +141,8 @@ public final class UploadCoordinator {
         self.lastContactStore = lastContactStore
         self.lastDeliveryStore = lastDeliveryStore
         self.journalIdentityProvider = journalIdentityProvider
+        self.recorder = recorder
+        self.logAdapter = logAdapter
         self.syncService = SyncService(
             storageManager: storageManager,
             client: client,
@@ -170,13 +176,17 @@ public final class UploadCoordinator {
         resolver: HomeBaseURLResolver? = nil,
         lastContactStore: any LastSuccessfulJournalContactStoring = InMemoryLastSuccessfulJournalContactStore(),
         lastDeliveryStore: any LastJournalDeliveryStoring = InMemoryLastJournalDeliveryStore(),
-        journalIdentityProvider: @escaping @MainActor @Sendable () -> JournalIdentityRead = { .absent }
+        journalIdentityProvider: @escaping @MainActor @Sendable () -> JournalIdentityRead = { .absent },
+        recorder: DiagnosticEvidenceRecorder = .dormant,
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live
     ) {
         self.config = config
         self.client = client
         self.lastContactStore = lastContactStore
         self.lastDeliveryStore = lastDeliveryStore
         self.journalIdentityProvider = journalIdentityProvider
+        self.recorder = recorder
+        self.logAdapter = logAdapter
         let snapshotResolver = resolver ?? HomeBaseURLResolver { .held }
         self.syncService = SyncService(
             storageManager: storageManager,
@@ -425,8 +435,12 @@ public final class UploadCoordinator {
             case .confirmed:
                 lastJournalDeliveryWriteFailed = false
             case .failed:
+                let wasFailed = lastJournalDeliveryWriteFailed
                 lastJournalDeliveryWriteFailed = true
-                Logger.upload.error("delivery_write_failed")
+                recorder.enqueue(.deliveryWriteFailed)
+                if !wasFailed {
+                    logAdapter.deliveryWriteFailed()
+                }
             }
         }
         refreshLastJournalDelivery()

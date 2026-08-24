@@ -86,6 +86,35 @@ struct AppStateTerminationDrainTests {
             .waitForCompletion
         ])
     }
+
+    @Test func realTimeoutRecordsTerminationEvidenceAndNotice() async {
+        let harness = DiagnosticEvidenceHarness()
+        let events = TerminationDrainLogEvents()
+        let state = AppState.forSnapshot(
+            config: AppConfig(serviceMode: .bundled),
+            recorder: harness.recorder,
+            logAdapter: DiagnosticEvidenceLoggingAdapter { events.events.append($0) }
+        )
+        state.terminationDrainer = NeverCompletingTerminationDrainer()
+        state.terminationDrainRunner = { operation in
+            try await withTimeout(seconds: 0.05, operation: operation)
+        }
+
+        await state.performQuitPreparation()
+
+        #expect(evidenceCodes(await harness.entries()) == [.terminationDrainTimeout])
+        #expect(events.events == [.terminationDrainTimeout])
+    }
+
+    @Test func genericDrainFailureRecordsNoTimeoutEvidence() async {
+        let harness = DiagnosticEvidenceHarness()
+        let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled), recorder: harness.recorder)
+        state.terminationDrainRunner = { _ in throw TerminationDrainTestError.failed }
+
+        await state.performQuitPreparation()
+
+        #expect((await harness.entries()).isEmpty)
+    }
 }
 
 private enum TerminationDrainEvent: Equatable, Sendable {
@@ -166,4 +195,23 @@ private actor RecordingTerminationFinalizerDrainer: SegmentFinalizing, Terminati
     func events() -> [TerminationDrainEvent] {
         recordedEvents
     }
+}
+
+private enum TerminationDrainTestError: Error {
+    case failed
+}
+
+private actor NeverCompletingTerminationDrainer: TerminationDraining {
+    func setOnSegmentComplete(_ callback: (@Sendable (URL, SegmentReconciliation) async -> Void)?) async {}
+
+    func waitForCompletion() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
+@MainActor
+private final class TerminationDrainLogEvents {
+    var events: [DiagnosticEvidenceLogEvent] = []
 }

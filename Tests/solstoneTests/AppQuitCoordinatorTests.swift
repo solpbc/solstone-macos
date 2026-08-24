@@ -123,7 +123,7 @@ struct AppQuitCoordinatorTests {
         let events = LockedArray<String>([])
         let coordinator = makeCoordinator(events: events)
 
-        coordinator.requestExternalTermination { proceed in
+        coordinator.requestAppKitTermination { proceed in
             events.append("reply:\(proceed)")
         }
 
@@ -154,10 +154,10 @@ struct AppQuitCoordinatorTests {
             }
         )
 
-        coordinator.requestExternalTermination { proceed in
+        coordinator.requestAppKitTermination { proceed in
             events.append("reply1:\(proceed)")
         }
-        coordinator.requestExternalTermination { proceed in
+        coordinator.requestAppKitTermination { proceed in
             events.append("reply2:\(proceed)")
         }
 
@@ -196,7 +196,7 @@ struct AppQuitCoordinatorTests {
             events.all.contains("prepareForQuit")
         }
 
-        coordinator.requestExternalTermination { proceed in
+        coordinator.requestAppKitTermination { proceed in
             events.append("reply:\(proceed)")
         }
         canFinish.set(true)
@@ -309,15 +309,18 @@ struct AppQuitCoordinatorTests {
         #expect(count(events.all, "prepareForUpdate") == 1)
     }
 
-    @Test func externalTerminationAfterPreparedRepliesTrueImmediatelyWithoutTerminate() async {
+    @Test func externalTerminationAfterPreparedRepliesTrueWithoutTerminate() async throws {
         let events = LockedArray<String>([])
         let coordinator = makeCoordinator(events: events)
 
         await coordinator.prepareForUpdaterInstall()
-        coordinator.requestExternalTermination { proceed in
+        coordinator.requestAppKitTermination { proceed in
             events.append("reply:\(proceed)")
         }
 
+        try await waitUntil(timeout: .seconds(5)) {
+            events.all.contains("reply:true")
+        }
         #expect(events.all.contains("reply:true"))
         #expect(!events.all.contains("terminate"))
     }
@@ -390,7 +393,7 @@ struct AppQuitCoordinatorTests {
         try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("prepareForUpdate:start")
         }
-        coordinator.requestExternalTermination { proceed in
+        coordinator.requestAppKitTermination { proceed in
             events.append("reply:\(proceed)")
         }
 

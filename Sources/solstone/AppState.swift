@@ -36,6 +36,7 @@ private final class AppStateBridgeTarget: @unchecked Sendable {
 @MainActor
 @Observable
 public final class AppState {
+    internal static let terminationRemixDrainTimeoutSeconds: Double = 30
 
     /// Latest real heartbeat POST outcome — the direct-URL connection-health fact
     /// the "your journal" panel presents when no tunnel manages the connection.
@@ -91,6 +92,8 @@ public final class AppState {
     private let loginService: any LoginItemService
     private let loginItemRegistrationReconciler: LoginItemRegistrationReconciler
     private let lastContactStore: any LastSuccessfulJournalContactStoring
+    private let recorder: DiagnosticEvidenceRecorder
+    private let logAdapter: DiagnosticEvidenceLoggingAdapter
     private let isSnapshot: Bool
     private let automaticObservationPipelineEnabled: Bool
     private let observerHealthSnapshotEnabled: Bool
@@ -162,6 +165,12 @@ public final class AppState {
     private var notificationRequestTask: Task<Void, Never>?
     private var activationObserver: NSObjectProtocol?
     internal var terminationDrainer: any TerminationDraining = RemixQueue.shared
+    internal var terminationDrainRunner: @MainActor (@escaping @Sendable () async -> Void) async throws -> Void = { operation in
+        try await withTimeout(
+            seconds: AppState.terminationRemixDrainTimeoutSeconds,
+            operation: operation
+        )
+    }
     internal var replacementLaunchRunner: @MainActor (ReplacementLaunchCommand) throws -> Void = ReplacementLaunchGate.runDetached
 
     // MARK: - Activation Policy
@@ -221,7 +230,9 @@ public final class AppState {
     private func makeAppQuitCoordinator(
         setCommitted: @escaping @MainActor (Bool) -> Void,
         terminate: @escaping @MainActor () -> Void,
-        launchReplacement: @escaping @MainActor () -> Void
+        launchReplacement: @escaping @MainActor () -> Void,
+        recorder: DiagnosticEvidenceRecorder,
+        logAdapter: DiagnosticEvidenceLoggingAdapter
     ) -> AppQuitCoordinator {
         AppQuitCoordinator(
             dependencies: AppQuitCoordinator.Dependencies(
@@ -242,7 +253,9 @@ public final class AppState {
                 // entering AppKit termination.
                 terminate: terminate,
                 launchReplacement: launchReplacement
-            )
+            ),
+            recorder: recorder,
+            logAdapter: logAdapter
         )
     }
 
@@ -272,8 +285,12 @@ public final class AppState {
         let drainer = terminationDrainer
         await drainer.setOnSegmentComplete(nil)
         do {
-            try await withTimeout(seconds: 30) { await drainer.waitForCompletion() }
+            try await terminationDrainRunner { await drainer.waitForCompletion() }
         } catch {
+            if error is TimeoutError {
+                recorder.enqueue(.terminationDrainTimeout)
+                logAdapter.terminationDrainTimeout()
+            }
             Logger.general.warning("Timed out draining pending remix work during termination; leaving in-flight segment recoverable")
         }
     }
@@ -771,6 +788,8 @@ public final class AppState {
             versionReader: SolstoneBundleVersionReader.read(fromBundleAt:)
         )
         self.lastContactStore = lastContactStore
+        self.recorder = recorder
+        self.logAdapter = logAdapter
         self.observerHealthSnapshotEnabled = true
         self.recoveryCoordinator = recoveryCoordinator
         let splClientInfo = SPLRuntime.clientInfo
@@ -877,7 +896,9 @@ public final class AppState {
             lastDeliveryStore: lastDeliveryStore,
             journalIdentityProvider: { [fingerprintTarget] in
                 fingerprintTarget.state?.currentJournalIdentity() ?? .absent
-            }
+            },
+            recorder: recorder,
+            logAdapter: logAdapter
         )
         appQuitCoordinator = makeAppQuitCoordinator(
             setCommitted: { [weak self] committed in
@@ -891,7 +912,9 @@ public final class AppState {
             launchReplacement: { [weak self] in
                 guard let self else { return }
                 self.launchReplacementForSettingsRestart()
-            }
+            },
+            recorder: recorder,
+            logAdapter: logAdapter
         )
         captureTarget.state = self
 
@@ -1134,6 +1157,8 @@ public final class AppState {
         )
         let lastContactStore = providedLastContactStore ?? InMemoryLastSuccessfulJournalContactStore()
         self.lastContactStore = lastContactStore
+        self.recorder = recorder
+        self.logAdapter = logAdapter
         let lastDeliveryStore = providedLastDeliveryStore ?? InMemoryLastJournalDeliveryStore()
         self.observerHealthSnapshotEnabled = false
         self.notificationAuthorizationStatus = notificationStatus
@@ -1207,12 +1232,16 @@ public final class AppState {
             lastDeliveryStore: lastDeliveryStore,
             journalIdentityProvider: { [fingerprintTarget] in
                 fingerprintTarget.state?.currentJournalIdentity() ?? .absent
-            }
+            },
+            recorder: recorder,
+            logAdapter: logAdapter
         )
         appQuitCoordinator = makeAppQuitCoordinator(
             setCommitted: { _ in },
             terminate: {},
-            launchReplacement: {}
+            launchReplacement: {},
+            recorder: recorder,
+            logAdapter: logAdapter
         )
         visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
         heartbeatTarget.state = self
