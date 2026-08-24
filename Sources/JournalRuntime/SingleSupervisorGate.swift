@@ -107,8 +107,12 @@ public struct SingleSupervisorGate: SingleSupervisorGating {
             )))
         }
 
-        if let failure = await assertStartupPortsAvailable(ports: [7657, 5015], runner: runner, clock: clock) {
-            Logger.setup.warning("journal-lifecycle: gate-blocked reason=ports-not-released ports=7657,5015 detail=\(failure.message, privacy: .public)")
+        let directDoorPortResolution = resolveJournalDirectDoorPort(journalRoot: journalRoot)
+        if let failure = await assertStartupPortsAvailable(resolution: directDoorPortResolution, runner: runner, clock: clock) {
+            let ports = JournalLifecyclePortPreflight.orderedPorts(for: directDoorPortResolution)
+                .map(String.init)
+                .joined(separator: ",")
+            Logger.setup.warning("journal-lifecycle: gate-blocked reason=ports-not-released ports=\(ports, privacy: .public) detail=\(failure.message, privacy: .public)")
             let diagnostic = JournalDiagnostic(
                 commandLabel: "journal supervisor gate",
                 outputExcerpt: failure.message

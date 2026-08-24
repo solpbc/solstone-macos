@@ -256,6 +256,15 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
     }
 }
 
+public extension FakeSubprocessRunner {
+    func lsofPorts() -> [Int] {
+        invocations.compactMap { invocation in
+            invocation.arguments.first { $0.hasPrefix("-iTCP:") }
+                .flatMap { Int($0.dropFirst("-iTCP:".count)) }
+        }
+    }
+}
+
 public struct FakeRunError: LocalizedError, Sendable {
     public let message: String
 

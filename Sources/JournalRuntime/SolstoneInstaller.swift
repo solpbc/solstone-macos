@@ -484,7 +484,8 @@ public final class SolstoneInstaller {
             return StopOldServiceFailure(step: failure.step, message: failure.message)
         }
 
-        if let failure = await assertPortsReleased(ports: [7657, 5015], runner: subprocessRunner) {
+        let directDoorPortResolution = resolveJournalDirectDoorPort(journalRoot: journalURL)
+        if let failure = await assertPortsReleased(resolution: directDoorPortResolution, runner: subprocessRunner) {
             return StopOldServiceFailure(step: failure.step, message: failure.message)
         }
 

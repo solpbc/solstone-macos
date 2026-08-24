@@ -152,10 +152,10 @@ private func logOrphanSweepNoop(reason: JournalOrphanClaimRejection) {
 }
 
 internal func assertPortsReleased(
-    ports: [Int],
+    resolution: JournalDirectDoorPortResolution,
     runner: SubprocessRunning
 ) async -> CleanupFailure? {
-    for port in ports {
+    for port in JournalLifecyclePortPreflight.orderedPorts(for: resolution) {
         let result: SubprocessResult
         do {
             result = try await runner.run(
@@ -185,13 +185,13 @@ internal func assertPortsReleased(
 }
 
 internal func assertStartupPortsAvailable(
-    ports: [Int],
+    resolution: JournalDirectDoorPortResolution,
     runner: SubprocessRunning,
     clock: any MonotonicClock
 ) async -> StartupPortProbeFailure? {
     let retryDelays: [Duration] = [.seconds(2), .seconds(3)]
 
-    for port in ports {
+    for port in JournalLifecyclePortPreflight.orderedPorts(for: resolution) {
         for attempt in 0...retryDelays.count {
             let output = LockedProcessUtilityOutput()
             let result: SubprocessResult
