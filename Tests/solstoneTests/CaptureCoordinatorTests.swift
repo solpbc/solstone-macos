@@ -288,7 +288,8 @@ struct CaptureCoordinatorTests {
             startOperation: { _, _ in
                 deferredStartCount.increment()
                 return .committed
-            }
+            },
+            screenPermissionProvider: grantedScreenPermissionProvider()
         )
         defer { try? FileManager.default.removeItem(at: deferredRoot) }
         deferredCoordinator.captureManager.lifecycleTransitionToError(
@@ -298,11 +299,9 @@ struct CaptureCoordinatorTests {
         )
 
         #expect(deferredCoordinator.captureManager.isRecoveryScheduled)
+        deferredCoordinator.microphoneAuthorizationReader = { .authorized }
 
-        await deferredCoordinator.checkPermissionsAndAutoStartForTesting(
-            screenRecordingGranted: true,
-            microphoneGranted: true
-        )
+        await deferredCoordinator.checkPermissionsAndAutoStart()
 
         #expect(deferredStartCount.count == 0)
         #expect(deferredCoordinator.initialPermissionCheckComplete)
@@ -312,16 +311,15 @@ struct CaptureCoordinatorTests {
             startOperation: { _, _ in
                 firedStartCount.increment()
                 return .committed
-            }
+            },
+            screenPermissionProvider: grantedScreenPermissionProvider()
         )
         defer { try? FileManager.default.removeItem(at: firedRoot) }
 
         #expect(!firedCoordinator.captureManager.isRecoveryScheduled)
+        firedCoordinator.microphoneAuthorizationReader = { .authorized }
 
-        await firedCoordinator.checkPermissionsAndAutoStartForTesting(
-            screenRecordingGranted: true,
-            microphoneGranted: true
-        )
+        await firedCoordinator.checkPermissionsAndAutoStart()
 
         #expect(firedStartCount.count == 1)
         #expect(firedCoordinator.initialPermissionCheckComplete)
@@ -329,13 +327,13 @@ struct CaptureCoordinatorTests {
 
     @Test func livePermissionCheckReadsMicrophoneCauseBeforeScreenRecordingBranch() throws {
         let source = try readWireUpSource("Sources/solstone/CaptureCoordinator.swift")
-        let functionStart = try #require(source.range(of: "private func checkPermissionsAndAutoStart("))
+        let functionStart = try #require(source.range(of: "internal func checkPermissionsAndAutoStart("))
         let functionEnd = try #require(
             source[functionStart.upperBound...].range(of: "\n    internal var isPermissionPollingActiveForTesting")
         )
         let body = source[functionStart.lowerBound..<functionEnd.lowerBound]
-        let microphoneRead = try #require(body.range(of: "microphoneAuthorizationCause = microphoneAuthorizationReader()"))
-        let screenBranch = try #require(body.range(of: "if checker.hasPromptedScreenRecording"))
+        let microphoneRead = try #require(body.range(of: "let microphoneCause = microphoneAuthorizationReader()"))
+        let screenBranch = try #require(body.range(of: "if screenPermissionProvider.hasPrompted()"))
 
         #expect(microphoneRead.lowerBound < screenBranch.lowerBound)
     }
@@ -347,7 +345,8 @@ struct CaptureCoordinatorTests {
             (disabled: Set<String>(), enabled: Set<String>())
         },
         bannerSink: @escaping CaptureCoordinator.BannerSink = { _ in },
-        startOperation: CaptureCoordinator.StartOperation? = nil
+        startOperation: CaptureCoordinator.StartOperation? = nil,
+        screenPermissionProvider: ScreenRecordingPermissionProvider = .live
     ) throws -> (CaptureCoordinator, URL) {
         let root = try makeTempDirectory("capture-coordinator")
         let captureManager = CaptureManager(storageManager: StorageManager(baseDirectory: root))
@@ -358,9 +357,19 @@ struct CaptureCoordinatorTests {
             isTerminating: isTerminating,
             configProvider: configProvider,
             bannerSink: bannerSink,
-            startOperation: startOperation
+            startOperation: startOperation,
+            screenPermissionProvider: screenPermissionProvider
         )
         return (coordinator, root)
+    }
+
+    private func grantedScreenPermissionProvider() -> ScreenRecordingPermissionProvider {
+        ScreenRecordingPermissionProvider(
+            hasPrompted: { true },
+            preflight: { true },
+            checkScreenRecording: { true },
+            resetPromptedFlag: {}
+        )
     }
 }
 

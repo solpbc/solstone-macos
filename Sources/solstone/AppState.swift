@@ -721,7 +721,7 @@ public final class AppState {
         confirmedMark = nil
     }
 
-    public init(
+    init(
         notifier: any UserNotifying = UNUserNotificationCenterNotifier(),
         loginService: any LoginItemService = LiveLoginItemService(),
         automaticObservationPipelineEnabled: Bool = true,
@@ -733,7 +733,10 @@ public final class AppState {
         },
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
             $0.uploadCoordinator.triggerSync()
-        }
+        },
+        recorder: DiagnosticEvidenceRecorder = .dormant,
+        screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live
     ) {
         // Load configuration
         let config = AppConfig.loadOrCreateDefault()
@@ -840,7 +843,10 @@ public final class AppState {
             },
             bannerSink: { [captureTarget] message in
                 captureTarget.state?.errorMessage = message
-            }
+            },
+            recorder: recorder,
+            screenPermissionProvider: screenPermissionProvider,
+            logAdapter: logAdapter
         )
         self.capture = capture
         self.heartbeatService = HeartbeatService(
@@ -985,7 +991,11 @@ public final class AppState {
             $0.uploadCoordinator.triggerSync()
         },
         lastContactStore: (any LastSuccessfulJournalContactStoring)? = nil,
-        lastDeliveryStore: (any LastJournalDeliveryStoring)? = nil
+        lastDeliveryStore: (any LastJournalDeliveryStoring)? = nil,
+        recorder: DiagnosticEvidenceRecorder = .dormant,
+        screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
+        captureStartOperation: CaptureCoordinator.StartOperation? = nil
     ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
@@ -999,7 +1009,11 @@ public final class AppState {
             sameMachinePairStart: sameMachinePairStart,
             triggerTunnelConnectedSync: triggerTunnelConnectedSync,
             lastContactStore: lastContactStore,
-            lastDeliveryStore: lastDeliveryStore
+            lastDeliveryStore: lastDeliveryStore,
+            recorder: recorder,
+            screenPermissionProvider: screenPermissionProvider,
+            logAdapter: logAdapter,
+            captureStartOperation: captureStartOperation
         )
     }
 
@@ -1077,7 +1091,11 @@ public final class AppState {
         pairingOperation: PairingCoordinator.PairOperation? = nil,
         pairingLoad: PairingCoordinator.LoadPairing? = nil,
         pairingSave: PairingCoordinator.SavePairing? = nil,
-        pairingDelete: PairingCoordinator.DeletePairing? = nil
+        pairingDelete: PairingCoordinator.DeletePairing? = nil,
+        recorder: DiagnosticEvidenceRecorder = .dormant,
+        screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
+        captureStartOperation: CaptureCoordinator.StartOperation? = nil
     ) {
         let pauseManager = PauseManager()
         let storageManager = StorageManager()
@@ -1146,7 +1164,11 @@ public final class AppState {
             },
             bannerSink: { [captureTarget] message in
                 captureTarget.state?.errorMessage = message
-            }
+            },
+            startOperation: captureStartOperation,
+            recorder: recorder,
+            screenPermissionProvider: screenPermissionProvider,
+            logAdapter: logAdapter
         )
         self.capture = capture
         self.heartbeatService = HeartbeatService(

@@ -902,7 +902,7 @@ struct SettingsView: View {
                     }
                 }
             } else if newValue == 0 {
-                appState.screenRecordingGranted = true
+                appState.capture.publishScreenRecordingPermission(.granted)
                 relaunchApp()
             }
         }

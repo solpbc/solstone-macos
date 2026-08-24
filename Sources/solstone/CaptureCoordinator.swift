@@ -7,6 +7,25 @@ import Observation
 import os
 @preconcurrency import ScreenCaptureKit
 
+internal enum ScreenRecordingPermissionEvidence: Equatable {
+    case granted
+    case notGranted
+    case unavailable
+}
+
+private enum MicrophonePermissionEvidence: Equatable {
+    case granted
+    case notGranted
+    case unavailable
+}
+
+private enum CaptureStateEvidence: Equatable {
+    case on
+    case paused
+    case off
+    case error
+}
+
 @MainActor
 @Observable
 public final class CaptureCoordinator {
@@ -20,7 +39,11 @@ public final class CaptureCoordinator {
     public internal(set) var isPaused = false
     public internal(set) var isUserPaused = false
     public internal(set) var captureError: String?
-    public internal(set) var screenRecordingGranted = false
+    private var storedScreenRecordingGranted = false
+    public internal(set) var screenRecordingGranted: Bool {
+        get { storedScreenRecordingGranted }
+        set { storedScreenRecordingGranted = newValue }
+    }
     internal var microphoneAuthorizationCause: MicrophoneAuthorizationCause = .unknown
     public internal(set) var initialPermissionCheckComplete = false
     public internal(set) var captureQueuedForJournalReadiness = false
@@ -43,18 +66,27 @@ public final class CaptureCoordinator {
     private let configProvider: MicUIDConfigProvider
     private let bannerSink: BannerSink
     private let startOperation: StartOperation
+    private let recorder: DiagnosticEvidenceRecorder
+    private let screenPermissionProvider: ScreenRecordingPermissionProvider
+    private let logAdapter: DiagnosticEvidenceLoggingAdapter
 
     private var permissionPollTimer: Timer?
     private var isCheckingPermissions = false
+    private var lastScreenPermissionEvidence: ScreenRecordingPermissionEvidence?
+    private var lastMicrophonePermissionEvidence: MicrophonePermissionEvidence?
+    private var lastCaptureStateEvidence: CaptureStateEvidence?
 
-    public init(
+    init(
         captureManager: CaptureManager,
         pauseManager: PauseManager,
         audioDeviceMonitor: AudioDeviceMonitor,
         isTerminating: @escaping IsTerminatingProvider,
         configProvider: @escaping MicUIDConfigProvider,
         bannerSink: @escaping BannerSink,
-        startOperation: StartOperation? = nil
+        startOperation: StartOperation? = nil,
+        recorder: DiagnosticEvidenceRecorder = .dormant,
+        screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live
     ) {
         self.captureManager = captureManager
         self.pauseManager = pauseManager
@@ -62,6 +94,9 @@ public final class CaptureCoordinator {
         self.isTerminating = isTerminating
         self.configProvider = configProvider
         self.bannerSink = bannerSink
+        self.recorder = recorder
+        self.screenPermissionProvider = screenPermissionProvider
+        self.logAdapter = logAdapter
         self.startOperation = startOperation ?? { [captureManager] reason, config in
             await captureManager.enqueueTransition(
                 .start(
@@ -109,6 +144,8 @@ public final class CaptureCoordinator {
     }
 
     func handleCaptureStateChange(_ state: CaptureManager.State) {
+        publishCaptureStateEvidence(for: state)
+
         switch state {
         case .idle:
             isRecording = false
@@ -151,16 +188,17 @@ public final class CaptureCoordinator {
         let outcome = await startOperation(reason, config)
         switch outcome {
         case .committed:
-            screenRecordingGranted = true
+            publishScreenRecordingPermission(.granted)
             if wasUserPaused {
                 pauseManager.clearPolicyStateSilently()
             }
         case .threw(let failure):
             if failure.isPermissionError {
                 Logger.general.info("[Permissions] Recording denied, screen recording permission not granted")
-                screenRecordingGranted = false
+                publishScreenRecordingPermission(.notGranted)
             } else {
                 Logger.general.error("Recording failed to start: \(failure.message, privacy: .public)")
+                publishCaptureStateEvidence(for: .error(failure.message))
                 captureError = UICopy.ERROR_START_OBSERVING
                 bannerSink(UICopy.ERROR_START_OBSERVING)
             }
@@ -192,7 +230,9 @@ public final class CaptureCoordinator {
     }
 
     internal func refreshMicrophoneAuthorization() {
-        microphoneAuthorizationCause = microphoneAuthorizationReader()
+        let cause = microphoneAuthorizationReader()
+        microphoneAuthorizationCause = cause
+        publishMicrophoneAuthorization(cause)
     }
 
     private func startPermissionPolling() {
@@ -214,49 +254,37 @@ public final class CaptureCoordinator {
         permissionPollTimer = nil
     }
 
-    internal func checkPermissionsAndAutoStartForTesting(
-        screenRecordingGranted: Bool,
-        microphoneGranted: Bool
-    ) async {
-        await checkPermissionsAndAutoStart(
-            permissionOverride: (
-                screenRecordingGranted: screenRecordingGranted,
-                microphoneAuthorizationCause: microphoneGranted ? .authorized : .denied
-            )
-        )
-    }
-
-    private func checkPermissionsAndAutoStart(
-        permissionOverride: (screenRecordingGranted: Bool, microphoneAuthorizationCause: MicrophoneAuthorizationCause)? = nil
-    ) async {
+    internal func checkPermissionsAndAutoStart() async {
         guard !isCheckingPermissions else { return }
         isCheckingPermissions = true
         defer { isCheckingPermissions = false }
 
-        if let permissionOverride {
-            screenRecordingGranted = permissionOverride.screenRecordingGranted
-            microphoneAuthorizationCause = permissionOverride.microphoneAuthorizationCause
-        } else {
-            let checker = PermissionChecker()
-            microphoneAuthorizationCause = microphoneAuthorizationReader()
+        let microphoneCause = microphoneAuthorizationReader()
+        microphoneAuthorizationCause = microphoneCause
+        publishMicrophoneAuthorization(microphoneCause)
 
-            if checker.hasPromptedScreenRecording {
-                // Gate on CGPreflightScreenCaptureAccess before touching SCShareableContent.
-                // On macOS 26, SCShareableContent.current re-triggers the OS dialog when no TCC
-                // entry exists — i.e. while the user has been prompted but hasn't granted yet.
-                // CGPreflightScreenCaptureAccess returns true only when a valid TCC entry exists.
-                if CGPreflightScreenCaptureAccess() {
-                    let granted = await PermissionChecker.checkScreenRecording()
-                    if !granted {
-                        // Preflight passed but SCShareableContent failed — CDHash changed after
-                        // reinstall. Reset prompted flag so user re-grants via the button.
-                        PermissionChecker.resetPromptedFlag()
-                        Logger.setup.info("[Permissions] Screen recording access lost (CDHash changed?), resetting prompt flag")
-                    }
-                    screenRecordingGranted = granted
+        if screenPermissionProvider.hasPrompted() {
+            // Gate on CGPreflightScreenCaptureAccess before touching SCShareableContent.
+            // On macOS 26, SCShareableContent.current re-triggers the OS dialog when no TCC
+            // entry exists — i.e. while the user has been prompted but hasn't granted yet.
+            // CGPreflightScreenCaptureAccess returns true only when a valid TCC entry exists.
+            if screenPermissionProvider.preflight() {
+                let granted = await screenPermissionProvider.checkScreenRecording()
+                if granted {
+                    publishScreenRecordingPermission(.granted)
+                } else {
+                    // Preflight passed but ScreenCaptureKit failed — a changed CDHash can leave
+                    // the TCC record unusable. This recurring signal must precede unavailable.
+                    screenPermissionProvider.resetPromptedFlag()
+                    recorder.enqueue(.screenRecordingCDHashMismatch)
+                    logAdapter.screenRecordingCDHashMismatch()
+                    publishScreenRecordingPermission(.unavailable)
                 }
-                // else: no TCC entry yet — user hasn't granted in System Settings, wait silently
+            } else {
+                publishScreenRecordingPermission(.notGranted)
             }
+        } else {
+            publishScreenRecordingPermission(.unavailable)
         }
 
         let allGranted = screenRecordingGranted && microphoneGranted
@@ -264,7 +292,8 @@ public final class CaptureCoordinator {
         // Auto-start if permissions are ready, not paused, not already recording, and recovery is not scheduled
         if allGranted && !isRecording && !isUserPaused && !captureManager.isRecoveryScheduled {
             if isTerminating() {
-                Logger.general.info("[Permissions] auto-start skipped because app is terminating")
+                recorder.enqueue(.permissionAutoStartSkipped)
+                logAdapter.permissionAutoStartSkipped()
             } else {
                 Logger.general.info("[Permissions] all granted, auto-starting observation")
                 await startRecording(reason: .autoStart)
@@ -281,5 +310,72 @@ public final class CaptureCoordinator {
 
     internal var isPermissionPollingActiveForTesting: Bool {
         permissionPollTimer != nil
+    }
+
+    internal func publishScreenRecordingPermission(_ evidence: ScreenRecordingPermissionEvidence) {
+        screenRecordingGranted = evidence == .granted
+        guard lastScreenPermissionEvidence != evidence else { return }
+        lastScreenPermissionEvidence = evidence
+
+        switch evidence {
+        case .granted:
+            recorder.enqueue(.screenRecordingGranted)
+        case .notGranted:
+            recorder.enqueue(.screenRecordingNotGranted)
+        case .unavailable:
+            recorder.enqueue(.screenRecordingUnavailable)
+        }
+    }
+
+    private func publishMicrophoneAuthorization(_ cause: MicrophoneAuthorizationCause) {
+        let evidence: MicrophonePermissionEvidence
+        switch cause {
+        case .authorized:
+            evidence = .granted
+        case .notDetermined, .denied, .restricted:
+            evidence = .notGranted
+        case .unknown:
+            evidence = .unavailable
+        }
+
+        guard lastMicrophonePermissionEvidence != evidence else { return }
+        lastMicrophonePermissionEvidence = evidence
+
+        switch evidence {
+        case .granted:
+            recorder.enqueue(.microphoneGranted)
+        case .notGranted:
+            recorder.enqueue(.microphoneNotGranted)
+        case .unavailable:
+            recorder.enqueue(.microphoneUnavailable)
+        }
+    }
+
+    private func publishCaptureStateEvidence(for state: CaptureManager.State) {
+        let evidence: CaptureStateEvidence
+        switch state {
+        case .recording:
+            evidence = .on
+        case .paused:
+            evidence = .paused
+        case .idle:
+            evidence = .off
+        case .error:
+            evidence = .error
+        }
+
+        guard lastCaptureStateEvidence != evidence else { return }
+        lastCaptureStateEvidence = evidence
+
+        switch evidence {
+        case .on:
+            recorder.enqueue(.captureOn)
+        case .paused:
+            recorder.enqueue(.capturePaused)
+        case .off:
+            recorder.enqueue(.captureOff)
+        case .error:
+            recorder.enqueue(.captureError)
+        }
     }
 }

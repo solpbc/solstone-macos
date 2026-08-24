@@ -40,7 +40,7 @@ func routeOpenSettingsWindow(
 }
 
 @MainActor
-private enum UpdateAnnouncementLaunchRegistry {
+enum UpdateAnnouncementLaunchRegistry {
     private static var controller: UpdateController?
 
     static func register(_ updateController: UpdateController) {
@@ -205,35 +205,11 @@ struct SolstoneCaptureApp: App {
         let automaticObservationPipelineEnabled = true
 #endif
 
-        _startup = State(initialValue: SolstoneStartupPlanner.planStartup(
+        _startup = State(initialValue: SolstoneStartupComposition.makeNormalStartup(
             decision: AppPlacementGate.evaluate(),
-            makeNormal: {
-                let appState = AppState(
-                    automaticObservationPipelineEnabled: automaticObservationPipelineEnabled
-                )
-                let updateAnnouncer = UpdateNotificationAnnouncer()
-                let updateController = UpdateController(
-                    log: Logger.setup,
-                    errorDomain: "app.solstone.observer.updates",
-                    exclusivity: { appState.journalHandoffActive },
-                    preInstallFinalizer: { @MainActor in
-                        await appState.appQuitCoordinator.prepareForUpdaterInstall()
-                    },
-                    installFailureRecovery: { @MainActor in
-                        appState.appQuitCoordinator.resetAfterFailedUpdaterInstall()
-                    },
-                    terminationBegan: { @MainActor in
-                        appState.appKitTerminationBegan
-                    },
-                    announce: { version in
-                        updateAnnouncer.announce(version: version)
-                    }
-                )
-                UpdateAnnouncementLaunchRegistry.register(updateController)
-                return SolstoneNormalStartup(
-                    appState: appState,
-                    updateController: updateController
-                )
+            automaticObservationPipelineEnabled: automaticObservationPipelineEnabled,
+            makeStartup: { appState, updateController in
+                SolstoneNormalStartup(appState: appState, updateController: updateController)
             }
         ))
     }
