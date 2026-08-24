@@ -94,6 +94,7 @@ final class AppQuitCoordinator {
     private var externalReplies: [@MainActor (Bool) -> Void] = []
     private var hasRecordedAppKitTerminationAttempt = false
     private var externalReplyDrainInFlight = false
+    internal private(set) var externalReplyDrainCountForTesting = 0
     private let dependencies: Dependencies
     private let recorder: DiagnosticEvidenceRecorder
     private let logAdapter: DiagnosticEvidenceLoggingAdapter
@@ -147,8 +148,8 @@ final class AppQuitCoordinator {
         committedIntent = nil
         preparationTask = nil
         finalActionPerformed = false
-        // If AppKit termination joined a failed updater preparation, cancel it
-        // because recovery returns the app to a usable, non-terminating state.
+        // Reply false and fence stale AppKit work; do not cancel the recorder tail,
+        // which must persist the historical attempt after recovery.
         drainExternalReplies(proceed: false)
     }
 
@@ -228,6 +229,7 @@ final class AppQuitCoordinator {
     }
 
     private func drainClaimedExternalReplies(generation: Int) async {
+        externalReplyDrainCountForTesting += 1
         defer { releaseExternalReplyDrainClaim(generation: generation) }
         guard generation == preparationGeneration else { return }
 

@@ -43,8 +43,15 @@ struct AppKitTerminationTests {
     }
 
     @Test func duplicatePreparedCallbacksUseOneDrainReplyEachCallbackAndOneAttemptEvidenceEntry() async throws {
-        let harness = DiagnosticEvidenceHarness()
-        let coordinator = makeCoordinator(recorder: harness.recorder)
+        let clock = TestClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let bytes = GatedDiagnosticEvidenceBytesStore()
+        let store = DiagnosticEvidenceStore(bytesStore: bytes, now: { clock.now })
+        let recorder = DiagnosticEvidenceRecorder(store: store, now: { clock.now })
+        let logEvents = AppKitTerminationLogEvents()
+        let coordinator = makeCoordinator(
+            recorder: recorder,
+            logAdapter: DiagnosticEvidenceLoggingAdapter { logEvents.events.append($0) }
+        )
         await coordinator.prepareForUpdaterInstall()
         let replies = LockedArray<Bool>([])
         let seam = AppKitTerminationSeam(
@@ -53,17 +60,55 @@ struct AppKitTerminationTests {
         )
 
         #expect(seam.applicationShouldTerminate() == .terminateLater)
+        #expect(await Task.detached { bytes.waitForFirstRead() }.value)
         #expect(seam.applicationShouldTerminate() == .terminateLater)
+        await Task.yield()
+        #expect(coordinator.externalReplyDrainCountForTesting == 1)
+        bytes.releaseFirstRead()
         try await waitUntil(timeout: .seconds(5)) {
             replies.all.count == 2
         }
 
         #expect(replies.all == [true, true])
-        let entries = await harness.entries()
-        #expect(evidenceCodes(entries) == [
-            .terminationCommitted,
-            .terminationAppKitBegan,
-        ])
+        #expect(coordinator.externalReplyDrainCountForTesting == 1)
+        await recorder.drain()
+        guard let stored = bytes.stored,
+              let envelope = try? DiagnosticEvidenceEnvelope.decoded(from: stored, now: clock.now) else {
+            Issue.record("AppKit attempt evidence was not durable")
+            return
+        }
+        #expect(evidenceCodes(envelope.entries) == [.terminationCommitted, .terminationAppKitBegan])
+        let attempts = envelope.entries.filter { $0.code == .terminationAppKitBegan }
+        #expect(attempts.map(\.repeatCount) == [1])
+        #expect(logEvents.events.filter { $0 == .terminationAppKitBegan } == [.terminationAppKitBegan])
+    }
+
+    @Test func duplicateUnpreparedCallbacksUseOneDrain() async throws {
+        let gate = AppKitPreparationGate()
+        let coordinator = AppQuitCoordinator(
+            dependencies: .init(prepareForQuit: {
+                await gate.wait()
+            }),
+            evidenceDrainCutoffSeconds: 0.05
+        )
+        let replies = LockedArray<Bool>([])
+        let seam = AppKitTerminationSeam(
+            coordinatorLookup: { coordinator },
+            reply: { replies.append($0) }
+        )
+
+        #expect(seam.applicationShouldTerminate() == .terminateLater)
+        try await waitUntil(timeout: .seconds(5)) {
+            await gate.started
+        }
+        #expect(seam.applicationShouldTerminate() == .terminateLater)
+        gate.release()
+        try await waitUntil(timeout: .seconds(5)) {
+            replies.all.count == 2
+        }
+
+        #expect(replies.all == [true, true])
+        #expect(coordinator.externalReplyDrainCountForTesting == 1)
     }
 
     @Test func mixedWitnessIsDurableWhenPreparedReplyFires() async throws {
@@ -160,8 +205,9 @@ struct AppKitTerminationTests {
             gatedBytes: bytes
         )
 
-        #expect(stalled == healthy)
-        #expect(stalled == [
+        #expect(stalled.events == healthy.events)
+        #expect(stalled.replyElapsed < .milliseconds(500))
+        #expect(stalled.events == [
             "committed:true",
             "prepared",
             "marker:settingsRestart",
@@ -270,10 +316,14 @@ struct AppKitTerminationTests {
         #expect(!events.all.contains("replacement"))
     }
 
-    private func makeCoordinator(recorder: DiagnosticEvidenceRecorder) -> AppQuitCoordinator {
+    private func makeCoordinator(
+        recorder: DiagnosticEvidenceRecorder,
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live
+    ) -> AppQuitCoordinator {
         AppQuitCoordinator(
             dependencies: AppQuitCoordinator.Dependencies(),
             recorder: recorder,
+            logAdapter: logAdapter,
             evidenceDrainCutoffSeconds: 0.05
         )
     }
@@ -281,7 +331,7 @@ struct AppKitTerminationTests {
     private func settingsRestartOutcome(
         recorder: DiagnosticEvidenceRecorder,
         gatedBytes: GatedDiagnosticEvidenceBytesStore? = nil
-    ) async throws -> [String] {
+    ) async throws -> (events: [String], replyElapsed: Duration) {
         let events = LockedArray<String>([])
         let gate = AppKitPreparationGate()
         let coordinator = AppQuitCoordinator(
@@ -307,6 +357,7 @@ struct AppKitTerminationTests {
         try await waitUntil(timeout: .seconds(5)) {
             await gate.started
         }
+        let replyStartedAt = ContinuousClock.now
         #expect(seam.applicationShouldTerminate() == .terminateLater)
         gate.release()
         if let gatedBytes {
@@ -316,7 +367,7 @@ struct AppKitTerminationTests {
             events.all.contains("terminate")
         }
         gatedBytes?.releaseFirstRead()
-        return events.all
+        return (events.all, replyStartedAt.duration(to: .now))
     }
 
     private func testUpdateController() -> UpdateController {
