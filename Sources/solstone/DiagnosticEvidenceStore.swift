@@ -123,6 +123,7 @@ internal struct DiagnosticEvidenceEnvelope: Equatable, Sendable {
     }
 
     func validate(now: Date) throws {
+        // The future-time boundary is exact: no tolerance, rounding, or substitution. A producer time within one ULP of `now` can be rejected as future-dated; this is bounded and deliberate.
         for entry in entries {
             guard entry.firstAt <= now, entry.lastAt <= now else {
                 throw DecodingError.dataCorrupted(
@@ -481,8 +482,9 @@ internal actor DiagnosticEvidenceStore {
 
         switch bytesStore.readStaged(staging) {
         case .bytes(let data):
-            guard let decoded = try? DiagnosticEvidenceEnvelope.decoded(from: data, now: currentTime),
-                  decoded == intended else {
+            // Staged bytes must be identical to the `Data` this call's trusted encoder returned and strictly readable at `currentTime`; in-memory Date equality is not transport integrity because `.secondsSince1970` / `Date(timeIntervalSince1970:)` can shift live timestamps by one ULP.
+            guard data == encoded,
+                  (try? DiagnosticEvidenceEnvelope.decoded(from: data, now: currentTime)) != nil else {
                 return unavailable(after: staging)
             }
         case .absent, .failed:

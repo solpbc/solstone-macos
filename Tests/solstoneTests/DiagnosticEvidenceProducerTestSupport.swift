@@ -7,6 +7,33 @@ import SolstoneCore
 import Testing
 @testable import solstone
 
+enum DiagnosticEvidenceDateWitnesses {
+    // 0x41c81e4117979475 measures -1.1920928955078125e-07 seconds after the store's Unix-seconds encode/decode shape.
+    static let downward = Date(timeIntervalSinceReferenceDate: Double(bitPattern: 0x41c81e4117979475))
+    // 0x41c81e4117979476 measures an exact 0-second delta after the store's Unix-seconds encode/decode shape.
+    static let exact = Date(timeIntervalSinceReferenceDate: Double(bitPattern: 0x41c81e4117979476))
+    // 0x41c81e4117979477 measures +1.1920928955078125e-07 seconds after the store's Unix-seconds encode/decode shape.
+    static let upward = Date(timeIntervalSinceReferenceDate: Double(bitPattern: 0x41c81e4117979477))
+}
+
+final class DiagnosticEvidenceDateSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var dates: [Date]
+
+    init(_ dates: [Date]) {
+        self.dates = dates
+    }
+
+    func next() -> Date {
+        lock.withLock {
+            guard !dates.isEmpty else {
+                fatalError("diagnostic evidence date sequence exhausted")
+            }
+            return dates.removeFirst()
+        }
+    }
+}
+
 @MainActor
 final class DiagnosticEvidenceHarness {
     let clock: TestClock

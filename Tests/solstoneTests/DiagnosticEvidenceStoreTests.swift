@@ -42,7 +42,9 @@ private struct DiagnosticEvidenceFileFixture {
 private final class DecoratingDiagnosticEvidenceBytesStore: DiagnosticEvidenceBytesStoring, @unchecked Sendable {
     let base: FileDiagnosticEvidenceBytesStore
     var injectedFailure: DiagnosticEvidenceInjectedFailure?
+    var encodedBytesOverride: Data?
     var mismatchedStagedBytes: Data?
+    var stagedReadOverride: DiagnosticEvidenceBytesRead?
     var failIfCanonicalReadAfterCommit = false
     var failIfStagingRemoval = false
     private(set) var canonicalReadAfterCommitCount = 0
@@ -71,6 +73,9 @@ private final class DecoratingDiagnosticEvidenceBytesStore: DiagnosticEvidenceBy
         if injectedFailure == .some(.encode) {
             return .failed
         }
+        if let encodedBytesOverride {
+            return .encoded(encodedBytesOverride)
+        }
         return base.encode(envelope)
     }
 
@@ -87,6 +92,9 @@ private final class DecoratingDiagnosticEvidenceBytesStore: DiagnosticEvidenceBy
     }
 
     func readStaged(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceBytesRead {
+        if let stagedReadOverride {
+            return stagedReadOverride
+        }
         switch injectedFailure {
         case .some(.stagedRead):
             return .failed
@@ -161,6 +169,204 @@ struct DiagnosticEvidenceStoreTests {
         #expect(decoded == envelope)
         try assertExactKeyAllowList(encoded)
 
+    }
+
+    @Test("lossy timestamps preserve the trusted staged bytes")
+    func lossyTimestampsPreserveTrustedStagedBytes() async throws {
+        let now = Date(timeIntervalSinceReferenceDate: 809_271_856)
+        let captured = DiagnosticEvidenceDateWitnesses.downward
+        let bytes = InMemoryDiagnosticEvidenceBytesStore()
+        let store = DiagnosticEvidenceStore(bytesStore: bytes, now: { now })
+        let intended = DiagnosticEvidenceEnvelope(
+            schemaVersion: 1,
+            entries: [
+                DiagnosticEvidenceEntry(code: .appLaunch, firstAt: captured, lastAt: captured, repeatCount: 1)
+            ]
+        )
+        let trustedBytes = try intended.encoded()
+        #expect(await store.record(.appLaunch, at: captured) == .recorded)
+        let storedBytes = try #require(bytes.stored)
+        let storedObject = try #require(
+            (try? JSONSerialization.jsonObject(with: storedBytes)) as? [String: Any]
+        )
+        let normalizedStored = try #require(
+            try? JSONSerialization.data(withJSONObject: storedObject, options: [.sortedKeys])
+        )
+        let trustedObject = try #require(
+            (try? JSONSerialization.jsonObject(with: trustedBytes)) as? [String: Any]
+        )
+        let normalizedTrusted = try #require(
+            try? JSONSerialization.data(withJSONObject: trustedObject, options: [.sortedKeys])
+        )
+        // Foundation's `JSONEncoder` does not guarantee key order across independent encodes, so key order — and only key order — is normalized on both sides.
+        #expect(normalizedStored == normalizedTrusted)
+
+        guard case .available(let envelope) = await store.read() else {
+            Issue.record("lossy evidence should remain strictly readable")
+            return
+        }
+        let entry = try #require(envelope.entries.first)
+        #expect(entry.code == .appLaunch)
+        #expect(entry.firstAt.timeIntervalSince1970 >= 0)
+        #expect(entry.firstAt <= now)
+        #expect(entry.firstAt != captured)
+    }
+
+    @Test("staged encoder output must remain strictly readable before commit")
+    func stagedEncoderOutputMustRemainStrictlyReadableBeforeCommit() async throws {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let fixture = try makeFileFixture(starting: .existingValid, now: now)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let future = now.addingTimeInterval(1)
+        let futureBytes = try DiagnosticEvidenceEnvelope(
+            schemaVersion: 1,
+            entries: [
+                DiagnosticEvidenceEntry(code: .appLaunch, firstAt: future, lastAt: future, repeatCount: 1)
+            ]
+        ).encoded()
+        #expect((try? DiagnosticEvidenceEnvelope.decoded(from: futureBytes, now: now)) == nil)
+
+        let decorated = DecoratingDiagnosticEvidenceBytesStore(
+            base: FileDiagnosticEvidenceBytesStore(applicationSupportBaseURL: fixture.directory)
+        )
+        decorated.encodedBytesOverride = futureBytes
+        let store = DiagnosticEvidenceStore(bytesStore: decorated, now: { now })
+
+        #expect(await store.record(.terminationCommitted, at: now.addingTimeInterval(-1)) == .unavailable)
+        let token = try #require(decorated.stagingTokens.last)
+        #expect(decorated.stagedBytesByToken[token] == futureBytes)
+        #expect(decorated.stagingRemovalCount == 1)
+        #expect(!FileManager.default.fileExists(atPath: token))
+        #expect(decorated.canonicalReadAfterCommitCount == 0)
+        #expect(!decorated.unexpectedCanonicalReadAfterCommit)
+        #expect(!decorated.unexpectedStagingRemoval)
+        try assertFixtureUnchanged(fixture)
+    }
+
+    @Test("file-backed recorder preserves lossy producer timestamps in order")
+    @MainActor
+    func fileBackedRecorderPreservesLossyProducerTimestampsInOrder() async throws {
+        let now = Date(timeIntervalSinceReferenceDate: 809_271_856)
+        let witnesses: [(Date, TimeInterval)] = [
+            (DiagnosticEvidenceDateWitnesses.downward, -1.1920928955078125e-07),
+            (DiagnosticEvidenceDateWitnesses.exact, 0),
+            (DiagnosticEvidenceDateWitnesses.upward, 1.1920928955078125e-07)
+        ]
+        for (timestamp, expectedDelta) in witnesses {
+            let probe = DiagnosticEvidenceEnvelope(
+                schemaVersion: 1,
+                entries: [DiagnosticEvidenceEntry(code: .appLaunch, firstAt: timestamp, lastAt: timestamp, repeatCount: 1)]
+            )
+            let decoded = try DiagnosticEvidenceEnvelope.decoded(from: probe.encoded(), now: now)
+            let delta = decoded.entries[0].firstAt.timeIntervalSinceReferenceDate - timestamp.timeIntervalSinceReferenceDate
+            #expect(delta == expectedDelta)
+        }
+
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let bytesStore = FileDiagnosticEvidenceBytesStore(applicationSupportBaseURL: directory)
+        let sequence = DiagnosticEvidenceDateSequence(witnesses.map(\.0))
+        let store = DiagnosticEvidenceStore(bytesStore: bytesStore, now: { now })
+        let recorder = DiagnosticEvidenceRecorder(store: store, now: { sequence.next() })
+
+        recorder.enqueue(.appLaunch)
+        recorder.enqueue(.terminationAppKitBegan)
+        recorder.enqueue(.terminationCommitted)
+        await recorder.drain()
+
+        guard case .available(let envelope) = await store.read() else {
+            Issue.record("file-backed lossy evidence should be available")
+            return
+        }
+        #expect(envelope.entries.map(\.code) == [.appLaunch, .terminationAppKitBegan, .terminationCommitted])
+
+        let canonicalURL = FileDiagnosticEvidenceBytesStore.fileURL(applicationSupportBaseURL: directory)
+        let files = try FileManager.default.contentsOfDirectory(
+            at: canonicalURL.deletingLastPathComponent(),
+            includingPropertiesForKeys: nil
+        )
+        #expect(FileManager.default.fileExists(atPath: canonicalURL.path))
+        #expect(files.map(\.lastPathComponent) == [canonicalURL.lastPathComponent])
+        #expect(!files.contains { $0.lastPathComponent.contains(".tmp") })
+    }
+
+    // The different-valid-envelope and staged-read-failed AC-3 shapes remain covered by `.stagedReadReturnsMismatchedBytes` and `.stagedRead` in the existing failure matrices.
+    @Test("staged byte substitutes never commit")
+    func stagedByteSubstitutesNeverCommit() async throws {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let recordedAt = now.addingTimeInterval(-1)
+        let intended = DiagnosticEvidenceEnvelope(
+            schemaVersion: 1,
+            entries: [
+                DiagnosticEvidenceEntry(
+                    code: .terminationCommitted,
+                    firstAt: recordedAt,
+                    lastAt: recordedAt,
+                    repeatCount: 1
+                )
+            ]
+        )
+        let encoded = try intended.encoded()
+        let encodedText = try #require(String(data: encoded, encoding: .utf8))
+
+        let representationOnly = Data("\n\t".utf8) + encoded + Data("\r\n".utf8)
+        #expect(representationOnly != encoded)
+        #expect(try DiagnosticEvidenceEnvelope.decoded(from: representationOnly, now: now) == intended)
+
+        let repeatToken = #""repeatCount":1"#
+        let changedRepeatToken = #""repeatCount":2"#
+        #expect(encodedText.components(separatedBy: repeatToken).count == 2)
+        let oneByteChanged = Data(encodedText.replacingOccurrences(of: repeatToken, with: changedRepeatToken).utf8)
+        #expect(oneByteChanged.count == encoded.count)
+        #expect(zip(encoded, oneByteChanged).filter { $0 != $1 }.count == 1)
+        #expect(try DiagnosticEvidenceEnvelope.decoded(from: oneByteChanged, now: now) != intended)
+
+        let widenedKey = Data(encodedText.replacingOccurrences(
+            of: #""schemaVersion":1"#,
+            with: #""schemaVersion":1,"extra":true"#
+        ).utf8)
+        let widenedCode = Data(encodedText.replacingOccurrences(
+            of: "termination.committed",
+            with: "not.a.code"
+        ).utf8)
+        #expect(encodedText.components(separatedBy: "999999").count == 3)
+        let futureTimestamp = Data(encodedText.replacingOccurrences(of: "999999", with: "1000001").utf8)
+
+        let rows: [(name: String, substitute: DiagnosticEvidenceBytesRead, strictlyReadable: Bool?)] = [
+            ("representation-only", .bytes(representationOnly), true),
+            ("one-byte different envelope", .bytes(oneByteChanged), true),
+            ("truncated", .bytes(Data(encoded.dropLast())), false),
+            ("widened key", .bytes(widenedKey), false),
+            ("widened code", .bytes(widenedCode), false),
+            ("future timestamp", .bytes(futureTimestamp), false),
+            ("absent", .absent, nil)
+        ]
+
+        for row in rows {
+            do {
+                if case .bytes(let data) = row.substitute,
+                   let strictlyReadable = row.strictlyReadable {
+                    #expect(((try? DiagnosticEvidenceEnvelope.decoded(from: data, now: now)) != nil) == strictlyReadable)
+                }
+
+                let fixture = try makeFileFixture(starting: .absent, now: now)
+                defer { try? FileManager.default.removeItem(at: fixture.directory) }
+                let decorated = DecoratingDiagnosticEvidenceBytesStore(
+                    base: FileDiagnosticEvidenceBytesStore(applicationSupportBaseURL: fixture.directory)
+                )
+                decorated.stagedReadOverride = row.substitute
+                let store = DiagnosticEvidenceStore(bytesStore: decorated, now: { now })
+
+                #expect(await store.record(.terminationCommitted, at: recordedAt) == .unavailable, "\(row.name)")
+                let token = try #require(decorated.stagingTokens.last)
+                #expect(decorated.stagingRemovalCount == 1, "\(row.name)")
+                #expect(!FileManager.default.fileExists(atPath: token), "\(row.name)")
+                #expect(decorated.canonicalReadAfterCommitCount == 0, "\(row.name)")
+                #expect(!decorated.unexpectedCanonicalReadAfterCommit, "\(row.name)")
+                #expect(!decorated.unexpectedStagingRemoval, "\(row.name)")
+                try assertFixtureUnchanged(fixture)
+            }
+        }
     }
 
     @Test("rejection matrix leaves planted bytes identical")

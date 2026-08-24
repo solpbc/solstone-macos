@@ -193,6 +193,66 @@ struct AppKitTerminationTests {
         ])
     }
 
+    @Test func fileBackedLossyEvidenceIsDurableBeforeTrueReply() async throws {
+        let directory = try makeTempDirectory("solstone-appkit-lossy-evidence")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeNow = Date(timeIntervalSinceReferenceDate: 809_271_856)
+        let sequence = DiagnosticEvidenceDateSequence([
+            DiagnosticEvidenceDateWitnesses.downward,
+            DiagnosticEvidenceDateWitnesses.exact,
+            DiagnosticEvidenceDateWitnesses.upward
+        ])
+        let bytesStore = FileDiagnosticEvidenceBytesStore(applicationSupportBaseURL: directory)
+        let store = DiagnosticEvidenceStore(bytesStore: bytesStore, now: { storeNow })
+        let recorder = DiagnosticEvidenceRecorder(store: store, now: { sequence.next() })
+
+        guard let state = SolstoneStartupComposition.makeNormalStartup(
+            decision: .allowed(.developerBypass),
+            automaticObservationPipelineEnabled: false,
+            evidenceNow: { storeNow },
+            makeEvidenceStore: { _ in store },
+            makeRecorder: { _, _ in recorder },
+            makeState: { evidenceRecorder, _ in AppState.forSnapshot(recorder: evidenceRecorder) },
+            registerSharedState: { _ in },
+            makeUpdateController: { _ in testUpdateController() },
+            registerUpdateAnnouncement: { _ in },
+            makeStartup: { state, _ in state }
+        ) else {
+            Issue.record("normal startup was unexpectedly unavailable")
+            return
+        }
+        guard let coordinator = state.appQuitCoordinator else {
+            Issue.record("snapshot app quit coordinator was unexpectedly unavailable")
+            return
+        }
+
+        let replyCodes = LockedValue<[DiagnosticEvidenceCode]>()
+        let replies = LockedArray<Bool>([])
+        let replyCount = LockedCounter()
+        let seam = AppKitTerminationSeam(
+            coordinatorLookup: { coordinator },
+            reply: { proceed in
+                let decoded: DiagnosticEvidenceEnvelope?
+                if let data = try? Data(contentsOf: bytesStore.fileURL) {
+                    decoded = try? DiagnosticEvidenceEnvelope.decoded(from: data, now: storeNow)
+                } else {
+                    decoded = nil
+                }
+                replyCodes.set(decoded?.entries.map(\.code) ?? [])
+                replies.append(proceed)
+                replyCount.increment()
+            }
+        )
+
+        #expect(seam.applicationShouldTerminate() == .terminateLater)
+        try await withTimeout(seconds: 5) {
+            await replyCount.waitUntilCount(1)
+        }
+
+        #expect(replies.all == [true])
+        #expect(replyCodes.current == [.appLaunch, .terminationAppKitBegan, .terminationCommitted])
+    }
+
     @Test func stalledEvidenceDrainDoesNotChangeSettingsRestartOutcome() async throws {
         let healthyHarness = DiagnosticEvidenceHarness()
         let healthy = try await settingsRestartOutcome(recorder: healthyHarness.recorder)
