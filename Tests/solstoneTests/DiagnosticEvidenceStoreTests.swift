@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import Darwin
 import Foundation
 import Testing
 @testable import solstone
@@ -15,10 +16,117 @@ final class TestClock: @unchecked Sendable {
     }
 }
 
+private enum DiagnosticEvidenceInjectedFailure: CaseIterable, Equatable {
+    case encode
+    case stage
+    case stagedRead
+    case stagedReadReturnsMismatchedBytes
+    case rename
+}
+
+private enum DiagnosticEvidenceCanonicalStartingState: CaseIterable {
+    case existingValid
+    case absent
+    case corrupt
+    case expiredPlusEligible
+}
+
+private struct DiagnosticEvidenceFileFixture {
+    let directory: URL
+    let canonicalURL: URL
+    let canonicalBytes: Data?
+    let orphanURL: URL
+    let orphanBytes: Data
+}
+
+private final class DecoratingDiagnosticEvidenceBytesStore: DiagnosticEvidenceBytesStoring, @unchecked Sendable {
+    let base: FileDiagnosticEvidenceBytesStore
+    var injectedFailure: DiagnosticEvidenceInjectedFailure?
+    var mismatchedStagedBytes: Data?
+    var failIfCanonicalReadAfterCommit = false
+    var failIfStagingRemoval = false
+    private(set) var canonicalReadAfterCommitCount = 0
+    private(set) var stagingRemovalCount = 0
+    private(set) var unexpectedCanonicalReadAfterCommit = false
+    private(set) var unexpectedStagingRemoval = false
+    private(set) var didMakeCanonicalDirectoryReadOnly = false
+    private(set) var stagedBytesByToken: [String: Data] = [:]
+    private(set) var stagingTokens: [String] = []
+    private var didCommit = false
+
+    init(base: FileDiagnosticEvidenceBytesStore) {
+        self.base = base
+    }
+
+    func readCanonical() -> DiagnosticEvidenceBytesRead {
+        if didCommit, failIfCanonicalReadAfterCommit {
+            canonicalReadAfterCommitCount += 1
+            unexpectedCanonicalReadAfterCommit = true
+            return .failed
+        }
+        return base.readCanonical()
+    }
+
+    func encode(_ envelope: DiagnosticEvidenceEnvelope) -> DiagnosticEvidenceEncodingResult {
+        if injectedFailure == .some(.encode) {
+            return .failed
+        }
+        return base.encode(envelope)
+    }
+
+    func stage(_ data: Data) -> DiagnosticEvidenceStagingResult {
+        if injectedFailure == .some(.stage) {
+            return .failed
+        }
+        let result = base.stage(data)
+        if case .staged(let staging) = result {
+            stagedBytesByToken[staging.token] = data
+            stagingTokens.append(staging.token)
+        }
+        return result
+    }
+
+    func readStaged(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceBytesRead {
+        switch injectedFailure {
+        case .some(.stagedRead):
+            return .failed
+        case .some(.stagedReadReturnsMismatchedBytes):
+            guard let mismatchedStagedBytes else {
+                return .failed
+            }
+            return .bytes(mismatchedStagedBytes)
+        case nil, .some(.encode), .some(.stage), .some(.rename):
+            return base.readStaged(staging)
+        }
+    }
+
+    func commit(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceCommitResult {
+        if injectedFailure == .some(.rename) {
+            if Darwin.chmod(base.fileURL.deletingLastPathComponent().path, 0o500) != 0 {
+                return .failed
+            }
+            didMakeCanonicalDirectoryReadOnly = true
+        }
+        let result = base.commit(staging)
+        if result == .committed {
+            didCommit = true
+        }
+        return result
+    }
+
+    func removeStaging(_ staging: DiagnosticEvidenceStagingHandle) {
+        stagingRemovalCount += 1
+        if failIfStagingRemoval {
+            unexpectedStagingRemoval = true
+        }
+        base.removeStaging(staging)
+    }
+}
+
 @Suite("Diagnostic evidence store")
 struct DiagnosticEvidenceStoreTests {
-    @Test("AC1 maximally populated schema-1 envelope round-trips with order and key allow-list")
-    func ac1_maximallyPopulatedEnvelopeRoundTrips() async throws {
+    @Test("maximally populated schema-1 envelope round-trips with order and key allow-list")
+    func maximallyPopulatedEnvelopeRoundTrips() async throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let codes = DiagnosticEvidenceCode.allCases
         var entries: [DiagnosticEvidenceEntry] = []
@@ -53,27 +161,10 @@ struct DiagnosticEvidenceStoreTests {
         #expect(decoded == envelope)
         try assertExactKeyAllowList(encoded)
 
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let fileStore = FileDiagnosticEvidenceBytesStore(applicationSupportBaseURL: directory)
-        #expect(fileStore.write(encoded) == .confirmed)
-        let expectedURL = directory
-            .appendingPathComponent("Solstone", isDirectory: true)
-            .appendingPathComponent("diagnostic-evidence.json")
-        #expect(fileStore.fileURL == expectedURL)
-        #expect(FileManager.default.fileExists(atPath: expectedURL.path))
-
-        let clock = TestClock(now)
-        let store = DiagnosticEvidenceStore(bytesStore: fileStore, now: { clock.now })
-        guard case .available(let readBack) = await store.read() else {
-            Issue.record("AC1 file-store read should be available")
-            return
-        }
-        #expect(readBack == envelope)
     }
 
-    @Test("AC2 rejection matrix leaves planted bytes identical")
-    func ac2_rejectionMatrixLeavesBytesUnchanged() async throws {
+    @Test("rejection matrix leaves planted bytes identical")
+    func rejectionMatrixLeavesBytesUnchanged() async throws {
         let now = Date(timeIntervalSince1970: 1_000)
         let clock = TestClock(now)
         let cases: [(name: String, json: String)] = [
@@ -128,8 +219,8 @@ struct DiagnosticEvidenceStoreTests {
         }
     }
 
-    @Test("AC3 missing and empty are available; malformed and unreadable are unavailable")
-    func ac3_fourWayMissingEmptyMalformedUnreadable() async throws {
+    @Test("missing and empty are available; malformed and unreadable are unavailable")
+    func fourWayMissingEmptyMalformedUnreadable() async throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let clock = TestClock(now)
 
@@ -167,8 +258,8 @@ struct DiagnosticEvidenceStoreTests {
         #expect(unreadableBytes.stored == priorGood)
     }
 
-    @Test("AC4 129 non-coalescing records preserve commit order and evict the first; an older 130th lands at the tail")
-    func ac4_capPreservesCommitOrderAndEvictsOldest() async throws {
+    @Test("129 non-coalescing records preserve commit order and evict the first; an older 130th lands at the tail")
+    func capPreservesCommitOrderAndEvictsOldest() async throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let clock = TestClock(now)
         let bytes = InMemoryDiagnosticEvidenceBytesStore()
@@ -181,7 +272,7 @@ struct DiagnosticEvidenceStoreTests {
         }
 
         guard case .available(let afterCap) = await store.read() else {
-            Issue.record("AC4 read after 129 records should be available")
+            Issue.record("read after 129 records should be available")
             return
         }
         #expect(afterCap.entries.count == 128)
@@ -192,7 +283,7 @@ struct DiagnosticEvidenceStoreTests {
         let older = Date(timeIntervalSince1970: 998_000)
         #expect(await store.record(.appLaunch, at: older) == .recorded)
         guard case .available(let afterOlder) = await store.read() else {
-            Issue.record("AC4 read after older record should be available")
+            Issue.record("read after older record should be available")
             return
         }
         #expect(afterOlder.entries.count == 128)
@@ -203,8 +294,8 @@ struct DiagnosticEvidenceStoreTests {
         #expect(afterOlder.entries.first?.firstAt == Date(timeIntervalSince1970: start + 2))
     }
 
-    @Test("AC5 retention keeps exactly seven-day lastAt and drops older")
-    func ac5_retentionKeepsExactlySevenDaysAndDropsOlder() async throws {
+    @Test("retention keeps exactly seven-day lastAt and drops older")
+    func retentionKeepsExactlySevenDaysAndDropsOlder() async throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let clock = TestClock(now)
         let exact = now.addingTimeInterval(-sevenDays)
@@ -220,7 +311,7 @@ struct DiagnosticEvidenceStoreTests {
         bytes.stored = try planted.encoded()
         let store = DiagnosticEvidenceStore(bytesStore: bytes, now: { clock.now })
         guard case .available(let envelope) = await store.read() else {
-            Issue.record("AC5 retention read should be available")
+            Issue.record("retention read should be available")
             return
         }
         #expect(envelope.entries.count == 1)
@@ -234,33 +325,177 @@ struct DiagnosticEvidenceStoreTests {
         #expect(!persisted.entries.contains { $0.code == .captureOn })
     }
 
-    @Test("AC5 compaction write failure returns unavailable and does not change stored bytes")
-    func ac5_compactionWriteFailureLeavesBytesIdentical() async throws {
+    @Test("record pre-commit failures preserve canonical bytes")
+    func recordPrecommitFailuresPreserveCanonicalBytes() async throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
-        let clock = TestClock(now)
-        let stale = now.addingTimeInterval(-(sevenDays + 1))
-        let fresh = now.addingTimeInterval(-10)
-        let planted = DiagnosticEvidenceEnvelope(
-            schemaVersion: 1,
-            entries: [
-                DiagnosticEvidenceEntry(code: .captureOn, firstAt: stale, lastAt: stale, repeatCount: 1),
-                DiagnosticEvidenceEntry(code: .captureOff, firstAt: fresh, lastAt: fresh, repeatCount: 1)
-            ]
-        )
-        let bytes = InMemoryDiagnosticEvidenceBytesStore()
-        let before = try planted.encoded()
-        bytes.stored = before
-        bytes.writeResult = .failed
-        let store = DiagnosticEvidenceStore(bytesStore: bytes, now: { clock.now })
-        #expect(await store.read() == .unavailable)
-        #expect(bytes.stored == before)
-        bytes.writeResult = .confirmed
-        #expect(await store.read() == .unavailable)
-        #expect(bytes.stored == before)
+        let mismatchedStagedBytes = try DiagnosticEvidenceEnvelope(schemaVersion: 1, entries: []).encoded()
+
+        for starting in DiagnosticEvidenceCanonicalStartingState.allCases {
+            for failure in DiagnosticEvidenceInjectedFailure.allCases {
+                do {
+                    let fixture = try makeFileFixture(starting: starting, now: now)
+                    defer { try? FileManager.default.removeItem(at: fixture.directory) }
+                    let parent = fixture.canonicalURL.deletingLastPathComponent()
+                    let needsPermissionRestore = failure == .rename
+                    defer {
+                        if needsPermissionRestore {
+                            _ = Darwin.chmod(parent.path, 0o700)
+                        }
+                    }
+
+                    let decorated = DecoratingDiagnosticEvidenceBytesStore(
+                        base: FileDiagnosticEvidenceBytesStore(applicationSupportBaseURL: fixture.directory)
+                    )
+                    decorated.injectedFailure = failure
+                    decorated.mismatchedStagedBytes = mismatchedStagedBytes
+                    let store = DiagnosticEvidenceStore(bytesStore: decorated, now: { now })
+
+                    #expect(await store.record(.terminationCommitted, at: now.addingTimeInterval(-1)) == .unavailable)
+                    #expect(await store.read() == .unavailable)
+                    try assertFixtureUnchanged(fixture)
+
+                    switch failure {
+                    case .encode, .stage:
+                        #expect(decorated.stagingTokens.isEmpty)
+                        #expect(decorated.stagingRemovalCount == 0)
+                    case .stagedRead, .stagedReadReturnsMismatchedBytes:
+                        let token = try #require(decorated.stagingTokens.last)
+                        #expect(decorated.stagingRemovalCount == 1)
+                        #expect(!FileManager.default.fileExists(atPath: token))
+                    case .rename:
+                        let token = try #require(decorated.stagingTokens.last)
+                        let expectedStagedBytes = try #require(decorated.stagedBytesByToken[token])
+                        #expect(decorated.didMakeCanonicalDirectoryReadOnly)
+                        #expect(decorated.stagingRemovalCount == 1)
+                        #expect(try Data(contentsOf: URL(fileURLWithPath: token)) == expectedStagedBytes)
+                    }
+                }
+            }
+        }
     }
 
-    @Test("AC6 coalesce consecutive codes, saturate, and start a new run after retention")
-    func ac6_coalesceSaturateAndNewRunAfterRetention() async throws {
+    @Test("read-triggered compaction failures preserve canonical bytes")
+    func readTriggeredCompactionFailuresPreserveCanonicalBytes() async throws {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let mismatchedStagedBytes = try DiagnosticEvidenceEnvelope(schemaVersion: 1, entries: []).encoded()
+
+        for failure in DiagnosticEvidenceInjectedFailure.allCases {
+            do {
+                let fixture = try makeFileFixture(starting: .expiredPlusEligible, now: now)
+                defer { try? FileManager.default.removeItem(at: fixture.directory) }
+                let parent = fixture.canonicalURL.deletingLastPathComponent()
+                let needsPermissionRestore = failure == .rename
+                defer {
+                    if needsPermissionRestore {
+                        _ = Darwin.chmod(parent.path, 0o700)
+                    }
+                }
+
+                let decorated = DecoratingDiagnosticEvidenceBytesStore(
+                    base: FileDiagnosticEvidenceBytesStore(applicationSupportBaseURL: fixture.directory)
+                )
+                decorated.injectedFailure = failure
+                decorated.mismatchedStagedBytes = mismatchedStagedBytes
+                let store = DiagnosticEvidenceStore(bytesStore: decorated, now: { now })
+
+                #expect(await store.read() == .unavailable)
+                try assertFixtureUnchanged(fixture)
+
+                switch failure {
+                case .encode, .stage:
+                    #expect(decorated.stagingTokens.isEmpty)
+                    #expect(decorated.stagingRemovalCount == 0)
+                case .stagedRead, .stagedReadReturnsMismatchedBytes:
+                    let token = try #require(decorated.stagingTokens.last)
+                    #expect(decorated.stagingRemovalCount == 1)
+                    #expect(!FileManager.default.fileExists(atPath: token))
+                case .rename:
+                    let token = try #require(decorated.stagingTokens.last)
+                    let expectedStagedBytes = try #require(decorated.stagedBytesByToken[token])
+                    #expect(decorated.didMakeCanonicalDirectoryReadOnly)
+                    #expect(decorated.stagingRemovalCount == 1)
+                    #expect(try Data(contentsOf: URL(fileURLWithPath: token)) == expectedStagedBytes)
+                }
+            }
+        }
+    }
+
+    @Test("record commit creates canonical bytes without post-commit work")
+    func recordCommitCreatesCanonicalBytesWithoutPostCommitWork() async throws {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let fixture = try makeFileFixture(starting: .absent, now: now)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let decorated = DecoratingDiagnosticEvidenceBytesStore(
+            base: FileDiagnosticEvidenceBytesStore(applicationSupportBaseURL: fixture.directory)
+        )
+        decorated.failIfCanonicalReadAfterCommit = true
+        decorated.failIfStagingRemoval = true
+        let store = DiagnosticEvidenceStore(bytesStore: decorated, now: { now })
+        let recordedAt = now.addingTimeInterval(-1)
+        let intended = DiagnosticEvidenceEnvelope(
+            schemaVersion: 1,
+            entries: [DiagnosticEvidenceEntry(code: .captureOn, firstAt: recordedAt, lastAt: recordedAt, repeatCount: 1)]
+        )
+
+        #expect(await store.record(.captureOn, at: recordedAt) == .recorded)
+        let persisted = try DiagnosticEvidenceEnvelope.decoded(from: Data(contentsOf: fixture.canonicalURL), now: now)
+        #expect(persisted == intended)
+        let token = try #require(decorated.stagingTokens.last)
+        let stagedBytes = try #require(decorated.stagedBytesByToken[token])
+        #expect(try Data(contentsOf: fixture.canonicalURL) == stagedBytes)
+        #expect(!FileManager.default.fileExists(atPath: token))
+        #expect(decorated.canonicalReadAfterCommitCount == 0)
+        #expect(decorated.stagingRemovalCount == 0)
+        #expect(!decorated.unexpectedCanonicalReadAfterCommit)
+        #expect(!decorated.unexpectedStagingRemoval)
+        try assertOrphanUnchanged(in: fixture)
+
+        decorated.failIfCanonicalReadAfterCommit = false
+        #expect(await store.read() == .available(intended))
+    }
+
+    @Test("read-triggered compaction replaces canonical bytes without post-commit work")
+    func readTriggeredCompactionReplacesCanonicalBytesWithoutPostCommitWork() async throws {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let fixture = try makeFileFixture(starting: .expiredPlusEligible, now: now)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let decorated = DecoratingDiagnosticEvidenceBytesStore(
+            base: FileDiagnosticEvidenceBytesStore(applicationSupportBaseURL: fixture.directory)
+        )
+        decorated.failIfCanonicalReadAfterCommit = true
+        decorated.failIfStagingRemoval = true
+        let store = DiagnosticEvidenceStore(bytesStore: decorated, now: { now })
+        let expected = DiagnosticEvidenceEnvelope(
+            schemaVersion: 1,
+            entries: [
+                DiagnosticEvidenceEntry(
+                    code: .captureOff,
+                    firstAt: now.addingTimeInterval(-10),
+                    lastAt: now.addingTimeInterval(-10),
+                    repeatCount: 1
+                )
+            ]
+        )
+
+        #expect(await store.read() == .available(expected))
+        let persisted = try DiagnosticEvidenceEnvelope.decoded(from: Data(contentsOf: fixture.canonicalURL), now: now)
+        #expect(persisted == expected)
+        let token = try #require(decorated.stagingTokens.last)
+        let stagedBytes = try #require(decorated.stagedBytesByToken[token])
+        #expect(try Data(contentsOf: fixture.canonicalURL) == stagedBytes)
+        #expect(!FileManager.default.fileExists(atPath: token))
+        #expect(decorated.canonicalReadAfterCommitCount == 0)
+        #expect(decorated.stagingRemovalCount == 0)
+        #expect(!decorated.unexpectedCanonicalReadAfterCommit)
+        #expect(!decorated.unexpectedStagingRemoval)
+        try assertOrphanUnchanged(in: fixture)
+
+        decorated.failIfCanonicalReadAfterCommit = false
+        #expect(await store.read() == .available(expected))
+    }
+
+    @Test("coalesce consecutive codes, saturate, and start a new run after retention")
+    func coalesceSaturateAndNewRunAfterRetention() async throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let clock = TestClock(now)
         let bytes = InMemoryDiagnosticEvidenceBytesStore()
@@ -272,7 +507,7 @@ struct DiagnosticEvidenceStoreTests {
         #expect(await store.record(.captureOn, at: t0.addingTimeInterval(3)) == .recorded)
 
         guard case .available(let coalesced) = await store.read() else {
-            Issue.record("AC6 coalesced read should be available")
+            Issue.record("coalesced read should be available")
             return
         }
         #expect(coalesced.entries.count == 3)
@@ -302,7 +537,7 @@ struct DiagnosticEvidenceStoreTests {
         let later = t0.addingTimeInterval(25)
         #expect(await saturateStore.record(.capturePaused, at: later) == .recorded)
         guard case .available(let afterSaturate) = await saturateStore.read() else {
-            Issue.record("AC6 saturate read should be available")
+            Issue.record("saturate read should be available")
             return
         }
         #expect(afterSaturate.entries.count == 1)
@@ -327,7 +562,7 @@ struct DiagnosticEvidenceStoreTests {
         let freshTime = now.addingTimeInterval(-10)
         #expect(await staleStore.record(.captureOn, at: freshTime) == .recorded)
         guard case .available(let afterStale) = await staleStore.read() else {
-            Issue.record("AC6 stale-tail read should be available")
+            Issue.record("stale-tail read should be available")
             return
         }
         #expect(afterStale.entries.count == 1)
@@ -337,8 +572,8 @@ struct DiagnosticEvidenceStoreTests {
         #expect(afterStale.entries[0].lastAt == freshTime)
     }
 
-    @Test("AC7 record on corrupt bytes replaces with a one-event envelope")
-    func ac7_recordOnCorruptBytesReplacesWithOneEventEnvelope() async throws {
+    @Test("record on corrupt bytes replaces with a one-event envelope")
+    func recordOnCorruptBytesReplacesWithOneEventEnvelope() async throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let clock = TestClock(now)
         let bytes = InMemoryDiagnosticEvidenceBytesStore()
@@ -347,7 +582,7 @@ struct DiagnosticEvidenceStoreTests {
         let time = Date(timeIntervalSince1970: 999_500)
         #expect(await store.record(.microphoneGranted, at: time) == .recorded)
         guard case .available(let envelope) = await store.read() else {
-            Issue.record("AC7 read after corrupt replace should be available")
+            Issue.record("read after corrupt replace should be available")
             return
         }
         #expect(envelope.entries.count == 1)
@@ -361,8 +596,8 @@ struct DiagnosticEvidenceStoreTests {
         #expect(decoded == envelope)
     }
 
-    @Test("AC8 record on unreadable store leaves bytes unchanged and stays unavailable")
-    func ac8_recordOnUnreadableStoreLeavesBytesUnchanged() async throws {
+    @Test("record on unreadable store leaves bytes unchanged and stays unavailable")
+    func recordOnUnreadableStoreLeavesBytesUnchanged() async throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let clock = TestClock(now)
         let prior = DiagnosticEvidenceEnvelope(
@@ -386,76 +621,102 @@ struct DiagnosticEvidenceStoreTests {
         #expect(await store.read() == .unavailable)
     }
 
-    @Test("AC9 write failure latches; a later confirmed record restores history without the failed event")
-    func ac9_confirmedRecordAfterFailurePreservesEligibleHistory() async throws {
+    @Test("later record after failed rename preserves eligible history without resurrection")
+    func laterRecordAfterFailedRenamePreservesEligibleHistoryWithoutResurrection() async throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
-        let clock = TestClock(now)
-        let older = [
-            DiagnosticEvidenceEntry(
-                code: .captureOn,
-                firstAt: Date(timeIntervalSince1970: 999_100),
-                lastAt: Date(timeIntervalSince1970: 999_100),
-                repeatCount: 1
-            ),
-            DiagnosticEvidenceEntry(
-                code: .capturePaused,
-                firstAt: Date(timeIntervalSince1970: 999_200),
-                lastAt: Date(timeIntervalSince1970: 999_200),
-                repeatCount: 2
-            ),
-            DiagnosticEvidenceEntry(
-                code: .captureOff,
-                firstAt: Date(timeIntervalSince1970: 999_300),
-                lastAt: Date(timeIntervalSince1970: 999_300),
-                repeatCount: 1
-            )
-        ]
-        let planted = DiagnosticEvidenceEnvelope(schemaVersion: 1, entries: older)
-        let bytes = InMemoryDiagnosticEvidenceBytesStore()
-        let plantedBytes = try planted.encoded()
-        bytes.stored = plantedBytes
-        bytes.writeResult = .failed
-        let store = DiagnosticEvidenceStore(bytesStore: bytes, now: { clock.now })
-        let failedAt = Date(timeIntervalSince1970: 999_400)
-        #expect(await store.record(.appLaunch, at: failedAt) == .unavailable)
-        #expect(bytes.stored == plantedBytes)
+        let fixture = try makeFileFixture(starting: .expiredPlusEligible, now: now)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let parent = fixture.canonicalURL.deletingLastPathComponent()
+        defer { _ = Darwin.chmod(parent.path, 0o700) }
 
-        bytes.writeResult = .confirmed
-        let recoveredAt = Date(timeIntervalSince1970: 999_500)
+        let decorated = DecoratingDiagnosticEvidenceBytesStore(
+            base: FileDiagnosticEvidenceBytesStore(applicationSupportBaseURL: fixture.directory)
+        )
+        decorated.injectedFailure = .rename
+        let store = DiagnosticEvidenceStore(bytesStore: decorated, now: { now })
+
+        #expect(await store.record(.appLaunch, at: now.addingTimeInterval(-5)) == .unavailable)
+        #expect(decorated.didMakeCanonicalDirectoryReadOnly)
+        try assertFixtureUnchanged(fixture)
+        let failedStagingToken = try #require(decorated.stagingTokens.last)
+        let failedStagedBytes = try #require(decorated.stagedBytesByToken[failedStagingToken])
+        #expect(Darwin.chmod(parent.path, 0o700) == 0)
+        #expect(FileManager.default.fileExists(atPath: failedStagingToken))
+        #expect(try Data(contentsOf: URL(fileURLWithPath: failedStagingToken)) == failedStagedBytes)
+        decorated.injectedFailure = nil
+
+        let recoveredAt = now.addingTimeInterval(-1)
         #expect(await store.record(.terminationCommitted, at: recoveredAt) == .recorded)
-        guard case .available(let envelope) = await store.read() else {
-            Issue.record("AC9 recovered read should be available")
-            return
-        }
-        #expect(envelope.entries.count == 4)
-        #expect(envelope.entries[0].code == .captureOn)
-        #expect(envelope.entries[1].code == .capturePaused)
-        #expect(envelope.entries[2].code == .captureOff)
-        #expect(envelope.entries[3].code == .terminationCommitted)
-        #expect(envelope.entries[3].firstAt == recoveredAt)
-        #expect(!envelope.entries.contains { $0.code == .appLaunch })
+        let expected = DiagnosticEvidenceEnvelope(
+            schemaVersion: 1,
+            entries: [
+                DiagnosticEvidenceEntry(
+                    code: .captureOff,
+                    firstAt: now.addingTimeInterval(-10),
+                    lastAt: now.addingTimeInterval(-10),
+                    repeatCount: 1
+                ),
+                DiagnosticEvidenceEntry(
+                    code: .terminationCommitted,
+                    firstAt: recoveredAt,
+                    lastAt: recoveredAt,
+                    repeatCount: 1
+                )
+            ]
+        )
+        #expect(await store.read() == .available(expected))
+        #expect(!expected.entries.contains { $0.code == .captureOn })
+        #expect(!expected.entries.contains { $0.code == .appLaunch })
+        try assertOrphanUnchanged(in: fixture)
+        #expect(FileManager.default.fileExists(atPath: failedStagingToken))
+        #expect(try Data(contentsOf: URL(fileURLWithPath: failedStagingToken)) == failedStagedBytes)
     }
 
-    @Test("AC9 read-back failure after write latches without rolling back")
-    func ac9_readBackFailureAfterWriteLatchesWithoutRollback() async throws {
+    @Test("later record after failed rename replaces corrupt canonical without resurrection")
+    func laterRecordAfterFailedRenameReplacesCorruptCanonicalWithoutResurrection() async throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
-        let clock = TestClock(now)
-        let bytes = InMemoryDiagnosticEvidenceBytesStore()
-        bytes.failReadsAfterSuccessfulWrite = true
-        let store = DiagnosticEvidenceStore(bytesStore: bytes, now: { clock.now })
-        let time = Date(timeIntervalSince1970: 999_000)
-        #expect(await store.record(.captureOn, at: time) == .unavailable)
-        let storedAfterWrite = try #require(bytes.stored)
-        let decoded = try DiagnosticEvidenceEnvelope.decoded(from: storedAfterWrite, now: now)
-        #expect(decoded.entries.count == 1)
-        #expect(decoded.entries[0].code == .captureOn)
-        bytes.failReadsAfterSuccessfulWrite = false
-        #expect(await store.read() == .unavailable)
-        #expect(bytes.stored == storedAfterWrite)
+        let fixture = try makeFileFixture(starting: .corrupt, now: now)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let parent = fixture.canonicalURL.deletingLastPathComponent()
+        defer { _ = Darwin.chmod(parent.path, 0o700) }
+
+        let decorated = DecoratingDiagnosticEvidenceBytesStore(
+            base: FileDiagnosticEvidenceBytesStore(applicationSupportBaseURL: fixture.directory)
+        )
+        decorated.injectedFailure = .rename
+        let store = DiagnosticEvidenceStore(bytesStore: decorated, now: { now })
+
+        #expect(await store.record(.appLaunch, at: now.addingTimeInterval(-5)) == .unavailable)
+        #expect(decorated.didMakeCanonicalDirectoryReadOnly)
+        try assertFixtureUnchanged(fixture)
+        let failedStagingToken = try #require(decorated.stagingTokens.last)
+        let failedStagedBytes = try #require(decorated.stagedBytesByToken[failedStagingToken])
+        #expect(Darwin.chmod(parent.path, 0o700) == 0)
+        #expect(FileManager.default.fileExists(atPath: failedStagingToken))
+        #expect(try Data(contentsOf: URL(fileURLWithPath: failedStagingToken)) == failedStagedBytes)
+        decorated.injectedFailure = nil
+
+        let recoveredAt = now.addingTimeInterval(-1)
+        #expect(await store.record(.terminationCommitted, at: recoveredAt) == .recorded)
+        let expected = DiagnosticEvidenceEnvelope(
+            schemaVersion: 1,
+            entries: [
+                DiagnosticEvidenceEntry(
+                    code: .terminationCommitted,
+                    firstAt: recoveredAt,
+                    lastAt: recoveredAt,
+                    repeatCount: 1
+                )
+            ]
+        )
+        #expect(await store.read() == .available(expected))
+        try assertOrphanUnchanged(in: fixture)
+        #expect(FileManager.default.fileExists(atPath: failedStagingToken))
+        #expect(try Data(contentsOf: URL(fileURLWithPath: failedStagingToken)) == failedStagedBytes)
     }
 
-    @Test("AC10 concurrent distinct records preserve membership and a valid order")
-    func ac10_concurrentDistinctRecordsPreserveMembershipAndValidOrder() async throws {
+    @Test("concurrent distinct records preserve membership and a valid order")
+    func concurrentDistinctRecordsPreserveMembershipAndValidOrder() async throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let clock = TestClock(now)
         let bytes = InMemoryDiagnosticEvidenceBytesStore()
@@ -478,7 +739,7 @@ struct DiagnosticEvidenceStoreTests {
         }
 
         guard case .available(let envelope) = await store.read() else {
-            Issue.record("AC10 concurrent final read should be available")
+            Issue.record("concurrent final read should be available")
             return
         }
         #expect(Set(envelope.entries.map(\.code)) == Set(codes))
@@ -492,8 +753,8 @@ struct DiagnosticEvidenceStoreTests {
         }
     }
 
-    @Test("AC11 persisted envelope contains only schema keys and the 17 codes")
-    func ac11_persistedEnvelopeContainsOnlySchemaKeysAndCodes() async throws {
+    @Test("persisted envelope contains only schema keys and the 17 codes")
+    func persistedEnvelopeContainsOnlySchemaKeysAndCodes() async throws {
         let keyToken = "sk-test-key"
         let filenameToken = "120000_audio_system.m4a"
         let deviceToken = "MacBook Pro Microphone"
@@ -506,7 +767,7 @@ struct DiagnosticEvidenceStoreTests {
             "Inbox — Private Browsing",
             "SCShareableContent failed: denied"
         ]
-        let leaf = "ac11-\(keyToken)_\(filenameToken)_\(deviceToken)_\(UUID().uuidString)"
+        let leaf = "diagnostic-evidence-\(keyToken)_\(filenameToken)_\(deviceToken)_\(UUID().uuidString)"
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(leaf, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -544,6 +805,84 @@ struct DiagnosticEvidenceStoreTests {
             #expect(entry["lastAt"] is NSNumber)
             #expect(entry["repeatCount"] is NSNumber)
         }
+    }
+
+    private func makeFileFixture(
+        starting state: DiagnosticEvidenceCanonicalStartingState,
+        now: Date
+    ) throws -> DiagnosticEvidenceFileFixture {
+        let directory = try makeTemporaryDirectory()
+        let canonicalURL = FileDiagnosticEvidenceBytesStore.fileURL(applicationSupportBaseURL: directory)
+        let parent = canonicalURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let orphanURL = parent.appendingPathComponent("unrelated-orphan-\(UUID().uuidString)")
+        let orphanBytes = Data("unrelated orphan bytes".utf8)
+        try orphanBytes.write(to: orphanURL)
+
+        let canonicalBytes: Data?
+        switch state {
+        case .existingValid:
+            canonicalBytes = try DiagnosticEvidenceEnvelope(
+                schemaVersion: 1,
+                entries: [
+                    DiagnosticEvidenceEntry(
+                        code: .captureOn,
+                        firstAt: now.addingTimeInterval(-20),
+                        lastAt: now.addingTimeInterval(-20),
+                        repeatCount: 1
+                    )
+                ]
+            ).encoded()
+        case .absent:
+            canonicalBytes = nil
+        case .corrupt:
+            canonicalBytes = Data("not-json".utf8)
+        case .expiredPlusEligible:
+            canonicalBytes = try DiagnosticEvidenceEnvelope(
+                schemaVersion: 1,
+                entries: [
+                    DiagnosticEvidenceEntry(
+                        code: .captureOn,
+                        firstAt: now.addingTimeInterval(-(sevenDays + 1)),
+                        lastAt: now.addingTimeInterval(-(sevenDays + 1)),
+                        repeatCount: 1
+                    ),
+                    DiagnosticEvidenceEntry(
+                        code: .captureOff,
+                        firstAt: now.addingTimeInterval(-10),
+                        lastAt: now.addingTimeInterval(-10),
+                        repeatCount: 1
+                    )
+                ]
+            ).encoded()
+        }
+
+        if let canonicalBytes {
+            try canonicalBytes.write(to: canonicalURL)
+        }
+
+        return DiagnosticEvidenceFileFixture(
+            directory: directory,
+            canonicalURL: canonicalURL,
+            canonicalBytes: canonicalBytes,
+            orphanURL: orphanURL,
+            orphanBytes: orphanBytes
+        )
+    }
+
+    private func assertFixtureUnchanged(_ fixture: DiagnosticEvidenceFileFixture) throws {
+        let actualCanonicalBytes: Data?
+        if FileManager.default.fileExists(atPath: fixture.canonicalURL.path) {
+            actualCanonicalBytes = try Data(contentsOf: fixture.canonicalURL)
+        } else {
+            actualCanonicalBytes = nil
+        }
+        #expect(actualCanonicalBytes == fixture.canonicalBytes)
+        try assertOrphanUnchanged(in: fixture)
+    }
+
+    private func assertOrphanUnchanged(in fixture: DiagnosticEvidenceFileFixture) throws {
+        #expect(try Data(contentsOf: fixture.orphanURL) == fixture.orphanBytes)
     }
 
     private func assertExactKeyAllowList(_ data: Data) throws {

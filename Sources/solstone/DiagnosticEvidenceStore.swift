@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import Darwin
 import Foundation
 
 internal enum DiagnosticEvidenceCode: String, Codable, Equatable, Sendable, CaseIterable {
@@ -203,14 +204,32 @@ internal enum DiagnosticEvidenceBytesRead: Equatable, Sendable {
     case failed
 }
 
-internal enum DiagnosticEvidenceBytesWriteResult: Equatable, Sendable {
-    case confirmed
+internal struct DiagnosticEvidenceStagingHandle: Equatable, Sendable {
+    let token: String
+}
+
+internal enum DiagnosticEvidenceEncodingResult: Equatable, Sendable {
+    case encoded(Data)
+    case failed
+}
+
+internal enum DiagnosticEvidenceStagingResult: Equatable, Sendable {
+    case staged(DiagnosticEvidenceStagingHandle)
+    case failed
+}
+
+internal enum DiagnosticEvidenceCommitResult: Equatable, Sendable {
+    case committed
     case failed
 }
 
 internal protocol DiagnosticEvidenceBytesStoring: Sendable {
-    func read() -> DiagnosticEvidenceBytesRead
-    func write(_ data: Data) -> DiagnosticEvidenceBytesWriteResult
+    func readCanonical() -> DiagnosticEvidenceBytesRead
+    func encode(_ envelope: DiagnosticEvidenceEnvelope) -> DiagnosticEvidenceEncodingResult
+    func stage(_ data: Data) -> DiagnosticEvidenceStagingResult
+    func readStaged(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceBytesRead
+    func commit(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceCommitResult
+    func removeStaging(_ staging: DiagnosticEvidenceStagingHandle)
 }
 
 /// UserDefaults cannot host this seam: `data(forKey:)` maps both never-written and non-Data values to nil, so it cannot implement `DiagnosticEvidenceBytesRead`.
@@ -232,7 +251,7 @@ internal final class FileDiagnosticEvidenceBytesStore: DiagnosticEvidenceBytesSt
             .appendingPathComponent("diagnostic-evidence.json")
     }
 
-    func read() -> DiagnosticEvidenceBytesRead {
+    func readCanonical() -> DiagnosticEvidenceBytesRead {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return .absent
         }
@@ -243,31 +262,62 @@ internal final class FileDiagnosticEvidenceBytesStore: DiagnosticEvidenceBytesSt
         }
     }
 
-    func write(_ data: Data) -> DiagnosticEvidenceBytesWriteResult {
+    func encode(_ envelope: DiagnosticEvidenceEnvelope) -> DiagnosticEvidenceEncodingResult {
+        do {
+            return .encoded(try envelope.encoded())
+        } catch {
+            return .failed
+        }
+    }
+
+    func stage(_ data: Data) -> DiagnosticEvidenceStagingResult {
+        let stagingURL = fileURL.deletingLastPathComponent()
+            .appendingPathComponent(".\(fileURL.lastPathComponent).\(UUID().uuidString).tmp")
         do {
             try FileManager.default.createDirectory(
                 at: fileURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            try data.write(to: fileURL, options: .atomic)
-            return .confirmed
+            try data.write(to: stagingURL)
+            return .staged(DiagnosticEvidenceStagingHandle(token: stagingURL.path))
+        } catch {
+            try? FileManager.default.removeItem(at: stagingURL)
+            return .failed
+        }
+    }
+
+    func readStaged(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceBytesRead {
+        let stagingURL = URL(fileURLWithPath: staging.token)
+        guard FileManager.default.fileExists(atPath: stagingURL.path) else {
+            return .absent
+        }
+        do {
+            return .bytes(try Data(contentsOf: stagingURL))
         } catch {
             return .failed
         }
+    }
+
+    // Same-directory POSIX rename is the sole commit point. Foundation's atomic-write and replacement APIs
+    // are rejected here because they could replace canonical bytes before the actor validates staged bytes.
+    func commit(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceCommitResult {
+        if Darwin.rename(staging.token, fileURL.path) != 0 {
+            return .failed
+        }
+        return .committed
+    }
+
+    func removeStaging(_ staging: DiagnosticEvidenceStagingHandle) {
+        try? FileManager.default.removeItem(at: URL(fileURLWithPath: staging.token))
     }
 }
 
 internal final class InMemoryDiagnosticEvidenceBytesStore: DiagnosticEvidenceBytesStoring, @unchecked Sendable {
     var stored: Data?
     var readOverride: DiagnosticEvidenceBytesRead?
-    var writeResult: DiagnosticEvidenceBytesWriteResult = .confirmed
-    var failReadsAfterSuccessfulWrite = false
-    private var didWrite = false
+    private var staged: [String: Data] = [:]
 
-    func read() -> DiagnosticEvidenceBytesRead {
-        if failReadsAfterSuccessfulWrite, didWrite {
-            return .failed
-        }
+    func readCanonical() -> DiagnosticEvidenceBytesRead {
         if let readOverride {
             return readOverride
         }
@@ -277,13 +327,37 @@ internal final class InMemoryDiagnosticEvidenceBytesStore: DiagnosticEvidenceByt
         return .bytes(stored)
     }
 
-    func write(_ data: Data) -> DiagnosticEvidenceBytesWriteResult {
-        guard writeResult == .confirmed else {
+    func encode(_ envelope: DiagnosticEvidenceEnvelope) -> DiagnosticEvidenceEncodingResult {
+        do {
+            return .encoded(try envelope.encoded())
+        } catch {
+            return .failed
+        }
+    }
+
+    func stage(_ data: Data) -> DiagnosticEvidenceStagingResult {
+        let token = UUID().uuidString
+        staged[token] = data
+        return .staged(DiagnosticEvidenceStagingHandle(token: token))
+    }
+
+    func readStaged(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceBytesRead {
+        guard let data = staged[staging.token] else {
+            return .absent
+        }
+        return .bytes(data)
+    }
+
+    func commit(_ staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceCommitResult {
+        guard let data = staged.removeValue(forKey: staging.token) else {
             return .failed
         }
         stored = data
-        didWrite = true
-        return .confirmed
+        return .committed
+    }
+
+    func removeStaging(_ staging: DiagnosticEvidenceStagingHandle) {
+        staged.removeValue(forKey: staging.token)
     }
 }
 
@@ -320,7 +394,7 @@ internal actor DiagnosticEvidenceStore {
         }
 
         let intended: DiagnosticEvidenceEnvelope
-        switch bytesStore.read() {
+        switch bytesStore.readCanonical() {
         case .failed:
             persistenceFailed = true
             return .unavailable
@@ -355,7 +429,7 @@ internal actor DiagnosticEvidenceStore {
         }
         let currentTime = now()
 
-        switch bytesStore.read() {
+        switch bytesStore.readCanonical() {
         case .failed:
             persistenceFailed = true
             return .unavailable
@@ -390,33 +464,49 @@ internal actor DiagnosticEvidenceStore {
         asRecord: Bool
     ) -> DiagnosticEvidenceRecordResult {
         let encoded: Data
-        do {
-            encoded = try intended.encoded()
-        } catch {
-            persistenceFailed = true
-            return .unavailable
+        switch bytesStore.encode(intended) {
+        case .encoded(let data):
+            encoded = data
+        case .failed:
+            return unavailable()
         }
 
-        guard bytesStore.write(encoded) == .confirmed else {
-            persistenceFailed = true
-            return .unavailable
+        let staging: DiagnosticEvidenceStagingHandle
+        switch bytesStore.stage(encoded) {
+        case .staged(let handle):
+            staging = handle
+        case .failed:
+            return unavailable()
         }
 
-        switch bytesStore.read() {
+        switch bytesStore.readStaged(staging) {
         case .bytes(let data):
             guard let decoded = try? DiagnosticEvidenceEnvelope.decoded(from: data, now: currentTime),
                   decoded == intended else {
-                persistenceFailed = true
-                return .unavailable
+                return unavailable(after: staging)
             }
-            if asRecord {
-                persistenceFailed = false
-            }
-            return .recorded
         case .absent, .failed:
-            persistenceFailed = true
-            return .unavailable
+            return unavailable(after: staging)
         }
+
+        guard bytesStore.commit(staging) == .committed else {
+            return unavailable(after: staging)
+        }
+        if asRecord {
+            persistenceFailed = false
+        }
+        return .recorded
+    }
+
+    private func unavailable() -> DiagnosticEvidenceRecordResult {
+        persistenceFailed = true
+        return .unavailable
+    }
+
+    private func unavailable(after staging: DiagnosticEvidenceStagingHandle) -> DiagnosticEvidenceRecordResult {
+        persistenceFailed = true
+        bytesStore.removeStaging(staging)
+        return .unavailable
     }
 }
 
