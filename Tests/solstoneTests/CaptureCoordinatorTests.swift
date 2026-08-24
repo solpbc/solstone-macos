@@ -366,7 +366,9 @@ struct CaptureCoordinatorTests {
         #expect(timer.isValid)
         #expect(deliveries.count == 0)
 
-        await passStarts.waitUntilCount(1)
+        try await withTimeout(seconds: 10) {
+            await passStarts.waitUntilCount(1)
+        }
         await Task.yield()
         #expect(passStarts.count == 1)
 
@@ -374,7 +376,9 @@ struct CaptureCoordinatorTests {
         timer.fireDate = .distantFuture
 
         #expect(deliveries.count == 1)
-        await passStarts.waitUntilCount(2)
+        try await withTimeout(seconds: 10) {
+            await passStarts.waitUntilCount(2)
+        }
         await Task.yield()
         #expect(passStarts.count == 2)
 
@@ -382,7 +386,9 @@ struct CaptureCoordinatorTests {
         delivery()
 
         #expect(deliveries.count == 1)
-        await passStarts.waitUntilCount(3)
+        try await withTimeout(seconds: 10) {
+            await passStarts.waitUntilCount(3)
+        }
         await Task.yield()
         #expect(passStarts.count == 3)
 
