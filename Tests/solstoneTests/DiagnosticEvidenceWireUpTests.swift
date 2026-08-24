@@ -26,6 +26,44 @@ struct DiagnosticEvidenceWireUpTests {
         #expect(!wireUpContains(coordinator, "Task { await store.record"))
     }
 
+    @Test func productionDefaultsReachTheLivePermissionPollScheduler() throws {
+        let app = try readWireUpSource("Sources/solstone/SolstoneCaptureApp.swift")
+        let composition = try readWireUpSource("Sources/solstone/SolstoneStartupComposition.swift")
+        let appState = try readWireUpSource("Sources/solstone/AppState.swift")
+        let coordinator = try readWireUpSource("Sources/solstone/CaptureCoordinator.swift")
+        let scheduler = try readWireUpSource("Sources/solstone/PermissionPollScheduler.swift")
+
+        #expect(wireUpContains(app, "SolstoneStartupComposition.makeNormalStartup("))
+        #expect(!app.contains("makeState:"))
+        #expect(wireUpContains(composition, """
+            makeState: @escaping @MainActor (DiagnosticEvidenceRecorder, Bool) -> AppState = { recorder, pipelineEnabled in
+                AppState(
+                    automaticObservationPipelineEnabled: pipelineEnabled,
+                    recorder: recorder
+                )
+            },
+            """))
+
+        let productionInitAnchor = "notifier: any UserNotifying = UNUserNotificationCenterNotifier(),"
+        try #require(appState.components(separatedBy: productionInitAnchor).count == 2)
+        let anchorRange = try #require(appState.range(of: productionInitAnchor))
+        let initRange = try #require(appState[..<anchorRange.lowerBound].range(of: "    init(", options: .backwards))
+        let captureRange = try #require(appState[initRange.lowerBound...].range(of: "        self.capture = capture"))
+        let productionInit = String(appState[initRange.lowerBound..<captureRange.upperBound])
+        try #require(!productionInit.isEmpty)
+
+        #expect(wireUpContains(productionInit, "let capture = CaptureCoordinator("))
+        #expect(!wireUpContains(productionInit, "permissionPollScheduler"))
+        #expect(wireUpContains(coordinator, "permissionPollScheduler: PermissionPollScheduler = .live(),"))
+        #expect(wireUpContains(coordinator, "self.permissionPollScheduler = permissionPollScheduler"))
+        #expect(wireUpContains(coordinator, "permissionPollCancellation = permissionPollScheduler.armPolling"))
+        #expect(wireUpContains(scheduler, """
+            Timer.scheduledTimer(withTimeInterval: interval, repeats: repeats) { _ in
+                delivery()
+            }
+            """))
+    }
+
     @Test func screenTruthAssignmentsAreContained() throws {
         let enumerator = try #require(FileManager.default.enumerator(
             at: URL(fileURLWithPath: "Sources"),

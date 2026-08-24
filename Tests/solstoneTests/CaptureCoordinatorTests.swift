@@ -333,34 +333,74 @@ struct CaptureCoordinatorTests {
         #expect(firedCoordinator.initialPermissionCheckComplete)
     }
 
-    @Test func livePermissionPollSchedulerContract() throws {
+    @Test func livePermissionPollSchedulerContract() async throws {
         let spy = LivePermissionPollTimerSpy()
-        var immediateCount = 0
+        let deliveries = LockedCounter()
+        let passStarts = LockedCounter()
         let scheduler = PermissionPollScheduler.live(
-            scheduleTimer: { interval, repeats, fire in
+            scheduleTimer: { interval, repeats, delivery in
+                spy.allocationCount += 1
                 spy.interval = interval
                 spy.repeats = repeats
                 let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: repeats) { _ in
-                    fire()
+                    deliveries.increment()
+                    delivery()
                 }
+                spy.delivery = delivery
                 spy.timer = timer
                 return timer
-            },
-            startImmediatePass: { _ in immediateCount += 1 }
+            }
         )
 
-        let cancel = scheduler.armPolling {}
+        let cancel = scheduler.armPolling {
+            passStarts.increment()
+        }
         let timer = try #require(spy.timer)
+        defer { timer.invalidate() }
+        timer.fireDate = .distantFuture
 
-        #expect(immediateCount == 1)
+        #expect(spy.allocationCount == 1)
         #expect(spy.interval == 5.0)
         #expect(spy.repeats == true)
         #expect(timer.tolerance == 2.0)
         #expect(timer.isValid)
+        #expect(deliveries.count == 0)
+
+        await passStarts.waitUntilCount(1)
+        await Task.yield()
+        #expect(passStarts.count == 1)
+
+        timer.fire()
+
+        #expect(deliveries.count == 1)
+        await passStarts.waitUntilCount(2)
+        await Task.yield()
+        #expect(passStarts.count == 2)
+
+        let delivery = try #require(spy.delivery)
+        delivery()
+
+        #expect(deliveries.count == 1)
+        await passStarts.waitUntilCount(3)
+        await Task.yield()
+        #expect(passStarts.count == 3)
 
         cancel()
 
         #expect(!timer.isValid)
+
+        timer.fire()
+
+        #expect(deliveries.count == 1)
+        await Task.yield()
+        #expect(passStarts.count == 3)
+
+        cancel()
+
+        #expect(!timer.isValid)
+        #expect(deliveries.count == 1)
+        await Task.yield()
+        #expect(passStarts.count == 3)
     }
 
     private func makeCoordinator(
@@ -402,8 +442,10 @@ struct CaptureCoordinatorTests {
 
 @MainActor
 private final class LivePermissionPollTimerSpy {
+    var allocationCount = 0
     var interval: TimeInterval?
     var repeats: Bool?
+    var delivery: (@Sendable () -> Void)?
     var timer: Timer?
 }
 

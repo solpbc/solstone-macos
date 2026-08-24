@@ -222,6 +222,7 @@ func makeScreenPermissionProvider(
 func makeEvidenceCoordinator(
     recorder: DiagnosticEvidenceRecorder,
     screenPermissionProvider: ScreenRecordingPermissionProvider,
+    permissionPollScheduler: PermissionPollScheduler = PermissionPollTestScheduler().scheduler,
     isTerminating: @escaping CaptureCoordinator.IsTerminatingProvider = { false },
     startOperation: CaptureCoordinator.StartOperation? = nil,
     logAdapter: DiagnosticEvidenceLoggingAdapter = DiagnosticEvidenceLoggingAdapter()
@@ -239,7 +240,7 @@ func makeEvidenceCoordinator(
         startOperation: startOperation,
         recorder: recorder,
         screenPermissionProvider: screenPermissionProvider,
-        permissionPollScheduler: PermissionPollTestScheduler().scheduler,
+        permissionPollScheduler: permissionPollScheduler,
         logAdapter: logAdapter
     )
     return (coordinator, root)

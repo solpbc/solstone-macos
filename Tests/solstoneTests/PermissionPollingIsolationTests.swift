@@ -151,6 +151,50 @@ struct PermissionPollingIsolationTests {
         #expect(start.count == 0)
     }
 
+    @Test func activationStopsAndTearsDownInjectedPermissionPolling() throws {
+        let defaults = DefaultsSnapshot()
+        defer { defaults.restore() }
+
+        let scheduler = PermissionPollTestScheduler()
+        let target = CaptureCoordinatorTarget()
+        var root: URL?
+        defer {
+            if let root {
+                try? FileManager.default.removeItem(at: root)
+            }
+        }
+
+        do {
+            let (coordinator, fixtureRoot) = try makeEvidenceCoordinator(
+                recorder: .dormant,
+                screenPermissionProvider: makeScreenPermissionProvider(prompted: false),
+                permissionPollScheduler: scheduler.scheduler
+            )
+            root = fixtureRoot
+            target.coordinator = coordinator
+
+            coordinator.activate()
+
+            #expect(scheduler.armCount == 1)
+            #expect(scheduler.outstandingArmCount == 1)
+
+            let callback = try #require(coordinator.captureManager.onStateChanged)
+            callback(.recording)
+
+            #expect(scheduler.cancellationCount == 1)
+            #expect(scheduler.outstandingArmCount == 0)
+
+            callback(.idle)
+
+            #expect(scheduler.armCount == 2)
+            #expect(scheduler.outstandingArmCount == 1)
+        }
+
+        #expect(target.coordinator == nil)
+        #expect(scheduler.cancellationCount == 2)
+        #expect(scheduler.outstandingArmCount == 0)
+    }
+
     @Test func unactivatedCoordinatorHasNoCallbackOrCaptureEvidence() async throws {
         let harness = DiagnosticEvidenceHarness()
         let (coordinator, root) = try makeEvidenceCoordinator(
