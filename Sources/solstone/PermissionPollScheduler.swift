@@ -15,26 +15,22 @@ internal struct PermissionPollScheduler {
         scheduleTimer: @escaping @MainActor @Sendable (
             _ interval: TimeInterval,
             _ repeats: Bool,
-            _ fire: @escaping @MainActor @Sendable () -> Void
-        ) -> Timer = { interval, repeats, fire in
+            _ delivery: @escaping @Sendable () -> Void
+        ) -> Timer = { interval, repeats, delivery in
             Timer.scheduledTimer(withTimeInterval: interval, repeats: repeats) { _ in
-                fire()
-            }
-        },
-        startImmediatePass: @escaping @MainActor @Sendable (@escaping Pass) -> Void = { pass in
-            Task { @MainActor in
-                await pass()
+                delivery()
             }
         }
     ) -> Self {
         Self { pass in
-            startImmediatePass(pass)
-            let fire: @MainActor @Sendable () -> Void = {
+            // Foundation delivers timer blocks nonisolated, so this crossing must be explicit here.
+            let delivery: @Sendable () -> Void = {
                 Task { @MainActor in
                     await pass()
                 }
             }
-            let timer = scheduleTimer(5.0, true, fire)
+            delivery()
+            let timer = scheduleTimer(5.0, true, delivery)
             timer.tolerance = 2.0
             return { timer.invalidate() }
         }
