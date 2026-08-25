@@ -21,6 +21,19 @@ struct UploadCoordinatorTests {
         #expect(coordinator.lastSyncedAt == nil)
     }
 
+    @Test func segmentUnprovableRecordsEvidenceOnceThenCoalescesOnRepeat() async throws {
+        let fixed = Date(timeIntervalSince1970: 1_700_000_000)
+        let harness = DiagnosticEvidenceHarness()
+        let coordinator = try makeCoordinator(now: fixed, recorder: harness.recorder)
+
+        coordinator.handleProgressEvent(.segmentUnprovable(segment: "130000_300"))
+        coordinator.handleProgressEvent(.segmentUnprovable(segment: "130000_300"))
+
+        let entries = await harness.entries()
+        #expect(evidenceCodes(entries) == [.syncSegmentUnprovable])
+        #expect(entries.first?.repeatCount == 2)
+    }
+
     @Test func journalContactSucceededUpdatesLastSyncedAtAndResetsHealthErrors() throws {
         let fixed = Date(timeIntervalSince1970: 1_700_000_000)
         let coordinator = try makeCoordinator(now: fixed)
@@ -584,11 +597,15 @@ struct UploadCoordinatorTests {
         UserDefaults.standard.removeObject(forKey: "syncedDays")
     }
 
-    private func makeCoordinator(now: Date) throws -> UploadCoordinator {
+    private func makeCoordinator(
+        now: Date,
+        recorder: DiagnosticEvidenceRecorder = .dormant
+    ) throws -> UploadCoordinator {
         let root = try makeTempDirectory("upload-coordinator")
         let coordinator = UploadCoordinator(
             forSnapshot: StorageManager(baseDirectory: root),
-            config: AppConfig()
+            config: AppConfig(),
+            recorder: recorder
         )
         coordinator.nowProvider = { now }
         return coordinator

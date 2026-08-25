@@ -22,6 +22,7 @@ internal enum DiagnosticEvidenceCode: String, Codable, Equatable, Sendable, Case
     case permissionAutoStartSkipped = "permission.auto_start_skipped"
     case terminationDrainTimeout = "termination.drain_timeout"
     case deliveryWriteFailed = "delivery.write_failed"
+    case syncSegmentUnprovable = "sync.segment_unprovable"
 }
 
 internal struct DiagnosticEvidenceEntry: Equatable, Sendable {

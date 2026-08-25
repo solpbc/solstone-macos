@@ -20,6 +20,12 @@ public actor SyncService {
         case syncComplete
         case offline(error: String, healthReason: ObserverHealthFailureReason)
         case awaitingTunnel
+        /// A segment's directory listed cleanly and held no file `selectFilesForUpload`
+        /// recognizes — it can never earn a hold proof. It no longer blocks its day's synced
+        /// mark; this exists purely to let a MainActor listener surface it once rather than
+        /// as unbounded log noise. Never fired for a segment whose directory failed to list;
+        /// that stays a transient, retried condition.
+        case segmentUnprovable(segment: String)
     }
 
     private struct SegmentAliasKey: Hashable, Sendable {
@@ -122,6 +128,19 @@ public actor SyncService {
     /// exposes neither submitted nor stored segment keys.
     var storedSegmentAliasCountForTesting: Int {
         storedSegmentKeyBySubmittedKey.count
+    }
+
+    /// `false` only when the segment directory itself could not be listed (missing,
+    /// permission fault, a race with deletion) — distinct from a listing that succeeded
+    /// and simply matched no file `selectFilesForUpload` recognizes. A segment must clear
+    /// this before it is treated as structurally unprovable; a transient listing failure
+    /// must not be, so a later pass gets the chance to retry once it clears.
+    func segmentDirectoryIsListableForTesting(_ segmentDirectory: URL) -> Bool {
+        segmentDirectoryIsListable(segmentDirectory)
+    }
+
+    private nonisolated func segmentDirectoryIsListable(_ segmentDirectory: URL) -> Bool {
+        (try? FileManager.default.contentsOfDirectory(atPath: segmentDirectory.path)) != nil
     }
 
     // MARK: - Sync Trigger
@@ -261,13 +280,29 @@ public actor SyncService {
                     serverSegment: serverSegment
                 )
                 if needsUpload {
-                    anyNeededUpload = true
+                    // A segment whose directory lists cleanly but matches no recognized file
+                    // can never earn a hold proof, so it must not veto this day's synced mark
+                    // or block local-disk cleanup for every other segment forever. Distinct
+                    // from (a) an unproven-but-possible segment (wrong hash, malformed server
+                    // read, etc.), which correctly keeps blocking until it resolves, and (b) a
+                    // segment whose directory itself failed to list (permission fault, a race
+                    // with deletion) — that is a transient read failure, not a structural
+                    // verdict, and must keep vetoing so a later pass can retry it.
                     guard !filesToUpload.isEmpty else {
+                        guard segmentDirectoryIsListable(segmentURL) else {
+                            anyNeededUpload = true
+                            Logger.upload.info("Segment \(segment, privacy: .public): directory could not be listed, retaining")
+                            checked += 1
+                            progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
+                            continue
+                        }
                         Logger.upload.info("Segment \(segment, privacy: .public): no files available to establish a hold")
+                        progressContinuation.yield(.segmentUnprovable(segment: segment))
                         checked += 1
                         progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
                         continue
                     }
+                    anyNeededUpload = true
                     Logger.upload.info("Segment \(segment, privacy: .public) needs upload...")
                     let metadata = readSegmentMetadata(segmentURL: segmentURL, segment: segment)
                     let outcome = await uploadSegmentWithRetry(

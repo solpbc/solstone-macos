@@ -232,37 +232,99 @@ struct SyncServiceTests {
         )
     }
 
-    @Test func noSelectableFilesBlockDaySyncedMark() async throws {
+    /// A segment that will never produce an uploadable file (the "0-byte capture" shape)
+    /// must not veto its day's synced mark forever — that's what stranded 32 days / 1.7 GB
+    /// of already-eligible local data behind one poisoned folder in the field. It should
+    /// still never be silently deleted (no server proof exists for it, ever) and it should
+    /// still be surfaced, once, in local diagnostics rather than an unbounded per-pass log.
+    @Test func noSelectableFilesDoesNotBlockDaySyncedMark() async throws {
         resetSyncedDaysCache()
         store.reset()
         let date = try #require(Calendar.current.date(byAdding: .day, value: -2, to: Date()))
         let root = try makeTempDirectory("sync-no-selectable-files")
-        let segment = try makeSegment(root: root, date: date)
-        try FileManager.default.removeItem(at: segment.url.appendingPathComponent("120000_300_audio.m4a"))
+        let segment = try makeUnuploadableSegment(root: root, date: date, segmentName: "120000_300")
         let day = dayString(for: segment.date)
-        store.enqueue(statusCode: 200, body: manifestJSON(day: day))
-        store.enqueue(statusCode: 200, body: manifestDayJSON(
-            day: day,
-            key: "120000_300",
-            filename: "120000_300_audio.m4a",
-            sha: "server-sha",
-            size: 5
-        ))
-        store.enqueue(statusCode: 200, body: segmentsDayJSON(
-            key: "120000_300",
-            filename: "120000_300_audio.m4a",
-            sha: "server-sha",
-            size: 5
-        ))
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        // The day-walk finds the day absent from the manifest (nothing was ever uploaded),
+        // so it never populates the reconciled-day cache. Once this segment stops vetoing
+        // the day's synced mark, cleanup runs for the day within this same pass and makes
+        // its own reconciled-day read to confirm nothing here is safe to delete.
+        store.enqueue(statusCode: 200, body: manifestDayJSON(day: day, entries: []))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(entries: []))
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24690") })
         await configure(service, cacheRetentionDays: 0)
 
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+
         await service.sync()
+        await collector.waitForSegmentUnprovable()
+        listen.cancel()
 
         #expect(FileManager.default.fileExists(atPath: segment.url.path))
         #expect(store.snapshotRequests().count == 3)
         #expect(store.snapshotRequests().contains { $0.url?.path == IngestProtocolV3.uploadPath } == false)
+        #expect(syncedDays().contains(day) == true)
+        #expect(collector.segmentUnprovableCount == 1)
+    }
+
+    /// The exact field shape from `req_jrzforj4`: one unprovable segment sharing a day with a
+    /// real, uploadable one. The poisoned segment must not strand the real segment's local
+    /// copy behind a synced-mark gate that can never close.
+    @Test func poisonSegmentDoesNotStrandProvenSiblingSegments() async throws {
+        resetSyncedDaysCache()
+        store.reset()
+        let date = try #require(Calendar.current.date(byAdding: .day, value: -2, to: Date()))
+        let root = try makeTempDirectory("sync-poison-sibling")
+        let real = try makeSegment(root: root, date: date, segmentName: "110000_300")
+        let poison = try makeUnuploadableSegment(root: root, date: date, segmentName: "130000_300")
+        let day = dayString(for: real.date)
+        let filename = "110000_300_audio.m4a"
+        let sha = try sha256(of: real.url.appendingPathComponent(filename))
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24691") })
+        await configure(service, cacheRetentionDays: 0)
+
+        // Pass 1: nothing on the server yet. The real segment uploads; the poison segment
+        // is skipped without ever reaching the network.
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: #"{"status":"ok","segment":"110000_300"}"#)
+        await service.sync()
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(syncedDays().contains(day) == false)
+        #expect(FileManager.default.fileExists(atPath: real.url.path))
+        #expect(FileManager.default.fileExists(atPath: poison.url.path))
+
+        // Pass 2: the server now confirms the real segment. The day must close and cleanup
+        // must reclaim the real segment's local copy — the poison segment must not block it.
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON(day: day, segments: 1))
+        store.enqueue(statusCode: 200, body: manifestDayJSON(day: day, key: "110000_300", filename: filename, sha: sha, size: 5))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(key: "110000_300", filename: filename, sha: sha, size: 5))
+        await service.sync()
+
+        #expect(store.snapshotRequests().count == 3)
+        #expect(store.snapshotRequests().contains { $0.url?.path == IngestProtocolV3.uploadPath } == false)
+        #expect(syncedDays().contains(day) == true)
+        #expect(FileManager.default.fileExists(atPath: real.url.path) == false)
+        #expect(FileManager.default.fileExists(atPath: poison.url.path) == true)
+    }
+
+    /// A directory that fails to list at all (missing, or removed out from under the walk)
+    /// must not be treated identically to one that lists cleanly and simply matches no
+    /// file — only the latter is a structural "can never earn a hold proof" verdict.
+    @Test func segmentDirectoryListabilityDistinguishesMissingFromEmpty() async throws {
+        let root = try makeTempDirectory("sync-listability")
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .held })
+
+        let listable = try makeUnuploadableSegment(root: root, segmentName: "140000_300")
+        #expect(await service.segmentDirectoryIsListableForTesting(listable.url) == true)
+
+        let missing = listable.url.deletingLastPathComponent().appendingPathComponent("150000_300")
+        #expect(await service.segmentDirectoryIsListableForTesting(missing) == false)
     }
 
     @Test func duplicateAliasConfirmsWithinServiceAndFreshServiceFailsClosed() async throws {
@@ -721,6 +783,19 @@ struct SyncServiceTests {
         return (directory, date)
     }
 
+    /// A finalized, listable segment directory (no `.incomplete`/`.failed` suffix) holding
+    /// no file `selectFilesForUpload` recognizes — the "0-byte capture" shape: it can never
+    /// earn a hold proof no matter how many sync passes run. Distinct from a directory that
+    /// fails to list at all, which stays a retried, transient condition.
+    private func makeUnuploadableSegment(root: URL, date: Date = Date(), segmentName: String = "130000_300") throws -> (url: URL, date: Date) {
+        let directory = root
+            .appendingPathComponent(dateFolderString(for: date), isDirectory: true)
+            .appendingPathComponent(segmentName, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: directory.appendingPathComponent("\(segmentName)_meta.json"))
+        return (directory, date)
+    }
+
     private func manifestJSON(day: String? = nil, segments: Int = 1) -> String {
         guard let day else { return #"{"days":{}}"# }
         return #"{"days":{"\#(day)":{"segments":\#(segments)}}}"#
@@ -858,6 +933,12 @@ private final class ProgressCollector: @unchecked Sendable {
         }
     }
 
+    var segmentUnprovableCount: Int {
+        lock.withLock {
+            events.filter { if case .segmentUnprovable = $0 { return true }; return false }.count
+        }
+    }
+
     var uploadSucceededFingerprints: [String] {
         lock.withLock {
             events.compactMap { event in
@@ -883,6 +964,10 @@ private final class ProgressCollector: @unchecked Sendable {
 
     func waitForSyncComplete(timeout: Duration = .seconds(10)) async {
         await waitUntil(timeout: timeout) { containsSyncComplete }
+    }
+
+    func waitForSegmentUnprovable(timeout: Duration = .seconds(10)) async {
+        await waitUntil(timeout: timeout) { segmentUnprovableCount > 0 }
     }
 
     private func waitUntil(timeout: Duration, _ condition: () -> Bool) async {

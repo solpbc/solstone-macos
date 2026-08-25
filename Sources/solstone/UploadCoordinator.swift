@@ -421,6 +421,9 @@ public final class UploadCoordinator {
             retryTask?.cancel()
             retryTask = nil
             status = .awaitingTunnel
+
+        case .segmentUnprovable:
+            recorder.enqueue(.syncSegmentUnprovable)
         }
     }
 
