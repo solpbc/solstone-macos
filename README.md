@@ -1,57 +1,62 @@
 <img src="docs/static/sol-wordmark.svg" alt="solstone" width="300">
 
-# The solstone app for macos
+# The solstone app for mac
 
-The solstone app runs on your mac. It takes in what you choose to share with it, and all of it goes into your journal.
+The solstone app runs on your mac.
 
 ## About
 
-This repository contains the native Swift menu-bar app for macos. The journal is a separate app and download. Install it on the computer where you choose to keep your journal: <https://solstone.app/download/journal>.
+This repository contains the native Swift menu-bar app for mac. The journal is a separate app and download. Your journal is always private, only yours: it lives on your devices. [The privacy policy](https://solpbc.org/privacy) sets out the narrow data handling for optional hosted services. Install it on the computer where you choose to keep your journal: <https://solstone.app/download/journal>.
 
 ## Install
 
-For most people, install the signed and notarized DMG from <https://solstone.app/download/macos>. It installs the solstone app, opens first-run setup, and updates over a signed channel.
+For most people, download the app from <https://solstone.app/download/macos> and follow its first-run setup.
 
 ## Build from source
 
-Build from source when you need to modify the app. Use [the local test build guide](docs/local-test-build.md) for the supported public path.
+Build from source when you need to modify the app.
+
+### Prerequisites
+
+- [mac, version 15 or later](Package.swift#L10)
+- [The full Xcode app](Makefile#L298) with [Swift 6.1 or later](Package.swift#L1)
+- Open Xcode once and complete its first-run setup before building.
 
 ```bash
 git clone https://github.com/solpbc/solstone-macos.git
 cd solstone-macos
-make install
-make build
-make test
+make bundle-adhoc
 make run
 ```
 
+These Make targets build a local test app. They do not build or bundle the journal. Use [the local test build guide](docs/local-test-build.md) for its local-signing and verification details.
+
 ## Development commands
 
-- `make build`: Build both packages (debug)
-- `make run`: Launch `solstone.app` from the source tree and stream logs
-- `make test`: Run tests
-- `make ci`: Run Swift and Python tests
-- `make install`: Install local development and build dependencies
-- `make setup`: Alias for `make install`
-- `make clean`: Clean all build artifacts
+- `make bundle-adhoc`: Build the local test app.
+- `make run`: Launch `solstone.app` and stream logs; run it after `make bundle-adhoc`.
+- `make build`: Compile a debug build without assembling an app bundle.
+- `make test`: Run the Swift tests.
+- `make ci`: Run the full project gate.
+- `make icons`: Regenerate app assets when you change their SVG sources.
+- `make clean`: Remove build artifacts.
 
 ## Permissions
 
-macos presents the permission prompts needed for the material you choose to share. The relevant settings include Screen Recording, Microphone, and System Audio Recording.
+mac presents permission prompts for what you choose to share. The relevant settings include Screen & System Audio Recording and Microphone.
 
 ## Architecture
 
-This is one Swift Package Manager repository. Production targets are `SolstoneCore`, `solstone` (the executable app and recording layer in `Sources/solstone/`), `solstone-watchdog`, and `ObjCHelpers`; SPL tunnel code comes from the shared `spl-swift` package. Test targets are `solstoneTests`.
+This is one Swift Package Manager repository. `solstone` is the app executable, `solstone-watchdog` is its helper, and shared code lives alongside them in the package. See [Package.swift](Package.swift) for the target graph.
 
-## File storage
+## Local files
 
-- Intake segments: `~/Library/Application Support/Solstone/captures/YYYY-MM-DD/HHMMSS_DDD/`
-- Configuration: UserDefaults
-- Journal key: UserDefaults
+- Material waiting to reach your journal: `~/Library/Application Support/Solstone/captures/YYYY-MM-DD/HHMMSS_DDD/`
+- App configuration: UserDefaults
 
 ## Logging
 
-Uses macos unified logging with subsystem `app.solstone.observer`.
+The app uses mac unified logging with subsystem `app.solstone.observer`.
 
 ```bash
 # Stream logs in real time
