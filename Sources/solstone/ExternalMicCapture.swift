@@ -372,6 +372,12 @@ public final class ExternalMicCapture: @unchecked Sendable {
             guard let newConverter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
                 return nil
             }
+            // AVAudioConverter has no defined mono downmix for discrete multichannel
+            // layouts (interfaces with >2 inputs) and emits all-zero samples for them;
+            // map the first input channel explicitly. Mono/stereo keep the default map.
+            if sourceFormat.channelCount > 2 {
+                newConverter.channelMap = [0]
+            }
             cachedConverter = newConverter
             cachedSourceFormat = sourceFormat
             converter = newConverter
