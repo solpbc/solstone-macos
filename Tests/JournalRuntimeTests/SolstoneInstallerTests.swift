@@ -84,7 +84,7 @@ struct SolstoneInstallerTests {
         defer { try? FileManager.default.removeItem(at: fixture.workspace) }
         let runner = FakeSubprocessRunner()
         enqueueSuccessfulInstall(on: runner)
-        runner.enqueue("--version", .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8)))
+        runner.enqueue("--version", .success(stdout: Data("solstone 9.9.9\n".utf8)))
         let failureStore = InMemoryUpgradeFailureRecordStore()
         let host = TestInstallerHost(readinessResult: false)
         let installer = makeInstaller(
@@ -104,7 +104,7 @@ struct SolstoneInstallerTests {
         #expect(await waitForInstallToFinish(installer))
         #expect(installer.main == .failed(.confirmingReadiness(message: UICopy.INSTALLER_READINESS_GATE_FAILED)))
         let record = try #require(failureStore.load())
-        #expect(record.installed == BundleConfig.solstonePinVersion)
+        #expect(record.installed == "9.9.9")
         #expect(record.pinned == BundleConfig.solstonePinVersion)
         #expect(record.errorDetails == "app-owned journal child did not become ready")
         #expect(host.upgradeStartedCallCount == 1)
