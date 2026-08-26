@@ -56,3 +56,4 @@ the local bundle should contain `SolstoneSPLKeychainPlane = login-keychain` in `
 - do not distribute `bundle-adhoc` or `bundle-adhoc-debug` builds.
 - `bundle-adhoc-debug` builds stay debug-attachable because they include `get-task-allow`.
 - on a machine without the stable development certificate, `scripts/adhoc-dev-cert.sh identity` prints nothing and exits nonzero; the Makefile then signs with `-`.
+- on machines previously configured with Xcode Command Line Tools, developers may need to manually run `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`
