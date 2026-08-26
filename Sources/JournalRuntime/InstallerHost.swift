@@ -7,5 +7,4 @@ public protocol InstallerHost: AnyObject, Sendable {
     func updateInstallerConfig(_ config: AppConfig)
     func notifyInstallerUpgradeStarted()
     func ensureBundledJournalRuntime(journalRoot: URL) async -> Bool
-    func testInstallerConnection(serverURL: String, serverKey: String) async -> String?
 }

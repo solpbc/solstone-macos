@@ -10,7 +10,7 @@ public enum MainState: Sendable, Equatable {
     case installingSolstone(SubprocessProgress)
     case runningSolSetup(SubprocessProgress)
     case verifyingIntegrity(SubprocessProgress)
-    case registering(SubprocessProgress)
+    case confirmingReadiness(SubprocessProgress)
     case externallyManaged(solPath: String)
     case done
     case failed(FailedState)
@@ -76,7 +76,7 @@ public enum FailedState: Sendable, Equatable {
     case installSolstone(message: String)
     case solSetup(errorCode: String?, message: String)
     case installModels(message: String)
-    case registering(message: String)
+    case confirmingReadiness(message: String)
     case upgradeCutoverFailed(message: String)
 }
 

@@ -24,12 +24,6 @@ public enum VersionProbeResult: Equatable, Sendable {
     case unknown
 }
 
-public enum AutoTestState: Equatable, Sendable {
-    case verifying
-    case success
-    case failure(String)
-}
-
 public enum RowStatus: Equatable, Sendable {
     case pending
     case running
@@ -44,7 +38,7 @@ public enum InstallerRow: String, CaseIterable, Sendable {
     case installSolstone = "row.installSolstone"
     case solSetup = "row.solSetup"
     case verifyingIntegrity = "row.verifyingIntegrity"
-    case registering = "row.registering"
+    case confirmingReadiness = "row.confirmingReadiness"
     case models = "row.models"
 }
 
@@ -54,7 +48,7 @@ public func cardState(from main: MainState) -> InstallerCardState {
         return .detecting
     case .awaitingChoice(let existingInstall):
         return existingInstall ? .installedPlaceholder : .absent
-    case .cleaningUp, .installingSolstone, .runningSolSetup, .verifyingIntegrity, .registering:
+    case .cleaningUp, .installingSolstone, .runningSolSetup, .verifyingIntegrity, .confirmingReadiness:
         return .installing
     case .externallyManaged(let solPath):
         return .externallyManaged(solPath: solPath, probe: nil)
@@ -198,7 +192,7 @@ public func rowStatus(
             return .pending
         case .cleaningUp:
             return .running
-        case .installingSolstone, .runningSolSetup, .verifyingIntegrity, .registering, .done:
+        case .installingSolstone, .runningSolSetup, .verifyingIntegrity, .confirmingReadiness, .done:
             return .ok
         case .failed(let failedState):
             if case .cleanup(_, let message) = failedState {
@@ -212,7 +206,7 @@ public func rowStatus(
             return .pending
         case .installingSolstone:
             return .running
-        case .runningSolSetup, .verifyingIntegrity, .registering, .done:
+        case .runningSolSetup, .verifyingIntegrity, .confirmingReadiness, .done:
             return .ok
         case .failed(let failedState):
             switch failedState {
@@ -232,7 +226,7 @@ public func rowStatus(
             return .pending
         case .runningSolSetup:
             return .running
-        case .verifyingIntegrity, .registering, .done:
+        case .verifyingIntegrity, .confirmingReadiness, .done:
             return .ok
         case .failed(let failedState):
             switch failedState {
@@ -240,7 +234,7 @@ public func rowStatus(
                 return .failed(message: message)
             case .cleanup, .installSolstone:
                 return .pending
-            case .registering, .installModels, .upgradeCutoverFailed:
+            case .confirmingReadiness, .installModels, .upgradeCutoverFailed:
                 return .ok
             }
         }
@@ -250,7 +244,7 @@ public func rowStatus(
             return .pending
         case .verifyingIntegrity:
             return .running
-        case .registering, .done:
+        case .confirmingReadiness, .done:
             if let message = integrityWarningMessage {
                 return .warning(message: message)
             }
@@ -259,24 +253,24 @@ public func rowStatus(
             switch failedState {
             case .cleanup, .installSolstone, .solSetup, .upgradeCutoverFailed:
                 return .pending
-            case .registering, .installModels:
+            case .confirmingReadiness, .installModels:
                 if let message = integrityWarningMessage {
                     return .warning(message: message)
                 }
                 return .ok
             }
         }
-    case .registering:
+    case .confirmingReadiness:
         switch main {
         case .detecting, .awaitingChoice, .cleaningUp, .installingSolstone, .runningSolSetup, .verifyingIntegrity, .externallyManaged:
             return .pending
-        case .registering:
+        case .confirmingReadiness:
             return .running
         case .done:
             return .ok
         case .failed(let failedState):
             switch failedState {
-            case .registering(let message):
+            case .confirmingReadiness(let message):
                 return .failed(message: message)
             case .cleanup, .installSolstone, .solSetup, .upgradeCutoverFailed:
                 return .pending
@@ -326,8 +320,8 @@ public func currentSubprocessProgress(
             return progress
         }
         return nil
-    case .registering:
-        if case .registering(let progress) = main {
+    case .confirmingReadiness:
+        if case .confirmingReadiness(let progress) = main {
             return progress
         }
         return nil

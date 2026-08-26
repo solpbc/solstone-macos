@@ -10,14 +10,6 @@ private let pidWaitTimeoutDefault: Duration = .seconds(10)
 private let pidWaitPollIntervalDefault: Duration = .milliseconds(250)
 private let orphanGracePeriodDefault: Duration = .seconds(3)
 private let subprocessTimeoutGracePeriodDefault: Duration = .seconds(2)
-private let observerRegistrationRetryBudget: Duration = .seconds(90)
-private let observerRegistrationRetryBackoffs: [Duration] = [
-    .milliseconds(500),
-    .seconds(1),
-    .seconds(2),
-    .seconds(4),
-    .seconds(8)
-]
 
 private enum UpgradeFailureRecordBaseline: Equatable {
     case none
@@ -29,7 +21,6 @@ private enum UpgradeFailureRecordBaseline: Equatable {
 public final class SolstoneInstaller {
     public var main: MainState = .detecting
     public var probedVersion: VersionProbeResult?
-    public var postInstallAutoTest: AutoTestState?
     public var modelsProgress: ModelsProgress = .idle
     public var lastFailureCategory: ErrorCategory?
     public var lastFailureLog: String?
@@ -40,7 +31,7 @@ public final class SolstoneInstaller {
     /// that should defer automatic Sparkle update checks and install activation.
     public var exclusiveOperationInProgress: Bool {
         switch main {
-        case .cleaningUp, .installingSolstone, .runningSolSetup, .verifyingIntegrity, .registering:
+        case .cleaningUp, .installingSolstone, .runningSolSetup, .verifyingIntegrity, .confirmingReadiness:
             return true
         case .detecting, .awaitingChoice, .externallyManaged, .done, .failed:
             return false
@@ -61,8 +52,6 @@ public final class SolstoneInstaller {
     private let wrapperDirURL: URL
     private let solBinaryFinder: @Sendable () async -> String?
     private let solOwnershipResolver: @Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership
-    private let connectionTester: (@Sendable (String, String) async -> String?)?
-    private let observerRegistrar: ObserverRegistrar
     private let fileExists: @Sendable (String) -> Bool
     private let pidExists: @Sendable (pid_t) -> Bool
     private let terminate: @Sendable (pid_t, Int32) -> Int32
@@ -72,7 +61,6 @@ public final class SolstoneInstaller {
     private let journalSetupTimeout: Duration
     private let journalWarmTimeout: Duration
     private let clock: any MonotonicClock
-    private let sleep: @Sendable (Duration) async throws -> Void
     private var detectionInFlight = false
     private var installTask: Task<Void, Never>?
     /// Test seam: whether an install/upgrade task is currently running.
@@ -88,7 +76,6 @@ public final class SolstoneInstaller {
         bundledPythonURL: URL? = nil,
         wheelhouseURL: URL? = nil,
         runtimeRootURL: URL? = nil,
-        observerRegistrar: @escaping ObserverRegistrar,
         subprocessTimeoutGracePeriod: Duration = .seconds(2),
         journalSetupTimeout: Duration = .seconds(180),
         journalWarmTimeout: Duration = .seconds(120),
@@ -101,7 +88,6 @@ public final class SolstoneInstaller {
             runtimeRootURL: runtimeRootURL,
             subprocessRunner: SubprocessRunner(timeoutGracePeriod: subprocessTimeoutGracePeriod),
             wrapperDirURL: wrapperDirURL,
-            observerRegistrar: observerRegistrar,
             journalSetupTimeout: journalSetupTimeout,
             journalWarmTimeout: journalWarmTimeout
         )
@@ -117,8 +103,6 @@ public final class SolstoneInstaller {
         wrapperDirURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin", isDirectory: true),
         solBinaryFinder: (@Sendable () async -> String?)? = nil,
         solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
-        connectionTester: (@Sendable (String, String) async -> String?)? = nil,
-        observerRegistrar: @escaping ObserverRegistrar,
         fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
         pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
             if Darwin.kill(pid, 0) == 0 { return true }
@@ -132,10 +116,7 @@ public final class SolstoneInstaller {
         orphanGracePeriod: Duration = .seconds(3),
         journalSetupTimeout: Duration = .seconds(180),
         journalWarmTimeout: Duration = .seconds(120),
-        clock: any MonotonicClock = SystemMonotonicClock(),
-        sleep: @escaping @Sendable (Duration) async throws -> Void = { duration in
-            try await Task.sleep(for: duration)
-        }
+        clock: any MonotonicClock = SystemMonotonicClock()
     ) {
         let resolvedRuntimeRootURL = runtimeRootURL ?? SolstoneRuntimeLayout.defaultRootURL
         self.uvBinaryURL = uvBinaryURL
@@ -162,8 +143,6 @@ public final class SolstoneInstaller {
             fileExists: fileExists,
             rootURL: resolvedRuntimeRootURL
         )
-        self.connectionTester = connectionTester
-        self.observerRegistrar = observerRegistrar
         self.pidExists = pidExists
         self.terminate = terminate
         self.pidWaitTimeout = pidWaitTimeout
@@ -172,7 +151,6 @@ public final class SolstoneInstaller {
         self.journalSetupTimeout = journalSetupTimeout
         self.journalWarmTimeout = journalWarmTimeout
         self.clock = clock
-        self.sleep = sleep
         self.upgradeFailureRecord = failureRecordStore.load()
     }
 
@@ -315,7 +293,7 @@ public final class SolstoneInstaller {
             layout: materializedRuntime.layout,
             skipService: true
         ) else { return }
-        await enterRegistering(runtime: materializedRuntime, journalURL: setupJournalURL)
+        await enterConfirmingReadiness(runtime: materializedRuntime, journalURL: setupJournalURL)
     }
 
     private func resolvedUVBinaryURL() -> URL {
@@ -517,7 +495,7 @@ public final class SolstoneInstaller {
             return
         }
 
-        await enterRegistering(runtime: materializedRuntime, journalURL: resolved.journalURL)
+        await enterConfirmingReadiness(runtime: materializedRuntime, journalURL: resolved.journalURL)
     }
 
     private func failCleanup(step: CleanupStep, why: String, category: ErrorCategory, logExcerpt: String? = nil) {
@@ -607,12 +585,12 @@ public final class SolstoneInstaller {
         return true
     }
 
-    private func enterRegistering(runtime: MaterializedRuntime, journalURL: URL) async {
+    private func enterConfirmingReadiness(runtime: MaterializedRuntime, journalURL: URL) async {
         let journalBinary = runtime.layout.journalBinary
         await runJournalWarm(runtime: runtime)
 
-        let phase = "journal observer create"
-        setMain(.registering(SubprocessProgress(phase: phase)))
+        let phase = "confirming journal readiness"
+        setMain(.confirmingReadiness(SubprocessProgress(phase: phase)))
 
         modelsTask = Task { [weak self] in
             await self?.runInstallModels(runtime: runtime)
@@ -620,14 +598,23 @@ public final class SolstoneInstaller {
 
         guard await runReadinessGate(runtime: runtime, phase: phase, journalURL: journalURL) else { return }
 
-        if await runObserverCreate(journalBinary: journalBinary, phase: phase) {
-            setMain(.done)
-            clearUpgradeFailureRecord()
-            UserDefaults.standard.removeObject(forKey: "SolstoneInProgressUpgradeMarker")
-            Task {
-                await probeVersion(journalBinary: journalBinary)
-                await runPostInstallAutoTest()
-            }
+        do {
+            try Task.checkCancellation()
+        } catch {
+            return
+        }
+
+        guard let host else { return }
+        var config = host.installerConfig
+        config.serverURL = ServiceMode.bundledServiceURL
+        config.serviceMode = .bundled
+        host.updateInstallerConfig(config)
+
+        setMain(.done)
+        clearUpgradeFailureRecord()
+        UserDefaults.standard.removeObject(forKey: "SolstoneInProgressUpgradeMarker")
+        Task {
+            await probeVersion(journalBinary: journalBinary)
         }
     }
 
@@ -727,7 +714,7 @@ public final class SolstoneInstaller {
             if ready {
                 return true
             }
-            await failRegistering(
+            await failConfirmingReadiness(
                 journalBinary: journalBinary,
                 message: UICopy.INSTALLER_READINESS_GATE_FAILED,
                 category: .unknown,
@@ -735,90 +722,12 @@ public final class SolstoneInstaller {
             )
             return false
         }
-        // Tests can exercise installer registration without a host. Production
+        // Tests can exercise installer readiness without a host. Production
         // always attaches a host before installation starts, and no path may call `journal up`.
         return true
     }
 
-    private func runObserverCreate(journalBinary: URL, phase _: String) async -> Bool {
-        if host?.installerConfig.isUploadConfigured == true {
-            return true
-        }
-
-        let hostname = ProcessInfo.processInfo.hostName
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let descriptor = ObserverRegistrationDescriptor(
-            platform: "darwin",
-            hostname: hostname.isEmpty ? "unknown" : hostname,
-            streamType: "desktop",
-            version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
-        )
-
-        let deadline = clock.now() + observerRegistrationRetryBudget
-        var attempt = 0
-        var lastTransientFailure: ObserverRegistrationFailure?
-        while true {
-            do {
-                try Task.checkCancellation()
-            } catch {
-                return false
-            }
-            if let lastTransientFailure, clock.now() >= deadline {
-                await failRegistering(
-                    journalBinary: journalBinary,
-                    message: lastTransientFailure.message,
-                    category: lastTransientFailure.category,
-                    logExcerpt: lastTransientFailure.logExcerpt
-                )
-                return false
-            }
-
-            switch await observerRegistrar(descriptor) {
-            case .success(let registration):
-                persistObserverRegistration(registration)
-                return true
-            case .failure(let failure):
-                guard failure.retryableConnection else {
-                    await failRegistering(
-                        journalBinary: journalBinary,
-                        message: failure.message,
-                        category: failure.category,
-                        logExcerpt: failure.logExcerpt
-                    )
-                    return false
-                }
-                lastTransientFailure = failure
-
-                guard clock.now() < deadline else {
-                    await failRegistering(
-                        journalBinary: journalBinary,
-                        message: failure.message,
-                        category: failure.category,
-                        logExcerpt: failure.logExcerpt
-                    )
-                    return false
-                }
-
-                do {
-                    try Task.checkCancellation()
-                    try await sleep(Self.observerRegistrationBackoff(attempt: attempt))
-                    try Task.checkCancellation()
-                } catch {
-                    return false
-                }
-                attempt += 1
-            }
-        }
-    }
-
-    private nonisolated static func observerRegistrationBackoff(attempt: Int) -> Duration {
-        if attempt < observerRegistrationRetryBackoffs.count {
-            return observerRegistrationRetryBackoffs[attempt]
-        }
-        return .seconds(15)
-    }
-
-    private func failRegistering(journalBinary: URL, message: String, category: ErrorCategory, logExcerpt: String?) async {
+    private func failConfirmingReadiness(journalBinary: URL, message: String, category: ErrorCategory, logExcerpt: String?) async {
         let baseline: UpgradeFailureRecordBaseline?
         if upgradeFailureRecordBaseline != .none {
             let installed = await JournalHealthCheck.version(journalBinary: journalBinary, runner: subprocessRunner)
@@ -827,7 +736,7 @@ public final class SolstoneInstaller {
             baseline = nil
         }
         failMain(
-            .registering(message: message),
+            .confirmingReadiness(message: message),
             category: category,
             logExcerpt: logExcerpt,
             upgradeFailureRecordInstalled: baseline
@@ -945,16 +854,6 @@ public final class SolstoneInstaller {
         )
     }
 
-    private func persistObserverRegistration(_ registration: ObserverRegistration) {
-        guard let host else { return }
-        var config = host.installerConfig
-        config.serverURL = ServiceMode.bundledServiceURL
-        config.serverKey = registration.key
-        config.observerName = registration.name
-        config.serviceMode = .bundled
-        host.updateInstallerConfig(config)
-    }
-
     private func persistJournalPath(_ journalURL: URL) {
         guard let host else { return }
         var config = host.installerConfig
@@ -1008,71 +907,9 @@ public final class SolstoneInstaller {
         return probedVersion
     }
 
-    public func runPostInstallAutoTest() async {
-        guard let host else { return }
-        let url = host.installerConfig.serverURL ?? ""
-        let key = host.installerConfig.serverKey ?? ""
-        guard !url.isEmpty, !key.isEmpty else {
-            postInstallAutoTest = .failure("missing journal credentials")
-            return
-        }
-
-        postInstallAutoTest = .verifying
-        let firstAttempt = await attemptConnectionTest(url: url, key: key, budgetSeconds: 5.0)
-        switch firstAttempt {
-        case .success:
-            postInstallAutoTest = .success
-            return
-        case .failure(let message):
-            postInstallAutoTest = .failure(message)
-            return
-        case .timeout:
-            break
-        }
-
-        let retry = await attemptConnectionTest(url: url, key: key, budgetSeconds: 5.0)
-        switch retry {
-        case .success:
-            postInstallAutoTest = .success
-        case .failure(let message):
-            postInstallAutoTest = .failure(message)
-        case .timeout:
-            postInstallAutoTest = .failure("timed out")
-        }
-    }
-
-    private enum ConnectionTestAttemptResult {
-        case success
-        case failure(String)
-        case timeout
-    }
-
-    private func attemptConnectionTest(url: String, key: String, budgetSeconds: Double) async -> ConnectionTestAttemptResult {
-        let tester = self.connectionTester
-        let host = self.host
-        do {
-            let error = try await withTimeout(seconds: budgetSeconds) {
-                if let tester {
-                    return await tester(url, key)
-                }
-                guard let host else { return nil }
-                return await host.testInstallerConnection(serverURL: url, serverKey: key)
-            }
-            if let error {
-                return .failure(error)
-            }
-            return .success
-        } catch is TimeoutError {
-            return .timeout
-        } catch {
-            return .failure("connection failed")
-        }
-    }
-
     private func setMain(_ newState: MainState) {
         if case .installingSolstone = newState {
             probedVersion = nil
-            postInstallAutoTest = nil
         }
         main = newState
         Logger.setup.info("installer: \(self.stateName(newState), privacy: .public)")
@@ -1105,7 +942,7 @@ public final class SolstoneInstaller {
              .installingSolstone(let progress),
              .runningSolSetup(let progress),
              .verifyingIntegrity(let progress),
-             .registering(let progress):
+             .confirmingReadiness(let progress):
             return progress
         case .detecting, .awaitingChoice, .externallyManaged, .done, .failed:
             return nil
@@ -1144,7 +981,7 @@ public final class SolstoneInstaller {
         case .installSolstone(let message): return message
         case .solSetup(let code, let message): return code.map { "[\($0)] \(message)" } ?? message
         case .installModels(let message): return message
-        case .registering(let message): return message
+        case .confirmingReadiness(let message): return message
         case .upgradeCutoverFailed(let message): return message
         }
     }
@@ -1155,7 +992,7 @@ public final class SolstoneInstaller {
         case .installSolstone: return "installSolstone"
         case .solSetup: return "solSetup"
         case .installModels: return "installModels"
-        case .registering: return "registering"
+        case .confirmingReadiness: return "confirmingReadiness"
         case .upgradeCutoverFailed: return "upgradeCutoverFailed"
         }
     }
@@ -1170,7 +1007,7 @@ public final class SolstoneInstaller {
                  .installingSolstone(let progress),
                  .runningSolSetup(let progress),
                  .verifyingIntegrity(let progress),
-                 .registering(let progress):
+                 .confirmingReadiness(let progress):
                 existing = progress
             default:
                 existing = SubprocessProgress(phase: phase)
@@ -1185,8 +1022,8 @@ public final class SolstoneInstaller {
                 main = .runningSolSetup(updated)
             case .verifyingIntegrity:
                 main = .verifyingIntegrity(updated)
-            case .registering:
-                main = .registering(updated)
+            case .confirmingReadiness:
+                main = .confirmingReadiness(updated)
             default:
                 break
             }
@@ -1226,8 +1063,8 @@ public final class SolstoneInstaller {
             return "running journal setup"
         case .verifyingIntegrity:
             return "verifying integrity"
-        case .registering:
-            return "registering"
+        case .confirmingReadiness:
+            return "confirming readiness"
         case .externallyManaged:
             return "externally managed"
         case .done:
@@ -1355,58 +1192,6 @@ private struct StepFailure {
     let errorCode: String?
     let message: String
 }
-
-public struct ObserverRegistrationDescriptor: Encodable, Sendable, Equatable {
-    public let platform: String
-    public let hostname: String
-    public let streamType: String
-    public let version: String
-
-    public init(platform: String, hostname: String, streamType: String, version: String) {
-        self.platform = platform
-        self.hostname = hostname
-        self.streamType = streamType
-        self.version = version
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case platform
-        case hostname
-        case streamType = "stream_type"
-        case version
-    }
-}
-
-public struct ObserverRegistrationFailure: Error, Sendable, Equatable {
-    public let category: ErrorCategory
-    public let message: String
-    public let logExcerpt: String?
-    public let retryableConnection: Bool
-
-    public init(
-        category: ErrorCategory,
-        message: String,
-        logExcerpt: String?,
-        retryableConnection: Bool = false
-    ) {
-        self.category = category
-        self.message = message
-        self.logExcerpt = logExcerpt
-        self.retryableConnection = retryableConnection
-    }
-}
-
-public struct ObserverRegistration: Sendable, Equatable {
-    public let key: String
-    public let name: String?
-
-    public init(key: String, name: String?) {
-        self.key = key
-        self.name = name
-    }
-}
-
-public typealias ObserverRegistrar = @Sendable (ObserverRegistrationDescriptor) async -> Result<ObserverRegistration, ObserverRegistrationFailure>
 
 private func truncate(_ value: String, limit: Int) -> String {
     guard value.count > limit else { return value }
