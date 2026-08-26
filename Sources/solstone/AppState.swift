@@ -38,20 +38,6 @@ private final class AppStateBridgeTarget: @unchecked Sendable {
 public final class AppState {
     internal static let terminationRemixDrainTimeoutSeconds: Double = 30
 
-    /// Latest real heartbeat POST outcome — the direct-URL connection-health fact
-    /// the "your journal" panel presents when no tunnel manages the connection.
-    struct JournalHeartbeatOutcome: Equatable {
-        let ok: Bool
-        let at: Date
-    }
-
-    private(set) var journalHeartbeatLastOutcome: JournalHeartbeatOutcome?
-
-    func noteJournalHeartbeatOutcome(_ ok: Bool, at: Date = Date()) {
-        journalHeartbeatLastOutcome = JournalHeartbeatOutcome(ok: ok, at: at)
-        triggerSameMachineMigrationAfterHeartbeatIfNeeded(ok: ok)
-    }
-
     /// Shared instance for app-wide access (registered by normal startup composition).
     nonisolated(unsafe) public static var shared: AppState?
     private static var snapshotAudioMonitorMode = false
@@ -72,16 +58,11 @@ public final class AppState {
     public var captureManager: CaptureManager { capture.captureManager }
     public private(set) var uploadCoordinator: UploadCoordinator!
     internal private(set) var appQuitCoordinator: AppQuitCoordinator!
-    public let heartbeatService: HeartbeatService
     public let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
     internal let tunnelLifecycleOwner: TunnelLifecycleOwner
     internal let pairingCoordinator: PairingCoordinator
     private let homeBaseURLResolver: HomeBaseURLResolver
     private let ingestBaseURLResolver: HomeBaseURLResolver
-    private let observerRegister: @MainActor @Sendable (
-        _ baseURL: String,
-        _ descriptor: ObserverRegistrationDescriptor
-    ) async -> Result<ObserverRegistration, ObserverRegistrationFailure>
     private let sameMachinePairStart: @MainActor @Sendable (
         _ baseURL: String,
         _ deviceLabel: String
@@ -96,11 +77,17 @@ public final class AppState {
     private let logAdapter: DiagnosticEvidenceLoggingAdapter
     private let isSnapshot: Bool
     private let automaticObservationPipelineEnabled: Bool
-    private let observerHealthSnapshotEnabled: Bool
     public private(set) var config: AppConfig
     private var debugAudioHolder: DebugSettingHolder!
     private var silenceMusicHolder: DebugSettingHolder!
     private var didAttemptSameMachineMigration = false
+    private static let sameMachineMigrationRetryDelays: [Duration] = [
+        .zero,
+        .seconds(1),
+        .seconds(2),
+        .seconds(7),
+        .seconds(20),
+    ]
     internal private(set) var sameMachineMigrationLastResult: SameMachineHomePairingResult?
     /// True only while the automatic same-machine adoption is driving the pairing ceremony.
     /// Owner-initiated pairing never sets it, so the journal-mark confirmation still runs there.
@@ -161,7 +148,6 @@ public final class AppState {
 
     private var tunnelLifecycleObservationEnabled = false
     private var previousTunnelLifecycleState: TunnelLifecycleState?
-    private var tunnelObserverRegistrationTask: Task<Void, Never>?
     private var notificationRequestTask: Task<Void, Never>?
     private var activationObserver: NSObjectProtocol?
     internal var terminationDrainer: any TerminationDraining = RemixQueue.shared
@@ -403,16 +389,6 @@ public final class AppState {
         config = newConfig
         uploadCoordinator.updateConfig(newConfig)
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
-        if newConfig.isUploadConfigured,
-           let serverKey = newConfig.serverKey {
-            Task { [heartbeatService] in
-                await heartbeatService.configure(serverKey: serverKey)
-            }
-        } else {
-            Task { [heartbeatService] in
-                await heartbeatService.stop()
-            }
-        }
         debugAudioHolder.value = newConfig.debugKeepRejectedAudio
         silenceMusicHolder.value = newConfig.silenceMusic
 
@@ -477,26 +453,37 @@ public final class AppState {
     }
 
     internal var sameMachineHomeMigrationComplete: Bool {
-        isPairedHome &&
-            config.isUploadConfigured &&
-            !BundledJournalEndpoint.isBundledServiceURL(config.serverURL)
+        isPairedHome
     }
 
-    private func triggerSameMachineMigrationAfterHeartbeatIfNeeded(ok: Bool) {
-        guard ok,
-              !didAttemptSameMachineMigration,
-              isEligibleForSameMachineHeartbeatMigration()
+    internal func triggerSameMachineMigrationIfEligible() {
+        guard !didAttemptSameMachineMigration,
+              isEligibleForSameMachineMigration()
         else {
             return
         }
 
         didAttemptSameMachineMigration = true
         Task { @MainActor [weak self] in
-            await self?.runSameMachineHomeMigration()
+            guard let self else { return }
+
+            for (attempt, delay) in Self.sameMachineMigrationRetryDelays.enumerated() {
+                if attempt > 0 {
+                    do {
+                        try await Task.sleep(for: delay)
+                    } catch {
+                        return
+                    }
+                }
+
+                guard self.isEligibleForSameMachineMigration() else { return }
+                await self.runSameMachineHomeMigration()
+                guard self.shouldRetrySameMachineMigration else { return }
+            }
         }
     }
 
-    internal func isEligibleForSameMachineHeartbeatMigration() -> Bool {
+    internal func isEligibleForSameMachineMigration() -> Bool {
         guard !isSnapshot,
               BundledJournalEndpoint.isBundledServiceURL(config.serverURL),
               let serverKey = config.serverKey?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -511,13 +498,25 @@ public final class AppState {
         return tunnelLifecycleOwner.sameMachineStoredPairingState == .noneHeld
     }
 
+    private var shouldRetrySameMachineMigration: Bool {
+        guard case let .failed(.pairStart(failure)) = sameMachineMigrationLastResult else {
+            return false
+        }
+        switch failure {
+        case .transport, .httpStatus(503):
+            return true
+        case .invalidURL, .requestEncoding, .invalidResponse, .httpStatus(_), .decode, .emptyPairLink:
+            return false
+        }
+    }
+
     private func runSameMachineHomeMigration() async {
         guard let baseURL = config.serverURL else {
             sameMachineMigrationLastResult = .notEligible
             return
         }
 
-        // This adoption runs by itself, on a heartbeat, for a journal the owner already had
+        // This adoption runs by itself for a journal the owner already had
         // linked on this same Mac. It re-uses the pairing ceremony to adopt the existing record
         // rather than re-mint one, and that ceremony ends by asking the owner to compare journal
         // marks. Left alone, merely taking an update therefore raises a security question the
@@ -561,24 +560,6 @@ public final class AppState {
 
     internal func readDiagnosticEvidence() async -> DiagnosticEvidenceRead {
         await recorder.read()
-    }
-
-    internal func observerHealthSnapshot() -> ObserverHealthSnapshot? {
-        guard observerHealthSnapshotEnabled else { return nil }
-        guard config.isUploadConfigured else { return nil }
-
-        let trimmedName = config.observerName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = trimmedName?.isEmpty == false ? trimmedName : nil
-        return ObserverHealthSnapshot(
-            name: name,
-            streamType: "desktop",
-            version: AppVersion.short,
-            uptimeSeconds: 0,
-            lastSuccessfulSync: uploadCoordinator.lastSyncedAt,
-            pendingQueueDepth: max(0, uploadCoordinator.pendingCount),
-            recentErrorCount: uploadCoordinator.recentErrorCount,
-            lastErrorReason: uploadCoordinator.lastErrorReason
-        )
     }
 
     public func refreshNotificationAuthorizationStatus() async {
@@ -743,12 +724,6 @@ public final class AppState {
         notifier: any UserNotifying = UNUserNotificationCenterNotifier(),
         loginService: any LoginItemService = LiveLoginItemService(),
         automaticObservationPipelineEnabled: Bool = true,
-        observerRegister: @escaping @MainActor @Sendable (
-            _ baseURL: String,
-            _ descriptor: ObserverRegistrationDescriptor
-        ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> = { baseURL, descriptor in
-            await ObserverRegistrationClient().register(baseURL: baseURL, descriptor: descriptor)
-        },
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
             $0.uploadCoordinator.triggerSync()
         },
@@ -761,8 +736,6 @@ public final class AppState {
         let pauseManager = PauseManager()
         let storageManager = StorageManager()
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
-        let uploadClient = UploadClient()
-        let heartbeatTarget = AppStateBridgeTarget()
         let captureTarget = AppStateBridgeTarget()
         let homeBaseURLTarget = AppStateBridgeTarget()
         let fingerprintTarget = AppStateBridgeTarget()
@@ -776,7 +749,6 @@ public final class AppState {
         self.isSnapshot = false
         self.automaticObservationPipelineEnabled = automaticObservationPipelineEnabled
         self.config = config
-        self.observerRegister = observerRegister
         self.sameMachinePairStart = { baseURL, deviceLabel in
             await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
         }
@@ -794,7 +766,6 @@ public final class AppState {
         self.lastContactStore = lastContactStore
         self.recorder = recorder
         self.logAdapter = logAdapter
-        self.observerHealthSnapshotEnabled = true
         self.recoveryCoordinator = recoveryCoordinator
         let splClientInfo = SPLRuntime.clientInfo
         let splKeychainStore = SPLPairingKeychain.store()
@@ -869,26 +840,6 @@ public final class AppState {
             logAdapter: logAdapter
         )
         self.capture = capture
-        self.heartbeatService = HeartbeatService(
-            resolver: homeBaseURLResolver,
-            isPaused: capture.heartbeatIsPausedProvider(),
-            healthProvider: { [heartbeatTarget] in
-                heartbeatTarget.state?.observerHealthSnapshot()
-            },
-            postHeartbeat: { [uploadClient] url, key, paused, health in
-                try await uploadClient.postObserverStatus(
-                    serverURL: url,
-                    serverKey: key,
-                    paused: paused,
-                    health: health
-                )
-            },
-            outcomeSink: { [heartbeatTarget] ok in
-                await MainActor.run {
-                    heartbeatTarget.state?.noteJournalHeartbeatOutcome(ok)
-                }
-            }
-        )
 
         uploadCoordinator = UploadCoordinator(
             storageManager: storageManager,
@@ -968,7 +919,6 @@ public final class AppState {
         }
 
         // Complete manager bridge wiring. Normal startup composition registers AppState.shared.
-        heartbeatTarget.state = self
         homeBaseURLTarget.state = self
         fingerprintTarget.state = self
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
@@ -995,12 +945,6 @@ public final class AppState {
         notificationStatus: UNAuthorizationStatus = .authorized,
         notifier: (any UserNotifying)? = nil,
         initialTunnelPairing: StoredPairing? = nil,
-        observerRegister: @escaping @MainActor @Sendable (
-            _ baseURL: String,
-            _ descriptor: ObserverRegistrationDescriptor
-        ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> = { baseURL, descriptor in
-            await ObserverRegistrationClient().register(baseURL: baseURL, descriptor: descriptor)
-        },
         sameMachinePairStart: @escaping @MainActor @Sendable (
             _ baseURL: String,
             _ deviceLabel: String
@@ -1026,7 +970,6 @@ public final class AppState {
             isSnapshot: true,
             notifier: notifier ?? NoopUserNotifier(),
             initialTunnelPairing: initialTunnelPairing,
-            observerRegister: observerRegister,
             sameMachinePairStart: sameMachinePairStart,
             triggerTunnelConnectedSync: triggerTunnelConnectedSync,
             lastContactStore: lastContactStore,
@@ -1093,12 +1036,6 @@ public final class AppState {
         stateStore: any LoginItemRegistrationReconciliationStateStoring = UserDefaultsLoginItemRegistrationReconciliationStateStore(),
         runningBundleURL: URL = Bundle.main.bundleURL,
         versionReader: @escaping (URL) throws -> SolstoneBundleVersion = SolstoneBundleVersionReader.read(fromBundleAt:),
-        observerRegister: @escaping @MainActor @Sendable (
-            _ baseURL: String,
-            _ descriptor: ObserverRegistrationDescriptor
-        ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> = { baseURL, descriptor in
-            await ObserverRegistrationClient().register(baseURL: baseURL, descriptor: descriptor)
-        },
         sameMachinePairStart: @escaping @MainActor @Sendable (
             _ baseURL: String,
             _ deviceLabel: String
@@ -1123,7 +1060,6 @@ public final class AppState {
         let pauseManager = PauseManager()
         let storageManager = StorageManager()
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
-        let heartbeatTarget = AppStateBridgeTarget()
         let captureTarget = AppStateBridgeTarget()
         let fingerprintTarget = AppStateBridgeTarget()
         let snapshotResolver = HomeBaseURLResolver { [config] in
@@ -1146,7 +1082,6 @@ public final class AppState {
         // startup composition owns activation after it creates the state.
         self.automaticObservationPipelineEnabled = true
         self.config = config
-        self.observerRegister = observerRegister
         self.sameMachinePairStart = sameMachinePairStart
         self.triggerTunnelConnectedSync = triggerTunnelConnectedSync
         self.notifier = notifier
@@ -1164,7 +1099,6 @@ public final class AppState {
         self.recorder = recorder
         self.logAdapter = logAdapter
         let lastDeliveryStore = providedLastDeliveryStore ?? InMemoryLastJournalDeliveryStore()
-        self.observerHealthSnapshotEnabled = false
         self.notificationAuthorizationStatus = notificationStatus
         self.recoveryCoordinator = .shared
         let debugAudioHolder = DebugSettingHolder(value: false)
@@ -1196,12 +1130,6 @@ public final class AppState {
             logAdapter: logAdapter
         )
         self.capture = capture
-        self.heartbeatService = HeartbeatService(
-            resolver: snapshotResolver,
-            isPaused: capture.heartbeatIsPausedProvider(),
-            healthProvider: { nil },
-            postHeartbeat: { _, _, _, _ in }
-        )
         let tunnelPairingLoad: @Sendable () throws -> StoredPairing?
         if let pairingLoad {
             tunnelPairingLoad = pairingLoad
@@ -1248,7 +1176,6 @@ public final class AppState {
             logAdapter: logAdapter
         )
         visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
-        heartbeatTarget.state = self
         captureTarget.state = self
         fingerprintTarget.state = self
         uploadCoordinator.refreshLastSuccessfulJournalContact()
@@ -1298,34 +1225,8 @@ public final class AppState {
         journalHomeBaseChangeToken += 1
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
         guard isConnected(newState), !isConnected(previousState) else { return }
-
-        let registrationTask: Task<Void, Never>
-        if let inFlight = tunnelObserverRegistrationTask {
-            registrationTask = inFlight
-        } else {
-            let task = Task { @MainActor [weak self] in
-                guard let self else { return }
-                await performTunnelObserverRegistration(
-                    appState: self,
-                    isTunnelManaged: self.tunnelLifecycleOwner.isTunnelManaged,
-                    resolveBase: { [weak self] in
-                        guard let self else { return .held }
-                        return await self.resolveHomeBase()
-                    },
-                    register: self.observerRegister
-                )
-                self.tunnelObserverRegistrationTask = nil
-            }
-            tunnelObserverRegistrationTask = task
-            registrationTask = task
-        }
-
-        Task { @MainActor [weak self, registrationTask] in
-            await registrationTask.value
-            guard let self else { return }
-            guard self.automaticObservationPipelineEnabled else { return }
-            self.triggerTunnelConnectedSync(self)
-        }
+        guard automaticObservationPipelineEnabled else { return }
+        triggerTunnelConnectedSync(self)
     }
 
     private func isConnected(_ state: TunnelLifecycleState?) -> Bool {
@@ -1351,11 +1252,7 @@ public final class AppState {
     private func configureJournalServicesIfNeeded() {
         captureQueuedForJournalReadiness = false
         scheduleStartupUploadSyncIfNeeded()
-        if config.isUploadConfigured, let serverKey = config.serverKey {
-            Task { [heartbeatService] in
-                await heartbeatService.configure(serverKey: serverKey)
-            }
-        }
+        triggerSameMachineMigrationIfEligible()
     }
 
     private func scheduleStartupUploadSyncIfNeeded() {

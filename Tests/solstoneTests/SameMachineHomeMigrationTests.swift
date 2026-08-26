@@ -3,7 +3,6 @@
 
 import Foundation
 import JournalMarkKit
-import JournalRuntimeTestSupport
 import ServiceManagement
 import SolstoneCore
 import SPLTunnel
@@ -29,16 +28,15 @@ struct SameMachineHomeMigrationTests {
             }
         )
 
-        state.noteJournalHeartbeatOutcome(true)
+        state.triggerSameMachineMigrationIfEligible()
 
         #expect(await pairStart.callCount == 0)
         #expect(state.sameMachineMigrationLastResult == nil)
     }
 
-    @Test func heartbeatTriggerFiresAtMostOncePerLaunchAndDoesNotFireOnFalse() async throws {
+    @Test func launchTriggerFiresAtMostOncePerLaunch() async throws {
         let pairStart = PairStartRecorder(responses: [
-            .failure(SameMachinePairStartFailure(kind: .httpStatus(503), detail: "not ready")),
-            .failure(SameMachinePairStartFailure(kind: .httpStatus(503), detail: "should not retry"))
+            .failure(SameMachinePairStartFailure(kind: .httpStatus(400), detail: "refused")),
         ])
         let state = AppState.forLoginItemTest(
             config: loopbackRegisteredConfig(),
@@ -48,19 +46,44 @@ struct SameMachineHomeMigrationTests {
             }
         )
 
-        state.noteJournalHeartbeatOutcome(false)
-        try? await Task.sleep(for: .milliseconds(50))
-        #expect(await pairStart.callCount == 0)
-
-        state.noteJournalHeartbeatOutcome(true)
+        state.triggerSameMachineMigrationIfEligible()
         try await waitUntil {
             await pairStart.callCount == 1
         }
-        #expect(state.sameMachineMigrationLastResult == SameMachineHomePairingResult.failed(.pairStart(.httpStatus(503))))
+        #expect(state.sameMachineMigrationLastResult == SameMachineHomePairingResult.failed(.pairStart(.httpStatus(400))))
 
-        state.noteJournalHeartbeatOutcome(true)
+        state.triggerSameMachineMigrationIfEligible()
+        state.triggerSameMachineMigrationIfEligible()
         try? await Task.sleep(for: .milliseconds(50))
         #expect(await pairStart.callCount == 1)
+    }
+
+    @Test func transientPairStartFailureRetriesAndCanSucceed() async throws {
+        let adoptedPairing = pairing(instanceID: "home-instance")
+        let store = PairingStore(pairing: nil)
+        let pairStart = PairStartRecorder(responses: [
+            .failure(SameMachinePairStartFailure(kind: .transport, detail: "journal starting")),
+            .success(sameMachinePairStartResponse(pairLink: loopbackDirectPairLink)),
+        ])
+        let state = AppState.forLoginItemTest(
+            config: loopbackRegisteredConfig(),
+            loginService: NoopLoginItemService(),
+            sameMachinePairStart: { baseURL, deviceLabel in
+                await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
+            },
+            pairingOperation: { _, _, _ in adoptedPairing },
+            pairingLoad: { try store.load() },
+            pairingSave: { try store.save($0) },
+            pairingDelete: { try store.delete() }
+        )
+
+        state.triggerSameMachineMigrationIfEligible()
+
+        try await waitUntil(timeout: .seconds(3)) { @MainActor in
+            state.sameMachineMigrationLastResult == .pairingStarted
+        }
+        #expect(await pairStart.callCount == 2)
+        #expect(state.sameMachineHomeMigrationComplete)
     }
 
     @Test func existingDifferentPairingBlocksBeforePairStart() async {
@@ -103,7 +126,7 @@ struct SameMachineHomeMigrationTests {
     }
 
     @Test func automaticAdoptionDoesNotAskTheOwnerToConfirmAMark() {
-        // The adoption runs off a heartbeat after an upgrade. It re-uses the pairing ceremony to
+        // The adoption runs during launch after an upgrade. It re-uses the pairing ceremony to
         // take over a journal the owner already had linked here, so the mark question would land
         // unrequested and hold settings behind a modal.
         let driver = JournalMarkConfirmationDriver()
@@ -203,66 +226,12 @@ struct SameMachineHomeMigrationTests {
         #expect(state.isRecording)
     }
 
-    @Test func registrationRefusedReportsNotYetPairedAndCaptureContinues() async {
-        let state = AppState.forSnapshot(
-            config: loopbackRegisteredConfig(),
-            initialTunnelPairing: pairing()
-        )
-        state.isRecording = true
-        let registrar = FakeObserverRegistrar(result: .failure(ObserverRegistrationFailure(
-            kind: .httpStatus(500),
-            detail: "refused"
-        )))
-
-        await performTunnelObserverRegistration(
-            appState: state,
-            isTunnelManaged: true,
-            resolveBase: { .url("http://127.0.0.1:49152") },
-            register: { baseURL, descriptor in
-                await registrar.register(baseURL: baseURL, descriptor: descriptor)
-            }
-        )
-
-        #expect(registrar.invocationCount == 1)
-        #expect(state.config.serverURL == ServiceMode.bundledServiceURL)
-        #expect(!state.sameMachineHomeMigrationComplete)
-        #expect(state.isRecording)
-    }
-
-    @Test func tunnelBaseUnresolvedAfterSuccessfulCeremonyReportsNotYetPairedAndCaptureContinues() async {
-        let state = AppState.forSnapshot(
-            config: loopbackRegisteredConfig(),
-            initialTunnelPairing: pairing()
-        )
-        state.isRecording = true
-        let registrar = FakeObserverRegistrar()
-
-        await performTunnelObserverRegistration(
-            appState: state,
-            isTunnelManaged: true,
-            resolveBase: { .held },
-            register: { baseURL, descriptor in
-                await registrar.register(baseURL: baseURL, descriptor: descriptor)
-            }
-        )
-
-        #expect(registrar.invocationCount == 0)
-        #expect(state.config.serverURL == ServiceMode.bundledServiceURL)
-        #expect(!state.sameMachineHomeMigrationComplete)
-        #expect(state.isRecording)
-    }
-
-    @Test func loopbackRegisteredConfigMigratesAndAdoptsExistingObserver() async throws {
+    @Test func loopbackRegisteredConfigMigratesAndAdoptsExistingPairedHome() async throws {
         let adoptedPairing = pairing(instanceID: "home-instance")
         let store = PairingStore(pairing: nil)
         let pairStart = PairStartRecorder(responses: [
             .success(sameMachinePairStartResponse(pairLink: loopbackDirectPairLink))
         ])
-        let linkBaseURL = "http://127.0.0.1:49152"
-        let registrar = FakeObserverRegistrar(result: .success(ObserverRegistration(
-            key: "legacy-key",
-            streamName: "linked-stream"
-        )))
         let state = AppState.forLoginItemTest(
             config: loopbackRegisteredConfig(),
             loginService: NoopLoginItemService(),
@@ -275,7 +244,7 @@ struct SameMachineHomeMigrationTests {
             pairingDelete: { try store.delete() }
         )
 
-        state.noteJournalHeartbeatOutcome(true)
+        state.triggerSameMachineMigrationIfEligible()
         try await waitUntil {
             state.sameMachineMigrationLastResult == SameMachineHomePairingResult.pairingStarted
         }
@@ -288,20 +257,10 @@ struct SameMachineHomeMigrationTests {
         // That exact mistake passed its unit tests and still put the mark sheet on the rig.
         #expect(state.isAdoptingSameMachineHomeAutomatically)
 
-        await performTunnelObserverRegistration(
-            appState: state,
-            isTunnelManaged: true,
-            resolveBase: { .url(linkBaseURL) },
-            register: { baseURL, descriptor in
-                await registrar.register(baseURL: baseURL, descriptor: descriptor)
-            }
-        )
-
         #expect(await pairStart.callCount == 1)
-        #expect(registrar.invocationCount == 1)
-        #expect(state.config.serverURL == linkBaseURL)
+        #expect(state.config.serverURL == ServiceMode.bundledServiceURL)
         #expect(state.config.serverKey == "legacy-key")
-        #expect(state.config.observerName == "linked-stream")
+        #expect(state.config.observerName == nil)
         #expect(state.config.serviceMode == .external)
         #expect(state.sameMachineHomeMigrationComplete)
     }
@@ -321,7 +280,7 @@ struct SameMachineHomeMigrationTests {
         ) == UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL)
     }
 
-    @Test func pairedHomePairingResultTextWaitsForBaseMove() {
+    @Test func pairedHomePairingResultTextRequiresCompletedMigration() {
         #expect(pairingResultText(
             for: .paired,
             isPairedHome: true,
@@ -334,7 +293,7 @@ struct SameMachineHomeMigrationTests {
         ) == "paired ✓")
     }
 
-    @Test func sameMachineCeremonyRefreshesPairedHomeBeforeResultText() async throws {
+    @Test func sameMachineCeremonyShowsResultOncePairedHomeIsStored() async throws {
         let remotePairing = pairing(
             instanceID: "remote-home",
             localEndpoints: [
@@ -379,8 +338,8 @@ struct SameMachineHomeMigrationTests {
         #expect(pairingResultText(
             for: coordinator.state,
             isPairedHome: owner.isPairedHome,
-            sameMachineHomeMigrationComplete: false
-        ) == nil)
+            sameMachineHomeMigrationComplete: owner.isPairedHome
+        ) == "paired ✓")
 
         initialTransport.releaseNextConnect()
         await owner.stop()
@@ -398,7 +357,6 @@ struct SameMachineHomeMigrationTests {
             isPairedHome: true,
             sameMachineHomeMigrationComplete: false,
             uploadStatus: .notSynced,
-            heartbeat: AppState.JournalHeartbeatOutcome(ok: true, at: Date(timeIntervalSince1970: 0)),
             pairingPresentation: tunnelPresentation
         )
 

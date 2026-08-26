@@ -30,7 +30,7 @@ extension JournalMarkConfirmationDriver {
         }
     ) {
         // The automatic same-machine adoption re-uses this ceremony to take over a journal the
-        // owner already had linked on this Mac. It runs off a heartbeat, so leaving the mark
+        // owner already had linked on this Mac. It runs automatically during launch, so leaving the mark
         // question in place means an owner who merely took an update is asked to make a security
         // decision they never started, with settings stuck behind the sheet until they do.
         //

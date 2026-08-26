@@ -88,6 +88,7 @@ public final class SolstoneInstaller {
         bundledPythonURL: URL? = nil,
         wheelhouseURL: URL? = nil,
         runtimeRootURL: URL? = nil,
+        observerRegistrar: @escaping ObserverRegistrar,
         subprocessTimeoutGracePeriod: Duration = .seconds(2),
         journalSetupTimeout: Duration = .seconds(180),
         journalWarmTimeout: Duration = .seconds(120),
@@ -100,6 +101,7 @@ public final class SolstoneInstaller {
             runtimeRootURL: runtimeRootURL,
             subprocessRunner: SubprocessRunner(timeoutGracePeriod: subprocessTimeoutGracePeriod),
             wrapperDirURL: wrapperDirURL,
+            observerRegistrar: observerRegistrar,
             journalSetupTimeout: journalSetupTimeout,
             journalWarmTimeout: journalWarmTimeout
         )
@@ -116,9 +118,7 @@ public final class SolstoneInstaller {
         solBinaryFinder: (@Sendable () async -> String?)? = nil,
         solOwnershipResolver: (@Sendable (_ hasLocalJournalCreds: Bool) async -> SolOwnership)? = nil,
         connectionTester: (@Sendable (String, String) async -> String?)? = nil,
-        observerRegistrar: @escaping ObserverRegistrar = { descriptor in
-            await SolstoneInstaller.defaultObserverRegister(descriptor: descriptor)
-        },
+        observerRegistrar: @escaping ObserverRegistrar,
         fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
         pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
             if Darwin.kill(pid, 0) == 0 { return true }
@@ -738,137 +738,6 @@ public final class SolstoneInstaller {
         // Tests can exercise installer registration without a host. Production
         // always attaches a host before installation starts, and no path may call `journal up`.
         return true
-    }
-
-    public nonisolated static func defaultObserverRegister(
-        descriptor: ObserverRegistrationDescriptor,
-        session: URLSession? = nil
-    ) async -> Result<ObserverRegistration, ObserverRegistrationFailure> {
-        let endpoint = ServiceMode.bundledServiceURL + "/app/devices/register"
-        guard let url = URL(string: endpoint) else {
-            return .failure(ObserverRegistrationFailure(
-                category: .unknown,
-                message: "couldn't build the registration request",
-                logExcerpt: "invalid observer registration URL: \(endpoint)"
-            ))
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 5
-
-        do {
-            request.httpBody = try JSONEncoder().encode(descriptor)
-        } catch {
-            return .failure(ObserverRegistrationFailure(
-                category: .unknown,
-                message: "couldn't build the registration request",
-                logExcerpt: "observer registration request encode failed: \(error)"
-            ))
-        }
-
-        let data: Data
-        let response: URLResponse
-        let requestSession = session ?? URLSession(configuration: .ephemeral)
-        let ownedSession = session == nil ? requestSession : nil
-        do {
-            defer { ownedSession?.invalidateAndCancel() }
-            (data, response) = try await requestSession.data(for: request)
-        } catch let error as URLError {
-            return .failure(ObserverRegistrationFailure(
-                category: .network,
-                message: "couldn't reach the journal to register this Mac",
-                logExcerpt: "observer registration request failed: \(error)",
-                retryableConnection: Self.isRetryableObserverRegistrationError(error)
-            ))
-        } catch {
-            return .failure(ObserverRegistrationFailure(
-                category: .network,
-                message: "couldn't reach the journal to register this Mac",
-                logExcerpt: "observer registration request failed: \(error)",
-                retryableConnection: Self.isRetryableObserverRegistrationError(error)
-            ))
-        }
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            return .failure(ObserverRegistrationFailure(
-                category: .unknown,
-                message: "journal returned an invalid registration",
-                logExcerpt: "observer registration response was not HTTP"
-            ))
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            return .failure(ObserverRegistrationFailure(
-                category: .unknown,
-                message: "journal couldn't register this Mac",
-                logExcerpt: "status \(httpResponse.statusCode): \(Self.shortBodyPreview(data))"
-            ))
-        }
-
-        let decoded: ObserverRegistrationResponse
-        do {
-            decoded = try JSONDecoder().decode(ObserverRegistrationResponse.self, from: data)
-        } catch {
-            return .failure(ObserverRegistrationFailure(
-                category: .unknown,
-                message: "journal returned an invalid registration",
-                logExcerpt: "observer registration response decode failed: \(error)"
-            ))
-        }
-
-        let key = decoded.key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else {
-            return .failure(ObserverRegistrationFailure(
-                category: .unknown,
-                message: "journal returned an empty registration key",
-                logExcerpt: "observer registration response key was empty"
-            ))
-        }
-        let name = decoded.name?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return .success(ObserverRegistration(
-            key: key,
-            name: name?.isEmpty == false ? name : nil
-        ))
-    }
-
-    private nonisolated static func isRetryableObserverRegistrationError(_ error: Error) -> Bool {
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .cannotConnectToHost, .networkConnectionLost, .timedOut:
-                return true
-            default:
-                break
-            }
-        }
-        return hasStreamErrorCode(error, code: 61)
-    }
-
-    private nonisolated static func hasStreamErrorCode(_ error: Error, code: Int) -> Bool {
-        let nsError = error as NSError
-        if nsError.userInfo.contains(where: { key, value in
-            let keyString = String(describing: key)
-            guard keyString == "_kCFStreamErrorCodeKey" || keyString == "kCFStreamErrorCodeKey" else {
-                return false
-            }
-            return (value as? Int) == code
-        }) {
-            return true
-        }
-
-        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
-            return hasStreamErrorCode(underlying, code: code)
-        }
-        return false
-    }
-
-    private nonisolated static func shortBodyPreview(_ data: Data) -> String {
-        let body = String(decoding: data, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return truncate(body, limit: 512)
     }
 
     private func runObserverCreate(journalBinary: URL, phase _: String) async -> Bool {
@@ -1525,11 +1394,6 @@ public struct ObserverRegistrationFailure: Error, Sendable, Equatable {
         self.logExcerpt = logExcerpt
         self.retryableConnection = retryableConnection
     }
-}
-
-private struct ObserverRegistrationResponse: Decodable {
-    let key: String
-    let name: String?
 }
 
 public struct ObserverRegistration: Sendable, Equatable {

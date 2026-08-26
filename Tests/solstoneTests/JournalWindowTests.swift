@@ -469,9 +469,7 @@ struct JournalWindowCompositionTests {
     }
 
     @Test func baseChangesReloadRetainedDestinationAndHeldRetainsIt() async {
-        let registrar = FakeObserverRegistrar()
         let state = AppState.forSnapshot(
-            observerRegister: registrar.register,
             triggerTunnelConnectedSync: { _ in }
         )
         let destination = JournalWindowDestination(

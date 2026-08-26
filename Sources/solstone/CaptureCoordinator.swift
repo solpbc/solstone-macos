@@ -114,13 +114,6 @@ public final class CaptureCoordinator {
         }
     }
 
-    public func heartbeatIsPausedProvider() -> HeartbeatService.IsPausedProvider {
-        {
-            // Strong self is safe: CaptureCoordinator never holds a reference to HeartbeatService, so no retain cycle. Keep it that way.
-            self.isPaused
-        }
-    }
-
     public func activate() {
         captureManager.onStateChanged = { [weak self] state in
             self?.handleCaptureStateChange(state)

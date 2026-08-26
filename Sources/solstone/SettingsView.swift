@@ -62,17 +62,13 @@ func journalConnectionPresentation(
     isPairedHome: Bool,
     sameMachineHomeMigrationComplete: Bool,
     uploadStatus: UploadCoordinator.Status,
-    heartbeat: AppState.JournalHeartbeatOutcome?,
     pairingPresentation: PairingConnectionPresentation
 ) -> PairingConnectionPresentation {
     let canPresentBundledLocal = !isPairedHome || sameMachineHomeMigrationComplete
     if canPresentBundledLocal,
        BundledJournalEndpoint.isBundledServiceURL(serverURL),
        isUploadConfigured {
-        return makeLocalJournalConnectionPresentation(
-            for: uploadStatus,
-            heartbeat: heartbeat
-        )
+        return makeLocalJournalConnectionPresentation(for: uploadStatus)
     }
     return pairingPresentation
 }
@@ -94,43 +90,6 @@ func pairingResultText(
     case .idle, .pairing, .switchConfirmPending, .saveFailed, .failed:
         return nil
     }
-}
-
-/// Direct-URL mode (no tunnel manages the connection — local link or manual LAN
-/// address): connection health derives from real heartbeat outcomes, because the
-/// tunnel lifecycle never leaves .connecting when there is no tunnel at all.
-func makeDirectConnectionPresentation(
-    outcome: AppState.JournalHeartbeatOutcome?,
-    now: Date = Date()
-) -> PairingConnectionPresentation {
-    guard let outcome else {
-        return PairingConnectionPresentation(
-            message: "connecting to your journal…",
-            severity: .warn,
-            axToken: PairingConnectionAXState.connecting.axToken
-        )
-    }
-    if outcome.ok {
-        // Heartbeats run every 15s; 60s of silence after a success reads as
-        // reconnecting, never as a confident stale green.
-        if now.timeIntervalSince(outcome.at) <= 60 {
-            return PairingConnectionPresentation(
-                message: "sync can connect through your journal",
-                severity: .good,
-                axToken: PairingConnectionAXState.connected.axToken
-            )
-        }
-        return PairingConnectionPresentation(
-            message: "connecting to your journal…",
-            severity: .warn,
-            axToken: PairingConnectionAXState.connecting.axToken
-        )
-    }
-    return PairingConnectionPresentation(
-        message: "can't reach your journal right now",
-        severity: .attention,
-        axToken: PairingConnectionAXState.disconnected.axToken
-    )
 }
 
 func makePairingConnectionPresentation(
@@ -200,21 +159,8 @@ func makePairingRelayAccessPresentation(
 }
 
 func makeLocalJournalConnectionPresentation(
-    for uploadStatus: UploadCoordinator.Status,
-    heartbeat: AppState.JournalHeartbeatOutcome? = nil,
-    now: Date = Date()
+    for uploadStatus: UploadCoordinator.Status
 ) -> PairingConnectionPresentation {
-    // Uploads lag the link by up to a full segment rotation (and legitimately go
-    // quiet while nothing records). A fresh successful heartbeat is live proof the
-    // journal is reachable — never present "connecting" over a healthy link.
-    if case .notSynced = uploadStatus,
-       let heartbeat, heartbeat.ok, now.timeIntervalSince(heartbeat.at) <= 60 {
-        return PairingConnectionPresentation(
-            message: "connected to your journal on this mac",
-            severity: .good,
-            axToken: PairingConnectionAXState.connected.axToken
-        )
-    }
     switch uploadStatus {
     case .synced:
         return PairingConnectionPresentation(
@@ -1463,7 +1409,6 @@ struct SettingsView: View {
             isPairedHome: appState.isPairedHome,
             sameMachineHomeMigrationComplete: appState.sameMachineHomeMigrationComplete,
             uploadStatus: appState.uploadCoordinator.status,
-            heartbeat: appState.journalHeartbeatLastOutcome,
             pairingPresentation: pairingConnectionPresentation
         )
     }
@@ -1905,11 +1850,6 @@ struct SettingsView: View {
     }
 
     private var pairingConnectionPresentation: PairingConnectionPresentation {
-        // Tunnel-managed pairings present tunnel truth; a direct-URL journal (local
-        // link / manual address) has no tunnel, so heartbeat outcomes are the truth.
-        if !appState.tunnelLifecycleOwner.isTunnelManaged, appState.config.serverURL != nil {
-            return makeDirectConnectionPresentation(outcome: appState.journalHeartbeatLastOutcome)
-        }
         return makePairingConnectionPresentation(
             for: appState.pairingCoordinator.tunnelState,
             hasPairing: pairingCanUnpair

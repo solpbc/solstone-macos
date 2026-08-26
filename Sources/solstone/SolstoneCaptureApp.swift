@@ -200,7 +200,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.audioDeviceMonitor.stopListening()
             state.isTerminating = true
             state.appKitTerminationBegan = true
-            Task { await state.heartbeatService.stop() }
             state.stopTunnelLifecycleOwner()
         } else {
             Logger.general.error("AppState.shared nil in applicationWillTerminate")

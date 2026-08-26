@@ -38,7 +38,7 @@ struct AppStateSnapshotTests {
         #expect(state.capture.audioReconciledCount == 3)
     }
 
-    @Test func snapshotCaptureCoordinatorIsInertButHeartbeatProviderWorks() async {
+    @Test func snapshotCaptureCoordinatorIsInert() {
         let state = AppState.forSnapshot()
 
         #expect(state.capture.captureManager.onStateChanged == nil)
@@ -46,15 +46,6 @@ struct AppStateSnapshotTests {
         #expect(state.pauseManager.onResume == nil)
         #expect(state.audioDeviceMonitor.onDeviceChange == nil)
         #expect(!state.capture.isPermissionPollingActiveForTesting)
-        #expect(await state.heartbeatService.pausedForTesting() == false)
-
-        state.isPaused = true
-        #expect(await state.heartbeatService.pausedForTesting() == true)
-
-        state.isPaused = false
-        state.pauseManager.pause(for: .indefinite)
-        #expect(await state.heartbeatService.pausedForTesting() == false)
-        state.pauseManager.resume()
     }
 
     @Test func ingestResolverRequiresConnectedPairedLoopbackAndSnapshotNeverUsesConfiguredURL() async {

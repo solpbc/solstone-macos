@@ -195,19 +195,6 @@ private func standardizedJournalPath(_ path: String) -> String {
         .path
 }
 
-func makeObserverRegistrationDescriptor(
-    hostname: String = ProcessInfo.processInfo.hostName,
-    version: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
-) -> ObserverRegistrationDescriptor {
-    let trimmedHostname = hostname.trimmingCharacters(in: .whitespacesAndNewlines)
-    return ObserverRegistrationDescriptor(
-        platform: "darwin",
-        hostname: trimmedHostname.isEmpty ? "unknown" : trimmedHostname,
-        streamType: "desktop",
-        version: version
-    )
-}
-
 @MainActor
 func resetForJournalRelink(
     appState: AppState,

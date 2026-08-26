@@ -152,55 +152,6 @@ struct UploadCoordinatorTests {
         #expect(coordinator.lastErrorReason == "existing_reason")
     }
 
-    @Test func observerHealthPayloadDoesNotLeakRawFailureDetails() throws {
-        let coordinator = try makeCoordinator(
-            now: Date(timeIntervalSince1970: 1_700_000_000)
-        )
-        coordinator.handleProgressEvent(.uploadFailed(
-            segment: "143022_300",
-            error: "/tmp/private/143022_300/file.mp4?token=secret",
-            healthReason: .uploadFailed
-        ))
-
-        let health = ObserverHealthSnapshot(
-            name: nil,
-            streamType: "desktop",
-            version: "1.2.3",
-            uptimeSeconds: 5,
-            lastSuccessfulSync: coordinator.lastSyncedAt,
-            pendingQueueDepth: coordinator.pendingCount,
-            recentErrorCount: coordinator.recentErrorCount,
-            lastErrorReason: coordinator.lastErrorReason
-        )
-        let request = try UploadClient().buildObserverStatusRequest(
-            serverURL: "http://example.com",
-            serverKey: "secret",
-            paused: false,
-            health: health
-        )
-        let body = try #require(request.httpBody)
-        let payload = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        let serialized = String(data: body, encoding: .utf8) ?? ""
-
-        #expect(Set(payload.keys) == [
-            "tract",
-            "event",
-            "paused",
-            "source",
-            "stream_type",
-            "version",
-            "uptime",
-            "pending_queue_depth",
-            "recent_error_count",
-            "last_error_reason"
-        ])
-        #expect(payload["last_error_reason"] as? String == "upload_failed")
-        #expect(!serialized.contains("143022_300"))
-        #expect(!serialized.contains("/tmp/private"))
-        #expect(!serialized.contains("token"))
-        #expect(!serialized.contains("secret"))
-    }
-
     @Test func syncOnStartupWaitsForInitialConfigurationBeforeSyncing() async throws {
         resetSyncedDaysCache()
         store.reset()
