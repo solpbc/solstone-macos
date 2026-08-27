@@ -700,8 +700,8 @@ bundle-dist-journal: unlock-signing signing-check journal-native-runtime release
 	@test ! -f journal.app/Contents/embedded.provisionprofile || { echo "error: journal.app must not embed a provisioning profile"; exit 1; }
 	@! codesign -d --entitlements - --xml journal.app 2>/dev/null | plutil -p - 2>/dev/null | grep -q 'keychain-access-groups' || { echo "error: journal.app must not carry keychain-access-groups"; exit 1; }
 	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -Fq 'Identifier=app.solstone.journal.watchdog' || { echo "error: journal watchdog identifier mismatch"; exit 1; }
-	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/journal
-	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone
+	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal
+	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-sol
 	@echo "✓ Signed: journal.app (native journal runtime, no profile/keychain-group verified)"
 
 run-journal: journal-app-dev
@@ -823,8 +823,8 @@ verify-notarization-journal:
 	@lipo -archs journal.app/Contents/MacOS/solstone-watchdog | grep -q 'arm64' || { echo "journal watchdog missing arm64 slice"; exit 1; }
 	@test -x journal.app/Contents/Resources/solstone-runtime/bin/journal || { echo "error: journal native runtime missing bin/journal"; exit 1; }
 	@test -x journal.app/Contents/Resources/solstone-runtime/bin/solstone || { echo "error: journal native runtime missing bin/solstone"; exit 1; }
-	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/journal
-	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone
+	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal
+	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-sol
 	@echo "✓ $(JOURNAL_DMG_NAME) notarized + stapled"
 
 verify-notarization-both:
@@ -838,8 +838,8 @@ verify-notarization-both:
 		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
 	@test -x journal.app/Contents/Resources/solstone-runtime/bin/journal || { echo "error: both-DMG journal native runtime missing bin/journal"; exit 1; }
 	@test -x journal.app/Contents/Resources/solstone-runtime/bin/solstone || { echo "error: both-DMG journal native runtime missing bin/solstone"; exit 1; }
-	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/journal
-	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone
+	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal
+	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-sol
 	@echo "✓ $(BOTH_DMG_NAME) notarized + stapled"
 
 # One-shot orchestrators. They intentionally call standalone worker targets in
@@ -903,8 +903,8 @@ supply-chain-check: vendor-uv vendor-python generate-bundle-config
 	@echo "── BundleConfig.swift ──"
 	@cat Sources/JournalRuntime/BundleConfig.swift
 	@echo "── native journal runtime ──"
-	@if [ -x journal.app/Contents/Resources/solstone-runtime/bin/journal ]; then \
-	    codesign -dvvv journal.app/Contents/Resources/solstone-runtime/bin/journal 2>&1 || true; \
+	@if [ -x journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal ]; then \
+	    codesign -dvvv journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal 2>&1 || true; \
 	else \
 	    echo "(not built yet — run make bundle-dist-journal to assemble the signed native runtime)"; \
 	fi
