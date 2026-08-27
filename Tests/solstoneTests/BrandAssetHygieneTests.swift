@@ -1,6 +1,9 @@
 import Foundation
 import Testing
 
+// Covers retired-asset naming only. Source->raster freshness and palette are
+// gated separately by `make check-brand-assets-fresh` (scripts/check-brand-assets-fresh.sh),
+// wired into `make ci`.
 @Suite("Brand asset hygiene")
 struct BrandAssetHygieneTests {
     @Test func halfSunAssetAndBrandSyncNeedleAreGone() throws {
@@ -10,8 +13,6 @@ struct BrandAssetHygieneTests {
             .deletingLastPathComponent()
 
         // Assembled so a retired-asset grep sweep finds no live reference.
-        // Makefile:217 mentions the bare word "half"; that comment is intentional
-        // and is not matched (the assertion is on the full needle, not the bare word).
         let needle = "sol-ring-icon-" + "half"
 
         let retiredSVG = repoRoot

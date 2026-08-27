@@ -129,7 +129,11 @@ python3 scripts/keychain_search_list.py prepend "$TEST_KC"
 security default-keychain -d user -s "$TEST_KC"
 
 run_tests() {
+  echo "==> brand asset freshness"
+  ./scripts/check-brand-assets-fresh.sh 2>&1
+  echo "==> swift test"
   swift test 2>&1
+  echo "==> python unittest"
   python3 -m unittest discover scripts/tests 2>&1
 }
 

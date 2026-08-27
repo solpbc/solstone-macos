@@ -1,4 +1,4 @@
-.PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot install setup reset reset-full icons check-icons-deps check-dev-deps ci \
+.PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
         vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-native-runtime brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
@@ -218,9 +218,12 @@ generate-bundle-config: check-versions
 	    } > Sources/JournalRuntime/BundleConfig.swift
 	@echo "generated: Sources/JournalRuntime/BundleConfig.swift"
 
-# Re-vendor brand SVGs from the canonical source. CI verifies the committed
-# output (it does not run brand-sync) — run this locally when the brand spec
-# updates, then commit the diff. G2 retired the wordmark and icon-tier aliases;
+# Re-vendor brand SVGs from the canonical source. `make ci` gates on the
+# committed *generated* output staying current with these SVGs (via
+# check-brand-assets-fresh below) — it does not run brand-sync itself, since
+# brand-sync pulls from an external, non-repo brand source. Run brand-sync
+# locally when the brand spec updates, then `make icons` and commit the diff.
+# G2 retired the wordmark and icon-tier aliases;
 # vendor the one current mark under its current name. Menubar template SVGs
 # (sol-ring-mb-*) are a separate template family, already on the ruled
 # construction, and are not overwritten here.
@@ -1123,6 +1126,14 @@ check-icons-deps:
 		(echo "error: rsvg-convert not found — run: brew install librsvg"; exit 1)
 	@which iconutil > /dev/null 2>&1 || \
 		(echo "error: iconutil not found (requires macOS)"; exit 1)
+
+# Fails when a committed generated brand asset (AppIcon.icns x2, the menubar
+# template PDFs, the wordmark PNGs, or the machine-generated
+# assets/icon-journal.svg) no longer matches what `make icons` produces from
+# its current source. Wired into `make ci` via scripts/run-ci.sh so staleness
+# fails the routine gate instead of waiting for someone to notice.
+check-brand-assets-fresh: check-icons-deps
+	@./scripts/check-brand-assets-fresh.sh
 
 # ────────────────────────────────────────────────────────────────
 # Publish targets — RELEASE HOST ONLY
