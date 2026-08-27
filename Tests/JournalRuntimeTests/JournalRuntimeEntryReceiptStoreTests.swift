@@ -57,6 +57,64 @@ struct JournalRuntimeEntryReceiptStoreTests {
         #expect(sink.validate(attemptID: preserved).isValidClosed)
         #expect(sink.validate(attemptID: unavailable) == .invalid(.missingAttempt))
     }
+
+    @Test func rejectsOversizedRecordWithoutMutatingExistingEnvelope() {
+        let sink = InMemoryJournalRuntimeEntryReceiptSink()
+        let preserved = JournalRuntimeEntryAttemptID()
+        #expect(sink.appendSynchronously(outerDraft(preserved)) == .recorded)
+        let before = sink.storedRecords(attemptID: preserved)
+
+        // Bundle identity fields are the only variable-length whitelisted values. This remains
+        // structurally valid while exceeding the 2 KiB encoded-record bound.
+        let oversized = JournalRuntimeEntryAttemptID()
+        #expect(sink.appendSynchronously(outerDraft(
+            oversized,
+            identity: identity(bundleIdentifier: String(repeating: "a", count: 2_500))
+        )) == .unavailable(.recordRejected))
+
+        #expect(sink.storedRecords(attemptID: preserved) == before)
+        #expect(sink.validate(attemptID: oversized) == .invalid(.missingAttempt))
+    }
+
+    @Test func rejectsFileBoundWithoutEvictingOpenAttempts() {
+        let sink = InMemoryJournalRuntimeEntryReceiptSink()
+        let openAttempts = (0..<15).map { _ in JournalRuntimeEntryAttemptID() }
+        for attempt in openAttempts {
+            #expect(sink.appendSynchronously(outerDraft(attempt)) == .recorded)
+            #expect(sink.appendSynchronously(payloadEntryDraft(attempt, generation: 1)) == .recorded)
+        }
+
+        var hitFileBound = false
+        for index in 0..<512 {
+            let attempt = openAttempts[index % openAttempts.count]
+            let generation = UInt64(index / openAttempts.count + 2)
+            let result = sink.appendSynchronously(payloadEntryDraft(attempt, generation: generation))
+            if result == .unavailable(.boundsExceeded) {
+                hitFileBound = true
+                break
+            }
+            #expect(result == .recorded)
+        }
+        guard hitFileBound else {
+            Issue.record("expected open attempts to reach the 128 KiB receipt-file bound")
+            return
+        }
+
+        let before = openAttempts.map { sink.storedRecords(attemptID: $0) }
+        let currentAttempt = JournalRuntimeEntryAttemptID()
+        let largeCurrentOuter = outerDraft(
+            currentAttempt,
+            identity: identity(bundleIdentifier: String(repeating: "a", count: 1_700))
+        )
+        let probe = InMemoryJournalRuntimeEntryReceiptSink()
+        #expect(probe.appendSynchronously(largeCurrentOuter) == .recorded)
+
+        #expect(sink.appendSynchronously(largeCurrentOuter) == .unavailable(.boundsExceeded))
+        for (attempt, records) in zip(openAttempts, before) {
+            #expect(sink.storedRecords(attemptID: attempt) == records)
+        }
+        #expect(sink.validate(attemptID: currentAttempt) == .invalid(.missingAttempt))
+    }
 }
 
 @Suite("JournalRuntimeEntryReceiptChainValidator")
@@ -100,10 +158,10 @@ private extension JournalRuntimeEntryReceiptChainValidationResult {
     }
 }
 
-private func identity() -> JournalRuntimeEntryReceiptAppIdentity {
+private func identity(bundleIdentifier: String = "app.solstone.journal") -> JournalRuntimeEntryReceiptAppIdentity {
     JournalRuntimeEntryReceiptAppIdentity(
         appPID: 99,
-        bundleIdentifier: "app.solstone.journal",
+        bundleIdentifier: bundleIdentifier,
         bundleShortVersion: "2.0.0",
         bundleVersion: "25",
         locationClass: .standard
@@ -122,16 +180,22 @@ private func provenance() -> JournalRuntimeEntryCandidateProvenance {
     )
 }
 
-private func outerDraft(_ attempt: JournalRuntimeEntryAttemptID) -> JournalRuntimeEntryReceiptDraft {
-    .outerEntry(.init(attemptID: attempt, observedAtUnixMilliseconds: 1, appIdentity: identity()))
+private func outerDraft(
+    _ attempt: JournalRuntimeEntryAttemptID,
+    identity: JournalRuntimeEntryReceiptAppIdentity = identity()
+) -> JournalRuntimeEntryReceiptDraft {
+    .outerEntry(.init(attemptID: attempt, observedAtUnixMilliseconds: 1, appIdentity: identity))
 }
 
-private func payloadEntryDraft(_ attempt: JournalRuntimeEntryAttemptID) -> JournalRuntimeEntryReceiptDraft {
+private func payloadEntryDraft(
+    _ attempt: JournalRuntimeEntryAttemptID,
+    generation: UInt64 = 1
+) -> JournalRuntimeEntryReceiptDraft {
     .payloadEntry(.init(
         attemptID: attempt,
         observedAtUnixMilliseconds: 2,
         appIdentity: identity(),
-        generation: 1,
+        generation: generation,
         childPID: 4242,
         childKernelStartTimeMicroseconds: 1_000,
         provenance: provenance()
