@@ -163,9 +163,6 @@ struct JournalDevicesSnapshotTests {
         let model = JournalDevicesModel(client: SnapshotDevicesClient(devices: devices), copyToClipboard: { _ in })
         model.devices = devices
         model.loadState = state
-        for row in devices {
-            model.setDraftLabel(model.baseLabel(for: row), for: row)
-        }
         return model
     }
 
@@ -266,10 +263,6 @@ private struct SnapshotDevicesClient: JournalDevicesClientProtocol {
     }
 
     func nonceStatus(nonce: String) async throws -> NonceStatusResponse {
-        throw JournalDevicesClientError.serverStatus(599)
-    }
-
-    func renameDevice(fingerprint: String, label: String) async throws {
         throw JournalDevicesClientError.serverStatus(599)
     }
 

@@ -7,7 +7,6 @@ protocol JournalDevicesClientProtocol: Sendable {
     func listDevices() async throws -> [DeviceRow]
     func startPairing() async throws -> PairStartResponse
     func nonceStatus(nonce: String) async throws -> NonceStatusResponse
-    func renameDevice(fingerprint: String, label: String) async throws
     func unpairDevice(fingerprint: String) async throws -> UnpairResponse
 }
 
@@ -148,19 +147,13 @@ struct JournalDevicesClient: Sendable, JournalDevicesClientProtocol {
         static let devices = "/app/network/api/devices"
         static let pairStart = "/app/network/pair-start"
         static let nonceStatus = "/app/network/api/pair/nonce-status"
-        static let rename = "/app/network/rename"
         static let unpair = "/app/network/unpair"
     }
 
     private struct EmptyRequest: Encodable, Sendable {}
-    private struct RenameRequest: Encodable, Sendable {
-        var fingerprint: String
-        var label: String
-    }
     private struct UnpairRequest: Encodable, Sendable {
         var fingerprint: String
     }
-    private struct JSONSuccessResponse: Decodable, Equatable, Sendable {}
 
     private let baseURL: String
     private let session: URLSession
@@ -202,15 +195,6 @@ struct JournalDevicesClient: Sendable, JournalDevicesClientProtocol {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 5
         return try await perform(request, expectedPath: Route.nonceStatus, as: NonceStatusResponse.self)
-    }
-
-    func renameDevice(fingerprint: String, label: String) async throws {
-        let request = try buildJSONRequest(
-            path: Route.rename,
-            body: RenameRequest(fingerprint: fingerprint, label: label),
-            timeout: 5
-        )
-        _ = try await perform(request, expectedPath: Route.rename, as: JSONSuccessResponse.self)
     }
 
     func unpairDevice(fingerprint: String) async throws -> UnpairResponse {

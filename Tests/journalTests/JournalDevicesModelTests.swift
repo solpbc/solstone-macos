@@ -115,90 +115,6 @@ struct JournalDevicesModelTests {
         #expect(notReady.loadState == .notReady)
     }
 
-    @Test func renameDraftPrefillsBaseDeviceLabelWhenDisplayLabelIsDisambiguated() async throws {
-        let client = FakeDevicesClient(listResults: [
-            .success([device(label: "iPhone (2)", deviceLabel: "iPhone", fingerprint: "a")]),
-        ])
-        let model = JournalDevicesModel(client: client)
-        await model.loadDevices()
-        let row = try #require(model.devices.first)
-
-        #expect(model.draftLabel(for: row) == "iPhone")
-    }
-
-    @Test func saveRenamePostsBaseDeviceLabelWithOwnerPrefix() async throws {
-        let client = FakeDevicesClient(
-            listResults: [
-                .success([device(label: "iPhone (2)", deviceLabel: "iPhone", fingerprint: "a")]),
-                .success([device(label: "Work iPhone", deviceLabel: "Work iPhone", fingerprint: "a")]),
-            ],
-            renameResults: [.success(())]
-        )
-        let model = JournalDevicesModel(client: client)
-        await model.loadDevices()
-        let row = try #require(model.devices.first)
-        model.setDraftLabel("Work \(model.draftLabel(for: row))", for: row)
-
-        await model.saveRename(for: row)
-        let requests = await client.renameRequests()
-
-        #expect(
-            requests == [RenameRequest(fingerprint: "a", label: "Work iPhone")],
-            "actual rename requests: \(requests)"
-        )
-    }
-
-    @Test func renameOptimisticallyCommitsAndRefreshesOnSuccess() async throws {
-        let client = FakeDevicesClient(
-            listResults: [
-                .success([device(label: "old", fingerprint: "a")]),
-                .success([device(label: "new", fingerprint: "a")]),
-            ],
-            renameResults: [.success(())]
-        )
-        let model = JournalDevicesModel(client: client)
-        await model.loadDevices()
-        let row = try #require(model.devices.first)
-        model.setDraftLabel(" new ", for: row)
-
-        await model.saveRename(for: row)
-
-        #expect(model.devices.first?.displayLabel == "new")
-        #expect(model.renameErrors["a"] == nil)
-        #expect(await client.renameRequests() == [RenameRequest(fingerprint: "a", label: "new")])
-        #expect(await client.listCallCount() == 2)
-    }
-
-    @Test func renameRollsBackOnFailure() async throws {
-        let client = FakeDevicesClient(
-            listResults: [.success([device(label: "old", fingerprint: "a")])],
-            renameResults: [.failure(.server(.init(error: "no", detail: "not allowed")))]
-        )
-        let model = JournalDevicesModel(client: client)
-        await model.loadDevices()
-        let row = try #require(model.devices.first)
-        model.setDraftLabel("bad", for: row)
-
-        await model.saveRename(for: row)
-
-        #expect(model.devices.first?.displayLabel == "old")
-        #expect(model.draftLabels["a"] == "bad")
-        #expect(model.renameErrors["a"] == "not allowed")
-    }
-
-    @Test func emptyRenameIsRejectedLocally() async throws {
-        let client = FakeDevicesClient(listResults: [.success([device(label: "old", fingerprint: "a")])])
-        let model = JournalDevicesModel(client: client)
-        await model.loadDevices()
-        let row = try #require(model.devices.first)
-        model.setDraftLabel("   ", for: row)
-
-        await model.saveRename(for: row)
-
-        #expect(model.renameErrors["a"] == DevicesCopy.renameRequired)
-        #expect(await client.renameRequests().isEmpty)
-    }
-
     @Test func detailLineRendersWhenPartsAreMissingWithoutDanglingSeparators() {
         let model = JournalDevicesModel(client: FakeDevicesClient())
         let detail = model.detailLine(
@@ -210,30 +126,6 @@ struct JournalDevicesModelTests {
         #expect(!detail.hasPrefix(" · "))
         #expect(!detail.hasSuffix(" · "))
         #expect(!detail.contains(" ·  · "))
-    }
-
-    @Test func applyDevicesPrunesStaleDraftsAndClampsSeededDrafts() async throws {
-        let overlong = String(repeating: "x", count: 81)
-        let client = FakeDevicesClient(listResults: [
-            .success([device(label: overlong, deviceLabel: overlong, fingerprint: "seed")]),
-        ])
-        let model = JournalDevicesModel(client: client)
-
-        model.setDraftLabel(overlong, for: device(label: "phone", fingerprint: "setter"))
-        await model.loadDevices()
-
-        #expect(model.draftLabels["setter"] == nil)
-        #expect(model.draftLabels["seed"]?.count == 80)
-    }
-
-    @Test func setterClampUsesCharacterCount() {
-        let model = JournalDevicesModel(client: FakeDevicesClient())
-        let overlong = String(repeating: "x", count: 81)
-        let row = device(label: "phone", fingerprint: "a")
-
-        model.setDraftLabel(overlong, for: row)
-
-        #expect(model.draftLabel(for: row).count == 80)
     }
 
     @Test func parserAcceptsGroundedISOShapesAndRejectsLossyStringsAsUnknown() {
@@ -488,11 +380,6 @@ struct JournalDevicesModelTests {
     }
 }
 
-private struct RenameRequest: Equatable, Sendable {
-    let fingerprint: String
-    let label: String
-}
-
 private enum FakeOutcome<Value: Sendable>: Sendable {
     case success(Value)
     case failure(JournalDevicesClientError)
@@ -511,14 +398,12 @@ private actor FakeDevicesClient: JournalDevicesClientProtocol {
     private var listResults: [FakeOutcome<[DeviceRow]>]
     private var pairResults: [FakeOutcome<PairStartResponse>]
     private var nonceResults: [FakeOutcome<NonceStatusResponse>]
-    private var renameResults: [FakeOutcome<Void>]
     private var unpairResults: [FakeOutcome<UnpairResponse>]
     private var holdNonce: Bool
     private var heldNonceContinuation: CheckedContinuation<Void, Never>?
 
     private(set) var listCalls = 0
     private(set) var nonceCalls = 0
-    private var recordedRenameRequests: [RenameRequest] = []
     private var recordedUnpairRequests: [String] = []
     private var recordedNonceRequests: [String] = []
 
@@ -526,14 +411,12 @@ private actor FakeDevicesClient: JournalDevicesClientProtocol {
         listResults: [FakeOutcome<[DeviceRow]>] = [],
         pairResults: [FakeOutcome<PairStartResponse>] = [],
         nonceResults: [FakeOutcome<NonceStatusResponse>] = [],
-        renameResults: [FakeOutcome<Void>] = [],
         unpairResults: [FakeOutcome<UnpairResponse>] = [],
         holdNonce: Bool = false
     ) {
         self.listResults = listResults
         self.pairResults = pairResults
         self.nonceResults = nonceResults
-        self.renameResults = renameResults
         self.unpairResults = unpairResults
         self.holdNonce = holdNonce
     }
@@ -558,11 +441,6 @@ private actor FakeDevicesClient: JournalDevicesClientProtocol {
         return try next(&nonceResults).get()
     }
 
-    func renameDevice(fingerprint: String, label: String) async throws {
-        recordedRenameRequests.append(RenameRequest(fingerprint: fingerprint, label: label))
-        try next(&renameResults).get()
-    }
-
     func unpairDevice(fingerprint: String) async throws -> UnpairResponse {
         recordedUnpairRequests.append(fingerprint)
         return try next(&unpairResults).get()
@@ -577,7 +455,6 @@ private actor FakeDevicesClient: JournalDevicesClientProtocol {
 
     func listCallCount() -> Int { listCalls }
     func nonceCallCount() -> Int { nonceCalls }
-    func renameRequests() -> [RenameRequest] { recordedRenameRequests }
     func unpairRequests() -> [String] { recordedUnpairRequests }
     func nonceRequests() -> [String] { recordedNonceRequests }
 

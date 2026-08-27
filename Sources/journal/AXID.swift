@@ -107,18 +107,6 @@ enum AXID {
                     "\(prefix(fingerprint)).detail.state"
                 }
 
-                static func renameField(_ fingerprint: String) -> String {
-                    "\(prefix(fingerprint)).rename.field"
-                }
-
-                static func renameSave(_ fingerprint: String) -> String {
-                    "\(prefix(fingerprint)).rename.save"
-                }
-
-                static func renameErrorState(_ fingerprint: String) -> String {
-                    "\(prefix(fingerprint)).rename.error.state"
-                }
-
                 static func revoke(_ fingerprint: String) -> String {
                     "\(prefix(fingerprint)).revoke"
                 }

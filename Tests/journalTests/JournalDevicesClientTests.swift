@@ -72,23 +72,6 @@ struct JournalDevicesClientTests {
         #expect(request.timeoutInterval == 5)
     }
 
-    @Test func renameDevicePostsFingerprintAndLabel() async throws {
-        let store = ObserverURLProtocolStore()
-        store.enqueue(body: #"{"ok":true}"#)
-        let client = makeClient(store: store)
-
-        try await client.renameDevice(fingerprint: "abc", label: "new name")
-        let request = try #require(store.snapshotRequests().first)
-        let body = try #require(store.requestBodies.first ?? nil)
-        let object = try JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any]
-
-        #expect(request.url?.absoluteString == "http://127.0.0.1:5015/app/network/rename")
-        #expect(request.httpMethod == "POST")
-        #expect(request.timeoutInterval == 5)
-        #expect(object?["fingerprint"] as? String == "abc")
-        #expect(object?["label"] as? String == "new name")
-    }
-
     @Test func unpairDevicePostsFingerprintAndDecodesResponse() async throws {
         let store = ObserverURLProtocolStore()
         store.enqueue(body: #"{"unpaired":true}"#)

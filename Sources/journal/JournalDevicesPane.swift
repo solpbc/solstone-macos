@@ -141,40 +141,8 @@ struct JournalDevicesPane: View {
                 Button(DevicesCopy.remove) {
                     model.beginRevoke(row)
                 }
-                .disabled(model.isRenaming(row))
                 .accessibilityIdentifier(AXID.Journal.Devices.Row.revoke(row.fingerprint))
             }
-
-            HStack(spacing: 8) {
-                TextField(
-                    DevicesCopy.renamePlaceholder,
-                    text: Binding(
-                        get: { model.draftLabel(for: row) },
-                        set: { model.setDraftLabel($0, for: row) }
-                    )
-                )
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier(AXID.Journal.Devices.Row.renameField(row.fingerprint))
-                .onSubmit {
-                    Task { await model.saveRename(for: row) }
-                }
-
-                Button(DevicesCopy.renameSave) {
-                    Task { await model.saveRename(for: row) }
-                }
-                .disabled(model.isRenaming(row))
-                .accessibilityIdentifier(AXID.Journal.Devices.Row.renameSave(row.fingerprint))
-            }
-
-            if let error = model.renameErrors[row.fingerprint] {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-            AXStateCompanion(
-                id: AXID.Journal.Devices.Row.renameErrorState(row.fingerprint),
-                value: model.renameErrors[row.fingerprint] ?? ""
-            )
         }
         .padding(.vertical, 10)
         .accessibilityElement(children: .contain)

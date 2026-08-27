@@ -21,10 +21,6 @@ struct JournalDevicesCopyTests {
         #expect(DevicesCopy.addDevice == "add a device")
         #expect(DevicesCopy.unnamedDevice == "unnamed device")
         #expect(DevicesCopy.unnamedJournal == "unnamed journal")
-        #expect(DevicesCopy.renamePlaceholder == "device name")
-        #expect(DevicesCopy.renameSave == "save")
-        #expect(DevicesCopy.renameRequired == "enter a name")
-        #expect(DevicesCopy.renameFailed == "couldn't rename this device")
         #expect(DevicesCopy.remove == "remove")
         #expect(DevicesCopy.revokeFailed == "couldn't remove this device")
         #expect(DevicesCopy.cancel == "cancel")
@@ -65,10 +61,6 @@ struct JournalDevicesCopyTests {
             DevicesCopy.addDevice,
             DevicesCopy.unnamedDevice,
             DevicesCopy.unnamedJournal,
-            DevicesCopy.renamePlaceholder,
-            DevicesCopy.renameSave,
-            DevicesCopy.renameRequired,
-            DevicesCopy.renameFailed,
             DevicesCopy.remove,
             DevicesCopy.revokeFailed,
             DevicesCopy.cancel,

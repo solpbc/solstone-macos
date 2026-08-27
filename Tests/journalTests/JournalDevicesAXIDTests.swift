@@ -13,9 +13,6 @@ struct JournalDevicesAXIDTests {
             AXID.Journal.Devices.Row.container(fingerprint),
             AXID.Journal.Devices.Row.label(fingerprint),
             AXID.Journal.Devices.Row.detailState(fingerprint),
-            AXID.Journal.Devices.Row.renameField(fingerprint),
-            AXID.Journal.Devices.Row.renameSave(fingerprint),
-            AXID.Journal.Devices.Row.renameErrorState(fingerprint),
             AXID.Journal.Devices.Row.revoke(fingerprint),
         ]
 
@@ -26,10 +23,6 @@ struct JournalDevicesAXIDTests {
             #expect(id.range(of: AXContract.idPattern, options: .regularExpression) != nil)
             #expect(id.contains("fingerprint-abc-123"))
         }
-        #expect(
-            AXContract.stateKey(for: AXID.Journal.Devices.Row.renameErrorState(fingerprint))
-                == "journal.devices.row.fingerprint-{fingerprint}.rename.error.state"
-        )
         #expect(
             AXContract.stateKey(for: AXID.Journal.Devices.Row.detailState(fingerprint))
                 == "journal.devices.row.fingerprint-{fingerprint}.detail.state"
@@ -42,9 +35,6 @@ struct JournalDevicesAXIDTests {
         #expect(templates.contains("journal.devices.row.fingerprint-{fingerprint}"))
         #expect(templates.contains("journal.devices.row.fingerprint-{fingerprint}.detail.state"))
         #expect(templates.contains("journal.devices.row.fingerprint-{fingerprint}.label"))
-        #expect(templates.contains("journal.devices.row.fingerprint-{fingerprint}.rename.field"))
-        #expect(templates.contains("journal.devices.row.fingerprint-{fingerprint}.rename.save"))
-        #expect(templates.contains("journal.devices.row.fingerprint-{fingerprint}.rename.error.state"))
         #expect(templates.contains("journal.devices.row.fingerprint-{fingerprint}.revoke"))
     }
 

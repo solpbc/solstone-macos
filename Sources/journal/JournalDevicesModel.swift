@@ -62,17 +62,12 @@ final class JournalDevicesModel {
     var devices: [DeviceRow] = []
     var loadState: JournalDevicesLoadState = .loading
     var loadErrorDetail: String?
-    var draftLabels: [String: String] = [:]
-    var renamingFingerprints: Set<String> = []
-    var renameErrors: [String: String] = [:]
     var revokeCandidate: DeviceRow?
     var revokeInFlightFingerprint: String?
     var revokeError: String?
     var isPairingPresented = false
     var pairingState: PairingState = .idle
     var pairingNow: Duration = .zero
-
-    private static let maxDraftLabelCharacters = 80
 
     init(
         client: any JournalDevicesClientProtocol = JournalDevicesClient(),
@@ -117,8 +112,6 @@ final class JournalDevicesModel {
         revokeCandidate = nil
         revokeInFlightFingerprint = nil
         revokeError = nil
-        renameErrors.removeAll()
-        renamingFingerprints.removeAll()
     }
 
     func loadDevices() async {
@@ -135,21 +128,8 @@ final class JournalDevicesModel {
         }
     }
 
-    func draftLabel(for row: DeviceRow) -> String {
-        draftLabels[row.fingerprint] ?? baseLabel(for: row)
-    }
-
-    func setDraftLabel(_ label: String, for row: DeviceRow) {
-        writeDraft(label, for: row.fingerprint)
-    }
-
     func displayName(for row: DeviceRow) -> String {
         firstNonEmpty(row.displayLabel, row.deviceLabel, row.observerHandle)
-            ?? (isPeerJournal(row) ? DevicesCopy.unnamedJournal : DevicesCopy.unnamedDevice)
-    }
-
-    func baseLabel(for row: DeviceRow) -> String {
-        firstNonEmpty(row.deviceLabel, row.observerHandle, row.displayLabel)
             ?? (isPeerJournal(row) ? DevicesCopy.unnamedJournal : DevicesCopy.unnamedDevice)
     }
 
@@ -167,41 +147,6 @@ final class JournalDevicesModel {
 
     func neverConnected(_ row: DeviceRow) -> Bool {
         row.lastSeenAt == nil
-    }
-
-    func isRenaming(_ row: DeviceRow) -> Bool {
-        renamingFingerprints.contains(row.fingerprint)
-    }
-
-    func saveRename(for row: DeviceRow) async {
-        let fingerprint = row.fingerprint
-        let newLabel = draftLabel(for: row).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !newLabel.isEmpty else {
-            renameErrors[fingerprint] = DevicesCopy.renameRequired
-            return
-        }
-
-        let previousDevices = devices
-        let previousDraft = draftLabels[fingerprint]
-        renameErrors[fingerprint] = nil
-        renamingFingerprints.insert(fingerprint)
-        applyOptimisticLabel(newLabel, fingerprint: fingerprint)
-        writeDraft(newLabel, for: fingerprint)
-
-        do {
-            try await client.renameDevice(fingerprint: fingerprint, label: newLabel)
-            renamingFingerprints.remove(fingerprint)
-            await loadDevices()
-        } catch is CancellationError {
-            devices = previousDevices
-            writeDraft(previousDraft, for: fingerprint)
-            renamingFingerprints.remove(fingerprint)
-        } catch {
-            devices = previousDevices
-            writeDraft(previousDraft, for: fingerprint)
-            renamingFingerprints.remove(fingerprint)
-            renameErrors[fingerprint] = detail(for: error) ?? DevicesCopy.renameFailed
-        }
     }
 
     func beginRevoke(_ row: DeviceRow) {
@@ -359,27 +304,16 @@ final class JournalDevicesModel {
 
     private func applyDevices(_ loaded: [DeviceRow]) {
         devices = loaded
-        let fingerprints = Set(loaded.map(\.fingerprint))
-        draftLabels = draftLabels.filter { fingerprints.contains($0.key) }
-        for row in loaded where draftLabels[row.fingerprint] == nil {
-            writeDraft(baseLabel(for: row), for: row.fingerprint)
-        }
     }
 
     private func applyLoadError(_ error: Error) {
         devices = []
-        draftLabels.removeAll()
         loadErrorDetail = detail(for: error)
         if isConnectionRefusedTransport(error) {
             loadState = .notRunning
         } else {
             loadState = .notReady
         }
-    }
-
-    private func applyOptimisticLabel(_ label: String, fingerprint: String) {
-        guard let index = devices.firstIndex(where: { $0.fingerprint == fingerprint }) else { return }
-        devices[index].displayLabel = label
     }
 
     private func isPeerJournal(_ row: DeviceRow) -> Bool {
@@ -411,14 +345,6 @@ final class JournalDevicesModel {
         formatter.dateTimeStyle = .named
         formatter.unitsStyle = .full
         return "last seen \(formatter.localizedString(for: lastSeenAt, relativeTo: now))"
-    }
-
-    private func writeDraft(_ label: String?, for fingerprint: String) {
-        guard let label else {
-            draftLabels[fingerprint] = nil
-            return
-        }
-        draftLabels[fingerprint] = String(label.prefix(Self.maxDraftLabelCharacters))
     }
 
     private func firstNonEmpty(_ values: String?...) -> String? {
