@@ -93,7 +93,7 @@ public struct JournalSetupRunner: Sendable {
             result = try await subprocessRunner.run(
                 executable: runtime.layout.journalBinary,
                 arguments: JournalSetupCommand.setupArguments(journalURL: journalRoot, skipService: skipService),
-                environment: runtime.layout.uvEnvironment(),
+                environment: runtime.environment,
                 timeout: setupTimeout,
                 stdoutHandler: { [output, progressContinuation] data in
                     for event in output.appendStdout(data) {
@@ -159,7 +159,7 @@ public struct JournalSetupRunner: Sendable {
     private func launchInstallModels(runtime: MaterializedRuntime) {
         let runner = subprocessRunner
         let journalBinary = runtime.layout.journalBinary
-        let environment = runtime.layout.uvEnvironment()
+        let environment = runtime.environment
         Task {
             do {
                 _ = try await runner.run(

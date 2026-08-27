@@ -10,10 +10,16 @@ import SolstoneCore
 public struct MaterializedRuntime: Sendable {
     public let key: String
     public let layout: SolstoneRuntimeLayout
+    public let environment: [String: String]
 
-    public init(key: String, layout: SolstoneRuntimeLayout) {
+    public init(
+        key: String,
+        layout: SolstoneRuntimeLayout,
+        environment: [String: String]? = nil
+    ) {
         self.key = key
         self.layout = layout
+        self.environment = environment ?? layout.uvEnvironment()
     }
 }
 

@@ -82,7 +82,7 @@ final class JournalFirstRunModel {
 
     init(
         config: JournalAppConfig,
-        setupRunner: any JournalSetupRunning = JournalSetupRunner(),
+        setupRunner: any JournalSetupRunning = JournalSetupRunner(materializer: NativeJournalRuntimeMaterializer()),
         initClient: any JournalInitClienting = JournalInitClient(),
         updateName: @escaping NameUpdate = { try await JournalConfigClient().updateJournalName($0) },
         startSupervisor: @escaping SupervisorStart,

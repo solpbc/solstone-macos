@@ -41,7 +41,7 @@ final class JournalSupervisor {
 
     init(
         gate: any SingleSupervisorGating = SingleSupervisorGate(),
-        materializer: any RuntimeMaterializing = RuntimeMaterializer(),
+        materializer: any RuntimeMaterializing = NativeJournalRuntimeMaterializer(),
         runner: (any SupervisedChildRunning)? = nil,
         readinessGate: any JournalReadinessChecking = JournalReadinessGate(),
         markerURL: URL = ExpectedExitMarker.markerURL(for: ExpectedExitMarker.journalMarkerDiscriminator),
@@ -70,7 +70,7 @@ final class JournalSupervisor {
     }
 
     var journalRuntimeEnvironment: [String: String]? {
-        activeRuntime?.layout.uvEnvironment()
+        activeRuntime?.environment
     }
 
     func applyRuntimeStatus(_ status: JournalRuntimeStatus) {

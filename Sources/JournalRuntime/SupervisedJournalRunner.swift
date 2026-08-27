@@ -307,7 +307,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
             executableURL: runtime.layout.journalBinary,
             currentDirectoryURL: canonicalJournalRoot,
             arguments: ["start", "--app-supervised", String(port)],
-            environment: runtime.layout.uvEnvironment()
+            environment: runtime.environment
         )
         switch await gate.prepareForSpawn(journalRoot: canonicalJournalRoot) {
         case .success:

@@ -15,7 +15,7 @@ class JournalReleaseMetadataTest(unittest.TestCase):
             plist = plistlib.load(handle)
 
         import re as _re
-        self.assertRegex(plist["CFBundleShortVersionString"], _re.compile(r"^1\.\d+\.\d+$"))
+        self.assertRegex(plist["CFBundleShortVersionString"], _re.compile(r"^2\.\d+\.\d+$"))
         self.assertGreaterEqual(int(plist["CFBundleVersion"]), 1)
 
     def test_sol_and_journal_changelog_1_0_0_blocks_are_distinct(self):
