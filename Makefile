@@ -1,5 +1,5 @@
 .PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
-        signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
+        signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal assemble-journal-app journal-app-unsigned bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
         vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-native-runtime brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
 
@@ -57,6 +57,12 @@ ADHOC_SIGN_ID      ?= $(shell scripts/adhoc-dev-cert.sh identity 2>/dev/null || 
 ADHOC_ENTITLEMENTS ?= $(ENTITLEMENTS_PLIST)
 BUNDLE_BUILD_TARGET ?= release-universal
 BUNDLE_CONFIGURATION ?= Release
+# Two --arch flags are load-bearing: release-universal-adhoc (below) uses the same
+# multi-arch shape to select SwiftPM's Apple/Xcode backend, which writes to
+# .build/apple/Products/Release (what bundle-dist-journal copies from). Journal is
+# arm64-only, so both flags are arm64; do not collapse them to one flag, and do not
+# swap in --build-system swiftbuild, which writes to .build/out/Products/Release instead.
+JOURNAL_RELEASE_APPLE_ARCH_FLAGS := --arch arm64 --arch arm64
 
 # uv vendoring
 UV_VERSION ?= 0.11.13
@@ -267,8 +273,8 @@ release-universal-adhoc:
 	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
 
 release-universal-journal:
-	swift build -c release --arch arm64 --product journal
-	swift build -c release --arch arm64 --product solstone-watchdog
+	swift build -c release $(JOURNAL_RELEASE_APPLE_ARCH_FLAGS) --product journal
+	swift build -c release $(JOURNAL_RELEASE_APPLE_ARCH_FLAGS) --product solstone-watchdog
 
 journal-native-runtime:
 	@SOURCE_DIR="$(abspath $(JOURNAL_NATIVE_SOURCE_DIR))"; \
@@ -645,8 +651,7 @@ journal-app-dev: journal-native-runtime
 		echo "✓ Assembled: journal.app"; \
 		find journal.app/Contents -maxdepth 3 \( -path '*/Versions' -o -path '*/_CodeSignature' \) -prune -o \( -type f -o -type d \) -print | sort
 
-bundle-dist-journal: unlock-signing signing-check journal-native-runtime release-universal-journal
-	@echo "Creating journal distribution app bundle..."
+assemble-journal-app: release-universal-journal
 	@rm -rf journal.app
 	@mkdir -p journal.app/Contents/MacOS journal.app/Contents/Resources journal.app/Contents/Frameworks journal.app/Contents/Library/LaunchAgents
 	@cp .build/apple/Products/Release/journal journal.app/Contents/MacOS/
@@ -658,6 +663,10 @@ bundle-dist-journal: unlock-signing signing-check journal-native-runtime release
 	@test -d .build/apple/Products/Release/solstone_journal.bundle || { echo "error: solstone_journal.bundle missing from .build/apple/Products/Release"; exit 1; }
 	@cp -r .build/apple/Products/Release/solstone_JournalMarkKit.bundle journal.app/Contents/Resources/
 	@cp -r .build/apple/Products/Release/solstone_journal.bundle journal.app/Contents/Resources/
+
+journal-app-unsigned: assemble-journal-app
+
+bundle-dist-journal: unlock-signing signing-check journal-native-runtime release-universal-journal assemble-journal-app
 	@cp -R "$(JOURNAL_NATIVE_RUNTIME_DIR)" journal.app/Contents/Resources/solstone-runtime
 	@cp -R "$(SPARKLE_FRAMEWORK)" journal.app/Contents/Frameworks/
 	@RPATH_LOG="$$(mktemp -t journal-rpath)"; \

@@ -351,7 +351,8 @@ public struct JournalRuntimeEntryReceiptContext: Sendable {
         terminationStatus: Int32,
         now: Date = Date()
     ) -> JournalRuntimeEntryReceiptDraft? {
-        guard let appIdentity, let kernelStart = kernelStartTimeMicroseconds(identity.kernelStartTime) else {
+        guard let appIdentity, candidateProvenance != nil,
+              let kernelStart = kernelStartTimeMicroseconds(identity.kernelStartTime) else {
             return nil
         }
         return .payloadExit(JournalRuntimeEntryReceiptPayloadExitDraft(

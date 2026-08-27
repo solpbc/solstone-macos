@@ -8,7 +8,7 @@ import SolstoneCore
 import Testing
 @testable import JournalRuntime
 
-@Suite("SupervisedJournalRunner")
+@Suite("SupervisedJournalRunner", .serialized)
 struct SupervisedJournalRunnerTests {
     @Test func launchGatesWithCanonicalRootAndDoesNotStampJournalEnvironment() async throws {
         let fixture = try RunnerFixture()
@@ -158,6 +158,79 @@ struct SupervisedJournalRunnerTests {
         #expect(payloadExits(live.sink.storedRecords(attemptID: live.context.attemptID)).isEmpty)
     }
 
+    @Test(arguments: [
+        "missing",
+        "CandidateProvenanceMalformed",
+        "CandidateProvenanceDuplicate",
+        "CandidateProvenanceTargetMismatch"
+    ])
+    func missingOrRejectedProvenanceWritesOnlyOuterEntry(named name: String) async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let appBundle = try makeTestBundle(at: fixture.root, named: "JournalAppIdentity")
+        let provenanceBundle: Bundle
+        if name == "missing" {
+            provenanceBundle = try makeTestBundle(at: fixture.root, named: "MissingProvenance")
+        } else {
+            provenanceBundle = try candidateProvenanceFixtureBundle(named: name)
+        }
+        let receipts = makeLaunchReceiptFixture(
+            appBundle: appBundle,
+            provenanceBundle: provenanceBundle
+        )
+
+        try await assertOuterOnlyClosedChainAfterExit(fixture: fixture, receipts: receipts)
+    }
+
+    @Test func provenanceResolutionIgnoresProcessGlobalDecoys() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let scratchRoot = try makeScratchDirectory(prefix: "supervised-runner-provenance-decoys")
+        let originalCurrentDirectory = FileManager.default.currentDirectoryPath
+        let environmentKey = "SOLSTONE_JOURNAL_RUNTIME_ENTRY_CANDIDATE_PROVENANCE"
+        let originalEnvironmentValue = getenv(environmentKey).map { String(cString: $0) }
+        defer {
+            _ = FileManager.default.changeCurrentDirectoryPath(originalCurrentDirectory)
+            if let originalEnvironmentValue {
+                setenv(environmentKey, originalEnvironmentValue, 1)
+            } else {
+                unsetenv(environmentKey)
+            }
+            try? FileManager.default.removeItem(at: scratchRoot)
+        }
+
+        let validProvenance = try validCandidateProvenanceData()
+        let currentDirectory = scratchRoot.appendingPathComponent("cwd", isDirectory: true)
+        try FileManager.default.createDirectory(at: currentDirectory, withIntermediateDirectories: true)
+        try validProvenance.write(to: currentDirectory.appendingPathComponent("runtime-entry-candidate-provenance.json"))
+        #expect(FileManager.default.changeCurrentDirectoryPath(currentDirectory.path))
+
+        let runtimeTreeDecoy = fixture.root
+            .appendingPathComponent("runtime-tree/Resources/runtime-entry-candidate-provenance.json")
+        try FileManager.default.createDirectory(at: runtimeTreeDecoy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try validProvenance.write(to: runtimeTreeDecoy)
+
+        let environmentDecoy = scratchRoot.appendingPathComponent("environment-provenance.json")
+        try validProvenance.write(to: environmentDecoy)
+        setenv(environmentKey, environmentDecoy.path, 1)
+
+        let unselectedBundle = try makeTestBundle(
+            at: fixture.root,
+            named: "UnselectedValidProvenance",
+            provenanceData: validProvenance
+        )
+        #expect(FileManager.default.fileExists(atPath: unselectedBundle.bundleURL.path))
+
+        let appBundle = try makeTestBundle(at: fixture.root, named: "JournalAppIdentity")
+        let emptyProvenanceBundle = try makeTestBundle(at: fixture.root, named: "MissingProvenance")
+        let receipts = makeLaunchReceiptFixture(
+            appBundle: appBundle,
+            provenanceBundle: emptyProvenanceBundle
+        )
+
+        try await assertOuterOnlyClosedChainAfterExit(fixture: fixture, receipts: receipts)
+    }
+
     @Test func keepsPIDReuseExitsBoundToTheirAdmittedKernelStartTime() async throws {
         let fixture = try RunnerFixture()
         defer { fixture.clear() }
@@ -184,6 +257,31 @@ struct SupervisedJournalRunnerTests {
 private struct ReceiptFixture {
     let context: JournalRuntimeEntryReceiptContext
     let sink: InMemoryJournalRuntimeEntryReceiptSink
+}
+
+private func makeLaunchReceiptFixture(
+    appBundle: Bundle,
+    provenanceBundle: Bundle
+) -> ReceiptFixture {
+    let sink = InMemoryJournalRuntimeEntryReceiptSink()
+    let processID = getpid()
+    let processUID = getuid()
+    let context = JournalRuntimeEntryReceiptLaunch.begin(
+        bundle: appBundle,
+        provenanceBundle: provenanceBundle,
+        sink: sink,
+        processEvidenceLookup: { pid in
+            guard pid == processID else { return nil }
+            return JournalProcessEvidence(
+                pid: pid,
+                ppid: 1,
+                uid: processUID,
+                username: "test",
+                kernelStartTime: 1_234.567_891
+            )
+        }
+    )
+    return ReceiptFixture(context: context, sink: sink)
 }
 
 private func makeReceiptFixture() -> ReceiptFixture {
@@ -233,6 +331,40 @@ private func payloadExits(_ records: [JournalRuntimeEntryReceipt]) -> [JournalRu
     }
 }
 
+private func assertOuterOnlyClosedChainAfterExit(
+    fixture: RunnerFixture,
+    receipts: ReceiptFixture
+) async throws {
+    #expect(receipts.context.candidateProvenance == nil)
+    let spawner = RecordingProcessSpawner(pid: 4242)
+    let runner = SupervisedJournalRunner(
+        statusSink: { _ in },
+        gate: RecordingRunnerGate(result: .success),
+        evidenceReader: FixedStartTimeReader(startTime: 1_000),
+        processSpawner: spawner,
+        pidExists: { _ in false }
+    )
+
+    try await runner.start(
+        runtime: fixture.runtime,
+        journalRoot: fixture.realJournalRoot,
+        port: 5015,
+        receiptContext: receipts.context
+    )
+    spawner.exit(spawn: 0, status: 0)
+    try await waitForNoActiveChild(runner)
+    await Task.yield()
+    await runner.stop()
+
+    let records = receipts.sink.storedRecords(attemptID: receipts.context.attemptID)
+    let validation = receipts.sink.validate(attemptID: receipts.context.attemptID)
+    #expect(records.filter { $0.kind == .outerEntry }.count == 1)
+    #expect(payloadEntries(records).isEmpty)
+    #expect(payloadExits(records).isEmpty)
+    #expect(validation != .invalid(.missingPeer))
+    #expect(validation.isValidClosed)
+}
+
 private func waitForSpawnCount(_ spawner: RecordingProcessSpawner, count: Int) async throws {
     let deadline = ContinuousClock.now.advanced(by: .seconds(1))
     while ContinuousClock.now < deadline {
@@ -253,6 +385,88 @@ private func waitForPayloadExitCount(
         try await Task.sleep(for: .milliseconds(5))
     }
     Issue.record("timed out waiting for payload exit receipt")
+}
+
+private func waitForNoActiveChild(_ runner: SupervisedJournalRunner) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+    while ContinuousClock.now < deadline {
+        if await runner.currentIdentity() == nil {
+            return
+        }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    Issue.record("timed out waiting for child exit")
+}
+
+private func candidateProvenanceFixtureBundle(named name: String) throws -> Bundle {
+    guard let url = Bundle.module.url(
+        forResource: name,
+        withExtension: "bundle",
+        subdirectory: "Fixtures"
+    ), let bundle = Bundle(url: url) else {
+        throw RunnerTestError.invalidBundle
+    }
+    return bundle
+}
+
+private func validCandidateProvenanceData() throws -> Data {
+    let bundle = try candidateProvenanceFixtureBundle(named: "CandidateProvenanceValid")
+    guard let url = bundle.url(
+        forResource: "runtime-entry-candidate-provenance",
+        withExtension: "json",
+        subdirectory: "Resources"
+    ) else {
+        throw RunnerTestError.invalidBundle
+    }
+    return try Data(contentsOf: url)
+}
+
+private func makeTestBundle(
+    at root: URL,
+    named name: String,
+    provenanceData: Data? = nil
+) throws -> Bundle {
+    let bundleURL = root.appendingPathComponent("\(name).bundle", isDirectory: true)
+    let contentsURL = bundleURL.appendingPathComponent("Contents", isDirectory: true)
+    try FileManager.default.createDirectory(at: contentsURL, withIntermediateDirectories: true)
+    let info = [
+        "CFBundleIdentifier": "app.solstone.journal",
+        "CFBundleShortVersionString": "2.0.0",
+        "CFBundleVersion": "25"
+    ]
+    let infoData = try PropertyListSerialization.data(
+        fromPropertyList: info,
+        format: .xml,
+        options: 0
+    )
+    try infoData.write(to: contentsURL.appendingPathComponent("Info.plist"))
+    if let provenanceData {
+        let resourcesURL = contentsURL.appendingPathComponent("Resources/Resources", isDirectory: true)
+        try FileManager.default.createDirectory(at: resourcesURL, withIntermediateDirectories: true)
+        try provenanceData.write(to: resourcesURL.appendingPathComponent("runtime-entry-candidate-provenance.json"))
+    }
+    guard let bundle = Bundle(url: bundleURL) else {
+        throw RunnerTestError.invalidBundle
+    }
+    return bundle
+}
+
+private func makeScratchDirectory(prefix: String) throws -> URL {
+    let url = URL(fileURLWithPath: "/var/tmp", isDirectory: true)
+        .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}
+
+private extension JournalRuntimeEntryReceiptChainValidationResult {
+    var isValidClosed: Bool {
+        if case .validClosed = self { return true }
+        return false
+    }
+}
+
+private enum RunnerTestError: Error {
+    case invalidBundle
 }
 
 private struct RunnerFixture {
