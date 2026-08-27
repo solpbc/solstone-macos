@@ -8,7 +8,7 @@ import SolstoneCore
 import Testing
 @testable import JournalRuntime
 
-@Suite("SupervisedJournalRunner", .serialized)
+@Suite("SupervisedJournalRunner")
 struct SupervisedJournalRunnerTests {
     @Test func launchGatesWithCanonicalRootAndDoesNotStampJournalEnvironment() async throws {
         let fixture = try RunnerFixture()
@@ -182,38 +182,11 @@ struct SupervisedJournalRunnerTests {
         try await assertOuterOnlyClosedChainAfterExit(fixture: fixture, receipts: receipts)
     }
 
-    @Test func provenanceResolutionIgnoresProcessGlobalDecoys() async throws {
+    @Test func provenanceResolutionIgnoresUnselectedBundleDecoy() async throws {
         let fixture = try RunnerFixture()
         defer { fixture.clear() }
-        let scratchRoot = try makeScratchDirectory(prefix: "supervised-runner-provenance-decoys")
-        let originalCurrentDirectory = FileManager.default.currentDirectoryPath
-        let environmentKey = "SOLSTONE_JOURNAL_RUNTIME_ENTRY_CANDIDATE_PROVENANCE"
-        let originalEnvironmentValue = getenv(environmentKey).map { String(cString: $0) }
-        defer {
-            _ = FileManager.default.changeCurrentDirectoryPath(originalCurrentDirectory)
-            if let originalEnvironmentValue {
-                setenv(environmentKey, originalEnvironmentValue, 1)
-            } else {
-                unsetenv(environmentKey)
-            }
-            try? FileManager.default.removeItem(at: scratchRoot)
-        }
 
         let validProvenance = try validCandidateProvenanceData()
-        let currentDirectory = scratchRoot.appendingPathComponent("cwd", isDirectory: true)
-        try FileManager.default.createDirectory(at: currentDirectory, withIntermediateDirectories: true)
-        try validProvenance.write(to: currentDirectory.appendingPathComponent("runtime-entry-candidate-provenance.json"))
-        #expect(FileManager.default.changeCurrentDirectoryPath(currentDirectory.path))
-
-        let runtimeTreeDecoy = fixture.root
-            .appendingPathComponent("runtime-tree/Resources/runtime-entry-candidate-provenance.json")
-        try FileManager.default.createDirectory(at: runtimeTreeDecoy.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try validProvenance.write(to: runtimeTreeDecoy)
-
-        let environmentDecoy = scratchRoot.appendingPathComponent("environment-provenance.json")
-        try validProvenance.write(to: environmentDecoy)
-        setenv(environmentKey, environmentDecoy.path, 1)
-
         let unselectedBundle = try makeTestBundle(
             at: fixture.root,
             named: "UnselectedValidProvenance",
@@ -229,6 +202,22 @@ struct SupervisedJournalRunnerTests {
         )
 
         try await assertOuterOnlyClosedChainAfterExit(fixture: fixture, receipts: receipts)
+    }
+
+    @Test func provenanceResolverDoesNotUseProcessGlobalFallbacks() throws {
+        let sourceURL = URL(fileURLWithPath: "Sources/JournalRuntime/JournalRuntimeEntryReceiptProvenance.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        let forbiddenFallbacks = [
+            "currentDirectoryPath",
+            "ProcessInfo",
+            ".environment",
+            "Bundle.main",
+            "solstone-runtime"
+        ]
+
+        for fallback in forbiddenFallbacks {
+            #expect(!source.contains(fallback), "provenance resolver must not use \(fallback) fallback")
+        }
     }
 
     @Test func keepsPIDReuseExitsBoundToTheirAdmittedKernelStartTime() async throws {
@@ -449,13 +438,6 @@ private func makeTestBundle(
         throw RunnerTestError.invalidBundle
     }
     return bundle
-}
-
-private func makeScratchDirectory(prefix: String) throws -> URL {
-    let url = URL(fileURLWithPath: "/var/tmp", isDirectory: true)
-        .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    return url
 }
 
 private extension JournalRuntimeEntryReceiptChainValidationResult {
