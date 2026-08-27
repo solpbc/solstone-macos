@@ -46,7 +46,6 @@ public final class FileJournalRuntimeEntryReceiptSink: JournalRuntimeEntryReceip
 
     static func lockURL(applicationSupportBaseURL: URL) -> URL {
         applicationSupportBaseURL
-            .appendingPathComponent("Solstone", isDirectory: true)
             .appendingPathComponent("journal-runtime-entry-receipts.lock")
     }
 
@@ -56,15 +55,14 @@ public final class FileJournalRuntimeEntryReceiptSink: JournalRuntimeEntryReceip
         }
         let fileURL = Self.fileURL(applicationSupportBaseURL: applicationSupportBaseURL)
         let lockURL = Self.lockURL(applicationSupportBaseURL: applicationSupportBaseURL)
-        do {
-            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        } catch {
-            return unavailable(.lockFailure)
-        }
-
         let lock = JournalRuntimeEntryReceiptFileLock(url: lockURL, clock: clock, timeout: lockTimeout)
         let (result, value) = lock.withExclusiveLock {
-            appendLocked(draft, fileURL: fileURL)
+            do {
+                try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            } catch {
+                return unavailable(.lockFailure)
+            }
+            return appendLocked(draft, fileURL: fileURL)
         }
         switch result {
         case .acquired:
@@ -86,14 +84,14 @@ public final class FileJournalRuntimeEntryReceiptSink: JournalRuntimeEntryReceip
         }
         let fileURL = Self.fileURL(applicationSupportBaseURL: applicationSupportBaseURL)
         let lockURL = Self.lockURL(applicationSupportBaseURL: applicationSupportBaseURL)
-        do {
-            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        } catch {
-            return .unavailable(.lockFailure)
-        }
         let lock = JournalRuntimeEntryReceiptFileLock(url: lockURL, clock: clock, timeout: lockTimeout)
         let (result, value) = lock.withExclusiveLock {
-            readEnvelope(fileURL: fileURL).map { JournalRuntimeEntryReceiptChainValidator.validate($0, attemptID: attemptID) }
+            do {
+                try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            } catch {
+                return Result<JournalRuntimeEntryReceiptChainValidationResult, JournalRuntimeEntryReceiptWriteFailure>.failure(.lockFailure)
+            }
+            return readEnvelope(fileURL: fileURL).map { JournalRuntimeEntryReceiptChainValidator.validate($0, attemptID: attemptID) }
         }
         switch result {
         case .acquired:
@@ -289,6 +287,7 @@ private func recordObject(_ record: JournalRuntimeEntryReceipt) -> [String: Any]
             "sequence": sequence,
             "observed_at_unix_ms": observedAt,
             "app_pid": identity.appPID,
+            "app_kernel_start_time_us": identity.appKernelStartTimeMicroseconds,
             "bundle_identifier": identity.bundleIdentifier,
             "bundle_short_version": identity.bundleShortVersion,
             "bundle_version": identity.bundleVersion,
@@ -389,7 +388,7 @@ private func decodeEnvelope(_ data: Data) -> Result<ReceiptEnvelope, JournalRunt
 private func parseRecord(_ object: [String: Any]) -> JournalRuntimeEntryReceipt? {
     let common = [
         "schema_version", "kind", "attempt_id", "sequence", "observed_at_unix_ms", "app_pid",
-        "bundle_identifier", "bundle_short_version", "bundle_version", "location_class"
+        "app_kernel_start_time_us", "bundle_identifier", "bundle_short_version", "bundle_version", "location_class"
     ]
     guard receiptInteger(object["schema_version"], as: Int.self) == receiptSchemaVersion,
           let rawKind = object["kind"] as? String,
@@ -399,6 +398,7 @@ private func parseRecord(_ object: [String: Any]) -> JournalRuntimeEntryReceipt?
           let sequence = receiptInteger(object["sequence"], as: UInt64.self),
           let observedAt = receiptInteger(object["observed_at_unix_ms"], as: Int64.self), observedAt >= 0,
           let appPID = receiptInteger(object["app_pid"], as: Int32.self), appPID > 0,
+          let appKernelStart = receiptInteger(object["app_kernel_start_time_us"], as: Int64.self), appKernelStart > 0,
           let bundleIdentifier = receiptString(object["bundle_identifier"]),
           let bundleShortVersion = receiptString(object["bundle_short_version"]),
           let bundleVersion = receiptString(object["bundle_version"]),
@@ -411,7 +411,8 @@ private func parseRecord(_ object: [String: Any]) -> JournalRuntimeEntryReceipt?
         bundleIdentifier: bundleIdentifier,
         bundleShortVersion: bundleShortVersion,
         bundleVersion: bundleVersion,
-        locationClass: location
+        locationClass: location,
+        appKernelStartTimeMicroseconds: appKernelStart
     )
     switch kind {
     case .outerEntry:

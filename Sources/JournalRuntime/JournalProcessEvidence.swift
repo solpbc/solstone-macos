@@ -42,18 +42,22 @@ public struct LiveJournalProcessEvidenceReader: JournalProcessEvidenceReading {
     public init() {}
 
     public func evidence(for pid: pid_t) async -> JournalProcessEvidence? {
-        guard let row = readProcessRow(pid: pid) else { return nil }
-        let pid = row.kp_proc.p_pid
-        guard pid > 0 else { return nil }
-        let uid = row.kp_eproc.e_ucred.cr_uid
-        return JournalProcessEvidence(
-            pid: pid,
-            ppid: row.kp_eproc.e_ppid,
-            uid: uid,
-            username: username(for: uid),
-            kernelStartTime: processStartTime(row)
-        )
+        liveJournalProcessEvidence(for: pid)
     }
+}
+
+internal func liveJournalProcessEvidence(for pid: pid_t) -> JournalProcessEvidence? {
+    guard let row = readProcessRow(pid: pid) else { return nil }
+    let pid = row.kp_proc.p_pid
+    guard pid > 0 else { return nil }
+    let uid = row.kp_eproc.e_ucred.cr_uid
+    return JournalProcessEvidence(
+        pid: pid,
+        ppid: row.kp_eproc.e_ppid,
+        uid: uid,
+        username: username(for: uid),
+        kernelStartTime: processStartTime(row)
+    )
 }
 
 internal enum JournalOrphanClaimVerification: Equatable, Sendable {

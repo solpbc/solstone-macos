@@ -63,6 +63,9 @@ public struct JournalRuntimeEntryReceiptChainValidator: Sendable {
             case let .outerEntry(entry):
                 guard index == 0 else { return .invalid(.duplicateOuterEntry) }
                 guard entry.draft.appIdentity == outerIdentity else { return .invalid(.inconsistentAppIdentity) }
+                guard entry.draft.appIdentity.appKernelStartTimeMicroseconds > 0 else {
+                    return .invalid(.malformed)
+                }
 
             case let .payloadEntry(entry):
                 guard entry.draft.appIdentity == outerIdentity else { return .invalid(.inconsistentAppIdentity) }

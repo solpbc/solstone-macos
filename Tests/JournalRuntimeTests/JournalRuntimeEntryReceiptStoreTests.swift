@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import Darwin
 import Foundation
+import SolstoneCore
 import Testing
 @testable import JournalRuntime
 
 @Suite("JournalRuntimeEntryReceiptStore")
 struct JournalRuntimeEntryReceiptStoreTests {
-    @Test func persistsClosedChainWithSiblingLockAndRejectsTemporaryRoot() throws {
+    @Test func persistsClosedChainWithApplicationSupportSiblingLockAndRejectsTemporaryRoot() throws {
         let baseURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".journal-runtime-entry-receipts-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
@@ -25,6 +27,8 @@ struct JournalRuntimeEntryReceiptStoreTests {
         #expect(FileManager.default.fileExists(atPath: FileJournalRuntimeEntryReceiptSink.lockURL(
             applicationSupportBaseURL: baseURL
         ).path))
+        #expect(!FileManager.default.fileExists(atPath: baseURL
+            .appendingPathComponent("Solstone/journal-runtime-entry-receipts.lock").path))
 
         let temporarySink = FileJournalRuntimeEntryReceiptSink(
             applicationSupportBaseURL: FileManager.default.temporaryDirectory
@@ -38,6 +42,105 @@ struct JournalRuntimeEntryReceiptStoreTests {
         let sink = FileJournalRuntimeEntryReceiptSink(applicationSupportBaseURL: nestedTemporaryBaseURL)
 
         #expect(sink.appendSynchronously(outerDraft(JournalRuntimeEntryAttemptID())) == .unavailable(.storageRootRejected))
+    }
+
+    @Test func lockContentionDoesNotCreateStoreAndFreshWritesRecover() throws {
+        let baseURL = try makeReceiptBaseURL()
+        defer { try? FileManager.default.removeItem(at: baseURL) }
+        let sink = FileJournalRuntimeEntryReceiptSink(
+            applicationSupportBaseURL: baseURL,
+            clock: FixedReceiptClock(),
+            lockTimeout: .zero
+        )
+        let attempt = JournalRuntimeEntryAttemptID()
+        let lockURL = FileJournalRuntimeEntryReceiptSink.lockURL(applicationSupportBaseURL: baseURL)
+
+        try withHeldReceiptLock(at: lockURL) {
+            #expect(sink.appendSynchronously(outerDraft(attempt)) == .unavailable(.lockTimeout))
+            #expect(sink.validate(attemptID: attempt) == .unavailable(.lockTimeout))
+            #expect(!FileManager.default.fileExists(atPath: baseURL.appendingPathComponent("Solstone").path))
+        }
+
+        #expect(sink.appendSynchronously(outerDraft(attempt)) == .recorded)
+        #expect(sink.appendSynchronously(payloadEntryDraft(attempt)) == .recorded)
+        #expect(sink.appendSynchronously(payloadExitDraft(attempt)) == .recorded)
+        #expect(sink.validate(attemptID: attempt).isValidClosed)
+    }
+
+    @Test func lockContentionDoesNotMutateExistingOrMalformedStore() throws {
+        let baseURL = try makeReceiptBaseURL()
+        defer { try? FileManager.default.removeItem(at: baseURL) }
+        let sink = FileJournalRuntimeEntryReceiptSink(
+            applicationSupportBaseURL: baseURL,
+            clock: FixedReceiptClock(),
+            lockTimeout: .zero
+        )
+        let validAttempt = JournalRuntimeEntryAttemptID()
+        #expect(sink.appendSynchronously(outerDraft(validAttempt)) == .recorded)
+        #expect(sink.appendSynchronously(payloadEntryDraft(validAttempt)) == .recorded)
+        #expect(sink.appendSynchronously(payloadExitDraft(validAttempt)) == .recorded)
+
+        let fileURL = FileJournalRuntimeEntryReceiptSink.fileURL(applicationSupportBaseURL: baseURL)
+        let validBytes = try Data(contentsOf: fileURL)
+        let lockURL = FileJournalRuntimeEntryReceiptSink.lockURL(applicationSupportBaseURL: baseURL)
+        try withHeldReceiptLock(at: lockURL) {
+            #expect(sink.appendSynchronously(outerDraft(JournalRuntimeEntryAttemptID())) == .unavailable(.lockTimeout))
+            #expect(sink.validate(attemptID: validAttempt) == .unavailable(.lockTimeout))
+        }
+        #expect(try Data(contentsOf: fileURL) == validBytes)
+        #expect(try receiptStagingURLs(in: fileURL.deletingLastPathComponent()).isEmpty)
+
+        let malformedURL = baseURL.appendingPathComponent("malformed", isDirectory: true)
+        try FileManager.default.createDirectory(at: malformedURL.appendingPathComponent("Solstone"), withIntermediateDirectories: true)
+        let malformedSink = FileJournalRuntimeEntryReceiptSink(
+            applicationSupportBaseURL: malformedURL,
+            clock: FixedReceiptClock(),
+            lockTimeout: .zero
+        )
+        let malformedFileURL = FileJournalRuntimeEntryReceiptSink.fileURL(applicationSupportBaseURL: malformedURL)
+        let malformedBytes = Data("malformed receipts".utf8)
+        try malformedBytes.write(to: malformedFileURL)
+        try withHeldReceiptLock(at: FileJournalRuntimeEntryReceiptSink.lockURL(applicationSupportBaseURL: malformedURL)) {
+            #expect(malformedSink.appendSynchronously(outerDraft(JournalRuntimeEntryAttemptID())) == .unavailable(.lockTimeout))
+            #expect(malformedSink.validate(attemptID: JournalRuntimeEntryAttemptID()) == .unavailable(.lockTimeout))
+        }
+        #expect(try Data(contentsOf: malformedFileURL) == malformedBytes)
+        #expect(try receiptStagingURLs(in: malformedFileURL.deletingLastPathComponent()).isEmpty)
+    }
+
+    @Test func missingApplicationSupportBaseFailsWithoutCreatingFiles() {
+        let baseURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".journal-runtime-entry-receipts-missing-\(UUID().uuidString)", isDirectory: true)
+        let sink = FileJournalRuntimeEntryReceiptSink(
+            applicationSupportBaseURL: baseURL,
+            clock: FixedReceiptClock(),
+            lockTimeout: .zero
+        )
+
+        #expect(sink.appendSynchronously(outerDraft(JournalRuntimeEntryAttemptID())) == .unavailable(.lockFailure))
+        #expect(sink.validate(attemptID: JournalRuntimeEntryAttemptID()) == .unavailable(.lockFailure))
+        #expect(!FileManager.default.fileExists(atPath: baseURL.path))
+    }
+
+    @Test func rejectsReceiptMissingRequiredAppKernelStartTimeKey() throws {
+        let baseURL = try makeReceiptBaseURL()
+        defer { try? FileManager.default.removeItem(at: baseURL) }
+        let sink = FileJournalRuntimeEntryReceiptSink(applicationSupportBaseURL: baseURL)
+        let attempt = JournalRuntimeEntryAttemptID()
+        #expect(sink.appendSynchronously(outerDraft(attempt)) == .recorded)
+
+        let fileURL = FileJournalRuntimeEntryReceiptSink.fileURL(applicationSupportBaseURL: baseURL)
+        var envelope = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any])
+        var attempts = try #require(envelope["attempts"] as? [[String: Any]])
+        var firstAttempt = try #require(attempts.first)
+        var records = try #require(firstAttempt["records"] as? [[String: Any]])
+        records[0].removeValue(forKey: "app_kernel_start_time_us")
+        firstAttempt["records"] = records
+        attempts[0] = firstAttempt
+        envelope["attempts"] = attempts
+        try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys]).write(to: fileURL)
+
+        #expect(sink.validate(attemptID: attempt) == .unavailable(.canonicalInvalid))
     }
 
     @Test func evictsOnlyOldClosedAttemptsAndPreservesExistingChainWhenCurrentWriteFails() {
@@ -149,6 +252,51 @@ struct JournalRuntimeEntryReceiptChainValidatorTests {
         #expect(JournalRuntimeEntryReceiptChainValidator(records: records)
             .validate(attemptID: attempt) == .invalid(.samePIDDifferentStartTime))
     }
+
+    @Test func rejectsOuterEntryWithMissingAppKernelStartTime() {
+        let attempt = JournalRuntimeEntryAttemptID()
+        let records = [
+            outerRecord(
+                attempt,
+                sequence: 0,
+                appIdentity: identity(appKernelStartTimeMicroseconds: 0)
+            )
+        ]
+
+        #expect(JournalRuntimeEntryReceiptChainValidator(records: records)
+            .validate(attemptID: attempt) == .invalid(.malformed))
+    }
+
+    @Test func keepsAppKernelStartIdentityDistinctAcrossClosedAttempts() {
+        let sink = InMemoryJournalRuntimeEntryReceiptSink()
+        let first = JournalRuntimeEntryAttemptID()
+        let second = JournalRuntimeEntryAttemptID()
+        let firstIdentity = identity(appKernelStartTimeMicroseconds: 1_000_000)
+        let secondIdentity = identity(appKernelStartTimeMicroseconds: 1_000_001)
+
+        for (attempt, appIdentity) in [(first, firstIdentity), (second, secondIdentity)] {
+            #expect(sink.appendSynchronously(outerDraft(attempt, identity: appIdentity)) == .recorded)
+            #expect(sink.appendSynchronously(payloadEntryDraft(attempt, appIdentity: appIdentity)) == .recorded)
+            #expect(sink.appendSynchronously(payloadExitDraft(attempt, appIdentity: appIdentity)) == .recorded)
+            #expect(sink.validate(attemptID: attempt).isValidClosed)
+            #expect(sink.storedRecords(attemptID: attempt).allSatisfy {
+                appKernelStartTimeMicroseconds(of: $0) == appIdentity.appKernelStartTimeMicroseconds
+            })
+        }
+    }
+
+    @Test func rejectsPayloadWithDifferentAppKernelStartTime() {
+        let attempt = JournalRuntimeEntryAttemptID()
+        let outerIdentity = identity(appKernelStartTimeMicroseconds: 1_000_000)
+        let forgedIdentity = identity(appKernelStartTimeMicroseconds: 1_000_001)
+        let records = [
+            outerRecord(attempt, sequence: 0, appIdentity: outerIdentity),
+            payloadEntryRecord(attempt, sequence: 1, startTime: 1_000, appIdentity: forgedIdentity)
+        ]
+
+        #expect(JournalRuntimeEntryReceiptChainValidator(records: records)
+            .validate(attemptID: attempt) == .invalid(.inconsistentAppIdentity))
+    }
 }
 
 private extension JournalRuntimeEntryReceiptChainValidationResult {
@@ -158,13 +306,17 @@ private extension JournalRuntimeEntryReceiptChainValidationResult {
     }
 }
 
-private func identity(bundleIdentifier: String = "app.solstone.journal") -> JournalRuntimeEntryReceiptAppIdentity {
+private func identity(
+    bundleIdentifier: String = "app.solstone.journal",
+    appKernelStartTimeMicroseconds: Int64 = 1_000_000
+) -> JournalRuntimeEntryReceiptAppIdentity {
     JournalRuntimeEntryReceiptAppIdentity(
         appPID: 99,
         bundleIdentifier: bundleIdentifier,
         bundleShortVersion: "2.0.0",
         bundleVersion: "25",
-        locationClass: .standard
+        locationClass: .standard,
+        appKernelStartTimeMicroseconds: appKernelStartTimeMicroseconds
     )
 }
 
@@ -189,12 +341,13 @@ private func outerDraft(
 
 private func payloadEntryDraft(
     _ attempt: JournalRuntimeEntryAttemptID,
-    generation: UInt64 = 1
+    generation: UInt64 = 1,
+    appIdentity: JournalRuntimeEntryReceiptAppIdentity = identity()
 ) -> JournalRuntimeEntryReceiptDraft {
     .payloadEntry(.init(
         attemptID: attempt,
         observedAtUnixMilliseconds: 2,
-        appIdentity: identity(),
+        appIdentity: appIdentity,
         generation: generation,
         childPID: 4242,
         childKernelStartTimeMicroseconds: 1_000,
@@ -202,11 +355,14 @@ private func payloadEntryDraft(
     ))
 }
 
-private func payloadExitDraft(_ attempt: JournalRuntimeEntryAttemptID) -> JournalRuntimeEntryReceiptDraft {
+private func payloadExitDraft(
+    _ attempt: JournalRuntimeEntryAttemptID,
+    appIdentity: JournalRuntimeEntryReceiptAppIdentity = identity()
+) -> JournalRuntimeEntryReceiptDraft {
     .payloadExit(.init(
         attemptID: attempt,
         observedAtUnixMilliseconds: 3,
-        appIdentity: identity(),
+        appIdentity: appIdentity,
         generation: 1,
         childPID: 4242,
         childKernelStartTimeMicroseconds: 1_000,
@@ -215,21 +371,26 @@ private func payloadExitDraft(_ attempt: JournalRuntimeEntryAttemptID) -> Journa
     ))
 }
 
-private func outerRecord(_ attempt: JournalRuntimeEntryAttemptID, sequence: UInt64) -> JournalRuntimeEntryReceipt {
+private func outerRecord(
+    _ attempt: JournalRuntimeEntryAttemptID,
+    sequence: UInt64,
+    appIdentity: JournalRuntimeEntryReceiptAppIdentity = identity()
+) -> JournalRuntimeEntryReceipt {
     .outerEntry(.init(sequence: sequence, draft: .init(
-        attemptID: attempt, observedAtUnixMilliseconds: 1, appIdentity: identity()
+        attemptID: attempt, observedAtUnixMilliseconds: 1, appIdentity: appIdentity
     )))
 }
 
 private func payloadEntryRecord(
     _ attempt: JournalRuntimeEntryAttemptID,
     sequence: UInt64,
-    startTime: Int64
+    startTime: Int64,
+    appIdentity: JournalRuntimeEntryReceiptAppIdentity = identity()
 ) -> JournalRuntimeEntryReceipt {
     .payloadEntry(.init(sequence: sequence, draft: .init(
         attemptID: attempt,
         observedAtUnixMilliseconds: 2,
-        appIdentity: identity(),
+        appIdentity: appIdentity,
         generation: 1,
         childPID: 4242,
         childKernelStartTimeMicroseconds: startTime,
@@ -252,4 +413,40 @@ private func payloadExitRecord(
         expectedStop: false,
         terminationStatus: 0
     )))
+}
+
+private func appKernelStartTimeMicroseconds(of record: JournalRuntimeEntryReceipt) -> Int64 {
+    switch record {
+    case .outerEntry(let entry): entry.draft.appIdentity.appKernelStartTimeMicroseconds
+    case .payloadEntry(let entry): entry.draft.appIdentity.appKernelStartTimeMicroseconds
+    case .payloadExit(let entry): entry.draft.appIdentity.appKernelStartTimeMicroseconds
+    }
+}
+
+private final class FixedReceiptClock: MonotonicClock, @unchecked Sendable {
+    func now() -> Duration { .zero }
+    func sleep(for duration: Duration) async {}
+}
+
+private func makeReceiptBaseURL() throws -> URL {
+    let url = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".journal-runtime-entry-receipts-lock-tests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}
+
+private func withHeldReceiptLock<Result>(at url: URL, body: () throws -> Result) throws -> Result {
+    let descriptor = open(url.path, O_RDWR | O_CREAT | O_CLOEXEC, S_IRUSR | S_IWUSR)
+    guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    defer { close(descriptor) }
+    guard flock(descriptor, LOCK_EX) == 0 else {
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+    defer { _ = flock(descriptor, LOCK_UN) }
+    return try body()
+}
+
+private func receiptStagingURLs(in directory: URL) throws -> [URL] {
+    try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        .filter { $0.lastPathComponent.hasPrefix(".journal-runtime-entry-receipts.") }
 }

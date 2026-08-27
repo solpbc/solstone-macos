@@ -12,7 +12,8 @@ struct JournalRuntimeEntryCandidateProvenanceTests {
         bundleIdentifier: "app.solstone.journal",
         bundleShortVersion: "2.0.0",
         bundleVersion: "25",
-        locationClass: .standard
+        locationClass: .standard,
+        appKernelStartTimeMicroseconds: 1_000_000
     )
 
     @Test func readsOneSchemaValidTargetMatchingReferenceFromBundle() throws {

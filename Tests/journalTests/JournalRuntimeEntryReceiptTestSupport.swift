@@ -37,7 +37,8 @@ func makeJournalTestReceiptContext(
         bundleIdentifier: "app.solstone.journal",
         bundleShortVersion: "2.0.0",
         bundleVersion: "25",
-        locationClass: .standard
+        locationClass: .standard,
+        appKernelStartTimeMicroseconds: 1_000_000
     )
     _ = sink.appendSynchronously(.outerEntry(.init(
         attemptID: attemptID,

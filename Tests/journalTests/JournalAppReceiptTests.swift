@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import AppKit
+import Darwin
 import JournalRuntime
 import Testing
 @testable import journal
@@ -81,7 +82,8 @@ struct JournalAppReceiptTests {
             bundleIdentifier: "app.solstone.journal",
             bundleShortVersion: "2.0.0",
             bundleVersion: "25",
-            locationClass: .standard
+            locationClass: .standard,
+            appKernelStartTimeMicroseconds: 1_000_000
         )
         let context = JournalRuntimeEntryReceiptContext(
             attemptID: attemptID,
@@ -104,6 +106,73 @@ struct JournalAppReceiptTests {
 
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
 
+        #expect(sink.drafts().isEmpty)
+        #expect(modelLaunches == 1)
+    }
+
+    @Test func beginCapturesInjectedBoundProcessEvidence() throws {
+        let baseURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".journal-app-receipt-evidence-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: baseURL) }
+        let appBundle = try makeApplicationBundle(at: baseURL)
+        let sink = RecordingJournalRuntimeEntryReceiptSink()
+        let expectedPID = getpid()
+
+        let context = JournalRuntimeEntryReceiptLaunch.begin(
+            bundle: appBundle,
+            sink: sink,
+            processEvidenceLookup: { pid in
+                guard pid == expectedPID else { return nil }
+                return JournalProcessEvidence(
+                    pid: pid,
+                    ppid: 1,
+                    uid: getuid(),
+                    username: "test",
+                    kernelStartTime: 1_234.567_891
+                )
+            }
+        )
+
+        let appIdentity = try #require(context.appIdentity)
+        #expect(appIdentity.appPID == expectedPID)
+        #expect(appIdentity.appKernelStartTimeMicroseconds == 1_234_567_891)
+        guard case .outerEntry(let outer) = try #require(sink.drafts().first) else {
+            Issue.record("expected outer entry")
+            return
+        }
+        #expect(outer.appIdentity.appKernelStartTimeMicroseconds == 1_234_567_891)
+    }
+
+    @Test func mismatchedProcessEvidenceFailsOpenWithoutBlockingModelLaunch() throws {
+        let baseURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".journal-app-receipt-mismatch-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: baseURL) }
+        let appBundle = try makeApplicationBundle(at: baseURL)
+        let sink = RecordingJournalRuntimeEntryReceiptSink()
+        let context = JournalRuntimeEntryReceiptLaunch.begin(
+            bundle: appBundle,
+            sink: sink,
+            processEvidenceLookup: { pid in
+                JournalProcessEvidence(
+                    pid: pid + 1,
+                    ppid: 1,
+                    uid: getuid(),
+                    username: "test",
+                    kernelStartTime: 1_000
+                )
+            }
+        )
+        var modelLaunches = 0
+        let delegate = JournalAppDelegate(
+            receiptContextFactory: { context },
+            modelLauncher: { _ in modelLaunches += 1 }
+        )
+
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+
+        #expect(context.appIdentity == nil)
         #expect(sink.drafts().isEmpty)
         #expect(modelLaunches == 1)
     }

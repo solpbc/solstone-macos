@@ -37,33 +37,46 @@ public struct JournalRuntimeEntryReceiptAppIdentity: Equatable, Sendable {
     public let bundleShortVersion: String
     public let bundleVersion: String
     public let locationClass: JournalRuntimeEntryLocationClass
+    public let appKernelStartTimeMicroseconds: Int64
 
     public init(
         appPID: Int32,
         bundleIdentifier: String,
         bundleShortVersion: String,
         bundleVersion: String,
-        locationClass: JournalRuntimeEntryLocationClass
+        locationClass: JournalRuntimeEntryLocationClass,
+        appKernelStartTimeMicroseconds: Int64
     ) {
         self.appPID = appPID
         self.bundleIdentifier = bundleIdentifier
         self.bundleShortVersion = bundleShortVersion
         self.bundleVersion = bundleVersion
         self.locationClass = locationClass
+        self.appKernelStartTimeMicroseconds = appKernelStartTimeMicroseconds
     }
 
-    static func live(bundle: Bundle) -> JournalRuntimeEntryReceiptAppIdentity? {
+    static func live(
+        bundle: Bundle,
+        processEvidenceLookup: @Sendable (pid_t) -> JournalProcessEvidence? = liveJournalProcessEvidence
+    ) -> JournalRuntimeEntryReceiptAppIdentity? {
         guard let bundleIdentifier = bundle.bundleIdentifier?.nonEmptyTrimmed,
               let bundleShortVersion = (bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)?.nonEmptyTrimmed,
               let bundleVersion = (bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String)?.nonEmptyTrimmed else {
             return nil
         }
+        let appPID = getpid()
+        guard let evidence = processEvidenceLookup(appPID), evidence.pid == appPID,
+              let kernelStart = evidence.kernelStartTime,
+              let appKernelStartTimeMicroseconds = kernelStartTimeMicroseconds(kernelStart) else {
+            return nil
+        }
         return JournalRuntimeEntryReceiptAppIdentity(
-            appPID: getpid(),
+            appPID: appPID,
             bundleIdentifier: bundleIdentifier,
             bundleShortVersion: bundleShortVersion,
             bundleVersion: bundleVersion,
-            locationClass: JournalRuntimeEntryLocationClassifier.classify(bundleURL: bundle.bundleURL)
+            locationClass: JournalRuntimeEntryLocationClassifier.classify(bundleURL: bundle.bundleURL),
+            appKernelStartTimeMicroseconds: appKernelStartTimeMicroseconds
         )
     }
 }
@@ -359,11 +372,16 @@ public enum JournalRuntimeEntryReceiptLaunch {
         bundle: Bundle = .main,
         provenanceBundle: Bundle? = nil,
         sink: (any JournalRuntimeEntryReceiptSinking)? = nil,
-        applicationSupportBaseURL: URL? = nil
+        applicationSupportBaseURL: URL? = nil,
+        processEvidenceLookup: (@Sendable (pid_t) -> JournalProcessEvidence?)? = nil
     ) -> JournalRuntimeEntryReceiptContext {
         let receiptSink = sink ?? FileJournalRuntimeEntryReceiptSink(applicationSupportBaseURL: applicationSupportBaseURL)
         let attemptID = JournalRuntimeEntryAttemptID()
-        let appIdentity = JournalRuntimeEntryReceiptAppIdentity.live(bundle: bundle)
+        let effectiveProcessEvidenceLookup = processEvidenceLookup ?? liveJournalProcessEvidence
+        let appIdentity = JournalRuntimeEntryReceiptAppIdentity.live(
+            bundle: bundle,
+            processEvidenceLookup: effectiveProcessEvidenceLookup
+        )
         let provenance = appIdentity.flatMap {
             BundledJournalRuntimeEntryCandidateProvenanceResolver(
                 bundle: provenanceBundle ?? bundle
