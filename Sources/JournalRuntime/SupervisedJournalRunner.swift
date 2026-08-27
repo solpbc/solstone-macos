@@ -19,7 +19,12 @@ public struct SupervisedChildIdentity: Equatable, Sendable {
 }
 
 public protocol SupervisedChildRunning: Sendable {
-    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws
+    func start(
+        runtime: MaterializedRuntime,
+        journalRoot: URL,
+        port: Int,
+        receiptContext: JournalRuntimeEntryReceiptContext
+    ) async throws
     func restart() async throws
     func stop() async
     func stopForTermination() async
@@ -148,6 +153,12 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         let runtime: MaterializedRuntime
         let journalRoot: URL
         let port: Int
+        let receiptContext: JournalRuntimeEntryReceiptContext
+    }
+
+    private struct AdmittedReceiptIdentity: Sendable {
+        let identity: SupervisedChildIdentity
+        let context: JournalRuntimeEntryReceiptContext
     }
 
     private let clock: any MonotonicClock
@@ -178,6 +189,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
     private var breakerTripped = false
     private var terminalDiagnostic: JournalDiagnostic?
     private var childIdentity: SupervisedChildIdentity?
+    private var admittedReceiptIdentities: [UInt64: AdmittedReceiptIdentity] = [:]
     private var launchGeneration: UInt64 = 0
     private var backoffIndex = 0
     private var unexpectedExitTimes: [Duration] = []
@@ -231,15 +243,30 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         self.terminate = terminate
     }
 
-    public func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+    public func start(
+        runtime: MaterializedRuntime,
+        journalRoot: URL,
+        port: Int,
+        receiptContext: JournalRuntimeEntryReceiptContext
+    ) async throws {
         Logger.journal.notice("journal-lifecycle: runner-start port=\(port, privacy: .public)")
         await cancelPendingRelaunch()
-        launchRequest = LaunchRequest(runtime: runtime, journalRoot: journalRoot, port: port)
+        launchRequest = LaunchRequest(
+            runtime: runtime,
+            journalRoot: journalRoot,
+            port: port,
+            receiptContext: receiptContext
+        )
         currentKey = runtime.key
         breakerTripped = false
         terminalDiagnostic = nil
         stopping = false
-        try await launch(runtime: runtime, journalRoot: journalRoot, port: port)
+        try await launch(
+            runtime: runtime,
+            journalRoot: journalRoot,
+            port: port,
+            receiptContext: receiptContext
+        )
     }
 
     public func restart() async throws {
@@ -254,7 +281,12 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         stopping = false
         breakerTripped = false
         terminalDiagnostic = nil
-        try await launch(runtime: launchRequest.runtime, journalRoot: launchRequest.journalRoot, port: launchRequest.port)
+        try await launch(
+            runtime: launchRequest.runtime,
+            journalRoot: launchRequest.journalRoot,
+            port: launchRequest.port,
+            receiptContext: launchRequest.receiptContext
+        )
     }
 
     public func stop() async {
@@ -297,7 +329,12 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         }
     }
 
-    private func launch(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+    private func launch(
+        runtime: MaterializedRuntime,
+        journalRoot: URL,
+        port: Int,
+        receiptContext: JournalRuntimeEntryReceiptContext
+    ) async throws {
         if process?.isRunning == true {
             await stopCurrentProcess()
         }
@@ -329,11 +366,19 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
             process = child
             try child.run()
             if let startTime = await evidenceReader.kernelStartTime(for: child.processIdentifier) {
-                childIdentity = SupervisedChildIdentity(
+                let identity = SupervisedChildIdentity(
                     pid: child.processIdentifier,
                     kernelStartTime: startTime,
                     generation: generation
                 )
+                childIdentity = identity
+                admittedReceiptIdentities[generation] = AdmittedReceiptIdentity(
+                    identity: identity,
+                    context: receiptContext
+                )
+                if let draft = receiptContext.payloadEntryDraft(identity: identity) {
+                    _ = await receiptContext.sink.append(draft)
+                }
             } else {
                 childIdentity = nil
             }
@@ -341,6 +386,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         } catch {
             process = nil
             childIdentity = nil
+            admittedReceiptIdentities.removeValue(forKey: generation)
             throw SupervisedJournalRunnerError.launchFailed(error.localizedDescription)
         }
     }
@@ -357,6 +403,16 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         await cancelPendingRelaunch()
 
         let expectedStop = stopping
+        if let admitted = admittedReceiptIdentities[generation], admitted.identity.pid == pid {
+            admittedReceiptIdentities.removeValue(forKey: generation)
+            if let draft = admitted.context.payloadExitDraft(
+                identity: admitted.identity,
+                expectedStop: expectedStop,
+                terminationStatus: status
+            ) {
+                _ = await admitted.context.sink.append(draft)
+            }
+        }
         if expectedStop {
             Logger.journal.notice("journal-lifecycle: child-exit status=\(status, privacy: .public) expected=true")
         }
@@ -395,7 +451,12 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         guard !Task.isCancelled, !stopping, !breakerTripped, let launchRequest else { return }
         Logger.journal.notice("journal-lifecycle: runner-backoff-relaunch delaySeconds=\(delay.components.seconds, privacy: .public)")
         do {
-            try await launch(runtime: launchRequest.runtime, journalRoot: launchRequest.journalRoot, port: launchRequest.port)
+            try await launch(
+                runtime: launchRequest.runtime,
+                journalRoot: launchRequest.journalRoot,
+                port: launchRequest.port,
+                receiptContext: launchRequest.receiptContext
+            )
         } catch SupervisedJournalRunnerError.gateBlocked(let blockage) {
             Logger.journal.error("journal-lifecycle: runner-backoff-gate-blocked")
             let diagnostic = blockage.diagnostic

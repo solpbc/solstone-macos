@@ -47,7 +47,12 @@ public final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked
         self.identity = identity
     }
 
-    public func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+    public func start(
+        runtime: MaterializedRuntime,
+        journalRoot: URL,
+        port: Int,
+        receiptContext: JournalRuntimeEntryReceiptContext
+    ) async throws {
         lock.withLock { starts += 1 }
         if let startError {
             throw startError

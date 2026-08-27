@@ -32,6 +32,8 @@ final class JournalSupervisor {
     private let markerURL: URL
     private let port: Int
     private let readinessTimeout: Duration
+    private let receiptContextFactory: () -> JournalRuntimeEntryReceiptContext
+    private var receiptContext: JournalRuntimeEntryReceiptContext?
 
     private(set) var state: JournalSupervisorState = .idle
     private(set) var runtimeStatus: JournalRuntimeStatus = .unobserved
@@ -46,7 +48,10 @@ final class JournalSupervisor {
         readinessGate: any JournalReadinessChecking = JournalReadinessGate(),
         markerURL: URL = ExpectedExitMarker.markerURL(for: ExpectedExitMarker.journalMarkerDiscriminator),
         port: Int = 5015,
-        readinessTimeout: Duration = .seconds(120)
+        readinessTimeout: Duration = .seconds(120),
+        receiptContextFactory: @escaping () -> JournalRuntimeEntryReceiptContext = {
+            JournalRuntimeEntryReceiptLaunch.begin(provenanceBundle: .module)
+        }
     ) {
         let bridge = StatusBridge()
         self.materializer = materializer
@@ -62,6 +67,7 @@ final class JournalSupervisor {
         self.markerURL = markerURL
         self.port = port
         self.readinessTimeout = readinessTimeout
+        self.receiptContextFactory = receiptContextFactory
         bridge.supervisor = self
     }
 
@@ -76,6 +82,11 @@ final class JournalSupervisor {
     func applyRuntimeStatus(_ status: JournalRuntimeStatus) {
         runtimeStatus = status
         Logger.journalSupervisor.notice("journal runtime status: \(String(describing: status), privacy: .public)")
+    }
+
+    func configureReceiptContext(_ context: JournalRuntimeEntryReceiptContext) {
+        guard receiptContext == nil else { return }
+        receiptContext = context
     }
 
     @discardableResult
@@ -103,7 +114,12 @@ final class JournalSupervisor {
 
         do {
             state = .starting
-            try await runner.start(runtime: runtime, journalRoot: journalRoot, port: port)
+            try await runner.start(
+                runtime: runtime,
+                journalRoot: journalRoot,
+                port: port,
+                receiptContext: resolvedReceiptContext()
+            )
         } catch SupervisedJournalRunnerError.gateBlocked(let blockage) {
             let diagnostic = blockage.diagnostic
             state = .blocked(diagnostic)
@@ -207,6 +223,15 @@ final class JournalSupervisor {
             Logger.journalSupervisor.warning("journal readiness failed: \(diagnostic.outputExcerpt ?? diagnostic.commandLabel, privacy: .public)")
             return false
         }
+    }
+
+    private func resolvedReceiptContext() -> JournalRuntimeEntryReceiptContext {
+        if let receiptContext {
+            return receiptContext
+        }
+        let context = receiptContextFactory()
+        receiptContext = context
+        return context
     }
 
     func terminate(reason: String = "ordinary-quit") async {

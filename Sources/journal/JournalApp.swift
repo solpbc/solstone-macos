@@ -3,6 +3,7 @@
 
 import AppKit
 import JournalMarkKit
+import JournalRuntime
 import os
 import SwiftUI
 import UpdateKit
@@ -44,7 +45,10 @@ final class JournalAppModel {
         )
     }
 
-    func launch() {
+    func launch(receiptContext: JournalRuntimeEntryReceiptContext? = nil) {
+        if let receiptContext {
+            supervisor.configureReceiptContext(receiptContext)
+        }
         JournalMarkFont.register()
         iconManager.start()
         config.applyLaunchAtLoginPreference()
@@ -114,8 +118,25 @@ final class JournalAppModel {
 
 @MainActor
 final class JournalAppDelegate: NSObject, NSApplicationDelegate {
+    private let receiptContextFactory: () -> JournalRuntimeEntryReceiptContext
+    private let modelLauncher: (JournalRuntimeEntryReceiptContext) -> Void
+
+    init(
+        receiptContextFactory: @escaping () -> JournalRuntimeEntryReceiptContext = {
+            JournalRuntimeEntryReceiptLaunch.begin(provenanceBundle: .module)
+        },
+        modelLauncher: @escaping (JournalRuntimeEntryReceiptContext) -> Void = { context in
+            JournalAppModel.shared?.launch(receiptContext: context)
+        }
+    ) {
+        self.receiptContextFactory = receiptContextFactory
+        self.modelLauncher = modelLauncher
+        super.init()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        JournalAppModel.shared?.launch()
+        let receiptContext = receiptContextFactory()
+        modelLauncher(receiptContext)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

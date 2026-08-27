@@ -41,10 +41,14 @@ public struct JournalSetupRunner: Sendable {
     private let materializer: any RuntimeMaterializing
     private let setupTimeout: Duration
 
+    var usesNativeRuntimeMaterializer: Bool {
+        materializer is NativeJournalRuntimeMaterializer
+    }
+
     public init(
         subprocessRunner: any SubprocessRunning = SubprocessRunner(),
         gate: any SingleSupervisorGating = SingleSupervisorGate(),
-        materializer: any RuntimeMaterializing = RuntimeMaterializer(),
+        materializer: any RuntimeMaterializing = NativeJournalRuntimeMaterializer(),
         setupTimeout: Duration = .seconds(180)
     ) {
         self.subprocessRunner = subprocessRunner

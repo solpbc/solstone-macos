@@ -21,6 +21,7 @@ struct JournalUpdateExclusivityObservationTests {
             runner: runner,
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
         let root = try makeTemporaryDirectory()
         let startTask = Task { @MainActor in
             await supervisor.start(journalRoot: root)
@@ -100,7 +101,12 @@ private final class PausingRuntimeMaterializer: RuntimeMaterializing, @unchecked
 private actor ObservationRunner: SupervisedChildRunning {
     private var runtimeKey: String?
 
-    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+    func start(
+        runtime: MaterializedRuntime,
+        journalRoot: URL,
+        port: Int,
+        receiptContext: JournalRuntimeEntryReceiptContext
+    ) async throws {
         runtimeKey = runtime.key
     }
 

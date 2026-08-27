@@ -150,6 +150,7 @@ struct JournalSnapshotTests {
             runner: MockSupervisedChildRunner(startError: SupervisedJournalRunnerError.gateBlocked(blockage)),
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
         let fixture = try makeConfiguredFixture()
         _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
         let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
@@ -228,6 +229,7 @@ struct JournalSnapshotTests {
             runner: MockSupervisedChildRunner(),
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
         let root = try makeTemporaryDirectory()
         _ = await supervisor.start(journalRoot: root)
         supervisor.applyRuntimeStatus(.running)

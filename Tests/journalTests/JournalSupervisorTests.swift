@@ -25,6 +25,7 @@ struct JournalSupervisorTests {
             runner: runner,
             readinessGate: RecordingReadinessGate(events: events, result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
 
         let started = await supervisor.start(journalRoot: try makeTemporaryDirectory())
 
@@ -46,6 +47,7 @@ struct JournalSupervisorTests {
             runner: runner,
             readinessGate: RecordingReadinessGate(events: events, result: .ready)
         )
+        let receiptContext = configureInMemoryReceiptContext(supervisor)
 
         let started = await supervisor.start(journalRoot: try makeTemporaryDirectory())
 
@@ -53,6 +55,7 @@ struct JournalSupervisorTests {
         #expect(await events.snapshot() == ["materialize", "gate", "spawn", "readiness", "markReady"])
         #expect(supervisor.state == .running)
         #expect(supervisor.journalBinaryURL != nil)
+        #expect(await runner.receiptAttemptIDs() == [receiptContext.attemptID])
     }
 
     @Test func runtimeStatusCanBeAppliedDirectlyForSinkSimulation() async throws {
@@ -62,6 +65,7 @@ struct JournalSupervisorTests {
             runner: RecordingRunner(events: EventRecorder()),
             readinessGate: RecordingReadinessGate(events: EventRecorder(), result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
         let diagnostic = JournalDiagnostic(commandLabel: "journal", outputExcerpt: "done")
 
         supervisor.applyRuntimeStatus(.stopped(diagnostic))
@@ -81,6 +85,7 @@ struct JournalSupervisorTests {
             runner: runner,
             readinessGate: RecordingReadinessGate(events: events, result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
         _ = await supervisor.start(journalRoot: try makeTemporaryDirectory())
         supervisor.applyRuntimeStatus(.running)
 
@@ -105,6 +110,7 @@ struct JournalSupervisorTests {
             runner: runner,
             readinessGate: RecordingReadinessGate(events: events, result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
         let root = try makeTemporaryDirectory()
         _ = await supervisor.start(journalRoot: root)
         supervisor.applyRuntimeStatus(.running)
@@ -132,6 +138,7 @@ struct JournalSupervisorTests {
             runner: runner,
             readinessGate: RecordingReadinessGate(events: events, result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
         let root = try makeTemporaryDirectory()
         _ = await supervisor.start(journalRoot: root)
         supervisor.applyRuntimeStatus(.running)
@@ -155,6 +162,7 @@ struct JournalSupervisorTests {
             runner: RecordingRunner(events: events),
             readinessGate: RecordingReadinessGate(events: events, result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
 
         let restarted = await supervisor.restart()
 
@@ -170,6 +178,32 @@ struct JournalSupervisorTests {
         } else {
             Issue.record("expected unknown restart status")
         }
+    }
+
+    @Test func lazyReceiptContextFactoryIsRedirectedAndResolvedOnlyOnce() async throws {
+        let events = EventRecorder()
+        let runner = RecordingRunner(events: events, gate: RecordingGate(events: events, result: .success))
+        let baseURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".journal-supervisor-receipts-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: baseURL) }
+        var factoryCalls = 0
+        let supervisor = JournalSupervisor(
+            gate: RecordingGate(events: events, result: .success),
+            materializer: try await RecordingMaterializer(events: events),
+            runner: runner,
+            readinessGate: RecordingReadinessGate(events: events, result: .ready),
+            receiptContextFactory: {
+                factoryCalls += 1
+                return JournalRuntimeEntryReceiptLaunch.begin(applicationSupportBaseURL: baseURL)
+            }
+        )
+
+        _ = await supervisor.start(journalRoot: try makeTemporaryDirectory())
+        _ = await supervisor.restart()
+
+        #expect(factoryCalls == 1)
+        #expect(await runner.receiptAttemptIDs().count == 1)
     }
 
     @Test func terminateWritesJournalMarkerBeforeStopLadder() async throws {
@@ -188,6 +222,7 @@ struct JournalSupervisorTests {
             readinessGate: RecordingReadinessGate(events: events, result: .ready),
             markerURL: markerURL
         )
+        _ = configureInMemoryReceiptContext(supervisor)
 
         await supervisor.terminate(reason: "journal-test-quit")
         let marker = ExpectedExitMarker.read(at: markerURL)
@@ -260,6 +295,7 @@ private actor RecordingRunner: SupervisedChildRunning {
     private let markerURLForStopCheck: URL?
     private let gate: RecordingGate?
     private var runtimeKey: String?
+    private var receiptContexts: [JournalRuntimeEntryReceiptContext] = []
 
     init(events: EventRecorder, markerURLForStopCheck: URL? = nil, gate: RecordingGate? = nil) {
         self.events = events
@@ -267,7 +303,12 @@ private actor RecordingRunner: SupervisedChildRunning {
         self.gate = gate
     }
 
-    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+    func start(
+        runtime: MaterializedRuntime,
+        journalRoot: URL,
+        port: Int,
+        receiptContext: JournalRuntimeEntryReceiptContext
+    ) async throws {
         if let gate {
             switch await gate.prepareForSpawn(journalRoot: journalRoot) {
             case .success:
@@ -277,6 +318,7 @@ private actor RecordingRunner: SupervisedChildRunning {
             }
         }
         await events.append("spawn")
+        receiptContexts.append(receiptContext)
         runtimeKey = runtime.key
     }
 
@@ -309,6 +351,10 @@ private actor RecordingRunner: SupervisedChildRunning {
 
     func currentRuntimeKey() async -> String? {
         runtimeKey
+    }
+
+    func receiptAttemptIDs() -> [JournalRuntimeEntryAttemptID] {
+        receiptContexts.map(\.attemptID)
     }
 
     func currentIdentity() async -> SupervisedChildIdentity? {

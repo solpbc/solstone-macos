@@ -150,6 +150,7 @@ struct JournalWindowModelTests {
             runner: MockSupervisedChildRunner(),
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
         let model = makeModel(config: fixture.config, supervisor: supervisor)
         _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
         supervisor.applyRuntimeStatus(.running)
@@ -200,6 +201,7 @@ struct JournalWindowModelTests {
             runner: MockSupervisedChildRunner(),
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
         let model = makeModel(
             config: fixture.config,
             supervisor: supervisor,
@@ -229,6 +231,7 @@ struct JournalWindowModelTests {
             runner: MockSupervisedChildRunner(),
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
         let model = makeModel(
             config: fixture.config,
             supervisor: supervisor,

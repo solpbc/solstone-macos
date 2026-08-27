@@ -9,6 +9,10 @@ import Testing
 
 @Suite("JournalSetupRunnerTests")
 struct JournalSetupRunnerTests {
+    @Test func productionDefaultUsesOnlyNativeRuntimeMaterializer() {
+        #expect(JournalSetupRunner().usesNativeRuntimeMaterializer)
+    }
+
     @Test func setupUsesExactSharedArgumentsIncludingSkipWrapper() async throws {
         let runtime = try makeRuntime()
         defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }

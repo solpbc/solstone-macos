@@ -96,6 +96,7 @@ struct JournalHandoffStoreTests {
             runner: MockSupervisedChildRunner(startError: SupervisedJournalRunnerError.gateBlocked(blockage)),
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
         let windowModel = makeWindowModel(config: fixture.config, supervisor: supervisor)
         let trace = FirstRunTrace()
         let model = JournalFirstRunModel(

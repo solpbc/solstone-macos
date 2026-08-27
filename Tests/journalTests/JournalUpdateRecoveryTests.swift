@@ -20,6 +20,7 @@ struct JournalUpdateRecoveryTests {
             runner: runner,
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
+        _ = configureInMemoryReceiptContext(supervisor)
         let model = JournalAppModel(config: fixture.config, supervisor: supervisor)
 
         await model.prepareForTermination()
@@ -65,7 +66,12 @@ private actor RecoveryRunner: SupervisedChildRunning {
     var stopForTerminationCalls: Int { terminations }
     var runningJournalRoot: URL? { journalRoot }
 
-    func start(runtime: MaterializedRuntime, journalRoot: URL, port: Int) async throws {
+    func start(
+        runtime: MaterializedRuntime,
+        journalRoot: URL,
+        port: Int,
+        receiptContext: JournalRuntimeEntryReceiptContext
+    ) async throws {
         starts += 1
         runtimeKey = runtime.key
         self.journalRoot = journalRoot.standardizedFileURL

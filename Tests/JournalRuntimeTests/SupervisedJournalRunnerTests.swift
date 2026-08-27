@@ -24,7 +24,12 @@ struct SupervisedJournalRunnerTests {
             pidExists: { _ in false }
         )
 
-        try await runner.start(runtime: fixture.runtime, journalRoot: fixture.linkedJournalRoot, port: 5015)
+        try await runner.start(
+            runtime: fixture.runtime,
+            journalRoot: fixture.linkedJournalRoot,
+            port: 5015,
+            receiptContext: makeReceiptFixture().context
+        )
 
         let requests = spawner.spawnRequests()
         #expect(requests.count == 1)
@@ -54,7 +59,12 @@ struct SupervisedJournalRunnerTests {
         )
 
         do {
-            try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015)
+            try await runner.start(
+                runtime: fixture.runtime,
+                journalRoot: fixture.realJournalRoot,
+                port: 5015,
+                receiptContext: makeReceiptFixture().context
+            )
             Issue.record("expected gateBlocked")
         } catch let error as SupervisedJournalRunnerError {
             #expect(error == .gateBlocked(blockage))
@@ -62,6 +72,186 @@ struct SupervisedJournalRunnerTests {
 
         #expect(spawner.spawnRequests().isEmpty)
     }
+
+    @Test func writesPayloadEntryForInitialRestartAndBackoffAdmissionsBeforeExit() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let receipts = makeReceiptFixture()
+        let spawner = RecordingProcessSpawner(pids: [4242, 4243, 4244])
+        let runner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(),
+            statusSink: { _ in },
+            gate: RecordingRunnerGate(result: .success),
+            evidenceReader: FixedStartTimeReader(startTimes: [1_000, 2_000, 3_000]),
+            processSpawner: spawner,
+            pidExists: { _ in false }
+        )
+
+        try await runner.start(
+            runtime: fixture.runtime,
+            journalRoot: fixture.realJournalRoot,
+            port: 5015,
+            receiptContext: receipts.context
+        )
+        try await runner.restart()
+        spawner.exit(spawn: 1, status: 9)
+        try await waitForSpawnCount(spawner, count: 3)
+
+        let entries = payloadEntries(receipts.sink.storedRecords(attemptID: receipts.context.attemptID))
+        #expect(entries.map(\.generation) == [1, 2, 3])
+        #expect(payloadExits(receipts.sink.storedRecords(attemptID: receipts.context.attemptID)).count == 1)
+    }
+
+    @Test func writesExactlyOneTerminalExitAfterObservedExpectedAndUnexpectedExit() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let expected = makeReceiptFixture()
+        let expectedSpawner = RecordingProcessSpawner(pids: [4242])
+        let expectedRunner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(), statusSink: { _ in }, gate: RecordingRunnerGate(result: .success),
+            evidenceReader: FixedStartTimeReader(startTime: 1_000), processSpawner: expectedSpawner, pidExists: { _ in false }
+        )
+        try await expectedRunner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: expected.context)
+        await expectedRunner.stop()
+        #expect(payloadExits(expected.sink.storedRecords(attemptID: expected.context.attemptID)).isEmpty)
+        expectedSpawner.exit(spawn: 0, status: 0)
+        try await waitForPayloadExitCount(expected.sink, attemptID: expected.context.attemptID, count: 1)
+        #expect(payloadExits(expected.sink.storedRecords(attemptID: expected.context.attemptID)).map(\.expectedStop) == [true])
+
+        let unexpected = makeReceiptFixture()
+        let unexpectedSpawner = RecordingProcessSpawner(pids: [4243, 4244])
+        let unexpectedRunner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(), statusSink: { _ in }, gate: RecordingRunnerGate(result: .success),
+            evidenceReader: FixedStartTimeReader(startTimes: [2_000, 3_000]), processSpawner: unexpectedSpawner, pidExists: { _ in false }
+        )
+        try await unexpectedRunner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: unexpected.context)
+        unexpectedSpawner.exit(spawn: 0, status: 9)
+        try await waitForSpawnCount(unexpectedSpawner, count: 2)
+        try await waitForPayloadExitCount(unexpected.sink, attemptID: unexpected.context.attemptID, count: 1)
+        #expect(payloadExits(unexpected.sink.storedRecords(attemptID: unexpected.context.attemptID)).map(\.expectedStop) == [false])
+    }
+
+    @Test func writesNoExitForUnadmittedOrStillLiveStoppedChild() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let unadmitted = makeReceiptFixture()
+        let unadmittedSpawner = RecordingProcessSpawner(pids: [4242])
+        let unadmittedRunner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(), statusSink: { _ in }, gate: RecordingRunnerGate(result: .success),
+            evidenceReader: FixedStartTimeReader(startTimes: [nil]), processSpawner: unadmittedSpawner, pidExists: { _ in false }
+        )
+        try await unadmittedRunner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: unadmitted.context)
+        unadmittedSpawner.exit(spawn: 0, status: 9)
+        await Task.yield()
+        #expect(payloadEntries(unadmitted.sink.storedRecords(attemptID: unadmitted.context.attemptID)).isEmpty)
+        #expect(payloadExits(unadmitted.sink.storedRecords(attemptID: unadmitted.context.attemptID)).isEmpty)
+
+        let live = makeReceiptFixture()
+        let liveSpawner = RecordingProcessSpawner(pids: [4243], closeParentInputStopsProcess: false)
+        let liveRunner = SupervisedJournalRunner(
+            clock: AdvancingRunnerClock(), statusSink: { _ in }, gate: RecordingRunnerGate(result: .success),
+            evidenceReader: FixedStartTimeReader(startTime: 3_000), processSpawner: liveSpawner, pidExists: { _ in true },
+            terminate: { _, _ in 0 }
+        )
+        try await liveRunner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: live.context)
+        await liveRunner.stop()
+        #expect(payloadExits(live.sink.storedRecords(attemptID: live.context.attemptID)).isEmpty)
+    }
+
+    @Test func keepsPIDReuseExitsBoundToTheirAdmittedKernelStartTime() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let receipts = makeReceiptFixture()
+        let spawner = RecordingProcessSpawner(pids: [4242, 4242])
+        let runner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(), statusSink: { _ in }, gate: RecordingRunnerGate(result: .success),
+            evidenceReader: FixedStartTimeReader(startTimes: [1_000, 2_000]), processSpawner: spawner, pidExists: { _ in false }
+        )
+        try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: receipts.context)
+        try await runner.restart()
+        await runner.stop()
+        spawner.exit(spawn: 0, status: 0)
+        try await waitForPayloadExitCount(receipts.sink, attemptID: receipts.context.attemptID, count: 1)
+        spawner.exit(spawn: 1, status: 0)
+        try await waitForPayloadExitCount(receipts.sink, attemptID: receipts.context.attemptID, count: 2)
+
+        let records = receipts.sink.storedRecords(attemptID: receipts.context.attemptID)
+        #expect(payloadEntries(records).map(\.childKernelStartTimeMicroseconds) == [1_000_000_000, 2_000_000_000])
+        #expect(payloadExits(records).map(\.childKernelStartTimeMicroseconds) == [1_000_000_000, 2_000_000_000])
+    }
+}
+
+private struct ReceiptFixture {
+    let context: JournalRuntimeEntryReceiptContext
+    let sink: InMemoryJournalRuntimeEntryReceiptSink
+}
+
+private func makeReceiptFixture() -> ReceiptFixture {
+    let sink = InMemoryJournalRuntimeEntryReceiptSink()
+    let attemptID = JournalRuntimeEntryAttemptID()
+    let identity = JournalRuntimeEntryReceiptAppIdentity(
+        appPID: 1,
+        bundleIdentifier: "app.solstone.journal",
+        bundleShortVersion: "2.0.0",
+        bundleVersion: "25",
+        locationClass: .standard
+    )
+    _ = sink.appendSynchronously(.outerEntry(.init(
+        attemptID: attemptID,
+        observedAtUnixMilliseconds: 1,
+        appIdentity: identity
+    )))
+    let context = JournalRuntimeEntryReceiptContext(
+        attemptID: attemptID,
+        sink: sink,
+        appIdentity: identity,
+        candidateProvenance: JournalRuntimeEntryCandidateProvenance(
+            source: "J",
+            target: .init(bundleIdentifier: "app.solstone.journal", bundleShortVersion: "2.0.0", bundleVersion: "25"),
+            runtimeArchiveSHA256: String(repeating: "a", count: 64),
+            manifestSHA256: String(repeating: "b", count: 64),
+            releaseReceiptSHA256: String(repeating: "c", count: 64),
+            signingReceiptSHA256: String(repeating: "d", count: 64),
+            runtimeTreeSHA256: String(repeating: "e", count: 64)
+        )
+    )
+    return ReceiptFixture(context: context, sink: sink)
+}
+
+private func payloadEntries(_ records: [JournalRuntimeEntryReceipt]) -> [JournalRuntimeEntryReceiptPayloadEntryDraft] {
+    records.compactMap {
+        guard case let .payloadEntry(entry) = $0 else { return nil }
+        return entry.draft
+    }
+}
+
+private func payloadExits(_ records: [JournalRuntimeEntryReceipt]) -> [JournalRuntimeEntryReceiptPayloadExitDraft] {
+    records.compactMap {
+        guard case let .payloadExit(entry) = $0 else { return nil }
+        return entry.draft
+    }
+}
+
+private func waitForSpawnCount(_ spawner: RecordingProcessSpawner, count: Int) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+    while ContinuousClock.now < deadline {
+        if spawner.spawnRequests().count >= count { return }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    Issue.record("timed out waiting for child spawn")
+}
+
+private func waitForPayloadExitCount(
+    _ sink: InMemoryJournalRuntimeEntryReceiptSink,
+    attemptID: JournalRuntimeEntryAttemptID,
+    count: Int
+) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+    while ContinuousClock.now < deadline {
+        if payloadExits(sink.storedRecords(attemptID: attemptID)).count >= count { return }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    Issue.record("timed out waiting for payload exit receipt")
 }
 
 private struct RunnerFixture {
@@ -111,15 +301,32 @@ private final class RecordingRunnerGate: SingleSupervisorGating, @unchecked Send
 
 private final class RecordingProcessSpawner: SupervisedJournalProcessSpawning, @unchecked Sendable {
     private let lock = NSLock()
-    private let pid: pid_t
+    private let pids: [pid_t]
+    private let closeParentInputStopsProcess: Bool
     private var requests: [SupervisedJournalSpawnRequest] = []
+    private var children: [RecordingChildProcess] = []
 
-    init(pid: pid_t) {
-        self.pid = pid
+    convenience init(pid: pid_t) {
+        self.init(pids: [pid])
+    }
+
+    init(pids: [pid_t], closeParentInputStopsProcess: Bool = true) {
+        self.pids = pids
+        self.closeParentInputStopsProcess = closeParentInputStopsProcess
     }
 
     func makeChildProcess(for request: SupervisedJournalSpawnRequest) -> any SupervisedJournalChildProcess {
-        RecordingChildProcess(pid: pid, request: request, spawner: self)
+        lock.withLock {
+            let index = children.count
+            let child = RecordingChildProcess(
+                pid: pids[min(index, pids.count - 1)],
+                request: request,
+                spawner: self,
+                closeParentInputStopsProcess: closeParentInputStopsProcess
+            )
+            children.append(child)
+            return child
+        }
     }
 
     func spawnRequests() -> [SupervisedJournalSpawnRequest] {
@@ -131,6 +338,13 @@ private final class RecordingProcessSpawner: SupervisedJournalProcessSpawning, @
             requests.append(request)
         }
     }
+
+    func exit(spawn: Int, status: Int32) {
+        let child = lock.withLock {
+            children.indices.contains(spawn) ? children[spawn] : nil
+        }
+        child?.exit(status: status)
+    }
 }
 
 private final class RecordingChildProcess: SupervisedJournalChildProcess, @unchecked Sendable {
@@ -138,13 +352,20 @@ private final class RecordingChildProcess: SupervisedJournalChildProcess, @unche
     private let pid: pid_t
     private let request: SupervisedJournalSpawnRequest
     private let spawner: RecordingProcessSpawner
+    private let closeParentInputStopsProcess: Bool
     private var running = false
     private var terminationHandler: (@Sendable (Int32, pid_t) -> Void)?
 
-    init(pid: pid_t, request: SupervisedJournalSpawnRequest, spawner: RecordingProcessSpawner) {
+    init(
+        pid: pid_t,
+        request: SupervisedJournalSpawnRequest,
+        spawner: RecordingProcessSpawner,
+        closeParentInputStopsProcess: Bool
+    ) {
         self.pid = pid
         self.request = request
         self.spawner = spawner
+        self.closeParentInputStopsProcess = closeParentInputStopsProcess
     }
 
     var processIdentifier: pid_t {
@@ -169,17 +390,39 @@ private final class RecordingChildProcess: SupervisedJournalChildProcess, @unche
     }
 
     func closeParentInput() {
-        lock.withLock {
-            running = false
+        if closeParentInputStopsProcess {
+            lock.withLock {
+                running = false
+            }
         }
+    }
+
+    func exit(status: Int32) {
+        let handler = lock.withLock { () -> (@Sendable (Int32, pid_t) -> Void)? in
+            running = false
+            return terminationHandler
+        }
+        handler?(status, pid)
     }
 }
 
-private struct FixedStartTimeReader: JournalProcessEvidenceReading {
-    let startTime: Double
+private final class FixedStartTimeReader: JournalProcessEvidenceReading, @unchecked Sendable {
+    private let lock = NSLock()
+    private var startTimes: [Double?]
+
+    convenience init(startTime: Double) {
+        self.init(startTimes: [startTime])
+    }
+
+    init(startTimes: [Double?]) {
+        self.startTimes = startTimes
+    }
 
     func evidence(for pid: pid_t) async -> JournalProcessEvidence? {
-        JournalProcessEvidence(
+        let startTime = lock.withLock {
+            startTimes.isEmpty ? nil : startTimes.removeFirst()
+        }
+        return JournalProcessEvidence(
             pid: pid,
             ppid: 1,
             uid: getuid(),
@@ -192,4 +435,17 @@ private struct FixedStartTimeReader: JournalProcessEvidenceReading {
 private final class NoopRunnerClock: MonotonicClock, @unchecked Sendable {
     func now() -> Duration { .zero }
     func sleep(for duration: Duration) async {}
+}
+
+private final class AdvancingRunnerClock: MonotonicClock, @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: Duration = .zero
+
+    func now() -> Duration {
+        lock.withLock { current }
+    }
+
+    func sleep(for duration: Duration) async {
+        lock.withLock { current += duration }
+    }
 }
