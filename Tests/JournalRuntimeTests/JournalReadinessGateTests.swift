@@ -22,7 +22,8 @@ struct JournalReadinessGateTests {
             terminalCheck: { nil },
             identityProvider: {
                 SupervisedChildIdentity(pid: 4242, kernelStartTime: 1_000.0, generation: 1)
-            }
+            },
+            readinessAcceptance: { _ in true }
         )
 
         #expect(result == .ready)
@@ -42,7 +43,8 @@ struct JournalReadinessGateTests {
             terminalCheck: { nil },
             identityProvider: {
                 SupervisedChildIdentity(pid: 4243, kernelStartTime: 1_000.0, generation: 1)
-            }
+            },
+            readinessAcceptance: { _ in true }
         )
 
         guard case .failed(let diagnostic) = result else {
@@ -66,7 +68,8 @@ struct JournalReadinessGateTests {
             terminalCheck: { nil },
             identityProvider: {
                 SupervisedChildIdentity(pid: 4242, kernelStartTime: 1_001.5, generation: 1)
-            }
+            },
+            readinessAcceptance: { _ in true }
         )
 
         #expect(result == .ready)
@@ -86,7 +89,8 @@ struct JournalReadinessGateTests {
             terminalCheck: { nil },
             identityProvider: {
                 SupervisedChildIdentity(pid: 4242, kernelStartTime: 1_001.501, generation: 1)
-            }
+            },
+            readinessAcceptance: { _ in true }
         )
 
         guard case .failed(let diagnostic) = result else {
@@ -115,7 +119,8 @@ struct JournalReadinessGateTests {
             terminalCheck: { nil },
             identityProvider: {
                 SupervisedChildIdentity(pid: 4242, kernelStartTime: 2_000.0, generation: 1)
-            }
+            },
+            readinessAcceptance: { _ in true }
         )
 
         guard case .failed(let diagnostic) = result else {
@@ -144,7 +149,8 @@ struct JournalReadinessGateTests {
             terminalCheck: { nil },
             identityProvider: {
                 SupervisedChildIdentity(pid: 4242, kernelStartTime: 1_000.0, generation: 1)
-            }
+            },
+            readinessAcceptance: { _ in true }
         )
 
         guard case .failed(let diagnostic) = result else {
@@ -168,7 +174,8 @@ struct JournalReadinessGateTests {
             terminalCheck: { nil },
             identityProvider: {
                 SupervisedChildIdentity(pid: 4242, kernelStartTime: 1_000.0, generation: 1)
-            }
+            },
+            readinessAcceptance: { _ in true }
         )
 
         guard case .failed(let diagnostic) = result else {
@@ -193,11 +200,56 @@ struct JournalReadinessGateTests {
             runtime: runtime,
             timeout: .seconds(120),
             terminalCheck: { diagnostic },
-            identityProvider: { nil }
+            identityProvider: { nil },
+            readinessAcceptance: { _ in true }
         )
 
         #expect(result == .failedTerminal(diagnostic))
         #expect(clock.now() == .zero)
+    }
+
+    @Test func rejectedCandidateKeepsPollingInsteadOfAcceptingStaleReadiness() async throws {
+        let runtime = try makeRuntime()
+        defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
+        try writeMarkerFiles(root: runtime.layout.rootURL, pid: 4242, startTime: 1_000.0)
+        let clock = AdvancingReadinessClock()
+        let gate = JournalReadinessGate(clock: clock, pollInterval: .milliseconds(1))
+        let attempts = ReadinessAcceptanceRecorder()
+
+        let result = await gate.waitUntilReady(
+            journalRoot: runtime.layout.rootURL,
+            runtime: runtime,
+            timeout: .milliseconds(3),
+            terminalCheck: { nil },
+            identityProvider: {
+                SupervisedChildIdentity(pid: 4242, kernelStartTime: 1_000.0, generation: 2)
+            },
+            readinessAcceptance: { identity in
+                attempts.append(identity)
+                return false
+            }
+        )
+
+        guard case .failed(let diagnostic) = result else {
+            Issue.record("expected readiness timeout, got \(result)")
+            return
+        }
+        #expect(diagnostic.timedOut)
+        #expect(attempts.identities().allSatisfy { $0.generation == 2 })
+        #expect(attempts.identities().count == 3)
+    }
+}
+
+private final class ReadinessAcceptanceRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [SupervisedChildIdentity] = []
+
+    func append(_ identity: SupervisedChildIdentity) {
+        lock.withLock { values.append(identity) }
+    }
+
+    func identities() -> [SupervisedChildIdentity] {
+        lock.withLock { values }
     }
 }
 

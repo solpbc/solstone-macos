@@ -109,8 +109,12 @@ public final class MockSupervisedChildRunner: SupervisedChildRunning, @unchecked
         lock.withLock { self.identity = identity }
     }
 
-    public func markReady() async {
-        lock.withLock { readyMarks += 1 }
+    public func markReady(identity: SupervisedChildIdentity) async -> Bool {
+        lock.withLock {
+            guard identity == self.identity else { return false }
+            readyMarks += 1
+            return true
+        }
     }
 }
 
@@ -145,9 +149,13 @@ public struct MockJournalReadinessGate: JournalReadinessChecking {
         runtime: MaterializedRuntime,
         timeout: Duration,
         terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?,
-        identityProvider: @escaping @Sendable () async -> SupervisedChildIdentity?
+        identityProvider: @escaping @Sendable () async -> SupervisedChildIdentity?,
+        readinessAcceptance: @escaping @Sendable (SupervisedChildIdentity) async -> Bool
     ) async -> JournalReadinessResult {
         await beforeReturn?()
+        if case .ready = result, let identity = await identityProvider() {
+            _ = await readinessAcceptance(identity)
+        }
         return result
     }
 }

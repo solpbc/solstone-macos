@@ -10,6 +10,16 @@ import Testing
 struct JournalHealthCheckTests {
     private let journalBinary = URL(fileURLWithPath: "/runtime/bin/journal")
 
+    @Test func restartingStatusCarriesOptionalRunnerGenerationWithoutDiagnostic() {
+        let manual = JournalRuntimeStatus.restarting(generation: nil)
+        let automatic = JournalRuntimeStatus.restarting(generation: 7)
+
+        #expect(manual.isRestarting)
+        #expect(automatic.isRestarting)
+        #expect(manual.diagnostic == nil)
+        #expect(automatic.diagnostic == nil)
+    }
+
     @Test func runUsesJournalHealthOnly() async {
         let runner = FakeDoctorRunner(stdout: Data("ok\n".utf8))
 

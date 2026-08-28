@@ -1,5 +1,6 @@
 public enum UICopy {
     public static let JOURNAL_CHILD_BREAKER_TRIPPED = "journal stopped after repeated exits"
+    public static let JOURNAL_CHILD_CONTAINMENT_UNRESOLVED = "journal stopped because its child processes could not be safely cleaned up; quit and reopen sol before starting again"
     public static let JOURNAL_MATERIALIZE_FAILED = "journal runtime couldn't be prepared"
     public static let JOURNAL_SPAWN_BLOCKED_PORTS = "journal ports are still in use"
     public static let JOURNAL_SPAWN_PORT_CHECK_FAILED = "couldn't verify journal ports are free"

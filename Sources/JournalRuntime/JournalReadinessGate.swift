@@ -10,7 +10,8 @@ public protocol JournalReadinessChecking: Sendable {
         runtime: MaterializedRuntime,
         timeout: Duration,
         terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?,
-        identityProvider: @escaping @Sendable () async -> SupervisedChildIdentity?
+        identityProvider: @escaping @Sendable () async -> SupervisedChildIdentity?,
+        readinessAcceptance: @escaping @Sendable (SupervisedChildIdentity) async -> Bool
     ) async -> JournalReadinessResult
 }
 
@@ -40,7 +41,8 @@ public struct JournalReadinessGate: JournalReadinessChecking {
         runtime: MaterializedRuntime,
         timeout: Duration,
         terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?,
-        identityProvider: @escaping @Sendable () async -> SupervisedChildIdentity?
+        identityProvider: @escaping @Sendable () async -> SupervisedChildIdentity?,
+        readinessAcceptance: @escaping @Sendable (SupervisedChildIdentity) async -> Bool
     ) async -> JournalReadinessResult {
         let deadline = clock.now() + timeout
 
@@ -48,7 +50,8 @@ public struct JournalReadinessGate: JournalReadinessChecking {
             if let terminalDiagnostic = await terminalCheck() {
                 return .failedTerminal(terminalDiagnostic)
             }
-            if await markerIsReady(journalRoot: journalRoot, identityProvider: identityProvider) {
+            if let identity = await markerIsReady(journalRoot: journalRoot, identityProvider: identityProvider),
+               await readinessAcceptance(identity) {
                 return .ready
             }
             await clock.sleep(for: pollInterval)
@@ -68,28 +71,31 @@ public struct JournalReadinessGate: JournalReadinessChecking {
     private func markerIsReady(
         journalRoot: URL,
         identityProvider: @escaping @Sendable () async -> SupervisedChildIdentity?
-    ) async -> Bool {
+    ) async -> SupervisedChildIdentity? {
         guard let marker = readReadyMarker(
             from: journalRoot.appendingPathComponent("health/supervisor.ready")
         ),
             let recordedPID = readPositivePID(from: journalRoot.appendingPathComponent("health/supervisor.pid")),
             let recordedStartTime = readDouble(from: journalRoot.appendingPathComponent("health/supervisor.start_time")),
             let identity = await identityProvider() else {
-            return false
+            return nil
         }
 
         guard marker.pid == recordedPID,
               recordedPID == identity.pid else {
-            return false
+            return nil
         }
         guard abs(recordedStartTime - identity.kernelStartTime) <= startTimeToleranceSeconds else {
-            return false
+            return nil
         }
         // Python's _valid_marker() parses payload start_time but does not bind
         // it. signal_ready() writes this value from supervisor.start_time, so a
         // fresh marker matches; this stricter check only rejects stale markers
         // for a recycled PID.
-        return abs(marker.startTime - identity.kernelStartTime) <= startTimeToleranceSeconds
+        guard abs(marker.startTime - identity.kernelStartTime) <= startTimeToleranceSeconds else {
+            return nil
+        }
+        return identity
     }
 
     private struct ReadyMarker: Decodable {

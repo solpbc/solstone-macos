@@ -102,7 +102,7 @@ private actor RecoveryRunner: SupervisedChildRunning {
         nil
     }
 
-    func markReady() async {}
+    func markReady(identity: SupervisedChildIdentity) async -> Bool { true }
 }
 
 private struct RecoveryFixture {

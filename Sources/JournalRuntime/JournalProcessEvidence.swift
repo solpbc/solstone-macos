@@ -46,6 +46,36 @@ public struct LiveJournalProcessEvidenceReader: JournalProcessEvidenceReading {
     }
 }
 
+/// Process-table facts used only while retiring a process group that this app
+/// admitted during its current lifetime. This is deliberately separate from
+/// `JournalProcessEvidence`: the latter is the durable, single-PID orphan
+/// claim used at cold start.
+internal struct JournalContainmentMemberEvidence: Equatable, Sendable {
+    let pid: pid_t
+    let processGroupID: pid_t
+    let uid: uid_t
+    let username: String
+    let kernelStartTime: Double?
+}
+
+internal protocol JournalProcessContainmentEvidenceReading: Sendable {
+    func containmentEvidence(for pid: pid_t) -> JournalContainmentMemberEvidence?
+    /// `nil` is an indeterminate sysctl failure, not an empty group.
+    func processIDs(inProcessGroup processGroupID: pid_t) -> [pid_t]?
+}
+
+internal struct LiveJournalProcessContainmentEvidenceReader: JournalProcessContainmentEvidenceReading {
+    init() {}
+
+    func containmentEvidence(for pid: pid_t) -> JournalContainmentMemberEvidence? {
+        liveJournalContainmentMemberEvidence(for: pid)
+    }
+
+    func processIDs(inProcessGroup processGroupID: pid_t) -> [pid_t]? {
+        liveProcessIDs(inProcessGroup: processGroupID)
+    }
+}
+
 internal func liveJournalProcessEvidence(for pid: pid_t) -> JournalProcessEvidence? {
     guard let row = readProcessRow(pid: pid) else { return nil }
     let pid = row.kp_proc.p_pid
@@ -58,6 +88,82 @@ internal func liveJournalProcessEvidence(for pid: pid_t) -> JournalProcessEviden
         username: username(for: uid),
         kernelStartTime: processStartTime(row)
     )
+}
+
+internal func liveJournalContainmentMemberEvidence(for pid: pid_t) -> JournalContainmentMemberEvidence? {
+    guard let row = readProcessRow(pid: pid) else { return nil }
+    let pid = row.kp_proc.p_pid
+    guard pid > 0 else { return nil }
+    let uid = row.kp_eproc.e_ucred.cr_uid
+    return JournalContainmentMemberEvidence(
+        pid: pid,
+        processGroupID: row.kp_eproc.e_pgid,
+        uid: uid,
+        username: username(for: uid),
+        kernelStartTime: processStartTime(row)
+    )
+}
+
+internal enum JournalContainmentMemberVerification: Equatable, Sendable {
+    case verified(pid_t)
+    case rejected(JournalContainmentMemberRejection)
+}
+
+internal enum JournalContainmentMemberRejection: String, Equatable, Sendable {
+    case pidMismatch = "pid-mismatch"
+    case processGroupMismatch = "process-group-mismatch"
+    case rootPID = "root-pid"
+    case ownPID = "own-pid"
+    case unsafeCallerProcessGroup = "unsafe-caller-process-group"
+    case wrongUser = "wrong-user"
+    case missingKernelStartTime = "missing-kernel-start-time"
+    case leaderStartTimeMismatch = "leader-start-time-mismatch"
+    case outsideDomainLifetime = "outside-domain-lifetime"
+}
+
+internal func verifyJournalContainmentMember(
+    enumeratedPID: pid_t,
+    evidence: JournalContainmentMemberEvidence,
+    domainProcessGroupID: pid_t,
+    domainBirthKernelStartTime: Double,
+    retirementAttemptWallTime: Double,
+    leaderIdentity: SupervisedChildIdentity,
+    currentUID: uid_t,
+    currentUsername: String,
+    ownPID: pid_t,
+    ownProcessGroupID: pid_t
+) -> JournalContainmentMemberVerification {
+    guard evidence.pid == enumeratedPID else {
+        return .rejected(.pidMismatch)
+    }
+    guard domainProcessGroupID != ownProcessGroupID else {
+        return .rejected(.unsafeCallerProcessGroup)
+    }
+    guard evidence.processGroupID == domainProcessGroupID else {
+        return .rejected(.processGroupMismatch)
+    }
+    guard enumeratedPID != 1 else {
+        return .rejected(.rootPID)
+    }
+    guard enumeratedPID != ownPID else {
+        return .rejected(.ownPID)
+    }
+    guard evidence.uid == currentUID, evidence.username == currentUsername else {
+        return .rejected(.wrongUser)
+    }
+    guard let startTime = evidence.kernelStartTime, startTime.isFinite else {
+        return .rejected(.missingKernelStartTime)
+    }
+    if enumeratedPID == leaderIdentity.pid {
+        guard abs(startTime - leaderIdentity.kernelStartTime) <= journalSupervisorStartTimeToleranceSeconds else {
+            return .rejected(.leaderStartTimeMismatch)
+        }
+    } else {
+        guard startTime >= domainBirthKernelStartTime, startTime <= retirementAttemptWallTime else {
+            return .rejected(.outsideDomainLifetime)
+        }
+    }
+    return .verified(enumeratedPID)
 }
 
 internal enum JournalOrphanClaimVerification: Equatable, Sendable {
@@ -147,6 +253,27 @@ private func readProcessRow(pid: pid_t) -> kinfo_proc? {
         return nil
     }
     return row
+}
+
+private func liveProcessIDs(inProcessGroup processGroupID: pid_t) -> [pid_t]? {
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PGRP, processGroupID]
+    var size = 0
+    guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0 else {
+        return nil
+    }
+    guard size > 0 else { return [] }
+
+    let stride = MemoryLayout<kinfo_proc>.stride
+    var rows = Array(repeating: kinfo_proc(), count: (size + stride - 1) / stride)
+    var actualSize = rows.count * stride
+    guard sysctl(&mib, u_int(mib.count), &rows, &actualSize, nil, 0) == 0 else {
+        return nil
+    }
+    let rowCount = min(rows.count, actualSize / stride)
+    return rows.prefix(rowCount).compactMap { row in
+        let pid = row.kp_proc.p_pid
+        return pid > 0 ? pid : nil
+    }
 }
 
 private func processStartTime(_ row: kinfo_proc) -> Double? {

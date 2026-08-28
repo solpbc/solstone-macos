@@ -231,11 +231,102 @@ struct JournalSupervisorTests {
         #expect(marker?.reason == "journal-test-quit")
     }
 
+    @Test func automaticReplacementReadinessUsesRunnerGenerationAndReturnsToRunning() async throws {
+        let events = EventRecorder()
+        let runner = RecordingRunner(events: events, gate: RecordingGate(events: events, result: .success))
+        let supervisor = JournalSupervisor(
+            gate: RecordingGate(events: events, result: .success),
+            materializer: try await RecordingMaterializer(events: events),
+            runner: runner,
+            readinessGate: RecordingReadinessGate(events: events, results: [.ready, .ready])
+        )
+        _ = configureInMemoryReceiptContext(supervisor)
+        _ = await supervisor.start(journalRoot: try makeTemporaryDirectory())
+        await runner.setIdentity(.init(pid: 4243, kernelStartTime: 2_000, generation: 2))
+
+        supervisor.applyRuntimeStatus(.restarting(generation: 2))
+        try await waitForEvent(events, event: "markReady", count: 2)
+
+        #expect(supervisor.state == .running)
+        #expect(supervisor.runtimeStatus == .restarting(generation: 2))
+    }
+
+    @Test func automaticReplacementReadinessRecoversAfterRejectedManualRestart() async throws {
+        let events = EventRecorder()
+        let runner = RecordingRunner(events: events, restartFails: true)
+        let supervisor = JournalSupervisor(
+            gate: RecordingGate(events: events, result: .success),
+            materializer: try await RecordingMaterializer(events: events),
+            runner: runner,
+            readinessGate: RecordingReadinessGate(events: events, results: [.ready, .ready])
+        )
+        _ = configureInMemoryReceiptContext(supervisor)
+        _ = await supervisor.start(journalRoot: try makeTemporaryDirectory())
+
+        let restarted = await supervisor.restart()
+
+        #expect(!restarted)
+        if case .failed(let diagnostic) = supervisor.state {
+            #expect(diagnostic.commandLabel == "journal restart")
+        } else {
+            Issue.record("expected failed restart state")
+        }
+
+        await runner.setIdentity(.init(pid: 4243, kernelStartTime: 2_000, generation: 2))
+        supervisor.applyRuntimeStatus(.restarting(generation: 2))
+        try await waitForEvent(events, event: "markReady", count: 2)
+
+        #expect(supervisor.state == .running)
+        #expect(supervisor.runtimeStatus == .restarting(generation: 2))
+    }
+
+    @Test func replacementReadinessFailureUsesExistingFailedUnknownOutcome() async throws {
+        let events = EventRecorder()
+        let diagnostic = JournalDiagnostic(commandLabel: "journal readiness", outputExcerpt: "no replacement marker")
+        let runner = RecordingRunner(events: events, gate: RecordingGate(events: events, result: .success))
+        let supervisor = JournalSupervisor(
+            gate: RecordingGate(events: events, result: .success),
+            materializer: try await RecordingMaterializer(events: events),
+            runner: runner,
+            readinessGate: RecordingReadinessGate(events: events, results: [.ready, .failed(diagnostic)])
+        )
+        _ = configureInMemoryReceiptContext(supervisor)
+        _ = await supervisor.start(journalRoot: try makeTemporaryDirectory())
+        await runner.setIdentity(.init(pid: 4243, kernelStartTime: 2_000, generation: 2))
+
+        supervisor.applyRuntimeStatus(.restarting(generation: 2))
+        try await waitForSupervisorState(supervisor, expected: .failed(diagnostic))
+
+        #expect(supervisor.runtimeStatus == .unknown(diagnostic))
+        #expect(await events.snapshot().last == "stop")
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("journal-supervisor-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func waitForEvent(_ events: EventRecorder, event: String, count: Int) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while ContinuousClock.now < deadline {
+            if await events.snapshot().filter({ $0 == event }).count >= count { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("timed out waiting for \(event)")
+    }
+
+    private func waitForSupervisorState(
+        _ supervisor: JournalSupervisor,
+        expected: JournalSupervisorState
+    ) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while ContinuousClock.now < deadline {
+            if supervisor.state == expected { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("timed out waiting for supervisor state")
     }
 }
 
@@ -294,13 +385,21 @@ private actor RecordingRunner: SupervisedChildRunning {
     private let events: EventRecorder
     private let markerURLForStopCheck: URL?
     private let gate: RecordingGate?
+    private let restartFails: Bool
     private var runtimeKey: String?
     private var receiptContexts: [JournalRuntimeEntryReceiptContext] = []
+    private var identity: SupervisedChildIdentity?
 
-    init(events: EventRecorder, markerURLForStopCheck: URL? = nil, gate: RecordingGate? = nil) {
+    init(
+        events: EventRecorder,
+        markerURLForStopCheck: URL? = nil,
+        gate: RecordingGate? = nil,
+        restartFails: Bool = false
+    ) {
         self.events = events
         self.markerURLForStopCheck = markerURLForStopCheck
         self.gate = gate
+        self.restartFails = restartFails
     }
 
     func start(
@@ -320,9 +419,13 @@ private actor RecordingRunner: SupervisedChildRunning {
         await events.append("spawn")
         receiptContexts.append(receiptContext)
         runtimeKey = runtime.key
+        identity = .init(pid: 4242, kernelStartTime: 1_000, generation: 1)
     }
 
     func restart() async throws {
+        if restartFails {
+            throw RecordingRunnerError.restartRejected
+        }
         if let gate {
             switch await gate.prepareForSpawn(journalRoot: URL(fileURLWithPath: "/tmp/journal-supervisor-restart")) {
             case .success:
@@ -337,6 +440,7 @@ private actor RecordingRunner: SupervisedChildRunning {
     func stop() async {
         await events.append("stop")
         runtimeKey = nil
+        identity = nil
     }
 
     func stopForTermination() async {
@@ -347,6 +451,7 @@ private actor RecordingRunner: SupervisedChildRunning {
             await events.append("stopForTermination-before-marker")
         }
         runtimeKey = nil
+        identity = nil
     }
 
     func currentRuntimeKey() async -> String? {
@@ -358,25 +463,44 @@ private actor RecordingRunner: SupervisedChildRunning {
     }
 
     func currentIdentity() async -> SupervisedChildIdentity? {
-        nil
+        identity
     }
 
     func terminalReason() async -> JournalDiagnostic? {
         nil
     }
 
-    func markReady() async {
+    func markReady(identity: SupervisedChildIdentity) async -> Bool {
+        guard identity == self.identity else { return false }
         await events.append("markReady")
+        return true
+    }
+
+    func setIdentity(_ identity: SupervisedChildIdentity?) {
+        self.identity = identity
+    }
+}
+
+private enum RecordingRunnerError: LocalizedError, Sendable {
+    case restartRejected
+
+    var errorDescription: String? {
+        "journal child containment is in progress"
     }
 }
 
 private actor RecordingReadinessGate: JournalReadinessChecking {
     private let events: EventRecorder
-    private let result: JournalReadinessResult
+    private var results: [JournalReadinessResult]
 
     init(events: EventRecorder, result: JournalReadinessResult) {
         self.events = events
-        self.result = result
+        results = [result]
+    }
+
+    init(events: EventRecorder, results: [JournalReadinessResult]) {
+        self.events = events
+        self.results = results
     }
 
     func waitUntilReady(
@@ -384,9 +508,14 @@ private actor RecordingReadinessGate: JournalReadinessChecking {
         runtime: MaterializedRuntime,
         timeout: Duration,
         terminalCheck: @escaping @Sendable () async -> JournalDiagnostic?,
-        identityProvider: @escaping @Sendable () async -> SupervisedChildIdentity?
+        identityProvider: @escaping @Sendable () async -> SupervisedChildIdentity?,
+        readinessAcceptance: @escaping @Sendable (SupervisedChildIdentity) async -> Bool
     ) async -> JournalReadinessResult {
         await events.append("readiness")
+        let result = results.count > 1 ? results.removeFirst() : (results.first ?? .ready)
+        if case .ready = result, let identity = await identityProvider() {
+            _ = await readinessAcceptance(identity)
+        }
         return result
     }
 }

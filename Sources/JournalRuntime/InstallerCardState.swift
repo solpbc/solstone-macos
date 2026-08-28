@@ -134,7 +134,7 @@ public func bundledJournalCardState(
         switch runtimeStatus {
         case .unobserved, .running:
             return .runtimeUnconfirmed
-        case .restarting:
+        case .restarting(_):
             return .runtimeStarting
         case .stopped, .unknown, .setupNeeded:
             return .runtimeFailed(runtimeStatus)

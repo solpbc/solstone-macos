@@ -133,6 +133,8 @@ struct JournalWindowModelTests {
 
         #expect(JournalRunDisplay.derive(state: .running, runtimeStatus: .running) == .running)
         #expect(JournalRunDisplay.derive(state: .running, runtimeStatus: .stopped(diagnostic)) == .stopped)
+        #expect(JournalRunDisplay.derive(state: .running, runtimeStatus: .restarting(generation: nil)) == .starting)
+        #expect(JournalRunDisplay.derive(state: .running, runtimeStatus: .restarting(generation: 7)) == .starting)
         #expect(JournalRunDisplay.derive(state: .running, runtimeStatus: .unobserved) == .unknown)
         #expect(JournalRunDisplay.derive(state: .starting, runtimeStatus: .running) == .starting)
         #expect(JournalRunDisplay.derive(state: .waitingForReadiness, runtimeStatus: .running) == .starting)

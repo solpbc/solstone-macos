@@ -31,7 +31,7 @@ public protocol SupervisedChildRunning: Sendable {
     func currentRuntimeKey() async -> String?
     func currentIdentity() async -> SupervisedChildIdentity?
     func terminalReason() async -> JournalDiagnostic?
-    func markReady() async
+    func markReady(identity: SupervisedChildIdentity) async -> Bool
 }
 
 public enum SupervisedJournalRunnerError: LocalizedError, Sendable, Equatable {
@@ -156,15 +156,28 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         let receiptContext: JournalRuntimeEntryReceiptContext
     }
 
-    private struct AdmittedReceiptIdentity: Sendable {
-        let identity: SupervisedChildIdentity
+    private enum GenerationPhase: Sendable {
+        case launching
+        case active
+        case stopping
+        case containing
+        case exited
+        case admissionFailed
+    }
+
+    private struct GenerationRecord: Sendable {
+        let rawPID: pid_t
         let context: JournalRuntimeEntryReceiptContext
+        var identity: SupervisedChildIdentity?
+        var containmentDomain: JournalContainmentDomain?
+        var receiptRecorded = false
+        var phase: GenerationPhase
     }
 
     private let clock: any MonotonicClock
     private let statusSink: @Sendable (JournalRuntimeStatus) -> Void
     private let gate: any SingleSupervisorGating
-    private let evidenceReader: any JournalProcessEvidenceReading
+    private let containmentEvidenceReader: any JournalProcessContainmentEvidenceReading
     private let processSpawner: any SupervisedJournalProcessSpawning
     private let pidExists: @Sendable (pid_t) -> Bool
     private let terminate: @Sendable (pid_t, Int32) -> Int32
@@ -188,19 +201,19 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
     private var stopping = false
     private var breakerTripped = false
     private var terminalDiagnostic: JournalDiagnostic?
-    private var childIdentity: SupervisedChildIdentity?
-    private var admittedReceiptIdentities: [UInt64: AdmittedReceiptIdentity] = [:]
+    private var generationRecords: [UInt64: GenerationRecord] = [:]
+    private var activeGeneration: UInt64?
     private var launchGeneration: UInt64 = 0
     private var backoffIndex = 0
     private var unexpectedExitTimes: [Duration] = []
     private var stabilityTask: Task<Void, Never>?
     private var relaunchTask: Task<Void, Never>?
+    private var pendingRelaunchGeneration: UInt64?
 
     public init(
         clock: any MonotonicClock = SystemMonotonicClock(),
         statusSink: @escaping @Sendable (JournalRuntimeStatus) -> Void,
         gate: any SingleSupervisorGating = SingleSupervisorGate(),
-        evidenceReader: any JournalProcessEvidenceReading = LiveJournalProcessEvidenceReader(),
         pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
             if Darwin.kill(pid, 0) == 0 { return true }
             return errno == EPERM
@@ -213,7 +226,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
             clock: clock,
             statusSink: statusSink,
             gate: gate,
-            evidenceReader: evidenceReader,
+            containmentEvidenceReader: LiveJournalProcessContainmentEvidenceReader(),
             processSpawner: FoundationSupervisedJournalProcessSpawner(),
             pidExists: pidExists,
             terminate: terminate
@@ -224,7 +237,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         clock: any MonotonicClock = SystemMonotonicClock(),
         statusSink: @escaping @Sendable (JournalRuntimeStatus) -> Void,
         gate: any SingleSupervisorGating = SingleSupervisorGate(),
-        evidenceReader: any JournalProcessEvidenceReading = LiveJournalProcessEvidenceReader(),
+        containmentEvidenceReader: any JournalProcessContainmentEvidenceReading = LiveJournalProcessContainmentEvidenceReader(),
         processSpawner: any SupervisedJournalProcessSpawning,
         pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
             if Darwin.kill(pid, 0) == 0 { return true }
@@ -237,7 +250,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         self.clock = clock
         self.statusSink = statusSink
         self.gate = gate
-        self.evidenceReader = evidenceReader
+        self.containmentEvidenceReader = containmentEvidenceReader
         self.processSpawner = processSpawner
         self.pidExists = pidExists
         self.terminate = terminate
@@ -249,6 +262,9 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         port: Int,
         receiptContext: JournalRuntimeEntryReceiptContext
     ) async throws {
+        guard !hasContainingGeneration else {
+            throw SupervisedJournalRunnerError.launchFailed("journal child containment is in progress")
+        }
         Logger.journal.notice("journal-lifecycle: runner-start port=\(port, privacy: .public)")
         await cancelPendingRelaunch()
         launchRequest = LaunchRequest(
@@ -273,8 +289,11 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         guard let launchRequest else {
             throw SupervisedJournalRunnerError.alreadyStopped
         }
+        guard !hasContainingGeneration else {
+            throw SupervisedJournalRunnerError.launchFailed("journal child containment is in progress")
+        }
         Logger.journal.notice("journal-lifecycle: runner-restart transition=restarting")
-        statusSink(.restarting)
+        statusSink(.restarting(generation: nil))
         stopping = true
         await cancelPendingRelaunch()
         await stopCurrentProcess()
@@ -313,27 +332,37 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
     }
 
     public func currentIdentity() async -> SupervisedChildIdentity? {
-        childIdentity
+        guard let generation = activeGeneration,
+              let record = generationRecords[generation],
+              record.phase == .active else {
+            return nil
+        }
+        return record.identity
     }
 
     public func terminalReason() async -> JournalDiagnostic? {
         terminalDiagnostic
     }
 
-    public func markReady() async {
+    public func markReady(identity: SupervisedChildIdentity) async -> Bool {
+        guard let activeIdentity = currentActiveIdentity(), activeIdentity == identity else {
+            return false
+        }
         statusSink(.running)
         stabilityTask?.cancel()
         stabilityTask = Task { [weak self] in
             guard let self else { return }
             await self.sleepForStabilityAndReset()
         }
+        return true
     }
 
     private func launch(
         runtime: MaterializedRuntime,
         journalRoot: URL,
         port: Int,
-        receiptContext: JournalRuntimeEntryReceiptContext
+        receiptContext: JournalRuntimeEntryReceiptContext,
+        automaticReplacement: Bool = false
     ) async throws {
         if process?.isRunning == true {
             await stopCurrentProcess()
@@ -365,58 +394,149 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         do {
             process = child
             try child.run()
-            if let startTime = await evidenceReader.kernelStartTime(for: child.processIdentifier) {
-                let identity = SupervisedChildIdentity(
-                    pid: child.processIdentifier,
-                    kernelStartTime: startTime,
-                    generation: generation
-                )
-                childIdentity = identity
-                admittedReceiptIdentities[generation] = AdmittedReceiptIdentity(
-                    identity: identity,
-                    context: receiptContext
-                )
-                if let draft = receiptContext.payloadEntryDraft(identity: identity) {
-                    _ = await receiptContext.sink.append(draft)
+            // This is intentionally synchronous and immediately follows run().
+            // A Process termination callback may be queued already, but it cannot
+            // enter this actor before this raw generation marker exists.
+            generationRecords[generation] = GenerationRecord(
+                rawPID: child.processIdentifier,
+                context: receiptContext,
+                phase: .launching
+            )
+            activeGeneration = generation
+
+            guard let evidence = containmentEvidenceReader.containmentEvidence(for: child.processIdentifier),
+                  evidence.pid == child.processIdentifier,
+                  evidence.processGroupID > 0,
+                  evidence.processGroupID != getpgrp(),
+                  let startTime = evidence.kernelStartTime,
+                  startTime.isFinite else {
+                if var record = generationRecords[generation] {
+                    record.phase = .admissionFailed
+                    generationRecords[generation] = record
                 }
-            } else {
-                childIdentity = nil
+                activeGeneration = nil
+                Logger.journal.error("journal-lifecycle: runner-child-admission-failed pid=\(child.processIdentifier, privacy: .public)")
+                await stopChild(child)
+                if process?.processIdentifier == child.processIdentifier {
+                    process = nil
+                }
+                generationRecords.removeValue(forKey: generation)
+                throw SupervisedJournalRunnerError.launchFailed("journal child admission could not be verified")
+            }
+
+            let identity = SupervisedChildIdentity(
+                pid: child.processIdentifier,
+                kernelStartTime: startTime,
+                generation: generation
+            )
+            let domain = JournalContainmentDomain(
+                processGroupID: evidence.processGroupID,
+                birthKernelStartTime: startTime,
+                generation: generation,
+                leaderIdentity: identity
+            )
+            if var record = generationRecords[generation] {
+                record.identity = identity
+                record.containmentDomain = domain
+                record.phase = .active
+                generationRecords[generation] = record
+            }
+            if let draft = receiptContext.payloadEntryDraft(identity: identity) {
+                _ = await receiptContext.sink.append(draft)
             }
             Logger.journal.notice("journal-lifecycle: runner-child-launched pid=\(child.processIdentifier, privacy: .public) port=\(port, privacy: .public)")
+            if automaticReplacement,
+               activeGeneration == generation,
+               generationRecords[generation]?.phase == .active {
+                statusSink(.restarting(generation: generation))
+            }
         } catch {
             process = nil
-            childIdentity = nil
-            admittedReceiptIdentities.removeValue(forKey: generation)
+            activeGeneration = nil
+            generationRecords.removeValue(forKey: generation)
+            if let runnerError = error as? SupervisedJournalRunnerError {
+                throw runnerError
+            }
             throw SupervisedJournalRunnerError.launchFailed(error.localizedDescription)
         }
     }
 
     private func childExited(status: Int32, pid: pid_t, generation: UInt64) async {
+        guard let record = generationRecords[generation], record.rawPID == pid else { return }
+        guard activeGeneration == generation, record.phase == .active else {
+            await recordExitReceipt(generation: generation, pid: pid, status: status, expectedStop: true)
+            if activeGeneration == generation {
+                activeGeneration = nil
+                if process?.processIdentifier == pid {
+                    process = nil
+                }
+            }
+            if record.phase == .stopping || record.phase == .admissionFailed {
+                generationRecords.removeValue(forKey: generation)
+            }
+            return
+        }
+
+        var containingRecord = record
+        containingRecord.phase = .containing
+        generationRecords[generation] = containingRecord
+        activeGeneration = nil
         if process?.processIdentifier == pid {
             process = nil
-        }
-        if childIdentity?.generation == generation {
-            childIdentity = nil
         }
         stabilityTask?.cancel()
         stabilityTask = nil
         await cancelPendingRelaunch()
 
         let expectedStop = stopping
-        if let admitted = admittedReceiptIdentities[generation], admitted.identity.pid == pid {
-            admittedReceiptIdentities.removeValue(forKey: generation)
-            if let draft = admitted.context.payloadExitDraft(
-                identity: admitted.identity,
-                expectedStop: expectedStop,
-                terminationStatus: status
-            ) {
-                _ = await admitted.context.sink.append(draft)
-            }
-        }
+        await recordExitReceipt(generation: generation, pid: pid, status: status, expectedStop: expectedStop)
         if expectedStop {
             Logger.journal.notice("journal-lifecycle: child-exit status=\(status, privacy: .public) expected=true")
+            generationRecords.removeValue(forKey: generation)
+            return
         }
-        guard !expectedStop, !breakerTripped else { return }
+        guard !breakerTripped else {
+            generationRecords.removeValue(forKey: generation)
+            return
+        }
+
+        let containmentResult: JournalContainmentResult
+        if let domain = containingRecord.containmentDomain {
+            let containment = JournalProcessContainment(
+                evidenceReader: containmentEvidenceReader,
+                terminate: terminate,
+                clock: clock,
+                gracePeriod: terminationGrace
+            )
+            containmentResult = await containment.retire(domain: domain)
+        } else {
+            // Defensive fallback: .active currently always admits its domain synchronously.
+            containmentResult = .unresolved([.missingDomainAdmission])
+        }
+        guard !stopping,
+              !breakerTripped,
+              activeGeneration == nil,
+              generationRecords[generation]?.phase == .containing else {
+            generationRecords.removeValue(forKey: generation)
+            return
+        }
+        switch containmentResult {
+        case .unresolved:
+            let diagnostic = JournalDiagnostic(
+                commandLabel: "journal start --hosted-parent",
+                exitCode: status,
+                outputExcerpt: UICopy.JOURNAL_CHILD_CONTAINMENT_UNRESOLVED
+            )
+            terminalDiagnostic = diagnostic
+            breakerTripped = true
+            generationRecords.removeValue(forKey: generation)
+            statusSink(.stopped(diagnostic))
+            return
+        case .clean, .noActiveGeneration:
+            break
+        }
+
+        generationRecords[generation]?.phase = .exited
         recordUnexpectedExit()
         Logger.journal.warning("journal-lifecycle: child-exit status=\(status, privacy: .public) expected=false unexpectedCount=\(self.unexpectedExitTimes.count, privacy: .public)")
         if unexpectedExitTimes.count >= restartLimit {
@@ -428,6 +548,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
                 outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
             )
             terminalDiagnostic = diagnostic
+            generationRecords.removeValue(forKey: generation)
             statusSink(.stopped(diagnostic))
             return
         }
@@ -435,27 +556,43 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         guard launchRequest != nil else { return }
         let delay = backoffSchedule[min(backoffIndex, backoffSchedule.count - 1)]
         backoffIndex = min(backoffIndex + 1, backoffSchedule.count - 1)
+        pendingRelaunchGeneration = generation
         relaunchTask = Task { [weak self] in
-            await self?.performBackoffRelaunch(delay: delay)
+            await self?.performBackoffRelaunch(delay: delay, afterGeneration: generation)
         }
     }
 
     private func cancelPendingRelaunch() async {
-        relaunchTask?.cancel()
-        await relaunchTask?.value
+        let task = relaunchTask
+        let generation = pendingRelaunchGeneration
+        pendingRelaunchGeneration = nil
+        task?.cancel()
+        await task?.value
         relaunchTask = nil
+        if let generation, generationRecords[generation]?.phase == .exited {
+            generationRecords.removeValue(forKey: generation)
+        }
     }
 
-    private func performBackoffRelaunch(delay: Duration) async {
+    private func performBackoffRelaunch(delay: Duration, afterGeneration generation: UInt64) async {
         await clock.sleep(for: delay)
-        guard !Task.isCancelled, !stopping, !breakerTripped, let launchRequest else { return }
+        guard !Task.isCancelled,
+              pendingRelaunchGeneration == generation,
+              generationRecords[generation]?.phase == .exited,
+              !stopping,
+              !breakerTripped,
+              let launchRequest else { return }
+        pendingRelaunchGeneration = nil
+        relaunchTask = nil
+        generationRecords.removeValue(forKey: generation)
         Logger.journal.notice("journal-lifecycle: runner-backoff-relaunch delaySeconds=\(delay.components.seconds, privacy: .public)")
         do {
             try await launch(
                 runtime: launchRequest.runtime,
                 journalRoot: launchRequest.journalRoot,
                 port: launchRequest.port,
-                receiptContext: launchRequest.receiptContext
+                receiptContext: launchRequest.receiptContext,
+                automaticReplacement: true
             )
         } catch SupervisedJournalRunnerError.gateBlocked(let blockage) {
             Logger.journal.error("journal-lifecycle: runner-backoff-gate-blocked")
@@ -489,10 +626,19 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
     }
 
     private func stopCurrentProcess() async {
-        process?.closeParentInput()
-        childIdentity = nil
-
         guard let child = process else { return }
+        if let generation = activeGeneration, var record = generationRecords[generation], record.rawPID == child.processIdentifier {
+            record.phase = .stopping
+            generationRecords[generation] = record
+        }
+        await stopChild(child)
+        if process?.processIdentifier == child.processIdentifier {
+            process = nil
+        }
+    }
+
+    private func stopChild(_ child: any SupervisedJournalChildProcess) async {
+        child.closeParentInput()
         await waitForProcessExit(child, timeout: terminationWait)
         if child.isRunning {
             _ = terminate(child.processIdentifier, SIGTERM)
@@ -501,7 +647,40 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         if child.isRunning {
             _ = terminate(child.processIdentifier, SIGKILL)
         }
-        process = nil
+    }
+
+    private func currentActiveIdentity() -> SupervisedChildIdentity? {
+        guard let generation = activeGeneration,
+              let record = generationRecords[generation],
+              record.phase == .active else {
+            return nil
+        }
+        return record.identity
+    }
+
+    private var hasContainingGeneration: Bool {
+        generationRecords.values.contains { $0.phase == .containing }
+    }
+
+    private func recordExitReceipt(
+        generation: UInt64,
+        pid: pid_t,
+        status: Int32,
+        expectedStop: Bool
+    ) async {
+        guard var record = generationRecords[generation],
+              record.rawPID == pid,
+              !record.receiptRecorded,
+              let identity = record.identity else { return }
+        record.receiptRecorded = true
+        generationRecords[generation] = record
+        if let draft = record.context.payloadExitDraft(
+            identity: identity,
+            expectedStop: expectedStop,
+            terminationStatus: status
+        ) {
+            _ = await record.context.sink.append(draft)
+        }
     }
 
     private func waitForProcessExit(_ child: any SupervisedJournalChildProcess, timeout: Duration) async {

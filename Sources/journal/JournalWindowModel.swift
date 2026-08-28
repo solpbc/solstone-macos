@@ -72,7 +72,7 @@ enum JournalRunDisplay: String, CaseIterable, Sendable {
             switch runtimeStatus {
             case .running:
                 return .running
-            case .restarting:
+            case .restarting(_):
                 return .starting
             case .stopped, .stoppedByUser:
                 return .stopped
@@ -83,7 +83,7 @@ enum JournalRunDisplay: String, CaseIterable, Sendable {
             switch runtimeStatus {
             case .stopped, .stoppedByUser:
                 return .stopped
-            case .restarting:
+            case .restarting(_):
                 return .starting
             case .unobserved, .running, .setupNeeded, .unknown:
                 return .unknown
@@ -92,7 +92,7 @@ enum JournalRunDisplay: String, CaseIterable, Sendable {
             switch runtimeStatus {
             case .stopped, .stoppedByUser:
                 return .stopped
-            case .restarting:
+            case .restarting(_):
                 return .starting
             case .unobserved, .running, .setupNeeded, .unknown:
                 return .unknown

@@ -19,7 +19,7 @@ struct SupervisedJournalRunnerTests {
             clock: NoopRunnerClock(),
             statusSink: { _ in },
             gate: gate,
-            evidenceReader: FixedStartTimeReader(startTime: 1_000.0),
+            containmentEvidenceReader: FixedStartTimeReader(startTime: 1_000.0),
             processSpawner: spawner,
             pidExists: { _ in false }
         )
@@ -53,7 +53,7 @@ struct SupervisedJournalRunnerTests {
             clock: NoopRunnerClock(),
             statusSink: { _ in },
             gate: RecordingRunnerGate(result: .blocked(blockage)),
-            evidenceReader: FixedStartTimeReader(startTime: 1_000.0),
+            containmentEvidenceReader: FixedStartTimeReader(startTime: 1_000.0),
             processSpawner: spawner,
             pidExists: { _ in false }
         )
@@ -82,7 +82,7 @@ struct SupervisedJournalRunnerTests {
             clock: NoopRunnerClock(),
             statusSink: { _ in },
             gate: RecordingRunnerGate(result: .success),
-            evidenceReader: FixedStartTimeReader(startTimes: [1_000, 2_000, 3_000]),
+            containmentEvidenceReader: FixedStartTimeReader(startTimes: [1_000, 2_000, 3_000]),
             processSpawner: spawner,
             pidExists: { _ in false }
         )
@@ -109,7 +109,7 @@ struct SupervisedJournalRunnerTests {
         let expectedSpawner = RecordingProcessSpawner(pids: [4242])
         let expectedRunner = SupervisedJournalRunner(
             clock: NoopRunnerClock(), statusSink: { _ in }, gate: RecordingRunnerGate(result: .success),
-            evidenceReader: FixedStartTimeReader(startTime: 1_000), processSpawner: expectedSpawner, pidExists: { _ in false }
+            containmentEvidenceReader: FixedStartTimeReader(startTime: 1_000), processSpawner: expectedSpawner, pidExists: { _ in false }
         )
         try await expectedRunner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: expected.context)
         await expectedRunner.stop()
@@ -122,7 +122,7 @@ struct SupervisedJournalRunnerTests {
         let unexpectedSpawner = RecordingProcessSpawner(pids: [4243, 4244])
         let unexpectedRunner = SupervisedJournalRunner(
             clock: NoopRunnerClock(), statusSink: { _ in }, gate: RecordingRunnerGate(result: .success),
-            evidenceReader: FixedStartTimeReader(startTimes: [2_000, 3_000]), processSpawner: unexpectedSpawner, pidExists: { _ in false }
+            containmentEvidenceReader: FixedStartTimeReader(startTimes: [2_000, 3_000]), processSpawner: unexpectedSpawner, pidExists: { _ in false }
         )
         try await unexpectedRunner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: unexpected.context)
         unexpectedSpawner.exit(spawn: 0, status: 9)
@@ -131,16 +131,23 @@ struct SupervisedJournalRunnerTests {
         #expect(payloadExits(unexpected.sink.storedRecords(attemptID: unexpected.context.attemptID)).map(\.expectedStop) == [false])
     }
 
-    @Test func writesNoExitForUnadmittedOrStillLiveStoppedChild() async throws {
+    @Test func admissionFailureWritesNoReceiptAndStillLiveStoppedChildWritesNoExit() async throws {
         let fixture = try RunnerFixture()
         defer { fixture.clear() }
         let unadmitted = makeReceiptFixture()
         let unadmittedSpawner = RecordingProcessSpawner(pids: [4242])
         let unadmittedRunner = SupervisedJournalRunner(
             clock: NoopRunnerClock(), statusSink: { _ in }, gate: RecordingRunnerGate(result: .success),
-            evidenceReader: FixedStartTimeReader(startTimes: [nil]), processSpawner: unadmittedSpawner, pidExists: { _ in false }
+            containmentEvidenceReader: FixedStartTimeReader(startTimes: [nil]), processSpawner: unadmittedSpawner, pidExists: { _ in false }
         )
-        try await unadmittedRunner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: unadmitted.context)
+        await #expect(throws: SupervisedJournalRunnerError.self) {
+            try await unadmittedRunner.start(
+                runtime: fixture.runtime,
+                journalRoot: fixture.realJournalRoot,
+                port: 5015,
+                receiptContext: unadmitted.context
+            )
+        }
         unadmittedSpawner.exit(spawn: 0, status: 9)
         await Task.yield()
         #expect(payloadEntries(unadmitted.sink.storedRecords(attemptID: unadmitted.context.attemptID)).isEmpty)
@@ -150,7 +157,7 @@ struct SupervisedJournalRunnerTests {
         let liveSpawner = RecordingProcessSpawner(pids: [4243], closeParentInputStopsProcess: false)
         let liveRunner = SupervisedJournalRunner(
             clock: AdvancingRunnerClock(), statusSink: { _ in }, gate: RecordingRunnerGate(result: .success),
-            evidenceReader: FixedStartTimeReader(startTime: 3_000), processSpawner: liveSpawner, pidExists: { _ in true },
+            containmentEvidenceReader: FixedStartTimeReader(startTime: 3_000), processSpawner: liveSpawner, pidExists: { _ in true },
             terminate: { _, _ in 0 }
         )
         try await liveRunner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: live.context)
@@ -227,7 +234,7 @@ struct SupervisedJournalRunnerTests {
         let spawner = RecordingProcessSpawner(pids: [4242, 4242])
         let runner = SupervisedJournalRunner(
             clock: NoopRunnerClock(), statusSink: { _ in }, gate: RecordingRunnerGate(result: .success),
-            evidenceReader: FixedStartTimeReader(startTimes: [1_000, 2_000]), processSpawner: spawner, pidExists: { _ in false }
+            containmentEvidenceReader: FixedStartTimeReader(startTimes: [1_000, 2_000]), processSpawner: spawner, pidExists: { _ in false }
         )
         try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: receipts.context)
         try await runner.restart()
@@ -240,6 +247,175 @@ struct SupervisedJournalRunnerTests {
         let records = receipts.sink.storedRecords(attemptID: receipts.context.attemptID)
         #expect(payloadEntries(records).map(\.childKernelStartTimeMicroseconds) == [1_000_000_000, 2_000_000_000])
         #expect(payloadExits(records).map(\.childKernelStartTimeMicroseconds) == [1_000_000_000, 2_000_000_000])
+    }
+
+    @Test func synchronousExitDuringRunIsAdmittedAndProducesOneReplacement() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let receipts = makeReceiptFixture()
+        let spawner = RecordingProcessSpawner(
+            pids: [4242, 4243],
+            exitFirstRunWithStatus: 9
+        )
+        let runner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(),
+            statusSink: { _ in },
+            gate: RecordingRunnerGate(result: .success),
+            containmentEvidenceReader: FixedStartTimeReader(startTimes: [1_000, 2_000]),
+            processSpawner: spawner,
+            pidExists: { _ in false }
+        )
+
+        try await runner.start(
+            runtime: fixture.runtime,
+            journalRoot: fixture.realJournalRoot,
+            port: 5015,
+            receiptContext: receipts.context
+        )
+        try await waitForSpawnCount(spawner, count: 2)
+
+        #expect(await runner.currentIdentity() == .init(pid: 4243, kernelStartTime: 2_000, generation: 2))
+        #expect(payloadEntries(receipts.sink.storedRecords(attemptID: receipts.context.attemptID)).map(\.generation) == [1, 2])
+        #expect(payloadExits(receipts.sink.storedRecords(attemptID: receipts.context.attemptID)).map(\.expectedStop) == [false])
+    }
+
+    @Test func duplicateExitCallbacksScheduleOnlyOneReplacement() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let spawner = RecordingProcessSpawner(pids: [4242, 4243])
+        let runner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(),
+            statusSink: { _ in },
+            gate: RecordingRunnerGate(result: .success),
+            containmentEvidenceReader: FixedStartTimeReader(startTimes: [1_000, 2_000]),
+            processSpawner: spawner,
+            pidExists: { _ in false }
+        )
+
+        try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: makeReceiptFixture().context)
+        spawner.exit(spawn: 0, status: 9)
+        spawner.exit(spawn: 0, status: 9)
+        try await waitForSpawnCount(spawner, count: 2)
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(spawner.spawnRequests().count == 2)
+        #expect(await runner.currentIdentity()?.generation == 2)
+    }
+
+    @Test func cleanContainmentPreservesExistingFiveExitBreakerThreshold() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let statuses = RunnerStatusRecorder()
+        let spawner = RecordingProcessSpawner(pids: [4242, 4243, 4244, 4245, 4246])
+        let runner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(),
+            statusSink: { statuses.append($0) },
+            gate: RecordingRunnerGate(result: .success),
+            containmentEvidenceReader: FixedStartTimeReader(startTimes: [1_000, 2_000, 3_000, 4_000, 5_000]),
+            processSpawner: spawner,
+            pidExists: { _ in false }
+        )
+
+        try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: makeReceiptFixture().context)
+        for spawn in 0..<4 {
+            spawner.exit(spawn: spawn, status: 9)
+            try await waitForSpawnCount(spawner, count: spawn + 2)
+        }
+        spawner.exit(spawn: 4, status: 9)
+        try await waitForStatusCount(statuses, count: 5)
+
+        #expect(spawner.spawnRequests().count == 5)
+        guard case .stopped(let diagnostic) = statuses.snapshot().last else {
+            Issue.record("expected terminal breaker status")
+            return
+        }
+        #expect(diagnostic.outputExcerpt == UICopy.JOURNAL_CHILD_BREAKER_TRIPPED)
+    }
+
+    @Test func unresolvedContainmentSignalsOnlyVerifiedMembersAndNeverReachesRelaunchGate() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let leaderPID: pid_t = 4242
+        let foreignPID: pid_t = 5252
+        let startTime = Date().timeIntervalSince1970 - 1
+        let reader = ScriptedContainmentEvidenceReader(
+            memberships: [[leaderPID, foreignPID], [], []],
+            evidenceByPID: [
+                leaderPID: .init(
+                    pid: leaderPID,
+                    processGroupID: leaderPID,
+                    uid: getuid(),
+                    username: currentUsername(),
+                    kernelStartTime: startTime
+                ),
+                foreignPID: .init(
+                    pid: foreignPID,
+                    processGroupID: leaderPID,
+                    uid: getuid() + 1,
+                    username: "foreign",
+                    kernelStartTime: startTime
+                ),
+                5353: .init(
+                    pid: 5353,
+                    processGroupID: leaderPID,
+                    uid: getuid(),
+                    username: currentUsername(),
+                    kernelStartTime: startTime
+                )
+            ]
+        )
+        let signals = RunnerSignalRecorder()
+        let statuses = RunnerStatusRecorder()
+        let gate = RecordingRunnerGate(result: .success)
+        let spawner = RecordingProcessSpawner(pid: leaderPID)
+        let runner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(),
+            statusSink: { statuses.append($0) },
+            gate: gate,
+            containmentEvidenceReader: reader,
+            processSpawner: spawner,
+            pidExists: { _ in false },
+            terminate: { pid, signal in
+                signals.append(pid: pid, signal: signal)
+                return 0
+            }
+        )
+
+        try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: makeReceiptFixture().context)
+        spawner.exit(spawn: 0, status: 9)
+        try await waitForStatusCount(statuses, count: 1)
+
+        #expect(spawner.spawnRequests().count == 1)
+        #expect(gate.roots().count == 1)
+        #expect(signals.snapshot() == [.init(pid: leaderPID, signal: SIGTERM)])
+        guard case .stopped(let diagnostic) = statuses.snapshot().last else {
+            Issue.record("expected containment terminal status")
+            return
+        }
+        #expect(diagnostic.outputExcerpt == UICopy.JOURNAL_CHILD_CONTAINMENT_UNRESOLVED)
+    }
+
+    @Test func markReadyRejectsStaleGenerationIdentity() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let statuses = RunnerStatusRecorder()
+        let runner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(),
+            statusSink: { statuses.append($0) },
+            gate: RecordingRunnerGate(result: .success),
+            containmentEvidenceReader: FixedStartTimeReader(startTime: 1_000),
+            processSpawner: RecordingProcessSpawner(pid: 4242),
+            pidExists: { _ in false }
+        )
+        try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: makeReceiptFixture().context)
+
+        let stale = SupervisedChildIdentity(pid: 4242, kernelStartTime: 1_000, generation: 2)
+        #expect(!(await runner.markReady(identity: stale)))
+        #expect(statuses.snapshot().isEmpty)
+
+        let current = try #require(await runner.currentIdentity())
+        #expect(await runner.markReady(identity: current))
+        #expect(statuses.snapshot() == [.running])
     }
 }
 
@@ -329,7 +505,7 @@ private func assertOuterOnlyClosedChainAfterExit(
     let runner = SupervisedJournalRunner(
         statusSink: { _ in },
         gate: RecordingRunnerGate(result: .success),
-        evidenceReader: FixedStartTimeReader(startTime: 1_000),
+        containmentEvidenceReader: FixedStartTimeReader(startTime: 1_000),
         processSpawner: spawner,
         pidExists: { _ in false }
     )
@@ -385,6 +561,15 @@ private func waitForNoActiveChild(_ runner: SupervisedJournalRunner) async throw
         try await Task.sleep(for: .milliseconds(5))
     }
     Issue.record("timed out waiting for child exit")
+}
+
+private func waitForStatusCount(_ recorder: RunnerStatusRecorder, count: Int) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+    while ContinuousClock.now < deadline {
+        if recorder.snapshot().count >= count { return }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    Issue.record("timed out waiting for runtime status")
 }
 
 private func candidateProvenanceFixtureBundle(named name: String) throws -> Bundle {
@@ -500,6 +685,7 @@ private final class RecordingProcessSpawner: SupervisedJournalProcessSpawning, @
     private let lock = NSLock()
     private let pids: [pid_t]
     private let closeParentInputStopsProcess: Bool
+    private let exitFirstRunWithStatus: Int32?
     private var requests: [SupervisedJournalSpawnRequest] = []
     private var children: [RecordingChildProcess] = []
 
@@ -507,9 +693,14 @@ private final class RecordingProcessSpawner: SupervisedJournalProcessSpawning, @
         self.init(pids: [pid])
     }
 
-    init(pids: [pid_t], closeParentInputStopsProcess: Bool = true) {
+    init(
+        pids: [pid_t],
+        closeParentInputStopsProcess: Bool = true,
+        exitFirstRunWithStatus: Int32? = nil
+    ) {
         self.pids = pids
         self.closeParentInputStopsProcess = closeParentInputStopsProcess
+        self.exitFirstRunWithStatus = exitFirstRunWithStatus
     }
 
     func makeChildProcess(for request: SupervisedJournalSpawnRequest) -> any SupervisedJournalChildProcess {
@@ -519,7 +710,8 @@ private final class RecordingProcessSpawner: SupervisedJournalProcessSpawning, @
                 pid: pids[min(index, pids.count - 1)],
                 request: request,
                 spawner: self,
-                closeParentInputStopsProcess: closeParentInputStopsProcess
+                closeParentInputStopsProcess: closeParentInputStopsProcess,
+                exitDuringRunStatus: index == 0 ? exitFirstRunWithStatus : nil
             )
             children.append(child)
             return child
@@ -550,6 +742,7 @@ private final class RecordingChildProcess: SupervisedJournalChildProcess, @unche
     private let request: SupervisedJournalSpawnRequest
     private let spawner: RecordingProcessSpawner
     private let closeParentInputStopsProcess: Bool
+    private let exitDuringRunStatus: Int32?
     private var running = false
     private var terminationHandler: (@Sendable (Int32, pid_t) -> Void)?
 
@@ -557,12 +750,14 @@ private final class RecordingChildProcess: SupervisedJournalChildProcess, @unche
         pid: pid_t,
         request: SupervisedJournalSpawnRequest,
         spawner: RecordingProcessSpawner,
-        closeParentInputStopsProcess: Bool
+        closeParentInputStopsProcess: Bool,
+        exitDuringRunStatus: Int32?
     ) {
         self.pid = pid
         self.request = request
         self.spawner = spawner
         self.closeParentInputStopsProcess = closeParentInputStopsProcess
+        self.exitDuringRunStatus = exitDuringRunStatus
     }
 
     var processIdentifier: pid_t {
@@ -584,6 +779,9 @@ private final class RecordingChildProcess: SupervisedJournalChildProcess, @unche
             running = true
         }
         spawner.recordSpawn(request)
+        if let exitDuringRunStatus {
+            exit(status: exitDuringRunStatus)
+        }
     }
 
     func closeParentInput() {
@@ -603,7 +801,7 @@ private final class RecordingChildProcess: SupervisedJournalChildProcess, @unche
     }
 }
 
-private final class FixedStartTimeReader: JournalProcessEvidenceReading, @unchecked Sendable {
+private final class FixedStartTimeReader: JournalProcessContainmentEvidenceReading, @unchecked Sendable {
     private let lock = NSLock()
     private var startTimes: [Double?]
 
@@ -615,17 +813,21 @@ private final class FixedStartTimeReader: JournalProcessEvidenceReading, @unchec
         self.startTimes = startTimes
     }
 
-    func evidence(for pid: pid_t) async -> JournalProcessEvidence? {
+    func containmentEvidence(for pid: pid_t) -> JournalContainmentMemberEvidence? {
         let startTime = lock.withLock {
             startTimes.isEmpty ? nil : startTimes.removeFirst()
         }
-        return JournalProcessEvidence(
+        return JournalContainmentMemberEvidence(
             pid: pid,
-            ppid: 1,
+            processGroupID: pid,
             uid: getuid(),
             username: currentUsername(),
             kernelStartTime: startTime
         )
+    }
+
+    func processIDs(inProcessGroup processGroupID: pid_t) -> [pid_t]? {
+        []
     }
 }
 
@@ -644,5 +846,58 @@ private final class AdvancingRunnerClock: MonotonicClock, @unchecked Sendable {
 
     func sleep(for duration: Duration) async {
         lock.withLock { current += duration }
+    }
+}
+
+private final class ScriptedContainmentEvidenceReader: JournalProcessContainmentEvidenceReading, @unchecked Sendable {
+    private let lock = NSLock()
+    private var memberships: [[pid_t]?]
+    private let evidenceByPID: [pid_t: JournalContainmentMemberEvidence]
+
+    init(memberships: [[pid_t]?], evidenceByPID: [pid_t: JournalContainmentMemberEvidence]) {
+        self.memberships = memberships
+        self.evidenceByPID = evidenceByPID
+    }
+
+    func containmentEvidence(for pid: pid_t) -> JournalContainmentMemberEvidence? {
+        evidenceByPID[pid]
+    }
+
+    func processIDs(inProcessGroup processGroupID: pid_t) -> [pid_t]? {
+        lock.withLock {
+            guard !memberships.isEmpty else { return [] }
+            return memberships.removeFirst()
+        }
+    }
+}
+
+private final class RunnerSignalRecorder: @unchecked Sendable {
+    struct Signal: Equatable, Sendable {
+        let pid: pid_t
+        let signal: Int32
+    }
+
+    private let lock = NSLock()
+    private var values: [Signal] = []
+
+    func append(pid: pid_t, signal: Int32) {
+        lock.withLock { values.append(.init(pid: pid, signal: signal)) }
+    }
+
+    func snapshot() -> [Signal] {
+        lock.withLock { values }
+    }
+}
+
+private final class RunnerStatusRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var statuses: [JournalRuntimeStatus] = []
+
+    func append(_ status: JournalRuntimeStatus) {
+        lock.withLock { statuses.append(status) }
+    }
+
+    func snapshot() -> [JournalRuntimeStatus] {
+        lock.withLock { statuses }
     }
 }

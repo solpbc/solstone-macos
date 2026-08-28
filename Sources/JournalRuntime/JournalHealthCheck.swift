@@ -26,7 +26,7 @@ public enum JournalRuntimeStatus: Equatable, Sendable {
     case running
     case stopped(JournalDiagnostic)
     case stoppedByUser
-    case restarting
+    case restarting(generation: UInt64?)
     case setupNeeded
     case unknown(JournalDiagnostic)
 
@@ -34,13 +34,13 @@ public enum JournalRuntimeStatus: Equatable, Sendable {
         switch self {
         case .stopped(let diagnostic), .unknown(let diagnostic):
             return diagnostic
-        case .unobserved, .running, .stoppedByUser, .restarting, .setupNeeded:
+        case .unobserved, .running, .stoppedByUser, .restarting(_), .setupNeeded:
             return nil
         }
     }
 
     public var isRestarting: Bool {
-        if case .restarting = self { return true }
+        if case .restarting(_) = self { return true }
         return false
     }
 

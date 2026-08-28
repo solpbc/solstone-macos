@@ -132,7 +132,7 @@ private actor ObservationRunner: SupervisedChildRunning {
         nil
     }
 
-    func markReady() async {}
+    func markReady(identity: SupervisedChildIdentity) async -> Bool { true }
 }
 
 @MainActor

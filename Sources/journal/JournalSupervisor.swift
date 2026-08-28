@@ -34,6 +34,8 @@ final class JournalSupervisor {
     private let readinessTimeout: Duration
     private let receiptContextFactory: () -> JournalRuntimeEntryReceiptContext
     private var receiptContext: JournalRuntimeEntryReceiptContext?
+    private var replacementReadinessTask: Task<Void, Never>?
+    private var replacementReadinessGeneration: UInt64?
 
     private(set) var state: JournalSupervisorState = .idle
     private(set) var runtimeStatus: JournalRuntimeStatus = .unobserved
@@ -82,6 +84,8 @@ final class JournalSupervisor {
     func applyRuntimeStatus(_ status: JournalRuntimeStatus) {
         runtimeStatus = status
         Logger.journalSupervisor.notice("journal runtime status: \(String(describing: status), privacy: .public)")
+        guard case .restarting(let generation?) = status else { return }
+        beginReplacementReadiness(generation: generation)
     }
 
     func configureReceiptContext(_ context: JournalRuntimeEntryReceiptContext) {
@@ -91,6 +95,7 @@ final class JournalSupervisor {
 
     @discardableResult
     func start(journalRoot rawJournalRoot: URL) async -> Bool {
+        cancelReplacementReadiness()
         let journalRoot = rawJournalRoot.standardizedFileURL
         blockedReason = nil
         activeRuntime = nil
@@ -142,6 +147,7 @@ final class JournalSupervisor {
 
     @discardableResult
     func stop() async -> Bool {
+        cancelReplacementReadiness()
         blockedReason = nil
         await runner.stop()
         activeRuntime = nil
@@ -153,6 +159,7 @@ final class JournalSupervisor {
 
     @discardableResult
     func restart() async -> Bool {
+        cancelReplacementReadiness()
         blockedReason = nil
         guard let runtime = activeRuntime, let journalRoot = activeJournalRoot else {
             let diagnostic = JournalDiagnostic(
@@ -186,7 +193,12 @@ final class JournalSupervisor {
         return await finishReadiness(journalRoot: journalRoot, runtime: runtime)
     }
 
-    private func finishReadiness(journalRoot: URL, runtime: MaterializedRuntime) async -> Bool {
+    private func finishReadiness(
+        journalRoot: URL,
+        runtime: MaterializedRuntime,
+        replacementGeneration: UInt64? = nil
+    ) async -> Bool {
+        guard readinessAttemptIsCurrent(replacementGeneration) else { return false }
         state = .waitingForReadiness
         switch await readinessGate.waitUntilReady(
             journalRoot: journalRoot,
@@ -196,17 +208,25 @@ final class JournalSupervisor {
                 await runner.terminalReason()
             },
             identityProvider: { [runner] in
-                await runner.currentIdentity()
+                guard let identity = await runner.currentIdentity() else { return nil }
+                guard replacementGeneration == nil || identity.generation == replacementGeneration else { return nil }
+                return identity
+            },
+            readinessAcceptance: { [runner] identity in
+                await runner.markReady(identity: identity)
             }
         ) {
         case .ready:
-            await runner.markReady()
+            guard readinessAttemptIsCurrent(replacementGeneration) else { return false }
+            finishReplacementReadiness(generation: replacementGeneration)
             activeRuntime = runtime
             activeJournalRoot = journalRoot
             state = .running
             Logger.journalSupervisor.notice("journal supervisor ready")
             return true
         case .failed(let diagnostic):
+            guard readinessAttemptIsCurrent(replacementGeneration) else { return false }
+            finishReplacementReadiness(generation: replacementGeneration)
             await runner.stop()
             activeRuntime = nil
             activeJournalRoot = nil
@@ -215,6 +235,8 @@ final class JournalSupervisor {
             Logger.journalSupervisor.warning("journal readiness failed: \(diagnostic.outputExcerpt ?? diagnostic.commandLabel, privacy: .public)")
             return false
         case .failedTerminal(let diagnostic):
+            guard readinessAttemptIsCurrent(replacementGeneration) else { return false }
+            finishReplacementReadiness(generation: replacementGeneration)
             await runner.stop()
             activeRuntime = nil
             activeJournalRoot = nil
@@ -236,6 +258,7 @@ final class JournalSupervisor {
 
     func terminate(reason: String = "ordinary-quit") async {
         guard state != .terminating else { return }
+        cancelReplacementReadiness()
         state = .terminating
         blockedReason = nil
         activeRuntime = nil
@@ -243,5 +266,39 @@ final class JournalSupervisor {
         ExpectedExitMarker.markExpectedExit(reason: reason, at: markerURL)
         await runner.stopForTermination()
         Logger.journalSupervisor.notice("journal supervisor terminated")
+    }
+
+    private func beginReplacementReadiness(generation: UInt64) {
+        cancelReplacementReadiness()
+        guard let runtime = activeRuntime, let journalRoot = activeJournalRoot else { return }
+        replacementReadinessGeneration = generation
+        replacementReadinessTask = Task { @MainActor [weak self] in
+            guard let self,
+                  self.readinessAttemptIsCurrent(generation),
+                  let identity = await self.runner.currentIdentity(),
+                  identity.generation == generation else { return }
+            _ = await self.finishReadiness(
+                journalRoot: journalRoot,
+                runtime: runtime,
+                replacementGeneration: generation
+            )
+        }
+    }
+
+    private func cancelReplacementReadiness() {
+        replacementReadinessTask?.cancel()
+        replacementReadinessTask = nil
+        replacementReadinessGeneration = nil
+    }
+
+    private func finishReplacementReadiness(generation: UInt64?) {
+        guard let generation, replacementReadinessGeneration == generation else { return }
+        replacementReadinessTask = nil
+        replacementReadinessGeneration = nil
+    }
+
+    private func readinessAttemptIsCurrent(_ generation: UInt64?) -> Bool {
+        guard let generation else { return true }
+        return replacementReadinessGeneration == generation && !Task.isCancelled
     }
 }
