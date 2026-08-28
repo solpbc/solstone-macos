@@ -78,10 +78,14 @@ public struct JournalSetupRunner: Sendable {
             throw JournalSetupRunnerError.materializeFailed(message: error.localizedDescription)
         }
 
-        do {
-            try runtime.layout.ensureCreated()
-        } catch {
-            throw JournalSetupRunnerError.runtimeDirectoryFailed(message: error.localizedDescription)
+        // Native runtime files live in the signed app bundle and can be on a
+        // read-only App Translocation mount; only materialized runtimes own these directories.
+        if !usesNativeRuntimeMaterializer {
+            do {
+                try runtime.layout.ensureCreated()
+            } catch {
+                throw JournalSetupRunnerError.runtimeDirectoryFailed(message: error.localizedDescription)
+            }
         }
 
         let output = JournalSetupOutputCollector()

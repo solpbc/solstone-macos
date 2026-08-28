@@ -13,6 +13,31 @@ struct JournalSetupRunnerTests {
         #expect(JournalSetupRunner().usesNativeRuntimeMaterializer)
     }
 
+    @Test func nativeRuntimeDoesNotCreateDirectoriesInsideTheAppBundle() async throws {
+        let workspace = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let runtimeRoot = try makeNativeRuntimeBundle(in: workspace)
+        let subprocess = FakeSubprocessRunner()
+        subprocess.enqueue("setup", .success(stdout: Data(Self.okSetupJSONL.utf8)))
+        let runner = JournalSetupRunner(
+            subprocessRunner: subprocess,
+            gate: MockSingleSupervisorGate(),
+            materializer: NativeJournalRuntimeMaterializer(
+                bundleURL: workspace.appendingPathComponent("Journal.app", isDirectory: true),
+                environment: [:]
+            )
+        )
+
+        _ = try await runner.run(journalRoot: workspace.appendingPathComponent("journal", isDirectory: true))
+
+        let layout = SolstoneRuntimeLayout(rootURL: runtimeRoot)
+        #expect(!FileManager.default.fileExists(atPath: layout.pythonDir.path))
+        #expect(!FileManager.default.fileExists(atPath: layout.cacheDir.path))
+        #expect(!FileManager.default.fileExists(atPath: layout.toolsDir.path))
+        let setup = try #require(subprocess.invocations.first { $0.arguments.first == "setup" })
+        #expect(setup.executable == layout.journalBinary)
+    }
+
     @Test func setupUsesExactSharedArgumentsIncludingSkipWrapper() async throws {
         let runtime = try makeRuntime()
         defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
@@ -259,6 +284,27 @@ struct JournalSetupRunnerTests {
             .appendingPathComponent("journal-setup-runner-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func makeNativeRuntimeBundle(in workspace: URL) throws -> URL {
+        let bundleURL = workspace.appendingPathComponent("Journal.app", isDirectory: true)
+        let contentsURL = bundleURL.appendingPathComponent("Contents", isDirectory: true)
+        let runtimeRoot = contentsURL.appendingPathComponent("Resources/solstone-runtime", isDirectory: true)
+        let binURL = runtimeRoot.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: binURL, withIntermediateDirectories: true)
+        let info: [String: String] = [
+            "CFBundleIdentifier": "app.solpbc.journal.tests",
+            "CFBundleShortVersionString": "0.1.0",
+            "CFBundleVersion": "1",
+        ]
+        let infoData = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+        try infoData.write(to: contentsURL.appendingPathComponent("Info.plist"))
+        for name in ["journal", "solstone"] {
+            let executable = binURL.appendingPathComponent(name)
+            try Data("#!/bin/sh\\nexit 0\\n".utf8).write(to: executable)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        }
+        return runtimeRoot
     }
 }
 
