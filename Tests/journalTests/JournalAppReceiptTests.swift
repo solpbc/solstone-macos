@@ -10,6 +10,12 @@ import Testing
 @MainActor
 @Suite("JournalAppReceipts")
 struct JournalAppReceiptTests {
+    @Test func objectiveCDelegateInitializerIsImplemented() {
+        let type: NSObject.Type = JournalAppDelegate.self
+        let delegate = type.init()
+        #expect(delegate is JournalAppDelegate)
+    }
+
     @Test func outerEntryPersistsSynchronouslyWhenNoAppModelExists() throws {
         let baseURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".journal-app-receipts-tests-\(UUID().uuidString)", isDirectory: true)

@@ -121,13 +121,19 @@ final class JournalAppDelegate: NSObject, NSApplicationDelegate {
     private let receiptContextFactory: () -> JournalRuntimeEntryReceiptContext
     private let modelLauncher: (JournalRuntimeEntryReceiptContext) -> Void
 
-    init(
-        receiptContextFactory: @escaping () -> JournalRuntimeEntryReceiptContext = {
+    override init() {
+        self.receiptContextFactory = {
             JournalRuntimeEntryReceiptLaunch.begin(provenanceBundle: .module)
-        },
-        modelLauncher: @escaping (JournalRuntimeEntryReceiptContext) -> Void = { context in
+        }
+        self.modelLauncher = { context in
             JournalAppModel.shared?.launch(receiptContext: context)
         }
+        super.init()
+    }
+
+    init(
+        receiptContextFactory: @escaping () -> JournalRuntimeEntryReceiptContext,
+        modelLauncher: @escaping (JournalRuntimeEntryReceiptContext) -> Void
     ) {
         self.receiptContextFactory = receiptContextFactory
         self.modelLauncher = modelLauncher
