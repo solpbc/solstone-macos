@@ -343,7 +343,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         let spawnRequest = SupervisedJournalSpawnRequest(
             executableURL: runtime.layout.journalBinary,
             currentDirectoryURL: canonicalJournalRoot,
-            arguments: ["start", "--app-supervised", String(port)],
+            arguments: ["start", "--hosted-parent", String(port)],
             environment: runtime.environment
         )
         switch await gate.prepareForSpawn(journalRoot: canonicalJournalRoot) {
@@ -423,7 +423,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
             breakerTripped = true
             Logger.journal.error("journal-lifecycle: runner-breaker-tripped status=\(status, privacy: .public) unexpectedCount=\(self.unexpectedExitTimes.count, privacy: .public)")
             let diagnostic = JournalDiagnostic(
-                commandLabel: "journal start --app-supervised",
+                commandLabel: "journal start --hosted-parent",
                 exitCode: status,
                 outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
             )
@@ -466,7 +466,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         } catch {
             Logger.journal.error("journal-lifecycle: runner-backoff-relaunch-failed")
             let diagnostic = JournalDiagnostic(
-                commandLabel: "journal start --app-supervised",
+                commandLabel: "journal start --hosted-parent",
                 outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
             )
             terminalDiagnostic = diagnostic

@@ -35,7 +35,7 @@ struct SupervisedJournalRunnerTests {
         #expect(requests.count == 1)
         #expect(requests.first?.executableURL == fixture.runtime.layout.journalBinary)
         #expect(requests.first?.currentDirectoryURL.path == canonicalPath(fixture.realJournalRoot))
-        #expect(requests.first?.arguments == ["start", "--app-supervised", "5015"])
+        #expect(requests.first?.arguments == ["start", "--hosted-parent", "5015"])
         #expect(requests.first?.environment["SOLSTONE_JOURNAL"] == nil)
         #expect(gate.roots() == [canonicalPath(fixture.realJournalRoot)])
         #expect(await runner.currentIdentity()?.pid == 4242)

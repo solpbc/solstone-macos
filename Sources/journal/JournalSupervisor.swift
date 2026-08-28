@@ -128,7 +128,7 @@ final class JournalSupervisor {
             return false
         } catch {
             let diagnostic = JournalDiagnostic(
-                commandLabel: "journal start --app-supervised",
+                commandLabel: "journal start --hosted-parent",
                 outputExcerpt: error.localizedDescription
             )
             state = .failed(diagnostic)
