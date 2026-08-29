@@ -62,6 +62,14 @@ internal protocol JournalProcessContainmentEvidenceReading: Sendable {
     func containmentEvidence(for pid: pid_t) -> JournalContainmentMemberEvidence?
     /// `nil` is an indeterminate sysctl failure, not an empty group.
     func processIDs(inProcessGroup processGroupID: pid_t) -> [pid_t]?
+    /// `nil` is an indeterminate sysctl failure, not an empty descendant set.
+    func descendantProcessIDs(of rootPID: pid_t) -> [pid_t]?
+}
+
+extension JournalProcessContainmentEvidenceReading {
+    func descendantProcessIDs(of rootPID: pid_t) -> [pid_t]? {
+        []
+    }
 }
 
 internal struct LiveJournalProcessContainmentEvidenceReader: JournalProcessContainmentEvidenceReading {
@@ -73,6 +81,10 @@ internal struct LiveJournalProcessContainmentEvidenceReader: JournalProcessConta
 
     func processIDs(inProcessGroup processGroupID: pid_t) -> [pid_t]? {
         liveProcessIDs(inProcessGroup: processGroupID)
+    }
+
+    func descendantProcessIDs(of rootPID: pid_t) -> [pid_t]? {
+        liveDescendantProcessIDs(of: rootPID)
     }
 }
 
@@ -119,6 +131,7 @@ internal enum JournalContainmentMemberRejection: String, Equatable, Sendable {
     case missingKernelStartTime = "missing-kernel-start-time"
     case leaderStartTimeMismatch = "leader-start-time-mismatch"
     case outsideDomainLifetime = "outside-domain-lifetime"
+    case observedStartTimeMismatch = "observed-start-time-mismatch"
 }
 
 internal func verifyJournalContainmentMember(
@@ -274,6 +287,37 @@ private func liveProcessIDs(inProcessGroup processGroupID: pid_t) -> [pid_t]? {
         let pid = row.kp_proc.p_pid
         return pid > 0 ? pid : nil
     }
+}
+
+private func liveDescendantProcessIDs(of rootPID: pid_t) -> [pid_t]? {
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
+    var size = 0
+    guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0 else {
+        return nil
+    }
+    guard size > 0 else { return [] }
+
+    let stride = MemoryLayout<kinfo_proc>.stride
+    var rows = Array(repeating: kinfo_proc(), count: (size + stride - 1) / stride)
+    var actualSize = rows.count * stride
+    guard sysctl(&mib, u_int(mib.count), &rows, &actualSize, nil, 0) == 0 else {
+        return nil
+    }
+    let rowCount = min(rows.count, actualSize / stride)
+    var children: [pid_t: [pid_t]] = [:]
+    for row in rows.prefix(rowCount) {
+        let pid = row.kp_proc.p_pid
+        let parent = row.kp_eproc.e_ppid
+        guard pid > 0, parent > 0 else { continue }
+        children[parent, default: []].append(pid)
+    }
+    var result: [pid_t] = []
+    var pending = children[rootPID] ?? []
+    while let pid = pending.popLast() {
+        result.append(pid)
+        pending.append(contentsOf: children[pid] ?? [])
+    }
+    return result.sorted()
 }
 
 private func processStartTime(_ row: kinfo_proc) -> Double? {

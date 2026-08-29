@@ -171,6 +171,8 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         var identity: SupervisedChildIdentity?
         var containmentDomain: JournalContainmentDomain?
         var receiptRecorded = false
+        var observedMembers: [JournalContainmentObservedMember] = []
+        var readinessCensusIndeterminate = false
         var phase: GenerationPhase
     }
 
@@ -345,8 +347,19 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
     }
 
     public func markReady(identity: SupervisedChildIdentity) async -> Bool {
-        guard let activeIdentity = currentActiveIdentity(), activeIdentity == identity else {
+        guard let generation = activeGeneration,
+              var record = generationRecords[generation],
+              record.phase == .active,
+              record.identity == identity else {
             return false
+        }
+        if let domain = record.containmentDomain {
+            if let observedMembers = captureObservedMembers(domain: domain) {
+                record.observedMembers = observedMembers
+            } else {
+                record.readinessCensusIndeterminate = true
+            }
+            generationRecords[generation] = record
         }
         statusSink(.running)
         stabilityTask?.cancel()
@@ -501,14 +514,20 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         }
 
         let containmentResult: JournalContainmentResult
-        if let domain = containingRecord.containmentDomain {
+        if containingRecord.readinessCensusIndeterminate {
+            containmentResult = .unresolved([.readinessCensusIndeterminate])
+        } else if let domain = containingRecord.containmentDomain {
             let containment = JournalProcessContainment(
                 evidenceReader: containmentEvidenceReader,
                 terminate: terminate,
                 clock: clock,
-                gracePeriod: terminationGrace
+                gracePeriod: terminationGrace,
+                pidExists: pidExists
             )
-            containmentResult = await containment.retire(domain: domain)
+            containmentResult = await containment.retire(
+                domain: domain,
+                observedMembers: containingRecord.observedMembers
+            )
         } else {
             // Defensive fallback: .active currently always admits its domain synchronously.
             containmentResult = .unresolved([.missingDomainAdmission])
@@ -647,6 +666,23 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         if child.isRunning {
             _ = terminate(child.processIdentifier, SIGKILL)
         }
+    }
+
+    private func captureObservedMembers(domain: JournalContainmentDomain) -> [JournalContainmentObservedMember]? {
+        guard let pids = containmentEvidenceReader.descendantProcessIDs(of: domain.leaderIdentity.pid) else {
+            return nil
+        }
+        var observed: [JournalContainmentObservedMember] = []
+        for pid in Set(pids).sorted() {
+            guard let evidence = containmentEvidenceReader.containmentEvidence(for: pid),
+                  evidence.pid == pid,
+                  let startTime = evidence.kernelStartTime,
+                  startTime.isFinite else {
+                return nil
+            }
+            observed.append(JournalContainmentObservedMember(pid: pid, kernelStartTime: startTime))
+        }
+        return observed
     }
 
     private func currentActiveIdentity() -> SupervisedChildIdentity? {

@@ -16,6 +16,11 @@ internal struct JournalContainmentDomain: Equatable, Sendable {
     let leaderIdentity: SupervisedChildIdentity
 }
 
+internal struct JournalContainmentObservedMember: Equatable, Sendable {
+    let pid: pid_t
+    let kernelStartTime: Double
+}
+
 internal enum JournalContainmentReadPhase: String, Equatable, Sendable {
     case initial = "initial"
     case postGrace = "post-grace"
@@ -29,6 +34,7 @@ internal enum JournalContainmentUnresolvedReason: Equatable, Sendable {
     case memberEvidenceUnavailable(pid_t, JournalContainmentReadPhase)
     case unprovenMember(pid_t, JournalContainmentMemberRejection, JournalContainmentReadPhase)
     case postSignalSurvivor(pid_t)
+    case readinessCensusIndeterminate
 
     var logValue: String {
         switch self {
@@ -44,6 +50,8 @@ internal enum JournalContainmentUnresolvedReason: Equatable, Sendable {
             return "unproven-member-\(phase.rawValue)-pid-\(pid)-\(rejection.rawValue)"
         case .postSignalSurvivor(let pid):
             return "post-signal-survivor-pid-\(pid)"
+        case .readinessCensusIndeterminate:
+            return "readiness-census-indeterminate"
         }
     }
 }
@@ -61,6 +69,7 @@ internal struct JournalProcessContainment {
     private let terminate: @Sendable (pid_t, Int32) -> Int32
     private let clock: any MonotonicClock
     private let gracePeriod: Duration
+    private let pidExists: @Sendable (pid_t) -> Bool
     private let wallTime: @Sendable () -> Double
     private let currentUID: uid_t
     private let currentUsernameValue: String
@@ -72,6 +81,10 @@ internal struct JournalProcessContainment {
         terminate: @escaping @Sendable (pid_t, Int32) -> Int32,
         clock: any MonotonicClock,
         gracePeriod: Duration,
+        pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
+            if Darwin.kill(pid, 0) == 0 { return true }
+            return errno == EPERM
+        },
         wallTime: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 },
         currentUID: uid_t = getuid(),
         currentUsernameValue: String = currentUsername(),
@@ -82,6 +95,7 @@ internal struct JournalProcessContainment {
         self.terminate = terminate
         self.clock = clock
         self.gracePeriod = gracePeriod
+        self.pidExists = pidExists
         self.wallTime = wallTime
         self.currentUID = currentUID
         self.currentUsernameValue = currentUsernameValue
@@ -89,7 +103,10 @@ internal struct JournalProcessContainment {
         self.ownProcessGroupID = ownProcessGroupID
     }
 
-    func retire(domain: JournalContainmentDomain?) async -> JournalContainmentResult {
+    func retire(
+        domain: JournalContainmentDomain?,
+        observedMembers: [JournalContainmentObservedMember] = []
+    ) async -> JournalContainmentResult {
         guard let domain else { return .noActiveGeneration }
         guard domain.processGroupID != ownProcessGroupID else {
             return unresolved([.unsafeCallerProcessGroup], domain: domain)
@@ -108,7 +125,15 @@ internal struct JournalProcessContainment {
             phase: .initial,
             gaps: &gaps
         )
-        signal(initialVerified, signal: SIGTERM)
+        let initialObserved = observedMembers.filter { !initialPIDs.contains($0.pid) }
+        let initialObservedVerified = verifiedObservedPIDs(
+            initialObserved,
+            domain: domain,
+            retirementAttemptWallTime: retirementAttemptWallTime,
+            phase: .initial,
+            gaps: &gaps
+        )
+        signal(Array(Set(initialVerified + initialObservedVerified)).sorted(), signal: SIGTERM)
 
         await clock.sleep(for: gracePeriod)
 
@@ -123,7 +148,15 @@ internal struct JournalProcessContainment {
             phase: .postGrace,
             gaps: &gaps
         )
-        signal(postGraceVerified, signal: SIGKILL)
+        let postGraceObserved = observedMembers.filter { !postGracePIDs.contains($0.pid) && pidExists($0.pid) }
+        let postGraceObservedVerified = verifiedObservedPIDs(
+            postGraceObserved,
+            domain: domain,
+            retirementAttemptWallTime: retirementAttemptWallTime,
+            phase: .postGrace,
+            gaps: &gaps
+        )
+        signal(Array(Set(postGraceVerified + postGraceObservedVerified)).sorted(), signal: SIGKILL)
 
         guard let finalPIDs = evidenceReader.processIDs(inProcessGroup: domain.processGroupID) else {
             gaps.append(.enumerationFailed(.final))
@@ -138,6 +171,17 @@ internal struct JournalProcessContainment {
                 gaps: &gaps
             )
             gaps.append(contentsOf: finalPIDs.sorted().map(JournalContainmentUnresolvedReason.postSignalSurvivor))
+        }
+        let finalObserved = observedMembers.filter { !finalPIDs.contains($0.pid) && pidExists($0.pid) }
+        if !finalObserved.isEmpty {
+            _ = verifiedObservedPIDs(
+                finalObserved,
+                domain: domain,
+                retirementAttemptWallTime: retirementAttemptWallTime,
+                phase: .final,
+                gaps: &gaps
+            )
+            gaps.append(contentsOf: finalObserved.map(\.pid).sorted().map(JournalContainmentUnresolvedReason.postSignalSurvivor))
         }
         guard gaps.isEmpty else {
             return unresolved(gaps, domain: domain)
@@ -177,6 +221,56 @@ internal struct JournalProcessContainment {
             case .rejected(let rejection):
                 gaps.append(.unprovenMember(pid, rejection, phase))
             }
+        }
+        return verified
+    }
+
+    private func verifiedObservedPIDs(
+        _ members: [JournalContainmentObservedMember],
+        domain: JournalContainmentDomain,
+        retirementAttemptWallTime: Double,
+        phase: JournalContainmentReadPhase,
+        gaps: inout [JournalContainmentUnresolvedReason]
+    ) -> [pid_t] {
+        var verified: [pid_t] = []
+        for member in members.sorted(by: { $0.pid < $1.pid }) {
+            guard let evidence = evidenceReader.containmentEvidence(for: member.pid) else {
+                gaps.append(.memberEvidenceUnavailable(member.pid, phase))
+                continue
+            }
+            guard evidence.pid == member.pid else {
+                gaps.append(.unprovenMember(member.pid, .pidMismatch, phase))
+                continue
+            }
+            guard member.pid != 1 else {
+                gaps.append(.unprovenMember(member.pid, .rootPID, phase))
+                continue
+            }
+            guard member.pid != ownPID else {
+                gaps.append(.unprovenMember(member.pid, .ownPID, phase))
+                continue
+            }
+            guard evidence.processGroupID != ownProcessGroupID else {
+                gaps.append(.unprovenMember(member.pid, .unsafeCallerProcessGroup, phase))
+                continue
+            }
+            guard evidence.uid == currentUID, evidence.username == currentUsernameValue else {
+                gaps.append(.unprovenMember(member.pid, .wrongUser, phase))
+                continue
+            }
+            guard let startTime = evidence.kernelStartTime, startTime.isFinite else {
+                gaps.append(.unprovenMember(member.pid, .missingKernelStartTime, phase))
+                continue
+            }
+            guard abs(startTime - member.kernelStartTime) <= journalSupervisorStartTimeToleranceSeconds else {
+                gaps.append(.unprovenMember(member.pid, .observedStartTimeMismatch, phase))
+                continue
+            }
+            guard startTime >= domain.birthKernelStartTime, startTime <= retirementAttemptWallTime else {
+                gaps.append(.unprovenMember(member.pid, .outsideDomainLifetime, phase))
+                continue
+            }
+            verified.append(member.pid)
         }
         return verified
     }

@@ -107,6 +107,39 @@ struct JournalProcessContainmentTests {
         #expect(signals.snapshot().isEmpty)
     }
 
+    @Test func signalsReadinessObservedMemberAfterItLeavesTheAdmittedProcessGroup() async {
+        let reader = RecordingContainmentEvidenceReader(
+            memberships: [[], [], []],
+            evidenceByPID: [
+                101: evidence(pid: 101, pgid: 101, startTime: 950)
+            ]
+        )
+        let signals = SignalRecorder()
+        let containment = JournalProcessContainment(
+            evidenceReader: reader,
+            terminate: { pid, signal in
+                signals.append(.init(pid: pid, signal: signal))
+                return 0
+            },
+            clock: ContainmentClock(),
+            gracePeriod: .seconds(2),
+            pidExists: { pid in
+                !signals.snapshot().contains { $0.pid == pid && $0.signal == SIGKILL }
+            },
+            wallTime: { 1_000 },
+            currentUID: 501,
+            currentUsernameValue: "owner",
+            ownPID: 999,
+            ownProcessGroupID: 999
+        )
+        let result = await containment.retire(
+            domain: makeDomain(),
+            observedMembers: [.init(pid: 101, kernelStartTime: 950)]
+        )
+        #expect(signals.snapshot() == [.init(pid: 101, signal: SIGTERM), .init(pid: 101, signal: SIGKILL)])
+        #expect(result == .clean)
+    }
+
     private func makeContainment(
         reader: RecordingContainmentEvidenceReader,
         signals: SignalRecorder,
