@@ -156,7 +156,15 @@ internal struct JournalProcessContainment {
             phase: .postGrace,
             gaps: &gaps
         )
-        signal(Array(Set(postGraceVerified + postGraceObservedVerified)).sorted(), signal: SIGKILL)
+        let postGraceTargets = Array(Set(postGraceVerified + postGraceObservedVerified)).sorted()
+        signal(postGraceTargets, signal: SIGKILL)
+        // `kill(pid, 0)` remains true while Darwin has not yet reaped a
+        // signalled process. Wait one bounded grace before declaring a
+        // start-time-bound escaped member a post-signal survivor; otherwise a
+        // successful cleanup can fail closed before its safe replacement.
+        if !postGraceTargets.isEmpty {
+            await clock.sleep(for: gracePeriod)
+        }
 
         guard let finalPIDs = evidenceReader.processIDs(inProcessGroup: domain.processGroupID) else {
             gaps.append(.enumerationFailed(.final))

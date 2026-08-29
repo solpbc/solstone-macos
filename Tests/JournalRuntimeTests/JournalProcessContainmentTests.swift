@@ -39,7 +39,7 @@ struct JournalProcessContainmentTests {
 
         #expect(result == .clean)
         #expect(signals.snapshot() == [.init(pid: 100, signal: SIGTERM), .init(pid: 101, signal: SIGTERM), .init(pid: 101, signal: SIGKILL)])
-        #expect(clock.sleeps == [.seconds(2)])
+        #expect(clock.sleeps == [.seconds(2), .seconds(2)])
     }
 
     @Test func reenumeratesAndKillsDescendantThatAppearsAfterInitialMembership() async {
@@ -115,16 +115,20 @@ struct JournalProcessContainmentTests {
             ]
         )
         let signals = SignalRecorder()
+        let clock = ContainmentClock()
         let containment = JournalProcessContainment(
             evidenceReader: reader,
             terminate: { pid, signal in
                 signals.append(.init(pid: pid, signal: signal))
                 return 0
             },
-            clock: ContainmentClock(),
+            clock: clock,
             gracePeriod: .seconds(2),
             pidExists: { pid in
-                !signals.snapshot().contains { $0.pid == pid && $0.signal == SIGKILL }
+                // Darwin can report a signalled process to `kill(pid, 0)`
+                // until it is reaped. The post-kill grace must elapse before
+                // final containment treats this escaped PGID member as gone.
+                clock.sleeps.count < 2
             },
             wallTime: { 1_000 },
             currentUID: 501,
@@ -137,6 +141,7 @@ struct JournalProcessContainmentTests {
             observedMembers: [.init(pid: 101, kernelStartTime: 950)]
         )
         #expect(signals.snapshot() == [.init(pid: 101, signal: SIGTERM), .init(pid: 101, signal: SIGKILL)])
+        #expect(clock.sleeps == [.seconds(2), .seconds(2)])
         #expect(result == .clean)
     }
 
