@@ -154,15 +154,17 @@ internal struct JournalProcessContainment {
             domain: domain,
             retirementAttemptWallTime: retirementAttemptWallTime,
             phase: .postGrace,
+            deferFailuresUntilFinal: true,
             gaps: &gaps
         )
         let postGraceTargets = Array(Set(postGraceVerified + postGraceObservedVerified)).sorted()
         signal(postGraceTargets, signal: SIGKILL)
-        // `kill(pid, 0)` remains true while Darwin has not yet reaped a
-        // signalled process. Wait one bounded grace before declaring a
-        // start-time-bound escaped member a post-signal survivor; otherwise a
-        // successful cleanup can fail closed before its safe replacement.
-        if !postGraceTargets.isEmpty {
+        // A readiness-observed member was bound to an exact start time and
+        // received SIGTERM above. Darwin can retain that now-opaque identity
+        // while it is being reaped, so do not turn a transient post-signal
+        // read failure into a terminal result before the final identity-bound
+        // read. Anything still present there remains fail closed.
+        if !postGraceTargets.isEmpty || !postGraceObserved.isEmpty {
             await clock.sleep(for: gracePeriod)
         }
 
@@ -238,44 +240,63 @@ internal struct JournalProcessContainment {
         domain: JournalContainmentDomain,
         retirementAttemptWallTime: Double,
         phase: JournalContainmentReadPhase,
+        deferFailuresUntilFinal: Bool = false,
         gaps: inout [JournalContainmentUnresolvedReason]
     ) -> [pid_t] {
         var verified: [pid_t] = []
         for member in members.sorted(by: { $0.pid < $1.pid }) {
             guard let evidence = evidenceReader.containmentEvidence(for: member.pid) else {
-                gaps.append(.memberEvidenceUnavailable(member.pid, phase))
+                if !deferFailuresUntilFinal {
+                    gaps.append(.memberEvidenceUnavailable(member.pid, phase))
+                }
                 continue
             }
             guard evidence.pid == member.pid else {
-                gaps.append(.unprovenMember(member.pid, .pidMismatch, phase))
+                if !deferFailuresUntilFinal {
+                    gaps.append(.unprovenMember(member.pid, .pidMismatch, phase))
+                }
                 continue
             }
             guard member.pid != 1 else {
-                gaps.append(.unprovenMember(member.pid, .rootPID, phase))
+                if !deferFailuresUntilFinal {
+                    gaps.append(.unprovenMember(member.pid, .rootPID, phase))
+                }
                 continue
             }
             guard member.pid != ownPID else {
-                gaps.append(.unprovenMember(member.pid, .ownPID, phase))
+                if !deferFailuresUntilFinal {
+                    gaps.append(.unprovenMember(member.pid, .ownPID, phase))
+                }
                 continue
             }
             guard evidence.processGroupID != ownProcessGroupID else {
-                gaps.append(.unprovenMember(member.pid, .unsafeCallerProcessGroup, phase))
+                if !deferFailuresUntilFinal {
+                    gaps.append(.unprovenMember(member.pid, .unsafeCallerProcessGroup, phase))
+                }
                 continue
             }
             guard evidence.uid == currentUID, evidence.username == currentUsernameValue else {
-                gaps.append(.unprovenMember(member.pid, .wrongUser, phase))
+                if !deferFailuresUntilFinal {
+                    gaps.append(.unprovenMember(member.pid, .wrongUser, phase))
+                }
                 continue
             }
             guard let startTime = evidence.kernelStartTime, startTime.isFinite else {
-                gaps.append(.unprovenMember(member.pid, .missingKernelStartTime, phase))
+                if !deferFailuresUntilFinal {
+                    gaps.append(.unprovenMember(member.pid, .missingKernelStartTime, phase))
+                }
                 continue
             }
             guard abs(startTime - member.kernelStartTime) <= journalSupervisorStartTimeToleranceSeconds else {
-                gaps.append(.unprovenMember(member.pid, .observedStartTimeMismatch, phase))
+                if !deferFailuresUntilFinal {
+                    gaps.append(.unprovenMember(member.pid, .observedStartTimeMismatch, phase))
+                }
                 continue
             }
             guard startTime >= domain.birthKernelStartTime, startTime <= retirementAttemptWallTime else {
-                gaps.append(.unprovenMember(member.pid, .outsideDomainLifetime, phase))
+                if !deferFailuresUntilFinal {
+                    gaps.append(.unprovenMember(member.pid, .outsideDomainLifetime, phase))
+                }
                 continue
             }
             verified.append(member.pid)

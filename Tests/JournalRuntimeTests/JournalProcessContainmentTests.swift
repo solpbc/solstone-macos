@@ -145,6 +145,41 @@ struct JournalProcessContainmentTests {
         #expect(result == .clean)
     }
 
+    @Test func defersAnOpaqueObservedMemberUntilItsPostSignalReapCompletes() async {
+        let reader = OpaqueAfterInitialObservedReader()
+        let signals = SignalRecorder()
+        let clock = ContainmentClock()
+        let containment = JournalProcessContainment(
+            evidenceReader: reader,
+            terminate: { pid, signal in
+                signals.append(.init(pid: pid, signal: signal))
+                return 0
+            },
+            clock: clock,
+            gracePeriod: .seconds(2),
+            pidExists: { _ in
+                // The process was individually proven at readiness and sent
+                // SIGTERM, but Darwin exposes no fresh row while reaping it.
+                // It must clear before the final identity-bound decision.
+                clock.sleeps.count < 2
+            },
+            wallTime: { 1_000 },
+            currentUID: 501,
+            currentUsernameValue: "owner",
+            ownPID: 999,
+            ownProcessGroupID: 999
+        )
+
+        let result = await containment.retire(
+            domain: makeDomain(),
+            observedMembers: [.init(pid: 101, kernelStartTime: 950)]
+        )
+
+        #expect(signals.snapshot() == [.init(pid: 101, signal: SIGTERM)])
+        #expect(clock.sleeps == [.seconds(2), .seconds(2)])
+        #expect(result == .clean)
+    }
+
     private func makeContainment(
         reader: RecordingContainmentEvidenceReader,
         signals: SignalRecorder,
@@ -224,6 +259,33 @@ private final class RecordingContainmentEvidenceReader: JournalProcessContainmen
 
     func containmentEvidence(for pid: pid_t) -> JournalContainmentMemberEvidence? {
         evidenceByPID[pid]
+    }
+
+    func processIDs(inProcessGroup processGroupID: pid_t) -> [pid_t]? {
+        lock.withLock {
+            guard !memberships.isEmpty else { return [] }
+            return memberships.removeFirst()
+        }
+    }
+}
+
+private final class OpaqueAfterInitialObservedReader: JournalProcessContainmentEvidenceReading, @unchecked Sendable {
+    private let lock = NSLock()
+    private var evidenceReads = 0
+    private var memberships: [[pid_t]?] = [[], [], []]
+
+    func containmentEvidence(for pid: pid_t) -> JournalContainmentMemberEvidence? {
+        lock.withLock {
+            evidenceReads += 1
+            guard evidenceReads == 1 else { return nil }
+            return JournalContainmentMemberEvidence(
+                pid: pid,
+                processGroupID: pid,
+                uid: 501,
+                username: "owner",
+                kernelStartTime: 950
+            )
+        }
     }
 
     func processIDs(inProcessGroup processGroupID: pid_t) -> [pid_t]? {
