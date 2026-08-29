@@ -163,9 +163,14 @@ internal struct JournalProcessContainment {
         // received SIGTERM above. Darwin can retain that now-opaque identity
         // while it is being reaped, so do not turn a transient post-signal
         // read failure into a terminal result before the final identity-bound
-        // read. Anything still present there remains fail closed.
+        // read. Three bounded reap intervals cover the observed Darwin tail
+        // while still leaving the runner's one-second backoff inside the
+        // callback proof budget. Anything still present there remains fail
+        // closed.
         if !postGraceTargets.isEmpty || !postGraceObserved.isEmpty {
-            await clock.sleep(for: gracePeriod)
+            for _ in 0..<3 {
+                await clock.sleep(for: gracePeriod)
+            }
         }
 
         guard let finalPIDs = evidenceReader.processIDs(inProcessGroup: domain.processGroupID) else {

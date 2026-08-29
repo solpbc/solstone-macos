@@ -39,7 +39,7 @@ struct JournalProcessContainmentTests {
 
         #expect(result == .clean)
         #expect(signals.snapshot() == [.init(pid: 100, signal: SIGTERM), .init(pid: 101, signal: SIGTERM), .init(pid: 101, signal: SIGKILL)])
-        #expect(clock.sleeps == [.seconds(2), .seconds(2)])
+        #expect(clock.sleeps == [.seconds(2), .seconds(2), .seconds(2), .seconds(2)])
     }
 
     @Test func reenumeratesAndKillsDescendantThatAppearsAfterInitialMembership() async {
@@ -141,7 +141,7 @@ struct JournalProcessContainmentTests {
             observedMembers: [.init(pid: 101, kernelStartTime: 950)]
         )
         #expect(signals.snapshot() == [.init(pid: 101, signal: SIGTERM), .init(pid: 101, signal: SIGKILL)])
-        #expect(clock.sleeps == [.seconds(2), .seconds(2)])
+        #expect(clock.sleeps == [.seconds(2), .seconds(2), .seconds(2), .seconds(2)])
         #expect(result == .clean)
     }
 
@@ -176,7 +176,7 @@ struct JournalProcessContainmentTests {
         )
 
         #expect(signals.snapshot() == [.init(pid: 101, signal: SIGTERM)])
-        #expect(clock.sleeps == [.seconds(2), .seconds(2)])
+        #expect(clock.sleeps == [.seconds(2), .seconds(2), .seconds(2), .seconds(2)])
         #expect(result == .clean)
     }
 
