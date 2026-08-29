@@ -395,6 +395,72 @@ struct SupervisedJournalRunnerTests {
         #expect(diagnostic.outputExcerpt == UICopy.JOURNAL_CHILD_CONTAINMENT_UNRESOLVED)
     }
 
+    @Test func retainsValidatedParentLossCoordinatorUntilItRetires() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let leaderPID: pid_t = 4242
+        let coordinatorPID: pid_t = 4243
+        let startTime = Double(Int64(Date().timeIntervalSince1970))
+        let birthMicros = Int64(startTime * 1_000_000)
+        let reader = ScriptedContainmentEvidenceReader(
+            memberships: [[leaderPID, coordinatorPID], [], []],
+            evidenceByPID: [
+                leaderPID: .init(
+                    pid: leaderPID,
+                    processGroupID: leaderPID,
+                    uid: getuid(),
+                    username: currentUsername(),
+                    kernelStartTime: startTime
+                ),
+                coordinatorPID: .init(
+                    pid: coordinatorPID,
+                    processGroupID: coordinatorPID,
+                    uid: getuid(),
+                    username: currentUsername(),
+                    kernelStartTime: startTime
+                )
+            ]
+        )
+        let signals = RunnerSignalRecorder()
+        let statuses = RunnerStatusRecorder()
+        let gate = RecordingRunnerGate(result: .success)
+        let spawner = RecordingProcessSpawner(pid: leaderPID)
+        let ledgerDirectory = fixture.realJournalRoot.appendingPathComponent(
+            "health/parent-loss",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: ledgerDirectory, withIntermediateDirectories: true)
+        let ledger = "{\"schema\":1,\"coordinator\":{\"pid\":\(coordinatorPID),\"birth\":{\"epoch_micros\":\(birthMicros)}},\"supervisor\":{\"pid\":\(leaderPID),\"birth\":{\"epoch_micros\":\(birthMicros)}}}"
+        try Data(ledger.utf8).write(to: ledgerDirectory.appendingPathComponent("active-generation.json"))
+        let runner = SupervisedJournalRunner(
+            clock: NoopRunnerClock(),
+            statusSink: { statuses.append($0) },
+            gate: gate,
+            containmentEvidenceReader: reader,
+            processSpawner: spawner,
+            pidExists: { _ in false },
+            terminate: { pid, signal in
+                signals.append(pid: pid, signal: signal)
+                return 0
+            }
+        )
+
+        try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot, port: 5015, receiptContext: makeReceiptFixture().context)
+        let current = try #require(await runner.currentIdentity())
+        #expect(await runner.markReady(identity: current))
+        spawner.exit(spawn: 0, status: 9)
+        try await waitForStatusCount(statuses, count: 2)
+
+        #expect(spawner.spawnRequests().count == 1)
+        #expect(gate.roots().count == 1)
+        #expect(signals.snapshot() == [.init(pid: leaderPID, signal: SIGTERM)])
+        guard case .stopped(let diagnostic) = statuses.snapshot().last else {
+            Issue.record("expected retained-authority containment status")
+            return
+        }
+        #expect(diagnostic.outputExcerpt == UICopy.JOURNAL_CHILD_CONTAINMENT_UNRESOLVED)
+    }
+
     @Test func markReadyRejectsStaleGenerationIdentity() async throws {
         let fixture = try RunnerFixture()
         defer { fixture.clear() }

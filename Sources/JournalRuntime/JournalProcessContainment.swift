@@ -14,6 +14,21 @@ internal struct JournalContainmentDomain: Equatable, Sendable {
     let birthKernelStartTime: Double
     let generation: UInt64
     let leaderIdentity: SupervisedChildIdentity
+    let retainedAuthority: JournalContainmentObservedMember?
+
+    init(
+        processGroupID: pid_t,
+        birthKernelStartTime: Double,
+        generation: UInt64,
+        leaderIdentity: SupervisedChildIdentity,
+        retainedAuthority: JournalContainmentObservedMember? = nil
+    ) {
+        self.processGroupID = processGroupID
+        self.birthKernelStartTime = birthKernelStartTime
+        self.generation = generation
+        self.leaderIdentity = leaderIdentity
+        self.retainedAuthority = retainedAuthority
+    }
 }
 
 internal struct JournalContainmentObservedMember: Equatable, Sendable {
@@ -35,6 +50,9 @@ internal enum JournalContainmentUnresolvedReason: Equatable, Sendable {
     case unprovenMember(pid_t, JournalContainmentMemberRejection, JournalContainmentReadPhase)
     case postSignalSurvivor(pid_t)
     case readinessCensusIndeterminate
+    case retainedAuthorityEvidenceUnavailable(pid_t)
+    case retainedAuthorityIdentityMismatch(pid_t)
+    case retainedAuthorityStillLive(pid_t)
 
     var logValue: String {
         switch self {
@@ -52,6 +70,12 @@ internal enum JournalContainmentUnresolvedReason: Equatable, Sendable {
             return "post-signal-survivor-pid-\(pid)"
         case .readinessCensusIndeterminate:
             return "readiness-census-indeterminate"
+        case .retainedAuthorityEvidenceUnavailable(let pid):
+            return "retained-authority-evidence-unavailable-pid-\(pid)"
+        case .retainedAuthorityIdentityMismatch(let pid):
+            return "retained-authority-identity-mismatch-pid-\(pid)"
+        case .retainedAuthorityStillLive(let pid):
+            return "retained-authority-still-live-pid-\(pid)"
         }
     }
 }
@@ -65,6 +89,12 @@ internal enum JournalContainmentResult: Equatable, Sendable {
 /// Retires one admitted containment domain. It only signals process IDs that
 /// individually pass fresh provenance checks; it never signals a process group.
 internal struct JournalProcessContainment {
+    private enum RetainedAuthorityStatus: Equatable {
+        case gone
+        case live
+        case evidenceUnavailable
+        case identityMismatch
+    }
     private let evidenceReader: any JournalProcessContainmentEvidenceReading
     private let terminate: @Sendable (pid_t, Int32) -> Int32
     private let clock: any MonotonicClock
@@ -125,7 +155,9 @@ internal struct JournalProcessContainment {
             phase: .initial,
             gaps: &gaps
         )
-        let initialObserved = observedMembers.filter { !initialPIDs.contains($0.pid) }
+        let initialObserved = observedMembers.filter {
+            !initialPIDs.contains($0.pid) && !isRetainedAuthority($0, domain: domain)
+        }
         let initialObservedVerified = verifiedObservedPIDs(
             initialObserved,
             domain: domain,
@@ -148,7 +180,11 @@ internal struct JournalProcessContainment {
             phase: .postGrace,
             gaps: &gaps
         )
-        let postGraceObserved = observedMembers.filter { !postGracePIDs.contains($0.pid) && pidExists($0.pid) }
+        let postGraceObserved = observedMembers.filter {
+            !postGracePIDs.contains($0.pid) &&
+            !isRetainedAuthority($0, domain: domain) &&
+            pidExists($0.pid)
+        }
         let postGraceObservedVerified = verifiedObservedPIDs(
             postGraceObserved,
             domain: domain,
@@ -173,6 +209,10 @@ internal struct JournalProcessContainment {
             }
         }
 
+        if let reason = await retainedAuthorityRetirementReason(domain: domain) {
+            gaps.append(reason)
+        }
+
         guard let finalPIDs = evidenceReader.processIDs(inProcessGroup: domain.processGroupID) else {
             gaps.append(.enumerationFailed(.final))
             return unresolved(gaps, domain: domain)
@@ -185,9 +225,16 @@ internal struct JournalProcessContainment {
                 phase: .final,
                 gaps: &gaps
             )
-            gaps.append(contentsOf: finalPIDs.sorted().map(JournalContainmentUnresolvedReason.postSignalSurvivor))
+            gaps.append(contentsOf: finalPIDs
+                .filter { !isRetainedAuthorityPID($0, domain: domain) }
+                .sorted()
+                .map(JournalContainmentUnresolvedReason.postSignalSurvivor))
         }
-        let finalObserved = observedMembers.filter { !finalPIDs.contains($0.pid) && pidExists($0.pid) }
+        let finalObserved = observedMembers.filter {
+            !finalPIDs.contains($0.pid) &&
+            !isRetainedAuthority($0, domain: domain) &&
+            pidExists($0.pid)
+        }
         if !finalObserved.isEmpty {
             _ = verifiedObservedPIDs(
                 finalObserved,
@@ -215,6 +262,18 @@ internal struct JournalProcessContainment {
     ) -> [pid_t] {
         var verified: [pid_t] = []
         for pid in Set(pids).sorted() {
+            if isRetainedAuthorityPID(pid, domain: domain) {
+                switch retainedAuthorityStatus(domain: domain) {
+                case .gone, .live:
+                    continue
+                case .evidenceUnavailable:
+                    gaps.append(.retainedAuthorityEvidenceUnavailable(pid))
+                    continue
+                case .identityMismatch:
+                    gaps.append(.retainedAuthorityIdentityMismatch(pid))
+                    continue
+                }
+            }
             guard let evidence = evidenceReader.containmentEvidence(for: pid) else {
                 // Membership is only a point-in-time snapshot. A process that
                 // exited between that scan and this evidence read cannot be
@@ -245,6 +304,55 @@ internal struct JournalProcessContainment {
         return verified
     }
 
+    private func isRetainedAuthority(
+        _ member: JournalContainmentObservedMember,
+        domain: JournalContainmentDomain
+    ) -> Bool {
+        guard let authority = domain.retainedAuthority else { return false }
+        return authority.pid == member.pid &&
+            abs(authority.kernelStartTime - member.kernelStartTime) <= journalSupervisorStartTimeToleranceSeconds
+    }
+
+    private func isRetainedAuthorityPID(_ pid: pid_t, domain: JournalContainmentDomain) -> Bool {
+        domain.retainedAuthority?.pid == pid
+    }
+
+    private func retainedAuthorityStatus(domain: JournalContainmentDomain) -> RetainedAuthorityStatus {
+        guard let authority = domain.retainedAuthority else { return .gone }
+        guard let evidence = evidenceReader.containmentEvidence(for: authority.pid) else {
+            return pidExists(authority.pid) ? .evidenceUnavailable : .gone
+        }
+        guard evidence.pid == authority.pid,
+              evidence.uid == currentUID,
+              evidence.username == currentUsernameValue,
+              let startTime = evidence.kernelStartTime,
+              startTime.isFinite,
+              abs(startTime - authority.kernelStartTime) <= journalSupervisorStartTimeToleranceSeconds else {
+            return .identityMismatch
+        }
+        return .live
+    }
+
+    private func retainedAuthorityRetirementReason(
+        domain: JournalContainmentDomain
+    ) async -> JournalContainmentUnresolvedReason? {
+        guard let authority = domain.retainedAuthority else { return nil }
+        var status = retainedAuthorityStatus(domain: domain)
+        for _ in 0..<3 where status == .live {
+            await clock.sleep(for: gracePeriod)
+            status = retainedAuthorityStatus(domain: domain)
+        }
+        switch status {
+        case .gone:
+            return nil
+        case .live:
+            return .retainedAuthorityStillLive(authority.pid)
+        case .evidenceUnavailable:
+            return .retainedAuthorityEvidenceUnavailable(authority.pid)
+        case .identityMismatch:
+            return .retainedAuthorityIdentityMismatch(authority.pid)
+        }
+    }
     private func verifiedObservedPIDs(
         _ members: [JournalContainmentObservedMember],
         domain: JournalContainmentDomain,

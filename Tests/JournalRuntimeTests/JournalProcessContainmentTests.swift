@@ -197,6 +197,34 @@ struct JournalProcessContainmentTests {
         #expect(result == .clean)
     }
 
+    @Test func retainsExactParentLossAuthorityWithoutSignalingItAndBlocksUntilItRetires() async {
+        let reader = RecordingContainmentEvidenceReader(
+            memberships: [[100, 101, 102], [], []],
+            evidenceByPID: [
+                100: evidence(pid: 100, pgid: 100, startTime: 900),
+                101: evidence(pid: 101, pgid: 100, startTime: 950),
+                102: evidence(pid: 102, pgid: 100, startTime: 960)
+            ]
+        )
+        let signals = SignalRecorder()
+        let clock = ContainmentClock()
+
+        let leader = SupervisedChildIdentity(pid: 100, kernelStartTime: 900, generation: 7)
+        let domain = JournalContainmentDomain(
+            processGroupID: 100,
+            birthKernelStartTime: 900,
+            generation: 7,
+            leaderIdentity: leader,
+            retainedAuthority: .init(pid: 101, kernelStartTime: 950)
+        )
+
+        let result = await makeContainment(reader: reader, signals: signals, clock: clock).retire(domain: domain)
+
+        #expect(result == .unresolved([.retainedAuthorityStillLive(101)]))
+        #expect(signals.snapshot() == [.init(pid: 100, signal: SIGTERM), .init(pid: 102, signal: SIGTERM)])
+        #expect(clock.sleeps == [.seconds(2), .seconds(2), .seconds(2), .seconds(2)])
+    }
+
     private func makeContainment(
         reader: RecordingContainmentEvidenceReader,
         signals: SignalRecorder,

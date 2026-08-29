@@ -18,6 +18,25 @@ public struct SupervisedChildIdentity: Equatable, Sendable {
     }
 }
 
+private struct ParentLossLedgerProcessIdentity: Decodable {
+    let pid: pid_t
+    let birth: ParentLossLedgerProcessBirth
+}
+
+private struct ParentLossLedgerProcessBirth: Decodable {
+    let epochMicros: Int64
+
+    private enum CodingKeys: String, CodingKey {
+        case epochMicros = "epoch_micros"
+    }
+}
+
+private struct ParentLossLedgerActiveGeneration: Decodable {
+    let schema: Int
+    let coordinator: ParentLossLedgerProcessIdentity
+    let supervisor: ParentLossLedgerProcessIdentity
+}
+
 public protocol SupervisedChildRunning: Sendable {
     func start(
         runtime: MaterializedRuntime,
@@ -354,7 +373,18 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
             return false
         }
         if let domain = record.containmentDomain {
-            if let observedMembers = captureObservedMembers(domain: domain) {
+            let retainedAuthority = launchRequest.flatMap {
+                parentLossCoordinatorAuthority(journalRoot: $0.journalRoot, domain: domain)
+            }
+            let scopedDomain = JournalContainmentDomain(
+                processGroupID: domain.processGroupID,
+                birthKernelStartTime: domain.birthKernelStartTime,
+                generation: domain.generation,
+                leaderIdentity: domain.leaderIdentity,
+                retainedAuthority: retainedAuthority
+            )
+            if let observedMembers = captureObservedMembers(domain: scopedDomain) {
+                record.containmentDomain = scopedDomain
                 record.observedMembers = observedMembers
             } else {
                 record.readinessCensusIndeterminate = true
@@ -666,6 +696,44 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         if child.isRunning {
             _ = terminate(child.processIdentifier, SIGKILL)
         }
+    }
+
+    private func parentLossCoordinatorAuthority(
+        journalRoot: URL,
+        domain: JournalContainmentDomain
+    ) -> JournalContainmentObservedMember? {
+        let activeGenerationURL = journalRoot.appendingPathComponent("health/parent-loss/active-generation.json")
+        guard let data = try? Data(contentsOf: activeGenerationURL),
+              let active = try? JSONDecoder().decode(ParentLossLedgerActiveGeneration.self, from: data),
+              active.schema == 1 else {
+            return nil
+        }
+
+        let supervisorStartTime = Double(active.supervisor.birth.epochMicros) / 1_000_000
+        guard active.supervisor.pid == domain.leaderIdentity.pid,
+              abs(supervisorStartTime - domain.leaderIdentity.kernelStartTime) <= journalSupervisorStartTimeToleranceSeconds else {
+            return nil
+        }
+
+        let coordinatorStartTime = Double(active.coordinator.birth.epochMicros) / 1_000_000
+        guard active.coordinator.pid > 1,
+              active.coordinator.pid != domain.leaderIdentity.pid,
+              active.coordinator.pid != getpid(),
+              coordinatorStartTime.isFinite,
+              coordinatorStartTime >= domain.birthKernelStartTime,
+              coordinatorStartTime <= Date().timeIntervalSince1970,
+              let evidence = containmentEvidenceReader.containmentEvidence(for: active.coordinator.pid),
+              evidence.pid == active.coordinator.pid,
+              evidence.uid == getuid(),
+              evidence.username == currentUsername(),
+              evidence.processGroupID != getpgrp(),
+              let actualStartTime = evidence.kernelStartTime,
+              actualStartTime.isFinite,
+              abs(actualStartTime - coordinatorStartTime) <= journalSupervisorStartTimeToleranceSeconds else {
+            return nil
+        }
+
+        return JournalContainmentObservedMember(pid: active.coordinator.pid, kernelStartTime: coordinatorStartTime)
     }
 
     private func captureObservedMembers(domain: JournalContainmentDomain) -> [JournalContainmentObservedMember]? {
