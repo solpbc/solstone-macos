@@ -87,6 +87,23 @@ struct JournalProcessContainmentTests {
         #expect(signals.snapshot().isEmpty)
     }
 
+    @Test func memberGoneAfterMembershipSnapshotDoesNotBlockContainment() async {
+        let reader = RecordingContainmentEvidenceReader(
+            memberships: [[100], [], []],
+            evidenceByPID: [:]
+        )
+        let signals = SignalRecorder()
+
+        let result = await makeContainment(
+            reader: reader,
+            signals: signals,
+            pidExists: { _ in false }
+        ).retire(domain: makeDomain())
+
+        #expect(result == .clean)
+        #expect(signals.snapshot().isEmpty)
+    }
+
     @Test func enumerationFailureIsIndeterminateAndSignalsNoMembers() async {
         let reader = RecordingContainmentEvidenceReader(memberships: [nil], evidenceByPID: [:])
         let signals = SignalRecorder()
@@ -183,7 +200,8 @@ struct JournalProcessContainmentTests {
     private func makeContainment(
         reader: RecordingContainmentEvidenceReader,
         signals: SignalRecorder,
-        clock: ContainmentClock = ContainmentClock()
+        clock: ContainmentClock = ContainmentClock(),
+        pidExists: @escaping @Sendable (pid_t) -> Bool = { _ in true }
     ) -> JournalProcessContainment {
         JournalProcessContainment(
             evidenceReader: reader,
@@ -193,6 +211,7 @@ struct JournalProcessContainmentTests {
             },
             clock: clock,
             gracePeriod: .seconds(2),
+            pidExists: pidExists,
             wallTime: { 1_000 },
             currentUID: 501,
             currentUsernameValue: "owner",

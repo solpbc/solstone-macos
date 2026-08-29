@@ -216,6 +216,11 @@ internal struct JournalProcessContainment {
         var verified: [pid_t] = []
         for pid in Set(pids).sorted() {
             guard let evidence = evidenceReader.containmentEvidence(for: pid) else {
+                // Membership is only a point-in-time snapshot. A process that
+                // exited between that scan and this evidence read cannot be
+                // signalled and is already safely absent; an extant PID whose
+                // identity cannot be proven remains fail-closed.
+                guard pidExists(pid) else { continue }
                 gaps.append(.memberEvidenceUnavailable(pid, phase))
                 continue
             }
@@ -251,7 +256,10 @@ internal struct JournalProcessContainment {
         var verified: [pid_t] = []
         for member in members.sorted(by: { $0.pid < $1.pid }) {
             guard let evidence = evidenceReader.containmentEvidence(for: member.pid) else {
-                if !deferFailuresUntilFinal {
+                // Observed descendants are equally subject to a race between
+                // the liveness check and native process inspection. Only a
+                // still-live PID with unavailable evidence is unresolved.
+                if pidExists(member.pid), !deferFailuresUntilFinal {
                     gaps.append(.memberEvidenceUnavailable(member.pid, phase))
                 }
                 continue
