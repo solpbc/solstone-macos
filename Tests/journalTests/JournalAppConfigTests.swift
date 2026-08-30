@@ -39,6 +39,26 @@ struct JournalAppConfigTests {
         #expect(loginItems.unregisterCalls == 1)
     }
 
+    @Test func ineligibleCurrentBundleDoesNotRegisterLoginItem() {
+        let fixture = makeDefaults()
+        defer { fixture.clear() }
+        let loginItems = FakeLoginItemManager()
+        let config = JournalAppConfig(
+            defaults: fixture.defaults,
+            loginItemManager: loginItems,
+            loginItemEligibility: { false }
+        )
+
+        config.applyLaunchAtLoginPreference()
+
+        #expect(config.launchAtLoginEnabled)
+        #expect(loginItems.registerCalls == 0)
+        #expect(loginItems.unregisterCalls == 0)
+
+        config.setLaunchAtLoginEnabled(false)
+        #expect(loginItems.unregisterCalls == 1)
+    }
+
     @Test func cachedIconMarkJSONRoundTripsValidatedMark() throws {
         let fixture = makeDefaults()
         defer { fixture.clear() }

@@ -43,13 +43,23 @@ final class JournalAppConfig {
 
     private let defaults: UserDefaults
     private let loginItemManager: any LoginItemManaging
+    private let loginItemEligibility: () -> Bool
 
     init(
         defaults: UserDefaults = UserDefaults(suiteName: suiteName) ?? .standard,
-        loginItemManager: any LoginItemManaging = LiveJournalLoginItemManager()
+        loginItemManager: any LoginItemManaging = LiveJournalLoginItemManager(),
+        loginItemEligibility: @escaping () -> Bool = {
+            let fileManager = FileManager.default
+            return WatchdogAppLocationEligibility.isEligible(
+                enclosingAppURL: Bundle.main.bundleURL,
+                cachesURL: fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0],
+                temporaryDirectoryURL: fileManager.temporaryDirectory
+            )
+        }
     ) {
         self.defaults = defaults
         self.loginItemManager = loginItemManager
+        self.loginItemEligibility = loginItemEligibility
     }
 
     var journalRoot: URL? {
@@ -110,6 +120,11 @@ final class JournalAppConfig {
     func applyLaunchAtLoginPreference() {
         do {
             if launchAtLoginEnabled {
+                // A quarantined app can execute from AppTranslocation while its
+                // bundled login item resolves the original download. Registering
+                // there would let the watchdog relaunch a different identity
+                // after an ordinary quit, so transient locations never enroll.
+                guard loginItemEligibility() else { return }
                 try loginItemManager.register()
             } else {
                 try loginItemManager.unregister()
