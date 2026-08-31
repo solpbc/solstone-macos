@@ -152,6 +152,41 @@ struct LegacyJournalServiceRetirerTests {
         #expect(!runner.invocations.contains { $0.arguments.first == "bootout" })
     }
 
+    @Test func loadedButNotRunningStillRetiresOnSameRootMatch() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        try fixture.writeSameRootPlist()
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .success(stdout: Data("""
+        gui/501/org.solpbc.solstone = {
+        \tpath = \(fixture.plistURL.path)
+        \ttype = LaunchAgent
+        \tstate = not running
+        \tprogram = /Users/jer/.local/bin/journal
+        \targuments = {
+        \t\t/Users/jer/.local/bin/journal
+        \t\tstart
+        \t\t5015
+        \t}
+        }
+
+        """.utf8)))
+        runner.enqueue("bootout", .success())
+        runner.enqueue("print", .success(stderr: Data(notFoundLaunchctlError.utf8), exitCode: 113))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: fixture.sameRoot)
+
+        #expect(result == .success(.provenMatchLoaded))
+        #expect(!FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(runner.invocations.map(\.arguments.first) == ["print", "bootout", "print"])
+    }
+
     @Test func notLoadedSameRootPlistIsUnlinked() async throws {
         let fixture = try ServiceFixture()
         defer { fixture.clear() }

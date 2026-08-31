@@ -354,7 +354,6 @@ private extension LegacyJournalServiceRetirer.LaunchdJob {
             && program?.isEmpty == false
             && !arguments.isEmpty
             && state?.isEmpty == false
-            && pid != nil
     }
 
     func agrees(with plist: LegacyJournalServiceRetirer.ServicePlist, plistURL: URL) -> Bool {
