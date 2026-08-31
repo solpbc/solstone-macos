@@ -860,13 +860,11 @@ struct SettingsView: View {
                 // On macOS 26, SCShareableContent.current re-triggers the OS dialog every call
                 // when no TCC entry exists yet — i.e. while the user hasn't granted yet.
                 if CGPreflightScreenCaptureAccess() {
-                    do {
-                        _ = try await SCShareableContent.current
+                    if await PermissionChecker.checkScreenRecording() {
                         restartCountdown = 5
                         return
-                    } catch {
-                        // permission not yet granted
                     }
+                    // else: permission not yet granted
                 }
                 try? await Task.sleep(for: .seconds(1.5))
             }
