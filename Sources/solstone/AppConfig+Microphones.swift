@@ -20,7 +20,7 @@ public extension AppConfig {
         microphonePriority.append(MicrophoneEntry(
             uid: device.uid,
             name: device.name,
-            isDisabled: device.transportType.isOptInOnly
+            isDisabled: device.isOptInOnlyMicrophone
         ))
         return true
     }

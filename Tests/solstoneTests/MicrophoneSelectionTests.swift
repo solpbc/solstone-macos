@@ -45,10 +45,20 @@ struct MicrophoneSelectionTests {
         #expect(MicrophoneSelection.shouldCapture(device, disabledMicUIDs: [], enabledMicUIDs: ["aggregate"]))
     }
 
-    private func makeDevice(uid: String, transportType: AudioTransportType) -> AudioInputDevice {
+    @Test func iPhoneNamedDeviceIsExcludedByDefaultEvenWithMisreportedTransport() {
+        // macOS doesn't reliably report a ContinuityCapture* transport type for every
+        // iPhone/iPad variant -- some report .usb, .bluetooth, or .unknown instead. The name
+        // fallback in isOptInOnlyMicrophone must still gate this device as opt-in-only.
+        let device = makeDevice(uid: "iphone-usb", name: "David's iPhone Microphone", transportType: .usb)
+
+        #expect(!MicrophoneSelection.shouldCapture(device, disabledMicUIDs: [], enabledMicUIDs: []))
+        #expect(MicrophoneSelection.shouldCapture(device, disabledMicUIDs: [], enabledMicUIDs: ["iphone-usb"]))
+    }
+
+    private func makeDevice(uid: String, name: String = "Test Mic", transportType: AudioTransportType) -> AudioInputDevice {
         AudioInputDevice(
             id: 1,
-            name: "Test Mic",
+            name: name,
             uid: uid,
             manufacturer: nil,
             sampleRate: 48000,

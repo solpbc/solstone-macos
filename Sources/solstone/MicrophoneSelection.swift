@@ -7,7 +7,7 @@ enum MicrophoneSelection {
         disabledMicUIDs: Set<String>,
         enabledMicUIDs: Set<String>
     ) -> Bool {
-        if device.transportType.isOptInOnly { return enabledMicUIDs.contains(device.uid) }
+        if device.isOptInOnlyMicrophone { return enabledMicUIDs.contains(device.uid) }
         return !disabledMicUIDs.contains(device.uid)
     }
 }

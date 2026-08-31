@@ -38,6 +38,22 @@ public struct AudioInputDevice: Sendable {
     public let sampleRate: Double
     public let transportType: AudioTransportType
 
+    /// True for a device that should default to opt-in (listed, but disabled until the user
+    /// explicitly enables it) rather than auto-captured: either its CoreAudio transport type is
+    /// opt-in-only (`AudioTransportType.isOptInOnly` — Continuity, aggregate), or its name matches
+    /// the iPhone/iPad Continuity-mic pattern.
+    ///
+    /// The name fallback exists because macOS does not reliably report a `ContinuityCapture*`
+    /// transport type for every iPhone/iPad Continuity mic variant — some report `.usb`,
+    /// `.bluetooth`, or `.unknown` instead. Without it, a misreported device falls through to
+    /// auto-capture and reproduces the attach/disconnect flapping this guard exists to prevent.
+    /// Heuristic contributed by github.com/howethomas, PR #1.
+    public var isOptInOnlyMicrophone: Bool {
+        if transportType.isOptInOnly { return true }
+        let lowered = name.lowercased()
+        return lowered.contains("iphone") || lowered.contains("ipad")
+    }
+
     /// Heuristic classification for device type (e.g., "speakerphone")
     public var facet: String? {
         let speakerphoneKeywords = [

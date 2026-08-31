@@ -894,7 +894,7 @@ public final class AppState {
         }
 
         let connectedOptInOnlyUIDs = Set(audioDeviceMonitor.availableDevices
-            .filter { $0.transportType.isOptInOnly }
+            .filter { $0.isOptInOnlyMicrophone }
             .map { $0.uid })
         self.config.reseedOptInOnlyMicrophonesIfNeeded(connectedOptInOnlyUIDs: connectedOptInOnlyUIDs)
 

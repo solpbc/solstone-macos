@@ -74,6 +74,38 @@ struct AudioInputDeviceTests {
         #expect(device.facet == nil)
     }
 
+    // MARK: - isOptInOnlyMicrophone
+
+    @Test func isOptInOnlyMicrophoneTrueForContinuityTransport() {
+        let device = makeDevice(name: "David's iPhone", transportType: .continuityWireless)
+        #expect(device.isOptInOnlyMicrophone)
+    }
+
+    @Test func isOptInOnlyMicrophoneTrueForAggregateTransport() {
+        let device = makeDevice(name: "Aggregate Device", transportType: .aggregate)
+        #expect(device.isOptInOnlyMicrophone)
+    }
+
+    @Test func isOptInOnlyMicrophoneFalseForOrdinaryUSBMic() {
+        let device = makeDevice(name: "Blue Yeti", transportType: .usb)
+        #expect(!device.isOptInOnlyMicrophone)
+    }
+
+    @Test func isOptInOnlyMicrophoneTrueForNameFallbackWhenTransportMisreported() {
+        let device = makeDevice(name: "David's iPhone Microphone", transportType: .usb)
+        #expect(device.isOptInOnlyMicrophone)
+    }
+
+    @Test func isOptInOnlyMicrophoneTrueForIPadNameFallback() {
+        let device = makeDevice(name: "David's iPad", transportType: .bluetooth)
+        #expect(device.isOptInOnlyMicrophone)
+    }
+
+    @Test func isOptInOnlyMicrophoneNameFallbackIsCaseInsensitive() {
+        let device = makeDevice(name: "IPHONE Microphone", transportType: .unknown)
+        #expect(device.isOptInOnlyMicrophone)
+    }
+
     // MARK: - toMetadata
 
     @Test func toMetadataIncludesRequiredKeys() {
