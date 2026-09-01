@@ -23,23 +23,53 @@ struct JournalClientBehaviorTests {
         #expect(shouldProbeLocalJournal(
             isUploadConfigured: false,
             isTunnelManaged: false,
-            localDiscoveryCompleted: false
+            localDiscoveryCompleted: false,
+            journalPathIsValid: true
         ))
         #expect(!shouldProbeLocalJournal(
             isUploadConfigured: false,
             isTunnelManaged: true,
-            localDiscoveryCompleted: false
+            localDiscoveryCompleted: false,
+            journalPathIsValid: true
         ))
         #expect(!shouldProbeLocalJournal(
             isUploadConfigured: true,
             isTunnelManaged: false,
-            localDiscoveryCompleted: false
+            localDiscoveryCompleted: false,
+            journalPathIsValid: true
+        ))
+        #expect(shouldProbeLocalJournal(
+            isUploadConfigured: true,
+            isTunnelManaged: false,
+            localDiscoveryCompleted: false,
+            journalPathIsValid: false
         ))
         #expect(!shouldProbeLocalJournal(
             isUploadConfigured: false,
             isTunnelManaged: false,
-            localDiscoveryCompleted: true
+            localDiscoveryCompleted: true,
+            journalPathIsValid: true
         ))
+    }
+
+    @Test func isJournalPathValidMirrorsHandoffPredicate() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("solstone-journal-path-valid-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        #expect(isJournalPathValid(directory.path))
+
+        #expect(!isJournalPathValid(nil))
+        #expect(!isJournalPathValid(""))
+        #expect(!isJournalPathValid("   \n"))
+
+        let missing = directory.appendingPathComponent("missing", isDirectory: true)
+        #expect(!isJournalPathValid(missing.path))
+
+        let file = directory.appendingPathComponent("not-a-directory", isDirectory: false)
+        try "payload".write(to: file, atomically: true, encoding: .utf8)
+        #expect(!isJournalPathValid(file.path))
     }
 
     @Test func sameKeyRelinkStillPresentsMarkOverlayAfterReset() async throws {

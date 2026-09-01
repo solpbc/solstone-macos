@@ -1051,11 +1051,18 @@ struct SettingsView: View {
         .onChange(of: appState.tunnelLifecycleOwner.isTunnelManaged) { _, _ in
             refreshLocalJournalDiscoveryIfNeeded()
         }
+        .onChange(of: appState.config.journalPath) { _, _ in
+            refreshLocalJournalDiscoveryIfNeeded()
+        }
         .onDisappear {
             journalNameFetchTask?.cancel()
             localDiscoveryTask?.cancel()
             freshFlow.cancelWaitingProbe()
         }
+    }
+
+    private var journalPathIsValid: Bool {
+        isJournalPathValid(appState.config.journalPath)
     }
 
     @ViewBuilder
@@ -1076,7 +1083,7 @@ struct SettingsView: View {
                 journalMigrationBanner
             }
 
-            if appState.config.isUploadConfigured {
+            if appState.config.isUploadConfigured && journalPathIsValid {
                 configuredJournalPanel
             } else {
                 unconfiguredJournalPanel
@@ -2029,7 +2036,8 @@ struct SettingsView: View {
         guard shouldProbeLocalJournal(
             isUploadConfigured: appState.config.isUploadConfigured,
             isTunnelManaged: appState.tunnelLifecycleOwner.isTunnelManaged,
-            localDiscoveryCompleted: localDiscoveryCompleted
+            localDiscoveryCompleted: localDiscoveryCompleted,
+            journalPathIsValid: journalPathIsValid
         ) else {
             if appState.tunnelLifecycleOwner.isTunnelManaged {
                 localDiscoveryTask?.cancel()

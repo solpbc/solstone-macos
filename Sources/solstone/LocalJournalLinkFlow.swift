@@ -35,12 +35,28 @@ struct LiveSolstoneUserConfigReader: SolstoneUserConfigReading {
     }
 }
 
+func isJournalPathValid(_ journalPath: String?, fileManager: FileManager = .default) -> Bool {
+    guard let journalPath = journalPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !journalPath.isEmpty
+    else {
+        return false
+    }
+    var isDirectory: ObjCBool = false
+    guard fileManager.fileExists(atPath: journalPath, isDirectory: &isDirectory),
+          isDirectory.boolValue
+    else {
+        return false
+    }
+    return true
+}
+
 func shouldProbeLocalJournal(
     isUploadConfigured: Bool,
     isTunnelManaged: Bool,
-    localDiscoveryCompleted: Bool
+    localDiscoveryCompleted: Bool,
+    journalPathIsValid: Bool
 ) -> Bool {
-    !isUploadConfigured && !isTunnelManaged && !localDiscoveryCompleted
+    (!isUploadConfigured || !journalPathIsValid) && !isTunnelManaged && !localDiscoveryCompleted
 }
 
 @MainActor
