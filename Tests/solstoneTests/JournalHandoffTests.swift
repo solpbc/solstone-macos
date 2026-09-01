@@ -433,6 +433,19 @@ struct JournalHandoffTests {
         #expect(FileManager.default.fileExists(atPath: world.installedJournalURL.path))
     }
 
+    @Test func freshFlowAbsentAppLeavesNoStagingLitter() async throws {
+        let world = signedWorld()
+        let flow = freshFlow(world: world)
+
+        flow.start()
+        try await waitUntil("fresh flow waiting after acquire with no staging litter") {
+            flow.state == .waitingForJournal
+        }
+
+        let names = try FileManager.default.contentsOfDirectory(atPath: world.dependencies.applicationsURL.path)
+        #expect(names == ["journal.app"])
+    }
+
     @Test func freshFlowVerificationFailuresFailWithoutInstall() async throws {
         let lengthMismatch = TestWorld(appcastData: appcast([
             appcastItem(version: 1, length: "4")
@@ -589,6 +602,101 @@ struct JournalHandoffTests {
         #expect(world.downloader.calls.count == 1)
         #expect(world.runningJournal.activatedURLs == [world.installedJournalURL])
         #expect(journalBuild(at: world.installedJournalURL) == 9)
+        #expect(world.runningJournal.terminateCalls == 0)
+    }
+
+    @Test func onDiskAdoptionQuiescesRunningJournalThenReplacesOldBuild() async throws {
+        let world = signedWorld()
+        world.runningJournal.installed = world.installedJournalURL
+        world.runningJournal.running = true
+        try writeJournalInfoPlist(at: world.installedJournalURL, build: 8)
+        let flow = onDiskAdoptionFlow(world: world)
+        let action = await flow.resolveOfferAction()
+
+        flow.start(
+            discoveredPath: world.journalRoot.path,
+            observerName: world.state.config.observerName,
+            action: action
+        )
+        try await waitUntil("on-disk adoption waiting after quiescing running journal") {
+            flow.state == .waitingForJournal
+        }
+
+        #expect(action == .install)
+        #expect(world.runningJournal.terminateCalls >= 1)
+        #expect(journalBuild(at: world.installedJournalURL) == 9)
+    }
+
+    @Test func onDiskAdoptionQuiesceFailureLeavesOldBuildUntouched() async throws {
+        let world = signedWorld()
+        world.runningJournal.installed = world.installedJournalURL
+        world.runningJournal.running = true
+        world.runningJournal.refusesTerminate = true
+        world.dependencies.runningTerminationTimeout = .milliseconds(5)
+        world.dependencies.runningTerminationPollInterval = .milliseconds(1)
+        try writeJournalInfoPlist(at: world.installedJournalURL, build: 8)
+        let flow = onDiskAdoptionFlow(world: world)
+        let action = await flow.resolveOfferAction()
+
+        flow.start(
+            discoveredPath: world.journalRoot.path,
+            observerName: world.state.config.observerName,
+            action: action
+        )
+        try await waitUntil("on-disk adoption quiesce abort") {
+            flow.state == .failed(.runningJournalWouldNotQuit)
+        }
+
+        #expect(action == .install)
+        #expect(journalBuild(at: world.installedJournalURL) == 8)
+    }
+
+    @Test func onDiskAdoptionDittoFailureLeavesOldBuildAndNoStagingLitter() async throws {
+        let world = signedWorld()
+        world.runningJournal.installed = world.installedJournalURL
+        world.mounter.removeAppAfterMount = true
+        try writeJournalInfoPlist(at: world.installedJournalURL, build: 8)
+        let flow = onDiskAdoptionFlow(world: world)
+        let action = await flow.resolveOfferAction()
+
+        flow.start(
+            discoveredPath: world.journalRoot.path,
+            observerName: world.state.config.observerName,
+            action: action
+        )
+        try await waitUntil("on-disk adoption ditto failure") {
+            if case .failed = flow.state {
+                return true
+            }
+            return false
+        }
+
+        #expect(action == .install)
+        #expect(journalBuild(at: world.installedJournalURL) == 8)
+        let names = try FileManager.default.contentsOfDirectory(atPath: world.dependencies.applicationsURL.path)
+        #expect(!names.contains { $0.hasPrefix(".journal.app.staging-") })
+    }
+
+    @Test func onDiskAdoptionReplaceLeavesNoStagingLitter() async throws {
+        let world = signedWorld()
+        world.runningJournal.installed = world.installedJournalURL
+        world.runningJournal.running = true
+        try writeJournalInfoPlist(at: world.installedJournalURL, build: 8)
+        let flow = onDiskAdoptionFlow(world: world)
+        let action = await flow.resolveOfferAction()
+
+        flow.start(
+            discoveredPath: world.journalRoot.path,
+            observerName: world.state.config.observerName,
+            action: action
+        )
+        try await waitUntil("on-disk adoption waiting after replacing old journal without litter") {
+            flow.state == .waitingForJournal
+        }
+
+        #expect(journalBuild(at: world.installedJournalURL) == 9)
+        let names = try FileManager.default.contentsOfDirectory(atPath: world.dependencies.applicationsURL.path)
+        #expect(names == ["journal.app"])
     }
 
     @Test func freshFlowWaitingProbeStoresDiscoveredMarkAndStops() async throws {
@@ -1151,6 +1259,7 @@ private final class FakeDMGDownloader: DMGDownloader {
 private final class FakeDiskImageMounter: DiskImageMounter {
     var tempRoot: URL!
     var mountFailure: JournalHandoffFailure?
+    var removeAppAfterMount = false
     var mounts = 0
     var detaches = 0
 
@@ -1162,6 +1271,9 @@ private final class FakeDiskImageMounter: DiskImageMounter {
         try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
         try writeJournalInfoPlist(at: appURL, build: 9)
         try Data("app".utf8).write(to: appURL.appendingPathComponent("marker"))
+        if removeAppAfterMount {
+            try? FileManager.default.removeItem(at: appURL)
+        }
         if let mountFailure {
             try? FileManager.default.removeItem(at: mountPoint)
             throw mountFailure

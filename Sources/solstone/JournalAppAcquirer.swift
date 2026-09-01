@@ -16,10 +16,14 @@ struct JournalAppAcquirer {
     var maxDMGBytes: Int64
     var applicationsURL: URL
     var fileManager: FileManager
+    var runningJournal: any RunningJournalController
+    var runningTerminationTimeout: Duration
+    var runningTerminationPollInterval: Duration
 
     static func live(
         defaults: UserDefaults = .standard,
-        trustVerifier: any TrustVerifier = LiveTrustVerifier()
+        trustVerifier: any TrustVerifier = LiveTrustVerifier(),
+        runningJournal: any RunningJournalController = LiveRunningJournalController()
     ) -> JournalAppAcquirer {
         JournalAppAcquirer(
             appcastFeedResolver: { JournalHandoffFeed.resolve(defaults: defaults) },
@@ -31,7 +35,10 @@ struct JournalAppAcquirer {
                 ?? JournalHandoffConstants.productionPublicEDKeyBase64,
             maxDMGBytes: JournalHandoffConstants.maxDMGBytes,
             applicationsURL: URL(fileURLWithPath: "/Applications", isDirectory: true),
-            fileManager: .default
+            fileManager: .default,
+            runningJournal: runningJournal,
+            runningTerminationTimeout: .seconds(15),
+            runningTerminationPollInterval: .milliseconds(250)
         )
     }
 
@@ -140,21 +147,52 @@ struct JournalAppAcquirer {
             throw JournalHandoffFailure.applicationsDirectoryUnwritable
         }
 
+        try await quiesceRunningJournalBeforeInstall()
+
         let destinationURL = applicationsURL.appendingPathComponent("journal.app", isDirectory: true)
+        let stageURL = applicationsURL.appendingPathComponent(
+            ".journal.app.staging-\(UUID().uuidString)", isDirectory: true
+        )
+
         do {
-            if fileManager.fileExists(atPath: destinationURL.path) {
-                try fileManager.removeItem(at: destinationURL)
-            }
             try await JournalHandoffProcessRunner.run(
                 executable: "/usr/bin/ditto",
-                arguments: [sourceURL.path, destinationURL.path]
+                arguments: [sourceURL.path, stageURL.path]
             ).throwIfFailed("ditto")
+
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                _ = try fileManager.replaceItemAt(destinationURL, withItemAt: stageURL, backupItemName: nil, options: [])
+            } else {
+                try fileManager.moveItem(at: stageURL, to: destinationURL)
+            }
             return destinationURL
         } catch let failure as JournalHandoffFailure {
+            try? fileManager.removeItem(at: stageURL)
             throw failure
         } catch {
+            try? fileManager.removeItem(at: stageURL)
             throw JournalHandoffFailure.installFailed(String(describing: error))
         }
+    }
+
+    private func quiesceRunningJournalBeforeInstall() async throws {
+        guard runningJournal.runningPID() != nil else {
+            return
+        }
+
+        Logger.setup.info("journal install: asking running journal to quit before install")
+        _ = runningJournal.terminateRunningJournal()
+        let deadline = ContinuousClock.now.advanced(by: runningTerminationTimeout)
+        while ContinuousClock.now < deadline {
+            try Task.checkCancellation()
+            if runningJournal.runningPID() == nil {
+                return
+            }
+            try await Task.sleep(for: runningTerminationPollInterval)
+        }
+
+        Logger.setup.error("journal install: running journal did not quit before timeout")
+        throw JournalHandoffFailure.runningJournalWouldNotQuit
     }
 
     private func clearQuarantine(at url: URL) async throws {

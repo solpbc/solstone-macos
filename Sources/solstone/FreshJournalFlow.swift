@@ -66,9 +66,10 @@ struct FreshJournalFlowDependencies {
     @MainActor
     static func live(defaults: UserDefaults = .standard) -> FreshJournalFlowDependencies {
         let trustVerifier = LiveTrustVerifier()
+        let runningJournal = LiveRunningJournalController()
         return FreshJournalFlowDependencies(
-            acquirer: .live(defaults: defaults, trustVerifier: trustVerifier),
-            runningJournal: LiveRunningJournalController(),
+            acquirer: .live(defaults: defaults, trustVerifier: trustVerifier, runningJournal: runningJournal),
+            runningJournal: runningJournal,
             trustVerifier: trustVerifier,
             fetchIdentity: { baseURL in
                 await JournalIdentityFetcher().fetch(baseURL: baseURL)

@@ -33,9 +33,10 @@ struct OnDiskJournalAdoptionFlowDependencies {
     @MainActor
     static func live(defaults: UserDefaults = .standard) -> OnDiskJournalAdoptionFlowDependencies {
         let trustVerifier = LiveTrustVerifier()
+        let runningJournal = LiveRunningJournalController()
         return OnDiskJournalAdoptionFlowDependencies(
-            acquirer: .live(defaults: defaults, trustVerifier: trustVerifier),
-            runningJournal: LiveRunningJournalController(),
+            acquirer: .live(defaults: defaults, trustVerifier: trustVerifier, runningJournal: runningJournal),
+            runningJournal: runningJournal,
             trustVerifier: trustVerifier,
             handoffFileURL: JournalHandoffFile.url(),
             fileManager: .default,

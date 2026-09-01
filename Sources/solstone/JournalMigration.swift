@@ -365,7 +365,10 @@ struct JournalHandoffDependencies {
             publicEDKeyBase64: publicEDKeyBase64,
             maxDMGBytes: maxDMGBytes,
             applicationsURL: applicationsURL,
-            fileManager: fileManager
+            fileManager: fileManager,
+            runningJournal: runningJournal,
+            runningTerminationTimeout: runningTerminationTimeout,
+            runningTerminationPollInterval: runningTerminationPollInterval
         )
     }
 }
