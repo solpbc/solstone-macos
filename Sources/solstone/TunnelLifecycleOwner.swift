@@ -73,7 +73,16 @@ final class TunnelLifecycleOwner {
         jitterRange: 1.0...1.0
     )
 
-    private(set) var state: TunnelLifecycleState = .disconnected
+    let journalVersion = JournalVersionMetadata()
+    private(set) var state: TunnelLifecycleState = .disconnected {
+        didSet {
+            if case .connected(let port, _) = state {
+                journalVersion.connected(localPort: port)
+            } else {
+                journalVersion.disconnected()
+            }
+        }
+    }
     private(set) var health: TunnelHealth = .unknown
     private(set) var isTunnelManaged = false
     private(set) var isPairedHome = false
@@ -233,6 +242,7 @@ final class TunnelLifecycleOwner {
     }
 
     func reevaluatePairing() async {
+        journalVersion.clear()
         invalidatePairingCache()
         refreshTunnelManagedFromStoredPairing()
         guard running else {
@@ -789,6 +799,14 @@ final class TunnelLifecycleOwner {
 
     private func setCachedPairingOutcome(_ outcome: PairingLoadOutcome) {
         cachedPairingOutcome = outcome
+        switch outcome {
+        case .loaded(let pairing):
+            journalVersion.setIdentity(journalVersionMetadataIdentity(for: pairing))
+        case .absent:
+            journalVersion.clear()
+        case .failed:
+            journalVersion.disconnected()
+        }
         relayAccessStatus = Self.relayAccessStatus(for: outcome, preserving: relayAccessStatus)
         refreshPairingDerivedState(from: outcome)
     }
@@ -875,6 +893,7 @@ final class TunnelLifecycleOwner {
     }
 
     private func disconnectCurrentTransport() async {
+        journalVersion.disconnected()
         stopProbe()
         establishedLoopbackPort = nil
         stateObservationTask?.cancel()

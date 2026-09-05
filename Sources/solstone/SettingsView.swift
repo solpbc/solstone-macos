@@ -2970,6 +2970,9 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier(AXID.Settings.Help.versionState)
                         .accessibilityValue(AppVersion.short)
+                    Text("journal version \(appState.tunnelLifecycleOwner.journalVersion.displayValue)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
