@@ -166,4 +166,3 @@ private func opaqueSHA256(_ parts: [String]) -> String {
     let digest = SHA256.hash(data: Data(canonical.utf8))
     return "sha256:" + digest.map { String(format: "%02x", $0) }.joined()
 }
-
