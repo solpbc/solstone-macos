@@ -42,7 +42,7 @@ public func watchdogAdoptionDecision(
     let normalizedOwnerURL = WatchdogAppLocationEligibility.normalized(ownerBundleURL)
     if let ownerCandidate = matchingCandidates.first(where: { candidate in
         guard let bundleURL = candidate.bundleURL else { return false }
-        // Path equality is not signer identity; code-signing verification is deferred to a follow-on lode.
+        // Path equality is not signer identity; code-signing verification is deferred to future work.
         return WatchdogAppLocationEligibility.normalized(bundleURL) == normalizedOwnerURL
     }) {
         return .adopt(pid: ownerCandidate.processIdentifier)

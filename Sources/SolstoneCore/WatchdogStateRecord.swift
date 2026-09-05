@@ -84,7 +84,7 @@ public enum WatchdogStateRecordStore {
         let source = url.lastPathComponent.isEmpty ? "watchdog" : url.lastPathComponent
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_"))
         let sanitized = String(source.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : "-" })
-        // This is a diagnostic-record filename, not a security boundary. The digest keeps distinct bundle URLs apart; the readable prefix helps Lode D and human debugging.
+        // This is a diagnostic-record filename, not a security boundary. The digest keeps distinct bundle URLs apart; the readable prefix helps human debugging.
         return String(sanitized.prefix(80))
     }
 }

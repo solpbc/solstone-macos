@@ -468,7 +468,7 @@ bump-release-journal:
 # Unlock the sol-signing keychain and add it to the session search list.
 # Fresh SSH sessions don't always inherit the user-domain search list, so
 # setting it here makes `make signing-check` work from any session (not just
-# the persistent hopper:build tmux window).
+# a long-lived build tmux window).
 unlock-signing:
 	@$(KEYCHAIN_SEARCH_LIST) prepend "$(SIGNING_KEYCHAIN)" >/dev/null
 	@if [ -f "$(SIGNING_KC_PASS_FILE)" ]; then \

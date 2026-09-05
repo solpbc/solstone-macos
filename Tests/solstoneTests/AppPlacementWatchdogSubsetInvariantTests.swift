@@ -21,7 +21,7 @@ struct AppPlacementWatchdogSubsetInvariantTests {
             try? FileManager.default.removeItem(at: privateVarTemporaryRoot)
         }
 
-        // The lode's a-j rows are retained below; translocation is an additional location row.
+        // The original a-j rows are retained below; translocation is an additional location row.
         let rows = [
             MatrixRow(
                 name: "a canonical",

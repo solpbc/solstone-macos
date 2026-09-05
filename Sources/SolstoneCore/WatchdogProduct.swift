@@ -8,7 +8,7 @@ public enum WatchdogProduct: String, Codable, Equatable, Sendable {
     case journal
 
     public init?(enclosingBundleIdentifier: String) {
-        // The designated-identifier signals in Makefile are deliberately not cross-checked here; code identity is deferred to a follow-on lode.
+        // The designated-identifier signals in Makefile are deliberately not cross-checked here; code identity is deferred to future work.
         switch enclosingBundleIdentifier {
         case "app.solstone.observer": self = .observer
         case "app.solstone.journal": self = .journal
