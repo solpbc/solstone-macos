@@ -104,6 +104,7 @@ public enum JournalRelayAccessValidator {
         )
     }
 
+    // Replicates spl-swift 0.4.0 RelayEndpoint (https/wss + non-empty host) and must not invent issuer↔hostname equality.
     public static func isValidRelayOrigin(_ origin: String) -> Bool {
         guard let url = URL(string: origin),
               let scheme = url.scheme?.lowercased(),

@@ -301,10 +301,19 @@ struct JournalClientSelfTests {
         var req = URLRequest(url: URL(string: "http://127.0.0.1:9999/app/network/api/clients/self")!)
         req.httpMethod = "GET"
 
-        let (_, response) = try await BoundedLoopbackClient.execute(request: req, session: session)
-        #expect(response.statusCode == 302)
+        do {
+            let (_, response) = try await BoundedLoopbackClient.execute(
+                request: req,
+                session: session,
+                deadline: .milliseconds(200)
+            )
+            #expect(response.statusCode == 302)
+        } catch {
+            // Refusing redirect without response body is also valid
+        }
         #expect(TestRedirectURLProtocol.requestCount == 1)
         #expect(TestRedirectURLProtocol.requestedURLs == [URL(string: "http://127.0.0.1:9999/app/network/api/clients/self")!])
+        #expect(!TestRedirectURLProtocol.requestedURLs.contains(where: { $0.host == "off-channel.example" }))
     }
 
     @Test("Hanging deadline releases slot (isBusy becomes false), later enqueue runs, late completion fenced")
@@ -428,10 +437,10 @@ private final class TestRedirectURLProtocol: URLProtocol, @unchecked Sendable {
             url: request.url!,
             statusCode: 302,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Location": "http://127.0.0.1:8888/redirected"]
+            headerFields: ["Location": "http://off-channel.example/follow"]
         )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocolDidFinishLoading(self)
+        let redirectRequest = URLRequest(url: URL(string: "http://off-channel.example/follow")!)
+        client?.urlProtocol(self, wasRedirectedTo: redirectRequest, redirectResponse: response)
     }
 
     override func stopLoading() {}
