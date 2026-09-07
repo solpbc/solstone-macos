@@ -11,21 +11,25 @@ public actor JournalRelayAccessSequencer {
         public let instanceID: String
         public let pairingGeneration: UInt64
         public let accessMutationGeneration: UInt64
+        public let transportAttempt: UInt64?
 
         public init(
             localPort: Int,
             instanceID: String,
             pairingGeneration: UInt64,
-            accessMutationGeneration: UInt64
+            accessMutationGeneration: UInt64,
+            transportAttempt: UInt64? = nil
         ) {
             self.localPort = localPort
             self.instanceID = instanceID
             self.pairingGeneration = pairingGeneration
             self.accessMutationGeneration = accessMutationGeneration
+            self.transportAttempt = transportAttempt
         }
     }
 
     public enum AccessUpdateOutcome: Sendable, Equatable {
+        case received(data: Data, target: TargetConnection, deadline: ContinuousClock.Instant, burstID: UInt64)
         case ready(pairing: StoredPairing, pairingGen: UInt64, accessGen: UInt64, newAccessGen: UInt64)
         case notConfiguredLiveDisabled(pairingGen: UInt64, accessGen: UInt64)
         case durableClearPersisted(pairing: StoredPairing, pairingGen: UInt64, accessGen: UInt64, newAccessGen: UInt64)
@@ -35,7 +39,6 @@ public actor JournalRelayAccessSequencer {
 
     private let session: URLSession
     private let deadline: Duration
-    private let credentialStore: PairingCredentialStore
     private let onOutcome: @Sendable (AccessUpdateOutcome) async -> Void
     private let now: @Sendable () -> Date
 
@@ -43,6 +46,8 @@ public actor JournalRelayAccessSequencer {
     private var inFlight = false
     private var hasPendingTrigger = false
     private var jobGeneration: UInt64 = 0
+    private var burstID: UInt64 = 0
+    private var passes = 0
 
     public init(
         credentialStore: PairingCredentialStore,
@@ -51,7 +56,6 @@ public actor JournalRelayAccessSequencer {
         now: @escaping @Sendable () -> Date = { Date() },
         onOutcome: @escaping @Sendable (AccessUpdateOutcome) async -> Void
     ) {
-        self.credentialStore = credentialStore
         self.session = session
         self.deadline = deadline
         self.now = now
@@ -62,7 +66,14 @@ public actor JournalRelayAccessSequencer {
         inFlight
     }
 
-    public func enqueue(target: TargetConnection) {
+    public func enqueue(target: TargetConnection, burstID requestedBurst: UInt64? = nil) {
+        let nextBurst = requestedBurst ?? (inFlight ? burstID : burstID &+ 1)
+        guard nextBurst >= burstID else { return }
+        if nextBurst != burstID {
+            burstID = nextBurst
+            passes = 0
+            jobGeneration &+= 1
+        }
         if activeTarget != target {
             activeTarget = target
             jobGeneration &+= 1
@@ -74,21 +85,24 @@ public actor JournalRelayAccessSequencer {
     public func cancel() {
         activeTarget = nil
         hasPendingTrigger = false
+        passes = 0
         jobGeneration &+= 1
     }
 
     private func drainIfNeeded() {
-        guard !inFlight, let target = activeTarget, hasPendingTrigger else { return }
+        guard !inFlight, passes < 2, let target = activeTarget, hasPendingTrigger else { return }
         inFlight = true
+        passes += 1
         hasPendingTrigger = false
         let currentJobGen = jobGeneration
+        let currentBurst = burstID
 
         Task {
-            await self.runJob(target: target, jobGen: currentJobGen)
+            await self.runJob(target: target, jobGen: currentJobGen, burstID: currentBurst)
         }
     }
 
-    private func runJob(target: TargetConnection, jobGen: UInt64) async {
+    private func runJob(target: TargetConnection, jobGen: UInt64, burstID: UInt64) async {
         defer {
             inFlight = false
             drainIfNeeded()
@@ -141,54 +155,7 @@ public actor JournalRelayAccessSequencer {
 
         guard activeTarget == target, jobGeneration == jobGen else { return }
 
-        switch decodedStatus {
-        case .notConfigured:
-            await onOutcome(.notConfiguredLiveDisabled(
-                pairingGen: target.pairingGeneration,
-                accessGen: target.accessMutationGeneration
-            ))
-
-            guard activeTarget == target, jobGeneration == jobGen else { return }
-            do {
-                let (clearedPairing, newAccessGen) = try credentialStore.clearRelayAccess(
-                    expectedPairingGen: target.pairingGeneration,
-                    expectedAccessGen: target.accessMutationGeneration
-                )
-                guard activeTarget == target, jobGeneration == jobGen else { return }
-                await onOutcome(.durableClearPersisted(
-                    pairing: clearedPairing,
-                    pairingGen: target.pairingGeneration,
-                    accessGen: target.accessMutationGeneration,
-                    newAccessGen: newAccessGen
-                ))
-            } catch {
-                Logger.journal.error("Durable clear save error: \(error.localizedDescription, privacy: .public)")
-                guard activeTarget == target, jobGeneration == jobGen else { return }
-                await onOutcome(.durableClearFailed(
-                    pairingGen: target.pairingGeneration,
-                    accessGen: target.accessMutationGeneration
-                ))
-            }
-
-        case .ready(let ready):
-            do {
-                let (updatedPairing, newAccessGen) = try credentialStore.updateRelayAccess(
-                    expectedPairingGen: target.pairingGeneration,
-                    expectedAccessGen: target.accessMutationGeneration,
-                    relayOrigin: ready.relayOrigin.absoluteString,
-                    deviceToken: ready.deviceToken,
-                    expiresAtString: ready.expiresAt
-                )
-                guard activeTarget == target, jobGeneration == jobGen else { return }
-                await onOutcome(.ready(
-                    pairing: updatedPairing,
-                    pairingGen: target.pairingGeneration,
-                    accessGen: target.accessMutationGeneration,
-                    newAccessGen: newAccessGen
-                ))
-            } catch {
-                Logger.journal.error("Failed to persist updated relay access: \(error.localizedDescription, privacy: .public)")
-            }
-        }
+        _ = decodedStatus
+        await onOutcome(.received(data: data, target: target, deadline: jobDeadline, burstID: burstID))
     }
 }

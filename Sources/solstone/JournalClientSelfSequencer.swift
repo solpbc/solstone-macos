@@ -2,31 +2,28 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import Synchronization
 import os
 import SolstoneCore
 
 public struct ClientSelfJournalMetadata: Decodable, Sendable {
     public let name: String?
-    public let version: String?
-    public let ownerLabel: String?
+    public let version: String
 
     enum CodingKeys: String, CodingKey {
         case name
         case version
-        case ownerLabel = "owner_label"
     }
 
-    public init(name: String?, version: String?, ownerLabel: String?) {
+    public init(name: String?, version: String) {
         self.name = name
         self.version = version
-        self.ownerLabel = ownerLabel
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String?.self, forKey: .name)
-        version = try container.decode(String?.self, forKey: .version)
-        ownerLabel = try container.decode(String?.self, forKey: .ownerLabel)
+        version = try container.decode(String.self, forKey: .version)
     }
 }
 
@@ -65,15 +62,21 @@ public struct ClientSelfReportedPayload: Decodable, Sendable {
 
 public struct ClientSelfProtocol1Response: Decodable, Sendable {
     public let protocolVersion: Int
-    public let revision: Int
-    public let journal: ClientSelfJournalMetadata?
+    public let revision: UInt64
+    public let journal: ClientSelfJournalMetadata
     public let reported: ClientSelfReportedPayload?
+    public let ownerLabel: String?
+    public let displayLabel: String
+    public let updatedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case protocolVersion = "protocol_version"
         case revision
         case journal
         case reported
+        case ownerLabel = "owner_label"
+        case displayLabel = "display_label"
+        case updatedAt = "updated_at"
     }
 
     public init(from decoder: Decoder) throws {
@@ -82,12 +85,12 @@ public struct ClientSelfProtocol1Response: Decodable, Sendable {
         guard protocolVersion == 1 else {
             throw DecodingError.dataCorruptedError(forKey: .protocolVersion, in: container, debugDescription: "Expected protocol_version == 1")
         }
-        revision = try container.decode(Int.self, forKey: .revision)
-        guard revision >= 0 else {
-            throw DecodingError.dataCorruptedError(forKey: .revision, in: container, debugDescription: "Expected revision >= 0")
-        }
-        journal = try container.decodeIfPresent(ClientSelfJournalMetadata.self, forKey: .journal)
-        reported = try container.decodeIfPresent(ClientSelfReportedPayload.self, forKey: .reported)
+        revision = try container.decode(UInt64.self, forKey: .revision)
+        journal = try container.decode(ClientSelfJournalMetadata.self, forKey: .journal)
+        reported = try container.decode(ClientSelfReportedPayload?.self, forKey: .reported)
+        ownerLabel = try container.decode(String?.self, forKey: .ownerLabel)
+        displayLabel = try container.decode(String.self, forKey: .displayLabel)
+        updatedAt = try container.decode(String?.self, forKey: .updatedAt)
     }
 }
 
@@ -100,14 +103,16 @@ public enum ClientSelfProtocol1Validator {
         guard let decoded = try? JSONDecoder().decode(ClientSelfProtocol1Response.self, from: data) else {
             return nil
         }
-        guard decoded.protocolVersion == 1, decoded.revision >= 0 else { return nil }
+        guard decoded.protocolVersion == 1,
+              sanitizedJournalVersion(decoded.journal.version) != nil else { return nil }
+        if let name = decoded.journal.name, sanitizedJournalName(name) == nil { return nil }
         return decoded
     }
 }
 
 private struct ClientSelfPutPayload: Encodable {
     let protocolVersion: Int
-    let expectedRevision: Int
+    let expectedRevision: UInt64
     let reported: ReportedPayload
 
     enum CodingKeys: String, CodingKey {
@@ -200,6 +205,20 @@ public struct ClientSelfReportedSnapshot: Equatable, Sendable {
     }
 }
 
+public final class MetadataPublicationFence: Sendable {
+    private let current = Mutex(true)
+
+    public func withCurrent(_ action: () -> Void) {
+        current.withLock { isCurrent in
+            if isCurrent { action() }
+        }
+    }
+
+    fileprivate func invalidate() {
+        current.withLock { $0 = false }
+    }
+}
+
 public actor JournalClientSelfSequencer {
     public struct TargetConnection: Equatable, Sendable {
         public let localPort: Int
@@ -223,17 +242,20 @@ public actor JournalClientSelfSequencer {
 
     private let session: URLSession
     private let deadline: Duration
-    private let onJournalMetadataUpdated: @Sendable (String, UInt64, String?, String?) async -> Void
+    private let onJournalMetadataUpdated: @Sendable (String, UInt64, String?, String?, Bool, ContinuousClock.Instant, MetadataPublicationFence) async -> Void
 
     private var activeTarget: TargetConnection?
     private var inFlight = false
     private var pendingSnapshot: ClientSelfReportedSnapshot?
     private var jobGeneration: UInt64 = 0
+    private var activeBurstID: UInt64?
+    private var passesStarted = 0
+    private var publicationFence: MetadataPublicationFence?
 
     public init(
         session: URLSession = BoundedLoopbackClient.makeSession(),
         deadline: Duration = BoundedLoopbackClient.defaultDeadline,
-        onJournalMetadataUpdated: @escaping @Sendable (String, UInt64, String?, String?) async -> Void
+        onJournalMetadataUpdated: @escaping @Sendable (String, UInt64, String?, String?, Bool, ContinuousClock.Instant, MetadataPublicationFence) async -> Void
     ) {
         self.session = session
         self.deadline = deadline
@@ -246,9 +268,20 @@ public actor JournalClientSelfSequencer {
 
     public func enqueue(
         target: TargetConnection,
-        snapshot: ClientSelfReportedSnapshot = .sampleCurrent()
+        snapshot: ClientSelfReportedSnapshot = .sampleCurrent(),
+        burstID: UInt64? = nil
     ) {
+        let requestedBurst = burstID ?? ((!inFlight || activeTarget?.pairingGeneration != target.pairingGeneration)
+            ? (activeBurstID ?? 0) &+ 1 : (activeBurstID ?? 1))
+        if let activeBurstID, requestedBurst < activeBurstID { return }
+        if activeBurstID != requestedBurst {
+            publicationFence?.invalidate()
+            activeBurstID = requestedBurst
+            passesStarted = 0
+            jobGeneration &+= 1
+        }
         if activeTarget != target {
+            publicationFence?.invalidate()
             activeTarget = target
             jobGeneration &+= 1
         }
@@ -257,28 +290,36 @@ public actor JournalClientSelfSequencer {
     }
 
     public func cancel() {
+        publicationFence?.invalidate()
         activeTarget = nil
         pendingSnapshot = nil
+        activeBurstID = nil
+        passesStarted = 0
         jobGeneration &+= 1
     }
 
     private func drainIfNeeded() {
-        guard !inFlight, let target = activeTarget, let snapshot = pendingSnapshot else { return }
+        guard !inFlight, passesStarted < 2, let target = activeTarget, let snapshot = pendingSnapshot else { return }
+        passesStarted += 1
         inFlight = true
         pendingSnapshot = nil
         let currentJobGen = jobGeneration
+        let fence = MetadataPublicationFence()
+        publicationFence = fence
 
         Task {
-            await self.runJob(target: target, snapshot: snapshot, jobGen: currentJobGen)
+            await self.runJob(target: target, snapshot: snapshot, jobGen: currentJobGen, fence: fence)
         }
     }
 
     private func runJob(
         target: TargetConnection,
         snapshot: ClientSelfReportedSnapshot,
-        jobGen: UInt64
+        jobGen: UInt64,
+        fence: MetadataPublicationFence
     ) async {
         defer {
+            fence.invalidate()
             inFlight = false
             drainIfNeeded()
         }
@@ -331,7 +372,7 @@ public actor JournalClientSelfSequencer {
                 deadline: fallbackRemaining
             ) {
                 guard activeTarget == target, jobGeneration == jobGen else { return }
-                await onJournalMetadataUpdated(target.identity, target.metadataGeneration, fallbackVersion, nil)
+                await publishMetadata(target: target, jobGen: jobGen, version: fallbackVersion, name: nil, preserveName: true, jobDeadline: jobDeadline)
             }
             return
         }
@@ -344,9 +385,7 @@ public actor JournalClientSelfSequencer {
 
         guard activeTarget == target, jobGeneration == jobGen else { return }
 
-        if let journal = getResponse.journal {
-            await onJournalMetadataUpdated(target.identity, target.metadataGeneration, journal.version, journal.name)
-        }
+        await publishMetadata(target: target, jobGen: jobGen, version: getResponse.journal.version, name: getResponse.journal.name, preserveName: false, jobDeadline: jobDeadline)
 
         guard activeTarget == target, jobGeneration == jobGen else { return }
 
@@ -361,7 +400,8 @@ public actor JournalClientSelfSequencer {
             snapshot: currentSnapshot,
             target: target,
             jobGen: jobGen,
-            deadline: putRemaining
+            deadline: putRemaining,
+            jobDeadline: jobDeadline
         )
 
         if putOutcome == .conflict {
@@ -380,9 +420,7 @@ public actor JournalClientSelfSequencer {
 
             guard activeTarget == target, jobGeneration == jobGen else { return }
 
-            if let journal = retryResponse.journal {
-                await onJournalMetadataUpdated(target.identity, target.metadataGeneration, journal.version, journal.name)
-            }
+            await publishMetadata(target: target, jobGen: jobGen, version: retryResponse.journal.version, name: retryResponse.journal.name, preserveName: false, jobDeadline: jobDeadline)
 
             guard activeTarget == target, jobGeneration == jobGen else { return }
             let latestSnapshot = pendingSnapshot ?? ClientSelfReportedSnapshot.sampleCurrent()
@@ -396,18 +434,52 @@ public actor JournalClientSelfSequencer {
                 snapshot: latestSnapshot,
                 target: target,
                 jobGen: jobGen,
-                deadline: retryPutRemaining
+                deadline: retryPutRemaining,
+                jobDeadline: jobDeadline
             )
         }
     }
 
+    private func publishMetadata(
+        target: TargetConnection,
+        jobGen: UInt64,
+        version: String?,
+        name: String?,
+        preserveName: Bool,
+        jobDeadline: ContinuousClock.Instant
+    ) async {
+        guard activeTarget == target, jobGeneration == jobGen,
+              ContinuousClock.now < jobDeadline, let fence = publicationFence else { return }
+        let callback = onJournalMetadataUpdated
+        let (completion, continuation) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        // The owner checks the same deadline at its actual cache mutation. A
+        // queued callback may outlive this waiter, but cannot publish late.
+        let publication = Task {
+            await callback(target.identity, target.metadataGeneration, version, name, preserveName, jobDeadline, fence)
+            continuation.yield(true)
+            continuation.finish()
+        }
+        let timeout = Task {
+            do { try await Task.sleep(until: jobDeadline, clock: .continuous) }
+            catch { return }
+            fence.invalidate()
+            continuation.yield(false)
+            continuation.finish()
+        }
+        var iterator = completion.makeAsyncIterator()
+        _ = await iterator.next()
+        publication.cancel()
+        timeout.cancel()
+    }
+
     private func sendPut(
         url: URL,
-        expectedRevision: Int,
+        expectedRevision: UInt64,
         snapshot: ClientSelfReportedSnapshot,
         target: TargetConnection,
         jobGen: UInt64,
-        deadline: Duration
+        deadline: Duration,
+        jobDeadline: ContinuousClock.Instant
     ) async throws -> PutOutcome {
         guard activeTarget == target, jobGeneration == jobGen else { return .failure }
         guard deadline > .zero else { return .failure }
@@ -446,9 +518,7 @@ public actor JournalClientSelfSequencer {
                 return .success
             }
             guard activeTarget == target, jobGeneration == jobGen else { return .failure }
-            if let journal = putResponse.journal {
-                await onJournalMetadataUpdated(target.identity, target.metadataGeneration, journal.version, journal.name)
-            }
+            await publishMetadata(target: target, jobGen: jobGen, version: putResponse.journal.version, name: putResponse.journal.name, preserveName: false, jobDeadline: jobDeadline)
             return .success
         }
 

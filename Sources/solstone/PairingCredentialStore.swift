@@ -21,8 +21,8 @@ extension SPLKeychainStore: PairingStoring {}
 public final class PairingCredentialStore: @unchecked Sendable {
     private let lock = NSLock()
     private let store: any PairingStoring
-    private(set) var pairingGeneration: UInt64 = 1
-    private(set) var accessMutationGeneration: UInt64 = 1
+    private var storedPairingGeneration: UInt64 = 1
+    private var storedAccessGeneration: UInt64 = 1
     private var cachedPairing: StoredPairing?
     private var lastIdentityToken: String?
 
@@ -30,24 +30,34 @@ public final class PairingCredentialStore: @unchecked Sendable {
         self.store = store
     }
 
+    public var pairingGeneration: UInt64 { lock.withLock { storedPairingGeneration } }
+    public var accessMutationGeneration: UInt64 { lock.withLock { storedAccessGeneration } }
+
+    public func matches(pairing: UInt64, access: UInt64) -> Bool {
+        lock.withLock { storedPairingGeneration == pairing && storedAccessGeneration == access }
+    }
+
     public func currentPairing() -> StoredPairing? {
         lock.withLock { cachedPairing }
     }
 
     public func currentGenerations() -> (pairingGeneration: UInt64, accessMutationGeneration: UInt64) {
-        lock.withLock { (pairingGeneration, accessMutationGeneration) }
+        lock.withLock { (storedPairingGeneration, storedAccessGeneration) }
     }
 
     public func load() throws -> StoredPairing? {
         lock.lock()
         defer { lock.unlock() }
         let loaded = try store.load()
+        let previous = cachedPairing
         cachedPairing = loaded
         let identity = loaded.map { self.deriveIdentityToken(for: $0) }
         if identity != lastIdentityToken {
             lastIdentityToken = identity
-            pairingGeneration &+= 1
-            accessMutationGeneration &+= 1
+            storedPairingGeneration &+= 1
+            storedAccessGeneration &+= 1
+        } else if loaded != previous {
+            storedAccessGeneration &+= 1
         }
         return loaded
     }
@@ -55,27 +65,30 @@ public final class PairingCredentialStore: @unchecked Sendable {
     public func save(_ pairing: StoredPairing, expectedGeneration: UInt64? = nil) throws {
         lock.lock()
         defer { lock.unlock() }
-        if let expectedGeneration, expectedGeneration != pairingGeneration {
+        if let expectedGeneration, expectedGeneration != storedPairingGeneration {
             throw PairingCredentialStoreError.staleGeneration
         }
         try store.save(pairing)
         cachedPairing = pairing
         lastIdentityToken = deriveIdentityToken(for: pairing)
-        pairingGeneration &+= 1
-        accessMutationGeneration &+= 1
+        storedPairingGeneration &+= 1
+        storedAccessGeneration &+= 1
     }
 
-    public func delete(expectedGeneration: UInt64? = nil) throws {
+    public func delete(expectedGeneration: UInt64? = nil, expectedAccessGeneration: UInt64? = nil) throws {
         lock.lock()
         defer { lock.unlock() }
-        if let expectedGeneration, expectedGeneration != pairingGeneration {
+        if let expectedGeneration, expectedGeneration != storedPairingGeneration {
+            throw PairingCredentialStoreError.staleGeneration
+        }
+        if let expectedAccessGeneration, expectedAccessGeneration != storedAccessGeneration {
             throw PairingCredentialStoreError.staleGeneration
         }
         try store.delete()
         cachedPairing = nil
         lastIdentityToken = nil
-        pairingGeneration &+= 1
-        accessMutationGeneration &+= 1
+        storedPairingGeneration &+= 1
+        storedAccessGeneration &+= 1
     }
 
     public func updateRelayAccess(
@@ -83,12 +96,13 @@ public final class PairingCredentialStore: @unchecked Sendable {
         expectedAccessGen: UInt64,
         relayOrigin: String,
         deviceToken: String,
-        expiresAtString: String?
+        expiresAtString: String?,
+        beforeSave: () throws -> Void = {}
     ) throws -> (pairing: StoredPairing, newAccessGen: UInt64) {
         lock.lock()
         defer { lock.unlock() }
-        guard expectedPairingGen == pairingGeneration,
-              expectedAccessGen == accessMutationGeneration else {
+        guard expectedPairingGen == storedPairingGeneration,
+              expectedAccessGen == storedAccessGeneration else {
             throw PairingCredentialStoreError.staleGeneration
         }
         guard let existing = cachedPairing ?? (try? store.load()) else {
@@ -108,11 +122,12 @@ public final class PairingCredentialStore: @unchecked Sendable {
             pairedAt: existing.pairedAt
         )
 
+        try beforeSave()
         try store.save(updated)
         cachedPairing = updated
         lastIdentityToken = deriveIdentityToken(for: updated)
-        accessMutationGeneration &+= 1
-        return (pairing: updated, newAccessGen: accessMutationGeneration)
+        storedAccessGeneration &+= 1
+        return (pairing: updated, newAccessGen: storedAccessGeneration)
     }
 
     public func clearRelayAccess(
@@ -121,8 +136,8 @@ public final class PairingCredentialStore: @unchecked Sendable {
     ) throws -> (pairing: StoredPairing, newAccessGen: UInt64) {
         lock.lock()
         defer { lock.unlock() }
-        guard expectedPairingGen == pairingGeneration,
-              expectedAccessGen == accessMutationGeneration else {
+        guard expectedPairingGen == storedPairingGeneration,
+              expectedAccessGen == storedAccessGeneration else {
             throw PairingCredentialStoreError.staleGeneration
         }
         guard let existing = cachedPairing ?? (try? store.load()) else {
@@ -145,8 +160,8 @@ public final class PairingCredentialStore: @unchecked Sendable {
         try store.save(updated)
         cachedPairing = updated
         lastIdentityToken = deriveIdentityToken(for: updated)
-        accessMutationGeneration &+= 1
-        return (pairing: updated, newAccessGen: accessMutationGeneration)
+        storedAccessGeneration &+= 1
+        return (pairing: updated, newAccessGen: storedAccessGeneration)
     }
 
     public func noteExternalPairingChange(_ pairing: StoredPairing?) {
@@ -154,11 +169,11 @@ public final class PairingCredentialStore: @unchecked Sendable {
         defer { lock.unlock() }
         cachedPairing = pairing
         lastIdentityToken = pairing.map { self.deriveIdentityToken(for: $0) }
-        pairingGeneration &+= 1
-        accessMutationGeneration &+= 1
+        storedPairingGeneration &+= 1
+        storedAccessGeneration &+= 1
     }
 
     private func deriveIdentityToken(for pairing: StoredPairing) -> String {
-        "\(pairing.instanceID):\(pairing.clientCertPEM.hashValue):\(pairing.pairedAt.timeIntervalSince1970)"
+        [pairing.instanceID, pairing.clientCertPEM, pairing.clientKeyPEM, pairing.caChainPEM, String(pairing.pairedAt.timeIntervalSince1970)].joined(separator: "\u{0}")
     }
 }

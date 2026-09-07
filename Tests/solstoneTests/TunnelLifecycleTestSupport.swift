@@ -2,7 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
-import SPLTunnel
+@testable import SPLTunnel
 import Testing
 @testable import solstone
 
@@ -183,6 +183,7 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
     nonisolated let pairing: StoredPairing?
     let clientInfo: SPLClientInfo?
     let policy: SessionPolicy?
+    private var connectContinuations: [CheckedContinuation<Void, Never>]?
     var shouldThrowOnConnect: Error?
 
     private(set) var requestReconnectCount = 0
@@ -219,9 +220,18 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
         connectionModeValue
     }
 
+    var pendingConnectCount: Int { connectContinuations?.count ?? 0 }
+    func armConnectGate() { connectContinuations = [] }
+    func releaseNextConnect() {
+        if connectContinuations?.isEmpty == false { connectContinuations!.removeFirst().resume() }
+    }
+
     func connect(endpoints: [TransportEndpoint]) async throws -> ConnectedVia {
         connectCallCount += 1
         recordedEndpoints.append(endpoints)
+        if connectContinuations != nil {
+            await withCheckedContinuation { connectContinuations?.append($0) }
+        }
         if let shouldThrowOnConnect {
             throw shouldThrowOnConnect
         }
@@ -628,4 +638,64 @@ func expectDuration(_ duration: Duration, inMilliseconds range: ClosedRange<Int>
 func durationMilliseconds(_ duration: Duration) -> Int {
     let components = duration.components
     return Int(components.seconds * 1_000 + components.attoseconds / 1_000_000_000_000_000)
+}
+
+
+extension FakeTunnelReconnectingSession: TunnelGeneration {
+    func connect(endpoints: [TransportEndpoint], preferredEndpoint: TransportEndpoint?) async throws -> ConnectedVia {
+        emitState(.connecting(candidates: endpoints.map(\.connectedVia)))
+        return try await connect(endpoints: endpoints)
+    }
+
+    func connectedEndpoint() async -> TransportEndpoint? {
+        recordedEndpoints.last?.first
+    }
+}
+
+final class ActualSupervisorRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var supervisors: [TunnelSupervisor] = []
+    let children = SessionRecorder()
+
+    var count: Int { lock.withLock { supervisors.count } }
+    subscript(index: Int) -> TunnelSupervisor { lock.withLock { supervisors[index] } }
+
+    func make(pairing: StoredPairing, info: SPLClientInfo, policy: SessionPolicy) -> TunnelSupervisor {
+        let supervisor = TunnelSupervisor(pairing: pairing, clientInfo: info, policy: policy,
+            makeSession: { [children] pairing, info, policy in
+                let child = FakeTunnelReconnectingSession(pairing: pairing, clientInfo: info, policy: policy)
+                children.append(child)
+                return child
+            })
+        lock.withLock { supervisors.append(supervisor) }
+        return supervisor
+    }
+}
+
+actor AccessRefreshBarrier {
+    private var continuation: CheckedContinuation<DeviceTokenRefreshResult, Never>?
+    private(set) var entered = false
+    private(set) var completed = false
+    func wait() async -> DeviceTokenRefreshResult {
+        entered = true
+        let result = await withCheckedContinuation { continuation = $0 }
+        completed = true
+        return result
+    }
+    func release(_ result: DeviceTokenRefreshResult) { continuation?.resume(returning: result); continuation = nil }
+}
+
+
+final class AccessHTTPReplyBarrier: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var released = false
+    private var arrived = false
+    var entered: Bool { condition.lock(); defer { condition.unlock() }; return arrived }
+    func wait() {
+        condition.lock()
+        arrived = true
+        while !released { condition.wait() }
+        condition.unlock()
+    }
+    func release() { condition.lock(); released = true; condition.broadcast(); condition.unlock() }
 }

@@ -1124,15 +1124,16 @@ struct TunnelLifecycleOwnerTests {
         try await waitUntil { second.connectAttempts == 1 }
         try await waitUntil { await refresh.pendingNowCount == 2 }
 
+        let retiredCandidateDisconnects = second.disconnectCount
         await refresh.completeNext(with: .refreshed(stale))
         await waitBrieflyUntil {
             let savedPairing = !store.savedPairings.isEmpty
-            let disconnectedNewTransport = second.disconnectCount > 0
+            let disconnectedNewTransport = second.disconnectCount > retiredCandidateDisconnects
             let connectedFallbackTransport = third.connectAttempts > 0
             return savedPairing || disconnectedNewTransport || connectedFallbackTransport
         }
         #expect(store.savedPairings.isEmpty)
-        #expect(second.disconnectCount == 0)
+        #expect(second.disconnectCount == retiredCandidateDisconnects)
         #expect(third.connectAttempts == 0)
 
         await owner.stop()

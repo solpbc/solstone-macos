@@ -17,6 +17,190 @@ struct JournalClientSelfTests {
         return URLSession(configuration: config, delegate: JournalVersionRedirectDelegate(), delegateQueue: nil)
     }
 
+    @Test("Full metadata resources require the actual journal schema")
+    func testActualFullResourceSchema() throws {
+        let full = #"{"protocol_version":1,"revision":0,"reported":{"name":null,"platform":null,"device_type":null,"app_id":null,"app_version":null},"owner_label":null,"display_label":"Test Mac","updated_at":null,"journal":{"name":null,"version":"0.9.1"}}"#
+        let value = try #require(try JSONSerialization.jsonObject(with: Data(full.utf8)) as? [String: Any])
+        #expect(ClientSelfProtocol1Validator.decode(Data(full.utf8))?.journal.name == nil)
+        #expect(ClientSelfProtocol1Validator.decode(Data(full.utf8)) != nil)
+        for key in ["protocol_version", "revision", "reported", "owner_label", "display_label", "updated_at", "journal"] {
+            var missing = value
+            missing.removeValue(forKey: key)
+            #expect(ClientSelfProtocol1Validator.decode(try JSONSerialization.data(withJSONObject: missing)) == nil)
+        }
+        for section in ["reported", "journal"] {
+            let fields = try #require(value[section] as? [String: Any])
+            for key in fields.keys {
+                var missing = value
+                var partial = fields
+                partial.removeValue(forKey: key)
+                missing[section] = partial
+                #expect(ClientSelfProtocol1Validator.decode(try JSONSerialization.data(withJSONObject: missing)) == nil)
+            }
+        }
+        for (key, wrong) in [("reported", "wrong" as Any), ("owner_label", 7), ("updated_at", 7), ("display_label", NSNull()), ("journal", NSNull()), ("revision", true), ("revision", -1), ("revision", 1.5)] {
+            var invalid = value
+            invalid[key] = wrong
+            #expect(ClientSelfProtocol1Validator.decode(try JSONSerialization.data(withJSONObject: invalid)) == nil)
+        }
+        var invalidVersion = value
+        invalidVersion["journal"] = ["name": NSNull(), "version": NSNull()]
+        #expect(ClientSelfProtocol1Validator.decode(try JSONSerialization.data(withJSONObject: invalidVersion)) == nil)
+        let maxRevision = full.replacingOccurrences(of: "\"revision\":0", with: "\"revision\":18446744073709551615")
+        #expect(ClientSelfProtocol1Validator.decode(Data(maxRevision.utf8))?.revision == UInt64.max)
+    }
+
+    @MainActor
+    @Test("Actual GET and PUT null-name metadata clears persisted name; legacy preserves it")
+    func testActualResourceNullClearsAndLegacyPreservesCache() async throws {
+        let domain = "ClientSelfCacheTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let cache = JournalVersionMetadata(defaults: defaults)
+        cache.setIdentity("fixture-home")
+        let store = ObserverURLProtocolStore()
+        let named = #"{"protocol_version":1,"revision":0,"reported":null,"owner_label":null,"display_label":"Test Mac","updated_at":null,"journal":{"name":"Test Journal","version":"0.9.1"}}"#
+        let cleared = #"{"protocol_version":1,"revision":1,"reported":{"name":"Test Mac","platform":"macos","device_type":"desktop","app_id":"app.solstone.observer","app_version":"1.0"},"owner_label":null,"display_label":"Test Mac","updated_at":"2026-09-07T20:00:00Z","journal":{"name":null,"version":"0.9.1"}}"#
+        store.enqueue(statusCode: 200, body: named)
+        store.enqueue(statusCode: 200, body: cleared)
+        let sequencer = JournalClientSelfSequencer(session: makeTestSession(store: store)) { identity, generation, version, name, preserveName, deadline, fence in
+            await MainActor.run {
+                fence.withCurrent {
+                    guard ContinuousClock.now < deadline else { return }
+                    cache.applyDirectly(identity: identity, generation: generation, version: version, name: name, preserveName: preserveName)
+                }
+            }
+        }
+        let target = JournalClientSelfSequencer.TargetConnection(localPort: 9999, identity: "fixture-home", pairingGeneration: 1, metadataGeneration: cache.currentGeneration())
+        await sequencer.enqueue(target: target)
+        try await waitUntil { !(await sequencer.isBusy) }
+        #expect(store.snapshotRequests().count == 2)
+        #expect(cache.version == "0.9.1")
+        #expect(cache.journalName == nil)
+        let restored = JournalVersionMetadata(defaults: defaults)
+        restored.setIdentity("fixture-home")
+        #expect(restored.version == "0.9.1")
+        #expect(restored.journalName == nil)
+        cache.applyDirectly(identity: "fixture-home", version: "0.9.1", name: "Preserved")
+        store.enqueue(statusCode: 404, body: "")
+        store.enqueue(statusCode: 200, body: #"{"version":{"current":"0.9.2"}}"#)
+        await sequencer.enqueue(target: target)
+        try await waitUntil { !(await sequencer.isBusy) }
+        #expect(cache.version == "0.9.2")
+        #expect(cache.journalName == "Preserved")
+        let legacyRestored = JournalVersionMetadata(defaults: defaults)
+        legacyRestored.setIdentity("fixture-home")
+        #expect(legacyRestored.journalName == "Preserved")
+        store.enqueue(statusCode: 200, body: cleared)
+        store.enqueue(statusCode: 200, body: cleared)
+        await sequencer.enqueue(target: target)
+        try await waitUntil { !(await sequencer.isBusy) }
+        #expect(cache.journalName == nil)
+    }
+
+    @MainActor
+    @Test("Shared burst IDs cap metadata at two passes even after optional loopback replacement")
+    func testExplicitBurstBudgetSettlesWithAlwaysHealthyResponses() async throws {
+        let store = ObserverURLProtocolStore()
+        let full = #"{"protocol_version":1,"revision":0,"reported":null,"owner_label":null,"display_label":"Test Mac","updated_at":null,"journal":{"name":"Home","version":"1.0"}}"#
+        store.registerRoute(path: "/app/network/api/clients/self", method: "GET", statusCode: 200, body: full)
+        store.registerRoute(path: "/app/network/api/clients/self", method: "PUT", statusCode: 200, body: full)
+        let sequencer = JournalClientSelfSequencer(session: makeTestSession(store: store)) { _, _, _, _, _, _, _ in }
+        let target = JournalClientSelfSequencer.TargetConnection(localPort: 9999, identity: "home", pairingGeneration: 1, metadataGeneration: 1)
+        let replacement = JournalClientSelfSequencer.TargetConnection(localPort: 9998, identity: "home", pairingGeneration: 1, metadataGeneration: 1)
+        await sequencer.enqueue(target: target, snapshot: .init(name: "A"), burstID: 41)
+        try await waitUntil { !(await sequencer.isBusy) }
+        await sequencer.enqueue(target: target, snapshot: .init(name: "B"), burstID: 41)
+        try await waitUntil { !(await sequencer.isBusy) }
+        #expect(store.snapshotRequests().count == 4)
+        await sequencer.enqueue(target: replacement, snapshot: .init(name: "C"), burstID: 41)
+        #expect(await sequencer.isBusy == false)
+        #expect(store.snapshotRequests().count == 4)
+        await sequencer.enqueue(target: replacement, snapshot: .init(name: "C"), burstID: 42)
+        try await waitUntil { !(await sequencer.isBusy) }
+        #expect(store.snapshotRequests().count == 6)
+        let body = try #require(store.requestBodies[5])
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        #expect((json["reported"] as? [String: Any])?["name"] as? String == "C")
+    }
+
+    @MainActor
+    @Test("Metadata callback waiting shares the job deadline and late cache effects are refused")
+    func testCallbackDeadlineReleasesLaneWithoutLatePublication() async throws {
+        @MainActor final class Probe {
+            var entered = false
+            var finished = false
+            var applied = false
+        }
+        let probe = Probe()
+        let (release, continuation) = AsyncStream<Void>.makeStream()
+        defer { continuation.finish() }
+        let store = ObserverURLProtocolStore()
+        let full = #"{"protocol_version":1,"revision":0,"reported":null,"owner_label":null,"display_label":"Test Mac","updated_at":null,"journal":{"name":"Home","version":"1.0"}}"#
+        store.registerRoute(path: "/app/network/api/clients/self", method: "GET", statusCode: 200, body: full)
+        let sequencer = JournalClientSelfSequencer(session: makeTestSession(store: store), deadline: .milliseconds(200)) { _, _, _, _, _, deadline, fence in
+            await MainActor.run { probe.entered = true }
+            for await _ in release { break }
+            await MainActor.run {
+                probe.finished = true
+                fence.withCurrent {
+                    guard ContinuousClock.now < deadline else { return }
+                    probe.applied = true
+                }
+            }
+        }
+        let target = JournalClientSelfSequencer.TargetConnection(localPort: 9999, identity: "home", pairingGeneration: 1, metadataGeneration: 1)
+        await sequencer.enqueue(target: target)
+        try await waitUntil { probe.entered }
+        try await waitUntil { !(await sequencer.isBusy) }
+        #expect(store.snapshotRequests().count == 1)
+        #expect(probe.applied == false)
+        continuation.yield(())
+        continuation.finish()
+        try await waitUntil { probe.finished }
+        #expect(probe.applied == false)
+    }
+
+    @MainActor
+    @Test("Queued metadata delivery rejects a superseded target with the same cache generation")
+    func testQueuedCallbackChecksActualAttemptAtCacheMutation() async throws {
+        @MainActor final class Probe {
+            var entered = false
+            var names: [String] = []
+        }
+        let probe = Probe()
+        let (release, continuation) = AsyncStream<Void>.makeStream()
+        defer { continuation.finish() }
+        let store = ObserverURLProtocolStore()
+        let a = #"{"protocol_version":1,"revision":0,"reported":null,"owner_label":null,"display_label":"Test Mac","updated_at":null,"journal":{"name":"A","version":"1.0"}}"#
+        let b = a.replacingOccurrences(of: "\"name\":\"A\"", with: "\"name\":\"B\"")
+        store.enqueue(statusCode: 200, body: a)
+        store.enqueue(statusCode: 200, body: b)
+        store.enqueue(statusCode: 200, body: b)
+        let sequencer = JournalClientSelfSequencer(session: makeTestSession(store: store)) { _, _, _, name, _, deadline, fence in
+            if name == "A" {
+                await MainActor.run { probe.entered = true }
+                for await _ in release { break }
+            }
+            await MainActor.run {
+                fence.withCurrent {
+                    guard ContinuousClock.now < deadline, let name else { return }
+                    probe.names.append(name)
+                }
+            }
+        }
+        let aTarget = JournalClientSelfSequencer.TargetConnection(localPort: 9999, identity: "home", pairingGeneration: 1, metadataGeneration: 1)
+        let bTarget = JournalClientSelfSequencer.TargetConnection(localPort: 9998, identity: "home", pairingGeneration: 1, metadataGeneration: 1)
+        await sequencer.enqueue(target: aTarget, burstID: 41)
+        try await waitUntil { probe.entered }
+        await sequencer.enqueue(target: bTarget, burstID: 41)
+        continuation.yield(())
+        continuation.finish()
+        try await waitUntil { !(await sequencer.isBusy) }
+        #expect(probe.names == ["B", "B"])
+        #expect(store.snapshotRequests().count == 3)
+    }
+
     @Test("Snapshot field sanitization: UTF-8 byte boundary, control chars, whitespace")
     func testSnapshotFieldSanitization() {
         // Name limit: 80 bytes
@@ -75,8 +259,8 @@ struct JournalClientSelfTests {
         let session = makeTestSession(store: store)
 
         // GET response with server owner_label
-        let getBody = #"{"protocol_version": 1, "revision": 3, "journal": {"name": "Test Journal", "version": "0.9.1", "owner_label": "Alice"}}"#
-        let putResponseBody = #"{"protocol_version": 1, "revision": 4, "journal": {"name": "Test Journal", "version": "0.9.1", "owner_label": "Alice"}}"#
+        let getBody = #"{"protocol_version":1,"revision":3,"journal":{"name":"Test Journal","version":"0.9.1"},"owner_label":"Alice","reported":null,"display_label":"Test Mac","updated_at":null}"#
+        let putResponseBody = #"{"protocol_version":1,"revision":4,"journal":{"name":"Test Journal","version":"0.9.1"},"owner_label":"Alice","reported":null,"display_label":"Test Mac","updated_at":null}"#
 
         store.enqueue(statusCode: 200, body: getBody)
         store.enqueue(statusCode: 200, body: putResponseBody)
@@ -98,7 +282,7 @@ struct JournalClientSelfTests {
 
         let sequencer = JournalClientSelfSequencer(
             session: session,
-            onJournalMetadataUpdated: { identity, gen, version, name in
+            onJournalMetadataUpdated: { identity, gen, version, name, preserveName, jobDeadline, fence in
                 box.updatedIdentity = identity
                 box.updatedVersion = version
                 box.updatedName = name
@@ -117,6 +301,7 @@ struct JournalClientSelfTests {
 
         await sequencer.enqueue(target: target, snapshot: snapshot)
         await store.waitForRequestCount(2, timeout: .seconds(2))
+        try await waitUntil { !(await sequencer.isBusy) }
 
         let requests = store.snapshotRequests()
         #expect(requests.count == 2)
@@ -154,15 +339,15 @@ struct JournalClientSelfTests {
         let session = makeTestSession(store: store)
 
         // 1. Initial GET -> 200 (revision 1)
-        let get1 = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "J1", "version": "1.0", "owner_label": null}}"#
+        let get1 = #"{"protocol_version":1,"revision":1,"journal":{"name":"J1","version":"1.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
         store.enqueue(statusCode: 200, body: get1)
         // 2. First PUT -> 409 Conflict
         store.enqueue(statusCode: 409, body: #"{"error": "conflict"}"#)
         // 3. Retry GET -> 200 (revision 2)
-        let get2 = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "J1", "version": "1.0", "owner_label": null}}"#
+        let get2 = #"{"protocol_version":1,"revision":2,"journal":{"name":"J1","version":"1.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
         store.enqueue(statusCode: 200, body: get2)
         // 4. Retry PUT -> 200 (revision 3)
-        let put2 = #"{"protocol_version": 1, "revision": 3, "journal": {"name": "J1", "version": "1.0", "owner_label": null}}"#
+        let put2 = #"{"protocol_version":1,"revision":3,"journal":{"name":"J1","version":"1.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
         store.enqueue(statusCode: 200, body: put2)
 
         let target = JournalClientSelfSequencer.TargetConnection(
@@ -174,13 +359,14 @@ struct JournalClientSelfTests {
 
         let sequencer = JournalClientSelfSequencer(
             session: session,
-            onJournalMetadataUpdated: { _, _, _, _ in }
+            onJournalMetadataUpdated: { _, _, _, _, preserveName, jobDeadline, fence in }
         )
 
         let initialSnapshot = ClientSelfReportedSnapshot(name: "Initial Name")
         await sequencer.enqueue(target: target, snapshot: initialSnapshot)
 
         await store.waitForRequestCount(4, timeout: .seconds(2))
+        try await waitUntil { !(await sequencer.isBusy) }
 
         let requests = store.snapshotRequests()
         #expect(requests.count == 4)
@@ -217,7 +403,7 @@ struct JournalClientSelfTests {
 
         let sequencer = JournalClientSelfSequencer(
             session: session,
-            onJournalMetadataUpdated: { _, _, ver, name in
+            onJournalMetadataUpdated: { _, _, ver, name, preserveName, jobDeadline, fence in
                 box.updatedVersion = ver
                 box.updatedName = name
                 box.updateCount += 1
@@ -233,6 +419,7 @@ struct JournalClientSelfTests {
 
         await sequencer.enqueue(target: target)
         await store.waitForRequestCount(2, timeout: .seconds(2))
+        try await waitUntil { !(await sequencer.isBusy) }
 
         // No PUT request was made
         let requests = store.snapshotRequests()
@@ -261,7 +448,7 @@ struct JournalClientSelfTests {
 
         let sequencer = JournalClientSelfSequencer(
             session: session,
-            onJournalMetadataUpdated: { _, _, _, _ in
+            onJournalMetadataUpdated: { _, _, _, _, preserveName, jobDeadline, fence in
                 box.updateCount += 1
             }
         )
@@ -275,6 +462,7 @@ struct JournalClientSelfTests {
 
         await sequencer.enqueue(target: target)
         await store.waitForRequestCount(1, timeout: .seconds(2))
+        try await waitUntil { !(await sequencer.isBusy) }
 
         #expect(box.updateCount == 0)
         #expect(store.snapshotRequests().count == 1)
@@ -350,10 +538,13 @@ struct JournalClientSelfTests {
         let sequencer = JournalClientSelfSequencer(
             session: hangingSession,
             deadline: .milliseconds(100),
-            onJournalMetadataUpdated: { identity, gen, version, name in
+            onJournalMetadataUpdated: { identity, gen, version, name, preserveName, jobDeadline, fence in
                 box.updateGens.append(gen)
                 await MainActor.run {
-                    jv.applyDirectly(identity: identity, generation: gen, version: version, name: name, markCurrent: true)
+                    fence.withCurrent {
+                        guard ContinuousClock.now < jobDeadline else { return }
+                        jv.applyDirectly(identity: identity, generation: gen, version: version, name: name, markCurrent: true, preserveName: preserveName)
+                    }
                 }
             }
         )
@@ -369,24 +560,27 @@ struct JournalClientSelfTests {
         #expect(await sequencer.isBusy == true)
 
         // Wait for timeout
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil { !(await sequencer.isBusy) }
         #expect(await sequencer.isBusy == false)
         #expect(box.updateGens.isEmpty)
 
         // Later enqueue against normal session runs and succeeds
         let normalStore = ObserverURLProtocolStore()
         let normalSession = makeTestSession(store: normalStore)
-        let getBody = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "New J", "version": "2.0", "owner_label": null}}"#
-        let putBody = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "New J", "version": "2.0", "owner_label": null}}"#
+        let getBody = #"{"protocol_version":1,"revision":1,"journal":{"name":"New J","version":"2.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
+        let putBody = #"{"protocol_version":1,"revision":2,"journal":{"name":"New J","version":"2.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
         normalStore.enqueue(statusCode: 200, body: getBody)
         normalStore.enqueue(statusCode: 200, body: putBody)
 
         let normalSequencer = JournalClientSelfSequencer(
             session: normalSession,
-            onJournalMetadataUpdated: { identity, gen, version, name in
+            onJournalMetadataUpdated: { identity, gen, version, name, preserveName, jobDeadline, fence in
                 box.updateGens.append(gen)
                 await MainActor.run {
-                    jv.applyDirectly(identity: identity, generation: gen, version: version, name: name, markCurrent: true)
+                    fence.withCurrent {
+                        guard ContinuousClock.now < jobDeadline else { return }
+                        jv.applyDirectly(identity: identity, generation: gen, version: version, name: name, markCurrent: true, preserveName: preserveName)
+                    }
                 }
             }
         )
@@ -402,6 +596,7 @@ struct JournalClientSelfTests {
 
         await normalSequencer.enqueue(target: target2)
         await normalStore.waitForRequestCount(2, timeout: .seconds(2))
+        try await waitUntil { !(await normalSequencer.isBusy) }
 
         #expect(!box.updateGens.isEmpty)
         #expect(box.updateGens.allSatisfy { $0 == gen2 })
@@ -419,8 +614,8 @@ struct JournalClientSelfTests {
         // Exceeding budget: 3 requests of 100ms > 200ms deadline
         let store = ObserverURLProtocolStore()
         let session = makeTestSession(store: store)
-        let getBody = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "J", "version": "1.0", "owner_label": null}}"#
-        let rereadBody = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "J", "version": "1.0", "owner_label": null}}"#
+        let getBody = #"{"protocol_version":1,"revision":1,"journal":{"name":"J","version":"1.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
+        let rereadBody = #"{"protocol_version":1,"revision":2,"journal":{"name":"J","version":"1.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
 
         store.enqueue(statusCode: 200, body: getBody, delay: .milliseconds(100))
         store.enqueue(statusCode: 409, body: "", delay: .milliseconds(100))
@@ -436,7 +631,7 @@ struct JournalClientSelfTests {
         let sequencer = JournalClientSelfSequencer(
             session: session,
             deadline: .milliseconds(200),
-            onJournalMetadataUpdated: { _, _, _, _ in
+            onJournalMetadataUpdated: { _, _, _, _, preserveName, jobDeadline, fence in
                 box.updateCount += 1
             }
         )
@@ -449,7 +644,7 @@ struct JournalClientSelfTests {
         )
 
         await sequencer.enqueue(target: target)
-        try await Task.sleep(for: .milliseconds(400))
+        try await waitUntil { !(await sequencer.isBusy) }
 
         #expect(await sequencer.isBusy == false)
         // Deadline expired, 4th request was not dispatched
@@ -467,14 +662,14 @@ struct JournalClientSelfTests {
         let sequencer2 = JournalClientSelfSequencer(
             session: session2,
             deadline: .milliseconds(500),
-            onJournalMetadataUpdated: { _, _, _, _ in
+            onJournalMetadataUpdated: { _, _, _, _, preserveName, jobDeadline, fence in
                 box2.updateCount += 1
             }
         )
 
         await sequencer2.enqueue(target: target)
         await store2.waitForRequestCount(4, timeout: .seconds(2))
-        try await Task.sleep(for: .milliseconds(50))
+        try await waitUntil { !(await sequencer2.isBusy) }
 
         #expect(await sequencer2.isBusy == false)
         #expect(box2.updateCount >= 1)
@@ -497,7 +692,7 @@ struct JournalClientSelfTests {
 
         let sequencer = JournalClientSelfSequencer(
             session: session,
-            onJournalMetadataUpdated: { _, _, _, _ in
+            onJournalMetadataUpdated: { _, _, _, _, preserveName, jobDeadline, fence in
                 box.updateCount += 1
             }
         )
@@ -511,7 +706,7 @@ struct JournalClientSelfTests {
 
         await sequencer.enqueue(target: target)
         await store.waitForRequestCount(2, timeout: .seconds(2))
-        try await Task.sleep(for: .milliseconds(50))
+        try await waitUntil { !(await sequencer.isBusy) }
 
         #expect(await sequencer.isBusy == false)
         #expect(box.updateCount == 0)
@@ -522,9 +717,9 @@ struct JournalClientSelfTests {
         let store = ObserverURLProtocolStore()
         let session = makeTestSession(store: store)
 
-        let validGet = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "Valid J", "version": "1.0", "owner_label": null}}"#
+        let validGet = #"{"protocol_version":1,"revision":1,"journal":{"name":"Valid J","version":"1.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
         // Malformed protocol_version 2 in PUT 200
-        let badPut = #"{"protocol_version": 2, "revision": 2, "journal": {"name": "Bad J", "version": "2.0", "owner_label": null}}"#
+        let badPut = #"{"protocol_version":2,"revision":2,"journal":{"name":"Bad J","version":"2.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
 
         store.enqueue(statusCode: 200, body: validGet)
         store.enqueue(statusCode: 200, body: badPut)
@@ -537,7 +732,7 @@ struct JournalClientSelfTests {
 
         let sequencer = JournalClientSelfSequencer(
             session: session,
-            onJournalMetadataUpdated: { _, _, version, name in
+            onJournalMetadataUpdated: { _, _, version, name, preserveName, jobDeadline, fence in
                 box.publishedNames.append(name)
                 box.publishedVersions.append(version)
             }
@@ -552,7 +747,7 @@ struct JournalClientSelfTests {
 
         await sequencer.enqueue(target: target)
         await store.waitForRequestCount(2, timeout: .seconds(2))
-        try await Task.sleep(for: .milliseconds(50))
+        try await waitUntil { !(await sequencer.isBusy) }
 
         #expect(box.publishedNames == ["Valid J"])
         #expect(box.publishedVersions == ["1.0"])
@@ -563,10 +758,10 @@ struct JournalClientSelfTests {
         let store = ObserverURLProtocolStore()
         let session = makeTestSession(store: store)
 
-        let getA = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "JA", "version": "1.0", "owner_label": null}}"#
-        let rereadA = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "JA", "version": "1.0", "owner_label": null}}"#
-        let getB = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "JB", "version": "2.0", "owner_label": null}}"#
-        let putB = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "JB", "version": "2.0", "owner_label": null}}"#
+        let getA = #"{"protocol_version":1,"revision":1,"journal":{"name":"JA","version":"1.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
+        let rereadA = #"{"protocol_version":1,"revision":2,"journal":{"name":"JA","version":"1.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
+        let getB = #"{"protocol_version":1,"revision":1,"journal":{"name":"JB","version":"2.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
+        let putB = #"{"protocol_version":1,"revision":2,"journal":{"name":"JB","version":"2.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
 
         store.enqueue(statusCode: 200, body: getA)
         store.enqueue(statusCode: 409, body: "")
@@ -581,7 +776,7 @@ struct JournalClientSelfTests {
 
         let sequencer = JournalClientSelfSequencer(
             session: session,
-            onJournalMetadataUpdated: { _, _, _, name in
+            onJournalMetadataUpdated: { _, _, _, name, preserveName, jobDeadline, fence in
                 box.names.append(name)
             }
         )
@@ -605,7 +800,7 @@ struct JournalClientSelfTests {
         await sequencer.enqueue(target: targetB)
 
         await store.waitForRequestCount(5, timeout: .seconds(2))
-        try await Task.sleep(for: .milliseconds(50))
+        try await waitUntil { !(await sequencer.isBusy) }
 
         #expect(box.names.contains("JB"))
     }
@@ -646,8 +841,8 @@ struct JournalClientSelfTests {
         }
         """
 
-        let metaGet = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "Concurrent J", "version": "3.0", "owner_label": null}}"#
-        let metaPut = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "Concurrent J", "version": "3.0", "owner_label": null}}"#
+        let metaGet = #"{"protocol_version":1,"revision":1,"journal":{"name":"Concurrent J","version":"3.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
+        let metaPut = #"{"protocol_version":1,"revision":2,"journal":{"name":"Concurrent J","version":"3.0"},"owner_label":null,"reported":null,"display_label":"Test Mac","updated_at":null}"#
 
         // Serve relay access ready, metadata GET, metadata PUT
         store.registerRoute(path: "/app/network/api/relay/access", statusCode: 200, body: readyJson)

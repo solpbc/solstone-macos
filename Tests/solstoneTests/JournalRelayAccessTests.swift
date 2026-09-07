@@ -827,3 +827,281 @@ struct JournalRelayAccessTests {
     }
 }
 
+
+extension JournalRelayAccessTests {
+    private static var actualMetadataBody: String {
+        #"{"protocol_version":1,"revision":1,"reported":null,"owner_label":null,"display_label":"Test Mac","updated_at":null,"journal":{"name":"Test Journal","version":"1.0"}}"#
+    }
+
+    private static func freshReadyBody(instanceID: String = "test-instance") -> String {
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let expiry = timestamp + 3600
+        let token = makeJWT(claims: [
+            "iss": "independent-issuer", "sub": "instance:\(instanceID)", "aud": "spl-relay",
+            "scope": "session.dial", "ver": 2, "instance_id": instanceID,
+            "iat": timestamp, "exp": expiry, "jti": UUID().uuidString
+        ])
+        return String(data: makeReadyJSON(
+            relayOrigin: "https://new-relay.solstone.test", instanceID: instanceID,
+            deviceToken: token, expiresAt: ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: Double(expiry)))
+        ), encoding: .utf8)!
+    }
+
+    @Test("Healthy responses settle across real supervisor replacement, then external reconnect starts another burst")
+    @MainActor
+    func healthyRealSupervisorBurstSettles() async throws {
+        let http = ObserverURLProtocolStore()
+        http.registerRoute(path: "/app/network/api/relay/access", body: Self.freshReadyBody())
+        http.registerRoute(path: "/app/network/api/clients/self", body: Self.actualMetadataBody)
+        let initial = pairing(instanceID: "test-instance", deviceToken: "old-token")
+        let disk = PairingStore(pairing: initial)
+        let credentials = PairingCredentialStore(store: disk)
+        let supervisors = ActualSupervisorRecorder()
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: { SPLTunnelTransport(makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) }) },
+            pathMonitoringSource: NoopPathMonitoringSource(), probe: { _, _ in true },
+            loopbackSession: makeTestSession(store: http)
+        )
+        owner.start()
+        do { try await waitUntil { supervisors.count >= 3 } } catch {
+            Issue.record("initial burst supervisors=\(supervisors.count) children=\(supervisors.children.count) requests=\(http.snapshotRequests().map { $0.url?.path ?? "?" }) state=\(owner.state)")
+            await owner.stop()
+            throw error
+        }
+        try await waitUntil {
+            let accessBusy = await owner.relayAccessSequencer.isBusy
+            let metadataBusy = await owner.clientSelfSequencer.isBusy
+            return !accessBusy && !metadataBusy
+        }
+        let firstCount = http.snapshotRequests().count
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(http.snapshotRequests().count == firstCount)
+        #expect(supervisors.count == 3)
+        #expect(http.snapshotRequests().filter { $0.url?.path.hasSuffix("/relay/access") == true }.count == 2)
+        let retiredChildCount = supervisors.children.count
+        await supervisors[0].requestReconnect()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(supervisors.children.count == retiredChildCount)
+        await supervisors[2].requestReconnect()
+        do { try await waitUntil { supervisors.count >= 5 } } catch {
+            Issue.record("external burst supervisors=\(supervisors.count) children=\(supervisors.children.count) requests=\(http.snapshotRequests().map { $0.url?.path ?? "?" }) state=\(owner.state)")
+            await owner.stop()
+            throw error
+        }
+        try await waitUntil {
+            let accessBusy = await owner.relayAccessSequencer.isBusy
+            let metadataBusy = await owner.clientSelfSequencer.isBusy
+            return !accessBusy && !metadataBusy
+        }
+        #expect(supervisors.count == 5)
+        for child in supervisors.children.sessions.dropFirst() {
+            #expect(child.pairing?.clientCertPEM == initial.clientCertPEM)
+            #expect(child.pairing?.relayEndpoint == "https://new-relay.solstone.test")
+        }
+        await owner.stop()
+    }
+
+    @Test("Disable retires the real supervisor before a blocked LAN candidate, even when durable clear fails", arguments: [false, true])
+    @MainActor
+    func disableRetiresBeforeBlockedLAN(clearFails: Bool) async throws {
+        let http = ObserverURLProtocolStore()
+        http.registerRoute(path: "/app/network/api/relay/access", body: #"{"protocol_version":2,"status":"not_configured"}"#)
+        http.registerRoute(path: "/app/network/api/clients/self", body: Self.actualMetadataBody)
+        let initial = pairing(instanceID: "test-instance", deviceToken: "old-token")
+        let disk = PairingStore(pairing: initial, saveError: clearFails ? SPLKeychainError.saveFailed(status: -1) : nil)
+        let credentials = PairingCredentialStore(store: disk)
+        let supervisors = ActualSupervisorRecorder()
+        let first = SPLTunnelTransport(makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) })
+        let candidate = FakeTunnelTransport(connectionMode: .plDirect, connection: .init(localPort: 29991, via: .lan))
+        candidate.armConnectGate()
+        let factory = FakeTransportFactory([first, candidate])
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials, tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: factory.make, pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true }, loopbackSession: makeTestSession(store: http),
+            optionalJobDeadline: .seconds(1)
+        )
+        owner.start()
+        try await waitUntil { candidate.pendingConnectCount == 1 }
+        #expect(await supervisors.children[0].isDisconnected)
+        await supervisors[0].requestReconnect()
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(supervisors.children.count == 1)
+        #expect(!owner.liveRelayEligible)
+        #expect(clearFails ? owner.pendingDurableClear != nil : disk.currentPairing?.relayEnrollment == .unavailable)
+        try await waitUntil { !(await owner.relayAccessSequencer.isBusy) }
+        #expect(owner.localPort == nil)
+        candidate.releaseNextConnect()
+        try await waitUntil { candidate.connectInFlight == 0 && candidate.disconnectCount >= 1 }
+        #expect(owner.localPort == nil)
+        await owner.stop()
+    }
+
+    @Test("Stale refresh success and terminal failure cannot replace a newer HTTP Ready", arguments: [false, true], [false, true])
+    @MainActor
+    func staleRefreshCannotReplaceReady(proactive: Bool, terminalFailure: Bool) async throws {
+        try await checkStaleRefresh(proactive: proactive, terminalFailure: terminalFailure, disable: false)
+    }
+
+    @Test("Stale refresh success and terminal failure cannot undo an HTTP disable", arguments: [false, true], [false, true])
+    @MainActor
+    func staleRefreshCannotUndoDisable(proactive: Bool, terminalFailure: Bool) async throws {
+        try await checkStaleRefresh(proactive: proactive, terminalFailure: terminalFailure, disable: true)
+    }
+
+    @MainActor
+    private func checkStaleRefresh(proactive: Bool, terminalFailure: Bool, disable: Bool) async throws {
+        let http = ObserverURLProtocolStore()
+        let reply = AccessHTTPReplyBarrier()
+        defer { reply.release() }
+        http.registerRoute(path: "/app/network/api/relay/access",
+            body: disable ? #"{"protocol_version":2,"status":"not_configured"}"# : Self.freshReadyBody(),
+            beforeReply: { reply.wait() })
+        http.registerRoute(path: "/app/network/api/clients/self", body: Self.actualMetadataBody)
+        let initial = pairing(instanceID: "test-instance", deviceToken: "old-token")
+        let disk = PairingStore(pairing: initial)
+        let credentials = PairingCredentialStore(store: disk)
+        let barrier = AccessRefreshBarrier()
+        let refresher = TunnelDeviceTokenRefreshing(
+            refreshIfNeeded: { pairing, _ in proactive ? await barrier.wait() : .notNeeded(pairing) },
+            refreshNow: { _ in await barrier.wait() }
+        )
+        let first = FakeTunnelTransport(connection: .init(localPort: 29992, via: .relay))
+        let replacement = FakeTunnelTransport(connection: .init(localPort: 29993, via: .relay))
+        let third = FakeTunnelTransport(connection: .init(localPort: 29994, via: .relay))
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials, tokenRefresher: refresher,
+            makeTransport: FakeTransportFactory([first, replacement, third]).make,
+            pathMonitoringSource: NoopPathMonitoringSource(), probe: { _, _ in true },
+            loopbackSession: makeTestSession(store: http)
+        )
+        owner.start()
+        if !proactive {
+            try await waitUntil { owner.localPort != nil }
+            first.emit(.failed(.authRefreshRequired))
+        }
+        try await waitUntil { await barrier.entered }
+        reply.release()
+        let revisions = credentials.currentGenerations()
+        await owner.relayAccessSequencer.enqueue(target: .init(
+            localPort: 29995, instanceID: initial.instanceID,
+            pairingGeneration: revisions.pairingGeneration, accessMutationGeneration: revisions.accessMutationGeneration
+        ))
+        try await waitUntil {
+            disable ? disk.currentPairing?.relayEnrollment == .unavailable : disk.currentPairing?.relayEndpoint == "https://new-relay.solstone.test"
+        }
+        await barrier.release(terminalFailure ? .definitiveAuthFailure : .refreshed(initial))
+        try await waitUntil { await barrier.completed }
+        try await waitUntil { !(await owner.relayAccessSequencer.isBusy) }
+        #expect(disk.deleteCount == 0)
+        #expect(disable ? disk.currentPairing?.relayEnrollment == .unavailable : disk.currentPairing?.relayEndpoint == "https://new-relay.solstone.test")
+        #expect(owner.state != .error(.revoked))
+        await owner.stop()
+    }
+}
+
+extension JournalRelayAccessTests {
+    @Test("Late production access delivery cannot cross unpair or same-home repair", arguments: [false, true], [false, true])
+    @MainActor
+    func lateHTTPOutcomeCannotCrossPairing(unpair: Bool, disable: Bool) async throws {
+        let http = ObserverURLProtocolStore()
+        let reply = AccessHTTPReplyBarrier()
+        defer { reply.release() }
+        http.registerRoute(matching: { $0.url?.port == 29996 && $0.url?.path.hasSuffix("/relay/access") == true },
+            body: disable ? #"{"protocol_version":2,"status":"not_configured"}"# : Self.freshReadyBody(),
+            beforeReply: { reply.wait() })
+        http.registerRoute(path: "/app/network/api/clients/self", body: Self.actualMetadataBody)
+        let initial = pairing(instanceID: "test-instance", deviceToken: "old-token")
+        let successor = pairing(instanceID: "test-instance", deviceToken: "replacement-token", relayEndpoint: "https://replacement.solstone.test")
+        let disk = PairingStore(pairing: initial)
+        let credentials = PairingCredentialStore(store: disk)
+        let first = FakeTunnelTransport(connection: .init(localPort: 29996, via: .relay))
+        let replacement = FakeTunnelTransport(connection: .init(localPort: 29997, via: .relay))
+        let owner = TunnelLifecycleOwner(credentialStore: credentials, tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: FakeTransportFactory([first, replacement]).make,
+            pathMonitoringSource: NoopPathMonitoringSource(), probe: { _, _ in true },
+            loopbackSession: makeTestSession(store: http))
+        owner.start()
+        try await waitUntil { reply.entered }
+        if unpair { try credentials.delete() } else { try credentials.save(successor) }
+        await owner.reevaluatePairing()
+        try await waitUntil { unpair ? owner.localPort == nil : owner.localPort == 29997 }
+        reply.release()
+        try await waitUntil { !(await owner.relayAccessSequencer.isBusy) }
+        #expect(disk.currentPairing == (unpair ? nil : successor))
+        #expect(unpair ? owner.localPort == nil : owner.localPort == 29997)
+        #expect(replacement.disconnectCount == 0)
+        await owner.stop()
+    }
+
+    @Test("Late candidate success or failure cannot replace a newer pairing", arguments: [false, true])
+    @MainActor
+    func lateCandidateCannotCrossPairing(fails: Bool) async throws {
+        let http = ObserverURLProtocolStore()
+        http.registerRoute(matching: { $0.url?.port == 29998 && $0.url?.path.hasSuffix("/relay/access") == true }, body: Self.freshReadyBody())
+        http.registerRoute(path: "/app/network/api/clients/self", body: Self.actualMetadataBody)
+        let initial = pairing(instanceID: "test-instance", deviceToken: "old-token")
+        let successor = pairing(instanceID: "test-instance", deviceToken: "replacement-token")
+        let disk = PairingStore(pairing: initial)
+        let credentials = PairingCredentialStore(store: disk)
+        let first = FakeTunnelTransport(connection: .init(localPort: 29998, via: .relay))
+        let blocked = FakeTunnelTransport(results: [fails ? .failure(SessionError.revoked) : .success(.init(localPort: 29999, via: .relay))])
+        blocked.armConnectGate()
+        let replacement = FakeTunnelTransport(connection: .init(localPort: 30000, via: .relay))
+        let owner = TunnelLifecycleOwner(credentialStore: credentials, tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: FakeTransportFactory([first, blocked, replacement]).make,
+            pathMonitoringSource: NoopPathMonitoringSource(), probe: { _, _ in true },
+            loopbackSession: makeTestSession(store: http))
+        owner.start()
+        try await waitUntil { blocked.pendingConnectCount == 1 }
+        try credentials.save(successor)
+        await owner.reevaluatePairing()
+        try await waitUntil { owner.localPort == 30000 }
+        blocked.releaseNextConnect()
+        try await waitUntil { !(await owner.relayAccessSequencer.isBusy) }
+        #expect(disk.currentPairing == successor)
+        #expect(disk.deleteCount == 0)
+        #expect(blocked.disconnectCount >= 1)
+        #expect(replacement.disconnectCount == 0)
+        #expect(owner.localPort == 30000)
+        await owner.stop()
+    }
+}
+
+
+extension JournalRelayAccessTests {
+    @Test("Retired production adapter cannot publish a late session connection", arguments: [false, true])
+    @MainActor
+    func retiredAdapterDropsLateConnection(fails: Bool) async throws {
+        let session = FakeTunnelReconnectingSession(shouldThrowOnConnect: fails ? SessionError.revoked : nil)
+        await session.armConnectGate()
+        let transport = SPLTunnelTransport(makeSession: { _, _, _ in session })
+        let stored = pairing()
+        let attempt = Task { try await transport.connect(pairing: stored, candidates: TransportEndpoint.candidates(for: stored)) }
+        try await waitUntil { await session.pendingConnectCount == 1 }
+        await transport.disconnect()
+        await session.releaseNextConnect()
+        do {
+            _ = try await attempt.value
+            Issue.record("retired adapter published a loopback connection")
+        } catch {}
+        #expect(transport.connectionMode == nil)
+        await transport.requestReconnect()
+        #expect(await session.requestReconnectCount == 0)
+        #expect(await session.disconnectCallCount >= 1)
+    }
+
+    @Test("Invalid journal text cannot partially mutate a complete metadata resource")
+    func invalidJournalTextRejectsResource() throws {
+        let resource = try #require(JSONSerialization.jsonObject(with: Data(Self.actualMetadataBody.utf8)) as? [String: Any])
+        #expect(ClientSelfProtocol1Validator.decode(Data(Self.actualMetadataBody.utf8)) != nil)
+        for journal in [["name": "valid", "version": "\u{0001}"], ["name": "bad\u{0001}", "version": "1.0"]] {
+            var invalid = resource
+            invalid["journal"] = journal
+            let bytes = try JSONSerialization.data(withJSONObject: invalid)
+            #expect(ClientSelfProtocol1Validator.decode(bytes) == nil)
+        }
+    }
+}

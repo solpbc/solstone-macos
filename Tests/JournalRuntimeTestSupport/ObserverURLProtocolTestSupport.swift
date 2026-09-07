@@ -9,6 +9,7 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
         public var data: Data
         public var delay: Duration
         public var error: URLError?
+        public var beforeReply: (@Sendable () -> Void)? = nil
     }
 
     public let token = UUID().uuidString
@@ -35,7 +36,8 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
         statusCode: Int = 200,
         body: String = "",
         delay: Duration = .zero,
-        error: URLError? = nil
+        error: URLError? = nil,
+        beforeReply: (@Sendable () -> Void)? = nil
     ) {
         lock.withLock {
             routeHandlers.append({ req in
@@ -44,7 +46,8 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
                     statusCode: statusCode,
                     data: Data(body.utf8),
                     delay: delay,
-                    error: error
+                    error: error,
+                    beforeReply: beforeReply
                 )
             })
         }
@@ -56,7 +59,8 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
         statusCode: Int = 200,
         body: String = "",
         delay: Duration = .zero,
-        error: URLError? = nil
+        error: URLError? = nil,
+        beforeReply: (@Sendable () -> Void)? = nil
     ) {
         registerRoute(
             matching: { req in
@@ -67,7 +71,8 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
             statusCode: statusCode,
             body: body,
             delay: delay,
-            error: error
+            error: error,
+            beforeReply: beforeReply
         )
     }
 
@@ -167,6 +172,7 @@ final class ObserverURLProtocol: URLProtocol {
         }
 
         let next = store.next(for: request)
+        next.beforeReply?()
         if next.delay > .zero {
             let seconds = Double(next.delay.components.seconds) + Double(next.delay.components.attoseconds) * 1e-18
             Thread.sleep(forTimeInterval: seconds)

@@ -105,12 +105,13 @@ final class JournalVersionMetadata {
         generation expectedGeneration: UInt64? = nil,
         version: String?,
         name: String?,
-        markCurrent: Bool = true
+        markCurrent: Bool = true,
+        preserveName: Bool = false
     ) {
         guard self.identity == identity else { return }
         if let expectedGeneration, self.generation != expectedGeneration { return }
         let currentVersion = version.flatMap(sanitizedJournalVersion) ?? self.version
-        let currentName = name.flatMap(sanitizedJournalName) ?? self.journalName
+        let currentName = preserveName ? self.journalName : name.flatMap(sanitizedJournalName)
 
         if let currentVersion {
             self.version = currentVersion
@@ -135,7 +136,7 @@ final class JournalVersionMetadata {
             guard let self, self.generation == expectedGeneration,
                   self.identity == identity, self.activePort == localPort,
                   let result, let version = sanitizedJournalVersion(result) else { return }
-            self.applyDirectly(identity: identity, version: version, name: self.journalName, markCurrent: true)
+            self.applyDirectly(identity: identity, version: version, name: nil, markCurrent: true, preserveName: true)
         }
         task = request
         return request
