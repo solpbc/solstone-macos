@@ -53,6 +53,10 @@ struct TunnelDeviceTokenRefreshing: Sendable {
     }
 }
 
+private final class RelayOutcomeTarget: @unchecked Sendable {
+    weak var owner: TunnelLifecycleOwner?
+}
+
 @MainActor
 @Observable
 final class TunnelLifecycleOwner {
@@ -76,17 +80,16 @@ final class TunnelLifecycleOwner {
     let journalVersion = JournalVersionMetadata()
     private(set) var state: TunnelLifecycleState = .disconnected {
         didSet {
-            if case .connected(let port, _) = state {
-                journalVersion.connected(localPort: port)
-            } else {
-                journalVersion.disconnected()
-            }
+            handleStateTransition(old: oldValue, new: state)
         }
     }
     private(set) var health: TunnelHealth = .unknown
     private(set) var isTunnelManaged = false
     private(set) var isPairedHome = false
     private(set) var relayAccessStatus: PairingRelayAccessStatus = .noPairing
+    private(set) var liveRelayEligible: Bool = true
+    private(set) var pendingDurableClear: (pairingGen: UInt64, accessGen: UInt64)?
+    private(set) var transportGeneration: UInt64 = 0
 
     var localPort: Int? {
         guard case .connected(let localPort, _) = state else {
@@ -131,6 +134,8 @@ final class TunnelLifecycleOwner {
     }
 
     @ObservationIgnored
+    let credentialStore: PairingCredentialStore
+    @ObservationIgnored
     private let loadPairing: @Sendable () throws -> StoredPairing?
     @ObservationIgnored
     private let savePairing: @Sendable (StoredPairing) throws -> Void
@@ -148,6 +153,13 @@ final class TunnelLifecycleOwner {
     private let sleep: @Sendable (Duration) async throws -> Void
     @ObservationIgnored
     private let now: @Sendable () -> Date
+
+    @ObservationIgnored
+    let clientSelfSequencer: JournalClientSelfSequencer
+    @ObservationIgnored
+    let relayAccessSequencer: JournalRelayAccessSequencer
+    @ObservationIgnored
+    private let relayOutcomeTarget: RelayOutcomeTarget
 
     @ObservationIgnored
     private var transport: (any TunnelTransporting)?
@@ -181,9 +193,12 @@ final class TunnelLifecycleOwner {
     private var cachedPairingOutcome: PairingLoadOutcome?
     @ObservationIgnored
     private var probeWatchdog = ProbeWatchdog(policy: TunnelLifecycleOwner.probeWatchdogPolicy)
+    @ObservationIgnored
+    private var suppressOptionalJobsOnNextConnected = false
 
     init(
         keychainStore: SPLKeychainStore = SPLPairingKeychain.store(),
+        credentialStore: PairingCredentialStore? = nil,
         loadPairing: (@Sendable () throws -> StoredPairing?)? = nil,
         savePairing: (@Sendable (StoredPairing) throws -> Void)? = nil,
         deletePairing: (@Sendable () throws -> Void)? = nil,
@@ -193,17 +208,47 @@ final class TunnelLifecycleOwner {
         pathMonitoringSource: (any PathMonitoringSource)? = nil,
         probe: @escaping @Sendable (Int, Duration) async -> Bool = TunnelLifecycleOwner.httpStatusProbe(localPort:timeout:),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        clientSelfSequencer: JournalClientSelfSequencer? = nil,
+        relayAccessSequencer: JournalRelayAccessSequencer? = nil
     ) {
-        self.loadPairing = loadPairing ?? { try keychainStore.load() }
-        self.savePairing = savePairing ?? { try keychainStore.save($0) }
-        self.deletePairing = deletePairing ?? { try keychainStore.delete() }
+        let store = credentialStore ?? PairingCredentialStore(store: keychainStore)
+        self.credentialStore = store
+        self.loadPairing = loadPairing ?? { try store.load() }
+        self.savePairing = savePairing ?? { try store.save($0) }
+        self.deletePairing = deletePairing ?? { try store.delete() }
         self.tokenRefresher = tokenRefresher ?? .live(clientInfo: clientInfo)
         self.makeTransport = makeTransport ?? { SPLTunnelTransport(clientInfo: clientInfo) }
         self.pathMonitor = pathMonitoringSource.map { PathMonitor(source: $0) } ?? PathMonitor()
         self.probe = probe
         self.sleep = sleep
         self.now = now
+
+        let jv = self.journalVersion
+        self.clientSelfSequencer = clientSelfSequencer ?? JournalClientSelfSequencer(
+            onJournalMetadataUpdated: { identity, gen, version, name in
+                Task { @MainActor in
+                    jv.applyDirectly(identity: identity, generation: gen, version: version, name: name, markCurrent: true)
+                }
+            }
+        )
+
+        let target = RelayOutcomeTarget()
+        self.relayOutcomeTarget = target
+        if let relayAccessSequencer {
+            self.relayAccessSequencer = relayAccessSequencer
+        } else {
+            self.relayAccessSequencer = JournalRelayAccessSequencer(
+                credentialStore: store,
+                onOutcome: { [weak target] outcome in
+                    Task { @MainActor in
+                        await target?.owner?.handleRelayAccessOutcome(outcome)
+                    }
+                }
+            )
+        }
+        target.owner = self
+
         refreshTunnelManagedFromStoredPairing()
     }
 
@@ -236,6 +281,10 @@ final class TunnelLifecycleOwner {
         cancelReactiveTokenRefresh()
         pathMonitor.stop()
         currentPathSignature = nil
+        Task { [clientSelfSequencer, relayAccessSequencer] in
+            await clientSelfSequencer.cancel()
+            await relayAccessSequencer.cancel()
+        }
         await disconnectCurrentTransport()
         state = .disconnected
         health = .unknown
@@ -244,6 +293,8 @@ final class TunnelLifecycleOwner {
     func reevaluatePairing() async {
         journalVersion.clear()
         invalidatePairingCache()
+        liveRelayEligible = true
+        pendingDurableClear = nil
         refreshTunnelManagedFromStoredPairing()
         guard running else {
             return
@@ -252,6 +303,10 @@ final class TunnelLifecycleOwner {
         let previous = startTask
         previous?.cancel()
         cancelReactiveTokenRefresh()
+        Task { [clientSelfSequencer, relayAccessSequencer] in
+            await clientSelfSequencer.cancel()
+            await relayAccessSequencer.cancel()
+        }
         startTask = Task { @MainActor [weak self] in
             await previous?.value
             guard let self, self.running, !Task.isCancelled else {
@@ -279,6 +334,140 @@ final class TunnelLifecycleOwner {
         health = .degraded
         splOwnerLog.notice("wake probe failed local_port=\(localPort, privacy: .public) reconnect=true")
         await transport?.requestReconnect()
+    }
+
+    private func handleStateTransition(old: TunnelLifecycleState, new: TunnelLifecycleState) {
+        if case .connected(let port, _) = new {
+            journalVersion.adoptConnectedPort(port)
+
+            if case .connected(let oldPort, _) = old, oldPort == port {
+                return
+            }
+
+            if suppressOptionalJobsOnNextConnected {
+                suppressOptionalJobsOnNextConnected = false
+                return
+            }
+
+            if let pending = pendingDurableClear {
+                let (pGen, aGen) = credentialStore.currentGenerations()
+                if pending.pairingGen == pGen && pending.accessGen == aGen {
+                    if (try? credentialStore.clearRelayAccess(expectedPairingGen: pGen, expectedAccessGen: aGen)) != nil {
+                        pendingDurableClear = nil
+                        if let current = currentStoredPairing() {
+                            setCachedPairingOutcome(.loaded(current))
+                        }
+                    }
+                } else {
+                    pendingDurableClear = nil
+                }
+            }
+
+            if let pairing = currentStoredPairing(), let identity = journalVersionMetadataIdentity(for: pairing) {
+                let (pGen, aGen) = credentialStore.currentGenerations()
+                let metaGen = journalVersion.currentGeneration()
+                Task { [clientSelfSequencer] in
+                    await clientSelfSequencer.enqueue(
+                        target: JournalClientSelfSequencer.TargetConnection(
+                            localPort: port,
+                            identity: identity,
+                            pairingGeneration: pGen,
+                            metadataGeneration: metaGen
+                        )
+                    )
+                }
+                Task { [relayAccessSequencer] in
+                    await relayAccessSequencer.enqueue(
+                        target: JournalRelayAccessSequencer.TargetConnection(
+                            localPort: port,
+                            instanceID: pairing.instanceID,
+                            pairingGeneration: pGen,
+                            accessMutationGeneration: aGen
+                        )
+                    )
+                }
+            }
+        } else {
+            journalVersion.disconnected()
+        }
+    }
+
+    func currentStoredPairing() -> StoredPairing? {
+        if case .loaded(let pairing) = cachedPairingOutcome {
+            return pairing
+        }
+        return try? loadPairing()
+    }
+
+    func handleRelayAccessOutcome(_ outcome: JournalRelayAccessSequencer.AccessUpdateOutcome) async {
+        switch outcome {
+        case .ready(let updatedPairing):
+            liveRelayEligible = true
+            setCachedPairingOutcome(.loaded(updatedPairing))
+            await replaceLiveTransport(with: updatedPairing)
+
+        case .notConfiguredLiveDisabled:
+            liveRelayEligible = false
+            if case .loaded(let current) = cachedPairingOutcome {
+                relayAccessStatus = relayAccessStatus(for: current)
+            } else {
+                relayAccessStatus = .unavailable
+            }
+
+        case .durableClearPersisted:
+            pendingDurableClear = nil
+            if let current = currentStoredPairing() {
+                setCachedPairingOutcome(.loaded(current))
+            }
+
+        case .durableClearFailed(let pairingGen, let accessGen):
+            pendingDurableClear = (pairingGen: pairingGen, accessGen: accessGen)
+
+        case .ignored:
+            break
+        }
+    }
+
+    func replaceLiveTransport(with pairing: StoredPairing) async {
+        guard running, !Task.isCancelled else { return }
+        transportGeneration &+= 1
+        let generation = transportGeneration
+        let candidates = usableCandidates(for: pairing)
+        guard !candidates.isEmpty else {
+            becomeDormant(tunnelManaged: false)
+            return
+        }
+
+        let newTransport = makeTransport()
+        let connection: TunnelTransportConnection
+        do {
+            connection = try await newTransport.connect(pairing: pairing, candidates: candidates)
+        } catch {
+            splOwnerLog.error("replaceLiveTransport connect failed: \(String(describing: error), privacy: .public)")
+            return
+        }
+
+        guard running, !Task.isCancelled, transportGeneration == generation else {
+            await newTransport.disconnect()
+            return
+        }
+
+        let oldTransport = self.transport
+        self.transport = newTransport
+        self.establishedLoopbackPort = connection.localPort
+
+        observe(newTransport, generation: generation)
+
+        Task {
+            await oldTransport?.disconnect()
+        }
+
+        let route: TunnelConnectionRoute = connection.via == .lan ? .lan : .relay
+        suppressOptionalJobsOnNextConnected = true
+        state = .connected(localPort: connection.localPort, via: route)
+        health = .healthy
+
+        journalVersion.adoptConnectedPort(connection.localPort)
     }
 
     private func connectFromStoredPairing() async {
@@ -351,7 +540,7 @@ final class TunnelLifecycleOwner {
         }
     }
 
-    private func connectOnceForEstablishment() async -> EstablishmentOutcome {
+    private func connectOnceForEstablishment() async -> EstablishmentResult {
         guard running, !Task.isCancelled else {
             return .cancelled
         }
@@ -388,7 +577,8 @@ final class TunnelLifecycleOwner {
                     return .cancelled
                 }
                 establishedLoopbackPort = connection.localPort
-                state = .connected(localPort: connection.localPort, via: connection.via)
+                let route: TunnelConnectionRoute = connection.via == .lan ? .lan : .relay
+                state = .connected(localPort: connection.localPort, via: route)
                 health = .unknown
                 probeWatchdog.noteConnectionEstablished()
                 startProbe()
@@ -433,32 +623,39 @@ final class TunnelLifecycleOwner {
         if let transport {
             return transport
         }
+        transportGeneration &+= 1
+        let generation = transportGeneration
         let transport = makeTransport()
         self.transport = transport
-        observe(transport)
+        observe(transport, generation: generation)
         return transport
     }
 
-    private func observe(_ transport: any TunnelTransporting) {
+    private func observe(_ transport: any TunnelTransporting, generation: UInt64) {
         stateObservationTask?.cancel()
         modeObservationTask?.cancel()
 
         stateObservationTask = Task { @MainActor [weak self] in
             for await tunnelState in transport.stateUpdates {
-                await self?.handle(tunnelState)
+                guard let self, self.running, self.transportGeneration == generation else {
+                    return
+                }
+                await self.handle(tunnelState)
             }
         }
 
         modeObservationTask = Task { @MainActor [weak self] in
             for await mode in transport.connectionModeUpdates {
-                self?.handleConnectionMode(mode)
+                guard let self, self.running, self.transportGeneration == generation else {
+                    return
+                }
+                self.handleConnectionMode(mode)
             }
         }
     }
 
     private func installWakeUnlockObservers() {
         if didWakeObserver == nil {
-            // Tunnel lifecycle follows AppKit's workspace notification center for wake, matching CaptureLifecycleManager.
             didWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
                 forName: NSWorkspace.didWakeNotification,
                 object: nil,
@@ -560,13 +757,6 @@ final class TunnelLifecycleOwner {
             pendingReactiveRefresh = true
             return
         }
-
-        launchReactiveTokenRefresh()
-    }
-
-    private func launchReactiveTokenRefresh() {
-        pendingReactiveRefresh = false
-        stopProbe()
         state = .connecting
         health = .unknown
         authRefreshGeneration += 1
@@ -597,6 +787,7 @@ final class TunnelLifecycleOwner {
 
         var attempt = 1
         while running, !Task.isCancelled {
+            guard authRefreshGeneration == generation else { return }
             let pairing: StoredPairing
             switch loadPairingCached() {
             case .loaded(let loaded):
@@ -613,8 +804,10 @@ final class TunnelLifecycleOwner {
                 return
             }
 
+            let expectedPairingGen = credentialStore.pairingGeneration
             let result = await tokenRefresher.refreshNow(pairing)
-            guard running, !Task.isCancelled else {
+            guard running, !Task.isCancelled, authRefreshGeneration == generation,
+                  credentialStore.pairingGeneration == expectedPairingGen else {
                 return
             }
 
@@ -629,12 +822,12 @@ final class TunnelLifecycleOwner {
                 }
                 setCachedPairingOutcome(.loaded(updated))
                 await disconnectCurrentTransport()
-                guard running, !Task.isCancelled else {
+                guard running, !Task.isCancelled, authRefreshGeneration == generation else {
                     return
                 }
                 pendingReactiveRefresh = false
                 await connect()
-                guard running, !Task.isCancelled else {
+                guard running, !Task.isCancelled, authRefreshGeneration == generation else {
                     return
                 }
                 if pendingReactiveRefresh {
@@ -664,7 +857,24 @@ final class TunnelLifecycleOwner {
                     return
                 }
 
-            case .notNeeded, .definitiveAuthFailure:
+            case .notNeeded:
+                let lanCandidates = pairing.localEndpoints.filter {
+                    !$0.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && 1...65535 ~= $0.port
+                }
+                if !lanCandidates.isEmpty {
+                    splOwnerLog.info("reactive token refresh not needed; preserving LAN pairing")
+                    await disconnectCurrentTransport()
+                    guard running, !Task.isCancelled, authRefreshGeneration == generation else {
+                        return
+                    }
+                    await connect()
+                    return
+                } else {
+                    await retirePairingAndFailRevoked()
+                    return
+                }
+
+            case .definitiveAuthFailure:
                 await retirePairingAndFailRevoked()
                 return
             }
@@ -771,6 +981,7 @@ final class TunnelLifecycleOwner {
             case .lan(let host, let port, _, _):
                 return !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && 1...65535 ~= port
             case .relay(let endpoint, let instanceID, let deviceToken):
+                guard liveRelayEligible else { return false }
                 return endpoint.scheme != nil &&
                     !instanceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                     !deviceToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -807,11 +1018,11 @@ final class TunnelLifecycleOwner {
         case .failed:
             journalVersion.disconnected()
         }
-        relayAccessStatus = Self.relayAccessStatus(for: outcome, preserving: relayAccessStatus)
+        relayAccessStatus = relayAccessStatus(for: outcome, preserving: relayAccessStatus)
         refreshPairingDerivedState(from: outcome)
     }
 
-    private static func relayAccessStatus(
+    private func relayAccessStatus(
         for outcome: PairingLoadOutcome,
         preserving current: PairingRelayAccessStatus
     ) -> PairingRelayAccessStatus {
@@ -825,7 +1036,8 @@ final class TunnelLifecycleOwner {
         }
     }
 
-    private static func relayAccessStatus(for pairing: StoredPairing) -> PairingRelayAccessStatus {
+    private func relayAccessStatus(for pairing: StoredPairing) -> PairingRelayAccessStatus {
+        guard liveRelayEligible else { return .unavailable }
         switch pairing.relayEnrollment {
         case .enrolled:
             return .available
@@ -900,7 +1112,6 @@ final class TunnelLifecycleOwner {
         stateObservationTask = nil
         modeObservationTask?.cancel()
         modeObservationTask = nil
-
         let transport = self.transport
         self.transport = nil
         await transport?.disconnect()
@@ -925,8 +1136,9 @@ final class TunnelLifecycleOwner {
         return .milliseconds(Int(seconds * 1_000 * Double.random(in: 0.75...1.25)))
     }
 
-    private static func httpStatusProbe(localPort: Int, timeout: Duration) async -> Bool {
-        guard let url = URL(string: "http://127.0.0.1:\(localPort)/app/network/api/status") else {
+    static func httpStatusProbe(localPort: Int, timeout: Duration) async -> Bool {
+        guard (1...65535).contains(localPort),
+              let url = URL(string: "http://127.0.0.1:\(localPort)/app/network/api/status") else {
             return false
         }
 
@@ -946,11 +1158,11 @@ final class TunnelLifecycleOwner {
     }
 }
 
-private enum EstablishmentOutcome: Sendable {
+private enum EstablishmentResult {
     case connected
     case dormant
-    case terminal
     case retry
+    case terminal
     case cancelled
 }
 

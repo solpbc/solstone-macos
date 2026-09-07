@@ -75,6 +75,7 @@ final class PairingCoordinator {
         pair: PairOperation? = nil,
         clientInfo: SPLClientInfo = SPLRuntime.clientInfo,
         keychainStore: SPLKeychainStore = SPLPairingKeychain.store(),
+        credentialStore: PairingCredentialStore? = nil,
         loadPairing: LoadPairing? = nil,
         savePairing: SavePairing? = nil,
         deletePairing: DeletePairing? = nil,
@@ -84,12 +85,13 @@ final class PairingCoordinator {
         deviceLabel: @escaping DeviceLabelSource = { SPLPairingDefaults.deviceLabel },
         clearLastSuccessfulJournalContact: @escaping ClearLastSuccessfulJournalContact = {}
     ) {
+        let store = credentialStore ?? PairingCredentialStore(store: keychainStore)
         self.pair = pair ?? { pairURL, deviceLabel, relayEndpoint in
             try await PairClient(clientInfo: clientInfo).pair(pairURL: pairURL, deviceLabel: deviceLabel, relayEndpoint: relayEndpoint)
         }
-        self.loadPairing = loadPairing ?? { try keychainStore.load() }
-        self.savePairing = savePairing ?? { try keychainStore.save($0) }
-        self.deletePairing = deletePairing ?? { try keychainStore.delete() }
+        self.loadPairing = loadPairing ?? { try store.load() }
+        self.savePairing = savePairing ?? { try store.save($0) }
+        self.deletePairing = deletePairing ?? { try store.delete() }
         self.reactivate = reactivate
         self.ownerState = ownerState
         self.relayEndpoint = relayEndpoint

@@ -1535,6 +1535,61 @@ struct TunnelLifecycleOwnerTests {
         #expect(transport.disconnectCount >= 1)
     }
 
+    @Test func replaceLiveTransportWithPairingUpdatesTransportWithoutDisconnectTransition() async throws {
+        let first = FakeTunnelTransport(connection: .init(localPort: 11111, via: .relay))
+        let second = FakeTunnelTransport(connection: .init(localPort: 22222, via: .relay))
+        let owner = makeOwner(factory: FakeTransportFactory([first, second]))
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 11111, via: .relay) }
+
+        let updatedPairing = pairing(
+            instanceID: "instance-1",
+            deviceToken: "new-token",
+            relayEndpoint: "https://new-relay.solstone.test",
+            localEndpoints: [LocalEndpoint(host: "10.0.0.1", port: 5000, scope: "local")]
+        )
+
+        await owner.replaceLiveTransport(with: updatedPairing)
+        try await waitUntil { owner.state == .connected(localPort: 22222, via: .relay) }
+
+        #expect(first.disconnectCount >= 1)
+        #expect(second.connectAttempts == 1)
+        #expect(owner.state == .connected(localPort: 22222, via: .relay))
+        await owner.stop()
+    }
+
+    @Test func reactiveTokenRefreshNotNeededPreservesLANPairing() async throws {
+        let lanPairing = pairing(
+            instanceID: "instance-lan",
+            deviceToken: "token",
+            relayEnrollment: .unavailable,
+            localEndpoints: [LocalEndpoint(host: "192.168.1.100", port: 4444, scope: "local")]
+        )
+        let store = PairingStore(pairing: lanPairing)
+        let refresher = FakeTokenRefresher(
+            ifNeededResults: [.notNeeded(lanPairing)],
+            nowResults: [.notNeeded(lanPairing)]
+        )
+        let transport1 = FakeTunnelTransport(results: [
+            .failure(SessionError.authRefreshRequired),
+        ])
+        let transport2 = FakeTunnelTransport(connectionMode: .plDirect, connection: .init(localPort: 33333, via: .lan))
+        let owner = makeOwner(
+            store: store,
+            refresher: refresher.seam,
+            factory: FakeTransportFactory([transport1, transport2])
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 33333, via: .lan) }
+
+        #expect(store.deleteCount == 0)
+        #expect(store.currentPairing != nil)
+        #expect(owner.state == .connected(localPort: 33333, via: .lan))
+        await owner.stop()
+    }
+
     private func makeOwner(
         store: PairingStore = PairingStore(pairing: pairing()),
         refresher: TunnelDeviceTokenRefreshing? = nil,
@@ -1543,10 +1598,9 @@ struct TunnelLifecycleOwnerTests {
         probe: @escaping @Sendable (Int, Duration) async -> Bool = { _, _ in true },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in try await Task.sleep(for: .seconds(10)) }
     ) -> TunnelLifecycleOwner {
-        TunnelLifecycleOwner(
-            loadPairing: { try store.load() },
-            savePairing: { try store.save($0) },
-            deletePairing: { try store.delete() },
+        let credStore = PairingCredentialStore(store: store)
+        return TunnelLifecycleOwner(
+            credentialStore: credStore,
             tokenRefresher: refresher ?? FakeTokenRefresher(ifNeededResults: [.notNeeded(store.currentPairing ?? pairing())]).seam,
             makeTransport: { factory.make() },
             pathMonitoringSource: pathSource,

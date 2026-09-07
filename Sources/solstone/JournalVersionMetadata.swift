@@ -13,9 +13,30 @@ final class JournalVersionMetadata {
     private struct Record: Codable {
         let identity: String
         let version: String
+        let name: String?
+
+        init(identity: String, version: String, name: String? = nil) {
+            self.identity = identity
+            self.version = version
+            self.name = name
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case identity
+            case version
+            case name
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            identity = try container.decode(String.self, forKey: .identity)
+            version = try container.decode(String.self, forKey: .version)
+            name = try container.decodeIfPresent(String.self, forKey: .name)
+        }
     }
 
     private(set) var version: String?
+    private(set) var journalName: String?
     private(set) var isCurrent = false
     var displayValue: String {
         guard let version else { return "unknown" }
@@ -44,10 +65,12 @@ final class JournalVersionMetadata {
         disconnected()
         identity = value
         version = nil
+        journalName = nil
         if let value, let data = defaults.data(forKey: Self.storageKey),
            let record = try? JSONDecoder().decode(Record.self, from: data),
            record.identity == value, let saved = sanitizedJournalVersion(record.version) {
             version = saved
+            journalName = record.name.flatMap(sanitizedJournalName)
         } else {
             defaults.removeObject(forKey: Self.storageKey)
         }
@@ -57,6 +80,7 @@ final class JournalVersionMetadata {
         disconnected()
         identity = nil
         version = nil
+        journalName = nil
         defaults.removeObject(forKey: Self.storageKey)
     }
 
@@ -66,6 +90,37 @@ final class JournalVersionMetadata {
         isCurrent = false
         task?.cancel()
         task = nil
+    }
+
+    func currentGeneration() -> UInt64 {
+        generation
+    }
+
+    func adoptConnectedPort(_ localPort: Int) {
+        activePort = localPort
+    }
+
+    func applyDirectly(
+        identity: String,
+        generation expectedGeneration: UInt64? = nil,
+        version: String?,
+        name: String?,
+        markCurrent: Bool = true
+    ) {
+        guard self.identity == identity else { return }
+        if let expectedGeneration, self.generation != expectedGeneration { return }
+        let currentVersion = version.flatMap(sanitizedJournalVersion) ?? self.version
+        let currentName = name.flatMap(sanitizedJournalName) ?? self.journalName
+
+        if let currentVersion {
+            self.version = currentVersion
+            self.journalName = currentName
+            self.isCurrent = markCurrent
+
+            if let data = try? JSONEncoder().encode(Record(identity: identity, version: currentVersion, name: currentName)) {
+                self.defaults.set(data, forKey: Self.storageKey)
+            }
+        }
     }
 
     @discardableResult
@@ -80,24 +135,10 @@ final class JournalVersionMetadata {
             guard let self, self.generation == expectedGeneration,
                   self.identity == identity, self.activePort == localPort,
                   let result, let version = sanitizedJournalVersion(result) else { return }
-            // Validation and persistence share this actor turn with pairing/lifecycle changes.
-            if let data = try? JSONEncoder().encode(Record(identity: identity, version: version)) {
-                self.defaults.set(data, forKey: Self.storageKey)
-            }
-            self.version = version
-            self.isCurrent = true
+            self.applyDirectly(identity: identity, version: version, name: self.journalName, markCurrent: true)
         }
         task = request
         return request
-    }
-}
-
-private final class JournalVersionRedirectDelegate: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest,
-                    completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-        completionHandler(nil)
     }
 }
 
@@ -105,12 +146,10 @@ enum JournalVersionStatusClient {
     static func fetch(localPort: Int) async -> String? {
         guard (1...65535).contains(localPort),
               let url = URL(string: "http://127.0.0.1:\(localPort)/api/system/status") else { return nil }
-        let configuration = URLSessionConfiguration.ephemeral
+        let configuration = BoundedLoopbackClient.makeSessionConfiguration()
         configuration.timeoutIntervalForRequest = 5
         configuration.timeoutIntervalForResource = 5
-        configuration.connectionProxyDictionary = [:]
-        let session = URLSession(configuration: configuration,
-                                 delegate: JournalVersionRedirectDelegate(), delegateQueue: nil)
+        let session = BoundedLoopbackClient.makeSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
@@ -151,6 +190,20 @@ internal func sanitizedJournalVersion(_ value: String) -> String? {
         return nil
     }
     return value
+}
+
+internal func sanitizedJournalName(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    guard !trimmed.unicodeScalars.contains(where: { scalar in
+        scalar.value <= 0x1F ||
+            (0x7F...0x9F).contains(scalar.value) ||
+            CharacterSet.newlines.contains(scalar)
+    }) else {
+        return nil
+    }
+    guard trimmed.utf8.count <= 80 else { return nil }
+    return trimmed
 }
 
 private func normalizedCAFingerprint(for pem: String) -> String? {

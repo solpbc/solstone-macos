@@ -769,14 +769,15 @@ public final class AppState {
         self.recoveryCoordinator = recoveryCoordinator
         let splClientInfo = SPLRuntime.clientInfo
         let splKeychainStore = SPLPairingKeychain.store()
+        let splCredentialStore = PairingCredentialStore(store: splKeychainStore)
         let tunnelLifecycleOwner = TunnelLifecycleOwner(
-            keychainStore: splKeychainStore,
+            credentialStore: splCredentialStore,
             clientInfo: splClientInfo
         )
         self.tunnelLifecycleOwner = tunnelLifecycleOwner
         self.pairingCoordinator = PairingCoordinator(
             clientInfo: splClientInfo,
-            keychainStore: splKeychainStore,
+            credentialStore: splCredentialStore,
             reactivate: { [fingerprintTarget] in
                 await fingerprintTarget.state?.reevaluateTunnelPairing()
             },

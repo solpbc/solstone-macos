@@ -83,6 +83,8 @@ final class PairingStore: @unchecked Sendable {
     }
 }
 
+extension PairingStore: PairingStoring {}
+
 actor FakeTokenRefresher {
     private var ifNeededResults: [DeviceTokenRefreshResult]
     private var nowResults: [DeviceTokenRefreshResult]
