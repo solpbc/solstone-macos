@@ -15,29 +15,93 @@ public struct ClientSelfJournalMetadata: Decodable, Sendable {
         case version
         case ownerLabel = "owner_label"
     }
-}
 
-public struct ClientSelfGetResponse: Decodable, Sendable {
-    public let protocolVersion: Int
-    public let revision: Int
-    public let journal: ClientSelfJournalMetadata?
+    public init(name: String?, version: String?, ownerLabel: String?) {
+        self.name = name
+        self.version = version
+        self.ownerLabel = ownerLabel
+    }
 
-    enum CodingKeys: String, CodingKey {
-        case protocolVersion = "protocol_version"
-        case revision
-        case journal
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String?.self, forKey: .name)
+        version = try container.decode(String?.self, forKey: .version)
+        ownerLabel = try container.decode(String?.self, forKey: .ownerLabel)
     }
 }
 
-public struct ClientSelfPutResponse: Decodable, Sendable {
+public struct ClientSelfReportedPayload: Decodable, Sendable {
+    public let name: String?
+    public let platform: String?
+    public let deviceType: String?
+    public let appID: String?
+    public let appVersion: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case platform
+        case deviceType = "device_type"
+        case appID = "app_id"
+        case appVersion = "app_version"
+    }
+
+    public init(name: String?, platform: String?, deviceType: String?, appID: String?, appVersion: String?) {
+        self.name = name
+        self.platform = platform
+        self.deviceType = deviceType
+        self.appID = appID
+        self.appVersion = appVersion
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String?.self, forKey: .name)
+        platform = try container.decode(String?.self, forKey: .platform)
+        deviceType = try container.decode(String?.self, forKey: .deviceType)
+        appID = try container.decode(String?.self, forKey: .appID)
+        appVersion = try container.decode(String?.self, forKey: .appVersion)
+    }
+}
+
+public struct ClientSelfProtocol1Response: Decodable, Sendable {
     public let protocolVersion: Int
     public let revision: Int
     public let journal: ClientSelfJournalMetadata?
+    public let reported: ClientSelfReportedPayload?
 
     enum CodingKeys: String, CodingKey {
         case protocolVersion = "protocol_version"
         case revision
         case journal
+        case reported
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        protocolVersion = try container.decode(Int.self, forKey: .protocolVersion)
+        guard protocolVersion == 1 else {
+            throw DecodingError.dataCorruptedError(forKey: .protocolVersion, in: container, debugDescription: "Expected protocol_version == 1")
+        }
+        revision = try container.decode(Int.self, forKey: .revision)
+        guard revision >= 0 else {
+            throw DecodingError.dataCorruptedError(forKey: .revision, in: container, debugDescription: "Expected revision >= 0")
+        }
+        journal = try container.decodeIfPresent(ClientSelfJournalMetadata.self, forKey: .journal)
+        reported = try container.decodeIfPresent(ClientSelfReportedPayload.self, forKey: .reported)
+    }
+}
+
+public typealias ClientSelfGetResponse = ClientSelfProtocol1Response
+public typealias ClientSelfPutResponse = ClientSelfProtocol1Response
+
+public enum ClientSelfProtocol1Validator {
+    public static func decode(_ data: Data) -> ClientSelfProtocol1Response? {
+        guard data.count <= 65536 else { return nil }
+        guard let decoded = try? JSONDecoder().decode(ClientSelfProtocol1Response.self, from: data) else {
+            return nil
+        }
+        guard decoded.protocolVersion == 1, decoded.revision >= 0 else { return nil }
+        return decoded
     }
 }
 
@@ -237,6 +301,10 @@ public actor JournalClientSelfSequencer {
             return
         }
 
+        let jobDeadline = ContinuousClock.now + deadline
+        let getRemaining = jobDeadline - ContinuousClock.now
+        guard getRemaining > .zero else { return }
+
         var getReq = URLRequest(url: url)
         getReq.httpMethod = "GET"
         getReq.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -246,7 +314,7 @@ public actor JournalClientSelfSequencer {
             (getData, getResp) = try await BoundedLoopbackClient.execute(
                 request: getReq,
                 session: session,
-                deadline: deadline
+                deadline: getRemaining
             )
         } catch {
             return
@@ -255,7 +323,13 @@ public actor JournalClientSelfSequencer {
         guard activeTarget == target, jobGeneration == jobGen else { return }
 
         if getResp.statusCode == 404 {
-            if let fallbackVersion = await JournalVersionStatusClient.fetch(localPort: target.localPort) {
+            let fallbackRemaining = jobDeadline - ContinuousClock.now
+            guard fallbackRemaining > .zero else { return }
+            if let fallbackVersion = await JournalVersionStatusClient.fetch(
+                localPort: target.localPort,
+                session: session,
+                deadline: fallbackRemaining
+            ) {
                 guard activeTarget == target, jobGeneration == jobGen else { return }
                 await onJournalMetadataUpdated(target.identity, target.metadataGeneration, fallbackVersion, nil)
             }
@@ -264,52 +338,65 @@ public actor JournalClientSelfSequencer {
 
         guard getResp.statusCode == 200 else { return }
 
-        guard let getResponse = try? JSONDecoder().decode(ClientSelfGetResponse.self, from: getData),
-              getResponse.protocolVersion == 1,
-              getResponse.revision >= 0
-        else {
+        guard let getResponse = ClientSelfProtocol1Validator.decode(getData) else {
             return
         }
+
+        guard activeTarget == target, jobGeneration == jobGen else { return }
 
         if let journal = getResponse.journal {
             await onJournalMetadataUpdated(target.identity, target.metadataGeneration, journal.version, journal.name)
         }
 
+        guard activeTarget == target, jobGeneration == jobGen else { return }
+
         let currentSnapshot = pendingSnapshot ?? snapshot
         pendingSnapshot = nil
+        let putRemaining = jobDeadline - ContinuousClock.now
+        guard putRemaining > .zero else { return }
+
         let putOutcome = try await sendPut(
             url: url,
             expectedRevision: getResponse.revision,
             snapshot: currentSnapshot,
             target: target,
-            jobGen: jobGen
+            jobGen: jobGen,
+            deadline: putRemaining
         )
 
         if putOutcome == .conflict {
             guard activeTarget == target, jobGeneration == jobGen else { return }
+            let retryGetRemaining = jobDeadline - ContinuousClock.now
+            guard retryGetRemaining > .zero else { return }
+
             let (retryData, retryResp) = try await BoundedLoopbackClient.execute(
                 request: getReq,
                 session: session,
-                deadline: deadline
+                deadline: retryGetRemaining
             )
             guard retryResp.statusCode == 200,
-                  let retryResponse = try? JSONDecoder().decode(ClientSelfGetResponse.self, from: retryData),
-                  retryResponse.protocolVersion == 1,
-                  retryResponse.revision >= 0
+                  let retryResponse = ClientSelfProtocol1Validator.decode(retryData)
             else { return }
+
+            guard activeTarget == target, jobGeneration == jobGen else { return }
 
             if let journal = retryResponse.journal {
                 await onJournalMetadataUpdated(target.identity, target.metadataGeneration, journal.version, journal.name)
             }
 
+            guard activeTarget == target, jobGeneration == jobGen else { return }
             let latestSnapshot = pendingSnapshot ?? ClientSelfReportedSnapshot.sampleCurrent()
             pendingSnapshot = nil
+            let retryPutRemaining = jobDeadline - ContinuousClock.now
+            guard retryPutRemaining > .zero else { return }
+
             _ = try await sendPut(
                 url: url,
                 expectedRevision: retryResponse.revision,
                 snapshot: latestSnapshot,
                 target: target,
-                jobGen: jobGen
+                jobGen: jobGen,
+                deadline: retryPutRemaining
             )
         }
     }
@@ -319,9 +406,11 @@ public actor JournalClientSelfSequencer {
         expectedRevision: Int,
         snapshot: ClientSelfReportedSnapshot,
         target: TargetConnection,
-        jobGen: UInt64
+        jobGen: UInt64,
+        deadline: Duration
     ) async throws -> PutOutcome {
         guard activeTarget == target, jobGeneration == jobGen else { return .failure }
+        guard deadline > .zero else { return .failure }
         let sanitized = snapshot.sanitized()
 
         let payload = ClientSelfPutPayload(
@@ -352,8 +441,12 @@ public actor JournalClientSelfSequencer {
         guard activeTarget == target, jobGeneration == jobGen else { return .failure }
 
         if putResp.statusCode == 200 {
-            if let putResponse = try? JSONDecoder().decode(ClientSelfPutResponse.self, from: putData),
-               let journal = putResponse.journal {
+            guard let putResponse = ClientSelfProtocol1Validator.decode(putData) else {
+                // Malformed PUT 200: keep latest validated cache, do not publish invalid journal
+                return .success
+            }
+            guard activeTarget == target, jobGeneration == jobGen else { return .failure }
+            if let journal = putResponse.journal {
                 await onJournalMetadataUpdated(target.identity, target.metadataGeneration, journal.version, journal.name)
             }
             return .success

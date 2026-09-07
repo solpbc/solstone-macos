@@ -89,7 +89,8 @@ final class TunnelLifecycleOwner {
     private(set) var relayAccessStatus: PairingRelayAccessStatus = .noPairing
     private(set) var liveRelayEligible: Bool = true
     private(set) var pendingDurableClear: (pairingGen: UInt64, accessGen: UInt64)?
-    private(set) var transportGeneration: UInt64 = 0
+    private(set) var transportAttemptID: UInt64 = 0
+    private(set) var transportIncarnation: UInt64 = 0
 
     var localPort: Int? {
         guard case .connected(let localPort, _) = state else {
@@ -193,8 +194,6 @@ final class TunnelLifecycleOwner {
     private var cachedPairingOutcome: PairingLoadOutcome?
     @ObservationIgnored
     private var probeWatchdog = ProbeWatchdog(policy: TunnelLifecycleOwner.probeWatchdogPolicy)
-    @ObservationIgnored
-    private var suppressOptionalJobsOnNextConnected = false
 
     init(
         keychainStore: SPLKeychainStore = SPLPairingKeychain.store(),
@@ -210,7 +209,8 @@ final class TunnelLifecycleOwner {
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         now: @escaping @Sendable () -> Date = { Date() },
         clientSelfSequencer: JournalClientSelfSequencer? = nil,
-        relayAccessSequencer: JournalRelayAccessSequencer? = nil
+        relayAccessSequencer: JournalRelayAccessSequencer? = nil,
+        loopbackSession: URLSession? = nil
     ) {
         let store = credentialStore ?? PairingCredentialStore(store: keychainStore)
         self.credentialStore = store
@@ -224,12 +224,14 @@ final class TunnelLifecycleOwner {
         self.sleep = sleep
         self.now = now
 
+        let session = loopbackSession ?? BoundedLoopbackClient.makeSession()
         let jv = self.journalVersion
         self.clientSelfSequencer = clientSelfSequencer ?? JournalClientSelfSequencer(
+            session: session,
             onJournalMetadataUpdated: { identity, gen, version, name in
-                Task { @MainActor in
+                await Task { @MainActor in
                     jv.applyDirectly(identity: identity, generation: gen, version: version, name: name, markCurrent: true)
-                }
+                }.value
             }
         )
 
@@ -240,10 +242,12 @@ final class TunnelLifecycleOwner {
         } else {
             self.relayAccessSequencer = JournalRelayAccessSequencer(
                 credentialStore: store,
+                session: session,
+                now: now,
                 onOutcome: { [weak target] outcome in
-                    Task { @MainActor in
+                    await Task { @MainActor in
                         await target?.owner?.handleRelayAccessOutcome(outcome)
-                    }
+                    }.value
                 }
             )
         }
@@ -344,37 +348,32 @@ final class TunnelLifecycleOwner {
                 return
             }
 
-            if suppressOptionalJobsOnNextConnected {
-                suppressOptionalJobsOnNextConnected = false
-                return
-            }
-
             if let pending = pendingDurableClear {
                 let (pGen, aGen) = credentialStore.currentGenerations()
                 if pending.pairingGen == pGen && pending.accessGen == aGen {
-                    if (try? credentialStore.clearRelayAccess(expectedPairingGen: pGen, expectedAccessGen: aGen)) != nil {
+                    if let (cleared, _) = try? credentialStore.clearRelayAccess(expectedPairingGen: pGen, expectedAccessGen: aGen) {
                         pendingDurableClear = nil
-                        if let current = currentStoredPairing() {
-                            setCachedPairingOutcome(.loaded(current))
-                        }
+                        setCachedPairingOutcome(.loaded(cleared))
                     }
                 } else {
                     pendingDurableClear = nil
                 }
             }
 
-            if let pairing = currentStoredPairing(), let identity = journalVersionMetadataIdentity(for: pairing) {
+            if let pairing = currentStoredPairing() {
                 let (pGen, aGen) = credentialStore.currentGenerations()
-                let metaGen = journalVersion.currentGeneration()
-                Task { [clientSelfSequencer] in
-                    await clientSelfSequencer.enqueue(
-                        target: JournalClientSelfSequencer.TargetConnection(
-                            localPort: port,
-                            identity: identity,
-                            pairingGeneration: pGen,
-                            metadataGeneration: metaGen
+                if let identity = journalVersionMetadataIdentity(for: pairing) {
+                    let metaGen = journalVersion.currentGeneration()
+                    Task { [clientSelfSequencer] in
+                        await clientSelfSequencer.enqueue(
+                            target: JournalClientSelfSequencer.TargetConnection(
+                                localPort: port,
+                                identity: identity,
+                                pairingGeneration: pGen,
+                                metadataGeneration: metaGen
+                            )
                         )
-                    )
+                    }
                 }
                 Task { [relayAccessSequencer] in
                     await relayAccessSequencer.enqueue(
@@ -400,27 +399,40 @@ final class TunnelLifecycleOwner {
     }
 
     func handleRelayAccessOutcome(_ outcome: JournalRelayAccessSequencer.AccessUpdateOutcome) async {
+        guard running, !Task.isCancelled else { return }
+        let (currentPairingGen, currentAccessGen) = credentialStore.currentGenerations()
+
         switch outcome {
-        case .ready(let updatedPairing):
+        case .ready(let updatedPairing, let pairingGen, _, let newAccessGen):
+            guard currentPairingGen == pairingGen, currentAccessGen == newAccessGen else {
+                splOwnerLog.debug("handleRelayAccessOutcome .ready dropped: generation drift (store: \(currentPairingGen)/\(currentAccessGen), outcome: \(pairingGen)/\(newAccessGen))")
+                return
+            }
             liveRelayEligible = true
             setCachedPairingOutcome(.loaded(updatedPairing))
             await replaceLiveTransport(with: updatedPairing)
 
-        case .notConfiguredLiveDisabled:
-            liveRelayEligible = false
-            if case .loaded(let current) = cachedPairingOutcome {
-                relayAccessStatus = relayAccessStatus(for: current)
-            } else {
-                relayAccessStatus = .unavailable
+        case .notConfiguredLiveDisabled(let pairingGen, let accessGen):
+            guard currentPairingGen == pairingGen, currentAccessGen == accessGen else {
+                splOwnerLog.debug("handleRelayAccessOutcome .notConfiguredLiveDisabled dropped: generation drift")
+                return
             }
+            await performLiveDisable()
 
-        case .durableClearPersisted:
-            pendingDurableClear = nil
-            if let current = currentStoredPairing() {
-                setCachedPairingOutcome(.loaded(current))
+        case .durableClearPersisted(let clearedPairing, let pairingGen, _, let newAccessGen):
+            guard currentPairingGen == pairingGen, currentAccessGen == newAccessGen else {
+                splOwnerLog.debug("handleRelayAccessOutcome .durableClearPersisted dropped: generation drift")
+                return
             }
+            pendingDurableClear = nil
+            setCachedPairingOutcome(.loaded(clearedPairing))
+            relayAccessStatus = .unavailable
 
         case .durableClearFailed(let pairingGen, let accessGen):
+            guard currentPairingGen == pairingGen, currentAccessGen == accessGen else {
+                return
+            }
+            splOwnerLog.error("durable clear failed for pairingGen=\(pairingGen) accessGen=\(accessGen); live relay disabled")
             pendingDurableClear = (pairingGen: pairingGen, accessGen: accessGen)
 
         case .ignored:
@@ -428,15 +440,77 @@ final class TunnelLifecycleOwner {
         }
     }
 
+    private func performLiveDisable() async {
+        liveRelayEligible = false
+        guard let pairing = currentStoredPairing() else {
+            await disconnectCurrentTransport()
+            relayAccessStatus = .unavailable
+            return
+        }
+        relayAccessStatus = .unavailable
+
+        let candidates = usableCandidates(for: pairing)
+        if candidates.isEmpty {
+            await disconnectCurrentTransport()
+            state = .disconnected
+            health = .unknown
+            return
+        }
+
+        transportAttemptID &+= 1
+        let attempt = transportAttemptID
+        let capturedPairingGen = credentialStore.pairingGeneration
+
+        let newTransport = makeTransport()
+        let connection: TunnelTransportConnection
+        do {
+            connection = try await newTransport.connect(pairing: pairing, candidates: candidates)
+        } catch {
+            splOwnerLog.error("live disable LAN fallback connect failed: \(String(describing: error), privacy: .public)")
+            await newTransport.disconnect()
+            await disconnectCurrentTransport()
+            state = .disconnected
+            health = .unknown
+            return
+        }
+
+        guard running, !Task.isCancelled,
+              transportAttemptID == attempt,
+              credentialStore.pairingGeneration == capturedPairingGen
+        else {
+            await newTransport.disconnect()
+            return
+        }
+
+        let oldTransport = self.transport
+        transportIncarnation &+= 1
+        let incarnation = transportIncarnation
+        self.transport = newTransport
+        self.establishedLoopbackPort = connection.localPort
+
+        observe(newTransport, generation: incarnation)
+
+        Task {
+            await oldTransport?.disconnect()
+        }
+
+        let route: TunnelConnectionRoute = connection.via == .lan ? .lan : .relay
+        state = .connected(localPort: connection.localPort, via: route)
+        health = .healthy
+        journalVersion.adoptConnectedPort(connection.localPort)
+    }
+
     func replaceLiveTransport(with pairing: StoredPairing) async {
         guard running, !Task.isCancelled else { return }
-        transportGeneration &+= 1
-        let generation = transportGeneration
         let candidates = usableCandidates(for: pairing)
         guard !candidates.isEmpty else {
             becomeDormant(tunnelManaged: false)
             return
         }
+
+        transportAttemptID &+= 1
+        let attempt = transportAttemptID
+        let capturedPairingGen = credentialStore.pairingGeneration
 
         let newTransport = makeTransport()
         let connection: TunnelTransportConnection
@@ -444,29 +518,33 @@ final class TunnelLifecycleOwner {
             connection = try await newTransport.connect(pairing: pairing, candidates: candidates)
         } catch {
             splOwnerLog.error("replaceLiveTransport connect failed: \(String(describing: error), privacy: .public)")
+            await newTransport.disconnect()
             return
         }
 
-        guard running, !Task.isCancelled, transportGeneration == generation else {
+        guard running, !Task.isCancelled,
+              transportAttemptID == attempt,
+              credentialStore.pairingGeneration == capturedPairingGen
+        else {
             await newTransport.disconnect()
             return
         }
 
         let oldTransport = self.transport
+        transportIncarnation &+= 1
+        let incarnation = transportIncarnation
         self.transport = newTransport
         self.establishedLoopbackPort = connection.localPort
 
-        observe(newTransport, generation: generation)
+        observe(newTransport, generation: incarnation)
 
         Task {
             await oldTransport?.disconnect()
         }
 
         let route: TunnelConnectionRoute = connection.via == .lan ? .lan : .relay
-        suppressOptionalJobsOnNextConnected = true
         state = .connected(localPort: connection.localPort, via: route)
         health = .healthy
-
         journalVersion.adoptConnectedPort(connection.localPort)
     }
 
@@ -493,23 +571,46 @@ final class TunnelLifecycleOwner {
         }
         isTunnelManaged = true
 
-        switch await tokenRefresher.refreshIfNeeded(pairing, now()) {
+        let (capturedPairingGen, capturedAccessGen) = credentialStore.currentGenerations()
+        let refreshResult = await tokenRefresher.refreshIfNeeded(pairing, now())
+
+        guard running, !Task.isCancelled else { return }
+
+        switch refreshResult {
         case .refreshed(let updated):
-            do {
-                try savePairing(updated)
-            } catch {
-                splOwnerLog.error("device token refresh save failed: \(String(describing: type(of: error)), privacy: .public)")
-                await failWithKeychainUnavailable()
+            let (curPGen, curAGen) = credentialStore.currentGenerations()
+            guard curPGen == capturedPairingGen && curAGen == capturedAccessGen else {
+                splOwnerLog.info("proactive token refresh dropped: store generations drifted")
+                await connect()
                 return
             }
-            setCachedPairingOutcome(.loaded(updated))
+
+            guard case .enrolled(let deviceToken, let expiresAt) = updated.relayEnrollment else {
+                await connect()
+                return
+            }
+
+            do {
+                let (persisted, _) = try credentialStore.updateRelayAccess(
+                    expectedPairingGen: capturedPairingGen,
+                    expectedAccessGen: capturedAccessGen,
+                    relayOrigin: updated.relayEndpoint,
+                    deviceToken: deviceToken,
+                    expiresAtString: expiresAt
+                )
+                setCachedPairingOutcome(.loaded(persisted))
+            } catch {
+                splOwnerLog.info("proactive token refresh CAS save failed: \(String(describing: error), privacy: .public)")
+            }
             await connect()
 
         case .notNeeded, .transientFailure:
             await connect()
 
         case .definitiveAuthFailure:
-            await retirePairingAndFailRevoked()
+            if credentialStore.pairingGeneration == capturedPairingGen {
+                await retirePairingAndFailRevoked()
+            }
         }
     }
 
@@ -623,11 +724,11 @@ final class TunnelLifecycleOwner {
         if let transport {
             return transport
         }
-        transportGeneration &+= 1
-        let generation = transportGeneration
+        transportIncarnation &+= 1
+        let incarnation = transportIncarnation
         let transport = makeTransport()
         self.transport = transport
-        observe(transport, generation: generation)
+        observe(transport, generation: incarnation)
         return transport
     }
 
@@ -637,7 +738,7 @@ final class TunnelLifecycleOwner {
 
         stateObservationTask = Task { @MainActor [weak self] in
             for await tunnelState in transport.stateUpdates {
-                guard let self, self.running, self.transportGeneration == generation else {
+                guard let self, self.running, self.transportIncarnation == generation else {
                     return
                 }
                 await self.handle(tunnelState)
@@ -646,7 +747,7 @@ final class TunnelLifecycleOwner {
 
         modeObservationTask = Task { @MainActor [weak self] in
             for await mode in transport.connectionModeUpdates {
-                guard let self, self.running, self.transportGeneration == generation else {
+                guard let self, self.running, self.transportIncarnation == generation else {
                     return
                 }
                 self.handleConnectionMode(mode)
@@ -804,23 +905,38 @@ final class TunnelLifecycleOwner {
                 return
             }
 
-            let expectedPairingGen = credentialStore.pairingGeneration
+            let (capturedPairingGen, capturedAccessGen) = credentialStore.currentGenerations()
             let result = await tokenRefresher.refreshNow(pairing)
-            guard running, !Task.isCancelled, authRefreshGeneration == generation,
-                  credentialStore.pairingGeneration == expectedPairingGen else {
+            guard running, !Task.isCancelled, authRefreshGeneration == generation else {
                 return
             }
 
             switch result {
             case .refreshed(let updated):
-                do {
-                    try savePairing(updated)
-                } catch {
-                    splOwnerLog.error("reactive token refresh save failed: \(String(describing: type(of: error)), privacy: .public)")
-                    await failWithKeychainUnavailable()
+                let (curPGen, curAGen) = credentialStore.currentGenerations()
+                guard curPGen == capturedPairingGen && curAGen == capturedAccessGen else {
+                    splOwnerLog.info("reactive token refresh dropped: generations drifted")
                     return
                 }
-                setCachedPairingOutcome(.loaded(updated))
+
+                guard case .enrolled(let deviceToken, let expiresAt) = updated.relayEnrollment else {
+                    return
+                }
+
+                do {
+                    let (persisted, _) = try credentialStore.updateRelayAccess(
+                        expectedPairingGen: capturedPairingGen,
+                        expectedAccessGen: capturedAccessGen,
+                        relayOrigin: updated.relayEndpoint,
+                        deviceToken: deviceToken,
+                        expiresAtString: expiresAt
+                    )
+                    setCachedPairingOutcome(.loaded(persisted))
+                } catch {
+                    splOwnerLog.info("reactive token refresh CAS failed: \(String(describing: error), privacy: .public)")
+                    return
+                }
+
                 await disconnectCurrentTransport()
                 guard running, !Task.isCancelled, authRefreshGeneration == generation else {
                     return
@@ -870,12 +986,16 @@ final class TunnelLifecycleOwner {
                     await connect()
                     return
                 } else {
-                    await retirePairingAndFailRevoked()
+                    if credentialStore.pairingGeneration == capturedPairingGen {
+                        await retirePairingAndFailRevoked()
+                    }
                     return
                 }
 
             case .definitiveAuthFailure:
-                await retirePairingAndFailRevoked()
+                if credentialStore.pairingGeneration == capturedPairingGen {
+                    await retirePairingAndFailRevoked()
+                }
                 return
             }
         }

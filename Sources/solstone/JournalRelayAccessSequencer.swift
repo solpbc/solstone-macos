@@ -25,10 +25,10 @@ public actor JournalRelayAccessSequencer {
         }
     }
 
-    public enum AccessUpdateOutcome: Sendable {
-        case ready(StoredPairing)
-        case notConfiguredLiveDisabled
-        case durableClearPersisted
+    public enum AccessUpdateOutcome: Sendable, Equatable {
+        case ready(pairing: StoredPairing, pairingGen: UInt64, accessGen: UInt64, newAccessGen: UInt64)
+        case notConfiguredLiveDisabled(pairingGen: UInt64, accessGen: UInt64)
+        case durableClearPersisted(pairing: StoredPairing, pairingGen: UInt64, accessGen: UInt64, newAccessGen: UInt64)
         case durableClearFailed(pairingGen: UInt64, accessGen: UInt64)
         case ignored
     }
@@ -37,6 +37,7 @@ public actor JournalRelayAccessSequencer {
     private let deadline: Duration
     private let credentialStore: PairingCredentialStore
     private let onOutcome: @Sendable (AccessUpdateOutcome) async -> Void
+    private let now: @Sendable () -> Date
 
     private var activeTarget: TargetConnection?
     private var inFlight = false
@@ -47,11 +48,13 @@ public actor JournalRelayAccessSequencer {
         credentialStore: PairingCredentialStore,
         session: URLSession = BoundedLoopbackClient.makeSession(),
         deadline: Duration = BoundedLoopbackClient.defaultDeadline,
+        now: @escaping @Sendable () -> Date = { Date() },
         onOutcome: @escaping @Sendable (AccessUpdateOutcome) async -> Void
     ) {
         self.credentialStore = credentialStore
         self.session = session
         self.deadline = deadline
+        self.now = now
         self.onOutcome = onOutcome
     }
 
@@ -91,9 +94,16 @@ public actor JournalRelayAccessSequencer {
             drainIfNeeded()
         }
 
+        let jobDeadline = ContinuousClock.now + deadline
         guard activeTarget == target, jobGeneration == jobGen else { return }
 
         guard let url = URL(string: "http://127.0.0.1:\(target.localPort)/app/network/api/relay/access") else {
+            return
+        }
+
+        let remaining = jobDeadline - ContinuousClock.now
+        guard remaining > .zero else {
+            Logger.journal.error("Relay access fetch timed out before start")
             return
         }
 
@@ -106,7 +116,7 @@ public actor JournalRelayAccessSequencer {
             (data, response) = try await BoundedLoopbackClient.execute(
                 request: req,
                 session: session,
-                deadline: deadline
+                deadline: remaining
             )
         } catch {
             Logger.journal.error("Relay access fetch error: \(error.localizedDescription, privacy: .public)")
@@ -116,30 +126,41 @@ public actor JournalRelayAccessSequencer {
         guard activeTarget == target, jobGeneration == jobGen else { return }
         guard response.statusCode == 200 else { return }
 
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-        let protocolVersion = (json["protocol_version"] as? NSNumber)?.intValue ?? (json["protocol_version"] as? Int)
-        guard protocolVersion == 2,
-              let status = json["status"] as? String
-        else {
+        let receiptNow = now()
+        let decodedStatus: RelayAccessStatus
+        do {
+            decodedStatus = try RelayAccessValidation.decode(
+                data,
+                expectedInstanceID: target.instanceID,
+                now: receiptNow
+            )
+        } catch {
+            Logger.journal.error("Relay access validation failed: \(String(describing: error), privacy: .public)")
             return
         }
 
-        if status == "not_configured" {
-            guard Set(json.keys) == Set(["protocol_version", "status"]) else {
-                return
-            }
+        guard activeTarget == target, jobGeneration == jobGen else { return }
 
-            guard activeTarget == target, jobGeneration == jobGen else { return }
-            await onOutcome(.notConfiguredLiveDisabled)
+        switch decodedStatus {
+        case .notConfigured:
+            await onOutcome(.notConfiguredLiveDisabled(
+                pairingGen: target.pairingGeneration,
+                accessGen: target.accessMutationGeneration
+            ))
 
             guard activeTarget == target, jobGeneration == jobGen else { return }
             do {
-                _ = try credentialStore.clearRelayAccess(
+                let (clearedPairing, newAccessGen) = try credentialStore.clearRelayAccess(
                     expectedPairingGen: target.pairingGeneration,
                     expectedAccessGen: target.accessMutationGeneration
                 )
                 guard activeTarget == target, jobGeneration == jobGen else { return }
-                await onOutcome(.durableClearPersisted)
+                await onOutcome(.durableClearPersisted(
+                    pairing: clearedPairing,
+                    pairingGen: target.pairingGeneration,
+                    accessGen: target.accessMutationGeneration,
+                    newAccessGen: newAccessGen
+                ))
             } catch {
                 Logger.journal.error("Durable clear save error: \(error.localizedDescription, privacy: .public)")
                 guard activeTarget == target, jobGeneration == jobGen else { return }
@@ -148,46 +169,23 @@ public actor JournalRelayAccessSequencer {
                     accessGen: target.accessMutationGeneration
                 ))
             }
-            return
-        }
 
-        if status == "ready" {
-            guard let relayOrigin = json["relay_origin"] as? String,
-                  let instanceID = json["instance_id"] as? String,
-                  let deviceToken = json["device_token"] as? String,
-                  let expiresAtString = json["expires_at"] as? String
-            else {
-                return
-            }
-
-            let validated: ValidatedRelayAccess
+        case .ready(let ready):
             do {
-                validated = try JournalRelayAccessValidator.validateReadyResponse(
-                    protocolVersion: protocolVersion ?? 2,
-                    status: status,
-                    relayOrigin: relayOrigin,
-                    instanceID: instanceID,
-                    deviceToken: deviceToken,
-                    expiresAtString: expiresAtString,
-                    pairedInstanceID: target.instanceID
-                )
-            } catch {
-                Logger.journal.error("Relay access validation failed: \(error.localizedDescription, privacy: .public)")
-                return
-            }
-
-            guard activeTarget == target, jobGeneration == jobGen else { return }
-
-            do {
-                let (updatedPairing, _) = try credentialStore.updateRelayAccess(
+                let (updatedPairing, newAccessGen) = try credentialStore.updateRelayAccess(
                     expectedPairingGen: target.pairingGeneration,
                     expectedAccessGen: target.accessMutationGeneration,
-                    relayOrigin: validated.relayOrigin,
-                    deviceToken: validated.deviceToken,
-                    expiresAtString: validated.expiresAtString
+                    relayOrigin: ready.relayOrigin.absoluteString,
+                    deviceToken: ready.deviceToken,
+                    expiresAtString: ready.expiresAt
                 )
                 guard activeTarget == target, jobGeneration == jobGen else { return }
-                await onOutcome(.ready(updatedPairing))
+                await onOutcome(.ready(
+                    pairing: updatedPairing,
+                    pairingGen: target.pairingGeneration,
+                    accessGen: target.accessMutationGeneration,
+                    newAccessGen: newAccessGen
+                ))
             } catch {
                 Logger.journal.error("Failed to persist updated relay access: \(error.localizedDescription, privacy: .public)")
             }

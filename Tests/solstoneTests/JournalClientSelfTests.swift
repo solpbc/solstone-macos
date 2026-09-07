@@ -3,6 +3,7 @@
 
 import Foundation
 import JournalRuntimeTestSupport
+import SPLTunnel
 import Testing
 @testable import solstone
 
@@ -153,15 +154,15 @@ struct JournalClientSelfTests {
         let session = makeTestSession(store: store)
 
         // 1. Initial GET -> 200 (revision 1)
-        let get1 = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "J1", "version": "1.0"}}"#
+        let get1 = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "J1", "version": "1.0", "owner_label": null}}"#
         store.enqueue(statusCode: 200, body: get1)
         // 2. First PUT -> 409 Conflict
         store.enqueue(statusCode: 409, body: #"{"error": "conflict"}"#)
         // 3. Retry GET -> 200 (revision 2)
-        let get2 = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "J1", "version": "1.0"}}"#
+        let get2 = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "J1", "version": "1.0", "owner_label": null}}"#
         store.enqueue(statusCode: 200, body: get2)
         // 4. Retry PUT -> 200 (revision 3)
-        let put2 = #"{"protocol_version": 1, "revision": 3, "journal": {"name": "J1", "version": "1.0"}}"#
+        let put2 = #"{"protocol_version": 1, "revision": 3, "journal": {"name": "J1", "version": "1.0", "owner_label": null}}"#
         store.enqueue(statusCode: 200, body: put2)
 
         let target = JournalClientSelfSequencer.TargetConnection(
@@ -204,6 +205,8 @@ struct JournalClientSelfTests {
 
         // GET /app/network/api/clients/self returns 404
         store.enqueue(statusCode: 404, body: "Not Found")
+        // Follow-up fallback GET /api/system/status returns 200 with version
+        store.enqueue(statusCode: 200, body: #"{"version": {"current": "0.8.0"}}"#)
 
         final class CallbackBox: @unchecked Sendable {
             var updatedVersion: String?
@@ -229,12 +232,19 @@ struct JournalClientSelfTests {
         )
 
         await sequencer.enqueue(target: target)
-        await store.waitForRequestCount(1, timeout: .seconds(2))
+        await store.waitForRequestCount(2, timeout: .seconds(2))
 
         // No PUT request was made
         let requests = store.snapshotRequests()
-        #expect(requests.count == 1)
+        #expect(requests.count == 2)
         #expect(requests[0].httpMethod == "GET")
+        #expect(requests[0].url?.path == "/app/network/api/clients/self")
+        #expect(requests[1].httpMethod == "GET")
+        #expect(requests[1].url?.path == "/api/system/status")
+
+        #expect(box.updatedVersion == "0.8.0")
+        #expect(box.updatedName == nil)
+        #expect(box.updateCount == 1)
     }
 
     @Test("Corrupt/unsupported GET does not wipe last-known")
@@ -366,8 +376,8 @@ struct JournalClientSelfTests {
         // Later enqueue against normal session runs and succeeds
         let normalStore = ObserverURLProtocolStore()
         let normalSession = makeTestSession(store: normalStore)
-        let getBody = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "New J", "version": "2.0"}}"#
-        let putBody = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "New J", "version": "2.0"}}"#
+        let getBody = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "New J", "version": "2.0", "owner_label": null}}"#
+        let putBody = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "New J", "version": "2.0", "owner_label": null}}"#
         normalStore.enqueue(statusCode: 200, body: getBody)
         normalStore.enqueue(statusCode: 200, body: putBody)
 
@@ -402,6 +412,291 @@ struct JournalClientSelfTests {
         jv.applyDirectly(identity: "inst_123", generation: target1.metadataGeneration, version: "0.1", name: "Old", markCurrent: true)
         #expect(jv.version == "2.0")
         #expect(jv.journalName == "New J")
+    }
+
+    @Test("Job budget shared across GET + PUT + 409 reread pipeline")
+    func testJobBudgetSharedAcrossPipeline() async throws {
+        // Exceeding budget: 3 requests of 100ms > 200ms deadline
+        let store = ObserverURLProtocolStore()
+        let session = makeTestSession(store: store)
+        let getBody = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "J", "version": "1.0", "owner_label": null}}"#
+        let rereadBody = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "J", "version": "1.0", "owner_label": null}}"#
+
+        store.enqueue(statusCode: 200, body: getBody, delay: .milliseconds(100))
+        store.enqueue(statusCode: 409, body: "", delay: .milliseconds(100))
+        store.enqueue(statusCode: 200, body: rereadBody, delay: .milliseconds(100))
+        store.enqueue(statusCode: 200, body: rereadBody, delay: .milliseconds(100))
+
+        final class CallbackBox: @unchecked Sendable {
+            var updateCount = 0
+            var completed = false
+        }
+        let box = CallbackBox()
+
+        let sequencer = JournalClientSelfSequencer(
+            session: session,
+            deadline: .milliseconds(200),
+            onJournalMetadataUpdated: { _, _, _, _ in
+                box.updateCount += 1
+            }
+        )
+
+        let target = JournalClientSelfSequencer.TargetConnection(
+            localPort: 9999,
+            identity: "inst_1",
+            pairingGeneration: 1,
+            metadataGeneration: 1
+        )
+
+        await sequencer.enqueue(target: target)
+        try await Task.sleep(for: .milliseconds(400))
+
+        #expect(await sequencer.isBusy == false)
+        // Deadline expired, 4th request was not dispatched
+        #expect(store.snapshotRequests().count <= 3)
+
+        // Completing within budget: 4 requests of 20ms = 80ms < 500ms deadline
+        let store2 = ObserverURLProtocolStore()
+        let session2 = makeTestSession(store: store2)
+        store2.enqueue(statusCode: 200, body: getBody, delay: .milliseconds(20))
+        store2.enqueue(statusCode: 409, body: "", delay: .milliseconds(20))
+        store2.enqueue(statusCode: 200, body: rereadBody, delay: .milliseconds(20))
+        store2.enqueue(statusCode: 200, body: rereadBody, delay: .milliseconds(20))
+
+        let box2 = CallbackBox()
+        let sequencer2 = JournalClientSelfSequencer(
+            session: session2,
+            deadline: .milliseconds(500),
+            onJournalMetadataUpdated: { _, _, _, _ in
+                box2.updateCount += 1
+            }
+        )
+
+        await sequencer2.enqueue(target: target)
+        await store2.waitForRequestCount(4, timeout: .seconds(2))
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(await sequencer2.isBusy == false)
+        #expect(box2.updateCount >= 1)
+    }
+
+    @Test("Oversized legacy fallback (>64 KiB) rejected without publishing metadata")
+    func testOversizedLegacyFallbackRejected() async throws {
+        let store = ObserverURLProtocolStore()
+        let session = makeTestSession(store: store)
+
+        // 404 on /clients/self triggers legacy fallback to /api/system/status
+        store.enqueue(statusCode: 404, body: "Not found")
+        let oversizedBody = "{\"version\": \"1.0\", \"padding\": \"" + String(repeating: "x", count: 65536) + "\"}"
+        store.enqueue(statusCode: 200, body: oversizedBody)
+
+        final class CallbackBox: @unchecked Sendable {
+            var updateCount = 0
+        }
+        let box = CallbackBox()
+
+        let sequencer = JournalClientSelfSequencer(
+            session: session,
+            onJournalMetadataUpdated: { _, _, _, _ in
+                box.updateCount += 1
+            }
+        )
+
+        let target = JournalClientSelfSequencer.TargetConnection(
+            localPort: 9999,
+            identity: "inst_1",
+            pairingGeneration: 1,
+            metadataGeneration: 1
+        )
+
+        await sequencer.enqueue(target: target)
+        await store.waitForRequestCount(2, timeout: .seconds(2))
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(await sequencer.isBusy == false)
+        #expect(box.updateCount == 0)
+    }
+
+    @Test("Malformed PUT 200 does not overwrite valid GET metadata")
+    func testMalformedPut200DoesNotOverwriteValidatedGet() async throws {
+        let store = ObserverURLProtocolStore()
+        let session = makeTestSession(store: store)
+
+        let validGet = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "Valid J", "version": "1.0", "owner_label": null}}"#
+        // Malformed protocol_version 2 in PUT 200
+        let badPut = #"{"protocol_version": 2, "revision": 2, "journal": {"name": "Bad J", "version": "2.0", "owner_label": null}}"#
+
+        store.enqueue(statusCode: 200, body: validGet)
+        store.enqueue(statusCode: 200, body: badPut)
+
+        final class CallbackBox: @unchecked Sendable {
+            var publishedNames: [String?] = []
+            var publishedVersions: [String?] = []
+        }
+        let box = CallbackBox()
+
+        let sequencer = JournalClientSelfSequencer(
+            session: session,
+            onJournalMetadataUpdated: { _, _, version, name in
+                box.publishedNames.append(name)
+                box.publishedVersions.append(version)
+            }
+        )
+
+        let target = JournalClientSelfSequencer.TargetConnection(
+            localPort: 9999,
+            identity: "inst_1",
+            pairingGeneration: 1,
+            metadataGeneration: 1
+        )
+
+        await sequencer.enqueue(target: target)
+        await store.waitForRequestCount(2, timeout: .seconds(2))
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(box.publishedNames == ["Valid J"])
+        #expect(box.publishedVersions == ["1.0"])
+    }
+
+    @Test("Target B during Target A 409 reread GET cancels A and publishes B")
+    func testTargetBDuringA409Reread() async throws {
+        let store = ObserverURLProtocolStore()
+        let session = makeTestSession(store: store)
+
+        let getA = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "JA", "version": "1.0", "owner_label": null}}"#
+        let rereadA = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "JA", "version": "1.0", "owner_label": null}}"#
+        let getB = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "JB", "version": "2.0", "owner_label": null}}"#
+        let putB = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "JB", "version": "2.0", "owner_label": null}}"#
+
+        store.enqueue(statusCode: 200, body: getA)
+        store.enqueue(statusCode: 409, body: "")
+        store.enqueue(statusCode: 200, body: rereadA, delay: .milliseconds(100))
+        store.enqueue(statusCode: 200, body: getB)
+        store.enqueue(statusCode: 200, body: putB)
+
+        final class CallbackBox: @unchecked Sendable {
+            var names: [String?] = []
+        }
+        let box = CallbackBox()
+
+        let sequencer = JournalClientSelfSequencer(
+            session: session,
+            onJournalMetadataUpdated: { _, _, _, name in
+                box.names.append(name)
+            }
+        )
+
+        let targetA = JournalClientSelfSequencer.TargetConnection(
+            localPort: 9001,
+            identity: "inst_A",
+            pairingGeneration: 1,
+            metadataGeneration: 1
+        )
+        let targetB = JournalClientSelfSequencer.TargetConnection(
+            localPort: 9002,
+            identity: "inst_B",
+            pairingGeneration: 2,
+            metadataGeneration: 2
+        )
+
+        await sequencer.enqueue(target: targetA)
+        await store.waitForRequestCount(2, timeout: .seconds(2))
+        // Enqueue target B while A is reading 409
+        await sequencer.enqueue(target: targetB)
+
+        await store.waitForRequestCount(5, timeout: .seconds(2))
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(box.names.contains("JB"))
+    }
+
+    @Test("Access Ready during metadata GET does not suppress metadata")
+    @MainActor
+    func testAccessReadyDuringMetadataGet() async throws {
+        let store = ObserverURLProtocolStore()
+        let sessions = SessionRecorder()
+
+        let now = Date()
+        let nowUnix = Int(now.timeIntervalSince1970)
+        let exp = nowUnix + 3600
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let expiresAtStr = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(exp)))
+
+        let claims: [String: Any] = [
+            "iss": "sol-relay",
+            "sub": "instance:test-instance",
+            "aud": "spl-relay",
+            "scope": "session.dial",
+            "ver": 2,
+            "instance_id": "test-instance",
+            "iat": nowUnix,
+            "exp": exp,
+            "jti": "jwt-ready-meta"
+        ]
+        let token = JournalRelayAccessTests.makeJWT(claims: claims)
+        let readyJson = """
+        {
+            "protocol_version": 2,
+            "status": "ready",
+            "relay_origin": "https://new-relay.solstone.test",
+            "instance_id": "test-instance",
+            "device_token": "\(token)",
+            "expires_at": "\(expiresAtStr)"
+        }
+        """
+
+        let metaGet = #"{"protocol_version": 1, "revision": 1, "journal": {"name": "Concurrent J", "version": "3.0", "owner_label": null}}"#
+        let metaPut = #"{"protocol_version": 1, "revision": 2, "journal": {"name": "Concurrent J", "version": "3.0", "owner_label": null}}"#
+
+        // Serve relay access ready, metadata GET, metadata PUT
+        store.registerRoute(path: "/app/network/api/relay/access", statusCode: 200, body: readyJson)
+        store.registerRoute(path: "/app/network/api/clients/self", method: "GET", statusCode: 200, body: metaGet)
+        store.registerRoute(path: "/app/network/api/clients/self", method: "PUT", statusCode: 200, body: metaPut)
+
+        let initialPairing = pairing(
+            instanceID: "test-instance",
+            deviceToken: "old-token",
+            relayEndpoint: "https://old-relay.solstone.test"
+        )
+        let pairingStore = PairingStore(pairing: initialPairing)
+        let credStore = PairingCredentialStore(store: pairingStore)
+        _ = try? credStore.load()
+
+        let session = makeTestSession(store: store)
+        let transportFactory: @MainActor @Sendable () -> any TunnelTransporting = {
+            SPLTunnelTransport(
+                clientInfo: SPLClientInfo(userAgent: "solstone-macos/test"),
+                makeSession: { pairing, info, policy in
+                    let s = FakeTunnelReconnectingSession(
+                        connectedVia: URL(string: "https://new-relay.solstone.test")!.relayConnectedVia,
+                        pairing: pairing,
+                        clientInfo: info,
+                        policy: policy
+                    )
+                    sessions.append(s)
+                    return s
+                }
+            )
+        }
+
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credStore,
+            tokenRefresher: FakeTokenRefresher(ifNeededResults: [.notNeeded(initialPairing)]).seam,
+            makeTransport: transportFactory,
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true },
+            loopbackSession: session
+        )
+
+        owner.start()
+        try await waitUntil { sessions.count >= 2 }
+        try await waitUntil { owner.journalVersion.version == "3.0" }
+
+        #expect(owner.journalVersion.version == "3.0")
+        #expect(owner.journalVersion.journalName == "Concurrent J")
+
+        await owner.stop()
     }
 }
 

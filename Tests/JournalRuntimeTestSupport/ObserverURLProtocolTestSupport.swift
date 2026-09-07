@@ -7,6 +7,7 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
     public struct Response: Sendable {
         public var statusCode: Int
         public var data: Data
+        public var delay: Duration
         public var error: URLError?
     }
 
@@ -14,6 +15,7 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
 
     private let lock = NSLock()
     private var responses: [Response] = []
+    private var routeHandlers: [@Sendable (URLRequest) -> Response?] = []
     private(set) var requests: [URLRequest] = []
     public private(set) var requestBodies: [String?] = []
 
@@ -22,14 +24,66 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
     public func reset() {
         lock.withLock {
             responses.removeAll()
+            routeHandlers.removeAll()
             requests.removeAll()
             requestBodies.removeAll()
         }
     }
 
-    public func enqueue(statusCode: Int = 200, body: String = "", error: URLError? = nil) {
+    public func registerRoute(
+        matching: @escaping @Sendable (URLRequest) -> Bool,
+        statusCode: Int = 200,
+        body: String = "",
+        delay: Duration = .zero,
+        error: URLError? = nil
+    ) {
         lock.withLock {
-            responses.append(Response(statusCode: statusCode, data: Data(body.utf8), error: error))
+            routeHandlers.append({ req in
+                guard matching(req) else { return nil }
+                return Response(
+                    statusCode: statusCode,
+                    data: Data(body.utf8),
+                    delay: delay,
+                    error: error
+                )
+            })
+        }
+    }
+
+    public func registerRoute(
+        path: String,
+        method: String? = nil,
+        statusCode: Int = 200,
+        body: String = "",
+        delay: Duration = .zero,
+        error: URLError? = nil
+    ) {
+        registerRoute(
+            matching: { req in
+                guard req.url?.path == path else { return false }
+                if let method, req.httpMethod != method { return false }
+                return true
+            },
+            statusCode: statusCode,
+            body: body,
+            delay: delay,
+            error: error
+        )
+    }
+
+    public func enqueue(
+        statusCode: Int = 200,
+        body: String = "",
+        delay: Duration = .zero,
+        error: URLError? = nil
+    ) {
+        lock.withLock {
+            responses.append(Response(
+                statusCode: statusCode,
+                data: Data(body.utf8),
+                delay: delay,
+                error: error
+            ))
         }
     }
 
@@ -38,8 +92,10 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
         lock.lock()
         requests.append(request)
         requestBodies.append(Self.bodyString(from: request))
-        if responses.isEmpty {
-            response = Response(statusCode: 500, data: Data(), error: nil)
+        if let match = routeHandlers.lazy.compactMap({ $0(request) }).first {
+            response = match
+        } else if responses.isEmpty {
+            response = Response(statusCode: 500, data: Data(), delay: .zero, error: nil)
         } else {
             response = responses.removeFirst()
         }
@@ -111,6 +167,10 @@ final class ObserverURLProtocol: URLProtocol {
         }
 
         let next = store.next(for: request)
+        if next.delay > .zero {
+            let seconds = Double(next.delay.components.seconds) + Double(next.delay.components.attoseconds) * 1e-18
+            Thread.sleep(forTimeInterval: seconds)
+        }
         if let error = next.error {
             client?.urlProtocol(self, didFailWithError: error)
             return

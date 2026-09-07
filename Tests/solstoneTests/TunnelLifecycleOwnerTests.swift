@@ -719,6 +719,45 @@ struct TunnelLifecycleOwnerTests {
         #expect(transport.disconnectCount >= 1)
     }
 
+    @Test func reactiveAuthRefreshDefinitiveFailureAgainstNewerPairingDoesNotDeleteNewerPairing() async throws {
+        let pairingA = pairing(instanceID: "instance-A", deviceToken: "token-A")
+        let pairingB = pairing(instanceID: "instance-B", deviceToken: "token-B")
+        let store = PairingStore(pairing: pairingA)
+        let refresh = ControlledTokenRefresher()
+        let transportA = FakeTunnelTransport(connection: .init(localPort: 61241, via: .relay))
+        let transportB = FakeTunnelTransport(connection: .init(localPort: 61242, via: .relay))
+        let owner = makeOwner(
+            store: store,
+            refresher: refresh.seam,
+            factory: FakeTransportFactory([transportA, transportB])
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 61241, via: .relay) }
+
+        // Start reactive refresh on pairingA
+        transportA.emit(.failed(.authRefreshRequired))
+        try await waitUntil { await refresh.pendingNowCount == 1 }
+
+        // Reevaluate / re-pair to pairingB (advances pairingGeneration)
+        try store.save(pairingB)
+        await owner.reevaluatePairing()
+        try await waitUntil { owner.state == .connected(localPort: 61242, via: .relay) }
+
+        // Complete the old refresh from pairingA with .definitiveAuthFailure
+        await refresh.completeNext(with: .definitiveAuthFailure)
+
+        // Allow any asynchronous outcome handling to settle
+        try await Task.sleep(for: .milliseconds(50))
+
+        // Newer pairingB must NOT be deleted from store or retired
+        #expect(store.deleted == false)
+        #expect(store.currentPairing?.instanceID == "instance-B")
+        #expect(owner.state == .connected(localPort: 61242, via: .relay))
+
+        await owner.stop()
+    }
+
     @Test func republishedConnectedRestoresRememberedLoopbackPort() async throws {
         let port = 61234
         let sleeper = ManualSleeper()
@@ -1587,6 +1626,99 @@ struct TunnelLifecycleOwnerTests {
         #expect(store.deleteCount == 0)
         #expect(store.currentPairing != nil)
         #expect(owner.state == .connected(localPort: 33333, via: .lan))
+        await owner.stop()
+    }
+
+    @Test func failedReadyCandidateLeavesCurrentTransportActiveAndDisconnectsCandidate() async throws {
+        let first = FakeTunnelTransport(connection: .init(localPort: 11111, via: .relay))
+        let failingCandidate = FakeTunnelTransport(results: [
+            .failure(SessionError.unreachable),
+        ])
+        let owner = makeOwner(factory: FakeTransportFactory([first, failingCandidate]))
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 11111, via: .relay) }
+
+        let updatedPairing = pairing(
+            instanceID: "instance-1",
+            deviceToken: "new-token",
+            relayEndpoint: "https://new-relay.solstone.test"
+        )
+
+        await owner.replaceLiveTransport(with: updatedPairing)
+
+        #expect(failingCandidate.disconnectCount >= 1)
+        #expect(first.disconnectCount == 0)
+        #expect(owner.state == .connected(localPort: 11111, via: .relay))
+
+        first.emit(.connected(via: URL(string: "https://relay.example")!.relayConnectedVia))
+        #expect(owner.state == .connected(localPort: 11111, via: .relay))
+
+        await owner.stop()
+    }
+
+    @Test func queuedRelayOutcomeAcrossPairingReplacementRefusesStaleGenerations() async throws {
+        let firstPairing = pairing(instanceID: "inst-1", deviceToken: "tok-1")
+        let secondPairing = pairing(instanceID: "inst-2", deviceToken: "tok-2")
+        let store = PairingStore(pairing: firstPairing)
+        let credStore = PairingCredentialStore(store: store)
+        let first = FakeTunnelTransport(connection: .init(localPort: 11111, via: .relay))
+        let second = FakeTunnelTransport(connection: .init(localPort: 22222, via: .relay))
+
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credStore,
+            tokenRefresher: FakeTokenRefresher(ifNeededResults: [.notNeeded(firstPairing)]).seam,
+            makeTransport: FakeTransportFactory([first, second]).make,
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 11111, via: .relay) }
+
+        // Advance stored pairing to secondPairing (bumps pairingGen)
+        try store.save(secondPairing)
+        await owner.reevaluatePairing()
+        try await waitUntil { owner.state == .connected(localPort: 22222, via: .relay) }
+
+        // Send stale ready outcome matching first pairingGen (gen 1)
+        await owner.handleRelayAccessOutcome(.ready(
+            pairing: firstPairing,
+            pairingGen: 1,
+            accessGen: 1,
+            newAccessGen: 2
+        ))
+
+        // State remains on second transport
+        #expect(owner.state == .connected(localPort: 22222, via: .relay))
+        #expect(second.disconnectCount == 0)
+
+        await owner.stop()
+    }
+
+    @Test func inFlightRefreshDefinitiveAuthFailureTransitionsToRevoked() async throws {
+        let testPairing = pairing(instanceID: "instance-1", deviceToken: "token-1")
+        let store = PairingStore(pairing: testPairing)
+        let refresher = FakeTokenRefresher(
+            ifNeededResults: [.definitiveAuthFailure],
+            nowResults: [.definitiveAuthFailure]
+        )
+        let transport = FakeTunnelTransport(results: [
+            .failure(SessionError.authRefreshRequired),
+        ])
+        let owner = makeOwner(
+            store: store,
+            refresher: refresher.seam,
+            factory: FakeTransportFactory([transport])
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .error(.revoked) }
+
+        #expect(store.deleteCount == 1)
+        #expect(store.currentPairing == nil)
+        #expect(owner.state == .error(.revoked))
+
         await owner.stop()
     }
 

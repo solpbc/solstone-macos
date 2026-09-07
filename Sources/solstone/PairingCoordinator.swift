@@ -252,6 +252,8 @@ final class PairingCoordinator {
             return .network
         case .relayInstanceMismatch:
             return .instanceMismatch
+        case .relayAccessInvalid:
+            return .network
         case .attestationRejected(let status):
             if status == 401 || status == 403 || status == 409 {
                 return .staleLink

@@ -83,7 +83,7 @@ public final class PairingCredentialStore: @unchecked Sendable {
         expectedAccessGen: UInt64,
         relayOrigin: String,
         deviceToken: String,
-        expiresAtString: String
+        expiresAtString: String?
     ) throws -> (pairing: StoredPairing, newAccessGen: UInt64) {
         lock.lock()
         defer { lock.unlock() }

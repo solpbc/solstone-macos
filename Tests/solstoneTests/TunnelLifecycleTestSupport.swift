@@ -177,21 +177,40 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
     nonisolated let connectionModeUpdates: AsyncStream<ConnectionMode?>
 
     private let stateContinuation: AsyncStream<TunnelState>.Continuation
+    private let connectionModeContinuation: AsyncStream<ConnectionMode?>.Continuation
     private let connectionModeValue: ConnectionMode?
     private let connectedVia: ConnectedVia
+    nonisolated let pairing: StoredPairing?
+    let clientInfo: SPLClientInfo?
+    let policy: SessionPolicy?
+    var shouldThrowOnConnect: Error?
+
     private(set) var requestReconnectCount = 0
+    private(set) var connectCallCount = 0
+    private(set) var disconnectCallCount = 0
+    private(set) var recordedEndpoints: [[TransportEndpoint]] = []
+    private(set) var isDisconnected = false
 
     init(
         connectionMode: ConnectionMode? = .plViaSpl,
-        connectedVia: ConnectedVia = URL(string: "ws://relay.example")!.relayConnectedVia
+        connectedVia: ConnectedVia = URL(string: "https://relay.example")!.relayConnectedVia,
+        pairing: StoredPairing? = nil,
+        clientInfo: SPLClientInfo? = nil,
+        policy: SessionPolicy? = nil,
+        shouldThrowOnConnect: Error? = nil
     ) {
         self.connectionModeValue = connectionMode
         self.connectedVia = connectedVia
+        self.pairing = pairing
+        self.clientInfo = clientInfo
+        self.policy = policy
+        self.shouldThrowOnConnect = shouldThrowOnConnect
         let states = AsyncStream<TunnelState>.makeStream()
         self.stateUpdates = states.stream
         self.stateContinuation = states.continuation
         let modes = AsyncStream<ConnectionMode?>.makeStream()
         self.connectionModeUpdates = modes.stream
+        self.connectionModeContinuation = modes.continuation
         modes.continuation.yield(connectionMode)
         states.continuation.yield(.disconnected)
     }
@@ -200,13 +219,25 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
         connectionModeValue
     }
 
-    func connect(endpoints _: [TransportEndpoint]) async throws -> ConnectedVia {
+    func connect(endpoints: [TransportEndpoint]) async throws -> ConnectedVia {
+        connectCallCount += 1
+        recordedEndpoints.append(endpoints)
+        if let shouldThrowOnConnect {
+            throw shouldThrowOnConnect
+        }
+        isDisconnected = false
         stateContinuation.yield(.connected(via: connectedVia))
         return connectedVia
     }
 
     func disconnect() async {
+        disconnectCallCount += 1
+        isDisconnected = true
         stateContinuation.yield(.disconnected)
+    }
+
+    func emitState(_ state: TunnelState) {
+        stateContinuation.yield(state)
     }
 
     func openStream() async throws -> MuxStream {
@@ -219,6 +250,40 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
 
     func requestReconnect() async {
         requestReconnectCount += 1
+        if let lastEndpoints = recordedEndpoints.last {
+            _ = try? await connect(endpoints: lastEndpoints)
+        }
+    }
+}
+
+final class SessionRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _sessions: [FakeTunnelReconnectingSession] = []
+
+    init() {}
+
+    func append(_ session: FakeTunnelReconnectingSession) {
+        lock.lock()
+        defer { lock.unlock() }
+        _sessions.append(session)
+    }
+
+    var sessions: [FakeTunnelReconnectingSession] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _sessions
+    }
+
+    subscript(index: Int) -> FakeTunnelReconnectingSession {
+        lock.lock()
+        defer { lock.unlock() }
+        return _sessions[index]
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _sessions.count
     }
 }
 
@@ -494,12 +559,26 @@ extension URL {
     }
 }
 
+let testCACertPEM = """
+-----BEGIN CERTIFICATE-----
+MIIBdTCCARugAwIBAgIUVMEtHY4txnB9yvPieVZOPQb8B/swCgYIKoZIzj0EAwIw
+EDEOMAwGA1UEAwwFdGVzdDEwHhcNMjYwNTExMDU0OTI4WhcNMzYwNTA4MDU0OTI4
+WjAQMQ4wDAYDVQQDDAV0ZXN0MTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABPih
+dGj0TbzBAXX6uLTt/rKpwd7t8DohOFLZ44i9KlffKSrMHvo2DufP/oUVB+V/jJy9
+0PQuCc+/j2NrTtHOh3yjUzBRMB0GA1UdDgQWBBQrAyo4k6cTcZB56UCx7ZcJPWxH
+ezAfBgNVHSMEGDAWgBQrAyo4k6cTcZB56UCx7ZcJPWxHezAPBgNVHRMBAf8EBTAD
+AQH/MAoGCCqGSM49BAMCA0gAMEUCIA0cayl/grfqS8xzPnv3+A6Wqb7NL8QvfgPu
+ZBXoDWAEAiEAgCfoRUL0QMRHSW4FKBCyqn63nZBYfgcl2q4I+kYz0y4=
+-----END CERTIFICATE-----
+"""
+
 func pairing(
     instanceID: String = "instance-1",
     deviceToken: String = "device-token",
     relayEndpoint: String = "ws://relay.example",
     relayEnrollment: RelayEnrollment? = nil,
-    localEndpoints: [LocalEndpoint] = [LocalEndpoint(host: "127.0.0.1", port: 1234, scope: "local")]
+    localEndpoints: [LocalEndpoint] = [LocalEndpoint(host: "127.0.0.1", port: 1234, scope: "local")],
+    caChainPEM: String = testCACertPEM
 ) -> StoredPairing {
     StoredPairing(
         instanceID: instanceID,
@@ -508,7 +587,7 @@ func pairing(
         fingerprint: "fingerprint",
         clientCertPEM: "cert",
         clientKeyPEM: "key",
-        caChainPEM: "ca",
+        caChainPEM: caChainPEM,
         relayEnrollment: relayEnrollment ?? .enrolled(deviceToken: deviceToken, expiresAt: nil),
         localEndpoints: localEndpoints,
         pairedAt: Date(timeIntervalSince1970: 0)

@@ -52,7 +52,7 @@ final class JournalVersionMetadata {
     private static let storageKey = "journalVersionMetadata"
 
     init(defaults: UserDefaults = .standard,
-         fetch: @escaping @Sendable (Int) async -> String? = JournalVersionStatusClient.fetch) {
+         fetch: @escaping @Sendable (Int) async -> String? = { await JournalVersionStatusClient.fetch(localPort: $0) }) {
         self.defaults = defaults
         self.fetch = fetch
     }
@@ -143,22 +143,31 @@ final class JournalVersionMetadata {
 }
 
 enum JournalVersionStatusClient {
-    static func fetch(localPort: Int) async -> String? {
+    static func fetch(
+        localPort: Int,
+        session: URLSession = BoundedLoopbackClient.makeSession(),
+        deadline: Duration = .seconds(5)
+    ) async -> String? {
         guard (1...65535).contains(localPort),
-              let url = URL(string: "http://127.0.0.1:\(localPort)/api/system/status") else { return nil }
-        let configuration = BoundedLoopbackClient.makeSessionConfiguration()
-        configuration.timeoutIntervalForRequest = 5
-        configuration.timeoutIntervalForResource = 5
-        let session = BoundedLoopbackClient.makeSession(configuration: configuration)
-        defer { session.invalidateAndCancel() }
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)
+              let url = URL(string: "http://127.0.0.1:\(localPort)/api/system/status"),
+              deadline > .zero
+        else { return nil }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let response = response as? HTTPURLResponse, response.statusCode == 200,
+            let (data, response) = try await BoundedLoopbackClient.execute(
+                request: request,
+                session: session,
+                deadline: deadline
+            )
+            guard response.statusCode == 200,
                   let status = try? JSONDecoder().decode(Status.self, from: data) else { return nil }
             return sanitizedJournalVersion(status.version.current)
-        } catch { return nil }
+        } catch {
+            return nil
+        }
     }
 
     private struct Status: Decodable {
