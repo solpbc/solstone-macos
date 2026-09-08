@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-08
+
+### Added
+- settings now shows when something was last added to your journal and whether the journal version is current or last known. it also includes diagnostics you can copy when you need help.
+
+### Changed
+- the app is now called the solstone app, with a new icon and a menu bar mark that makes its current state easier to tell at a glance.
+- permission prompts now explain that what you share from your screen, microphone, calls, and media lands in your journal.
+- chat notifications and their setting have been removed. notifications about app updates still work as before.
+
+### Fixed
+- after pairing, the solstone app no longer keeps trying stale connection details when the way it reaches your journal changes. settings also returns to journal discovery when a saved journal location is no longer valid.
+- iPhone and iPad microphones now stay off until you turn them on, even when your Mac reports their connection differently. the first input from a multichannel audio interface is no longer mistaken for silence.
+
 ## [1.4.16] - 2026-08-02
 
 ### Changed

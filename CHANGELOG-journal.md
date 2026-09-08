@@ -5,6 +5,18 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0 (build 25)] - 2026-09-08
+
+### Changed
+- updated the bundled journal to [2.0.0](https://solstone.app/releases#v2.0.0) →
+- device renaming has been removed from the devices list. pairing and removing devices work as before.
+
+### Fixed
+- when the solstone app installs a newer copy of the journal app, it now waits for the open copy to quit before replacing it. if installation cannot finish, the copy you already have stays intact.
+- some upgrades from the older background setup could stop partway if its background process was not running. the journal app can now finish the handoff.
+- if the journal app stopped unexpectedly, it could fail to start again because part of the old attempt was still running. the journal app now clears that old process before restarting.
+- when you quit the journal app, it now stays closed instead of reopening on its own.
+
 ## [1.0.22 (build 24)] - 2026-08-01
 
 ### Changed
