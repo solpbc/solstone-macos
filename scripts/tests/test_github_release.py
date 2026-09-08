@@ -267,16 +267,6 @@ class GithubReleaseRecoveryTest(unittest.TestCase):
             download_fail=download_fail,
         )
         self.write_plist(root / "Sources/journal/Info.plist", "1.0.12", 14)
-        (root / "Makefile").write_text("SOLSTONE_PIN_VERSION ?= 1.0.12\n", encoding="utf-8")
-        bundle = root / "Sources/JournalRuntime/BundleConfig.swift"
-        bundle.parent.mkdir(parents=True, exist_ok=True)
-        bundle.write_text(
-            'public enum BundleConfig {\n'
-            '    public static let solstonePinVersion = "1.0.12"\n'
-            '}\n',
-            encoding="utf-8",
-        )
-
         return root, log, git_bin, gh_bin
 
     def make_sol_workspace(self, *, release_json=None, local_tag=HEAD, remote_tag=HEAD):
@@ -483,13 +473,17 @@ class GithubReleaseRecoveryTest(unittest.TestCase):
         self.assertNotIn("gh release upload", calls)
         self.assertNotIn("--clobber", calls)
 
-    def test_pin_gate_fails_before_mutating_git_or_gh_calls(self):
+    def test_journal_source_identity_mismatch_fails_before_mutation(self):
         root, log, git_bin, gh_bin = self.make_workspace()
-        (root / "Makefile").write_text("SOLSTONE_PIN_VERSION ?= 0.9.1\n", encoding="utf-8")
+        self.write_plist(root / "Sources/journal/Info.plist", "2.0.0", 25)
 
         proc = self.run_live(root, git_bin, gh_bin)
 
         self.assertNotEqual(proc.returncode, 0)
+        self.assertIn(
+            "journal source identity is 2.0.0 (build 25), requested 1.0.12 (build 14)",
+            proc.stderr,
+        )
         calls = log.read_text(encoding="utf-8")
         self.assertNotIn("git tag -a", calls)
         self.assertNotIn("git push", calls)

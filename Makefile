@@ -399,9 +399,8 @@ release-preflight: signing-check
 		[ "$$AHEAD" = "0" ] || { echo "warn: $$AHEAD local commit(s) ahead of upstream — push before release"; }
 	@echo "✓ release pre-flight clean: tree clean, no stale processes, signing ready"
 
-# Bump sol.app's user-visible version and root changelog only. Journal runtime
-# pins move through bump-release-journal so sol releases do not touch
-# BundleConfig or backend material.
+# Bump the solstone app's user-visible version and root changelog only. The
+# journal app has its own release identity and carries a native runtime.
 #
 # Usage: make bump-release VERSION=1.1.4 BUILD=6
 #   VERSION  required, semver — sets CFBundleShortVersionString
@@ -413,7 +412,7 @@ release-preflight: signing-check
 bump-release:
 	@test -n "$(VERSION)" || { echo "error: VERSION=... required (e.g. VERSION=1.1.4)"; exit 1; }
 	@test -n "$(BUILD)"   || { echo "error: BUILD=... required (e.g. BUILD=6)"; exit 1; }
-	@test -z "$(SOLSTONE)" || { echo "error: SOLSTONE= belongs to bump-release-journal"; exit 1; }
+	@test -z "$(SOLSTONE)" || { echo "error: SOLSTONE= is retired; the journal app carries a native runtime"; exit 1; }
 	@CURRENT_BUILD="$(DIST_BUILD)"; \
 		python3 -c "import sys; sys.exit(0 if int('$(BUILD)') > int('$$CURRENT_BUILD') else 1)" || \
 		{ echo "error: BUILD=$(BUILD) must be strictly greater than current $$CURRENT_BUILD (Sparkle uses CFBundleVersion for 'is newer?')"; exit 1; }
@@ -435,19 +434,13 @@ bump-release:
 bump-release-journal:
 	@test -n "$(VERSION)" || { echo "error: VERSION=... required (e.g. VERSION=1.0.1)"; exit 1; }
 	@test -n "$(BUILD)"   || { echo "error: BUILD=... required (e.g. BUILD=2)"; exit 1; }
-	@test -n "$(SOLSTONE)" || { echo "error: SOLSTONE=... required for journal runtime pin"; exit 1; }
-	@$(RELEASE_IDENTITY) check-journal-prep --version "$(VERSION)" --solstone "$(SOLSTONE)"
+	@test -z "$(SOLSTONE)" || { echo "error: SOLSTONE= is retired; journal release prep uses VERSION and BUILD only"; exit 1; }
 	@CURRENT_BUILD="$(JOURNAL_DIST_BUILD)"; \
 		python3 -c "import sys; sys.exit(0 if int('$(BUILD)') > int('$$CURRENT_BUILD') else 1)" || \
 		{ echo "error: BUILD=$(BUILD) must be strictly greater than current journal build $$CURRENT_BUILD"; exit 1; }
 	@/usr/bin/plutil -replace CFBundleShortVersionString -string "$(VERSION)" Sources/journal/Info.plist
 	@/usr/bin/plutil -replace CFBundleVersion -string "$(BUILD)" Sources/journal/Info.plist
 	@echo "✓ journal Info.plist: CFBundleShortVersionString=$(VERSION), CFBundleVersion=$(BUILD)"
-	@sed -i '' "s/^SOLSTONE_PIN_VERSION ?= .*/SOLSTONE_PIN_VERSION ?= $(SOLSTONE)/" Makefile
-	@sed -i '' "s/^SOLSTONE_MIN_VERSION ?= .*/SOLSTONE_MIN_VERSION ?= $(SOLSTONE)/" Makefile
-	@sed -i '' "s/^SOLSTONE_REF ?= .*/SOLSTONE_REF ?= v$(SOLSTONE)/" Makefile
-	@echo "✓ Makefile pins: SOLSTONE_PIN_VERSION = $(SOLSTONE), SOLSTONE_REF = v$(SOLSTONE)"
-	@$(MAKE) -s SOLSTONE_PIN_VERSION="$(SOLSTONE)" SOLSTONE_MIN_VERSION="$(SOLSTONE)" generate-bundle-config
 	@CHANGELOG_KEY="$$( $(RELEASE_IDENTITY) identity --app journal --version "$(VERSION)" --build "$(BUILD)" --field changelog_key )"; \
 	if grep -Fq "## [$$CHANGELOG_KEY]" CHANGELOG-journal.md; then \
 		echo "note: CHANGELOG-journal.md already has an entry for $$CHANGELOG_KEY; leaving it alone"; \
@@ -460,7 +453,7 @@ bump-release-journal:
 	@echo "next steps:"
 	@echo "  1. edit CHANGELOG-journal.md — replace scaffold bullets with real release notes"
 	@echo "  2. git diff to review"
-	@echo "  3. git add Sources/journal/Info.plist Makefile Sources/JournalRuntime/BundleConfig.swift CHANGELOG-journal.md"
+	@echo "  3. git add Sources/journal/Info.plist CHANGELOG-journal.md"
 	@echo "  4. git commit -m 'release: bump journal to $(VERSION) (build $(BUILD))'"
 	@echo "  5. git push origin main"
 	@echo "  6. make release-preflight && make release-dmg-journal"

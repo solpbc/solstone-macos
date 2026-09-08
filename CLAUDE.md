@@ -12,7 +12,7 @@ solstone-macos is the repository for sol on macOS. sol is the status bar app in 
 # Build the package (debug)
 make build
 
-# Build the signed .app bundle (Developer ID + hardened runtime + bundled uv/python)
+# Build the signed .app bundle (Developer ID + hardened runtime + native journal runtime)
 make bundle-dist
 
 # Launch solstone.app from the source tree and stream logs (requires bundle-dist first)

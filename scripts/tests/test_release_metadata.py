@@ -108,12 +108,12 @@ class JournalBumpMakefileContractTest(unittest.TestCase):
                     return text[start:candidate]
             search_from = candidate + 1
 
-    def test_bump_release_journal_checks_pin_before_writes(self):
+    def test_bump_release_journal_rejects_retired_solstone_pin(self):
         block = self.target_block("bump-release-journal")
-        self.assertLess(
-            block.index("check-journal-prep"),
-            block.index("plutil -replace CFBundleShortVersionString"),
-        )
+        self.assertIn("SOLSTONE= is retired", block)
+        self.assertNotIn("check-journal-prep", block)
+        self.assertNotIn("generate-bundle-config", block)
+        self.assertNotIn("SOLSTONE_PIN_VERSION", block)
 
     def test_bump_release_journal_uses_pair_qualified_changelog_key(self):
         block = self.target_block("bump-release-journal")

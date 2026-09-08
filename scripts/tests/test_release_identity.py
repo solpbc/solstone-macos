@@ -1,12 +1,8 @@
-import contextlib
 import importlib.util
-import io
 import json
 import pathlib
-import plistlib
 import subprocess
 import sys
-import tempfile
 import unittest
 
 
@@ -21,18 +17,6 @@ def load_release_identity():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
-
-
-def write_plist(path, version, build):
-    with path.open("wb") as handle:
-        plistlib.dump(
-            {
-                "CFBundleShortVersionString": version,
-                "CFBundleVersion": str(build),
-            },
-            handle,
-        )
-
 
 class ReleaseIdentityTest(unittest.TestCase):
     def test_journal_build_qualified_identity_examples(self):
@@ -116,64 +100,6 @@ class ReleaseIdentityTest(unittest.TestCase):
             text=True,
         ).stdout.strip()
         self.assertEqual(field, "1.0.12 (build 14)")
-
-    def test_preparation_pin_gate_reports_both_values(self):
-        module = load_release_identity()
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            with self.assertRaises(SystemExit):
-                module.check_journal_prep("1.0.12", "0.9.1")
-
-        diagnostic = stderr.getvalue()
-        self.assertIn("VERSION='1.0.12'", diagnostic)
-        self.assertIn("SOLSTONE='0.9.1'", diagnostic)
-        self.assertIn("Pass matching VERSION and SOLSTONE", diagnostic)
-
-    def test_publication_pin_gate_uses_injected_paths(self):
-        module = load_release_identity()
-        with tempfile.TemporaryDirectory() as tmp:
-            root = pathlib.Path(tmp)
-            plist = root / "Info.plist"
-            makefile = root / "Makefile"
-            bundle_config = root / "BundleConfig.swift"
-            write_plist(plist, "1.0.12", 14)
-            makefile.write_text("SOLSTONE_PIN_VERSION ?= 1.0.12\n", encoding="utf-8")
-            bundle_config.write_text(
-                'public enum BundleConfig {\n'
-                '    public static let solstonePinVersion = "1.0.12"\n'
-                '}\n',
-                encoding="utf-8",
-            )
-
-            module.check_journal_pin(
-                journal_plist=plist,
-                makefile=makefile,
-                bundle_config=bundle_config,
-                expected_version="1.0.12",
-            )
-
-            bundle_config.write_text(
-                'public enum BundleConfig {\n'
-                '    public static let solstonePinVersion = "0.9.1"\n'
-                '}\n',
-                encoding="utf-8",
-            )
-            stderr = io.StringIO()
-            with contextlib.redirect_stderr(stderr):
-                with self.assertRaises(SystemExit):
-                    module.check_journal_pin(
-                        journal_plist=plist,
-                        makefile=makefile,
-                        bundle_config=bundle_config,
-                        expected_version="1.0.12",
-                    )
-
-        diagnostic = stderr.getvalue()
-        self.assertIn("Info.plist", diagnostic)
-        self.assertIn("SOLSTONE_PIN_VERSION", diagnostic)
-        self.assertIn("solstonePinVersion", diagnostic)
-        self.assertIn("0.9.1", diagnostic)
-        self.assertIn("Align committed journal J", diagnostic)
 
     def test_sol_cli_rejects_build_argument(self):
         proc = subprocess.run(

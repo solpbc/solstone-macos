@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import plistlib
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -189,65 +188,6 @@ def build_identity(
     )
 
 
-def parse_make_solstone_pin(makefile_path: str | Path) -> str:
-    path = Path(makefile_path)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        die(f"{path}: {exc}")
-    match = re.search(r"^SOLSTONE_PIN_VERSION\s*\?=\s*(\S+)\s*$", text, re.MULTILINE)
-    if not match:
-        die(f"{path}: missing or malformed SOLSTONE_PIN_VERSION")
-    return match.group(1)
-
-
-def parse_bundle_config_pin(bundle_config_path: str | Path) -> str:
-    path = Path(bundle_config_path)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        die(f"{path}: {exc}")
-    match = re.search(r'^\s*public static let solstonePinVersion = "([^"]+)"\s*$', text, re.MULTILINE)
-    if not match:
-        die(f"{path}: missing or malformed solstonePinVersion")
-    return match.group(1)
-
-
-def check_journal_prep(version: str, solstone: str) -> None:
-    if version != solstone:
-        die(
-            "journal release prep pin mismatch: "
-            f"VERSION={version!r}, SOLSTONE={solstone!r}. "
-            "Pass matching VERSION and SOLSTONE; they must be the same shared release number."
-        )
-
-
-def check_journal_pin(
-    *,
-    journal_plist: str | Path,
-    makefile: str | Path,
-    bundle_config: str | Path,
-    expected_version: str | None = None,
-) -> None:
-    journal_version, _ = read_info_plist(journal_plist)
-    make_pin = parse_make_solstone_pin(makefile)
-    bundle_pin = parse_bundle_config_pin(bundle_config)
-    values = {
-        str(journal_plist): journal_version,
-        f"{makefile}:SOLSTONE_PIN_VERSION": make_pin,
-        f"{bundle_config}:solstonePinVersion": bundle_pin,
-    }
-    if expected_version is not None:
-        values["--expected-version"] = expected_version
-    if len(set(values.values())) != 1:
-        rendered = ", ".join(f"{source}={value!r}" for source, value in values.items())
-        die(
-            f"journal publication pin mismatch: {rendered}. "
-            "Align committed journal J, Makefile SOLSTONE_PIN_VERSION, and "
-            "BundleConfig solstonePinVersion before publishing; bump/regenerate so they match."
-        )
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Print or verify release identity values.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -260,16 +200,6 @@ def main(argv: list[str] | None = None) -> int:
     identity_parser.add_argument("--build")
     identity_parser.add_argument("--staging", action="store_true")
     identity_parser.add_argument("--field", choices=IDENTITY_FIELDS)
-
-    prep_parser = subparsers.add_parser("check-journal-prep")
-    prep_parser.add_argument("--version", required=True)
-    prep_parser.add_argument("--solstone", required=True)
-
-    pin_parser = subparsers.add_parser("check-journal-pin")
-    pin_parser.add_argument("--journal-plist", required=True)
-    pin_parser.add_argument("--makefile", required=True)
-    pin_parser.add_argument("--bundle-config", required=True)
-    pin_parser.add_argument("--expected-version")
 
     args = parser.parse_args(argv)
     if args.command == "identity":
@@ -290,19 +220,6 @@ def main(argv: list[str] | None = None) -> int:
             print(value)
         else:
             print(json.dumps(values, separators=(",", ":")))
-        return 0
-
-    if args.command == "check-journal-prep":
-        check_journal_prep(args.version, args.solstone)
-        return 0
-
-    if args.command == "check-journal-pin":
-        check_journal_pin(
-            journal_plist=args.journal_plist,
-            makefile=args.makefile,
-            bundle_config=args.bundle_config,
-            expected_version=args.expected_version,
-        )
         return 0
 
     raise AssertionError(args.command)

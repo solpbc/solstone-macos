@@ -139,11 +139,14 @@ trap 'rm -f "$NOTES_FILE" "$RELEASE_JSON" "$RELEASE_VIEW_ERR"; rm -rf "$ASSET_DI
 "$EXTRACT_CHANGELOG_BIN" "$CHANGELOG_KEY" "$CHANGELOG" > "$NOTES_FILE"
 
 if [[ "$APP" == "journal" ]]; then
-  "$RELEASE_IDENTITY_BIN" check-journal-pin \
-    --journal-plist Sources/journal/Info.plist \
-    --makefile Makefile \
-    --bundle-config Sources/JournalRuntime/BundleConfig.swift \
-    --expected-version "$VERSION"
+  PLIST_VERSION=$("$RELEASE_IDENTITY_BIN" identity --app journal \
+    --plist Sources/journal/Info.plist --field short_version)
+  PLIST_BUILD=$("$RELEASE_IDENTITY_BIN" identity --app journal \
+    --plist Sources/journal/Info.plist --field bundle_version)
+  if [[ "$PLIST_VERSION" != "$VERSION" || "$PLIST_BUILD" != "$BUILD" ]]; then
+    echo "error: journal source identity is ${PLIST_VERSION} (build ${PLIST_BUILD}), requested ${VERSION} (build ${BUILD})" >&2
+    exit 1
+  fi
 fi
 
 HEAD_COMMIT=$("$GIT_BIN" rev-parse HEAD)
