@@ -6,6 +6,8 @@ import Foundation
 import os
 import SolstoneCore
 
+internal let journalPortProbeTimeout: Duration = .seconds(10)
+
 internal struct CleanupFailure {
     let step: CleanupStep
     let message: String
@@ -153,7 +155,8 @@ private func logOrphanSweepNoop(reason: JournalOrphanClaimRejection) {
 
 internal func assertPortsReleased(
     resolution: JournalDirectDoorPortResolution,
-    runner: SubprocessRunning
+    runner: SubprocessRunning,
+    timeout: Duration = journalPortProbeTimeout
 ) async -> CleanupFailure? {
     for port in JournalLifecyclePortPreflight.orderedPorts(for: resolution) {
         let result: SubprocessResult
@@ -162,6 +165,7 @@ internal func assertPortsReleased(
                 executable: URL(fileURLWithPath: "/usr/sbin/lsof"),
                 arguments: ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN"],
                 environment: nil,
+                timeout: timeout,
                 stdoutHandler: { _ in },
                 stderrHandler: { _ in }
             )
@@ -170,6 +174,10 @@ internal func assertPortsReleased(
                 step: .ports,
                 message: "lsof failed to launch probing port \(port)"
             )
+        }
+
+        if result.terminationReason == .uncaughtSignal {
+            return CleanupFailure(step: .ports, message: "lsof did not complete probing port \(port)")
         }
 
         switch result.exitCode {
@@ -187,7 +195,8 @@ internal func assertPortsReleased(
 internal func assertStartupPortsAvailable(
     resolution: JournalDirectDoorPortResolution,
     runner: SubprocessRunning,
-    clock: any MonotonicClock
+    clock: any MonotonicClock,
+    timeout: Duration = journalPortProbeTimeout
 ) async -> StartupPortProbeFailure? {
     let retryDelays: [Duration] = [.seconds(2), .seconds(3)]
 
@@ -200,6 +209,7 @@ internal func assertStartupPortsAvailable(
                     executable: URL(fileURLWithPath: "/usr/sbin/lsof"),
                     arguments: ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-F"],
                     environment: nil,
+                    timeout: timeout,
                     stdoutHandler: { data in
                         output.append(data)
                     },
@@ -209,6 +219,13 @@ internal func assertStartupPortsAvailable(
                 return StartupPortProbeFailure(
                     kind: .couldNotVerify,
                     message: "lsof failed to launch probing port \(port)"
+                )
+            }
+
+            if result.terminationReason == .uncaughtSignal {
+                return StartupPortProbeFailure(
+                    kind: .couldNotVerify,
+                    message: "lsof did not complete probing port \(port)"
                 )
             }
 

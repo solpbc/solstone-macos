@@ -24,6 +24,7 @@ struct SingleSupervisorGateTests {
         #expect(result == .success)
         #expect(runner.lsofPorts() == [9000, 5015])
         #expect(!runner.lsofPorts().contains(7657))
+        #expect(runner.invocations.allSatisfy { $0.timeout == .seconds(10) })
     }
 
     @Test func missingConfigProbesNormalDefaultDirectDoorThenConvey() async throws {
@@ -96,7 +97,32 @@ struct SingleSupervisorGateTests {
         #expect(clock.sleptDurations == [.seconds(2), .seconds(3)])
     }
 
-    private func makeGate(runner: FakeSubprocessRunner, clock: GateClock) -> SingleSupervisorGate {
+    @Test func hangingStartupPortProbeFailsClosedBeforeSetupCanStart() async throws {
+        let fixture = try JournalRootFixture()
+        defer { fixture.clear() }
+        let runner = FakeSubprocessRunner()
+        runner.enqueueLsof(port: 7657, .success(exitCode: 1, delay: .milliseconds(2)))
+
+        let result = await makeGate(
+            runner: runner,
+            clock: GateClock(),
+            portProbeTimeout: .milliseconds(1)
+        ).prepareForSpawn(journalRoot: fixture.rootURL)
+
+        guard case .blocked(.portVerificationFailed(let diagnostic)) = result else {
+            Issue.record("expected unverifiable startup ports to fail closed, got \(result)")
+            return
+        }
+        #expect(diagnostic.outputExcerpt == "lsof did not complete probing port 7657")
+        #expect(runner.invocations.last?.timeout == .milliseconds(1))
+        #expect(runner.invocations.allSatisfy { $0.arguments.first != "setup" })
+    }
+
+    private func makeGate(
+        runner: FakeSubprocessRunner,
+        clock: GateClock,
+        portProbeTimeout: Duration = journalPortProbeTimeout
+    ) -> SingleSupervisorGate {
         SingleSupervisorGate(
             runner: runner,
             serviceRetirer: NoLegacyServiceRetirer(),
@@ -104,7 +130,8 @@ struct SingleSupervisorGateTests {
             pidExists: { _ in false },
             terminate: { _, _ in 0 },
             clock: clock,
-            orphanGracePeriod: .zero
+            orphanGracePeriod: .zero,
+            portProbeTimeout: portProbeTimeout
         )
     }
 

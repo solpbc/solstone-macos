@@ -53,6 +53,7 @@ public struct SingleSupervisorGate: SingleSupervisorGating {
     private let terminate: @Sendable (pid_t, Int32) -> Int32
     private let clock: any MonotonicClock
     private let orphanGracePeriod: Duration
+    private let portProbeTimeout: Duration
     private let serviceRetirer: any LegacyJournalServiceRetiring
     private let evidenceReader: any JournalProcessEvidenceReading
 
@@ -68,13 +69,15 @@ public struct SingleSupervisorGate: SingleSupervisorGating {
             Darwin.kill(pid, signal)
         },
         clock: any MonotonicClock = SystemMonotonicClock(),
-        orphanGracePeriod: Duration = .seconds(3)
+        orphanGracePeriod: Duration = .seconds(3),
+        portProbeTimeout: Duration = .seconds(10)
     ) {
         self.runner = runner
         self.pidExists = pidExists
         self.terminate = terminate
         self.clock = clock
         self.orphanGracePeriod = orphanGracePeriod
+        self.portProbeTimeout = portProbeTimeout
         self.serviceRetirer = serviceRetirer ?? LegacyJournalServiceRetirer(runner: runner, clock: clock)
         self.evidenceReader = evidenceReader
     }
@@ -108,7 +111,12 @@ public struct SingleSupervisorGate: SingleSupervisorGating {
         }
 
         let directDoorPortResolution = resolveJournalDirectDoorPort(journalRoot: journalRoot)
-        if let failure = await assertStartupPortsAvailable(resolution: directDoorPortResolution, runner: runner, clock: clock) {
+        if let failure = await assertStartupPortsAvailable(
+            resolution: directDoorPortResolution,
+            runner: runner,
+            clock: clock,
+            timeout: portProbeTimeout
+        ) {
             let ports = JournalLifecyclePortPreflight.orderedPorts(for: directDoorPortResolution)
                 .map(String.init)
                 .joined(separator: ",")

@@ -24,6 +24,7 @@ struct JournalProcessUtilitiesTests {
 
         #expect(failure == nil)
         #expect(runner.lsofPorts() == [9000, 5015])
+        #expect(runner.invocations.allSatisfy { $0.timeout == .seconds(10) })
     }
 
     @Test func cleanupPreservesPortsFailureForBoundDirectDoorPort() async throws {
@@ -75,5 +76,22 @@ struct JournalProcessUtilitiesTests {
 
         #expect(failure == nil)
         #expect(runner.lsofPorts() == [7657, 5015])
+    }
+
+    @Test func cleanupFailsClosedWhenPortProbeDoesNotComplete() async throws {
+        let fixture = try JournalRootFixture()
+        defer { fixture.clear() }
+        let runner = FakeSubprocessRunner()
+        runner.enqueueLsof(port: 7657, .success(exitCode: 1, delay: .milliseconds(2)))
+
+        let failure = await assertPortsReleased(
+            resolution: resolveJournalDirectDoorPort(journalRoot: fixture.rootURL),
+            runner: runner,
+            timeout: .milliseconds(1)
+        )
+
+        #expect(failure?.step == .ports)
+        #expect(failure?.message == "lsof did not complete probing port 7657")
+        #expect(runner.invocations.last?.timeout == .milliseconds(1))
     }
 }
