@@ -177,7 +177,7 @@ class JournalNativeProvenanceTest(unittest.TestCase):
                 {
                     "CFBundleIdentifier": "app.solstone.journal",
                     "CFBundleShortVersionString": "2.0.0",
-                    "CFBundleVersion": "29",
+                    "CFBundleVersion": "30",
                 },
                 handle,
             )
@@ -190,7 +190,7 @@ class JournalNativeProvenanceTest(unittest.TestCase):
             "target": {
                 "bundle_identifier": "app.solstone.journal",
                 "bundle_short_version": "2.0.0",
-                "bundle_version": "29",
+                "bundle_version": "30",
             },
             "runtime_archive_sha256": "0" * 64,
             "manifest_sha256": "1" * 64,
@@ -379,7 +379,7 @@ class JournalNativeProvenanceTest(unittest.TestCase):
             provenance["signing_receipt_sha256"],
             hashlib.sha256(fixture["signing"].read_bytes()).hexdigest(),
         )
-        self.assertEqual(provenance["target"]["bundle_version"], "29")
+        self.assertEqual(provenance["target"]["bundle_version"], "30")
         self.assertTrue(fixture["tree_map"].is_file())
         self.assertEqual(
             provenance["runtime_tree_sha256"],
@@ -450,7 +450,7 @@ class JournalNativeProvenanceTest(unittest.TestCase):
                 {
                     "CFBundleIdentifier": "app.solstone.journal",
                     "CFBundleShortVersionString": "2.0.1",
-                    "CFBundleVersion": "29",
+                    "CFBundleVersion": "30",
                 },
                 handle,
             )
