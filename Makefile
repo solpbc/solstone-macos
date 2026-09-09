@@ -1,6 +1,6 @@
 .PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal assemble-journal-app journal-app-unsigned bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
-        vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-native-runtime brand-sync \
+        vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-native-runtime journal-native-runtime-accepted brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
 
 # Default goal when running bare `make` — build the project. brand-sync is
@@ -95,12 +95,18 @@ WHEELHOUSE_PLATFORM_TAG ?= macosx_15_0_arm64
 WHEELHOUSE_ABI ?= cp313
 WHEELHOUSE_PYTHON_TAG ?= 3.13
 
-# journal.app carries the Rust-native distribution tree directly. Override this
-# path only when producing a candidate from a specific journal source revision.
+# journal.app carries the Rust-native distribution tree directly. Development
+# builds bind a clean source commit; shipping builds consume an already-accepted
+# archive by SHA-256. Both embed a provenance receipt beside the entrypoints.
 JOURNAL_NATIVE_SOURCE_DIR ?= ../solstone-journal
+JOURNAL_NATIVE_EXPECTED_COMMIT ?=
 JOURNAL_NATIVE_TARGET ?= macos-arm64
 JOURNAL_NATIVE_OUTPUT_DIR ?= .build/journal-native-output
 JOURNAL_NATIVE_RUNTIME_DIR ?= .build/journal-native-runtime
+JOURNAL_NATIVE_PROVENANCE_RECEIPT ?= $(JOURNAL_NATIVE_RUNTIME_DIR)/journal-native-provenance.json
+JOURNAL_NATIVE_ACCEPTED_ARCHIVE ?=
+JOURNAL_NATIVE_ACCEPTED_SHA256 ?=
+JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE ?=
 
 check-versions:
 	@[ -n "$(SOLSTONE_PIN_VERSION)" ] || { echo "error: solstone pin version must not be empty"; exit 1; }
@@ -277,9 +283,13 @@ release-universal-journal:
 	swift build -c release $(JOURNAL_RELEASE_APPLE_ARCH_FLAGS) --product solstone-watchdog
 
 journal-native-runtime:
-	@SOURCE_DIR="$(abspath $(JOURNAL_NATIVE_SOURCE_DIR))"; \
-		git -C "$$SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error: JOURNAL_NATIVE_SOURCE_DIR '$$SOURCE_DIR' is not a journal git repository"; exit 1; }; \
-		$(MAKE) -C "$$SOURCE_DIR" ci-full-prep
+	@python3 scripts/journal_native_provenance.py check-source \
+		--source-dir "$(abspath $(JOURNAL_NATIVE_SOURCE_DIR))" \
+		--expected-commit "$(JOURNAL_NATIVE_EXPECTED_COMMIT)"
+	@$(MAKE) -C "$(abspath $(JOURNAL_NATIVE_SOURCE_DIR))" ci-full-prep
+	@python3 scripts/journal_native_provenance.py check-source \
+		--source-dir "$(abspath $(JOURNAL_NATIVE_SOURCE_DIR))" \
+		--expected-commit "$(JOURNAL_NATIVE_EXPECTED_COMMIT)"
 	@rm -rf "$(JOURNAL_NATIVE_OUTPUT_DIR)" "$(JOURNAL_NATIVE_RUNTIME_DIR)"
 	@mkdir -p "$(JOURNAL_NATIVE_OUTPUT_DIR)" "$(JOURNAL_NATIVE_RUNTIME_DIR)"
 	@(cd "$(abspath $(JOURNAL_NATIVE_SOURCE_DIR))" && cargo run --manifest-path core/Cargo.toml -p solstone-core-distribution --bin solstone-distribution --locked --offline -- produce "$(JOURNAL_NATIVE_TARGET)" "$(abspath $(JOURNAL_NATIVE_OUTPUT_DIR))")
@@ -288,6 +298,31 @@ journal-native-runtime:
 		tar -xzf "$$1" -C "$(JOURNAL_NATIVE_RUNTIME_DIR)"
 	@test -x "$(JOURNAL_NATIVE_RUNTIME_DIR)/bin/journal" || { echo "error: native journal runtime is missing bin/journal"; exit 1; }
 	@test -x "$(JOURNAL_NATIVE_RUNTIME_DIR)/bin/solstone" || { echo "error: native journal runtime is missing bin/solstone"; exit 1; }
+	@python3 scripts/journal_native_provenance.py write-receipt \
+		--source-dir "$(abspath $(JOURNAL_NATIVE_SOURCE_DIR))" \
+		--expected-commit "$(JOURNAL_NATIVE_EXPECTED_COMMIT)" \
+		--target "$(JOURNAL_NATIVE_TARGET)" \
+		--output-dir "$(abspath $(JOURNAL_NATIVE_OUTPUT_DIR))" \
+		--runtime-dir "$(abspath $(JOURNAL_NATIVE_RUNTIME_DIR))" \
+		--receipt "$(abspath $(JOURNAL_NATIVE_PROVENANCE_RECEIPT))"
+
+# Shipping consumes the journal lane's already-produced, accepted archive. The
+# source-build target above remains available for local development, but release
+# packaging must not silently rebuild a payload with different bytes.
+journal-native-runtime-accepted:
+	@test -n "$(JOURNAL_NATIVE_ACCEPTED_ARCHIVE)" || { echo "error: JOURNAL_NATIVE_ACCEPTED_ARCHIVE=/absolute/path required"; exit 1; }
+	@test -n "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" || { echo "error: JOURNAL_NATIVE_ACCEPTED_SHA256=<sha256> required"; exit 1; }
+	@test -n "$(JOURNAL_NATIVE_EXPECTED_COMMIT)" || { echo "error: JOURNAL_NATIVE_EXPECTED_COMMIT=<accepted-sha40> required"; exit 1; }
+	@test -n "$(JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE)" || { echo "error: JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE=<receipt-or-record> required"; exit 1; }
+	@python3 scripts/journal_native_provenance.py stage-accepted \
+		--archive "$(abspath $(JOURNAL_NATIVE_ACCEPTED_ARCHIVE))" \
+		--expected-sha256 "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" \
+		--expected-commit "$(JOURNAL_NATIVE_EXPECTED_COMMIT)" \
+		--acceptance-evidence "$(JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE)" \
+		--target "$(JOURNAL_NATIVE_TARGET)" \
+		--workspace-root "$(CURDIR)" \
+		--runtime-dir "$(abspath $(JOURNAL_NATIVE_RUNTIME_DIR))" \
+		--receipt "$(abspath $(JOURNAL_NATIVE_PROVENANCE_RECEIPT))"
 
 # Run the built app from the source tree and stream all logs to a timestamped
 # file in scratch/. Run `make bundle-dist` first to produce solstone.app.
@@ -456,7 +491,7 @@ bump-release-journal:
 	@echo "  3. git add Sources/journal/Info.plist CHANGELOG-journal.md"
 	@echo "  4. git commit -m 'release: bump journal to $(VERSION) (build $(BUILD))'"
 	@echo "  5. git push origin main"
-	@echo "  6. make release-preflight && make release-dmg-journal"
+	@echo "  6. make release-preflight && make release-dmg-journal JOURNAL_NATIVE_ACCEPTED_ARCHIVE=/absolute/path JOURNAL_NATIVE_ACCEPTED_SHA256=<sha256> JOURNAL_NATIVE_EXPECTED_COMMIT=<accepted-sha40> JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE=<receipt-or-record>"
 
 # Unlock the sol-signing keychain and add it to the session search list.
 # Fresh SSH sessions don't always inherit the user-domain search list, so
@@ -659,7 +694,7 @@ assemble-journal-app: release-universal-journal
 
 journal-app-unsigned: assemble-journal-app
 
-bundle-dist-journal: unlock-signing signing-check journal-native-runtime release-universal-journal assemble-journal-app
+bundle-dist-journal: unlock-signing signing-check journal-native-runtime-accepted release-universal-journal assemble-journal-app
 	@cp -R "$(JOURNAL_NATIVE_RUNTIME_DIR)" journal.app/Contents/Resources/solstone-runtime
 	@cp -R "$(SPARKLE_FRAMEWORK)" journal.app/Contents/Frameworks/
 	@RPATH_LOG="$$(mktemp -t journal-rpath)"; \

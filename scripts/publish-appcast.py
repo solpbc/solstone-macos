@@ -36,7 +36,7 @@ SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from release_identity import APP_CONFIG, BASE_URL, ReleaseIdentity, build_identity, check_journal_pin
+from release_identity import APP_CONFIG, BASE_URL, ReleaseIdentity, build_identity
 
 R2_BUCKET = "solstone-updates"
 SPARKLE_NS = "http://www.andymatuschak.org/xml-namespaces/sparkle"
@@ -520,12 +520,6 @@ def main() -> None:
             short_version=args.version,
             bundle_version=bundle_version,
             staging=args.staging,
-        )
-        check_journal_pin(
-            journal_plist=config["plist_path"],
-            makefile="Makefile",
-            bundle_config="Sources/JournalRuntime/BundleConfig.swift",
-            expected_version=args.version,
         )
     else:
         identity = build_identity(args.app, short_version=args.version, staging=args.staging)

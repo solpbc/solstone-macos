@@ -535,7 +535,6 @@ class JournalDmgCreateOnlyTest(unittest.TestCase):
                     "--build",
                     "14",
                 ]), \
-                     mock.patch.object(module, "check_journal_pin"), \
                      mock.patch.object(module, "preflight_wrangler"), \
                      mock.patch.object(module, "preflight_r2"), \
                      mock.patch.object(module, "load_private_key", return_value=object()), \
@@ -665,7 +664,6 @@ class Appcast404Test(unittest.TestCase):
             "--staging",
             "--first-publish",
         ]), \
-             mock.patch.object(module, "check_journal_pin"), \
              mock.patch.object(module, "preflight_wrangler"), \
              mock.patch.object(module, "preflight_r2"), \
              mock.patch.object(module, "load_private_key", return_value=object()), \
@@ -690,7 +688,7 @@ class Appcast404Test(unittest.TestCase):
         )
         self.assertEqual(upload.call_args_list[0].args[1], "journal-macos/_staging/appcast.xml")
 
-    def test_journal_pin_gate_runs_before_publish_side_effects(self):
+    def test_journal_identity_gate_runs_before_publish_side_effects(self):
         module = load_publish_appcast()
         with mock.patch.object(sys, "argv", [
             "publish-appcast.py",
@@ -700,8 +698,7 @@ class Appcast404Test(unittest.TestCase):
             "--build",
             "14",
         ]), \
-             mock.patch.object(module, "read_info_plist", return_value=14), \
-             mock.patch.object(module, "check_journal_pin", side_effect=SystemExit(1)), \
+             mock.patch.object(module, "read_info_plist", side_effect=SystemExit(1)), \
              mock.patch.object(module, "preflight_wrangler") as wrangler, \
              mock.patch.object(module, "preflight_r2") as r2:
             with self.assertRaises(SystemExit):
@@ -725,7 +722,6 @@ class Appcast404Test(unittest.TestCase):
             "14",
             "--first-publish",
         ]), \
-             mock.patch.object(module, "check_journal_pin"), \
              mock.patch.object(module, "preflight_wrangler"), \
              mock.patch.object(module, "preflight_r2"), \
              mock.patch.object(module, "load_private_key", return_value=object()), \
