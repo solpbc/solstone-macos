@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import pathlib
 import subprocess
@@ -242,6 +243,116 @@ class JournalNativeProvenanceTest(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must not be a symlink", result.stderr)
+
+    def test_stage_accepted_refuses_unsafe_archive_members(self):
+        expected_errors = {
+            "traversal": "unsafe member path",
+            "symlink": "not a regular file or directory",
+            "hardlink": "not a regular file or directory",
+            "fifo": "not a regular file or directory",
+            "device": "not a regular file or directory",
+            "duplicate": "duplicate member path",
+            "collision": "cannot extract accepted journal archive",
+        }
+        for kind, expected_error in expected_errors.items():
+            with self.subTest(kind=kind):
+                archive = self.root / f"unsafe-{kind}.tar.gz"
+                with tarfile.open(archive, "w:gz") as bundle:
+                    if kind == "traversal":
+                        member = tarfile.TarInfo("../escaped")
+                        member.size = 0
+                        bundle.addfile(member)
+                    elif kind == "symlink":
+                        member = tarfile.TarInfo("bin/linked")
+                        member.type = tarfile.SYMTYPE
+                        member.linkname = "/tmp/escaped"
+                        bundle.addfile(member)
+                    elif kind == "hardlink":
+                        member = tarfile.TarInfo("bin/linked")
+                        member.type = tarfile.LNKTYPE
+                        member.linkname = "bin/journal"
+                        bundle.addfile(member)
+                    elif kind == "fifo":
+                        member = tarfile.TarInfo("bin/fifo")
+                        member.type = tarfile.FIFOTYPE
+                        bundle.addfile(member)
+                    elif kind == "device":
+                        member = tarfile.TarInfo("bin/device")
+                        member.type = tarfile.CHRTYPE
+                        member.devmajor = 1
+                        member.devminor = 3
+                        bundle.addfile(member)
+                    elif kind == "duplicate":
+                        bundle.addfile(tarfile.TarInfo("bin/duplicate"))
+                        bundle.addfile(tarfile.TarInfo("bin/duplicate"))
+                    else:
+                        bundle.addfile(tarfile.TarInfo("bin"))
+                        bundle.addfile(tarfile.TarInfo("bin/journal"))
+
+                staged = self.root / f"unsafe-{kind}-runtime"
+                staged.mkdir()
+                sentinel = staged / "sentinel"
+                sentinel.write_text("preserve\n", encoding="utf-8")
+                result = self.run_script(
+                    "stage-accepted",
+                    "--archive",
+                    str(archive),
+                    "--expected-sha256",
+                    hashlib.sha256(archive.read_bytes()).hexdigest(),
+                    "--expected-commit",
+                    self.commit,
+                    "--acceptance-evidence",
+                    "journal-lane/receipt.json",
+                    "--target",
+                    "macos-arm64",
+                    "--workspace-root",
+                    str(self.root),
+                    "--runtime-dir",
+                    str(staged),
+                    "--receipt",
+                    str(staged / "journal-native-provenance.json"),
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected_error, result.stderr)
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "preserve\n")
+
+    def test_stage_accepted_sanitizes_restrictive_modes(self):
+        archive = self.root / "restrictive.tar.gz"
+        with tarfile.open(archive, "w:gz") as bundle:
+            directory = tarfile.TarInfo("bin")
+            directory.type = tarfile.DIRTYPE
+            directory.mode = 0
+            bundle.addfile(directory)
+            for name in ("journal", "solstone"):
+                payload = name.encode("utf-8")
+                member = tarfile.TarInfo(f"bin/{name}")
+                member.mode = 0o555
+                member.size = len(payload)
+                bundle.addfile(member, io.BytesIO(payload))
+
+        staged = self.root / "restrictive-runtime"
+        result = self.run_script(
+            "stage-accepted",
+            "--archive",
+            str(archive),
+            "--expected-sha256",
+            hashlib.sha256(archive.read_bytes()).hexdigest(),
+            "--expected-commit",
+            self.commit,
+            "--acceptance-evidence",
+            "journal-lane/receipt.json",
+            "--target",
+            "macos-arm64",
+            "--workspace-root",
+            str(self.root),
+            "--runtime-dir",
+            str(staged),
+            "--receipt",
+            str(staged / "journal-native-provenance.json"),
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((staged / "bin/journal").stat().st_mode & 0o100)
+        self.assertTrue((staged / "bin/solstone").stat().st_mode & 0o100)
 
 
 if __name__ == "__main__":

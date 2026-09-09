@@ -91,6 +91,47 @@ def store_receipt(receipt: dict, receipt_path: pathlib.Path) -> None:
     temporary_path.replace(receipt_path)
 
 
+def extract_regular_tree(bundle: tarfile.TarFile, destination: pathlib.Path) -> None:
+    """Extract a link-free archive without relying on Python 3.12 filters."""
+    seen: set[str] = set()
+    for member in bundle.getmembers():
+        name = member.name.rstrip("/")
+        parts = name.split("/")
+        if (
+            not name
+            or member.name.startswith("/")
+            or any(part in ("", ".", "..") for part in parts)
+        ):
+            die(f"accepted journal archive has an unsafe member path: {member.name}")
+        if name in seen:
+            die(f"accepted journal archive has a duplicate member path: {name}")
+        seen.add(name)
+
+        target = destination.joinpath(*parts)
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+            # Keep staging traversable even when the archive declares a
+            # restrictive directory; no archive mode may block later members.
+            target.chmod(0o755)
+            continue
+        if not member.isfile():
+            die(
+                "accepted journal archive member is not a regular file or directory: "
+                f"{member.name}"
+            )
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source = bundle.extractfile(member)
+        if source is None:
+            die(f"accepted journal archive member cannot be read: {member.name}")
+        with source, target.open("xb") as output:
+            shutil.copyfileobj(source, output)
+        mode = member.mode & 0o755
+        if not mode & 0o100:
+            mode &= ~0o111
+        target.chmod(mode | 0o600)
+
+
 def write_receipt(args: argparse.Namespace) -> None:
     source_dir = pathlib.Path(args.source_dir).resolve()
     actual_commit = verify_source(source_dir, args.expected_commit)
@@ -174,7 +215,7 @@ def stage_accepted(args: argparse.Namespace) -> None:
     )
     try:
         with tarfile.open(archive, mode="r:gz") as bundle:
-            bundle.extractall(staged_dir, filter="data")
+            extract_regular_tree(bundle, staged_dir)
         entries = runtime_entries(staged_dir)
 
         receipt = {
