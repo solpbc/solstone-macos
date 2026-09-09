@@ -215,22 +215,10 @@ final class JournalFirstRunModel {
 
     func runSetupThenStartSupervisor() async {
         route = .ritual(.setupProgress)
-        setupEvents = []
-        setupRenderedLog = ""
-        currentStep = nil
         errorMessage = nil
 
         do {
-            let result = try await setupRunner.run(
-                journalRoot: journalRoot,
-                skipService: true,
-                progress: { [weak self] event in
-                    await MainActor.run {
-                        self?.applySetupEvent(event)
-                    }
-                }
-            )
-            setupRenderedLog = result.renderedLog
+            try await runSetup(at: journalRoot)
             guard await startSupervisor(journalRoot.standardizedFileURL) else {
                 errorMessage = supervisorFailureMessage()
                 return
@@ -239,6 +227,23 @@ final class JournalFirstRunModel {
         } catch {
             errorMessage = readableMessage(for: error)
         }
+    }
+
+    private func runSetup(at journalRoot: URL) async throws {
+        setupEvents = []
+        setupRenderedLog = ""
+        currentStep = nil
+
+        let result = try await setupRunner.run(
+            journalRoot: journalRoot,
+            skipService: true,
+            progress: { [weak self] event in
+                await MainActor.run {
+                    self?.applySetupEvent(event)
+                }
+            }
+        )
+        setupRenderedLog = result.renderedLog
     }
 
     func regenerateMark() async {
@@ -323,6 +328,7 @@ final class JournalFirstRunModel {
             draftName = handoff.observerName.trimmingCharacters(in: .whitespacesAndNewlines)
             config.journalRoot = root
 
+            try await runSetup(at: root)
             guard await startSupervisor(root) else {
                 errorMessage = supervisorFailureMessage()
                 return

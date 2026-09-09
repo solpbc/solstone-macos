@@ -30,6 +30,7 @@ struct JournalHandoffStoreTests {
 
         #expect(fixture.store.exists())
         #expect(failedStart.config.journalRoot?.standardizedFileURL == fixture.root.standardizedFileURL)
+        #expect(await failedStartTrace.snapshot() == ["setup", "supervisor"])
 
         let successTrace = FirstRunTrace()
         let success = makeModel(
@@ -46,6 +47,7 @@ struct JournalHandoffStoreTests {
         #expect(!fixture.store.exists())
         #expect(success.model.route == .home)
         #expect(success.model.adoptMessage == JournalFirstRunCopy.adoptLandingLine)
+        #expect(await successTrace.snapshot() == ["setup", "supervisor", "probe", "getMark"])
     }
 
     @Test func unlockedAdoptLandsHomeHiddenWithoutNotification() async throws {

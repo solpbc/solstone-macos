@@ -230,9 +230,11 @@ struct JournalFirstRunModelTests {
     }
 
     @Test func migrationHandoffStillUsesAdoptRoute() async throws {
+        let trace = FirstRunTrace()
         let root = try makeTemporaryDirectory()
         let handoffStore = FakeFirstRunHandoffStore(handoff: migrationHandoff(root: root))
         let fixture = makeModel(
+            trace: trace,
             startResults: [false],
             probeResults: [],
             handoffStore: handoffStore
@@ -244,6 +246,66 @@ struct JournalFirstRunModelTests {
         #expect(fixture.config.journalRoot == root.standardizedFileURL)
         #expect(handoffStore.consumeCount == 0)
         #expect(fixture.model.errorMessage != nil)
+        #expect(fixture.setupRunner.rootsSnapshot == [root.standardizedFileURL])
+        #expect(await trace.snapshot() == ["setup", "supervisor"])
+    }
+
+    @Test func migrationSetupFailureKeepsHandoffAndDoesNotStartSupervisor() async throws {
+        let trace = FirstRunTrace()
+        let root = try makeTemporaryDirectory()
+        let handoffStore = FakeFirstRunHandoffStore(handoff: migrationHandoff(root: root))
+        let fixture = makeModel(
+            trace: trace,
+            startResults: [true],
+            probeResults: [],
+            setupError: JournalSetupRunnerError.setupFailed(
+                errorCode: "fixture",
+                message: "fixture setup failed"
+            ),
+            handoffStore: handoffStore
+        )
+
+        await fixture.model.decideLaunchRoute()
+
+        #expect(fixture.model.route == .adopting)
+        #expect(fixture.config.journalRoot == root.standardizedFileURL)
+        #expect(handoffStore.consumeCount == 0)
+        #expect(fixture.model.errorMessage == "fixture setup failed")
+        #expect(fixture.setupRunner.rootsSnapshot == [root.standardizedFileURL])
+        #expect(await trace.snapshot() == ["setup"])
+    }
+
+    @Test func migrationRetryRepeatsSetupAndConsumesOnlyAfterStart() async throws {
+        let trace = FirstRunTrace()
+        let root = try makeTemporaryDirectory()
+        let handoffStore = FakeFirstRunHandoffStore(handoff: migrationHandoff(root: root))
+        let fixture = makeModel(
+            trace: trace,
+            startResults: [false, true],
+            probeResults: [.complete],
+            getMarkResponses: [.lockedResponse],
+            handoffStore: handoffStore
+        )
+
+        await fixture.model.decideLaunchRoute()
+        #expect(handoffStore.consumeCount == 0)
+
+        await fixture.model.decideLaunchRoute()
+
+        #expect(fixture.model.route == .home)
+        #expect(handoffStore.consumeCount == 1)
+        #expect(fixture.setupRunner.rootsSnapshot == [
+            root.standardizedFileURL,
+            root.standardizedFileURL,
+        ])
+        #expect(await trace.snapshot() == [
+            "setup",
+            "supervisor",
+            "setup",
+            "supervisor",
+            "probe",
+            "getMark",
+        ])
     }
 
     @Test func corruptHandoffIsConsumedAndCreatesAtDefault() async throws {
@@ -370,6 +432,7 @@ func makeModel(
     lockResponse: JournalInitMarkResponse = .lockedResponse,
     finalizeResponse: JournalInitFinalizeResponse = .success,
     nameUpdateError: Error? = nil,
+    setupError: Error? = nil,
     handoffStore: any JournalHandoffStoring = EmptyHandoffStore(),
     notificationCenter: NotificationCenter = NotificationCenter(),
     journalFileReader: any OnDiskJournalFileReading = FakeFirstRunJournalFileReader(),
@@ -389,7 +452,7 @@ func makeModel(
         machineNameProvider: { "machine-name" },
         appVersion: "test-app"
     )
-    let setupRunner = FakeSetupRunner(trace: trace)
+    let setupRunner = FakeSetupRunner(trace: trace, error: setupError)
     let fakeInitClient = FakeInitClient(
         trace: trace,
         probeResults: probeResults,
@@ -507,14 +570,16 @@ final class StartSequence: @unchecked Sendable {
 
 final class FakeSetupRunner: JournalSetupRunning, @unchecked Sendable {
     private let trace: FirstRunTrace
+    private let error: Error?
     private let lock = NSLock()
     private var roots: [URL] = []
 
     var calls: Int { lock.withLock { roots.count } }
     var rootsSnapshot: [URL] { lock.withLock { roots } }
 
-    init(trace: FirstRunTrace) {
+    init(trace: FirstRunTrace, error: Error? = nil) {
         self.trace = trace
+        self.error = error
     }
 
     func run(
@@ -525,6 +590,9 @@ final class FakeSetupRunner: JournalSetupRunning, @unchecked Sendable {
         _ = skipService
         lock.withLock { roots.append(journalRoot.standardizedFileURL) }
         await trace.append("setup")
+        if let error {
+            throw error
+        }
         await progress(.stepStarted(step: "prepare", index: 1, total: 1))
         await progress(.completed(status: "ok"))
         return try JournalSetupResult(runtime: makeRuntime(), stdoutTail: "", renderedLog: "setup ok")

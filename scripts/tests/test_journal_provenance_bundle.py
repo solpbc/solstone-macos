@@ -1,5 +1,7 @@
 import hashlib
+import json
 import pathlib
+import plistlib
 import re
 import shutil
 import subprocess
@@ -12,6 +14,7 @@ import unittest
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
 SOURCE_PROVENANCE = REPO_ROOT / "Sources/journal/Resources/runtime-entry-candidate-provenance.json"
+SOURCE_INFO_PLIST = REPO_ROOT / "Sources/journal/Info.plist"
 APPLE_RELEASE = REPO_ROOT / ".build/apple/Products/Release"
 JOURNAL_APP = REPO_ROOT / "journal.app"
 APPLE_OUTPUTS = [
@@ -69,6 +72,20 @@ class JournalProvenanceBundleTest(unittest.TestCase):
         if self.had_journal_app:
             shutil.move(str(self.saved_journal_app), str(JOURNAL_APP))
         self.temporary_directory.cleanup()
+
+    def test_source_provenance_target_matches_source_app_identity(self):
+        with SOURCE_INFO_PLIST.open("rb") as handle:
+            info = plistlib.load(handle)
+        provenance = json.loads(SOURCE_PROVENANCE.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            provenance["target"],
+            {
+                "bundle_identifier": info["CFBundleIdentifier"],
+                "bundle_short_version": info["CFBundleShortVersionString"],
+                "bundle_version": info["CFBundleVersion"],
+            },
+        )
 
     def test_unsigned_assembly_refreshes_apple_products_and_copies_provenance(self):
         for output in APPLE_OUTPUTS:
