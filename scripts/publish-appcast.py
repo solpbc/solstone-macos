@@ -372,11 +372,6 @@ def complete_create_only_multipart(
 ) -> None:
     if length <= 0:
         die(f"{identity.dmg_name}: journal DMG is empty; refusing create-only upload")
-    if length <= WRANGLER_MAX_UPLOAD_BYTES:
-        die(
-            f"{identity.dmg_name}: journal DMG is {length} bytes; refusing "
-            "wrangler path because it cannot create-only"
-        )
 
     upload_id = None
     try:

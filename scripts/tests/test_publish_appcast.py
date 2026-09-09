@@ -413,7 +413,7 @@ class JournalDmgCreateOnlyTest(unittest.TestCase):
                 path,
                 identity,
                 "application/x-apple-diskimage",
-                module.WRANGLER_MAX_UPLOAD_BYTES + 1,
+                len(payload),
                 sha,
             )
 
@@ -552,21 +552,6 @@ class JournalDmgCreateOnlyTest(unittest.TestCase):
         self.assertEqual([name for name, _ in calls], ["complete", "abort"])
         self.assertEqual(calls[0][1]["IfNoneMatch"], "*")
         upload.assert_not_called()
-
-    def test_journal_dmg_refuses_wrangler_sized_path(self):
-        module = load_publish_appcast()
-        identity = self.identity(module)
-        path, _ = self.temp_dmg()
-
-        with self.assertRaises(SystemExit):
-            module.complete_create_only_multipart(
-                object(),
-                local_path=path,
-                identity=identity,
-                content_type="application/x-apple-diskimage",
-                length=module.WRANGLER_MAX_UPLOAD_BYTES,
-                sha256=module.hash_file_sha256(path),
-            )
 
     def test_zero_byte_journal_dmg_fails_before_multipart_create(self):
         module = load_publish_appcast()
