@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import pathlib
+import plistlib
 import subprocess
 import tarfile
 import tempfile
@@ -20,6 +21,7 @@ class JournalNativeProvenanceTest(unittest.TestCase):
             dir="/var/tmp",
         )
         self.root = pathlib.Path(self.temporary_directory.name)
+        self.fixture_index = 0
         self.source = self.root / "journal"
         self.source.mkdir()
         subprocess.run(["git", "init", "-q"], cwd=self.source, check=True)
@@ -64,6 +66,183 @@ class JournalNativeProvenanceTest(unittest.TestCase):
             text=True,
             check=False,
         )
+
+    def candidate_fixture(self):
+        self.fixture_index += 1
+        fixture_root = self.root / f"candidate-fixture-{self.fixture_index}"
+        fixture_root.mkdir()
+        payload = fixture_root / "candidate-payload"
+        (payload / "bin").mkdir(parents=True)
+        for name, contents in (("journal", b"candidate-journal"), ("solstone", b"candidate-solstone")):
+            path = payload / "bin" / name
+            path.write_bytes(contents)
+            path.chmod(0o755)
+
+        accepted = fixture_root / "accepted"
+        accepted.mkdir()
+        archive = accepted / "solstone-journal-2.0.0-macos-arm64.tar.gz"
+        with tarfile.open(archive, "w:gz") as bundle:
+            bundle.add(payload / "bin", arcname="bin")
+        archive_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
+
+        runtime = fixture_root / "candidate-runtime"
+        native_receipt = runtime / "journal-native-provenance.json"
+        staged = self.run_script(
+            "stage-accepted",
+            "--archive",
+            str(archive),
+            "--expected-sha256",
+            archive_sha256,
+            "--expected-commit",
+            self.commit,
+            "--acceptance-evidence",
+            "journal-lane/accepted.md",
+            "--target",
+            "macos-arm64",
+            "--workspace-root",
+            str(self.root),
+            "--runtime-dir",
+            str(runtime),
+            "--receipt",
+            str(native_receipt),
+        )
+        self.assertEqual(staged.returncode, 0, staged.stdout + staged.stderr)
+
+        release = accepted / "solstone-journal-2.0.0-macos-arm64.release"
+        release.write_text(
+            "\n".join(
+                [
+                    "product=solstone-journal",
+                    "version=2.0.0",
+                    "target=macos-arm64",
+                    f"commit={self.commit}",
+                    "receipt=fixture",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        signing = accepted / "solstone-journal-2.0.0-macos-arm64.signing.json"
+        signing.write_text(
+            json.dumps(
+                {
+                    "members": [
+                        {
+                            "path": f"bin/{name}",
+                            "sha256": hashlib.sha256(contents).hexdigest(),
+                        }
+                        for name, contents in (
+                            ("journal", b"candidate-journal"),
+                            ("solstone", b"candidate-solstone"),
+                        )
+                    ]
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        manifest = accepted / "solstone-journal-2.0.0-macos-arm64.manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "product": "solstone-journal",
+                    "version": "2.0.0",
+                    "target": "macos-arm64",
+                    "files": {
+                        archive.name: archive_sha256,
+                        release.name: hashlib.sha256(release.read_bytes()).hexdigest(),
+                        signing.name: hashlib.sha256(signing.read_bytes()).hexdigest(),
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        signature = accepted / f"{manifest.name}.minisig"
+        signature.write_text("test signature\n", encoding="utf-8")
+        minisign = fixture_root / "minisign"
+        minisign.write_text(
+            "#!/bin/sh\n"
+            "test \"$1\" = -Vm || exit 91\n"
+            "test \"$3\" = -x || exit 92\n"
+            "test \"$5\" = -P || exit 93\n"
+            "test \"$6\" = RWRE2eBJv3NAtN0mF5+kqygYyP/ocYNw1Ng9yJhAKgyTflNV9NabMMjq || exit 94\n",
+            encoding="utf-8",
+        )
+        minisign.chmod(0o755)
+
+        info = fixture_root / "Info.plist"
+        with info.open("wb") as handle:
+            plistlib.dump(
+                {
+                    "CFBundleIdentifier": "app.solstone.journal",
+                    "CFBundleShortVersionString": "2.0.0",
+                    "CFBundleVersion": "28",
+                },
+                handle,
+            )
+        output = fixture_root / "Resources" / "runtime-entry-candidate-provenance.json"
+        output.parent.mkdir()
+        placeholder = {
+            "schema": "journal-runtime-entry-candidate-provenance",
+            "schema_version": 1,
+            "source": "J",
+            "target": {
+                "bundle_identifier": "app.solstone.journal",
+                "bundle_short_version": "2.0.0",
+                "bundle_version": "28",
+            },
+            "runtime_archive_sha256": "0" * 64,
+            "manifest_sha256": "1" * 64,
+            "release_receipt_sha256": "2" * 64,
+            "signing_receipt_sha256": "3" * 64,
+            "runtime_tree_sha256": "4" * 64,
+        }
+        output.write_text(json.dumps(placeholder) + "\n", encoding="utf-8")
+        tree_map = fixture_root / "candidate-runtime-tree.map"
+        arguments = [
+            "--archive",
+            str(archive),
+            "--expected-sha256",
+            archive_sha256,
+            "--expected-commit",
+            self.commit,
+            "--target",
+            "macos-arm64",
+            "--manifest",
+            str(manifest),
+            "--manifest-signature",
+            str(signature),
+            "--release-receipt",
+            str(release),
+            "--signing-receipt",
+            str(signing),
+            "--minisign",
+            str(minisign),
+            "--runtime-dir",
+            str(runtime),
+            "--native-receipt",
+            str(native_receipt),
+            "--info-plist",
+            str(info),
+            "--output",
+            str(output),
+            "--tree-map",
+            str(tree_map),
+        ]
+        return {
+            "arguments": arguments,
+            "archive": archive,
+            "archive_sha256": archive_sha256,
+            "manifest": manifest,
+            "release": release,
+            "signing": signing,
+            "runtime": runtime,
+            "output": output,
+            "placeholder": placeholder,
+            "tree_map": tree_map,
+            "minisign": minisign,
+        }
 
     def test_check_source_requires_exact_clean_commit(self):
         valid = self.run_script(
@@ -139,7 +318,7 @@ class JournalNativeProvenanceTest(unittest.TestCase):
         )
         self.assertEqual(
             text.count("--expected-commit \"$(JOURNAL_NATIVE_EXPECTED_COMMIT)\""),
-            4,
+            6,
         )
         self.assertIn(
             'cp -R "$(JOURNAL_NATIVE_RUNTIME_DIR)" '
@@ -151,6 +330,133 @@ class JournalNativeProvenanceTest(unittest.TestCase):
         )[0]
         self.assertNotIn('rm -rf "$(JOURNAL_NATIVE_RUNTIME_DIR)"', accepted_recipe)
         self.assertIn('--workspace-root "$(CURDIR)"', accepted_recipe)
+
+        bundle_recipe = text.split("bundle-dist-journal:", 1)[1].split(
+            "\n\n", 1
+        )[0]
+        self.assertIn("write-candidate", bundle_recipe)
+        self.assertIn("verify-candidate", bundle_recipe)
+        self.assertLess(
+            bundle_recipe.index("write-candidate"),
+            bundle_recipe.index("codesign --force"),
+        )
+        self.assertLess(
+            bundle_recipe.rindex("codesign --verify"),
+            bundle_recipe.index("verify-candidate"),
+        )
+        for variable in (
+            "JOURNAL_NATIVE_ACCEPTED_MANIFEST",
+            "JOURNAL_NATIVE_ACCEPTED_MANIFEST_SIGNATURE",
+            "JOURNAL_NATIVE_ACCEPTED_RELEASE_RECEIPT",
+            "JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT",
+            "JOURNAL_NATIVE_RUNTIME_TREE_MAP",
+        ):
+            self.assertIn(variable, bundle_recipe)
+
+    def test_candidate_provenance_binds_exact_accepted_set_and_tree_map(self):
+        fixture = self.candidate_fixture()
+        placeholder_refusal = self.run_script(
+            "verify-candidate", *fixture["arguments"]
+        )
+        self.assertNotEqual(placeholder_refusal.returncode, 0)
+        self.assertIn("does not match", placeholder_refusal.stderr)
+
+        written = self.run_script("write-candidate", *fixture["arguments"])
+        self.assertEqual(written.returncode, 0, written.stdout + written.stderr)
+        provenance = json.loads(fixture["output"].read_text(encoding="utf-8"))
+        self.assertEqual(
+            provenance["runtime_archive_sha256"], fixture["archive_sha256"]
+        )
+        self.assertEqual(
+            provenance["manifest_sha256"],
+            hashlib.sha256(fixture["manifest"].read_bytes()).hexdigest(),
+        )
+        self.assertEqual(
+            provenance["release_receipt_sha256"],
+            hashlib.sha256(fixture["release"].read_bytes()).hexdigest(),
+        )
+        self.assertEqual(
+            provenance["signing_receipt_sha256"],
+            hashlib.sha256(fixture["signing"].read_bytes()).hexdigest(),
+        )
+        self.assertEqual(provenance["target"]["bundle_version"], "28")
+        self.assertTrue(fixture["tree_map"].is_file())
+        self.assertEqual(
+            provenance["runtime_tree_sha256"],
+            hashlib.sha256(fixture["tree_map"].read_bytes()).hexdigest(),
+        )
+        for key in (
+            "runtime_archive_sha256",
+            "manifest_sha256",
+            "release_receipt_sha256",
+            "signing_receipt_sha256",
+            "runtime_tree_sha256",
+        ):
+            self.assertNotEqual(len(set(provenance[key])), 1)
+
+        verified = self.run_script("verify-candidate", *fixture["arguments"])
+        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
+
+    def test_candidate_provenance_refuses_manifest_and_runtime_mismatches(self):
+        fixture = self.candidate_fixture()
+        original_output = fixture["output"].read_bytes()
+        manifest = json.loads(fixture["manifest"].read_text(encoding="utf-8"))
+        manifest["files"][fixture["archive"].name] = "a" * 64
+        fixture["manifest"].write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+        manifest_refusal = self.run_script("write-candidate", *fixture["arguments"])
+        self.assertNotEqual(manifest_refusal.returncode, 0)
+        self.assertIn("manifest digest mismatch", manifest_refusal.stderr)
+        self.assertEqual(fixture["output"].read_bytes(), original_output)
+
+        fixture = self.candidate_fixture()
+        (fixture["runtime"] / "bin/journal").write_bytes(b"substituted")
+        runtime_refusal = self.run_script("write-candidate", *fixture["arguments"])
+        self.assertNotEqual(runtime_refusal.returncode, 0)
+        self.assertIn("differs from accepted archive", runtime_refusal.stderr)
+
+        fixture = self.candidate_fixture()
+        (fixture["runtime"] / "unlisted").write_bytes(b"extra")
+        inventory_refusal = self.run_script(
+            "write-candidate", *fixture["arguments"]
+        )
+        self.assertNotEqual(inventory_refusal.returncode, 0)
+        self.assertIn("runtime file inventory mismatch", inventory_refusal.stderr)
+
+    def test_candidate_provenance_refuses_unverified_manifest_signature(self):
+        fixture = self.candidate_fixture()
+        fixture["minisign"].write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+        fixture["minisign"].chmod(0o755)
+        result = self.run_script("write-candidate", *fixture["arguments"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("manifest signature verification failed", result.stderr)
+
+    def test_candidate_provenance_refuses_duplicate_json_and_target_mismatch(self):
+        fixture = self.candidate_fixture()
+        fixture["manifest"].write_text(
+            '{"product":"solstone-journal","product":"substituted",'
+            '"version":"2.0.0","target":"macos-arm64","files":{}}\n',
+            encoding="utf-8",
+        )
+        duplicate = self.run_script("write-candidate", *fixture["arguments"])
+        self.assertNotEqual(duplicate.returncode, 0)
+        self.assertIn("duplicate JSON key", duplicate.stderr)
+
+        fixture = self.candidate_fixture()
+        info_path = pathlib.Path(
+            fixture["arguments"][fixture["arguments"].index("--info-plist") + 1]
+        )
+        with info_path.open("wb") as handle:
+            plistlib.dump(
+                {
+                    "CFBundleIdentifier": "app.solstone.journal",
+                    "CFBundleShortVersionString": "2.0.1",
+                    "CFBundleVersion": "28",
+                },
+                handle,
+            )
+        target = self.run_script("write-candidate", *fixture["arguments"])
+        self.assertNotEqual(target.returncode, 0)
+        self.assertIn("identity does not match", target.stderr)
 
     def test_stage_accepted_verifies_digest_and_records_handoff(self):
         archive = self.root / "accepted.tar.gz"

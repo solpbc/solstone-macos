@@ -107,6 +107,13 @@ JOURNAL_NATIVE_PROVENANCE_RECEIPT ?= $(JOURNAL_NATIVE_RUNTIME_DIR)/journal-nativ
 JOURNAL_NATIVE_ACCEPTED_ARCHIVE ?=
 JOURNAL_NATIVE_ACCEPTED_SHA256 ?=
 JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE ?=
+JOURNAL_NATIVE_ACCEPTED_MANIFEST ?=
+JOURNAL_NATIVE_ACCEPTED_MANIFEST_SIGNATURE ?=
+JOURNAL_NATIVE_ACCEPTED_RELEASE_RECEIPT ?=
+JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT ?=
+JOURNAL_NATIVE_MINISIGN ?= /opt/homebrew/bin/minisign
+JOURNAL_NATIVE_RUNTIME_TREE_MAP ?= .build/journal-native-runtime-tree.map
+JOURNAL_NATIVE_RUNTIME_ENTRY_PROVENANCE := journal.app/Contents/Resources/solstone_journal.bundle/Contents/Resources/Resources/runtime-entry-candidate-provenance.json
 
 check-versions:
 	@[ -n "$(SOLSTONE_PIN_VERSION)" ] || { echo "error: solstone pin version must not be empty"; exit 1; }
@@ -696,6 +703,21 @@ journal-app-unsigned: assemble-journal-app
 
 bundle-dist-journal: unlock-signing signing-check journal-native-runtime-accepted release-universal-journal assemble-journal-app
 	@cp -R "$(JOURNAL_NATIVE_RUNTIME_DIR)" journal.app/Contents/Resources/solstone-runtime
+	@python3 scripts/journal_native_provenance.py write-candidate \
+		--archive "$(abspath $(JOURNAL_NATIVE_ACCEPTED_ARCHIVE))" \
+		--expected-sha256 "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" \
+		--expected-commit "$(JOURNAL_NATIVE_EXPECTED_COMMIT)" \
+		--target "$(JOURNAL_NATIVE_TARGET)" \
+		--manifest "$(abspath $(JOURNAL_NATIVE_ACCEPTED_MANIFEST))" \
+		--manifest-signature "$(abspath $(JOURNAL_NATIVE_ACCEPTED_MANIFEST_SIGNATURE))" \
+		--release-receipt "$(abspath $(JOURNAL_NATIVE_ACCEPTED_RELEASE_RECEIPT))" \
+		--signing-receipt "$(abspath $(JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT))" \
+		--minisign "$(JOURNAL_NATIVE_MINISIGN)" \
+		--runtime-dir "$(abspath journal.app/Contents/Resources/solstone-runtime)" \
+		--native-receipt "$(abspath journal.app/Contents/Resources/solstone-runtime/journal-native-provenance.json)" \
+		--info-plist "$(abspath journal.app/Contents/Info.plist)" \
+		--output "$(abspath $(JOURNAL_NATIVE_RUNTIME_ENTRY_PROVENANCE))" \
+		--tree-map "$(abspath $(JOURNAL_NATIVE_RUNTIME_TREE_MAP))"
 	@cp -R "$(SPARKLE_FRAMEWORK)" journal.app/Contents/Frameworks/
 	@RPATH_LOG="$$(mktemp -t journal-rpath)"; \
 		if install_name_tool -add_rpath "@executable_path/../Frameworks" journal.app/Contents/MacOS/journal 2>"$$RPATH_LOG"; then \
@@ -742,6 +764,21 @@ bundle-dist-journal: unlock-signing signing-check journal-native-runtime-accepte
 	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -Fq 'Identifier=app.solstone.journal.watchdog' || { echo "error: journal watchdog identifier mismatch"; exit 1; }
 	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal
 	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-sol
+	@python3 scripts/journal_native_provenance.py verify-candidate \
+		--archive "$(abspath $(JOURNAL_NATIVE_ACCEPTED_ARCHIVE))" \
+		--expected-sha256 "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" \
+		--expected-commit "$(JOURNAL_NATIVE_EXPECTED_COMMIT)" \
+		--target "$(JOURNAL_NATIVE_TARGET)" \
+		--manifest "$(abspath $(JOURNAL_NATIVE_ACCEPTED_MANIFEST))" \
+		--manifest-signature "$(abspath $(JOURNAL_NATIVE_ACCEPTED_MANIFEST_SIGNATURE))" \
+		--release-receipt "$(abspath $(JOURNAL_NATIVE_ACCEPTED_RELEASE_RECEIPT))" \
+		--signing-receipt "$(abspath $(JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT))" \
+		--minisign "$(JOURNAL_NATIVE_MINISIGN)" \
+		--runtime-dir "$(abspath journal.app/Contents/Resources/solstone-runtime)" \
+		--native-receipt "$(abspath journal.app/Contents/Resources/solstone-runtime/journal-native-provenance.json)" \
+		--info-plist "$(abspath journal.app/Contents/Info.plist)" \
+		--output "$(abspath $(JOURNAL_NATIVE_RUNTIME_ENTRY_PROVENANCE))" \
+		--tree-map "$(abspath $(JOURNAL_NATIVE_RUNTIME_TREE_MAP))"
 	@echo "✓ Signed: journal.app (native journal runtime, no profile/keychain-group verified)"
 
 run-journal: journal-app-dev
