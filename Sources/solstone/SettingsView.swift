@@ -10,8 +10,6 @@ import os
 import SolstoneCore
 import UpdateKit
 
-private let failureDiagnosticSupportURL = URL(string: "https://support.solstone.app")!
-
 /// Display entry for microphone priority list
 struct MicrophoneDisplayEntry: Identifiable {
     let id: String
@@ -2961,8 +2959,11 @@ struct SettingsView: View {
                     Text("need a hand? reach a human. we're happy to help.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Link("support.solstone.app", destination: failureDiagnosticSupportURL)
+                    Link("get help", destination: SupportReportURL.help)
                         .accessibilityIdentifier(AXID.Settings.Help.supportSite)
+                    Button("report a problem") {
+                        openProblemReport()
+                    }
                     Link("support@solstone.app", destination: URL(string: "mailto:support@solstone.app?subject=solstone%20(macOS)")!)
                         .accessibilityIdentifier(AXID.Settings.Help.supportEmail)
                     Text("version \(AppVersion.short)")
@@ -3116,6 +3117,28 @@ struct SettingsView: View {
                 now: Date()
             ))
             diagnosticsLoading = false
+        }
+    }
+
+    private func openProblemReport() {
+        Task { @MainActor in
+            let evidence = await appState.readDiagnosticEvidence()
+            let recent: String? = switch evidence {
+            case .available(let envelope) where !envelope.entries.isEmpty:
+                diagnosticEvidenceValue(evidence)
+            case .available, .unavailable:
+                nil
+            }
+            let state = appState.errorMessage != nil
+                ? "error"
+                : (appState.isPaused ? "paused" : (appState.isRecording ? "observing" : "off"))
+            NSWorkspace.shared.open(SupportReportURL.make(
+                version: AppVersion.short,
+                build: AppVersion.build,
+                osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+                state: state,
+                recent: recent
+            ))
         }
     }
 

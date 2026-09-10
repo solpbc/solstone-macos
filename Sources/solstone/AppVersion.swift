@@ -9,4 +9,8 @@ enum AppVersion {
     static var short: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
     }
+
+    static var build: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
+    }
 }
