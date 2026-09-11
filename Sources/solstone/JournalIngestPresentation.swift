@@ -26,7 +26,7 @@ func classifiedObserverHealthOwnerCopy(_ reason: ObserverHealthFailureReason) ->
         return "your journal isn't taking this in"
     case .httpStatus(403):
         return "pairing was revoked. pair again to reconnect."
-    case .httpStatus(let statusCode):
+    case .httpStatus:
         return "journal connection error"
     case .urlErrorCode:
         return "can't reach your journal"

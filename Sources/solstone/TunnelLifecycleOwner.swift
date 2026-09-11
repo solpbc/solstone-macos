@@ -1596,7 +1596,7 @@ final class TunnelLifecycleOwner {
         inFlightConnectTask?.cancel()
         inFlightConnectTask = nil
         let retainedCandidate = self.retainedCandidate
-        retainedCandidate = nil
+        self.retainedCandidate = nil
         stateObservationTask?.cancel()
         stateObservationTask = nil
         modeObservationTask?.cancel()
