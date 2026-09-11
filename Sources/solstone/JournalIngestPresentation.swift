@@ -3,10 +3,9 @@
 
 import Foundation
 
-func overlayIngestOnConnectionVerdict(
+func journalConnectionVerdictPresentation(
     tunnel: JournalConnectionVerdict,
-    pairingMismatch: Bool,
-    healthReason: ObserverHealthFailureReason?
+    pairingMismatch: Bool
 ) -> JournalConnectionVerdict {
     if pairingMismatch {
         return JournalConnectionVerdict(
@@ -18,39 +17,7 @@ func overlayIngestOnConnectionVerdict(
         )
     }
 
-    guard tunnel.axToken == PairingConnectionAXState.connected.axToken,
-          let healthReason else {
-        return tunnel
-    }
-
-    switch healthReason {
-    case .httpStatus(404):
-        return JournalConnectionVerdict(
-            severity: .attention,
-            message: classifiedObserverHealthOwnerCopy(healthReason),
-            caption: nil,
-            axToken: PairingConnectionAXState.notServing.axToken,
-            failureCause: .notServing
-        )
-    case .httpStatus(403):
-        return JournalConnectionVerdict(
-            severity: .attention,
-            message: "pairing was revoked. pair again to reconnect.",
-            caption: nil,
-            axToken: PairingConnectionAXState.revoked.axToken,
-            failureCause: .revoked
-        )
-    case .urlErrorCode:
-        return JournalConnectionVerdict(
-            severity: .attention,
-            message: "can't reach your journal right now",
-            caption: nil,
-            axToken: PairingConnectionAXState.unreachable.axToken,
-            failureCause: .unreachable(nil)
-        )
-    default:
-        return tunnel
-    }
+    return tunnel
 }
 
 func classifiedObserverHealthOwnerCopy(_ reason: ObserverHealthFailureReason) -> String {

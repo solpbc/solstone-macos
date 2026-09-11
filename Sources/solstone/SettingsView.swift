@@ -1096,9 +1096,6 @@ struct SettingsView: View {
                     pairingSection
                 }
 
-                if affordances.showTunnelRetry {
-                    tunnelErrorRetryRow
-                }
             }
             .padding(.vertical, 4)
         }
@@ -1352,10 +1349,9 @@ struct SettingsView: View {
     }
 
     private var journalConnectionPresentation: JournalConnectionVerdict {
-        overlayIngestOnConnectionVerdict(
+        journalConnectionVerdictPresentation(
             tunnel: appState.tunnelLifecycleOwner.connectionVerdict,
-            pairingMismatch: pairingMismatch,
-            healthReason: appState.uploadCoordinator.lastHealthReason
+            pairingMismatch: pairingMismatch
         )
     }
 

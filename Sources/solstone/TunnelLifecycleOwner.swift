@@ -407,11 +407,14 @@ final class TunnelLifecycleOwner {
                 inFlightEstablishmentBackoffTask?.cancel()
                 inFlightEstablishmentBackoffTask = nil
             } else if inFlightConnectTask != nil {
-                if proxyStartAttemptID != transportAttemptID {
-                    transportAttemptID &+= 1
-                }
+                let candidate = retainedCandidate
+                retainedCandidate = nil
+                rejectedAttemptIDs.insert(transportAttemptID)
+                transportAttemptID &+= 1
                 inFlightConnectTask?.cancel()
-                inFlightConnectTask = nil
+                Task { @MainActor in
+                    await candidate?.disconnect()
+                }
             }
         } else {
             startTask = Task { @MainActor [weak self] in
@@ -643,7 +646,7 @@ final class TunnelLifecycleOwner {
                 self.updateConnectionVerdict()
             }
             guard let self, self.running, !Task.isCancelled, self.transportAttemptID == attempt, !self.isIntentionallyRetiring else { return }
-            self.handleUnexpectedAttemptStreamCompletion(forIncarnation: nil, forAttempt: attempt)
+            await self.handleUnexpectedAttemptStreamCompletion(forIncarnation: nil, forAttempt: attempt)
         }
         do {
             connection = try await wait.connect(
@@ -868,7 +871,7 @@ final class TunnelLifecycleOwner {
                 self.updateConnectionVerdict()
             }
             guard let self, self.running, !Task.isCancelled, self.transportAttemptID == attemptID, !self.isIntentionallyRetiring else { return }
-            self.handleUnexpectedAttemptStreamCompletion(forIncarnation: nil, forAttempt: attemptID)
+            await self.handleUnexpectedAttemptStreamCompletion(forIncarnation: nil, forAttempt: attemptID)
         }
         var loopbackAttempt = 0
         while operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID), !rejectedAttemptIDs.contains(attemptID) {
@@ -983,7 +986,7 @@ final class TunnelLifecycleOwner {
                 self.publishingOptionalBurstID = nil
             }
             guard let self, self.running, !Task.isCancelled, self.transportIncarnation == generation, !self.isIntentionallyRetiring else { return }
-            self.handleUnexpectedStateStreamCompletion(forIncarnation: generation)
+            await self.handleUnexpectedStateStreamCompletion(forIncarnation: generation)
         }
 
         modeObservationTask = Task { @MainActor [weak self] in
@@ -1030,70 +1033,35 @@ final class TunnelLifecycleOwner {
                 firstAttempt = false
             }
             guard let self, self.running, !Task.isCancelled, self.transportIncarnation == generation, !self.isIntentionallyRetiring else { return }
-            self.handleUnexpectedAttemptStreamCompletion(forIncarnation: generation, forAttempt: nil)
+            await self.handleUnexpectedAttemptStreamCompletion(forIncarnation: generation, forAttempt: nil)
         }
     }
 
-    func handleUnexpectedStateStreamCompletion(forIncarnation incarnation: UInt64?) {
+    func handleUnexpectedStateStreamCompletion(forIncarnation incarnation: UInt64?) async {
         guard running, !Task.isCancelled, !isIntentionallyRetiring else { return }
         if let incarnation, transportIncarnation != incarnation { return }
 
         splOwnerLog.notice("unexpected tunnel state stream completion observed (incarnation=\(incarnation ?? 0), attempt=\(self.transportAttemptID))")
-
-        let currentAttempt = transportAttemptID
-        rejectedAttemptIDs.insert(currentAttempt)
-
-        inFlightConnectTask?.cancel()
-        inFlightConnectTask = nil
-
-        if proxyStartAttemptID != currentAttempt {
-            transportAttemptID &+= 1
-        }
-
-        stopProbe()
-        transport = nil
-        establishedLoopbackPort = nil
-        stateObservationTask?.cancel()
-        stateObservationTask = nil
-        modeObservationTask?.cancel()
-        modeObservationTask = nil
-        attemptObservationTask?.cancel()
-        attemptObservationTask = nil
-        state = .disconnected
-        health = .unknown
-        supervisorAttemptState = .idle
-        updateConnectionVerdict()
+        await failClosedAfterUnexpectedStreamCompletion(forAttempt: transportAttemptID)
     }
 
     func handleUnexpectedAttemptStreamCompletion(
         forIncarnation incarnation: UInt64?,
         forAttempt attempt: UInt64?
-    ) {
+    ) async {
         guard running, !Task.isCancelled, !isIntentionallyRetiring else { return }
         if let incarnation, transportIncarnation != incarnation { return }
         if let attempt, transportAttemptID != attempt { return }
 
         splOwnerLog.notice("unexpected tunnel attempt stream completion observed (incarnation=\(incarnation ?? 0), attempt=\(attempt ?? self.transportAttemptID))")
+        await failClosedAfterUnexpectedStreamCompletion(forAttempt: attempt ?? transportAttemptID)
+    }
 
-        supervisorAttemptState = .idle
-
-        if case .connected(let localPort, _) = state,
-           establishedLoopbackPort == localPort,
-           transport != nil {
-            updateConnectionVerdict()
-            return
-        }
-
-        let currentAttempt = attempt ?? transportAttemptID
-        rejectedAttemptIDs.insert(currentAttempt)
-
-        inFlightConnectTask?.cancel()
-        inFlightConnectTask = nil
-
-        if proxyStartAttemptID != currentAttempt {
-            transportAttemptID &+= 1
-        }
-
+    private func failClosedAfterUnexpectedStreamCompletion(forAttempt attempt: UInt64) async {
+        rejectedAttemptIDs.insert(attempt)
+        transportAttemptID &+= 1
+        await disconnectCurrentTransport()
+        guard running else { return }
         state = .disconnected
         health = .unknown
         updateConnectionVerdict()
@@ -1627,6 +1595,7 @@ final class TunnelLifecycleOwner {
         establishedLoopbackPort = nil
         inFlightConnectTask?.cancel()
         inFlightConnectTask = nil
+        let retainedCandidate = self.retainedCandidate
         retainedCandidate = nil
         stateObservationTask?.cancel()
         stateObservationTask = nil
@@ -1639,8 +1608,17 @@ final class TunnelLifecycleOwner {
         self.transport = nil
         if let deadline {
             let completion = AsyncStream<Void>.makeStream()
-            Task {
+            Task { @MainActor in
                 await transport?.disconnect()
+                if let retainedCandidate {
+                    if let transport {
+                        if retainedCandidate !== transport {
+                            await retainedCandidate.disconnect()
+                        }
+                    } else {
+                        await retainedCandidate.disconnect()
+                    }
+                }
                 completion.continuation.finish()
             }
             let timer = Task {
@@ -1651,6 +1629,15 @@ final class TunnelLifecycleOwner {
             timer.cancel()
         } else {
             await transport?.disconnect()
+            if let retainedCandidate {
+                if let transport {
+                    if retainedCandidate !== transport {
+                        await retainedCandidate.disconnect()
+                    }
+                } else {
+                    await retainedCandidate.disconnect()
+                }
+            }
         }
         updateConnectionVerdict()
     }

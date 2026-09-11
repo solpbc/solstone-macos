@@ -262,19 +262,7 @@ struct UploadCoordinatorTests {
                 healthReason: healthReason,
                 requestedPath: route.path
             ))
-            let presented = overlayIngestOnConnectionVerdict(
-                tunnel: JournalConnectionVerdict(
-                    severity: .good,
-                    message: "connected",
-                    caption: nil,
-                    axToken: PairingConnectionAXState.connected.axToken,
-                    failureCause: nil
-                ),
-                pairingMismatch: false,
-                healthReason: coordinator.lastHealthReason
-            )
-            #expect(presented.failureCause == .notServing)
-            #expect(presented.axToken == PairingConnectionAXState.notServing.axToken)
+            #expect(coordinator.lastHealthReason == .httpStatus(404))
             #expect(coordinator.lastRequestedIngestPath == route.path)
             #expect(coordinator.lastRequestedIngestPath?.contains("://") == false)
             #expect(try #require(store.snapshotRequests().first?.url?.path) == route.path)
@@ -305,19 +293,7 @@ struct UploadCoordinatorTests {
             healthReason: healthReason,
             requestedPath: IngestProtocolV3.uploadPath
         ))
-        let presented = overlayIngestOnConnectionVerdict(
-            tunnel: JournalConnectionVerdict(
-                severity: .good,
-                message: "connected",
-                caption: nil,
-                axToken: PairingConnectionAXState.connected.axToken,
-                failureCause: nil
-            ),
-            pairingMismatch: false,
-            healthReason: coordinator.lastHealthReason
-        )
-        #expect(presented.failureCause == .notServing)
-        #expect(presented.axToken == PairingConnectionAXState.notServing.axToken)
+        #expect(coordinator.lastHealthReason == .httpStatus(404))
         #expect(coordinator.lastRequestedIngestPath == IngestProtocolV3.uploadPath)
         #expect(coordinator.lastRequestedIngestPath?.contains("://") == false)
         #expect(try #require(store.snapshotRequests().first?.url?.path) == IngestProtocolV3.uploadPath)

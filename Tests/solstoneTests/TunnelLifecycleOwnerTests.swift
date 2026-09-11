@@ -2352,6 +2352,7 @@ struct TunnelLifecycleOwnerTests {
         #expect(owner.supervisorAttemptState == .idle)
         #expect(owner.connectionVerdict.severity == StatusDotSeverity.attention)
         #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.unreachable.axToken)
+        #expect(await child1.isDisconnected)
 
         await owner.stop()
     }
@@ -2371,7 +2372,7 @@ struct TunnelLifecycleOwnerTests {
         #expect(owner.connectionVerdict.severity == StatusDotSeverity.calm)
 
         // Trigger stream completion without pairing: stays neutral/calm
-        owner.handleUnexpectedStateStreamCompletion(forIncarnation: nil)
+        await owner.handleUnexpectedStateStreamCompletion(forIncarnation: nil)
         #expect(owner.connectionVerdict.severity == StatusDotSeverity.calm)
         #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.disconnected.axToken)
 
@@ -2409,11 +2410,12 @@ struct TunnelLifecycleOwnerTests {
         try await waitUntil { owner.state == .disconnected }
         #expect(owner.connectionVerdict.severity == StatusDotSeverity.attention)
         #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.unreachable.axToken)
+        #expect(await child1.isDisconnected)
 
         await owner.stop()
     }
 
-    @Test func innerSessionAttemptSourceLossWhileGreenStaysGreen() async throws {
+    @Test func innerSessionAttemptSourceLossWhileGreenFailsClosedRed() async throws {
         let supervisors = ActualSupervisorRecorder(armGate: false)
         let store = PairingStore(pairing: pairing())
         let credentials = PairingCredentialStore(store: store)
@@ -2434,11 +2436,12 @@ struct TunnelLifecycleOwnerTests {
         try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.good }
         let child1 = supervisors.children[0]
 
-        // Finish inner attempt updates: live route is protected and stays green
+        // Losing the attempt stream makes future reconnect state unknowable, so retire the route.
         child1.finishAttemptUpdates()
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
-        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connected.axToken)
+        try await waitUntil { owner.state == .disconnected }
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.attention)
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.unreachable.axToken)
+        #expect(await child1.isDisconnected)
 
         await owner.stop()
     }
@@ -2468,9 +2471,11 @@ struct TunnelLifecycleOwnerTests {
         #expect(owner.supervisorAttemptState == .idle)
     }
 
-    @Test func productionGatedUnavailableBackoffSettingsRecoverySuccessor() async throws {
-        let sleeper = ManualSleeper()
-        let supervisors = ActualSupervisorRecorder(armGate: true)
+    @Test func productionSupervisorBackoffSettingsRecoveryCreatesFreshSupervisor() async throws {
+        let supervisors = ActualSupervisorRecorder(
+            sessionErrors: [SessionError.unreachable, nil],
+            useActualSupervisor: true
+        )
         let store = PairingStore(pairing: pairing())
         let credentials = PairingCredentialStore(store: store)
         let owner = TunnelLifecycleOwner(
@@ -2482,50 +2487,23 @@ struct TunnelLifecycleOwnerTests {
                 )
             },
             pathMonitoringSource: NoopPathMonitoringSource(),
-            probe: { _, _ in true },
-            sleep: { try await sleeper.sleep($0) }
+            probe: { _, _ in true }
         )
 
         owner.start()
-        try await waitUntil { supervisors.children.count >= 1 }
+        try await waitUntil { supervisors.children.count == 1 }
         let child1 = supervisors.children[0]
-        try await waitUntil { await child1.pendingConnectCount == 1 }
-
-        // Emit unavailable -> red unreachable, enters backoff
-        child1.emitAttemptState(.unavailable(.retrying(failureClass: .unreachable, attempt: 1, retryAfter: .seconds(5))))
         try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.attention }
+        #expect(supervisors.count == 1)
 
-        // No-action twin: without action, count of children stays 1
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(supervisors.children.count == 1)
-
-        // Rapid 3x mapped Settings action -> exactly one successor
+        // The Settings action retires the SDK supervisor that owns the backoff and
+        // starts a fresh app-owned establishment attempt.
         #expect(journalConnectionRecoveryAction(for: owner.connectionVerdict.failureCause) == .coalescedReconnect)
         await owner.requestCoalescedReconnect()
-        await owner.requestCoalescedReconnect()
-        await owner.requestCoalescedReconnect()
-
-        try await waitUntil { supervisors.children.count == 2 }
-        let child2 = supervisors.children[1]
-        try await waitUntil { await child2.pendingConnectCount == 1 }
-        try await Task.sleep(for: .milliseconds(50))
+        try await waitUntil { supervisors.count == 2 }
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.good }
         #expect(supervisors.children.count == 2)
-
-        // Still red until real attempting
-        #expect(owner.connectionVerdict.severity == StatusDotSeverity.attention)
-
-        child2.emitAttemptState(.attempting)
-        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.warn }
-
-        // Unsuccessful successor -> enters backoff again
-        child2.emitAttemptState(.unavailable(.retrying(failureClass: .unreachable, attempt: 2, retryAfter: .seconds(5))))
-        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.attention }
-
-        // Later invocation starts one more successor
-        await owner.requestCoalescedReconnect()
-        try await waitUntil { supervisors.children.count == 3 }
-        let child3 = supervisors.children[2]
-        try await waitUntil { await child3.pendingConnectCount == 1 }
+        #expect(await child1.isDisconnected)
 
         await owner.stop()
     }

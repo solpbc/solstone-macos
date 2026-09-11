@@ -7,114 +7,21 @@ import Testing
 
 @Suite("Journal ingest presentation")
 struct JournalIngestPresentationTests {
-    @Test func connectedHttp404OverlaysNotServing() {
-        let presented = overlayIngestOnConnectionVerdict(
+    @Test func connectionPresentationUsesTransportVerdict() {
+        let presented = journalConnectionVerdictPresentation(
             tunnel: connectedTunnel,
-            pairingMismatch: false,
-            healthReason: .httpStatus(404)
+            pairingMismatch: false
         )
-        #expect(presented.failureCause == .notServing)
-        #expect(presented.axToken == PairingConnectionAXState.notServing.axToken)
+        #expect(presented == connectedTunnel)
     }
 
-    @Test func connectedHttp403OverlaysRevoked() {
-        let presented = overlayIngestOnConnectionVerdict(
+    @Test func pairingMismatchOverridesTransportVerdict() {
+        let presented = journalConnectionVerdictPresentation(
             tunnel: connectedTunnel,
-            pairingMismatch: false,
-            healthReason: .httpStatus(403)
-        )
-        #expect(presented.failureCause == .revoked)
-        #expect(presented.axToken == PairingConnectionAXState.revoked.axToken)
-    }
-
-    @Test func connectedUrlErrorOverlaysUnreachable() {
-        let presented = overlayIngestOnConnectionVerdict(
-            tunnel: connectedTunnel,
-            pairingMismatch: false,
-            healthReason: .urlErrorCode(URLError.timedOut.rawValue)
-        )
-        #expect(presented.failureCause == .unreachable(nil))
-        #expect(presented.axToken == PairingConnectionAXState.unreachable.axToken)
-    }
-
-    @Test func connected404403AndUrlErrorAreThreeDistinctTokens() {
-        let tokens = [
-            overlayIngestOnConnectionVerdict(
-                tunnel: connectedTunnel,
-                pairingMismatch: false,
-                healthReason: .urlErrorCode(-1009)
-            ).axToken,
-            overlayIngestOnConnectionVerdict(
-                tunnel: connectedTunnel,
-                pairingMismatch: false,
-                healthReason: .httpStatus(403)
-            ).axToken,
-            overlayIngestOnConnectionVerdict(
-                tunnel: connectedTunnel,
-                pairingMismatch: false,
-                healthReason: .httpStatus(404)
-            ).axToken,
-        ]
-        #expect(Set(tokens) == [
-            PairingConnectionAXState.unreachable.axToken,
-            PairingConnectionAXState.revoked.axToken,
-            PairingConnectionAXState.notServing.axToken,
-        ])
-        #expect(Set(tokens).count == 3)
-    }
-
-    @Test func connectedOtherHealthReasonDoesNotOverlay() {
-        for reason: ObserverHealthFailureReason in [
-            .httpStatus(503),
-            .uploadFailed,
-            .uploadInvalidResponse,
-            .configChanged,
-        ] {
-            let presented = overlayIngestOnConnectionVerdict(
-                tunnel: connectedTunnel,
-                pairingMismatch: false,
-                healthReason: reason
-            )
-            #expect(presented.axToken == PairingConnectionAXState.connected.axToken)
-            #expect(presented.failureCause == nil)
-        }
-    }
-
-    @Test func pairingMismatchWinsOverHttp404() {
-        let presented = overlayIngestOnConnectionVerdict(
-            tunnel: connectedTunnel,
-            pairingMismatch: true,
-            healthReason: .httpStatus(404)
+            pairingMismatch: true
         )
         #expect(presented.failureCause == .mismatch)
         #expect(presented.axToken == PairingConnectionAXState.mismatch.axToken)
-    }
-
-    @Test func doesNotOverlayWhenTunnelNotConnected() {
-        let connecting = JournalConnectionVerdict(
-            severity: .warn,
-            message: "connecting",
-            caption: nil,
-            axToken: PairingConnectionAXState.connecting.axToken,
-            failureCause: nil
-        )
-        let unreachable = JournalConnectionVerdict(
-            severity: .attention,
-            message: "unreachable",
-            caption: nil,
-            axToken: PairingConnectionAXState.unreachable.axToken,
-            failureCause: .unreachable(nil)
-        )
-        let disconnected = JournalConnectionVerdict.neutral
-        for tunnel in [connecting, unreachable, disconnected] {
-            let presented = overlayIngestOnConnectionVerdict(
-                tunnel: tunnel,
-                pairingMismatch: false,
-                healthReason: .httpStatus(404)
-            )
-            #expect(presented.axToken == tunnel.axToken)
-            #expect(presented.failureCause == tunnel.failureCause)
-        }
     }
 
     @Test func notServingRemedyIsOpenJournal() {
