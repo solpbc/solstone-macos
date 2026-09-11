@@ -88,6 +88,15 @@ public struct JournalSetupRunner: Sendable {
             }
         }
 
+        var setupEnvironment = runtime.environment
+        if usesNativeRuntimeMaterializer {
+            // Setup validates command resolution against this exact bundled installation.
+            // An ambient CLI installation must not shadow the app's native commands.
+            let inheritedPath = setupEnvironment["PATH"].flatMap { $0.isEmpty ? nil : $0 }
+                ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+            setupEnvironment["PATH"] = runtime.layout.binDir.path + ":" + inheritedPath
+        }
+
         let output = JournalSetupOutputCollector()
         let (progressStream, progressContinuation) = AsyncStream<JournalSetupProgressEvent>.makeStream()
         let progressTask = Task {
@@ -101,7 +110,7 @@ public struct JournalSetupRunner: Sendable {
             result = try await subprocessRunner.run(
                 executable: runtime.layout.journalBinary,
                 arguments: JournalSetupCommand.setupArguments(journalURL: journalRoot, skipService: skipService),
-                environment: runtime.environment,
+                environment: setupEnvironment,
                 timeout: setupTimeout,
                 stdoutHandler: { [output, progressContinuation] data in
                     for event in output.appendStdout(data) {

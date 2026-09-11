@@ -38,6 +38,63 @@ struct JournalSetupRunnerTests {
         #expect(setup.executable == layout.journalBinary)
     }
 
+    @Test(arguments: ["ambient", "empty", "missing"])
+    func nativeSetupResolvesBundledCommandsBeforeAmbientInstallation(pathMode: String) async throws {
+        let workspace = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let runtimeRoot = try makeNativeRuntimeBundle(in: workspace)
+        let ambientBin = workspace.appendingPathComponent("other installation/bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: ambientBin, withIntermediateDirectories: true)
+        for name in ["journal", "solstone"] {
+            for (directory, status) in [(runtimeRoot.appendingPathComponent("bin"), 0), (ambientBin, 91)] {
+                let executable = directory.appendingPathComponent(name)
+                try Data("#!/bin/sh\nexit \(status)\n".utf8).write(to: executable)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+            }
+        }
+        let ambientPath = ambientBin.path + ":/usr/bin:/bin"
+        var environment = ["HOME": workspace.path, "SETUP_TEST_SENTINEL": "preserved"]
+        if pathMode != "missing" {
+            environment["PATH"] = pathMode == "empty" ? "" : ambientPath
+        }
+        let subprocess = FakeSubprocessRunner()
+        subprocess.enqueue("setup", .success(stdout: Data(Self.okSetupJSONL.utf8)))
+        let runner = JournalSetupRunner(
+            subprocessRunner: subprocess,
+            gate: MockSingleSupervisorGate(),
+            materializer: NativeJournalRuntimeMaterializer(
+                bundleURL: workspace.appendingPathComponent("Journal.app", isDirectory: true),
+                environment: environment
+            )
+        )
+        _ = try await runner.run(journalRoot: workspace.appendingPathComponent("journal", isDirectory: true))
+        let invocation = try #require(subprocess.invocations.first { $0.arguments.first == "setup" })
+        let setupEnvironment = try #require(invocation.environment)
+        #expect(setupEnvironment["HOME"] == workspace.path)
+        #expect(setupEnvironment["SETUP_TEST_SENTINEL"] == "preserved")
+        let processRunner = SubprocessRunner()
+        for command in ["journal", "solstone"] {
+            let control = try await processRunner.run(
+                executable: URL(fileURLWithPath: "/usr/bin/env"), arguments: [command],
+                environment: ["PATH": ambientPath], timeout: .seconds(5),
+                stdoutHandler: { _ in }, stderrHandler: { _ in }
+            )
+            #expect(control.exitCode == 91)
+            let bundled = try await processRunner.run(
+                executable: URL(fileURLWithPath: "/usr/bin/env"), arguments: [command],
+                environment: setupEnvironment, timeout: .seconds(5),
+                stdoutHandler: { _ in }, stderrHandler: { _ in }
+            )
+            #expect(bundled.exitCode == 0)
+        }
+        let hostTool = try await processRunner.run(
+            executable: URL(fileURLWithPath: "/usr/bin/env"), arguments: ["true"],
+            environment: setupEnvironment, timeout: .seconds(5),
+            stdoutHandler: { _ in }, stderrHandler: { _ in }
+        )
+        #expect(hostTool.exitCode == 0)
+    }
+
     @Test func setupUsesExactSharedArgumentsIncludingSkipWrapper() async throws {
         let runtime = try makeRuntime()
         defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
