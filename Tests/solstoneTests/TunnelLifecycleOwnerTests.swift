@@ -1539,14 +1539,14 @@ struct TunnelLifecycleOwnerTests {
         #expect(!shouldShowPairingRetry(for: .disconnected))
         #expect(!shouldShowPairingRetry(for: .connecting))
         #expect(!shouldShowPairingRetry(for: .connected(localPort: 1, via: .relay)))
-        #expect(!shouldShowPairingRetry(for: .error(.revoked)))
+        #expect(shouldShowPairingRetry(for: .error(.revoked)))
         #expect(!shouldShowPairingRetry(for: .error(.notEntitled)))
         #expect(shouldShowPairingRetry(for: .error(.loopbackUnavailable)))
         #expect(shouldShowPairingRetry(for: .connecting, failureCause: .keychainUnavailable))
         #expect(shouldShowPairingRetry(for: .connecting, failureCause: .noRoute))
         #expect(shouldShowPairingRetry(for: .connecting, failureCause: .unreachable(nil)))
         #expect(shouldShowPairingRetry(for: .connecting, failureCause: .loopbackUnavailable))
-        #expect(!shouldShowPairingRetry(for: .connecting, failureCause: .revoked))
+        #expect(shouldShowPairingRetry(for: .connecting, failureCause: .revoked))
         #expect(!shouldShowPairingRetry(for: .connecting, failureCause: .notEntitled))
         #expect(!shouldShowPairingRetry(for: .connecting, failureCause: .mismatch))
         #expect(!shouldShowPairingRetry(for: .connecting, failureCause: .notServing))
@@ -1924,6 +1924,7 @@ struct TunnelLifecycleOwnerTests {
     }
 
     @Test func controlledAttemptingYellowAndUnavailableRetryRed() async throws {
+        let sleeper = ManualSleeper()
         let supervisors = ActualSupervisorRecorder(armGate: true)
         let disk = PairingStore(pairing: pairing())
         let credentials = PairingCredentialStore(store: disk)
@@ -1936,34 +1937,90 @@ struct TunnelLifecycleOwnerTests {
                 )
             },
             pathMonitoringSource: NoopPathMonitoringSource(),
-            probe: { _, _ in true }
+            probe: { _, _ in true },
+            sleep: { try await sleeper.sleep($0) }
         )
 
         owner.start()
-        try await waitUntil { supervisors.count >= 1 }
-        let child = supervisors.children[0]
+        try await waitUntil { supervisors.children.count >= 1 }
+        let child1 = supervisors.children[0]
 
-        // Initial connect attempt: yellow
-        try await waitUntil { await child.pendingConnectCount == 1 }
+        // While outer connect is still gated: emit attempting -> yellow connecting
+        try await waitUntil { await child1.pendingConnectCount == 1 }
+        child1.emitAttemptState(.attempting)
         try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.warn }
         #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connecting.axToken)
 
-        // Connect succeeds: green
-        await child.releaseNextConnect()
-        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.good }
-        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connected.axToken)
-
-        // Child fails and yields unavailable with retry: owner transitions to red unreachable
-        await child.emitState(.failed(.unreachable))
-        await child.emitAttemptState(.unavailable(.retrying(failureClass: .unreachable, attempt: 1, retryAfter: .seconds(5))))
+        // While outer connect is still gated: emit unavailable(.retrying) -> red unreachable and !isProxyStarting
+        child1.emitAttemptState(.unavailable(.retrying(failureClass: .unreachable, attempt: 1, retryAfter: .seconds(5))))
         try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.attention }
         #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.unreachable.axToken)
         #expect(owner.connectionVerdict.failureCause == JournalConnectionFailureCause.unreachable(nil))
+        #expect(!owner.isProxyStarting)
 
-        // Child next generation attempts: returns to yellow
-        await child.emitAttemptState(.attempting)
+        // Sleeper holds backoff: without recovery action, successor session/connect count stays 0
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(supervisors.children.count == 1)
+
+        // Rapid 3x mapped Settings action -> exactly one successor
+        #expect(journalConnectionRecoveryAction(for: owner.connectionVerdict.failureCause) == .coalescedReconnect)
+        await owner.requestCoalescedReconnect()
+        await owner.requestCoalescedReconnect()
+        await owner.requestCoalescedReconnect()
+
+        try await waitUntil { supervisors.children.count == 2 }
+        let child2 = supervisors.children[1]
+        try await waitUntil { await child2.pendingConnectCount == 1 }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(supervisors.children.count == 2)
+
+        // Child 2 emits attempting -> yellow
+        child2.emitAttemptState(.attempting)
         try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.warn }
         #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connecting.axToken)
+
+        // Release connect / success -> green
+        await child2.releaseNextConnect()
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.good }
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connected.axToken)
+
+        await owner.stop()
+    }
+
+    @Test func controlledAttemptingYellowAndUnavailableRetryRedNoActionTwin() async throws {
+        let sleeper = ManualSleeper()
+        let supervisors = ActualSupervisorRecorder(armGate: true)
+        let disk = PairingStore(pairing: pairing())
+        let credentials = PairingCredentialStore(store: disk)
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: {
+                SPLTunnelTransport(
+                    makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) }
+                )
+            },
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { supervisors.children.count >= 1 }
+        let child1 = supervisors.children[0]
+        try await waitUntil { await child1.pendingConnectCount == 1 }
+
+        child1.emitAttemptState(.attempting)
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.warn }
+
+        child1.emitAttemptState(.unavailable(.retrying(failureClass: .unreachable, attempt: 1, retryAfter: .seconds(5))))
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.attention }
+        #expect(!owner.isProxyStarting)
+
+        // No-action twin: successor connect / session count stays 0
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(supervisors.children.count == 1)
+        #expect(await child1.pendingConnectCount == 1)
 
         await owner.stop()
     }
@@ -2103,6 +2160,406 @@ struct TunnelLifecycleOwnerTests {
         await owner.replaceLiveTransport(with: pairing(deviceToken: "background-refresh"))
         #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
         #expect(owner.state == .connected(localPort: 19191, via: .relay))
+
+        await owner.stop()
+    }
+
+    @Test func proxyStartingActiveOnlyDuringLoopbackProxyStart() async throws {
+        var proxyStartObserved = false
+        var verdictDuringProxyStart: JournalConnectionVerdict?
+
+        let transport = FakeTunnelTransport(connection: .init(localPort: 8080, via: .relay))
+        let store = PairingStore(pairing: pairing())
+        var owner: TunnelLifecycleOwner!
+        owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+
+        transport.onProxyStartingHook = {
+            proxyStartObserved = true
+            verdictDuringProxyStart = owner.connectionVerdict
+        }
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 8080, via: .relay) }
+
+        #expect(proxyStartObserved)
+        #expect(verdictDuringProxyStart?.severity == .warn)
+        #expect(verdictDuringProxyStart?.message == "connecting to your journal…")
+        #expect(verdictDuringProxyStart?.axToken == PairingConnectionAXState.connecting.axToken)
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connected.axToken)
+
+        await owner.stop()
+    }
+
+    @Test func disconnectEagerlyReplacesOutwardStreams() async throws {
+        let transport = SPLTunnelTransport()
+        let states1 = transport.stateUpdates
+        let modes1 = transport.connectionModeUpdates
+        let attempts1 = transport.attemptStateUpdates
+
+        let stateTask = Task {
+            var observed: [TunnelState] = []
+            for await state in states1 {
+                observed.append(state)
+            }
+            return observed
+        }
+
+        let modeTask = Task {
+            var observed: [ConnectionMode?] = []
+            for await mode in modes1 {
+                observed.append(mode)
+            }
+            return observed
+        }
+
+        let attemptTask = Task {
+            var observed: [TunnelSupervisorAttemptState] = []
+            for await attempt in attempts1 {
+                observed.append(attempt)
+            }
+            return observed
+        }
+
+        await transport.disconnect()
+
+        let observedStates = await stateTask.value
+        let observedModes = await modeTask.value
+        let observedAttempts = await attemptTask.value
+
+        #expect(!observedStates.isEmpty)
+        #expect(!observedModes.isEmpty)
+        #expect(!observedAttempts.isEmpty)
+
+        // After disconnect, new subscribers get newly allocated fresh streams that start cleanly
+        let states2 = transport.stateUpdates
+        let nextStateTask = Task {
+            var count = 0
+            for await _ in states2 {
+                count += 1
+                if count >= 1 { break }
+            }
+            return count
+        }
+        let nextCount = await nextStateTask.value
+        #expect(nextCount == 1)
+    }
+
+    @Test func overlappingProxyStartsOlderEndDoesNotClearNewer() async throws {
+        let transport = FakeTunnelTransport(connection: .init(localPort: 34567, via: .relay))
+        transport.armConnectGate()
+        let factory = FakeTransportFactory([transport])
+        let owner = makeOwner(factory: factory)
+
+        owner.start()
+        try await waitUntil { transport.pendingConnectCount == 1 }
+        #expect(owner.isProxyStarting)
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.warn)
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connecting.axToken)
+
+        // Trigger new generation while transport is still in proxy start
+        await owner.requestCoalescedReconnect()
+        try await waitUntil { transport.pendingConnectCount == 1 }
+        #expect(owner.isProxyStarting)
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.warn)
+
+        // Older generation attempt 1 ends: must NOT clear newer yellow / isProxyStarting
+        owner.endProxyStart(attempt: 1)
+        #expect(owner.isProxyStarting)
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.warn)
+
+        // Current generation attempt 2 ends: clears proxy start
+        owner.endProxyStart(attempt: 2)
+        #expect(!owner.isProxyStarting)
+
+        await owner.stop()
+    }
+
+    @Test func reusedAdapterEstablishmentFailureRetryEmitsAttemptingYellowOnNewSession() async throws {
+        let sleeper = ManualSleeper()
+        let supervisors = ActualSupervisorRecorder(armGate: true, sessionErrors: [SessionError.unreachable])
+        let store = PairingStore(pairing: pairing())
+        let credentials = PairingCredentialStore(store: store)
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: {
+                SPLTunnelTransport(
+                    makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) }
+                )
+            },
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { supervisors.children.count >= 1 }
+        let child1 = supervisors.children[0]
+        try await waitUntil { await child1.pendingConnectCount == 1 }
+
+        // Release child 1 to hit the configured SessionError.unreachable
+        await child1.releaseNextConnect()
+
+        // Sleeper parks on establishment backoff
+        try await waitUntil { await sleeper.sleepCount == 1 }
+
+        // Retrying starts next generation with new session
+        await sleeper.advance()
+        try await waitUntil { supervisors.children.count == 2 }
+        let child2 = supervisors.children[1]
+        try await waitUntil { await child2.pendingConnectCount == 1 }
+
+        // Child 2 emits attempting on the new inner session -> owner goes yellow
+        child2.emitAttemptState(.attempting)
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.warn }
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connecting.axToken)
+
+        // Child 2 completes connect -> owner goes green
+        await child2.releaseNextConnect()
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.good }
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connected.axToken)
+
+        await owner.stop()
+    }
+
+    @Test func innerSessionStateSourceLossWithPairingFailsClosedRedAndRejectsInFlightConnect() async throws {
+        let supervisors = ActualSupervisorRecorder(armGate: false)
+        let store = PairingStore(pairing: pairing())
+        let credentials = PairingCredentialStore(store: store)
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: {
+                SPLTunnelTransport(
+                    makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) }
+                )
+            },
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true }
+        )
+
+        owner.start()
+        try await waitUntil { supervisors.children.count >= 1 }
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.good }
+        let child1 = supervisors.children[0]
+
+        // Finish inner state updates: propagates through SPLTunnelTransport
+        child1.finishStateUpdates()
+
+        try await waitUntil { owner.state == .disconnected }
+        #expect(owner.health == .unknown)
+        #expect(owner.supervisorAttemptState == .idle)
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.attention)
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.unreachable.axToken)
+
+        await owner.stop()
+    }
+
+    @Test func innerSessionStateSourceLossWithNoPairingStaysNeutralDormant() async throws {
+        let store = PairingStore(pairing: nil)
+        let credentials = PairingCredentialStore(store: store)
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: { FakeTunnelTransport() },
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true }
+        )
+
+        owner.start()
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.calm)
+
+        // Trigger stream completion without pairing: stays neutral/calm
+        owner.handleUnexpectedStateStreamCompletion(forIncarnation: nil)
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.calm)
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.disconnected.axToken)
+
+        await owner.stop()
+    }
+
+    @Test func innerSessionAttemptSourceLossWhileYellowFailsClosedRed() async throws {
+        let supervisors = ActualSupervisorRecorder(armGate: true)
+        let store = PairingStore(pairing: pairing())
+        let credentials = PairingCredentialStore(store: store)
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: {
+                SPLTunnelTransport(
+                    makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) }
+                )
+            },
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true }
+        )
+
+        owner.start()
+        try await waitUntil { supervisors.children.count >= 1 }
+        let child1 = supervisors.children[0]
+        try await waitUntil { await child1.pendingConnectCount == 1 }
+
+        // Emit attempting -> yellow
+        child1.emitAttemptState(.attempting)
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.warn }
+
+        // Finish inner attempt updates: propagates through SPLTunnelTransport
+        child1.finishAttemptUpdates()
+
+        try await waitUntil { owner.state == .disconnected }
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.attention)
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.unreachable.axToken)
+
+        await owner.stop()
+    }
+
+    @Test func innerSessionAttemptSourceLossWhileGreenStaysGreen() async throws {
+        let supervisors = ActualSupervisorRecorder(armGate: false)
+        let store = PairingStore(pairing: pairing())
+        let credentials = PairingCredentialStore(store: store)
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: {
+                SPLTunnelTransport(
+                    makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) }
+                )
+            },
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true }
+        )
+
+        owner.start()
+        try await waitUntil { supervisors.children.count >= 1 }
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.good }
+        let child1 = supervisors.children[0]
+
+        // Finish inner attempt updates: live route is protected and stays green
+        child1.finishAttemptUpdates()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connected.axToken)
+
+        await owner.stop()
+    }
+
+    @Test func intentionalStopDoesNotFailClosed() async throws {
+        let supervisors = ActualSupervisorRecorder(armGate: false)
+        let store = PairingStore(pairing: pairing())
+        let credentials = PairingCredentialStore(store: store)
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: {
+                SPLTunnelTransport(
+                    makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) }
+                )
+            },
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true }
+        )
+
+        owner.start()
+        try await waitUntil { supervisors.children.count >= 1 }
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.good }
+
+        await owner.stop()
+        #expect(owner.state == .disconnected)
+        #expect(owner.supervisorAttemptState == .idle)
+    }
+
+    @Test func productionGatedUnavailableBackoffSettingsRecoverySuccessor() async throws {
+        let sleeper = ManualSleeper()
+        let supervisors = ActualSupervisorRecorder(armGate: true)
+        let store = PairingStore(pairing: pairing())
+        let credentials = PairingCredentialStore(store: store)
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: {
+                SPLTunnelTransport(
+                    makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) }
+                )
+            },
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true },
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { supervisors.children.count >= 1 }
+        let child1 = supervisors.children[0]
+        try await waitUntil { await child1.pendingConnectCount == 1 }
+
+        // Emit unavailable -> red unreachable, enters backoff
+        child1.emitAttemptState(.unavailable(.retrying(failureClass: .unreachable, attempt: 1, retryAfter: .seconds(5))))
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.attention }
+
+        // No-action twin: without action, count of children stays 1
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(supervisors.children.count == 1)
+
+        // Rapid 3x mapped Settings action -> exactly one successor
+        #expect(journalConnectionRecoveryAction(for: owner.connectionVerdict.failureCause) == .coalescedReconnect)
+        await owner.requestCoalescedReconnect()
+        await owner.requestCoalescedReconnect()
+        await owner.requestCoalescedReconnect()
+
+        try await waitUntil { supervisors.children.count == 2 }
+        let child2 = supervisors.children[1]
+        try await waitUntil { await child2.pendingConnectCount == 1 }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(supervisors.children.count == 2)
+
+        // Still red until real attempting
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.attention)
+
+        child2.emitAttemptState(.attempting)
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.warn }
+
+        // Unsuccessful successor -> enters backoff again
+        child2.emitAttemptState(.unavailable(.retrying(failureClass: .unreachable, attempt: 2, retryAfter: .seconds(5))))
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.attention }
+
+        // Later invocation starts one more successor
+        await owner.requestCoalescedReconnect()
+        try await waitUntil { supervisors.children.count == 3 }
+        let child3 = supervisors.children[2]
+        try await waitUntil { await child3.pendingConnectCount == 1 }
+
+        await owner.stop()
+    }
+
+    @Test func productionExhaustedLoopbackSettingsRecoverySuccessor() async throws {
+        let sleeper = ManualSleeper()
+        let retryTransport1 = FakeTunnelTransport(results: [
+            .failure(LoopbackProxyError.listenerFailed("one")),
+            .failure(LoopbackProxyError.listenerFailed("two")),
+            .failure(LoopbackProxyError.listenerFailed("three")),
+        ])
+        let retryTransport2 = FakeTunnelTransport(results: [
+            .success(.init(localPort: 5678, via: .relay)),
+        ])
+        let factory = FakeTransportFactory([retryTransport1, retryTransport2])
+        let owner = makeOwner(factory: factory, sleep: { try await sleeper.sleep($0) })
+
+        owner.start()
+        await sleeper.advance()
+        await sleeper.advance()
+        try await waitUntil { owner.state == .error(.loopbackUnavailable) }
+        #expect(owner.connectionVerdict.failureCause == .loopbackUnavailable)
+
+        // Mapped Settings action is .coalescedReconnect
+        #expect(journalConnectionRecoveryAction(for: owner.connectionVerdict.failureCause) == .coalescedReconnect)
+        #expect(factory.makeCount == 1)
+        await owner.requestCoalescedReconnect()
+        await owner.requestCoalescedReconnect()
+        await owner.requestCoalescedReconnect()
+
+        try await waitUntil { factory.makeCount == 2 }
+        #expect(factory.makeCount == 2)
+        try await waitUntil { owner.state == .connected(localPort: 5678, via: .relay) }
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
 
         await owner.stop()
     }

@@ -60,17 +60,44 @@ func pairingResultText(
     }
 }
 
+enum JournalConnectionRecoveryAction: Equatable {
+    case none
+    case reevaluatePairing
+    case coalescedReconnect
+    case paidPlan
+    case retryRevokedRetirement
+    case mismatchFreshLinkAndSupport
+}
+
+func journalConnectionRecoveryAction(for cause: JournalConnectionFailureCause?) -> JournalConnectionRecoveryAction {
+    guard let cause else { return .none }
+    switch cause {
+    case .keychainUnavailable, .noRoute:
+        return .reevaluatePairing
+    case .unreachable, .loopbackUnavailable:
+        return .coalescedReconnect
+    case .notEntitled:
+        return .paidPlan
+    case .revoked:
+        return .retryRevokedRetirement
+    case .mismatch:
+        return .mismatchFreshLinkAndSupport
+    case .notServing:
+        return .none
+    }
+}
+
 func shouldShowPairingRetry(for state: TunnelLifecycleState, failureCause: JournalConnectionFailureCause? = nil) -> Bool {
     if let failureCause {
         switch failureCause {
-        case .keychainUnavailable, .noRoute, .unreachable, .loopbackUnavailable:
+        case .keychainUnavailable, .noRoute, .unreachable, .loopbackUnavailable, .revoked:
             return true
-        case .revoked, .notEntitled, .mismatch, .notServing:
+        case .notEntitled, .mismatch, .notServing:
             return false
         }
     }
     switch state {
-    case .error(.keychainUnavailable), .error(.loopbackUnavailable):
+    case .error(.keychainUnavailable), .error(.loopbackUnavailable), .error(.revoked):
         return true
     default:
         return false
@@ -219,7 +246,8 @@ struct SettingsView: View {
         },
         openURL: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) },
         initialEntitlementOpenFailed: Bool = false,
-        initialSupportOpenFailed: Bool = false
+        initialSupportOpenFailed: Bool = false,
+        initialPairingMismatch: Bool = false
     ) {
         self.appState = appState
         self.updateController = updateController
@@ -247,6 +275,7 @@ struct SettingsView: View {
         self._showPairingFlow = State(initialValue: initialShowPairingFlow)
         self._entitlementOpenFailed = State(initialValue: initialEntitlementOpenFailed)
         self._supportOpenFailed = State(initialValue: initialSupportOpenFailed)
+        self._pairingMismatch = State(initialValue: initialPairingMismatch)
     }
 
     // MARK: - Auto-saving Bindings
@@ -1008,17 +1037,26 @@ struct SettingsView: View {
                 if pairingMismatch {
                     pairingMismatchPane
                 } else {
-                    LabeledContent("connection") {
-                        let presentation = journalConnectionPresentation
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(presentation.severity.color)
-                                .frame(width: 8, height: 8)
-                            Text(presentation.message)
-                                .foregroundStyle(presentation.severity.color)
+                    let presentation = journalConnectionPresentation
+                    VStack(alignment: .leading, spacing: 4) {
+                        LabeledContent("connection") {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(presentation.severity.color)
+                                    .frame(width: 8, height: 8)
+                                Text(presentation.message)
+                                    .foregroundStyle(presentation.severity.color)
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier(AXID.Settings.Service.journalConnectionState)
+                            .accessibilityValue(presentation.axToken)
                         }
-                        .accessibilityIdentifier(AXID.Settings.Service.journalConnectionState)
-                        .accessibilityValue(presentation.axToken)
+                        if let caption = presentation.caption {
+                            Text(caption)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        configuredJournalRecoveryRow(for: presentation.failureCause)
                     }
                 }
 
@@ -1563,7 +1601,7 @@ struct SettingsView: View {
 
                 pairingFailureRow
 
-                if !appState.config.isUploadConfigured || !journalPathIsValid {
+                if !(appState.config.isUploadConfigured && journalPathIsValid) {
                     tunnelErrorRetryRow
                 }
 
@@ -1621,6 +1659,52 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private func configuredJournalRecoveryRow(for cause: JournalConnectionFailureCause?) -> some View {
+        let action = journalConnectionRecoveryAction(for: cause)
+        switch action {
+        case .none, .mismatchFreshLinkAndSupport:
+            EmptyView()
+        case .reevaluatePairing:
+            Button("retry") {
+                Task {
+                    await appState.reevaluateTunnelPairing()
+                }
+            }
+            .disabled(pairingIsBusy)
+            .accessibilityIdentifier(AXID.Settings.Service.pairingRetry)
+        case .coalescedReconnect:
+            Button("retry") {
+                Task {
+                    await appState.tunnelLifecycleOwner.requestCoalescedReconnect()
+                }
+            }
+            .disabled(pairingIsBusy)
+            .accessibilityIdentifier(AXID.Settings.Service.pairingRetry)
+        case .retryRevokedRetirement:
+            Button("retry") {
+                Task {
+                    await appState.retryRevokedPairingRetirement()
+                }
+            }
+            .disabled(pairingIsBusy)
+            .accessibilityIdentifier(AXID.Settings.Service.pairingRetry)
+        case .paidPlan:
+            Button("set up the paid plan ↗") {
+                openEntitlementURL()
+            }
+            .font(.caption)
+            .accessibilityIdentifier(AXID.Settings.Service.pairingPaidPlanLink)
+
+            if entitlementOpenFailed {
+                Text("https://link.solstone.app")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
     private var pairingMismatchPane: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(UICopy.JOURNAL_MARK_MISMATCH_TITLE)
@@ -1646,11 +1730,10 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
-            AXStateCompanion(
-                id: AXID.Settings.Service.journalConnectionState,
-                value: PairingConnectionAXState.mismatch.axToken
-            )
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(AXID.Settings.Service.journalConnectionState)
+        .accessibilityValue(PairingConnectionAXState.mismatch.axToken)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(
@@ -1674,6 +1757,7 @@ struct SettingsView: View {
                     Text(presentation.message)
                         .foregroundStyle(presentation.severity.color)
                 }
+                .accessibilityElement(children: .combine)
                 .accessibilityIdentifier(AXID.Settings.Service.journalConnectionState)
                 .accessibilityValue(presentation.axToken)
             }
@@ -1696,10 +1780,6 @@ struct SettingsView: View {
                         .textSelection(.enabled)
                 }
             }
-            AXStateCompanion(
-                id: AXID.Settings.Service.journalConnectionState,
-                value: presentation.axToken
-            )
         }
     }
 
@@ -1747,6 +1827,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var tunnelErrorRetryRow: some View {
         let failureCause = journalConnectionPresentation.failureCause
+        let action = journalConnectionRecoveryAction(for: failureCause)
         if shouldShowPairingRetry(
             for: appState.pairingCoordinator.tunnelState,
             failureCause: failureCause
@@ -1754,11 +1835,13 @@ struct SettingsView: View {
             HStack {
                 Button("retry") {
                     Task {
-                        switch failureCause {
-                        case .keychainUnavailable, .noRoute:
+                        switch action {
+                        case .reevaluatePairing:
                             await appState.reevaluateTunnelPairing()
-                        case .unreachable, .loopbackUnavailable:
+                        case .coalescedReconnect:
                             await appState.tunnelLifecycleOwner.requestCoalescedReconnect()
+                        case .retryRevokedRetirement:
+                            await appState.retryRevokedPairingRetirement()
                         default:
                             await appState.reevaluateTunnelPairing()
                         }

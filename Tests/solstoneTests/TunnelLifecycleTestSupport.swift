@@ -158,6 +158,8 @@ actor ControlledTokenRefresher {
 final class FakeTransportFactory: @unchecked Sendable {
     private var transports: [any TunnelTransporting]
 
+    private(set) var makeCount = 0
+
     init(_ transports: [any TunnelTransporting]) {
         self.transports = transports
     }
@@ -166,6 +168,7 @@ final class FakeTransportFactory: @unchecked Sendable {
         guard !transports.isEmpty else {
             preconditionFailure("Missing fake tunnel transport")
         }
+        makeCount += 1
         let transport = transports.removeFirst()
         (transport as? FakeTunnelTransport)?.recordConstruction()
         return transport
@@ -177,13 +180,49 @@ final class FakeTransportFactory: @unchecked Sendable {
 }
 
 actor FakeTunnelReconnectingSession: TunnelReconnecting {
-    nonisolated let stateUpdates: AsyncStream<TunnelState>
-    nonisolated let connectionModeUpdates: AsyncStream<ConnectionMode?>
-    nonisolated let attemptStateUpdatesStream: AsyncStream<TunnelSupervisorAttemptState>
+    private final class StateBox: @unchecked Sendable {
+        var stateContinuations: [UUID: AsyncStream<TunnelState>.Continuation] = [:]
+        var modeContinuations: [UUID: AsyncStream<ConnectionMode?>.Continuation] = [:]
+        var attemptContinuations: [UUID: AsyncStream<TunnelSupervisorAttemptState>.Continuation] = [:]
+        var lastState: TunnelState = .disconnected
+        var lastAttemptState: TunnelSupervisorAttemptState = .idle
+    }
 
-    private let stateContinuation: AsyncStream<TunnelState>.Continuation
-    private let connectionModeContinuation: AsyncStream<ConnectionMode?>.Continuation
-    private let attemptStateContinuation: AsyncStream<TunnelSupervisorAttemptState>.Continuation
+    private let lock = NSLock()
+    private let box = StateBox()
+
+    nonisolated var stateUpdates: AsyncStream<TunnelState> {
+        AsyncStream { continuation in
+            let id = UUID()
+            let state: TunnelState = self.lock.withLock {
+                self.box.stateContinuations[id] = continuation
+                return self.box.lastState
+            }
+            continuation.onTermination = { [weak self] _ in
+                self?.lock.withLock {
+                    _ = self?.box.stateContinuations.removeValue(forKey: id)
+                }
+            }
+            continuation.yield(state)
+        }
+    }
+
+    nonisolated var connectionModeUpdates: AsyncStream<ConnectionMode?> {
+        AsyncStream { continuation in
+            let id = UUID()
+            let mode = self.lock.withLock {
+                self.box.modeContinuations[id] = continuation
+                return self.connectionModeValue
+            }
+            continuation.onTermination = { [weak self] _ in
+                self?.lock.withLock {
+                    _ = self?.box.modeContinuations.removeValue(forKey: id)
+                }
+            }
+            continuation.yield(mode)
+        }
+    }
+
     private let connectionModeValue: ConnectionMode?
     private let connectedVia: ConnectedVia
     nonisolated let pairing: StoredPairing?
@@ -216,18 +255,6 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
         if armConnectGate {
             self.connectContinuations = []
         }
-        let states = AsyncStream<TunnelState>.makeStream()
-        self.stateUpdates = states.stream
-        self.stateContinuation = states.continuation
-        let modes = AsyncStream<ConnectionMode?>.makeStream()
-        self.connectionModeUpdates = modes.stream
-        self.connectionModeContinuation = modes.continuation
-        let attempts = AsyncStream<TunnelSupervisorAttemptState>.makeStream()
-        self.attemptStateUpdatesStream = attempts.stream
-        self.attemptStateContinuation = attempts.continuation
-        modes.continuation.yield(connectionMode)
-        states.continuation.yield(.disconnected)
-        attempts.continuation.yield(.idle)
     }
 
     var connectionMode: ConnectionMode? {
@@ -239,39 +266,96 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
     func releaseNextConnect() {
         if connectContinuations?.isEmpty == false { connectContinuations!.removeFirst().resume() }
     }
+    func releasePendingConnect() {
+        if let conts = connectContinuations {
+            connectContinuations = []
+            conts.forEach { $0.resume() }
+        }
+    }
 
     func connect(endpoints: [TransportEndpoint]) async throws -> ConnectedVia {
         connectCallCount += 1
         recordedEndpoints.append(endpoints)
         if connectContinuations != nil {
-            await withCheckedContinuation { connectContinuations?.append($0) }
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    connectContinuations?.append(continuation)
+                }
+            } onCancel: {
+                Task {
+                    await self.releasePendingConnect()
+                }
+            }
+            try Task.checkCancellation()
         }
         if let shouldThrowOnConnect {
             throw shouldThrowOnConnect
         }
         isDisconnected = false
-        stateContinuation.yield(.connected(via: connectedVia))
-        attemptStateContinuation.yield(.connected)
+        emitState(.connected(via: connectedVia))
+        emitAttemptState(.connected)
         return connectedVia
     }
 
     func disconnect() async {
         disconnectCallCount += 1
         isDisconnected = true
-        stateContinuation.yield(.disconnected)
-        attemptStateContinuation.yield(.idle)
+        if let conts = connectContinuations {
+            connectContinuations = []
+            conts.forEach { $0.resume() }
+        }
+        emitState(.disconnected)
+        emitAttemptState(.idle)
     }
 
-    func emitState(_ state: TunnelState) {
-        stateContinuation.yield(state)
+    nonisolated func emitState(_ state: TunnelState) {
+        let continuations = lock.withLock { () -> [AsyncStream<TunnelState>.Continuation] in
+            box.lastState = state
+            return Array(box.stateContinuations.values)
+        }
+        continuations.forEach { $0.yield(state) }
     }
 
-    func emitAttemptState(_ state: TunnelSupervisorAttemptState) {
-        attemptStateContinuation.yield(state)
+    nonisolated func emitAttemptState(_ state: TunnelSupervisorAttemptState) {
+        let continuations = lock.withLock { () -> [AsyncStream<TunnelSupervisorAttemptState>.Continuation] in
+            box.lastAttemptState = state
+            return Array(box.attemptContinuations.values)
+        }
+        continuations.forEach { $0.yield(state) }
     }
 
-    func attemptStateUpdates() async -> AsyncStream<TunnelSupervisorAttemptState> {
-        attemptStateUpdatesStream
+    nonisolated func finishStateUpdates() {
+        let continuations = lock.withLock { () -> [AsyncStream<TunnelState>.Continuation] in
+            let arr = Array(box.stateContinuations.values)
+            box.stateContinuations.removeAll()
+            return arr
+        }
+        continuations.forEach { $0.finish() }
+    }
+
+    nonisolated func finishAttemptUpdates() {
+        let continuations = lock.withLock { () -> [AsyncStream<TunnelSupervisorAttemptState>.Continuation] in
+            let arr = Array(box.attemptContinuations.values)
+            box.attemptContinuations.removeAll()
+            return arr
+        }
+        continuations.forEach { $0.finish() }
+    }
+
+    nonisolated func attemptStateUpdates() async -> AsyncStream<TunnelSupervisorAttemptState> {
+        AsyncStream { continuation in
+            let id = UUID()
+            let attempt: TunnelSupervisorAttemptState = self.lock.withLock {
+                self.box.attemptContinuations[id] = continuation
+                return self.box.lastAttemptState
+            }
+            continuation.onTermination = { [weak self] _ in
+                self?.lock.withLock {
+                    _ = self?.box.attemptContinuations.removeValue(forKey: id)
+                }
+            }
+            continuation.yield(attempt)
+        }
     }
 
     func openStream() async throws -> MuxStream {
@@ -323,15 +407,53 @@ final class SessionRecorder: @unchecked Sendable {
 
 @MainActor
 final class FakeTunnelTransport: TunnelTransporting {
-    let stateUpdates: AsyncStream<TunnelState>
-    let connectionModeUpdates: AsyncStream<ConnectionMode?>
-    let attemptStateUpdates: AsyncStream<TunnelSupervisorAttemptState>
+    private var stateContinuations: [UUID: AsyncStream<TunnelState>.Continuation] = [:]
+    private var modeContinuations: [UUID: AsyncStream<ConnectionMode?>.Continuation] = [:]
+    private var attemptContinuations: [UUID: AsyncStream<TunnelSupervisorAttemptState>.Continuation] = [:]
+    private var lastState: TunnelState = .disconnected
+    private var lastAttemptState: TunnelSupervisorAttemptState = .idle
     private(set) var connectionMode: ConnectionMode?
     var inboundSnapshots: [UInt64] = []
 
-    private let stateContinuation: AsyncStream<TunnelState>.Continuation
-    private let modeContinuation: AsyncStream<ConnectionMode?>.Continuation
-    private let attemptContinuation: AsyncStream<TunnelSupervisorAttemptState>.Continuation
+    var stateUpdates: AsyncStream<TunnelState> {
+        AsyncStream { continuation in
+            let id = UUID()
+            self.stateContinuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.stateContinuations.removeValue(forKey: id)
+                }
+            }
+            continuation.yield(self.lastState)
+        }
+    }
+
+    var connectionModeUpdates: AsyncStream<ConnectionMode?> {
+        AsyncStream { continuation in
+            let id = UUID()
+            self.modeContinuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.modeContinuations.removeValue(forKey: id)
+                }
+            }
+            continuation.yield(self.connectionMode)
+        }
+    }
+
+    var attemptStateUpdates: AsyncStream<TunnelSupervisorAttemptState> {
+        AsyncStream { continuation in
+            let id = UUID()
+            self.attemptContinuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.attemptContinuations.removeValue(forKey: id)
+                }
+            }
+            continuation.yield(self.lastAttemptState)
+        }
+    }
+
     private var results: [Result<TunnelTransportConnection, Error>]
     private let tracker: ActiveSessionTracker?
     private var active = false
@@ -354,21 +476,11 @@ final class FakeTunnelTransport: TunnelTransporting {
         self.connectionMode = connectionMode
         self.results = results ?? [.success(connection)]
         self.tracker = tracker
-        let states = AsyncStream<TunnelState>.makeStream()
-        self.stateUpdates = states.stream
-        self.stateContinuation = states.continuation
-        let modes = AsyncStream<ConnectionMode?>.makeStream()
-        self.connectionModeUpdates = modes.stream
-        self.modeContinuation = modes.continuation
-        let attempts = AsyncStream<TunnelSupervisorAttemptState>.makeStream()
-        self.attemptStateUpdates = attempts.stream
-        self.attemptContinuation = attempts.continuation
-        modes.continuation.yield(connectionMode)
-        attempts.continuation.yield(.idle)
     }
 
     func emitAttemptState(_ state: TunnelSupervisorAttemptState) {
-        attemptContinuation.yield(state)
+        lastAttemptState = state
+        attemptContinuations.values.forEach { $0.yield(state) }
     }
 
     var pendingConnectCount: Int {
@@ -399,7 +511,31 @@ final class FakeTunnelTransport: TunnelTransporting {
         }
     }
 
-    func connect(pairing: StoredPairing, candidates _: [TransportEndpoint]) async throws -> TunnelTransportConnection {
+    func releasePendingConnect() {
+        if let conts = connectContinuations {
+            connectContinuations = []
+            conts.forEach { $0.resume() }
+        }
+    }
+
+    var onConnectHook: (@MainActor () -> Void)?
+    var onProxyStartingHook: (@MainActor () -> Void)?
+
+    func finishStateUpdates() {
+        stateContinuations.values.forEach { $0.finish() }
+        stateContinuations.removeAll()
+    }
+
+    func finishAttemptUpdates() {
+        attemptContinuations.values.forEach { $0.finish() }
+        attemptContinuations.removeAll()
+    }
+
+    func connect(
+        pairing: StoredPairing,
+        candidates _: [TransportEndpoint],
+        onLocalProxyStart: (@MainActor (Bool) -> Void)? = nil
+    ) async throws -> TunnelTransportConnection {
         connectInFlight += 1
         maxConnectInFlight = max(maxConnectInFlight, connectInFlight)
         defer {
@@ -407,11 +543,22 @@ final class FakeTunnelTransport: TunnelTransporting {
         }
         connectAttempts += 1
         connectedPairings.append(pairing)
+        onConnectHook?()
+        onLocalProxyStart?(true)
+        onProxyStartingHook?()
+        defer { onLocalProxyStart?(false) }
         let result = results.count > 1 ? results.removeFirst() : results[0]
         if connectContinuations != nil {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                connectContinuations?.append(continuation)
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    connectContinuations?.append(continuation)
+                }
+            } onCancel: {
+                Task { @MainActor in
+                    self.releasePendingConnect()
+                }
             }
+            try Task.checkCancellation()
         }
         switch result {
         case .success(let connection):
@@ -419,10 +566,12 @@ final class FakeTunnelTransport: TunnelTransporting {
                 active = true
                 tracker?.didConnect()
             }
-            modeContinuation.yield(connectionMode)
-            stateContinuation.yield(connection.via == .lan
+            modeContinuations.values.forEach { $0.yield(self.connectionMode) }
+            let s: TunnelState = connection.via == .lan
                 ? .connected(via: .lanDirect(host: "127.0.0.1", port: connection.localPort))
-                : .connected(via: URL(string: "ws://relay.example")!.relayConnectedVia))
+                : .connected(via: URL(string: "ws://relay.example")!.relayConnectedVia)
+            lastState = s
+            stateContinuations.values.forEach { $0.yield(s) }
             return connection
         case .failure(let error):
             throw error
@@ -440,7 +589,14 @@ final class FakeTunnelTransport: TunnelTransporting {
             active = false
             tracker?.didDisconnect()
         }
-        stateContinuation.yield(.disconnected)
+        lastState = .disconnected
+        lastAttemptState = .idle
+        stateContinuations.values.forEach { $0.finish() }
+        stateContinuations.removeAll()
+        modeContinuations.values.forEach { $0.finish() }
+        modeContinuations.removeAll()
+        attemptContinuations.values.forEach { $0.finish() }
+        attemptContinuations.removeAll()
     }
 
     func requestReconnect() async {
@@ -455,12 +611,13 @@ final class FakeTunnelTransport: TunnelTransporting {
     }
 
     func emit(_ state: TunnelState) {
-        stateContinuation.yield(state)
+        lastState = state
+        stateContinuations.values.forEach { $0.yield(state) }
     }
 
     func emitMode(_ mode: ConnectionMode?) {
         connectionMode = mode
-        modeContinuation.yield(mode)
+        modeContinuations.values.forEach { $0.yield(mode) }
     }
 
     func recordConstruction() {
@@ -691,24 +848,43 @@ final class ActualSupervisorRecorder: @unchecked Sendable {
     private var supervisors: [TunnelSupervisor] = []
     let children = SessionRecorder()
     private let armGate: Bool
+    private var sessionErrors: [Error?]
+    private let useActualSupervisor: Bool
 
-    init(armGate: Bool = false) {
+    init(armGate: Bool = false, sessionErrors: [Error?] = [], useActualSupervisor: Bool = false) {
         self.armGate = armGate
+        self.sessionErrors = sessionErrors
+        self.useActualSupervisor = useActualSupervisor
     }
 
-    var count: Int { lock.withLock { supervisors.count } }
+    var count: Int { lock.withLock { useActualSupervisor ? supervisors.count : children.count } }
     subscript(index: Int) -> TunnelSupervisor { lock.withLock { supervisors[index] } }
 
-    func make(pairing: StoredPairing, info: SPLClientInfo, policy: SessionPolicy) -> TunnelSupervisor {
+    func make(pairing: StoredPairing, info: SPLClientInfo, policy: SessionPolicy) -> any TunnelReconnecting {
         let arm = armGate
-        let supervisor = TunnelSupervisor(pairing: pairing, clientInfo: info, policy: policy,
-            makeSession: { [children] pairing, info, policy in
-                let child = FakeTunnelReconnectingSession(pairing: pairing, clientInfo: info, policy: policy, armConnectGate: arm)
-                children.append(child)
-                return child
-            })
-        lock.withLock { supervisors.append(supervisor) }
-        return supervisor
+        if useActualSupervisor {
+            let supervisor = TunnelSupervisor(
+                pairing: pairing,
+                clientInfo: info,
+                policy: policy,
+                makeSession: { [children, weak self] p, i, pol in
+                    let err: Error? = self?.lock.withLock {
+                        (self?.sessionErrors.isEmpty == false) ? self?.sessionErrors.removeFirst() : nil
+                    }
+                    let child = FakeTunnelReconnectingSession(pairing: p, clientInfo: i, policy: pol, shouldThrowOnConnect: err, armConnectGate: arm)
+                    children.append(child)
+                    return child
+                }
+            )
+            lock.withLock { supervisors.append(supervisor) }
+            return supervisor
+        }
+        let err: Error? = lock.withLock {
+            sessionErrors.isEmpty ? nil : sessionErrors.removeFirst()
+        }
+        let child = FakeTunnelReconnectingSession(pairing: pairing, clientInfo: info, policy: policy, shouldThrowOnConnect: err, armConnectGate: arm)
+        children.append(child)
+        return child
     }
 }
 

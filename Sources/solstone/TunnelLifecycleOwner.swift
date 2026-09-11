@@ -118,7 +118,8 @@ final class TunnelLifecycleOwner {
     }
     private(set) var hasPersistedPairing = false
     private(set) var supervisorAttemptState: TunnelSupervisorAttemptState = .idle
-    private(set) var isProxyStarting = false
+    private(set) var proxyStartAttemptID: UInt64? = nil
+    var isProxyStarting: Bool { proxyStartAttemptID == transportAttemptID }
     private(set) var isBackingOff = false
     private(set) var connectionVerdict: JournalConnectionVerdict = .neutral
     private(set) var isTunnelManaged = false
@@ -128,6 +129,13 @@ final class TunnelLifecycleOwner {
     private(set) var pendingDurableClear: (pairingGen: UInt64, accessGen: UInt64)?
     private(set) var transportAttemptID: UInt64 = 0
     private(set) var transportIncarnation: UInt64 = 0
+
+    private var isIntentionallyRetiring = false
+    private var rejectedAttemptIDs: Set<UInt64> = []
+    private var coalescedReconnectInFlight = false
+    private var retainedCandidate: (any TunnelTransporting)?
+    private var inFlightEstablishmentBackoffTask: Task<Void, any Error>?
+    private var inFlightConnectTask: Task<TunnelTransportConnection, any Error>?
 
     var localPort: Int? {
         guard case .connected(let localPort, _) = state else {
@@ -345,6 +353,18 @@ final class TunnelLifecycleOwner {
         health = .unknown
     }
 
+    func beginProxyStart(attempt: UInt64) {
+        guard attempt == transportAttemptID else { return }
+        proxyStartAttemptID = attempt
+        updateConnectionVerdict()
+    }
+
+    func endProxyStart(attempt: UInt64) {
+        guard proxyStartAttemptID == attempt else { return }
+        proxyStartAttemptID = nil
+        updateConnectionVerdict()
+    }
+
     func reevaluatePairing() async {
         transportAttemptID &+= 1
         journalVersion.clear()
@@ -373,7 +393,36 @@ final class TunnelLifecycleOwner {
     }
 
     public func requestCoalescedReconnect() async {
-        await transport?.requestReconnect()
+        if let transport {
+            await transport.requestReconnect()
+            return
+        }
+
+        guard running else { return }
+        guard !coalescedReconnectInFlight else { return }
+        coalescedReconnectInFlight = true
+
+        if establishmentInFlight {
+            if inFlightEstablishmentBackoffTask != nil {
+                inFlightEstablishmentBackoffTask?.cancel()
+                inFlightEstablishmentBackoffTask = nil
+            } else if inFlightConnectTask != nil {
+                if proxyStartAttemptID != transportAttemptID {
+                    transportAttemptID &+= 1
+                }
+                inFlightConnectTask?.cancel()
+                inFlightConnectTask = nil
+            }
+        } else {
+            startTask = Task { @MainActor [weak self] in
+                await self?.connect()
+            }
+        }
+    }
+
+    public func retryRevokedPairingRetirement() async {
+        let (pGen, aGen) = credentialStore.currentGenerations()
+        await retirePairingAndFailRevoked(expectedPairing: pGen, expectedAccess: aGen)
     }
 
     func handleWakeOrUnlock() async {
@@ -399,8 +448,7 @@ final class TunnelLifecycleOwner {
         updateConnectionVerdict()
         if case .connected(let port, _) = new {
             journalVersion.adoptConnectedPort(port)
-
-            if case .connected(let oldPort, _) = old, oldPort == port {
+            if case .connected(let oldPort, let oldVia) = old, oldPort == port, case .connected(_, let newVia) = new, oldVia == newVia {
                 return
             }
 
@@ -420,11 +468,9 @@ final class TunnelLifecycleOwner {
             let publicationBurst = publishingOptionalBurstID
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                let metadataBusy = await self.clientSelfSequencer.isBusy
-                let accessBusy = await self.relayAccessSequencer.isBusy
                 guard self.running, self.transportIncarnation == incarnation, self.localPort == port,
                       let pairing = self.currentStoredPairing() else { return }
-                if publicationBurst == nil && !metadataBusy && !accessBusy { self.optionalBurstID &+= 1 }
+                if publicationBurst == nil { self.optionalBurstID &+= 1 }
                 let burst = publicationBurst ?? self.optionalBurstID
                 let (pGen, aGen) = self.credentialStore.currentGenerations()
                 if let identity = journalVersionMetadataIdentity(for: pairing) {
@@ -596,34 +642,50 @@ final class TunnelLifecycleOwner {
                 self.supervisorAttemptState = attemptState
                 self.updateConnectionVerdict()
             }
+            guard let self, self.running, !Task.isCancelled, self.transportAttemptID == attempt, !self.isIntentionallyRetiring else { return }
+            self.handleUnexpectedAttemptStreamCompletion(forIncarnation: nil, forAttempt: attempt)
         }
         do {
-            if !hasLiveRoute {
-                isProxyStarting = true
-                updateConnectionVerdict()
-            }
-            connection = try await wait.connect(candidate, pairing: pairing, candidates: candidates, deadline: deadline)
-            if isProxyStarting {
-                isProxyStarting = false
-                updateConnectionVerdict()
-            }
+            connection = try await wait.connect(
+                candidate,
+                pairing: pairing,
+                candidates: candidates,
+                deadline: deadline,
+                onLocalProxyStart: { [weak self] starting in
+                    if starting {
+                        self?.beginProxyStart(attempt: attempt)
+                    } else {
+                        self?.endProxyStart(attempt: attempt)
+                    }
+                }
+            )
         } catch {
-            if isProxyStarting {
-                isProxyStarting = false
-                updateConnectionVerdict()
-            }
             splOwnerLog.error("replacement connect failed: \(String(describing: error), privacy: .public)")
             return
         }
         guard operationIsCurrent(pairing: pGen, access: aGen, attempt: attempt),
+              !rejectedAttemptIDs.contains(attempt),
               ContinuousClock.now < deadline else {
             await candidate.disconnect()
             return
         }
-        install(candidate, connection: connection, burstID: burstID)
+        install(candidate, connection: connection, attemptID: attempt, burstID: burstID)
     }
 
-    private func install(_ candidate: any TunnelTransporting, connection: TunnelTransportConnection, burstID: UInt64? = nil, initialHealth: TunnelHealth = .healthy) {
+    private func install(
+        _ candidate: any TunnelTransporting,
+        connection: TunnelTransportConnection,
+        attemptID: UInt64? = nil,
+        burstID: UInt64? = nil,
+        initialHealth: TunnelHealth = .healthy
+    ) {
+        if let attemptID {
+            guard !rejectedAttemptIDs.contains(attemptID) else {
+                splOwnerLog.notice("refusing install for rejected attempt \(attemptID)")
+                Task { await candidate.disconnect() }
+                return
+            }
+        }
         let oldTransport = transport
         transportIncarnation &+= 1
         transport = candidate
@@ -711,16 +773,25 @@ final class TunnelLifecycleOwner {
         establishmentInFlight = true
         defer {
             establishmentInFlight = false
+            coalescedReconnectInFlight = false
         }
 
         var establishmentAttempt = 1
-        var candidate: (any TunnelTransporting)?
         while running, !Task.isCancelled {
-            switch await connectOnceForEstablishment(candidate: &candidate) {
-            case .connected, .dormant, .terminal, .cancelled:
+            let outcome = await connectOnceForEstablishment()
+            switch outcome {
+            case .connected, .dormant, .terminal:
+                return
+
+            case .cancelled:
+                if coalescedReconnectInFlight && running && !Task.isCancelled {
+                    coalescedReconnectInFlight = false
+                    continue
+                }
                 return
 
             case .retry:
+                coalescedReconnectInFlight = false
                 state = .connecting
                 health = .unknown
                 isBackingOff = true
@@ -728,11 +799,22 @@ final class TunnelLifecycleOwner {
                 let delay = Self.jitter(Self.establishmentBackoff(forAttempt: establishmentAttempt))
                 establishmentAttempt += 1
                 splOwnerLog.debug("tunnel establishment retry attempt=\(establishmentAttempt, privacy: .public)")
+                let sleepTask: Task<Void, any Error> = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    try await self.sleep(delay)
+                }
+                inFlightEstablishmentBackoffTask = sleepTask
                 do {
-                    try await sleep(delay)
+                    try await sleepTask.value
+                    inFlightEstablishmentBackoffTask = nil
                 } catch {
+                    inFlightEstablishmentBackoffTask = nil
                     isBackingOff = false
                     updateConnectionVerdict()
+                    if coalescedReconnectInFlight && running && !Task.isCancelled {
+                        coalescedReconnectInFlight = false
+                        continue
+                    }
                     return
                 }
                 isBackingOff = false
@@ -741,7 +823,7 @@ final class TunnelLifecycleOwner {
         }
     }
 
-    private func connectOnceForEstablishment(candidate retainedCandidate: inout (any TunnelTransporting)?) async -> EstablishmentResult {
+    private func connectOnceForEstablishment() async -> EstablishmentResult {
         guard running, !Task.isCancelled else {
             return .cancelled
         }
@@ -785,41 +867,46 @@ final class TunnelLifecycleOwner {
                 self.supervisorAttemptState = attemptState
                 self.updateConnectionVerdict()
             }
+            guard let self, self.running, !Task.isCancelled, self.transportAttemptID == attemptID, !self.isIntentionallyRetiring else { return }
+            self.handleUnexpectedAttemptStreamCompletion(forIncarnation: nil, forAttempt: attemptID)
         }
         var loopbackAttempt = 0
-        while operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID) {
+        while operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID), !rejectedAttemptIDs.contains(attemptID) {
             do {
-                let hasLiveRoute = {
-                    if case .connected(let port, _) = state, establishedLoopbackPort == port, transport != nil {
-                        return true
-                    }
-                    return false
-                }()
-                if !hasLiveRoute {
-                    isProxyStarting = true
-                    updateConnectionVerdict()
+                let connectTask = Task<TunnelTransportConnection, any Error> { @MainActor in
+                    try await candidate.connect(
+                        pairing: pairing,
+                        candidates: candidates,
+                        onLocalProxyStart: { [weak self] starting in
+                            if starting {
+                                self?.beginProxyStart(attempt: attemptID)
+                            } else {
+                                self?.endProxyStart(attempt: attemptID)
+                            }
+                        }
+                    )
                 }
-                let connection = try await candidate.connect(pairing: pairing, candidates: candidates)
-                if isProxyStarting {
-                    isProxyStarting = false
-                    updateConnectionVerdict()
-                }
-                guard operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID) else {
+                inFlightConnectTask = connectTask
+                let connection = try await connectTask.value
+                inFlightConnectTask = nil
+                guard operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID),
+                      !rejectedAttemptIDs.contains(attemptID) else {
+                    splOwnerLog.notice("ignoring late tunnel connect success for rejected/superseded attempt=\(attemptID)")
                     await candidate.disconnect()
                     return .cancelled
                 }
-                install(candidate, connection: connection, initialHealth: .unknown)
+                install(candidate, connection: connection, attemptID: attemptID, initialHealth: .unknown)
                 return .connected
             } catch {
-                if isProxyStarting {
-                    isProxyStarting = false
-                    updateConnectionVerdict()
-                }
-                guard operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID) else {
+                inFlightConnectTask = nil
+                guard operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID),
+                      !rejectedAttemptIDs.contains(attemptID) else {
                     await candidate.disconnect()
                     return .cancelled
                 }
                 if error is CancellationError {
+                    attemptObservationTask?.cancel()
+                    attemptObservationTask = nil
                     await candidate.disconnect()
                     return .cancelled
                 }
@@ -827,16 +914,22 @@ final class TunnelLifecycleOwner {
                     let delay = Self.loopbackRetryDelays[loopbackAttempt]
                     loopbackAttempt += 1
                     do { try await sleep(delay) } catch {
+                        attemptObservationTask?.cancel()
+                        attemptObservationTask = nil
                         await candidate.disconnect()
                         return .cancelled
                     }
                     continue
                 }
+                attemptObservationTask?.cancel()
+                attemptObservationTask = nil
                 await candidate.disconnect()
-                guard operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID) else {
+                guard operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID),
+                      !rejectedAttemptIDs.contains(attemptID) else {
                     return .cancelled
                 }
                 if error is LoopbackProxyError {
+                    retainedCandidate = nil
                     state = .error(.loopbackUnavailable)
                     health = .unknown
                     return .terminal
@@ -844,12 +937,15 @@ final class TunnelLifecycleOwner {
                 if let sessionError = error as? SessionError {
                     switch sessionError {
                     case .authRefreshRequired:
+                        retainedCandidate = nil
                         beginReactiveTokenRefresh()
                         return .terminal
                     case .revoked:
+                        retainedCandidate = nil
                         await retirePairingAndFailRevoked(expectedPairing: pGen, expectedAccess: aGen)
                         return .terminal
                     case .notEntitled:
+                        retainedCandidate = nil
                         if case .connected(let localPort, _) = state, establishedLoopbackPort == localPort, transport != nil {
                             return .terminal
                         }
@@ -861,6 +957,8 @@ final class TunnelLifecycleOwner {
                 return .retry
             }
         }
+        attemptObservationTask?.cancel()
+        attemptObservationTask = nil
         await candidate.disconnect()
         return .cancelled
     }
@@ -869,6 +967,7 @@ final class TunnelLifecycleOwner {
         let observedRevision = credentialStore.currentGenerations()
         stateObservationTask?.cancel()
         modeObservationTask?.cancel()
+        attemptObservationTask?.cancel()
 
         stateObservationTask = Task { @MainActor [weak self] in
             var firstConnection = true
@@ -883,8 +982,8 @@ final class TunnelLifecycleOwner {
                 await self.handle(tunnelState, pairingRevision: observedRevision.pairingGeneration, accessRevision: observedRevision.accessMutationGeneration)
                 self.publishingOptionalBurstID = nil
             }
-            guard let self, self.running, !Task.isCancelled, self.transportIncarnation == generation, self.transport != nil else { return }
-            self.handleUnexpectedStreamCompletion()
+            guard let self, self.running, !Task.isCancelled, self.transportIncarnation == generation, !self.isIntentionallyRetiring else { return }
+            self.handleUnexpectedStateStreamCompletion(forIncarnation: generation)
         }
 
         modeObservationTask = Task { @MainActor [weak self] in
@@ -896,24 +995,107 @@ final class TunnelLifecycleOwner {
             }
         }
 
-        if attemptObservationTask == nil {
-            attemptObservationTask = Task { @MainActor [weak self] in
-                for await attempt in transport.attemptStateUpdates {
-                    guard let self, self.running, !Task.isCancelled, self.transportIncarnation == generation else {
-                        return
-                    }
-                    self.supervisorAttemptState = attempt
-                    self.updateConnectionVerdict()
+        attemptObservationTask = Task { @MainActor [weak self] in
+            var firstAttempt = true
+            for await attempt in transport.attemptStateUpdates {
+                guard let self, self.running, !Task.isCancelled, self.transportIncarnation == generation else {
+                    return
                 }
+                let oldAttempt = self.supervisorAttemptState
+                self.supervisorAttemptState = attempt
+                self.updateConnectionVerdict()
+                if !firstAttempt, oldAttempt != .connected, attempt == .connected, case .connected(let port, _) = self.state {
+                    let incarnation = self.transportIncarnation
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        guard self.running, self.transportIncarnation == incarnation, self.localPort == port,
+                              let pairing = self.currentStoredPairing() else { return }
+                        self.optionalBurstID &+= 1
+                        let burst = self.optionalBurstID
+                        let (pGen, aGen) = self.credentialStore.currentGenerations()
+                        if let identity = journalVersionMetadataIdentity(for: pairing) {
+                            await self.clientSelfSequencer.enqueue(
+                                target: .init(localPort: port, identity: identity, pairingGeneration: pGen,
+                                              metadataGeneration: self.journalVersion.currentGeneration()),
+                                burstID: burst
+                            )
+                        }
+                        await self.relayAccessSequencer.enqueue(
+                            target: .init(localPort: port, instanceID: pairing.instanceID,
+                                          pairingGeneration: pGen, accessMutationGeneration: aGen, transportAttempt: self.transportAttemptID),
+                            burstID: burst
+                        )
+                    }
+                }
+                firstAttempt = false
             }
+            guard let self, self.running, !Task.isCancelled, self.transportIncarnation == generation, !self.isIntentionallyRetiring else { return }
+            self.handleUnexpectedAttemptStreamCompletion(forIncarnation: generation, forAttempt: nil)
         }
     }
 
-    private func handleUnexpectedStreamCompletion() {
+    func handleUnexpectedStateStreamCompletion(forIncarnation incarnation: UInt64?) {
+        guard running, !Task.isCancelled, !isIntentionallyRetiring else { return }
+        if let incarnation, transportIncarnation != incarnation { return }
+
+        splOwnerLog.notice("unexpected tunnel state stream completion observed (incarnation=\(incarnation ?? 0), attempt=\(self.transportAttemptID))")
+
+        let currentAttempt = transportAttemptID
+        rejectedAttemptIDs.insert(currentAttempt)
+
+        inFlightConnectTask?.cancel()
+        inFlightConnectTask = nil
+
+        if proxyStartAttemptID != currentAttempt {
+            transportAttemptID &+= 1
+        }
+
         stopProbe()
+        transport = nil
+        establishedLoopbackPort = nil
+        stateObservationTask?.cancel()
+        stateObservationTask = nil
+        modeObservationTask?.cancel()
+        modeObservationTask = nil
+        attemptObservationTask?.cancel()
+        attemptObservationTask = nil
         state = .disconnected
         health = .unknown
         supervisorAttemptState = .idle
+        updateConnectionVerdict()
+    }
+
+    func handleUnexpectedAttemptStreamCompletion(
+        forIncarnation incarnation: UInt64?,
+        forAttempt attempt: UInt64?
+    ) {
+        guard running, !Task.isCancelled, !isIntentionallyRetiring else { return }
+        if let incarnation, transportIncarnation != incarnation { return }
+        if let attempt, transportAttemptID != attempt { return }
+
+        splOwnerLog.notice("unexpected tunnel attempt stream completion observed (incarnation=\(incarnation ?? 0), attempt=\(attempt ?? self.transportAttemptID))")
+
+        supervisorAttemptState = .idle
+
+        if case .connected(let localPort, _) = state,
+           establishedLoopbackPort == localPort,
+           transport != nil {
+            updateConnectionVerdict()
+            return
+        }
+
+        let currentAttempt = attempt ?? transportAttemptID
+        rejectedAttemptIDs.insert(currentAttempt)
+
+        inFlightConnectTask?.cancel()
+        inFlightConnectTask = nil
+
+        if proxyStartAttemptID != currentAttempt {
+            transportAttemptID &+= 1
+        }
+
+        state = .disconnected
+        health = .unknown
         updateConnectionVerdict()
     }
 
@@ -1383,6 +1565,9 @@ final class TunnelLifecycleOwner {
 
     private func becomeDormant(tunnelManaged: Bool) {
         isTunnelManaged = tunnelManaged
+        inFlightConnectTask?.cancel()
+        inFlightConnectTask = nil
+        retainedCandidate = nil
         state = .disconnected
         health = .unknown
         updateConnectionVerdict()
@@ -1435,9 +1620,14 @@ final class TunnelLifecycleOwner {
     }
 
     private func disconnectCurrentTransport(deadline: ContinuousClock.Instant? = nil) async {
+        isIntentionallyRetiring = true
+        defer { isIntentionallyRetiring = false }
         journalVersion.disconnected()
         stopProbe()
         establishedLoopbackPort = nil
+        inFlightConnectTask?.cancel()
+        inFlightConnectTask = nil
+        retainedCandidate = nil
         stateObservationTask?.cancel()
         stateObservationTask = nil
         modeObservationTask?.cancel()
@@ -1655,7 +1845,8 @@ private final class CandidateConnectionWait {
         _ candidate: any TunnelTransporting,
         pairing: StoredPairing,
         candidates: [TransportEndpoint],
-        deadline: ContinuousClock.Instant
+        deadline: ContinuousClock.Instant,
+        onLocalProxyStart: (@MainActor (Bool) -> Void)? = nil
     ) async throws -> TunnelTransportConnection {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -1667,7 +1858,11 @@ private final class CandidateConnectionWait {
                 }
                 operation = Task { @MainActor in
                     do {
-                        let connection = try await candidate.connect(pairing: pairing, candidates: candidates)
+                        let connection = try await candidate.connect(
+                            pairing: pairing,
+                            candidates: candidates,
+                            onLocalProxyStart: onLocalProxyStart
+                        )
                         guard !self.completed, ContinuousClock.now < deadline else {
                             await candidate.disconnect()
                             self.finish(.failure(BoundedLoopbackClientError.timedOut))

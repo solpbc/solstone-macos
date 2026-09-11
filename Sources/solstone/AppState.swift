@@ -448,6 +448,10 @@ public final class AppState {
         uploadCoordinator.refreshLastJournalDelivery()
     }
 
+    internal func retryRevokedPairingRetirement() async {
+        await tunnelLifecycleOwner.retryRevokedPairingRetirement()
+    }
+
     internal var isPairedHome: Bool {
         tunnelLifecycleOwner.isPairedHome
     }

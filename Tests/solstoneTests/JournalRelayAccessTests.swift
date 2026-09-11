@@ -856,7 +856,7 @@ extension JournalRelayAccessTests {
         let initial = pairing(instanceID: "test-instance", deviceToken: "old-token")
         let disk = PairingStore(pairing: initial)
         let credentials = PairingCredentialStore(store: disk)
-        let supervisors = ActualSupervisorRecorder()
+        let supervisors = ActualSupervisorRecorder(useActualSupervisor: true)
         let owner = TunnelLifecycleOwner(
             credentialStore: credentials,
             tokenRefresher: FakeTokenRefresher().seam,
@@ -912,7 +912,7 @@ extension JournalRelayAccessTests {
         let initial = pairing(instanceID: "test-instance", deviceToken: "old-token")
         let disk = PairingStore(pairing: initial, saveError: clearFails ? SPLKeychainError.saveFailed(status: -1) : nil)
         let credentials = PairingCredentialStore(store: disk)
-        let supervisors = ActualSupervisorRecorder()
+        let supervisors = ActualSupervisorRecorder(useActualSupervisor: true)
         let first = SPLTunnelTransport(makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) })
         let candidate = FakeTunnelTransport(connectionMode: .plDirect, connection: .init(localPort: 29991, via: .lan))
         candidate.armConnectGate()
