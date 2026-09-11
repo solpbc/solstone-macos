@@ -52,8 +52,7 @@ Rows:
 - Screen recording row: required for all topologies. Uses `screenPermissionOutcome`.
 - Microphone row: required for all topologies. Uses `microphonePermissionOutcome`.
 - Journal app row: required only for `local`; for `remote` and `undecided`, emits `notRequired` with "not needed on this Mac" semantics and does not vote.
-- `sol` wrapper row: required only for `local`; for `remote` and `undecided`, emits `notRequired` and does not vote.
-- `journal` wrapper row: required only for `local`; for `remote` and `undecided`, emits `notRequired` and does not vote.
+- Command-line tools row: probes the `solstone` and `journal` wrappers, is informational for every topology, and never votes.
 - Last sync row: always non-voting. Shows last successful contact, never synced, couldn't check, or not applicable. It never affects verdict.
 
 Verdict rollup:
@@ -311,7 +310,7 @@ No background timer:
 Structure:
 
 - Native `GroupBox("check my setup")`.
-- Place immediately after `healthSummaryCard` and before the existing `GroupBox("sol")`.
+- Place immediately after `healthSummaryCard` and before the existing `GroupBox("solstone")`.
 - Use `LabeledContent` rows for stable labels and values.
 - Use SF Symbols plus text for every state; never color alone.
 - Use semantic system colors only.
