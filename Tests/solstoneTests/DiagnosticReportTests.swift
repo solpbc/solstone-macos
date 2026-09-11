@@ -32,8 +32,8 @@ struct DiagnosticReportTests {
         screen and audio: on
         last added to your journal: 2m ago
         last journal connection: just now
-        journal ingest: http_404
-        journal ingest route: /app/devices/ingest/manifest
+        journal intake: http_404
+        journal intake address: /app/devices/ingest/manifest
         recent state codes: app.launch · first 1970-01-01T00:15:00.000Z · last 1970-01-01T00:15:50.000Z · repeat 3
         """)
         #expect(report.screenRecordingState == .granted)

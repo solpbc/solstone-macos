@@ -193,7 +193,7 @@ public struct UploadClient: Sendable {
         } catch let UploadError.serverError(statusCode, _) {
             switch statusCode {
             case 403:
-                return "this Mac is disabled"
+                return "pairing was revoked. pair again to reconnect."
             case 404:
                 return "journal endpoint not found (update solstone?)"
             default:
