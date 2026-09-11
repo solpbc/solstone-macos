@@ -38,13 +38,13 @@ class GithubReleaseDryRunTest(unittest.TestCase):
             "APP=sol\n"
             "VERSION=1.2.3\n"
             "TAG=v1.2.3\n"
-            "DMG=sol-1.2.3.dmg\n"
-            "TITLE=solstone-macos 1.2.3\n"
+            "DMG=solstone-1.2.3.dmg\n"
+            "TITLE=solstone 1.2.3 for macos\n"
             "CHANGELOG=CHANGELOG.md\n"
             "LATEST_ARGS=(default)\n"
-            "git tag -a v1.2.3 -m 'solstone-macos 1.2.3'\n"
+            "git tag -a v1.2.3 -m 'solstone 1.2.3 for macos'\n"
             "git push origin v1.2.3\n"
-            "gh release create v1.2.3 sol-1.2.3.dmg --title 'solstone-macos 1.2.3' --notes-file <notes> \n",
+            "gh release create v1.2.3 solstone-1.2.3.dmg --title 'solstone 1.2.3 for macos' --notes-file <notes> \n",
         )
 
     def test_journal_release_shape(self):
@@ -272,8 +272,8 @@ class GithubReleaseRecoveryTest(unittest.TestCase):
     def make_sol_workspace(self, *, release_json=None, local_tag=HEAD, remote_tag=HEAD):
         return self.make_app_workspace(
             tag="v1.2.3",
-            dmg_name="sol-1.2.3.dmg",
-            title="solstone-macos 1.2.3",
+            dmg_name="solstone-1.2.3.dmg",
+            title="solstone 1.2.3 for macos",
             changelog_path="CHANGELOG.md",
             changelog_text=(
                 "# solstone\n\n"

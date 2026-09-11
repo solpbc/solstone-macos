@@ -1,5 +1,3 @@
-<img src="docs/static/sol-wordmark.svg" alt="solstone" width="300">
-
 # The solstone app for mac
 
 The solstone app runs on your mac.

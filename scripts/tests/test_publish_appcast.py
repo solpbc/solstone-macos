@@ -56,7 +56,7 @@ class BuildItemMarkdownFormatTest(unittest.TestCase):
         self.assertIsNotNone(description)
         self.assertEqual(description.text, notes)
 
-    def test_sol_pubdate_can_be_frozen_and_dmg_name_is_sol_prefixed(self):
+    def test_solstone_pubdate_can_be_frozen_and_dmg_name_is_solstone_prefixed(self):
         module = load_publish_appcast()
         config = module.APP_CONFIG["sol"]
         dmg_name = config["dmg_name"].format(version="1.2.3")
@@ -71,9 +71,9 @@ class BuildItemMarkdownFormatTest(unittest.TestCase):
             now=datetime(2026, 7, 5, 12, 34, tzinfo=timezone.utc),
         )
 
-        self.assertEqual(dmg_name, "sol-1.2.3.dmg")
+        self.assertEqual(dmg_name, "solstone-1.2.3.dmg")
         self.assertEqual(item.find("pubDate").text, "Sun, 05 Jul 2026 12:34:00 GMT")
-        self.assertTrue(item.find("enclosure").get("url").endswith("/sol-1.2.3.dmg"))
+        self.assertTrue(item.find("enclosure").get("url").endswith("/solstone-1.2.3.dmg"))
 
 
 class AppConfigTest(unittest.TestCase):
@@ -86,8 +86,10 @@ class AppConfigTest(unittest.TestCase):
         self.assertEqual(sol["staging_prefix"], "solstone-macos/_staging")
         self.assertEqual(sol["plist_path"], "Sources/solstone/Info.plist")
         self.assertEqual(sol["changelog_path"], "CHANGELOG.md")
-        self.assertEqual(sol["dmg_name"].format(version="1.2.3"), "sol-1.2.3.dmg")
-        self.assertEqual(sol["item_title"].format(version="1.2.3"), "Solstone 1.2.3")
+        self.assertEqual(sol["dmg_name"].format(version="1.2.3"), "solstone-1.2.3.dmg")
+        self.assertEqual(sol["item_title"].format(version="1.2.3"), "solstone 1.2.3")
+        self.assertEqual(sol["seed_title"], "solstone")
+        self.assertEqual(sol["seed_description"], "solstone for macos updates")
 
         self.assertEqual(journal["prod_prefix"], "journal-macos")
         self.assertEqual(journal["staging_prefix"], "journal-macos/_staging")
@@ -97,6 +99,40 @@ class AppConfigTest(unittest.TestCase):
         self.assertEqual(journal["dmg_name"].format(version="1.0.0", build="14"), identity.dmg_name)
         self.assertEqual(journal["item_title"].format(version="1.0.0", build="14"), identity.appcast_item_title)
         self.assertNotEqual(journal["plist_path"], sol["plist_path"])
+
+    def test_existing_appcast_adopts_current_channel_identity_without_changing_items(self):
+        module = load_publish_appcast()
+        config = module.APP_CONFIG["sol"]
+        tree = module.seed_appcast(config, config["prod_prefix"])
+        channel = tree.getroot().find("channel")
+        channel.find("title").text = "old app name"
+        channel.find("description").text = "old app description"
+        item = module.build_item(
+            config,
+            "1.2.2",
+            8,
+            "signature",
+            123,
+            "https://example.com/old.dmg",
+            "notes",
+        )
+        channel.append(item)
+        item_before = module.ET.tostring(item)
+
+        module.update_channel_identity(tree, config)
+
+        self.assertEqual(channel.find("title").text, "solstone")
+        self.assertEqual(channel.find("description").text, "solstone for macos updates")
+        self.assertEqual(module.ET.tostring(channel.find("item")), item_before)
+
+    def test_existing_appcast_requires_complete_channel_metadata(self):
+        module = load_publish_appcast()
+        config = module.APP_CONFIG["sol"]
+        tree = module.seed_appcast(config, config["prod_prefix"])
+        tree.getroot().find("channel").remove(tree.getroot().find("channel/title"))
+
+        with self.assertRaises(SystemExit):
+            module.update_channel_identity(tree, config)
 
 
 class PreflightWranglerTest(unittest.TestCase):

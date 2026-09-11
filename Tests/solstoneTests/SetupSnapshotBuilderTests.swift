@@ -51,55 +51,61 @@ struct SetupSnapshotBuilderTests {
         #expect(states(in: presentation)[.screenRecording] == .checking)
     }
 
-    @Test func commandLineToolMixedWrapperStatesKeepKnownMissingAction() {
+    @Test func commandLineToolsAreInformationalInEveryProbeState() {
         let unavailableThenMissing = buildSetupSnapshot(input(
-            solWrapperExecutable: .unavailable,
+            solstoneWrapperExecutable: .unavailable,
             journalWrapperExecutable: .needsAttention
         ))
         #expect(states(in: unavailableThenMissing)[.commandLineTools] == .unavailable)
-        #expect(row(.commandLineTools, in: unavailableThenMissing).action == .openJournalSettings)
+        #expect(row(.commandLineTools, in: unavailableThenMissing).action == nil)
 
         let missingThenUnavailable = buildSetupSnapshot(input(
-            solWrapperExecutable: .needsAttention,
+            solstoneWrapperExecutable: .needsAttention,
             journalWrapperExecutable: .unavailable
         ))
         #expect(states(in: missingThenUnavailable)[.commandLineTools] == .unavailable)
-        #expect(row(.commandLineTools, in: missingThenUnavailable).action == .openJournalSettings)
+        #expect(row(.commandLineTools, in: missingThenUnavailable).action == nil)
 
         let checkingThenMissing = buildSetupSnapshot(input(
-            solWrapperExecutable: .checking,
+            solstoneWrapperExecutable: .checking,
             journalWrapperExecutable: .needsAttention
         ))
         #expect(states(in: checkingThenMissing)[.commandLineTools] == .checking)
-        #expect(row(.commandLineTools, in: checkingThenMissing).action == .openJournalSettings)
+        #expect(row(.commandLineTools, in: checkingThenMissing).action == nil)
 
         let bothUnavailable = buildSetupSnapshot(input(
-            solWrapperExecutable: .unavailable,
+            solstoneWrapperExecutable: .unavailable,
             journalWrapperExecutable: .unavailable
         ))
         #expect(states(in: bothUnavailable)[.commandLineTools] == .unavailable)
         #expect(row(.commandLineTools, in: bothUnavailable).action == nil)
 
         let bothMissing = buildSetupSnapshot(input(
-            solWrapperExecutable: .needsAttention,
+            solstoneWrapperExecutable: .needsAttention,
             journalWrapperExecutable: .needsAttention
         ))
-        #expect(states(in: bothMissing)[.commandLineTools] == .needsAttention)
-        #expect(row(.commandLineTools, in: bothMissing).action == .openJournalSettings)
+        #expect(states(in: bothMissing)[.commandLineTools] == .notRequired)
+        #expect(row(.commandLineTools, in: bothMissing).value == UICopy.SETTINGS_SETUP_COMMAND_LINE_TOOLS_NOT_INSTALLED)
+        #expect(row(.commandLineTools, in: bothMissing).action == nil)
+        #expect(bothMissing.verdict == .ready)
 
         let bothReady = buildSetupSnapshot(input(
-            solWrapperExecutable: .ready,
+            solstoneWrapperExecutable: .ready,
             journalWrapperExecutable: .ready
         ))
         #expect(states(in: bothReady)[.commandLineTools] == .ready)
         #expect(row(.commandLineTools, in: bothReady).action == nil)
+
+        for presentation in [unavailableThenMissing, missingThenUnavailable, checkingThenMissing, bothUnavailable, bothMissing, bothReady] {
+            #expect(!row(.commandLineTools, in: presentation).votes)
+        }
     }
 
     @Test func remoteTopologyMakesLocalArtifactsNonVoting() {
         let presentation = buildSetupSnapshot(input(
             topology: .remote,
             journalAppInstalled: .needsAttention,
-            solWrapperExecutable: .needsAttention,
+            solstoneWrapperExecutable: .needsAttention,
             journalWrapperExecutable: .needsAttention
         ))
 
@@ -115,7 +121,7 @@ struct SetupSnapshotBuilderTests {
             topology: .local,
             journalAppInstalled: .needsAttention,
             serviceIsDone: false,
-            solWrapperExecutable: .needsAttention,
+            solstoneWrapperExecutable: .needsAttention,
             journalWrapperExecutable: .needsAttention
         ))
 
@@ -158,7 +164,7 @@ struct SetupSnapshotBuilderTests {
         solAppPlacement: SetupProbeOutcome = .ready,
         journalAppInstalled: SetupProbeOutcome = .ready,
         serviceIsDone: Bool = true,
-        solWrapperExecutable: SetupProbeOutcome = .ready,
+        solstoneWrapperExecutable: SetupProbeOutcome = .ready,
         journalWrapperExecutable: SetupProbeOutcome = .ready,
         screenRecording: PermissionOutcome = .granted,
         microphone: PermissionOutcome = .granted,
@@ -169,7 +175,7 @@ struct SetupSnapshotBuilderTests {
             solAppPlacement: solAppPlacement,
             journalAppInstalled: journalAppInstalled,
             serviceIsDone: serviceIsDone,
-            solWrapperExecutable: solWrapperExecutable,
+            solstoneWrapperExecutable: solstoneWrapperExecutable,
             journalWrapperExecutable: journalWrapperExecutable,
             screenRecording: screenRecording,
             microphone: microphone,

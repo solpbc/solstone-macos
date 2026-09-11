@@ -54,11 +54,11 @@ class ReleaseIdentityTest(unittest.TestCase):
         identity = module.build_identity("sol", short_version="1.2.3").as_dict()
 
         self.assertEqual(identity["github_tag"], "v1.2.3")
-        self.assertEqual(identity["dmg_name"], "sol-1.2.3.dmg")
-        self.assertEqual(identity["github_title"], "solstone-macos 1.2.3")
-        self.assertEqual(identity["appcast_item_title"], "Solstone 1.2.3")
+        self.assertEqual(identity["dmg_name"], "solstone-1.2.3.dmg")
+        self.assertEqual(identity["github_title"], "solstone 1.2.3 for macos")
+        self.assertEqual(identity["appcast_item_title"], "solstone 1.2.3")
         self.assertEqual(
-            identity["dmg_key"], "solstone-macos/releases/v1.2.3/sol-1.2.3.dmg"
+            identity["dmg_key"], "solstone-macos/releases/v1.2.3/solstone-1.2.3.dmg"
         )
         self.assertEqual(identity["changelog_key"], "1.2.3")
 
@@ -123,6 +123,16 @@ class ReleaseIdentityTest(unittest.TestCase):
 
 
 class MakefileJournalIdentityContractTest(unittest.TestCase):
+    def test_solstone_and_paired_dmg_identity(self):
+        text = MAKEFILE.read_text()
+
+        self.assertIn("BOTH_DMG_NAME          ?= solstone-and-journal-$(DIST_VERSION).dmg", text)
+        self.assertIn("DMG_VOLNAME            ?= solstone", text)
+        self.assertIn('--volname "solstone + journal"', text)
+        self.assertNotIn("BOTH_DMG_NAME          ?= sol-journal-$(DIST_VERSION).dmg", text)
+        self.assertNotIn("DMG_VOLNAME            ?= sol\n", text)
+        self.assertNotIn('--volname "sol + journal"', text)
+
     def target_block(self, target):
         text = MAKEFILE.read_text()
         start = text.index(f"{target}:")

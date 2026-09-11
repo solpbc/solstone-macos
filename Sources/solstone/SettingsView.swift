@@ -829,7 +829,7 @@ struct SettingsView: View {
             setupProbeSnapshot = SetupProbeSnapshot(
                 solAppPlacement: solAppPlacementOutcome(),
                 journalAppInstalled: runningJournalController.installedURL() == nil ? .needsAttention : .ready,
-                solWrapperExecutable: wrapperExecutableOutcome(named: "sol"),
+                solstoneWrapperExecutable: wrapperExecutableOutcome(named: "solstone"),
                 journalWrapperExecutable: wrapperExecutableOutcome(named: "journal"),
                 hasPromptedScreenRecording: permissionChecker.hasPromptedScreenRecording,
                 screenDiagnostic: screenDiagnostic
@@ -2496,7 +2496,7 @@ struct SettingsView: View {
             solAppPlacement: setupProbeSnapshot.solAppPlacement,
             journalAppInstalled: setupProbeSnapshot.journalAppInstalled,
             serviceIsDone: appState.serviceIsDone,
-            solWrapperExecutable: setupProbeSnapshot.solWrapperExecutable,
+            solstoneWrapperExecutable: setupProbeSnapshot.solstoneWrapperExecutable,
             journalWrapperExecutable: setupProbeSnapshot.journalWrapperExecutable,
             screenRecording: screenOutcome,
             microphone: microphoneOutcome,

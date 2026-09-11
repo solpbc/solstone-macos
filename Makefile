@@ -8,7 +8,7 @@
 .DEFAULT_GOAL := build
 
 # Brand asset source — REQUIRED by `make brand-sync` (no default). Point it at
-# your sol brand asset directory: BRAND_DIR=/path/to/brand make brand-sync
+# your solstone brand asset directory: BRAND_DIR=/path/to/brand make brand-sync
 BRAND_DIR ?=
 
 # ---------------------------------------------------------------------------
@@ -39,8 +39,8 @@ DMG_NAME               ?= $(shell $(RELEASE_IDENTITY) identity --app sol --versi
 JOURNAL_DIST_VERSION   := $(shell $(RELEASE_IDENTITY) identity --app journal --plist Sources/journal/Info.plist --field short_version 2>/dev/null || echo 0.0.0)
 JOURNAL_DIST_BUILD     := $(shell $(RELEASE_IDENTITY) identity --app journal --plist Sources/journal/Info.plist --field bundle_version 2>/dev/null || echo 0)
 JOURNAL_DMG_NAME       ?= $(shell $(RELEASE_IDENTITY) identity --app journal --version '$(JOURNAL_DIST_VERSION)' --build '$(JOURNAL_DIST_BUILD)' --field dmg_name)
-BOTH_DMG_NAME          ?= sol-journal-$(DIST_VERSION).dmg
-DMG_VOLNAME            ?= sol
+BOTH_DMG_NAME          ?= solstone-and-journal-$(DIST_VERSION).dmg
+DMG_VOLNAME            ?= solstone
 DMG_APP                ?= solstone.app
 DMG_ICON               ?= solstone.app
 SPARKLE_ARTIFACT_DIR   ?= .build/artifacts/sparkle/Sparkle
@@ -247,7 +247,7 @@ generate-bundle-config: check-versions
 # (sol-ring-mb-*) are a separate template family, already on the ruled
 # construction, and are not overwritten here.
 brand-sync:
-	@test -n "$(BRAND_DIR)" || { echo "brand: BRAND_DIR is required — point it at your sol brand asset directory (BRAND_DIR=/path/to/brand make brand-sync)"; exit 1; }
+	@test -n "$(BRAND_DIR)" || { echo "brand: BRAND_DIR is required — point it at your solstone brand asset directory (BRAND_DIR=/path/to/brand make brand-sync)"; exit 1; }
 	@test -d "$(BRAND_DIR)" || { echo "brand: BRAND_DIR=$(BRAND_DIR) not found"; exit 1; }
 	cp "$(BRAND_DIR)/mark.svg" assets/mark.svg
 	# macOS app icon uses the macOS-convention squircle source (inset rounded-rect
@@ -448,7 +448,7 @@ release-preflight: signing-check
 #   VERSION  required, semver — sets CFBundleShortVersionString
 #   BUILD    required, integer — sets CFBundleVersion (must be > current)
 #
-# Side effects: sol Info.plist updated via plutil; the staged CHANGELOG.md
+# Side effects: solstone Info.plist updated via plutil; the staged CHANGELOG.md
 # Unreleased notes become the new dated version and one empty Unreleased
 # section remains above them. Does NOT commit.
 bump-release:
@@ -824,7 +824,7 @@ dmg-both:
 		cp -R journal.app "$$STAGING/"; \
 		rm -f $(BOTH_DMG_NAME); \
 		create-dmg \
-		  --volname "sol + journal" \
+		  --volname "solstone + journal" \
 		  --background assets/dmg-background@2x.png \
 		  --window-pos 200 200 \
 		  --window-size 840 400 \
@@ -964,7 +964,7 @@ release-dmg-both:
 	@$(MAKE) verify-notarization-both
 	@echo ""
 	@echo "✅ Distribution DMGs ready:"
-	@echo "   sol:     $(DMG_NAME)"
+	@echo "   solstone: $(DMG_NAME)"
 	@echo "   journal: $(JOURNAL_DMG_NAME)"
 	@echo "   both:    $(BOTH_DMG_NAME)"
 

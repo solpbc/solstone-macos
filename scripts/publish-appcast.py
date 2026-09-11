@@ -4,7 +4,7 @@ Publish a Sparkle 2 auto-update release.
 Usage:
   publish-appcast.py <version> --app {sol,journal} [--build <build>] [--staging]
 Inputs:
-  - ./sol-<version>.dmg or ./journal-<version>-build-<build>.dmg in CWD
+  - ./solstone-<version>.dmg or ./journal-<version>-build-<build>.dmg in CWD
   - app Info.plist (CFBundleVersion int, CFBundleShortVersionString must equal <version>)
   - app changelog (## [<version>] or ## [<version> (build <build>)] block)
   - $SOLSTONE_SPARKLE_KEY_PATH (default /tmp/sparkle-priv.key), mode 600, 44-byte base64 Ed25519 seed
@@ -187,6 +187,21 @@ def seed_appcast(config: dict[str, str], prefix: str) -> ET.ElementTree:
     ET.SubElement(channel, "description").text = config["seed_description"]
     ET.SubElement(channel, "language").text = "en"
     return ET.ElementTree(rss)
+
+def update_channel_identity(tree: ET.ElementTree, config: dict[str, str]) -> None:
+    root = tree.getroot()
+    if root.tag != "rss":
+        die("appcast.xml: root element must be rss")
+    channels = root.findall("channel")
+    if len(channels) != 1:
+        die(f"appcast.xml: expected exactly one channel element, found {len(channels)}")
+    channel = channels[0]
+    for field in ("title", "link", "description", "language"):
+        elements = channel.findall(field)
+        if len(elements) != 1 or not (elements[0].text or "").strip():
+            die(f"appcast.xml: expected exactly one non-empty channel {field}")
+    channel.find("title").text = config["seed_title"]
+    channel.find("description").text = config["seed_description"]
 
 def build_item(
     config: dict[str, str],
@@ -533,6 +548,7 @@ def main() -> None:
         if not args.first_publish:
             die(f"{identity.appcast_url}: appcast not found (HTTP 404); pass --first-publish only when intentionally creating a new feed")
         tree = seed_appcast(config, identity.feed_prefix)
+    update_channel_identity(tree, config)
     item = build_item(
         config,
         args.version,

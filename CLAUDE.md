@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-solstone-macos is the repository for sol on macOS. sol is the status bar app in the solstone platform. it lives on the owner's mac, experiences screen and audio alongside them, and keeps it all in their journal. it takes in all connected displays at 1 FPS and system/microphone audio in five-minute segments (per-source M4A files remixed at segment boundaries), supports pause, and sends each finished segment to the owner's journal automatically.
+solstone-macos is the repository for the solstone app on macOS. The solstone app takes in what you share with it, and all of it goes into your journal. It takes in connected displays at 1 FPS and system/microphone audio in five-minute segments (per-source M4A files remixed at segment boundaries), supports pause, and sends each finished segment to the owner's journal automatically.
 
 ## Build Commands
 

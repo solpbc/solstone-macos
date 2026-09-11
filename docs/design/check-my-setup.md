@@ -37,7 +37,7 @@ Input fields and sources:
 - `placementOutcome`: from an injected cheap placement probe. Source should reuse the existing placement repair/check area, not open-code bundle path logic in the builder.
 - `journalAppInstalledOutcome`: from `RunningJournalController.installedURL()` through the existing `LiveRunningJournalController` seam.
 - `serviceIsDone`: from `AppState.serviceIsDone`.
-- `solWrapperExecutableOutcome`: injected filesystem/executable probe for the `sol` wrapper.
+- `solstoneWrapperExecutable`: injected filesystem/executable probe for the `solstone` wrapper.
 - `journalWrapperExecutableOutcome`: injected filesystem/executable probe for the `journal` wrapper.
 - `screenPermissionOutcome`: pure `PermissionOutcome`, derived outside the snapshot builder.
 - `microphonePermissionOutcome`: pure `PermissionOutcome`, derived outside the snapshot builder.
