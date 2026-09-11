@@ -2136,7 +2136,7 @@ struct SettingsView: View {
             case .pairingStarted, .notEligible:
                 localLinkInProgress = false
                 localDiscoveryCompleted = true
-                showPairingFlow = true
+                showPairingFlow = false
             case .failed:
                 localLinkInProgress = false
                 localLinkError = "couldn't connect to your journal. try again."
