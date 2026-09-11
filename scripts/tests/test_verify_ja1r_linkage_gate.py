@@ -198,10 +198,9 @@ def spl_link_lane_subset(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
         "to_build": SOL_B,
         "checks": {key: True for key in verifier.SPL_LINK_CHECK_KEYS},
         "oracles": {
-            "serverkey_trimmed_nonempty": True,
-            "servicemode_external": True,
-            "last_synced_fresh": True,
-            "serverkey_sha256": "f" * 64,
+            "delivery_identity_present": True,
+            "delivery_fresh": True,
+            "delivery_identity_sha256": "f" * 64,
         },
         "freshness": {
             "last_synced_pre_raw": None,
@@ -792,7 +791,7 @@ class SPLLinkCoordinatorReport(GateTestCase):
     def test_nested_spl_link_objects_reject_missing_and_extra_keys(self):
         cases = (
             ("lane.checks", "initial_reset_clean"),
-            ("lane.oracles", "serverkey_sha256"),
+            ("lane.oracles", "delivery_identity_sha256"),
             ("lane.freshness", "ok"),
             ("lane.provenance", "commit"),
             ("lane.provenance.contracts", "sol_sha256"),
@@ -1016,7 +1015,7 @@ class SPLLinkCoordinatorReport(GateTestCase):
             "cleanup.remote_lane.action_ok",
             "cleanup.remote_lane.verified",
             "lane.checks.initial_reset_clean",
-            "lane.oracles.serverkey_trimmed_nonempty",
+            "lane.oracles.delivery_identity_present",
             "lane.freshness.ok",
             "lane.provenance.clean",
             "lane.identity_match",
@@ -1027,10 +1026,10 @@ class SPLLinkCoordinatorReport(GateTestCase):
 
     def test_oracle_refusals(self):
         cases = (
-            ("missing", lambda r: delete_path(r, "lane.oracles.serverkey_sha256")),
-            ("false tier-a", lambda r: set_path(r, "lane.oracles.last_synced_fresh", False)),
-            ("bad sha", lambda r: set_path(r, "lane.oracles.serverkey_sha256", "x" * 64)),
-            ("none literal", lambda r: set_path(r, "lane.oracles.serverkey_sha256", "NONE")),
+            ("missing", lambda r: delete_path(r, "lane.oracles.delivery_identity_sha256")),
+            ("false tier-a", lambda r: set_path(r, "lane.oracles.delivery_fresh", False)),
+            ("bad sha", lambda r: set_path(r, "lane.oracles.delivery_identity_sha256", "x" * 64)),
+            ("none literal", lambda r: set_path(r, "lane.oracles.delivery_identity_sha256", "NONE")),
         )
         for label, mutate in cases:
             with self.subTest(label=label):

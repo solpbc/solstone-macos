@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - settings now has a "report a problem" button that opens support with your app version, macos version, and recent diagnostic details.
 
 ### Changed
-- settings now shows one connection status: green when connected, yellow while actively connecting, and red when the app cannot connect. pairing confirmation no longer adds a competing yellow warning.
+- settings keeps your paired journal visible, with separate connection and sync status, "open journal," and recovery controls. connection status is green when connected, yellow while actively connecting, and red when the app cannot connect. pairing confirmation no longer adds a competing yellow warning.
 
 ### Fixed
 - on audio interfaces with more than two inputs, microphones beyond the first input are no longer missing from your journal. all inputs are mixed together. contributed by David Van Duzer.

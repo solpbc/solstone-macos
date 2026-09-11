@@ -195,7 +195,17 @@ public final class AppState {
     }
 
     public var serviceNeedsAttention: Bool {
-        config.serviceMode == .bundled || !config.isUploadConfigured
+        !serviceIsDone || tunnelLifecycleOwner.connectionVerdict.failureCause != nil
+    }
+
+    /// Keep pairing recovery visible even when the saved identity cannot be read.
+    internal var showsConfiguredJournal: Bool {
+        tunnelLifecycleOwner.hasPersistedPairing || config.isUploadConfigured
+            || tunnelLifecycleOwner.connectionVerdict.failureCause != nil
+    }
+
+    internal var canOpenJournal: Bool {
+        tunnelLifecycleOwner.cachedPairingIdentity != nil || config.isUploadConfigured
     }
 
     public var permissionsAreDone: Bool {
@@ -203,7 +213,7 @@ public final class AppState {
     }
 
     public var serviceIsDone: Bool {
-        resolvedServiceMode(for: config) == .external && config.isUploadConfigured && !serviceNeedsAttention
+        tunnelLifecycleOwner.cachedPairingIdentity != nil
     }
 
     public internal(set) var visitedSettingsTabs: Set<String> = []

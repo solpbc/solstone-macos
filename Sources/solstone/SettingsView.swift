@@ -503,6 +503,13 @@ struct SettingsView: View {
 
     private func handlePairingStateChange(_ state: PairingFlowState) {
         journalMarkDriver.startIfNeeded(for: state, appState: appState)
+        switch state {
+        case .paired, .alreadyConnected, .switched:
+            showPairingFlow = false
+            pairingLink = ""
+        default:
+            break
+        }
     }
 
     private func confirmJournalMark() {
@@ -991,6 +998,11 @@ struct SettingsView: View {
                 .accessibilityIdentifier(AXID.Settings.Service.prereqPermissions)
             }
 
+            AXStateCompanion(
+                id: AXID.Settings.Service.pairingFlowState,
+                value: appState.pairingCoordinator.state.axToken
+            )
+
             Text("your journal")
                 .font(.title2)
                 .fontWeight(.semibold)
@@ -999,7 +1011,7 @@ struct SettingsView: View {
                 journalMigrationBanner
             }
 
-            if appState.config.isUploadConfigured && journalPathIsValid {
+            if appState.showsConfiguredJournal {
                 configuredJournalPanel
             } else {
                 unconfiguredJournalPanel
@@ -1060,11 +1072,9 @@ struct SettingsView: View {
                     }
                 }
 
-                uploadStatusView
-
                 let affordances = journalPanelAffordancesForPresentation
 
-                if affordances.showRelink {
+                if affordances.showRelink && !pairingCanUnpair {
                     HStack {
                         Button("re-link") {
                             relinkJournal()
@@ -1079,7 +1089,7 @@ struct SettingsView: View {
                     }
                 }
 
-                if affordances.showOpenJournal {
+                if appState.canOpenJournal || affordances.showOpenJournal {
                     Button(UICopy.SETTINGS_JOURNAL_OPEN) {
                         appState.requestOpenJournal(.root)
                     }
@@ -1092,7 +1102,15 @@ struct SettingsView: View {
                         .foregroundStyle(.red)
                 }
 
-                if affordances.showPairingForm, showPairingFlow {
+                if pairingCanUnpair {
+                    Button("pair to another journal") {
+                        showPairingFlow.toggle()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Service.pairJournalAnotherDevice)
+                    .disabled(pairingIsBusy)
+                    pairingDisconnectControls
+                }
+                if showPairingFlow {
                     pairingSection
                 }
 
@@ -1100,8 +1118,10 @@ struct SettingsView: View {
             .padding(.vertical, 4)
         }
 
-        DisclosureGroup("advanced") {
-            externalServiceSection
+        if !appState.tunnelLifecycleOwner.hasPersistedPairing {
+            DisclosureGroup("advanced") {
+                externalServiceSection
+            }
         }
 
         externalJournalSyncSection
@@ -1368,12 +1388,6 @@ struct SettingsView: View {
     private var externalJournalSyncSection: some View {
         GroupBox("sync") {
             VStack(alignment: .leading, spacing: 8) {
-                LabeledContent("journal") {
-                    Text(appState.config.serverURL ?? "not configured")
-                        .foregroundStyle(appState.config.serverURL == nil ? .secondary : .primary)
-                        .accessibilityIdentifier(AXID.Settings.Status.uploadJournalState)
-                        .accessibilityValue(appState.config.serverURL ?? "")
-                }
                 uploadStatusView
                 Toggle("pause sync", isOn: Binding(
                     get: { appState.config.syncPaused },
@@ -1383,7 +1397,6 @@ struct SettingsView: View {
                         appState.updateConfig(config)
                     }
                 ))
-                .disabled(!appState.isPairedIngestReady)
                 .help("keeps solstone running locally but stops sending to your journal")
                 .accessibilityIdentifier(AXID.Settings.Status.pauseSync)
                 lastDeliveryDetailRow
@@ -1399,6 +1412,7 @@ struct SettingsView: View {
                 }
                 .help("re-check all days, including previously synced ones")
                 .accessibilityIdentifier(AXID.Settings.Status.resyncAll)
+                .disabled(!appState.isPairedIngestReady || appState.config.syncPaused)
             }
             .padding(.vertical, 4)
         }
@@ -1534,44 +1548,15 @@ struct SettingsView: View {
                 pairingResultView
 
                 if pairingMismatch {
-                    if !(appState.config.isUploadConfigured && journalPathIsValid) {
+                    if !appState.showsConfiguredJournal {
                         pairingMismatchPane
                     }
-                } else if !(appState.config.isUploadConfigured && journalPathIsValid) {
+                } else if !appState.showsConfiguredJournal {
                     pairingConnectionTruthRow
                 }
 
-                if pairingCanUnpair {
-                    if disconnectConfirmPending {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(pairingDisconnectConfirmText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            HStack {
-                                Button("disconnect", role: .destructive) {
-                                    disconnectPairing()
-                                }
-                                .accessibilityIdentifier(AXID.Settings.Service.pairingDisconnectConfirm)
-
-                                Button("cancel") {
-                                    disconnectConfirmPending = false
-                                }
-                                .accessibilityIdentifier(AXID.Settings.Service.pairingDisconnectCancel)
-                            }
-                        }
-                    } else {
-                        HStack {
-                            Spacer()
-                            Button("disconnect") {
-                                disconnectConfirmPending = true
-                            }
-                            .buttonStyle(.plain)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier(AXID.Settings.Service.pairingUnpair)
-                            .disabled(pairingIsBusy)
-                        }
-                    }
+                if !appState.showsConfiguredJournal {
+                    pairingDisconnectControls
                 }
 
                 if case .switchConfirmPending = appState.pairingCoordinator.state {
@@ -1597,16 +1582,48 @@ struct SettingsView: View {
 
                 pairingFailureRow
 
-                if !(appState.config.isUploadConfigured && journalPathIsValid) {
+                if !appState.showsConfiguredJournal {
                     tunnelErrorRetryRow
                 }
 
-                AXStateCompanion(
-                    id: AXID.Settings.Service.pairingFlowState,
-                    value: appState.pairingCoordinator.state.axToken
-                )
             }
             .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private var pairingDisconnectControls: some View {
+        if pairingCanUnpair {
+            if disconnectConfirmPending {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(pairingDisconnectConfirmText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("disconnect", role: .destructive) {
+                            disconnectPairing()
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Service.pairingDisconnectConfirm)
+
+                        Button("cancel") {
+                            disconnectConfirmPending = false
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Service.pairingDisconnectCancel)
+                    }
+                }
+            } else {
+                HStack {
+                    Spacer()
+                    Button("disconnect") {
+                        disconnectConfirmPending = true
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier(AXID.Settings.Service.pairingUnpair)
+                    .disabled(pairingIsBusy)
+                }
+            }
         }
     }
 
@@ -2848,13 +2865,13 @@ struct SettingsView: View {
 
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                statusIcon(for: status)
-                Text(statusText(for: status))
-                Spacer()
-                if pending > 0 {
-                    Text("\(pending) pending")
-                        .foregroundStyle(.secondary)
+                if appState.config.syncPaused || !appState.isPairedIngestReady {
+                    Image(systemName: "pause.circle").foregroundStyle(.secondary)
+                } else {
+                    statusIcon(for: status)
                 }
+                Text(journalSyncStatusText(status, paused: appState.config.syncPaused, ready: appState.isPairedIngestReady))
+                Spacer()
             }
             .accessibilityIdentifier(AXID.Settings.Status.uploadState)
             .accessibilityValue(status.axToken)
@@ -2910,24 +2927,6 @@ struct SettingsView: View {
             .foregroundStyle(color)
     }
 
-    private func statusText(for status: UploadCoordinator.Status) -> String {
-        switch status {
-        case .notSynced:
-            return "connecting..."
-        case .synced:
-            return "synced"
-        case .syncing(let checked, let total):
-            return "syncing: \(checked)/\(total)"
-        case .uploading(let segment):
-            return "uploading: \(segment)"
-        case .retrying(let segment, let attempts):
-            return "retrying \(segment) (attempt \(attempts))"
-        case .awaitingTunnel:
-            return "connecting to your journal…"
-        case .offline(let error):
-            return "offline: \(error)"
-        }
-    }
 
     // MARK: - Connection Test
 

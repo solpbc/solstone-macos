@@ -111,3 +111,23 @@ func journalPanelAffordances(for remedy: JournalPanelRemedy) -> JournalPanelAffo
         )
     }
 }
+
+/// Activity describes this sync pass; only the delivery receipt proves an addition.
+func journalSyncStatusText(_ status: UploadCoordinator.Status, paused: Bool, ready: Bool) -> String {
+    if paused { return "sync paused" }
+    if !ready { return "waiting for a connection" }
+    switch status {
+    case .notSynced:
+        return "sync hasn't checked yet"
+    case .synced:
+        return "sync check complete"
+    case .syncing, .uploading:
+        return "syncing to your journal…"
+    case .retrying:
+        return "waiting to retry"
+    case .awaitingTunnel:
+        return "waiting for a connection"
+    case .offline(let error):
+        return error
+    }
+}

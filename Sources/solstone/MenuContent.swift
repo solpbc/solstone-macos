@@ -24,7 +24,7 @@ struct MenuContent: View {
         Divider()
 
         Section {
-            if appState.config.isUploadConfigured {
+            if appState.canOpenJournal {
                 Button("open journal") {
                     appState.requestOpenJournal(.root)
                 }

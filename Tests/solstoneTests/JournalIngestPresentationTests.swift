@@ -88,6 +88,18 @@ struct JournalIngestPresentationTests {
         )
     }
 
+    @Test func pausedAndDisconnectedSyncDoNotShowStaleSuccess() {
+        #expect(journalSyncStatusText(.synced, paused: true, ready: true) == "sync paused")
+        #expect(journalSyncStatusText(.synced, paused: false, ready: false) == "waiting for a connection")
+        #expect(journalSyncStatusText(.notSynced, paused: false, ready: true) == "sync hasn't checked yet")
+        #expect(journalSyncStatusText(.synced, paused: false, ready: true) == "sync check complete")
+    }
+
+    @Test func activityDoesNotExposeSegmentNamesOrClaimDelivery() {
+        #expect(journalSyncStatusText(.uploading(segment: "private-segment"), paused: false, ready: true) == "syncing to your journal…")
+        #expect(journalSyncStatusText(.retrying(segment: "private-segment", attempts: 2), paused: false, ready: true) == "waiting to retry")
+    }
+
     private var connectedTunnel: JournalConnectionVerdict {
         JournalConnectionVerdict(
             severity: .good,

@@ -204,18 +204,16 @@ SPL_LINK_CHECK_KEYS = (
     "pairing_connection_connected",
     "pairing_mark_confirmed",
     "pairing_mark_cleared",
-    "serverkey_trimmed_nonempty",
-    "servicemode_external",
-    "last_synced_fresh",
+    "delivery_identity_present",
+    "delivery_fresh",
     "tier_b_segment_injected",
     "tier_b_probe_suppressed",
 )
 SPL_LINK_ORACLE_BOOLEAN_KEYS = (
-    "serverkey_trimmed_nonempty",
-    "servicemode_external",
-    "last_synced_fresh",
+    "delivery_identity_present",
+    "delivery_fresh",
 )
-SPL_LINK_ORACLE_KEYS = frozenset((*SPL_LINK_ORACLE_BOOLEAN_KEYS, "serverkey_sha256"))
+SPL_LINK_ORACLE_KEYS = frozenset((*SPL_LINK_ORACLE_BOOLEAN_KEYS, "delivery_identity_sha256"))
 SPL_LINK_FRESHNESS_KEYS = frozenset(
     (
         "last_synced_pre_raw",
@@ -1157,7 +1155,7 @@ def verify_spl_link_oracles(oracles, filename):
     require_exact_keys(oracles, SPL_LINK_ORACLE_KEYS, f"{filename}: lane.oracles")
     for key in SPL_LINK_ORACLE_BOOLEAN_KEYS:
         require_true(oracles[key], f"{filename}: lane.oracles.{key}")
-    require_sha256(oracles["serverkey_sha256"], f"{filename}: lane.oracles.serverkey_sha256")
+    require_sha256(oracles["delivery_identity_sha256"], f"{filename}: lane.oracles.delivery_identity_sha256")
 
 
 def verify_spl_link_freshness(freshness, filename):
