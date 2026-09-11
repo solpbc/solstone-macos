@@ -7,14 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-09-11
+
+### Added
+- settings now has a "report a problem" button that opens support with your app version, macos version, and recent diagnostic details.
+
 ### Changed
-- settings now shows one connection status: green when connected, yellow only while actively connecting, and red when the app cannot connect.
+- settings now shows one connection status: green when connected, yellow while actively connecting, and red when the app cannot connect. pairing confirmation no longer adds a competing yellow warning.
 
 ### Fixed
-- a microphone plugged into any input of a multichannel audio interface now records. every input is mixed into that interface's track, so the mic no longer has to sit on input 1; before, inputs past the first were recorded as silence and dropped.
-- the app now calls itself solstone everywhere it names itself: settings, the menu bar, permission prompts, the about window, and its update messages. a few places still used the old name, and some of those told you to look for it in System Settings, where it has always been listed as solstone.
-- Settings retry starts a real connection attempt when the journal is not connected yet, and a configured journal shows the same connection caption and recovery as pairing.
-- the command-line tools check now looks for `solstone` and `journal`, and new macos downloads use solstone in their filenames and release titles.
+- on audio interfaces with more than two inputs, microphones beyond the first input are no longer missing from your journal. all inputs are mixed together. contributed by David Van Duzer.
+- retry in settings now starts a fresh connection attempt when the connection is stuck.
+- when something can't be added to your journal, settings now shows a short explanation instead of raw error-page text.
+- menus, permission instructions, and update messages now use the solstone name. new macos downloads use it too.
 
 ## [2.0.0] - 2026-09-08
 
