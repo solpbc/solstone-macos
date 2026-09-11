@@ -52,11 +52,11 @@ func isJournalPathValid(_ journalPath: String?, fileManager: FileManager = .defa
 
 func shouldProbeLocalJournal(
     isUploadConfigured: Bool,
-    isTunnelManaged: Bool,
+    hasPersistedPairing: Bool,
     localDiscoveryCompleted: Bool,
     journalPathIsValid: Bool
 ) -> Bool {
-    (!isUploadConfigured || !journalPathIsValid) && !isTunnelManaged && !localDiscoveryCompleted
+    (!isUploadConfigured || !journalPathIsValid) && !hasPersistedPairing && !localDiscoveryCompleted
 }
 
 @MainActor

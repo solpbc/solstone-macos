@@ -170,14 +170,20 @@ final class FakeTransportFactory: @unchecked Sendable {
         (transport as? FakeTunnelTransport)?.recordConstruction()
         return transport
     }
+
+    func enqueue(_ newTransports: [any TunnelTransporting]) {
+        transports.append(contentsOf: newTransports)
+    }
 }
 
 actor FakeTunnelReconnectingSession: TunnelReconnecting {
     nonisolated let stateUpdates: AsyncStream<TunnelState>
     nonisolated let connectionModeUpdates: AsyncStream<ConnectionMode?>
+    nonisolated let attemptStateUpdatesStream: AsyncStream<TunnelSupervisorAttemptState>
 
     private let stateContinuation: AsyncStream<TunnelState>.Continuation
     private let connectionModeContinuation: AsyncStream<ConnectionMode?>.Continuation
+    private let attemptStateContinuation: AsyncStream<TunnelSupervisorAttemptState>.Continuation
     private let connectionModeValue: ConnectionMode?
     private let connectedVia: ConnectedVia
     nonisolated let pairing: StoredPairing?
@@ -198,7 +204,8 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
         pairing: StoredPairing? = nil,
         clientInfo: SPLClientInfo? = nil,
         policy: SessionPolicy? = nil,
-        shouldThrowOnConnect: Error? = nil
+        shouldThrowOnConnect: Error? = nil,
+        armConnectGate: Bool = false
     ) {
         self.connectionModeValue = connectionMode
         self.connectedVia = connectedVia
@@ -206,14 +213,21 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
         self.clientInfo = clientInfo
         self.policy = policy
         self.shouldThrowOnConnect = shouldThrowOnConnect
+        if armConnectGate {
+            self.connectContinuations = []
+        }
         let states = AsyncStream<TunnelState>.makeStream()
         self.stateUpdates = states.stream
         self.stateContinuation = states.continuation
         let modes = AsyncStream<ConnectionMode?>.makeStream()
         self.connectionModeUpdates = modes.stream
         self.connectionModeContinuation = modes.continuation
+        let attempts = AsyncStream<TunnelSupervisorAttemptState>.makeStream()
+        self.attemptStateUpdatesStream = attempts.stream
+        self.attemptStateContinuation = attempts.continuation
         modes.continuation.yield(connectionMode)
         states.continuation.yield(.disconnected)
+        attempts.continuation.yield(.idle)
     }
 
     var connectionMode: ConnectionMode? {
@@ -237,6 +251,7 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
         }
         isDisconnected = false
         stateContinuation.yield(.connected(via: connectedVia))
+        attemptStateContinuation.yield(.connected)
         return connectedVia
     }
 
@@ -244,10 +259,19 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
         disconnectCallCount += 1
         isDisconnected = true
         stateContinuation.yield(.disconnected)
+        attemptStateContinuation.yield(.idle)
     }
 
     func emitState(_ state: TunnelState) {
         stateContinuation.yield(state)
+    }
+
+    func emitAttemptState(_ state: TunnelSupervisorAttemptState) {
+        attemptStateContinuation.yield(state)
+    }
+
+    func attemptStateUpdates() async -> AsyncStream<TunnelSupervisorAttemptState> {
+        attemptStateUpdatesStream
     }
 
     func openStream() async throws -> MuxStream {
@@ -301,11 +325,13 @@ final class SessionRecorder: @unchecked Sendable {
 final class FakeTunnelTransport: TunnelTransporting {
     let stateUpdates: AsyncStream<TunnelState>
     let connectionModeUpdates: AsyncStream<ConnectionMode?>
+    let attemptStateUpdates: AsyncStream<TunnelSupervisorAttemptState>
     private(set) var connectionMode: ConnectionMode?
     var inboundSnapshots: [UInt64] = []
 
     private let stateContinuation: AsyncStream<TunnelState>.Continuation
     private let modeContinuation: AsyncStream<ConnectionMode?>.Continuation
+    private let attemptContinuation: AsyncStream<TunnelSupervisorAttemptState>.Continuation
     private var results: [Result<TunnelTransportConnection, Error>]
     private let tracker: ActiveSessionTracker?
     private var active = false
@@ -334,7 +360,15 @@ final class FakeTunnelTransport: TunnelTransporting {
         let modes = AsyncStream<ConnectionMode?>.makeStream()
         self.connectionModeUpdates = modes.stream
         self.modeContinuation = modes.continuation
+        let attempts = AsyncStream<TunnelSupervisorAttemptState>.makeStream()
+        self.attemptStateUpdates = attempts.stream
+        self.attemptContinuation = attempts.continuation
         modes.continuation.yield(connectionMode)
+        attempts.continuation.yield(.idle)
+    }
+
+    func emitAttemptState(_ state: TunnelSupervisorAttemptState) {
+        attemptContinuation.yield(state)
     }
 
     var pendingConnectCount: Int {
@@ -656,14 +690,20 @@ final class ActualSupervisorRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var supervisors: [TunnelSupervisor] = []
     let children = SessionRecorder()
+    private let armGate: Bool
+
+    init(armGate: Bool = false) {
+        self.armGate = armGate
+    }
 
     var count: Int { lock.withLock { supervisors.count } }
     subscript(index: Int) -> TunnelSupervisor { lock.withLock { supervisors[index] } }
 
     func make(pairing: StoredPairing, info: SPLClientInfo, policy: SessionPolicy) -> TunnelSupervisor {
+        let arm = armGate
         let supervisor = TunnelSupervisor(pairing: pairing, clientInfo: info, policy: policy,
             makeSession: { [children] pairing, info, policy in
-                let child = FakeTunnelReconnectingSession(pairing: pairing, clientInfo: info, policy: policy)
+                let child = FakeTunnelReconnectingSession(pairing: pairing, clientInfo: info, policy: policy, armConnectGate: arm)
                 children.append(child)
                 return child
             })

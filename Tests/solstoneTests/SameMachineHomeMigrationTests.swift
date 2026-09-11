@@ -344,26 +344,6 @@ struct SameMachineHomeMigrationTests {
         initialTransport.releaseNextConnect()
         await owner.stop()
     }
-
-    @Test func pairedHomeIncompleteMigrationUsesTunnelConnectionPresentation() {
-        let tunnelPresentation = PairingConnectionPresentation(
-            message: "connecting to your journal…",
-            severity: .warn,
-            axToken: PairingConnectionAXState.connecting.axToken
-        )
-        let presentation = journalConnectionPresentation(
-            serverURL: ServiceMode.bundledServiceURL,
-            isUploadConfigured: true,
-            isPairedHome: true,
-            sameMachineHomeMigrationComplete: false,
-            uploadStatus: .notSynced,
-            pairingPresentation: tunnelPresentation
-        )
-
-        #expect(presentation.message == tunnelPresentation.message)
-        #expect(presentation.severity == tunnelPresentation.severity)
-        #expect(presentation.axToken == tunnelPresentation.axToken)
-    }
 }
 
 private func loopbackRegisteredConfig() -> AppConfig {

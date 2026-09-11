@@ -24,6 +24,32 @@ enum TunnelLifecycleError: Error, Sendable, Equatable {
     case notEntitled
 }
 
+enum JournalConnectionFailureCause: Sendable, Equatable {
+    case noRoute
+    case revoked
+    case notEntitled
+    case keychainUnavailable
+    case loopbackUnavailable
+    case unreachable(String?)
+    case mismatch
+}
+
+struct JournalConnectionVerdict: Sendable, Equatable {
+    let severity: StatusDotSeverity
+    let message: String
+    let caption: String?
+    let axToken: String
+    let failureCause: JournalConnectionFailureCause?
+
+    static let neutral = JournalConnectionVerdict(
+        severity: .calm,
+        message: "not paired",
+        caption: nil,
+        axToken: PairingConnectionAXState.disconnected.axToken,
+        failureCause: nil
+    )
+}
+
 enum TunnelHealth: Sendable, Equatable {
     case unknown
     case healthy
@@ -84,7 +110,16 @@ final class TunnelLifecycleOwner {
             handleStateTransition(old: oldValue, new: state)
         }
     }
-    private(set) var health: TunnelHealth = .unknown
+    private(set) var health: TunnelHealth = .unknown {
+        didSet {
+            updateConnectionVerdict()
+        }
+    }
+    private(set) var hasPersistedPairing = false
+    private(set) var supervisorAttemptState: TunnelSupervisorAttemptState = .idle
+    private(set) var isProxyStarting = false
+    private(set) var isBackingOff = false
+    private(set) var connectionVerdict: JournalConnectionVerdict = .neutral
     private(set) var isTunnelManaged = false
     private(set) var isPairedHome = false
     private(set) var relayAccessStatus: PairingRelayAccessStatus = .noPairing
@@ -171,6 +206,8 @@ final class TunnelLifecycleOwner {
     private var stateObservationTask: Task<Void, Never>?
     @ObservationIgnored
     private var modeObservationTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var attemptObservationTask: Task<Void, Never>?
     @ObservationIgnored
     private var probeTask: Task<Void, Never>?
     @ObservationIgnored
@@ -334,6 +371,10 @@ final class TunnelLifecycleOwner {
         }
     }
 
+    public func requestCoalescedReconnect() async {
+        await transport?.requestReconnect()
+    }
+
     func handleWakeOrUnlock() async {
         guard running,
               case .connected(let localPort, _) = state
@@ -354,6 +395,7 @@ final class TunnelLifecycleOwner {
     }
 
     private func handleStateTransition(old: TunnelLifecycleState, new: TunnelLifecycleState) {
+        updateConnectionVerdict()
         if case .connected(let port, _) = new {
             journalVersion.adoptConnectedPort(port)
 
@@ -528,8 +570,14 @@ final class TunnelLifecycleOwner {
     ) async {
         guard running, !Task.isCancelled, ContinuousClock.now < deadline else { return }
         let candidates = usableCandidates(for: pairing)
+        let hasLiveRoute = {
+            if case .connected(let localPort, _) = state, establishedLoopbackPort == localPort, transport != nil {
+                return true
+            }
+            return false
+        }()
         guard !candidates.isEmpty else {
-            if transport == nil { becomeDormant(tunnelManaged: false) }
+            if !hasLiveRoute { becomeDormant(tunnelManaged: false) }
             return
         }
         transportAttemptID &+= 1
@@ -538,9 +586,31 @@ final class TunnelLifecycleOwner {
         let candidate = makeTransport()
         let wait = CandidateConnectionWait()
         let connection: TunnelTransportConnection
+        attemptObservationTask?.cancel()
+        attemptObservationTask = Task { @MainActor [weak self] in
+            for await attemptState in candidate.attemptStateUpdates {
+                guard let self, self.running, !Task.isCancelled, self.transportAttemptID == attempt else {
+                    return
+                }
+                self.supervisorAttemptState = attemptState
+                self.updateConnectionVerdict()
+            }
+        }
         do {
+            if !hasLiveRoute {
+                isProxyStarting = true
+                updateConnectionVerdict()
+            }
             connection = try await wait.connect(candidate, pairing: pairing, candidates: candidates, deadline: deadline)
+            if isProxyStarting {
+                isProxyStarting = false
+                updateConnectionVerdict()
+            }
         } catch {
+            if isProxyStarting {
+                isProxyStarting = false
+                updateConnectionVerdict()
+            }
             splOwnerLog.error("replacement connect failed: \(String(describing: error), privacy: .public)")
             return
         }
@@ -652,14 +722,20 @@ final class TunnelLifecycleOwner {
             case .retry:
                 state = .connecting
                 health = .unknown
+                isBackingOff = true
+                updateConnectionVerdict()
                 let delay = Self.jitter(Self.establishmentBackoff(forAttempt: establishmentAttempt))
                 establishmentAttempt += 1
                 splOwnerLog.debug("tunnel establishment retry attempt=\(establishmentAttempt, privacy: .public)")
                 do {
                     try await sleep(delay)
                 } catch {
+                    isBackingOff = false
+                    updateConnectionVerdict()
                     return
                 }
+                isBackingOff = false
+                updateConnectionVerdict()
             }
         }
     }
@@ -688,19 +764,45 @@ final class TunnelLifecycleOwner {
         }
         isTunnelManaged = true
 
-        state = .connecting
-        health = .unknown
-        stopProbe()
+        if transport == nil {
+            state = .connecting
+            health = .unknown
+            stopProbe()
+        }
 
         transportAttemptID &+= 1
         let attemptID = transportAttemptID
         let (pGen, aGen) = credentialStore.currentGenerations()
         let candidate = retainedCandidate ?? makeTransport()
         retainedCandidate = candidate
+        attemptObservationTask?.cancel()
+        attemptObservationTask = Task { @MainActor [weak self] in
+            for await attemptState in candidate.attemptStateUpdates {
+                guard let self, self.running, !Task.isCancelled, self.transportAttemptID == attemptID else {
+                    return
+                }
+                self.supervisorAttemptState = attemptState
+                self.updateConnectionVerdict()
+            }
+        }
         var loopbackAttempt = 0
         while operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID) {
             do {
+                let hasLiveRoute = {
+                    if case .connected(let port, _) = state, establishedLoopbackPort == port, transport != nil {
+                        return true
+                    }
+                    return false
+                }()
+                if !hasLiveRoute {
+                    isProxyStarting = true
+                    updateConnectionVerdict()
+                }
                 let connection = try await candidate.connect(pairing: pairing, candidates: candidates)
+                if isProxyStarting {
+                    isProxyStarting = false
+                    updateConnectionVerdict()
+                }
                 guard operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID) else {
                     await candidate.disconnect()
                     return .cancelled
@@ -708,6 +810,10 @@ final class TunnelLifecycleOwner {
                 install(candidate, connection: connection, initialHealth: .unknown)
                 return .connected
             } catch {
+                if isProxyStarting {
+                    isProxyStarting = false
+                    updateConnectionVerdict()
+                }
                 guard operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID) else {
                     await candidate.disconnect()
                     return .cancelled
@@ -743,6 +849,9 @@ final class TunnelLifecycleOwner {
                         await retirePairingAndFailRevoked(expectedPairing: pGen, expectedAccess: aGen)
                         return .terminal
                     case .notEntitled:
+                        if case .connected(let localPort, _) = state, establishedLoopbackPort == localPort, transport != nil {
+                            return .terminal
+                        }
                         await failWithNotEntitled()
                         return .terminal
                     default: break
@@ -773,16 +882,38 @@ final class TunnelLifecycleOwner {
                 await self.handle(tunnelState, pairingRevision: observedRevision.pairingGeneration, accessRevision: observedRevision.accessMutationGeneration)
                 self.publishingOptionalBurstID = nil
             }
+            guard let self, self.running, !Task.isCancelled, self.transportIncarnation == generation, self.transport != nil else { return }
+            self.handleUnexpectedStreamCompletion()
         }
 
         modeObservationTask = Task { @MainActor [weak self] in
             for await mode in transport.connectionModeUpdates {
-                guard let self, self.running, self.transportIncarnation == generation else {
+                guard let self, self.running, !Task.isCancelled, self.transportIncarnation == generation else {
                     return
                 }
                 self.handleConnectionMode(mode)
             }
         }
+
+        if attemptObservationTask == nil {
+            attemptObservationTask = Task { @MainActor [weak self] in
+                for await attempt in transport.attemptStateUpdates {
+                    guard let self, self.running, !Task.isCancelled, self.transportIncarnation == generation else {
+                        return
+                    }
+                    self.supervisorAttemptState = attempt
+                    self.updateConnectionVerdict()
+                }
+            }
+        }
+    }
+
+    private func handleUnexpectedStreamCompletion() {
+        stopProbe()
+        state = .disconnected
+        health = .unknown
+        supervisorAttemptState = .idle
+        updateConnectionVerdict()
     }
 
     private func installWakeUnlockObservers() {
@@ -852,8 +983,8 @@ final class TunnelLifecycleOwner {
                 state = .connected(localPort: port, via: Self.route(for: via))
                 if !wasConnected {
                     probeWatchdog.noteConnectionEstablished()
+                    startProbe()
                 }
-                startProbe()
             } else if !establishmentInFlight {
                 splOwnerLog.error("tunnel republished connected with no remembered loopback port")
             }
@@ -867,6 +998,9 @@ final class TunnelLifecycleOwner {
             case .revoked:
                 await retirePairingAndFailRevoked(expectedPairing: pairingRevision, expectedAccess: accessRevision)
             case .notEntitled:
+                if case .connected(let localPort, _) = state, establishedLoopbackPort == localPort, transport != nil {
+                    return
+                }
                 await failWithNotEntitled()
             default:
                 stopProbe()
@@ -889,8 +1023,16 @@ final class TunnelLifecycleOwner {
             pendingReactiveRefresh = true
             return
         }
-        state = .connecting
-        health = .unknown
+        let hasLiveRoute = {
+            if case .connected(let localPort, _) = state, establishedLoopbackPort == localPort, transport != nil {
+                return true
+            }
+            return false
+        }()
+        if !hasLiveRoute {
+            state = .connecting
+            health = .unknown
+        }
         authRefreshGeneration += 1
         let generation = authRefreshGeneration
         authRefreshTask = Task { @MainActor [weak self] in
@@ -996,8 +1138,16 @@ final class TunnelLifecycleOwner {
 
             case .transientFailure:
                 splOwnerLog.info("reactive token refresh transient failure; preserving pairing")
-                state = .connecting
-                health = .unknown
+                let hasLiveRoute = {
+                    if case .connected(let localPort, _) = state, establishedLoopbackPort == localPort, transport != nil {
+                        return true
+                    }
+                    return false
+                }()
+                if !hasLiveRoute {
+                    state = .connecting
+                    health = .unknown
+                }
                 let delay = Self.jitter(Self.establishmentBackoff(forAttempt: attempt))
                 attempt += 1
                 do {
@@ -1215,21 +1365,26 @@ final class TunnelLifecycleOwner {
     private func refreshPairingDerivedState(from outcome: PairingLoadOutcome) {
         switch outcome {
         case .loaded(let pairing):
+            hasPersistedPairing = true
             isTunnelManaged = !usableCandidates(for: pairing).isEmpty
             isPairedHome = Self.isHomePairing(pairing)
         case .absent:
+            hasPersistedPairing = false
             isTunnelManaged = false
             isPairedHome = false
         case .failed:
-            // Preserve the previous signal on transient keychain load failures.
-            break
+            hasPersistedPairing = true
+            isTunnelManaged = false
+            isPairedHome = false
         }
+        updateConnectionVerdict()
     }
 
     private func becomeDormant(tunnelManaged: Bool) {
         isTunnelManaged = tunnelManaged
         state = .disconnected
         health = .unknown
+        updateConnectionVerdict()
     }
 
     private func retirePairingAndFailRevoked(expectedPairing: UInt64? = nil, expectedAccess: UInt64? = nil) async {
@@ -1286,6 +1441,9 @@ final class TunnelLifecycleOwner {
         stateObservationTask = nil
         modeObservationTask?.cancel()
         modeObservationTask = nil
+        attemptObservationTask?.cancel()
+        attemptObservationTask = nil
+        supervisorAttemptState = .idle
         let transport = self.transport
         self.transport = nil
         if let deadline {
@@ -1303,6 +1461,122 @@ final class TunnelLifecycleOwner {
         } else {
             await transport?.disconnect()
         }
+        updateConnectionVerdict()
+    }
+
+    func updateConnectionVerdict() {
+        connectionVerdict = reduceConnectionVerdict()
+    }
+
+    func reduceConnectionVerdict() -> JournalConnectionVerdict {
+        Self.reduceConnectionVerdict(
+            state: state,
+            hasPersistedPairing: hasPersistedPairing,
+            isTunnelManaged: isTunnelManaged,
+            isPairedHome: isPairedHome,
+            supervisorAttemptState: supervisorAttemptState,
+            isProxyStarting: isProxyStarting,
+            establishedLoopbackPort: establishedLoopbackPort,
+            hasTransport: transport != nil
+        )
+    }
+
+    static func reduceConnectionVerdict(
+        state: TunnelLifecycleState,
+        hasPersistedPairing: Bool,
+        isTunnelManaged: Bool,
+        isPairedHome: Bool = false,
+        supervisorAttemptState: TunnelSupervisorAttemptState,
+        isProxyStarting: Bool,
+        establishedLoopbackPort: Int?,
+        hasTransport: Bool
+    ) -> JournalConnectionVerdict {
+        // Layer (a): Live Installed Route
+        if case .connected(let localPort, _) = state,
+           establishedLoopbackPort == localPort,
+           hasTransport {
+            let msg = isPairedHome ? "connected to your journal on this Mac" : "sync can connect through your journal"
+            return JournalConnectionVerdict(
+                severity: .good,
+                message: msg,
+                caption: nil,
+                axToken: PairingConnectionAXState.connected.axToken,
+                failureCause: nil
+            )
+        }
+
+        // Layer (b): Active Attempt In Flight
+        let isAttempting: Bool = isProxyStarting || supervisorAttemptState == .attempting
+
+        if isAttempting {
+            return JournalConnectionVerdict(
+                severity: .warn,
+                message: "connecting to your journal…",
+                caption: nil,
+                axToken: PairingConnectionAXState.connecting.axToken,
+                failureCause: nil
+            )
+        }
+
+        // Layer (c): Failure / Backoff / Redrive Sleep / No Route / Owner Action Error
+        guard hasPersistedPairing else {
+            return .neutral
+        }
+
+        if case .error(let error) = state {
+            switch error {
+            case .notEntitled:
+                return JournalConnectionVerdict(
+                    severity: .attention,
+                    message: "can't sync over the internet yet",
+                    caption: UICopy.PAIRING_NOTENTITLED_RECOVERY,
+                    axToken: PairingConnectionAXState.notEntitled.axToken,
+                    failureCause: .notEntitled
+                )
+            case .revoked:
+                return JournalConnectionVerdict(
+                    severity: .attention,
+                    message: "pairing was revoked. pair again to reconnect.",
+                    caption: nil,
+                    axToken: PairingConnectionAXState.revoked.axToken,
+                    failureCause: .revoked
+                )
+            case .loopbackUnavailable:
+                return JournalConnectionVerdict(
+                    severity: .attention,
+                    message: "paired, but the local connection couldn't start",
+                    caption: nil,
+                    axToken: PairingConnectionAXState.loopbackUnavailable.axToken,
+                    failureCause: .loopbackUnavailable
+                )
+            case .keychainUnavailable:
+                return JournalConnectionVerdict(
+                    severity: .attention,
+                    message: "paired, but this Mac couldn't read the pairing",
+                    caption: nil,
+                    axToken: PairingConnectionAXState.keychainUnavailable.axToken,
+                    failureCause: .keychainUnavailable
+                )
+            }
+        }
+
+        if !isTunnelManaged {
+            return JournalConnectionVerdict(
+                severity: .attention,
+                message: "can't reach your journal right now",
+                caption: "waiting for a direct network route or relay connection",
+                axToken: PairingConnectionAXState.noRoute.axToken,
+                failureCause: .noRoute
+            )
+        }
+
+        return JournalConnectionVerdict(
+            severity: .attention,
+            message: "can't reach your journal right now",
+            caption: nil,
+            axToken: PairingConnectionAXState.unreachable.axToken,
+            failureCause: .unreachable(nil)
+        )
     }
 
     private static func route(for via: ConnectedVia) -> TunnelConnectionRoute {

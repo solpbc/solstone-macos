@@ -98,7 +98,6 @@ struct AXIDTests {
         expectTokensMatchGrammar(DiagnosticCaptureAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(DiagnosticCopyAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(PairingConnectionAXState.allCases.map(\.axToken))
-        expectTokensMatchGrammar(PairingRelayAccessAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(JournalHandoffAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(FreshJournalAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(LocalJournalDiscoveryAXState.allCases.map(\.axToken))

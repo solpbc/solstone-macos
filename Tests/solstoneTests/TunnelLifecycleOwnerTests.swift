@@ -1541,7 +1541,14 @@ struct TunnelLifecycleOwnerTests {
         #expect(!shouldShowPairingRetry(for: .connected(localPort: 1, via: .relay)))
         #expect(!shouldShowPairingRetry(for: .error(.revoked)))
         #expect(!shouldShowPairingRetry(for: .error(.notEntitled)))
-        #expect(!shouldShowPairingRetry(for: .error(.loopbackUnavailable)))
+        #expect(shouldShowPairingRetry(for: .error(.loopbackUnavailable)))
+        #expect(shouldShowPairingRetry(for: .connecting, failureCause: .keychainUnavailable))
+        #expect(shouldShowPairingRetry(for: .connecting, failureCause: .noRoute))
+        #expect(shouldShowPairingRetry(for: .connecting, failureCause: .unreachable(nil)))
+        #expect(shouldShowPairingRetry(for: .connecting, failureCause: .loopbackUnavailable))
+        #expect(!shouldShowPairingRetry(for: .connecting, failureCause: .revoked))
+        #expect(!shouldShowPairingRetry(for: .connecting, failureCause: .notEntitled))
+        #expect(!shouldShowPairingRetry(for: .connecting, failureCause: .mismatch))
     }
 
     @Test func notEntitledDuringBootstrapSetsTerminalOwnerError() async throws {
@@ -1562,17 +1569,17 @@ struct TunnelLifecycleOwnerTests {
         #expect(transport.connectAttempts == 1)
     }
 
-    @Test func notEntitledStateUpdateSetsTerminalOwnerError() async throws {
+    @Test func notEntitledStateUpdateDuringLiveRoutePreservesConnected() async throws {
         let transport = FakeTunnelTransport(connection: .init(localPort: 67676, via: .relay))
         let owner = makeOwner(factory: FakeTransportFactory([transport]))
 
         owner.start()
         try await waitUntil { owner.state == .connected(localPort: 67676, via: .relay) }
         transport.emit(.failed(.notEntitled))
-        try await waitUntil { owner.state == .error(.notEntitled) }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(owner.state == .connected(localPort: 67676, via: .relay))
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
         await owner.stop()
-
-        #expect(transport.disconnectCount >= 1)
     }
 
     @Test func replaceLiveTransportWithPairingUpdatesTransportWithoutDisconnectTransition() async throws {
@@ -1752,6 +1759,351 @@ struct TunnelLifecycleOwnerTests {
             }
             transport.releaseNextConnect()
         }
+    }
+
+    @Test func supervisorAttemptStateUpdatesDriveConnectionVerdict() async throws {
+        let store = PairingStore(pairing: pairing())
+        let transport = FakeTunnelTransport(connection: .init(localPort: 8080, via: .relay))
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 8080, via: .relay) }
+        #expect(owner.connectionVerdict.severity == .good)
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connected.axToken)
+
+        transport.emitAttemptState(.attempting)
+        try await waitUntil { owner.supervisorAttemptState == .attempting }
+
+        transport.emitAttemptState(.unavailable(.retrying(failureClass: .unreachable, attempt: 1, retryAfter: .seconds(5))))
+        try await waitUntil {
+            if case .unavailable = owner.supervisorAttemptState { return true }
+            return false
+        }
+
+        transport.emitAttemptState(.connected)
+        try await waitUntil { owner.supervisorAttemptState == .connected }
+        #expect(owner.connectionVerdict.severity == .good)
+
+        await owner.stop()
+    }
+
+    @Test func threeLayerReducerTransitions() {
+        // Neutral: no pairing
+        let neutral = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .disconnected,
+            hasPersistedPairing: false,
+            isTunnelManaged: false,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+        #expect(neutral.severity == .calm)
+        #expect(neutral.axToken == PairingConnectionAXState.disconnected.axToken)
+
+        // Live installed route: green
+        let liveRoute = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .connected(localPort: 8080, via: .relay),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .connected,
+            isProxyStarting: false,
+            establishedLoopbackPort: 8080,
+            hasTransport: true
+        )
+        #expect(liveRoute.severity == .good)
+        #expect(liveRoute.axToken == PairingConnectionAXState.connected.axToken)
+
+        // Active attempt in flight: yellow via proxy starting
+        let proxyStarting = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .connecting,
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: true,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+        #expect(proxyStarting.severity == .warn)
+        #expect(proxyStarting.axToken == PairingConnectionAXState.connecting.axToken)
+
+        // Active attempt in flight: yellow via supervisor attempting
+        let supervisorAttempting = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .connecting,
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .attempting,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: true
+        )
+        #expect(supervisorAttempting.severity == .warn)
+        #expect(supervisorAttempting.axToken == PairingConnectionAXState.connecting.axToken)
+
+        // Held pairing in .connecting with .idle supervisor and NOT proxy starting MUST be red unreachable (not yellow)
+        let connectingNotAttempting = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .connecting,
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+        #expect(connectingNotAttempting.severity == .attention)
+        #expect(connectingNotAttempting.axToken == PairingConnectionAXState.unreachable.axToken)
+        #expect(connectingNotAttempting.failureCause == .unreachable(nil))
+
+        // Failure layer: no route red
+        let noRoute = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .disconnected,
+            hasPersistedPairing: true,
+            isTunnelManaged: false,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+        #expect(noRoute.severity == .attention)
+        #expect(noRoute.axToken == PairingConnectionAXState.noRoute.axToken)
+        #expect(noRoute.failureCause == .noRoute)
+
+        // Failure layer: terminal errors
+        let notEntitled = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .error(.notEntitled),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+        #expect(notEntitled.severity == .attention)
+        #expect(notEntitled.axToken == PairingConnectionAXState.notEntitled.axToken)
+        #expect(notEntitled.failureCause == .notEntitled)
+
+        let revoked = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .error(.revoked),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+        #expect(revoked.severity == .attention)
+        #expect(revoked.axToken == PairingConnectionAXState.revoked.axToken)
+        #expect(revoked.failureCause == .revoked)
+
+        let loopbackUnavail = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .error(.loopbackUnavailable),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+        #expect(loopbackUnavail.severity == .attention)
+        #expect(loopbackUnavail.axToken == PairingConnectionAXState.loopbackUnavailable.axToken)
+        #expect(loopbackUnavail.failureCause == .loopbackUnavailable)
+
+        let keychainUnavail = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .error(.keychainUnavailable),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+        #expect(keychainUnavail.severity == .attention)
+        #expect(keychainUnavail.axToken == PairingConnectionAXState.keychainUnavailable.axToken)
+        #expect(keychainUnavail.failureCause == .keychainUnavailable)
+    }
+
+    @Test func controlledAttemptingYellowAndUnavailableRetryRed() async throws {
+        let supervisors = ActualSupervisorRecorder(armGate: true)
+        let disk = PairingStore(pairing: pairing())
+        let credentials = PairingCredentialStore(store: disk)
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: {
+                SPLTunnelTransport(
+                    makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) }
+                )
+            },
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true }
+        )
+
+        owner.start()
+        try await waitUntil { supervisors.count >= 1 }
+        let child = supervisors.children[0]
+
+        // Initial connect attempt: yellow
+        try await waitUntil { await child.pendingConnectCount == 1 }
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.warn }
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connecting.axToken)
+
+        // Connect succeeds: green
+        await child.releaseNextConnect()
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.good }
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connected.axToken)
+
+        // Child fails and yields unavailable with retry: owner transitions to red unreachable
+        await child.emitState(.failed(.unreachable))
+        await child.emitAttemptState(.unavailable(.retrying(failureClass: .unreachable, attempt: 1, retryAfter: .seconds(5))))
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.attention }
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.unreachable.axToken)
+        #expect(owner.connectionVerdict.failureCause == JournalConnectionFailureCause.unreachable(nil))
+
+        // Child next generation attempts: returns to yellow
+        await child.emitAttemptState(.attempting)
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.warn }
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connecting.axToken)
+
+        await owner.stop()
+    }
+
+    @Test func transportReturnStaysYellowUntilProxyInstallAndOwnerConnected() async throws {
+        let transport = FakeTunnelTransport(connection: .init(localPort: 34567, via: .relay))
+        transport.armConnectGate()
+        let factory = FakeTransportFactory([transport])
+        let owner = makeOwner(factory: factory)
+
+        owner.start()
+        try await waitUntil { transport.pendingConnectCount == 1 }
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.warn)
+
+        transport.releaseNextConnect()
+        try await waitUntil { owner.state == .connected(localPort: 34567, via: .relay) }
+
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connected.axToken)
+        await owner.stop()
+    }
+
+    @Test func oldUsableRouteGreenThroughReplacementFailure() async throws {
+        let initial = FakeTunnelTransport(connection: .init(localPort: 12121, via: .relay))
+        let failingReplacement = FakeTunnelTransport(results: [.failure(SessionError.unreachable)])
+        let factory = FakeTransportFactory([initial, failingReplacement])
+        let owner = makeOwner(factory: factory)
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 12121, via: .relay) }
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
+
+        // Replacement connect attempt fails
+        await owner.replaceLiveTransport(with: pairing(deviceToken: "replacement-token"))
+        #expect(owner.state == .connected(localPort: 12121, via: .relay))
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
+
+        // If old route is then lost while successor is attempting -> yellow
+        let successor = FakeTunnelTransport(connection: .init(localPort: 12122, via: .relay))
+        successor.armConnectGate()
+        factory.enqueue([successor])
+
+        initial.emit(.failed(.unreachable))
+        try await waitUntil { owner.state == .connecting }
+        let replaceTask = Task { await owner.replaceLiveTransport(with: pairing(deviceToken: "token-3")) }
+        try await waitUntil { successor.pendingConnectCount == 1 }
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.warn }
+
+        // Successor connects -> green
+        successor.releaseNextConnect()
+        _ = await replaceTask.result
+        try await waitUntil { owner.state == .connected(localPort: 12122, via: .relay) }
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
+
+        await owner.stop()
+    }
+
+    @Test func zeroCandidatePersistedPairingShowsRedNoRoute() async throws {
+        let zeroCandidatePairing = pairing(relayEnrollment: .unavailable, localEndpoints: [])
+        let disk = PairingStore(pairing: zeroCandidatePairing)
+        let credentials = PairingCredentialStore(store: disk)
+        let transport = FakeTunnelTransport()
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: { transport },
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true }
+        )
+
+        owner.start()
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(owner.hasPersistedPairing)
+        #expect(!owner.isTunnelManaged)
+        #expect(transport.connectAttempts == 0)
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.attention)
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.noRoute.axToken)
+        #expect(owner.connectionVerdict.failureCause == JournalConnectionFailureCause.noRoute)
+
+        await owner.stop()
+    }
+
+    @Test func nilPairingStaysNeutralDormant() async throws {
+        let disk = PairingStore(pairing: nil)
+        let credentials = PairingCredentialStore(store: disk)
+        let transport = FakeTunnelTransport()
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: { transport },
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true }
+        )
+
+        owner.start()
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(!owner.hasPersistedPairing)
+        #expect(!owner.isTunnelManaged)
+        #expect(transport.connectAttempts == 0)
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.calm)
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.disconnected.axToken)
+        #expect(owner.connectionVerdict.failureCause == nil)
+
+        await owner.stop()
+    }
+
+    @Test func sameMacUploadSyncedAndSyncPausedPreservesRouteTruth() async throws {
+        let transport = FakeTunnelTransport(connectionMode: .plDirect, connection: .init(localPort: 18181, via: .lan))
+        let owner = makeOwner(factory: FakeTransportFactory([transport]))
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 18181, via: .lan) }
+
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connected.axToken)
+
+        // Route loss -> red even if higher-level sync is paused
+        transport.emit(.failed(.unreachable))
+        try await waitUntil { owner.connectionVerdict.severity == StatusDotSeverity.attention }
+        #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.unreachable.axToken)
+
+        await owner.stop()
+    }
+
+    @Test func adversarialCauseRankingAndLiveRouteProtection() async throws {
+        let transport = FakeTunnelTransport(connection: .init(localPort: 19191, via: .relay))
+        let failingCandidate = FakeTunnelTransport(results: [.failure(SessionError.notEntitled)])
+        let owner = makeOwner(factory: FakeTransportFactory([transport, failingCandidate]))
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 19191, via: .relay) }
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
+
+        // When live route is present, background credential refresh failure does not tear down live transport
+        await owner.replaceLiveTransport(with: pairing(deviceToken: "background-refresh"))
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
+        #expect(owner.state == .connected(localPort: 19191, via: .relay))
+
+        await owner.stop()
     }
 
     private func waitBrieflyUntil(_ condition: @escaping @MainActor @Sendable () async -> Bool) async {

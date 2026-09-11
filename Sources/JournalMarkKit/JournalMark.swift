@@ -198,8 +198,8 @@ enum MarkGeometry {
     static let cardBorder = Self.color(hex: "#e7d8c6")
     static let chipBorder = Self.color(hex: "#e7d8c6")
     static let wordColor = Self.color(hex: "#c2b9a6")
-    static let confirmationColor = Self.color(hex: "#166534")
-    static let confirmedBorder = Self.color(hex: "#cfe3d3")
+    static let confirmationColor = Self.color(hex: "#333333")
+    static let confirmedBorder = Self.color(hex: "#d1c7b7")
 
     static func glyphLineWidth(for rect: CGRect) -> CGFloat {
         max(rect.width / 24 * 2, 1)

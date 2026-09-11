@@ -175,7 +175,6 @@
       "settings.service.localJournal.discovery.state",
       "settings.service.next.checkStatus",
       "settings.service.pairing.connect",
-      "settings.service.pairing.connection.state",
       "settings.service.pairing.disconnectCancel",
       "settings.service.pairing.disconnectConfirm",
       "settings.service.pairing.failure.state",
@@ -186,7 +185,6 @@
       "settings.service.pairing.mismatchFreshLink",
       "settings.service.pairing.mismatchSupport",
       "settings.service.pairing.paidPlanLink",
-      "settings.service.pairing.relayAccess.state",
       "settings.service.pairing.retry",
       "settings.service.pairing.switchCancel",
       "settings.service.pairing.switchConfirm",
@@ -363,10 +361,6 @@
       "kind" : "enum",
       "vocabulary" : "LocalJournalDiscoveryAXState"
     },
-    "settings.service.pairing.connection.state" : {
-      "kind" : "enum",
-      "vocabulary" : "PairingConnectionAXState"
-    },
     "settings.service.pairing.failure.state" : {
       "kind" : "enum",
       "vocabulary" : "PairingFailure"
@@ -374,10 +368,6 @@
     "settings.service.pairing.flow.state" : {
       "kind" : "enum",
       "vocabulary" : "PairingFlowState"
-    },
-    "settings.service.pairing.relayAccess.state" : {
-      "kind" : "enum",
-      "vocabulary" : "PairingRelayAccessAXState"
     },
     "settings.sidebar.tab.{tab}.state" : {
       "kind" : "enum",
@@ -604,7 +594,10 @@
       "not_entitled",
       "revoked",
       "loopback_unavailable",
-      "keychain_unavailable"
+      "keychain_unavailable",
+      "no_route",
+      "unreachable",
+      "mismatch"
     ],
     "PairingFailure" : [
       "stale_link",
@@ -625,9 +618,6 @@
       "switched",
       "save_failed",
       "failed"
-    ],
-    "PairingRelayAccessAXState" : [
-      "unavailable"
     ],
     "SettingsObservationAXState" : [
       "on",

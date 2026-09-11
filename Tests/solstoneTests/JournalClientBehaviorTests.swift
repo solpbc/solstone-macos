@@ -22,31 +22,31 @@ struct JournalClientBehaviorTests {
     @Test func localDiscoveryProbeRunsOnlyForUnconfiguredNonTunnelState() {
         #expect(shouldProbeLocalJournal(
             isUploadConfigured: false,
-            isTunnelManaged: false,
+            hasPersistedPairing: false,
             localDiscoveryCompleted: false,
             journalPathIsValid: true
         ))
         #expect(!shouldProbeLocalJournal(
             isUploadConfigured: false,
-            isTunnelManaged: true,
+            hasPersistedPairing: true,
             localDiscoveryCompleted: false,
             journalPathIsValid: true
         ))
         #expect(!shouldProbeLocalJournal(
             isUploadConfigured: true,
-            isTunnelManaged: false,
+            hasPersistedPairing: false,
             localDiscoveryCompleted: false,
             journalPathIsValid: true
         ))
         #expect(shouldProbeLocalJournal(
             isUploadConfigured: true,
-            isTunnelManaged: false,
+            hasPersistedPairing: false,
             localDiscoveryCompleted: false,
             journalPathIsValid: false
         ))
         #expect(!shouldProbeLocalJournal(
             isUploadConfigured: false,
-            isTunnelManaged: false,
+            hasPersistedPairing: false,
             localDiscoveryCompleted: true,
             journalPathIsValid: true
         ))

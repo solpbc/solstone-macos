@@ -10,61 +10,42 @@ import Testing
 @Suite("Pairing overlay", .serialized)
 @MainActor
 struct PairingOverlayTests {
-    @Test func notEntitledRendersDistinctPairedButTierWarning() {
-        let presentation = makePairingConnectionPresentation(for: .error(.notEntitled), hasPairing: true)
+    @Test func notEntitledRendersDistinctPairedButTierAttention() {
+        let presentation = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .error(.notEntitled),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
 
         #expect(presentation.message == "can't sync over the internet yet")
-        #expect(presentation.severity == .warn)
+        #expect(presentation.caption == UICopy.PAIRING_NOTENTITLED_RECOVERY)
+        #expect(presentation.severity == .attention)
         #expect(presentation.axToken == PairingConnectionAXState.notEntitled.axToken)
-    }
-
-    @Test func relayAccessUnavailableRendersDistinctLineAndCaption() throws {
-        let presentation = try #require(makePairingRelayAccessPresentation(for: .unavailable))
-
-        #expect(presentation.message == "paired · remote access unavailable")
-        #expect(presentation.caption == "on the same wi-fi or over your own vpn, solstone connects to your journal directly.")
-        #expect(presentation.severity == .warn)
-        #expect(presentation.axToken == PairingRelayAccessAXState.unavailable.axToken)
-    }
-
-    @Test func relayAccessAvailableAndNoPairingRenderNothing() {
-        #expect(makePairingRelayAccessPresentation(for: .available) == nil)
-        #expect(makePairingRelayAccessPresentation(for: .noPairing) == nil)
+        #expect(presentation.failureCause == .notEntitled)
     }
 
     @Test func revokedPairedHomeIsRecoverableAndCaptureContinues() {
         let state = AppState.forSnapshot(initialTunnelPairing: pairing())
         state.isRecording = true
-        let presentation = makePairingConnectionPresentation(for: .error(.revoked), hasPairing: true)
+        let presentation = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .error(.revoked),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
 
         #expect(presentation.message == "pairing was revoked. pair again to reconnect.")
         #expect(presentation.severity == .attention)
         #expect(presentation.axToken == PairingConnectionAXState.revoked.axToken)
+        #expect(presentation.failureCause == .revoked)
         #expect(state.isRecording)
-    }
-
-    @Test func localJournalConnectionPresentationIsUploadStatusDriven() {
-        let synced = makeLocalJournalConnectionPresentation(for: .synced)
-        #expect(synced.message == "connected to your journal on this mac")
-        #expect(synced.severity == .good)
-        #expect(synced.axToken == PairingConnectionAXState.connected.axToken)
-
-        for status in [
-            UploadCoordinator.Status.notSynced,
-            .syncing(checked: 1, total: 3),
-            .uploading(segment: "segment-1"),
-            .awaitingTunnel,
-            .retrying(segment: "segment-1", attempts: 2)
-        ] {
-            let presentation = makeLocalJournalConnectionPresentation(for: status)
-            #expect(presentation.severity == .warn)
-            #expect(presentation.axToken == PairingConnectionAXState.connecting.axToken)
-        }
-
-        let offline = makeLocalJournalConnectionPresentation(for: .offline("network"))
-        #expect(offline.message == "can't reach your journal on this mac")
-        #expect(offline.severity == .attention)
-        #expect(offline.axToken == PairingConnectionAXState.loopbackUnavailable.axToken)
     }
 
     @Test func unpairLeavesConfigByteIdentical() async throws {

@@ -35,40 +35,10 @@ func shouldApplyConnectionTestCompletion(inFlightTestID: UUID?, testGeneration: 
     inFlightTestID == testGeneration
 }
 
-struct PairingConnectionPresentation {
-    let message: String
-    let severity: StatusDotSeverity
-    let axToken: String
-}
-
-struct PairingRelayAccessPresentation: Equatable {
-    let message: String
-    let caption: String
-    let severity: StatusDotSeverity
-    let axToken: String
-}
-
 func journalLocationLabel(isPairedHome: Bool, serverURL: String?) -> String {
     isPairedHome || BundledJournalEndpoint.isBundledServiceURL(serverURL)
         ? UICopy.JOURNAL_MODE_THIS_MAC_LABEL
         : UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL
-}
-
-func journalConnectionPresentation(
-    serverURL: String?,
-    isUploadConfigured: Bool,
-    isPairedHome: Bool,
-    sameMachineHomeMigrationComplete: Bool,
-    uploadStatus: UploadCoordinator.Status,
-    pairingPresentation: PairingConnectionPresentation
-) -> PairingConnectionPresentation {
-    let canPresentBundledLocal = !isPairedHome || sameMachineHomeMigrationComplete
-    if canPresentBundledLocal,
-       BundledJournalEndpoint.isBundledServiceURL(serverURL),
-       isUploadConfigured {
-        return makeLocalJournalConnectionPresentation(for: uploadStatus)
-    }
-    return pairingPresentation
 }
 
 func pairingResultText(
@@ -90,111 +60,21 @@ func pairingResultText(
     }
 }
 
-func makePairingConnectionPresentation(
-    for state: TunnelLifecycleState,
-    hasPairing: Bool
-) -> PairingConnectionPresentation {
+func shouldShowPairingRetry(for state: TunnelLifecycleState, failureCause: JournalConnectionFailureCause? = nil) -> Bool {
+    if let failureCause {
+        switch failureCause {
+        case .keychainUnavailable, .noRoute, .unreachable, .loopbackUnavailable:
+            return true
+        case .revoked, .notEntitled, .mismatch:
+            return false
+        }
+    }
     switch state {
-    case .connected:
-        return PairingConnectionPresentation(
-            message: "sync can connect through your journal",
-            severity: .good,
-            axToken: PairingConnectionAXState.connected.axToken
-        )
-    case .connecting:
-        return PairingConnectionPresentation(
-            message: "connecting to your journal…",
-            severity: .warn,
-            axToken: PairingConnectionAXState.connecting.axToken
-        )
-    case .disconnected:
-        return PairingConnectionPresentation(
-            message: hasPairing ? "paired · waiting to connect" : "not paired",
-            severity: .warn,
-            axToken: PairingConnectionAXState.disconnected.axToken
-        )
-    case .error(.notEntitled):
-        return PairingConnectionPresentation(
-            message: "can't sync over the internet yet",
-            severity: .warn,
-            axToken: PairingConnectionAXState.notEntitled.axToken
-        )
-    case .error(.revoked):
-        return PairingConnectionPresentation(
-            message: "pairing was revoked. pair again to reconnect.",
-            severity: .attention,
-            axToken: PairingConnectionAXState.revoked.axToken
-        )
-    case .error(.loopbackUnavailable):
-        return PairingConnectionPresentation(
-            message: "paired, but the local connection couldn't start",
-            severity: .attention,
-            axToken: PairingConnectionAXState.loopbackUnavailable.axToken
-        )
-    case .error(.keychainUnavailable):
-        return PairingConnectionPresentation(
-            message: "paired, but this Mac couldn't read the pairing",
-            severity: .attention,
-            axToken: PairingConnectionAXState.keychainUnavailable.axToken
-        )
+    case .error(.keychainUnavailable), .error(.loopbackUnavailable):
+        return true
+    default:
+        return false
     }
-}
-
-func makePairingRelayAccessPresentation(
-    for status: PairingRelayAccessStatus
-) -> PairingRelayAccessPresentation? {
-    switch status {
-    case .noPairing, .available:
-        return nil
-    case .unavailable:
-        return PairingRelayAccessPresentation(
-            message: "paired · remote access unavailable",
-            caption: "on the same wi-fi or over your own vpn, solstone connects to your journal directly.",
-            severity: .warn,
-            axToken: PairingRelayAccessAXState.unavailable.axToken
-        )
-    }
-}
-
-func makeLocalJournalConnectionPresentation(
-    for uploadStatus: UploadCoordinator.Status
-) -> PairingConnectionPresentation {
-    switch uploadStatus {
-    case .synced:
-        return PairingConnectionPresentation(
-            message: "connected to your journal on this mac",
-            severity: .good,
-            axToken: PairingConnectionAXState.connected.axToken
-        )
-    case .syncing, .uploading:
-        return PairingConnectionPresentation(
-            message: "syncing to your journal on this mac",
-            severity: .warn,
-            axToken: PairingConnectionAXState.connecting.axToken
-        )
-    case .notSynced, .awaitingTunnel:
-        return PairingConnectionPresentation(
-            message: "connecting to your journal on this mac",
-            severity: .warn,
-            axToken: PairingConnectionAXState.connecting.axToken
-        )
-    case .retrying:
-        return PairingConnectionPresentation(
-            message: "trouble reaching your journal on this mac; retrying",
-            severity: .warn,
-            axToken: PairingConnectionAXState.connecting.axToken
-        )
-    case .offline:
-        return PairingConnectionPresentation(
-            message: "can't reach your journal on this mac",
-            severity: .attention,
-            axToken: PairingConnectionAXState.loopbackUnavailable.axToken
-        )
-    }
-}
-
-func shouldShowPairingRetry(for state: TunnelLifecycleState) -> Bool {
-    state == .error(.keychainUnavailable)
 }
 
 private struct SettingsPaneScrollEdgeModifier: ViewModifier {
@@ -273,6 +153,8 @@ struct SettingsView: View {
     @State private var localLinkInProgress = false
     @State private var localLinkError: String?
     @State private var showPairingFlow = false
+    @State var entitlementOpenFailed = false
+    @State var supportOpenFailed = false
 
     private let journalNameFetch: @MainActor @Sendable (String) async -> String?
     private let localIdentityFetch: @MainActor @Sendable (String) async -> JournalMark?
@@ -286,6 +168,7 @@ struct SettingsView: View {
     private let setupFileManager: FileManager
     private let diagnosticClipboardWrite: @MainActor (String) -> Bool
     private let diagnosticAnnouncement: @MainActor (String) -> Void
+    private let openURL: @MainActor (URL) -> Bool
 
     init(
         appState: AppState,
@@ -333,7 +216,10 @@ struct SettingsView: View {
                 notification: .announcementRequested,
                 userInfo: [.announcement: message]
             )
-        }
+        },
+        openURL: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        initialEntitlementOpenFailed: Bool = false,
+        initialSupportOpenFailed: Bool = false
     ) {
         self.appState = appState
         self.updateController = updateController
@@ -346,6 +232,7 @@ struct SettingsView: View {
         self.setupFileManager = setupFileManager
         self.diagnosticClipboardWrite = diagnosticClipboardWrite
         self.diagnosticAnnouncement = diagnosticAnnouncement
+        self.openURL = openURL
         self._selectedTab = State(initialValue: selectedTab)
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
         self._setupProbeSnapshot = State(initialValue: initialSetupProbeSnapshot)
@@ -358,6 +245,8 @@ struct SettingsView: View {
         self._localJournalMark = State(initialValue: initialLocalJournalMark)
         self._localDiscoveryCompleted = State(initialValue: initialLocalDiscoveryCompleted)
         self._showPairingFlow = State(initialValue: initialShowPairingFlow)
+        self._entitlementOpenFailed = State(initialValue: initialEntitlementOpenFailed)
+        self._supportOpenFailed = State(initialValue: initialSupportOpenFailed)
     }
 
     // MARK: - Auto-saving Bindings
@@ -1116,17 +1005,21 @@ struct SettingsView: View {
                     Text(journalLocationLabel)
                 }
 
-                LabeledContent("connection") {
-                    let presentation = journalConnectionPresentation
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(presentation.severity.color)
-                            .frame(width: 8, height: 8)
-                        Text(presentation.message)
-                            .foregroundStyle(presentation.severity.color)
+                if pairingMismatch {
+                    pairingMismatchPane
+                } else {
+                    LabeledContent("connection") {
+                        let presentation = journalConnectionPresentation
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(presentation.severity.color)
+                                .frame(width: 8, height: 8)
+                            Text(presentation.message)
+                                .foregroundStyle(presentation.severity.color)
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Service.journalConnectionState)
+                        .accessibilityValue(presentation.axToken)
                     }
-                    .accessibilityIdentifier(AXID.Settings.Service.journalConnectionState)
-                    .accessibilityValue(presentation.axToken)
                 }
 
                 uploadStatusView
@@ -1167,7 +1060,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var unconfiguredJournalPanel: some View {
-        if appState.tunnelLifecycleOwner.isTunnelManaged {
+        if appState.tunnelLifecycleOwner.hasPersistedPairing {
             pairingSection
         } else {
             localJournalDiscoveryPanel
@@ -1405,15 +1298,17 @@ struct SettingsView: View {
         )
     }
 
-    private var journalConnectionPresentation: PairingConnectionPresentation {
-        solstone.journalConnectionPresentation(
-            serverURL: appState.config.serverURL,
-            isUploadConfigured: appState.config.isUploadConfigured,
-            isPairedHome: appState.isPairedHome,
-            sameMachineHomeMigrationComplete: appState.sameMachineHomeMigrationComplete,
-            uploadStatus: appState.uploadCoordinator.status,
-            pairingPresentation: pairingConnectionPresentation
-        )
+    private var journalConnectionPresentation: JournalConnectionVerdict {
+        if pairingMismatch {
+            return JournalConnectionVerdict(
+                severity: .attention,
+                message: "can't reach your journal right now",
+                caption: nil,
+                axToken: PairingConnectionAXState.mismatch.axToken,
+                failureCause: .mismatch
+            )
+        }
+        return appState.tunnelLifecycleOwner.connectionVerdict
     }
 
     private var externalJournalSyncSection: some View {
@@ -1584,34 +1479,12 @@ struct SettingsView: View {
 
                 pairingResultView
 
-                pairingConnectionTruthRow
-
-                pairingRelayAccessTruthRow
-
                 if pairingMismatch {
-                    pairingMismatchPane
-                }
-
-                if case .error(.notEntitled) = appState.pairingCoordinator.tunnelState {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(UICopy.PAIRING_NOTENTITLED_RECOVERY)
-                            .font(.callout)
-                            .foregroundStyle(.primary)
-                            .multilineTextAlignment(.leading)
-                        Link("set up the paid plan ↗", destination: URL(string: "https://link.solstone.app")!)
-                            .font(.callout)
-                            .accessibilityIdentifier(AXID.Settings.Service.pairingPaidPlanLink)
+                    if !(appState.config.isUploadConfigured && journalPathIsValid) {
+                        pairingMismatchPane
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.orange.opacity(0.12))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Color.orange.opacity(0.35), lineWidth: 1)
-                    )
+                } else if !(appState.config.isUploadConfigured && journalPathIsValid) {
+                    pairingConnectionTruthRow
                 }
 
                 if pairingCanUnpair {
@@ -1676,10 +1549,6 @@ struct SettingsView: View {
                     id: AXID.Settings.Service.pairingFlowState,
                     value: appState.pairingCoordinator.state.axToken
                 )
-                AXStateCompanion(
-                    id: AXID.Settings.Service.pairingConnectionState,
-                    value: pairingConnectionPresentation.axToken
-                )
             }
             .padding(.vertical, 4)
         }
@@ -1692,11 +1561,41 @@ struct SettingsView: View {
         } else if let result = pairingResultText {
             LabeledContent("pairing") {
                 HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                    Image(systemName: "checkmark.circle")
+                        .foregroundStyle(.primary)
                     Text(result)
                 }
             }
+        }
+    }
+
+    @discardableResult
+    func openEntitlementURL() -> Bool {
+        guard let url = URL(string: "https://link.solstone.app") else {
+            entitlementOpenFailed = true
+            return false
+        }
+        if openURL(url) {
+            entitlementOpenFailed = false
+            return true
+        } else {
+            entitlementOpenFailed = true
+            return false
+        }
+    }
+
+    @discardableResult
+    func openSupportMailto() -> Bool {
+        guard let url = URL(string: "mailto:support@solstone.app") else {
+            supportOpenFailed = true
+            return false
+        }
+        if openURL(url) {
+            supportOpenFailed = false
+            return true
+        } else {
+            supportOpenFailed = true
+            return false
         }
     }
 
@@ -1715,12 +1614,20 @@ struct SettingsView: View {
                 .accessibilityIdentifier(AXID.Settings.Service.pairingMismatchFreshLink)
 
                 Button(UICopy.JOURNAL_MARK_MISMATCH_SUPPORT) {
-                    if let url = URL(string: "mailto:support@solstone.app") {
-                        NSWorkspace.shared.open(url)
-                    }
+                    openSupportMailto()
                 }
                 .accessibilityIdentifier(AXID.Settings.Service.pairingMismatchSupport)
             }
+            if supportOpenFailed {
+                Text("support@solstone.app")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            AXStateCompanion(
+                id: AXID.Settings.Service.journalConnectionState,
+                value: PairingConnectionAXState.mismatch.axToken
+            )
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -1735,22 +1642,9 @@ struct SettingsView: View {
     }
 
     private var pairingConnectionTruthRow: some View {
-        let presentation = pairingConnectionPresentation
-        return LabeledContent("connection") {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(presentation.severity.color)
-                    .frame(width: 8, height: 8)
-                Text(presentation.message)
-                    .foregroundStyle(presentation.severity.color)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var pairingRelayAccessTruthRow: some View {
-        if let presentation = pairingRelayAccessPresentation {
-            VStack(alignment: .leading, spacing: 4) {
+        let presentation = journalConnectionPresentation
+        return VStack(alignment: .leading, spacing: 4) {
+            LabeledContent("connection") {
                 HStack(spacing: 6) {
                     Circle()
                         .fill(presentation.severity.color)
@@ -1758,14 +1652,32 @@ struct SettingsView: View {
                     Text(presentation.message)
                         .foregroundStyle(presentation.severity.color)
                 }
-                Text(presentation.caption)
+                .accessibilityIdentifier(AXID.Settings.Service.journalConnectionState)
+                .accessibilityValue(presentation.axToken)
+            }
+            if let caption = presentation.caption {
+                Text(caption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                AXStateCompanion(
-                    id: AXID.Settings.Service.pairingRelayAccessState,
-                    value: presentation.axToken
-                )
             }
+            if presentation.failureCause == .notEntitled {
+                Button("set up the paid plan ↗") {
+                    openEntitlementURL()
+                }
+                .font(.caption)
+                .accessibilityIdentifier(AXID.Settings.Service.pairingPaidPlanLink)
+
+                if entitlementOpenFailed {
+                    Text("https://link.solstone.app")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+            AXStateCompanion(
+                id: AXID.Settings.Service.journalConnectionState,
+                value: presentation.axToken
+            )
         }
     }
 
@@ -1812,11 +1724,23 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var tunnelErrorRetryRow: some View {
-        if shouldShowPairingRetry(for: appState.pairingCoordinator.tunnelState),
-           !coordinatorShowsPairingRetry {
+        let failureCause = appState.tunnelLifecycleOwner.connectionVerdict.failureCause
+        if shouldShowPairingRetry(
+            for: appState.pairingCoordinator.tunnelState,
+            failureCause: failureCause
+        ), !coordinatorShowsPairingRetry {
             HStack {
                 Button("retry") {
-                    Task { await appState.reevaluateTunnelPairing() }
+                    Task {
+                        switch failureCause {
+                        case .keychainUnavailable, .noRoute:
+                            await appState.reevaluateTunnelPairing()
+                        case .unreachable, .loopbackUnavailable:
+                            await appState.tunnelLifecycleOwner.requestCoalescedReconnect()
+                        default:
+                            await appState.reevaluateTunnelPairing()
+                        }
+                    }
                 }
                 .disabled(pairingIsBusy)
                 .accessibilityIdentifier(AXID.Settings.Service.pairingRetry)
@@ -1849,18 +1773,7 @@ struct SettingsView: View {
     }
 
     private var pairingCanUnpair: Bool {
-        appState.tunnelLifecycleOwner.isTunnelManaged || pairingResultText != nil
-    }
-
-    private var pairingConnectionPresentation: PairingConnectionPresentation {
-        return makePairingConnectionPresentation(
-            for: appState.pairingCoordinator.tunnelState,
-            hasPairing: pairingCanUnpair
-        )
-    }
-
-    private var pairingRelayAccessPresentation: PairingRelayAccessPresentation? {
-        makePairingRelayAccessPresentation(for: appState.tunnelLifecycleOwner.relayAccessStatus)
+        appState.tunnelLifecycleOwner.hasPersistedPairing || pairingResultText != nil
     }
 
     private func submitPairingLink() {
@@ -2033,11 +1946,11 @@ struct SettingsView: View {
     private func refreshLocalJournalDiscoveryIfNeeded() {
         guard shouldProbeLocalJournal(
             isUploadConfigured: appState.config.isUploadConfigured,
-            isTunnelManaged: appState.tunnelLifecycleOwner.isTunnelManaged,
+            hasPersistedPairing: appState.tunnelLifecycleOwner.hasPersistedPairing,
             localDiscoveryCompleted: localDiscoveryCompleted,
             journalPathIsValid: journalPathIsValid
         ) else {
-            if appState.tunnelLifecycleOwner.isTunnelManaged {
+            if appState.tunnelLifecycleOwner.hasPersistedPairing {
                 localDiscoveryTask?.cancel()
                 localDiscoveryTask = nil
                 localJournalMark = nil

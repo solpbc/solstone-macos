@@ -18,6 +18,7 @@ struct TunnelTransportConnection: Sendable, Equatable {
 protocol TunnelTransporting: AnyObject, Sendable {
     var stateUpdates: AsyncStream<TunnelState> { get }
     var connectionModeUpdates: AsyncStream<ConnectionMode?> { get }
+    var attemptStateUpdates: AsyncStream<TunnelSupervisorAttemptState> { get }
     var connectionMode: ConnectionMode? { get }
 
     func connect(pairing: StoredPairing, candidates: [TransportEndpoint]) async throws -> TunnelTransportConnection
@@ -28,6 +29,7 @@ protocol TunnelTransporting: AnyObject, Sendable {
 
 protocol TunnelReconnecting: TunnelSessioning, MuxStreamOpening {
     func requestReconnect() async
+    func attemptStateUpdates() async -> AsyncStream<TunnelSupervisorAttemptState>
 }
 
 extension TunnelSupervisor: TunnelReconnecting {}
@@ -36,6 +38,7 @@ extension TunnelSupervisor: TunnelReconnecting {}
 final class SPLTunnelTransport: TunnelTransporting {
     private(set) var stateUpdates: AsyncStream<TunnelState>
     private(set) var connectionModeUpdates: AsyncStream<ConnectionMode?>
+    private(set) var attemptStateUpdates: AsyncStream<TunnelSupervisorAttemptState>
     private(set) var connectionMode: ConnectionMode?
 
     private let clientInfo: SPLClientInfo
@@ -43,12 +46,14 @@ final class SPLTunnelTransport: TunnelTransporting {
     private let makeSession: @Sendable (StoredPairing, SPLClientInfo, SessionPolicy) -> any TunnelReconnecting
     private var stateContinuation: AsyncStream<TunnelState>.Continuation
     private var connectionModeContinuation: AsyncStream<ConnectionMode?>.Continuation
+    private var attemptStateContinuation: AsyncStream<TunnelSupervisorAttemptState>.Continuation
 
     private var generation: UInt64 = 0
     private var session: (any TunnelReconnecting)?
     private var proxy: LoopbackProxy?
     private var stateForwardTask: Task<Void, Never>?
     private var connectionModeForwardTask: Task<Void, Never>?
+    private var attemptStateForwardTask: Task<Void, Never>?
 
     init(
         clientInfo: SPLClientInfo = SPLRuntime.clientInfo,
@@ -66,8 +71,12 @@ final class SPLTunnelTransport: TunnelTransporting {
         let mode = AsyncStream<ConnectionMode?>.makeStream()
         self.connectionModeUpdates = mode.stream
         self.connectionModeContinuation = mode.continuation
+        let attempt = AsyncStream<TunnelSupervisorAttemptState>.makeStream()
+        self.attemptStateUpdates = attempt.stream
+        self.attemptStateContinuation = attempt.continuation
         state.continuation.yield(.disconnected)
         mode.continuation.yield(nil)
+        attempt.continuation.yield(.idle)
     }
 
     func connect(pairing: StoredPairing, candidates: [TransportEndpoint]) async throws -> TunnelTransportConnection {
@@ -116,12 +125,16 @@ final class SPLTunnelTransport: TunnelTransporting {
         stateForwardTask = nil
         connectionModeForwardTask?.cancel()
         connectionModeForwardTask = nil
+        attemptStateForwardTask?.cancel()
+        attemptStateForwardTask = nil
 
         connectionMode = nil
         connectionModeContinuation.yield(nil)
         stateContinuation.yield(.disconnected)
+        attemptStateContinuation.yield(.idle)
         stateContinuation.finish()
         connectionModeContinuation.finish()
+        attemptStateContinuation.finish()
         // Retire reconnect eligibility before waiting for local proxy drainage.
         await oldSession?.disconnect()
         await oldProxy?.stop()
@@ -152,11 +165,15 @@ final class SPLTunnelTransport: TunnelTransporting {
             let modes = AsyncStream<ConnectionMode?>.makeStream()
             connectionModeUpdates = modes.stream
             connectionModeContinuation = modes.continuation
+            let attempts = AsyncStream<TunnelSupervisorAttemptState>.makeStream()
+            attemptStateUpdates = attempts.stream
+            attemptStateContinuation = attempts.continuation
         }
         let session = makeSession(pairing, clientInfo, policy)
         self.session = session
         observe(session)
         observeConnectionMode(session)
+        observeAttemptState(session)
         return session
     }
 
@@ -180,6 +197,19 @@ final class SPLTunnelTransport: TunnelTransporting {
                 guard let self, self.generation == capturedGeneration, !Task.isCancelled else { return }
                 self.connectionMode = mode
                 self.connectionModeContinuation.yield(mode)
+            }
+        }
+    }
+
+    private func observeAttemptState(_ session: any TunnelReconnecting) {
+        attemptStateForwardTask?.cancel()
+        let continuation = attemptStateContinuation
+        let capturedGeneration = generation
+        attemptStateForwardTask = Task { @MainActor [weak self] in
+            let stream = await session.attemptStateUpdates()
+            for await attemptState in stream {
+                guard let self, self.generation == capturedGeneration, !Task.isCancelled else { return }
+                continuation.yield(attemptState)
             }
         }
     }
