@@ -1185,13 +1185,6 @@ icons: check-icons-deps
 			-o Sources/solstone/Resources/sol-ring-icon-error-template.pdf && \
 		echo "  ✓ sol-ring-icon-error-template.pdf" && \
 	\
-	echo "  Rendering mark for UI..." && \
-	rsvg-convert -w 128 -h 128 assets/mark.svg \
-		-o Sources/solstone/Resources/sol-wordmark.png && \
-	rsvg-convert -w 256 -h 256 assets/mark.svg \
-		-o Sources/solstone/Resources/sol-wordmark@2x.png && \
-	echo "  ✓ sol-wordmark.png + @2x" && \
-	\
 	rm -rf $$TMPDIR && \
 	echo "Icons generated in Sources/solstone/Resources/ and Sources/journal/Resources/"
 
@@ -1202,7 +1195,7 @@ check-icons-deps:
 		(echo "error: iconutil not found (requires macOS)"; exit 1)
 
 # Fails when a committed generated brand asset (AppIcon.icns x2, the menubar
-# template PDFs, the wordmark PNGs, or the machine-generated
+# template PDFs, or the machine-generated
 # assets/icon-journal.svg) no longer matches what `make icons` produces from
 # its current source. Wired into `make ci` via scripts/run-ci.sh so staleness
 # fails the routine gate instead of waiting for someone to notice.

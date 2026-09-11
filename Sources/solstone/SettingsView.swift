@@ -596,7 +596,7 @@ struct SettingsView: View {
 
     private var permissionsTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("solstone needs screen recording and microphone access to build your memory.")
+            Text("the solstone app takes in what you share with it, and all of it goes into your journal.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -616,7 +616,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("this is how you get searchable memory of every meeting, document, and idea. solstone takes in your screen alongside you and keeps everything on your Mac, sent only to your journal.")
+                        Text("macOS lists this as Screen Recording. grant it so what you share can go into your journal.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         if shouldShowScreenRecordingResetHint(
@@ -684,7 +684,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("to take in conversations and meetings, solstone needs mic access. same rules: stored locally, sent only to your journal. no third parties, no exceptions.")
+                        Text("grant Microphone access so conversations and meetings you share can go into your journal.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
@@ -2853,13 +2853,14 @@ struct SettingsView: View {
 
     private var agentInstructions: String {
         """
-        this is solstone-macos, a screen and audio observer for your journal.
+        this is solstone for macos.
+        the solstone app takes in what you share with it, and all of it goes into your journal.
         installed at: \(Bundle.main.bundlePath)
-        captures: ~/Library/Application Support/Solstone/captures/
+        files: ~/Library/Application Support/Solstone/captures/
         logs: /usr/bin/log stream --predicate 'subsystem == "app.solstone.observer"' --level debug
         journal: \(appState.config.serverURL ?? "not configured")
 
-        if the observer isn't running, check settings → permissions.
+        if intake isn't running, check settings → permissions.
         if it's not syncing, check settings → journal.
         source: https://github.com/solpbc/solstone-macos
         """
@@ -3044,7 +3045,7 @@ struct SettingsView: View {
             }
             let state = appState.errorMessage != nil
                 ? "error"
-                : (appState.isPaused ? "paused" : (appState.isRecording ? "observing" : "off"))
+                : (appState.isPaused ? "paused" : (appState.isRecording ? "on" : "off"))
             NSWorkspace.shared.open(SupportReportURL.make(
                 version: AppVersion.short,
                 build: AppVersion.build,

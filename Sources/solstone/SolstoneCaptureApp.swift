@@ -348,22 +348,12 @@ enum SolstoneResources {
 /// `Contents/Resources/Resources/<file>`, and `Bundle.image(forResource:)`
 /// does not recurse into subdirectories. The `inDirectory: "Resources"`
 /// parameter makes the lookup work against the nested layout.
-///
-/// Prefers PDF (vector, resolution-independent — renders crisp at any
-/// menu-bar density and on any Retina factor) and falls back to PNG for
-/// raster-only assets like the wordmark.
 func bundleImage(_ name: String, isTemplate: Bool = false) -> Image {
-    let nsImage: NSImage
-    if let pdfPath = SolstoneResources.bundle.path(forResource: name, ofType: "pdf", inDirectory: "Resources"),
-       let img = NSImage(contentsOfFile: pdfPath) {
-        nsImage = img
-    } else if let pngPath = SolstoneResources.bundle.path(forResource: name, ofType: "png", inDirectory: "Resources"),
-              let img = NSImage(contentsOfFile: pngPath) {
-        nsImage = img
-    } else {
-        nsImage = NSImage()
-    }
-    if isTemplate { nsImage.isTemplate = true }
+    let nsImage = SolstoneResourceImage.mustLoad(
+        named: name,
+        in: SolstoneResources.bundle,
+        isTemplate: isTemplate
+    )
     return Image(nsImage: nsImage)
 }
 

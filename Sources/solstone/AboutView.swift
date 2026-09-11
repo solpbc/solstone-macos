@@ -7,14 +7,10 @@ import SwiftUI
 struct AboutView: View {
     private var version: String { AppVersion.short }
 
-    private var copyright: String {
-        Bundle.main.infoDictionary?["NSHumanReadableCopyright"] as? String ?? ""
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 8) {
-                bundleImage("sol-wordmark")
+                bundleImage("AppIcon")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 64, height: 64)
@@ -39,7 +35,7 @@ struct AboutView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
 
-                Text("sol is part of solstone: open source, local-first.")
+                Text("open source, local-first.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -52,9 +48,10 @@ struct AboutView: View {
 
             Spacer().frame(height: 12)
 
-            Text("a memory your agents can work from. always private, only yours.")
+            Text("the solstone app takes in what you share with it, and all of it goes into your journal.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
 
             Spacer()
 

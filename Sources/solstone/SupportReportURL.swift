@@ -15,7 +15,7 @@ nonisolated enum SupportReportURL {
     ) -> URL {
         var fields = [
             ("report", "v1"),
-            ("app", "solstone for mac"),
+            ("app", "solstone for macos"),
         ]
         if !version.isEmpty {
             fields.append(("version", String(version.prefix(120))))

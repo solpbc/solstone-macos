@@ -3,7 +3,7 @@
 # Copyright (c) 2026 sol pbc
 #
 # Fails when a committed generated brand asset (AppIcon.icns x2, the menubar
-# template PDFs, the wordmark PNGs, or the machine-generated
+# template PDFs, or the machine-generated
 # assets/icon-journal.svg) no longer matches what `make icons` produces from
 # its current SVG/JournalMarkKit source. `make icons` pins SOURCE_DATE_EPOCH,
 # so regenerate-and-diff is deterministic — a real content change is the only

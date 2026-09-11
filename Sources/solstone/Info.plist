@@ -34,13 +34,13 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 sol pbc. all rights reserved.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>local network access lets what you share with the solstone app land in your journal.</string>
+	<string>the solstone app takes in what you share with it, and all of it goes into your journal.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>the solstone app takes in what you share with it through your microphone. that audio lands in your journal.</string>
+	<string>the solstone app takes in what you share with it, and all of it goes into your journal.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>the solstone app takes in what you share with it from your screen. it lands in your journal.</string>
+	<string>the solstone app takes in what you share with it, and all of it goes into your journal.</string>
 	<key>NSSystemAudioRecordingUsageDescription</key>
-	<string>the solstone app takes in what you share with it from calls and media. that audio lands in your journal.</string>
+	<string>the solstone app takes in what you share with it, and all of it goes into your journal.</string>
 	<key>SUAllowsAutomaticUpdates</key>
 	<true/>
 	<key>SUAutomaticallyUpdate</key>

@@ -58,7 +58,7 @@ public enum UICopy {
     public static let SETTINGS_OBSERVATION_ERROR = "something's broken"
     public static let SETTINGS_TRY_AGAIN = "try again"
     public static let SETTINGS_TRY_AGAIN_IN_FLIGHT = "trying again…"
-    public static let SETTINGS_OBSERVATION_RECOVERY_FALLBACK = "solstone stopped and couldn't restart on its own."
+    public static let SETTINGS_OBSERVATION_RECOVERY_FALLBACK = "intake stopped and couldn't restart on its own."
     public static let SETTINGS_SETUP_GROUP_TITLE = "check my setup"
     public static let SETTINGS_SETUP_VERDICT_READY = "your setup is ready"
     public static let SETTINGS_SETUP_VERDICT_UNAVAILABLE = "some setup checks are unavailable"
@@ -126,7 +126,7 @@ public enum UICopy {
     public static let SETTINGS_HELP_ICON_ERROR = "something's broken"
     public static let ERROR_LOGIN_ITEM = "couldn't update your login setting. try again, or toggle it off and on."
     public static let ERROR_SAVE_CONFIG = "couldn't save your settings. try again, or restart solstone."
-    public static let ERROR_START_OBSERVING = "couldn't turn solstone on. check permissions in settings, then try again."
+    public static let ERROR_START_OBSERVING = "couldn't turn intake on. check permissions in settings, then try again."
 
     public static func menubarErrorOpenSettings(_ message: String) -> String {
         "error: \(message) →"

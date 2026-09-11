@@ -14,7 +14,7 @@ struct SupportReportURLTests {
             recent: "app.launch\ncapture.stopped"
         ).absoluteString
 
-        #expect(url.hasPrefix("https://support.solstone.app/#report=v1&app=solstone+for+mac"))
+        #expect(url.hasPrefix("https://support.solstone.app/#report=v1&app=solstone+for+macos"))
         #expect(url.contains("&state=paused"))
         #expect(url.contains("&recent=app.launch%0Acapture.stopped"))
         #expect(!url.contains("?"))

@@ -592,7 +592,7 @@ extension MenubarIconState {
     var axToken: String {
         switch self {
         case .recording:
-            return "recording"
+            return "on"
         case .offline:
             return "offline"
         case .paused:
