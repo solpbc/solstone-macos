@@ -765,14 +765,14 @@ private extension UpdatesTabView {
 
         private static let _debugReleaseNotes_1_3_0 = """
 ### Added
-- you can now run solstone's on-screen analysis entirely on your own Apple Silicon Mac. choose the on-device option in settings, and the part of solstone that makes sense of what's on your screen runs locally, with nothing about those frames going to a cloud provider. it's opt-in, vision-only for now, and needs a Mac with at least 16 GB of memory. a one-time model download happens the first time you turn it on.
+- you can now run on-screen analysis entirely on your own Apple Silicon Mac. choose the on-device option in settings, and that work runs locally, with nothing about those frames going to a cloud provider. it's opt-in, vision-only for now, and needs a Mac with at least 16 GB of memory. a one-time model download happens the first time you turn it on.
 - the menu bar now tells you when your journal needs attention and opens settings for restart or setup.
 - you can now power solstone with your Anthropic or OpenAI account without installing anything separately. enable the provider in settings and paste your key, and solstone installs what it needs on its own.
 
 ### Changed
 - the timeline view is rebuilt. it fits any window width, shows where each entry came from with a link to that day, and refreshes in place as new days roll up.
 - long todo lists load faster. solstone now shows a focused first screen with a "show more" control, instead of rendering the entire list up front.
-- pairing a phone is more reliable, and the paused state in the menu now reads "paused - 8 min left" so you can see at a glance when solstone resumes.
+- pairing a phone is more reliable, and the paused state in the menu now reads "paused - 8 min left" so the remaining pause time is obvious when solstone resumes.
 
 ### Fixed
 - videos and audio in your journal that wouldn't play now play correctly, with a clearer message on the rare file that still can't.

@@ -17,7 +17,7 @@ struct ReleaseNotesViewModelTests {
         ])
         #expect(plainText(blocks[0]) == "Added")
         #expect(!plainText(blocks[0]).contains("###"))
-        #expect(plainText(blocks[1]).hasPrefix("you can now run solstone's on-screen analysis"))
+        #expect(plainText(blocks[1]).hasPrefix("you can now run on-screen analysis"))
         #expect(!plainText(blocks[1]).contains("- "))
         #expect(model.blocks != nil)
     }
