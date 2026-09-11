@@ -346,7 +346,14 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
     /// Convert buffer to mono at target sample rate
     /// Uses cached AVAudioConverter for efficiency
-    private func convertToMono(_ buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
+    private func convertToMono(_ captured: AVAudioPCMBuffer, targetFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let buffer: AVAudioPCMBuffer
+        if captured.format.channelCount > 2 {
+            guard let summed = Self.summedMono(captured) else { return nil }
+            buffer = summed
+        } else {
+            buffer = captured
+        }
         let sourceFormat = buffer.format
 
         // If formats match, just return the buffer
@@ -371,12 +378,6 @@ public final class ExternalMicCapture: @unchecked Sendable {
             // Create new converter and cache it
             guard let newConverter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
                 return nil
-            }
-            // AVAudioConverter has no defined mono downmix for discrete multichannel
-            // layouts (interfaces with >2 inputs) and emits all-zero samples for them;
-            // map the first input channel explicitly. Mono/stereo keep the default map.
-            if sourceFormat.channelCount > 2 {
-                newConverter.channelMap = [0]
             }
             cachedConverter = newConverter
             cachedSourceFormat = sourceFormat
@@ -410,6 +411,32 @@ public final class ExternalMicCapture: @unchecked Sendable {
         }
 
         return outputBuffer
+    }
+
+    /// Sum every input of a discrete multichannel interface (>2 inputs) into one
+    /// mono buffer at the hardware sample rate. AVAudioConverter has no defined
+    /// mono downmix for these layouts and emits all-zero samples, so the mix is
+    /// done here. Inputs are summed, not averaged, so one live mic among idle
+    /// preamps keeps its level; processAndSend clamps after gain.
+    internal static func summedMono(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let source = buffer.floatChannelData,
+              let monoFormat = AVAudioFormat(
+                  commonFormat: .pcmFormatFloat32,
+                  sampleRate: buffer.format.sampleRate,
+                  channels: 1,
+                  interleaved: false
+              ),
+              let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameLength),
+              let destination = mono.floatChannelData
+        else { return nil }
+
+        let frames = vDSP_Length(buffer.frameLength)
+        mono.frameLength = buffer.frameLength
+        vDSP_vclr(destination[0], 1, frames)
+        for channel in 0..<Int(buffer.format.channelCount) {
+            vDSP_vadd(destination[0], 1, source[channel], 1, destination[0], 1, frames)
+        }
+        return mono
     }
 
     /// Get the native sample rate of a device
