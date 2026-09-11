@@ -56,11 +56,11 @@ func overlayIngestOnConnectionVerdict(
 func classifiedObserverHealthOwnerCopy(_ reason: ObserverHealthFailureReason) -> String {
     switch reason {
     case .httpStatus(404):
-        return "your journal isn't taking anything in from this mac"
+        return "your journal isn't taking this in"
     case .httpStatus(403):
         return "pairing was revoked. pair again to reconnect."
     case .httpStatus(let statusCode):
-        return "your journal couldn't take this in right now"
+        return "journal connection error"
     case .urlErrorCode:
         return "can't reach your journal"
     case .uploadInvalidURL:
@@ -68,7 +68,7 @@ func classifiedObserverHealthOwnerCopy(_ reason: ObserverHealthFailureReason) ->
     case .uploadNoFiles:
         return "nothing to add yet"
     case .uploadInvalidResponse:
-        return "couldn't read what came back from your journal"
+        return "couldn't understand your journal"
     case .configChanged:
         return "settings changed, starting over"
     case .notConfigured:
