@@ -15,10 +15,10 @@ public actor SyncService {
         case uploadStarted(segment: String)
         case uploadRetrying(segment: String, attempt: Int)
         case uploadSucceeded(segment: String, journalFingerprint: String)
-        case uploadFailed(segment: String, error: String, healthReason: ObserverHealthFailureReason)
+        case uploadFailed(segment: String, error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)
         case journalContactSucceeded
         case syncComplete
-        case offline(error: String, healthReason: ObserverHealthFailureReason)
+        case offline(error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)
         case awaitingTunnel
         /// A segment's directory listed cleanly and held no file `selectFilesForUpload`
         /// recognizes — it can never earn a hold proof. It no longer blocks its day's synced
@@ -35,7 +35,7 @@ public actor SyncService {
 
     private enum UploadRetryOutcome: Sendable {
         case succeeded
-        case failed(error: String, healthReason: ObserverHealthFailureReason)
+        case failed(error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)
         case held
         case stopped
     }
@@ -206,7 +206,7 @@ public actor SyncService {
             return f.string(from: Date())
         }()
 
-        var terminalUploadFailure: (error: String, healthReason: ObserverHealthFailureReason)?
+        var terminalUploadFailure: (error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)?
         let manifest: IngestProtocolV3.Manifest
         do {
             manifest = try await fetchManifest()
@@ -216,7 +216,11 @@ public actor SyncService {
         } catch {
             let healthReason = observerHealthFailureReason(from: error)
             Logger.upload.info("Manifest query failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
-            progressContinuation.yield(.offline(error: error.localizedDescription, healthReason: healthReason))
+            progressContinuation.yield(.offline(
+                error: error.localizedDescription,
+                healthReason: healthReason,
+                requestedPath: IngestProtocolV3.manifestPath
+            ))
             return
         }
         progressContinuation.yield(.journalContactSucceeded)
@@ -238,7 +242,11 @@ public actor SyncService {
             switch manifest.days[day] {
             case .error:
                 Logger.upload.info("Day \(day, privacy: .public): manifest reported an error")
-                progressContinuation.yield(.offline(error: "journal manifest rejected \(day)", healthReason: .uploadFailed))
+                progressContinuation.yield(.offline(
+                    error: "journal manifest rejected \(day)",
+                    healthReason: .uploadFailed,
+                    requestedPath: IngestProtocolV3.manifestPath
+                ))
                 return
             case .segments:
                 do {
@@ -248,10 +256,23 @@ public actor SyncService {
                 } catch SyncReadError.held {
                     progressContinuation.yield(.awaitingTunnel)
                     return
+                } catch let SyncReadError.ingest(path, error) {
+                    let healthReason = observerHealthFailureReason(from: error)
+                    Logger.upload.info("Day \(day, privacy: .public) query failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
+                    progressContinuation.yield(.offline(
+                        error: error.localizedDescription,
+                        healthReason: healthReason,
+                        requestedPath: path
+                    ))
+                    return
                 } catch {
                     let healthReason = observerHealthFailureReason(from: error)
                     Logger.upload.info("Day \(day, privacy: .public) query failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
-                    progressContinuation.yield(.offline(error: error.localizedDescription, healthReason: healthReason))
+                    progressContinuation.yield(.offline(
+                        error: error.localizedDescription,
+                        healthReason: healthReason,
+                        requestedPath: IngestProtocolV3.manifestDayPath(day)
+                    ))
                     return
                 }
             case nil:
@@ -314,8 +335,8 @@ public actor SyncService {
                     switch outcome {
                     case .succeeded:
                         break
-                    case .failed(let error, let healthReason):
-                        terminalUploadFailure = (error, healthReason)
+                    case .failed(let error, let healthReason, let requestedPath):
+                        terminalUploadFailure = (error, healthReason, requestedPath)
                     case .held:
                         progressContinuation.yield(.awaitingTunnel)
                         return
@@ -340,7 +361,11 @@ public actor SyncService {
 
         if let failure = terminalUploadFailure {
             Logger.upload.info("Sync finished with upload failures: \(sanitizedObserverHealthErrorReason(failure.healthReason), privacy: .public)")
-            progressContinuation.yield(.offline(error: failure.error, healthReason: failure.healthReason))
+            progressContinuation.yield(.offline(
+                error: failure.error,
+                healthReason: failure.healthReason,
+                requestedPath: failure.requestedPath
+            ))
             return
         }
 
@@ -352,6 +377,7 @@ public actor SyncService {
 
     private enum SyncReadError: Error {
         case held
+        case ingest(path: String, underlying: Error)
     }
 
     private func fetchManifest() async throws -> IngestProtocolV3.Manifest {
@@ -361,9 +387,19 @@ public actor SyncService {
 
     private func fetchReconciledDay(_ day: String) async throws -> [String: ServerSegmentInfo] {
         let manifestURL = try await resolvedServerURL()
-        let manifestDay = try await client.getManifestDay(serverURL: manifestURL, day: day)
+        let manifestDay: IngestProtocolV3.ManifestDay
+        do {
+            manifestDay = try await client.getManifestDay(serverURL: manifestURL, day: day)
+        } catch {
+            throw SyncReadError.ingest(path: IngestProtocolV3.manifestDayPath(day), underlying: error)
+        }
         let segmentsURL = try await resolvedServerURL()
-        let segmentsDay = try await client.getSegmentsDay(serverURL: segmentsURL, day: day)
+        let segmentsDay: IngestProtocolV3.SegmentsDay
+        do {
+            segmentsDay = try await client.getSegmentsDay(serverURL: segmentsURL, day: day)
+        } catch {
+            throw SyncReadError.ingest(path: IngestProtocolV3.segmentsDayPath(day), underlying: error)
+        }
         return mergeServerDay(manifestDay: manifestDay, segmentsDay: segmentsDay)
     }
 
@@ -545,9 +581,14 @@ public actor SyncService {
                 progressContinuation.yield(.uploadFailed(
                     segment: segment,
                     error: "No files",
-                    healthReason: .uploadNoFiles
+                    healthReason: .uploadNoFiles,
+                    requestedPath: IngestProtocolV3.uploadPath
                 ))
-                return .failed(error: "No files", healthReason: .uploadNoFiles)
+                return .failed(
+                    error: "No files",
+                    healthReason: .uploadNoFiles,
+                    requestedPath: IngestProtocolV3.uploadPath
+                )
             }
 
             let result = await client.uploadSegment(
@@ -584,9 +625,14 @@ public actor SyncService {
                     progressContinuation.yield(.uploadFailed(
                         segment: segment,
                         error: error.localizedDescription,
-                        healthReason: healthReason
+                        healthReason: healthReason,
+                        requestedPath: IngestProtocolV3.uploadPath
                     ))
-                    return .failed(error: error.localizedDescription, healthReason: healthReason)
+                    return .failed(
+                        error: error.localizedDescription,
+                        healthReason: healthReason,
+                        requestedPath: IngestProtocolV3.uploadPath
+                    )
                 }
 
                 // Calculate delay with exponential backoff
@@ -601,7 +647,11 @@ public actor SyncService {
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
         }
-        return .failed(error: "retry exhausted", healthReason: .uploadFailed)
+        return .failed(
+            error: "retry exhausted",
+            healthReason: .uploadFailed,
+            requestedPath: IngestProtocolV3.uploadPath
+        )
     }
 
     private func failClosedForConfigChange(segment: String) -> UploadRetryOutcome {
@@ -609,7 +659,8 @@ public actor SyncService {
         progressContinuation.yield(.uploadFailed(
             segment: segment,
             error: "Config changed",
-            healthReason: .configChanged
+            healthReason: .configChanged,
+            requestedPath: IngestProtocolV3.uploadPath
         ))
         return .stopped
     }

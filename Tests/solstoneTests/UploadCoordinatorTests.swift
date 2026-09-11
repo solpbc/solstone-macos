@@ -41,7 +41,8 @@ struct UploadCoordinatorTests {
         coordinator.handleProgressEvent(.uploadFailed(
             segment: "x",
             error: "raw failure",
-            healthReason: .uploadFailed
+            healthReason: .uploadFailed,
+            requestedPath: IngestProtocolV3.uploadPath
         ))
         coordinator.handleProgressEvent(.journalContactSucceeded)
 
@@ -49,6 +50,8 @@ struct UploadCoordinatorTests {
         #expect(coordinator.recentErrorCount == 0)
         #expect(coordinator.lastError == nil)
         #expect(coordinator.lastErrorReason == nil)
+        #expect(coordinator.lastHealthReason == nil)
+        #expect(coordinator.lastRequestedIngestPath == nil)
     }
 
     @Test func journalContactSucceededWritesDurableLastContactPayload() throws {
@@ -80,11 +83,13 @@ struct UploadCoordinatorTests {
         coordinator.handleProgressEvent(.uploadFailed(
             segment: "x",
             error: "upload failed",
-            healthReason: .uploadFailed
+            healthReason: .uploadFailed,
+            requestedPath: IngestProtocolV3.uploadPath
         ))
         coordinator.handleProgressEvent(.offline(
             error: "offline",
-            healthReason: .urlErrorCode(URLError.notConnectedToInternet.rawValue)
+            healthReason: .urlErrorCode(URLError.notConnectedToInternet.rawValue),
+            requestedPath: IngestProtocolV3.manifestPath
         ))
 
         #expect(coordinator.recentErrorCount == 2)
@@ -94,7 +99,8 @@ struct UploadCoordinatorTests {
             coordinator.handleProgressEvent(.uploadFailed(
                 segment: "x",
                 error: "upload failed",
-                healthReason: .uploadFailed
+                healthReason: .uploadFailed,
+                requestedPath: IngestProtocolV3.uploadPath
             ))
         }
 
@@ -112,28 +118,209 @@ struct UploadCoordinatorTests {
 
         coordinator.handleProgressEvent(.offline(
             error: "timed out",
-            healthReason: observerHealthFailureReason(from: URLError(.timedOut))
+            healthReason: observerHealthFailureReason(from: URLError(.timedOut)),
+            requestedPath: IngestProtocolV3.manifestPath
         ))
         #expect(coordinator.lastErrorReason == "url_error_-1001")
 
         coordinator.handleProgressEvent(.uploadFailed(
             segment: "x",
             error: "server failed",
-            healthReason: observerHealthFailureReason(from: UploadError.serverError(statusCode: 503, message: "body"))
+            healthReason: observerHealthFailureReason(from: UploadError.serverError(statusCode: 503, message: "body")),
+            requestedPath: IngestProtocolV3.uploadPath
         ))
         #expect(coordinator.lastErrorReason == "http_503")
 
+        let rawPath = "/tmp/private/143022_300/file.mp4?token=secret"
         coordinator.handleProgressEvent(.uploadFailed(
             segment: "143022_300",
-            error: "/tmp/private/143022_300/file.mp4?token=secret",
-            healthReason: .uploadFailed
+            error: rawPath,
+            healthReason: .uploadFailed,
+            requestedPath: IngestProtocolV3.uploadPath
         ))
-        #expect(coordinator.lastError == "/tmp/private/143022_300/file.mp4?token=secret")
+        #expect(coordinator.lastError != rawPath)
+        #expect(coordinator.lastError?.contains("143022_300") == false)
+        #expect(coordinator.lastError?.contains("/tmp/private") == false)
+        #expect(coordinator.lastError?.contains("token") == false)
+        #expect(coordinator.lastError?.contains("secret") == false)
         #expect(coordinator.lastErrorReason == "upload_failed")
         #expect(coordinator.lastErrorReason?.contains("143022_300") == false)
         #expect(coordinator.lastErrorReason?.contains("/tmp/private") == false)
         #expect(coordinator.lastErrorReason?.contains("token") == false)
         #expect(coordinator.lastErrorReason?.contains("secret") == false)
+    }
+
+    @Test func lastErrorUsesClassifiedCopyNotEventBody() throws {
+        let coordinator = try makeCoordinator(
+            now: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let unit = "ZZSENTINELZZ"
+        let longBody = String(repeating: unit, count: 200_000 / unit.count)
+        let shortBody = "abcdefghijkl"
+        #expect(longBody.count >= 190_000)
+
+        coordinator.handleProgressEvent(.offline(
+            error: longBody,
+            healthReason: .httpStatus(404),
+            requestedPath: IngestProtocolV3.manifestPath
+        ))
+        let longError = try #require(coordinator.lastError)
+        let longReason = try #require(coordinator.lastErrorReason)
+        let longOffline: String
+        if case .offline(let copy) = coordinator.status {
+            longOffline = copy
+        } else {
+            Issue.record("expected offline status")
+            return
+        }
+
+        coordinator.handleProgressEvent(.journalContactSucceeded)
+        coordinator.handleProgressEvent(.offline(
+            error: shortBody,
+            healthReason: .httpStatus(404),
+            requestedPath: IngestProtocolV3.manifestPath
+        ))
+        let shortError = try #require(coordinator.lastError)
+        let shortReason = try #require(coordinator.lastErrorReason)
+        let shortOffline: String
+        if case .offline(let copy) = coordinator.status {
+            shortOffline = copy
+        } else {
+            Issue.record("expected offline status")
+            return
+        }
+
+        #expect(longError == shortError)
+        #expect(longReason == shortReason)
+        #expect(longOffline == shortOffline)
+        #expect(!longError.contains(unit))
+        #expect(!longError.contains(shortBody))
+        #expect(!longOffline.contains(unit))
+        #expect(!longOffline.contains(shortBody))
+        #expect(!longReason.contains(unit))
+        #expect(!longReason.contains(shortBody))
+        #expect(longReason == "http_404")
+        #expect(shortReason == "http_404")
+    }
+
+    @Test func lastErrorAccessibilityValueIsSanitizerTokenNotBody() throws {
+        let coordinator = try makeCoordinator(
+            now: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let body = "ZZSENTINELZZ<html>not found</html>"
+        coordinator.handleProgressEvent(.uploadFailed(
+            segment: "x",
+            error: body,
+            healthReason: .httpStatus(404),
+            requestedPath: IngestProtocolV3.uploadPath
+        ))
+        #expect(coordinator.lastErrorReason == "http_404")
+        #expect(coordinator.lastError != body)
+        #expect(coordinator.lastError?.contains("ZZSENTINELZZ") == false)
+        #expect(coordinator.lastHealthReason == .httpStatus(404))
+        #expect(coordinator.lastRequestedIngestPath == IngestProtocolV3.uploadPath)
+    }
+
+    @Test func ingestHttp404OnEachRoutePresentsNotServing() async throws {
+        let routes: [(path: String, drive: (UploadClient) async -> Error?)] = [
+            (IngestProtocolV3.manifestPath, { client in
+                do {
+                    _ = try await client.getManifest(serverURL: "http://journal.example")
+                    return nil
+                } catch {
+                    return error
+                }
+            }),
+            (IngestProtocolV3.manifestDayPath("20260101"), { client in
+                do {
+                    _ = try await client.getManifestDay(serverURL: "http://journal.example", day: "20260101")
+                    return nil
+                } catch {
+                    return error
+                }
+            }),
+            (IngestProtocolV3.segmentsDayPath("20260101"), { client in
+                do {
+                    _ = try await client.getSegmentsDay(serverURL: "http://journal.example", day: "20260101")
+                    return nil
+                } catch {
+                    return error
+                }
+            }),
+        ]
+
+        for route in routes {
+            store.reset()
+            store.enqueue(statusCode: 404, body: "<html>ZZSENTINELZZ</html>")
+            let client = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
+            let error = try #require(await route.drive(client))
+            let healthReason = observerHealthFailureReason(from: error)
+            #expect(healthReason == .httpStatus(404))
+            let coordinator = try makeCoordinator(now: Date(timeIntervalSince1970: 1_700_000_000))
+            coordinator.handleProgressEvent(.offline(
+                error: error.localizedDescription,
+                healthReason: healthReason,
+                requestedPath: route.path
+            ))
+            let presented = overlayIngestOnConnectionVerdict(
+                tunnel: JournalConnectionVerdict(
+                    severity: .good,
+                    message: "connected",
+                    caption: nil,
+                    axToken: PairingConnectionAXState.connected.axToken,
+                    failureCause: nil
+                ),
+                pairingMismatch: false,
+                healthReason: coordinator.lastHealthReason
+            )
+            #expect(presented.failureCause == .notServing)
+            #expect(presented.axToken == PairingConnectionAXState.notServing.axToken)
+            #expect(coordinator.lastRequestedIngestPath == route.path)
+            #expect(coordinator.lastRequestedIngestPath?.contains("://") == false)
+            #expect(try #require(store.snapshotRequests().first?.url?.path) == route.path)
+        }
+
+        store.reset()
+        let root = try makeTempDirectory("ingest-404-upload")
+        let segment = try makeSegment(root: root)
+        store.enqueue(statusCode: 404, body: "<html>ZZSENTINELZZ</html>")
+        let client = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
+        let result = await client.uploadSegment(
+            serverURL: "http://journal.example",
+            day: dayString(for: segment.date),
+            segment: segment.url.lastPathComponent,
+            mediaFiles: [segment.url.appendingPathComponent("\(segment.url.lastPathComponent)_audio.m4a")],
+            metadata: nil
+        )
+        guard case .failure(let error) = result else {
+            Issue.record("expected upload 404")
+            return
+        }
+        let healthReason = observerHealthFailureReason(from: error)
+        #expect(healthReason == .httpStatus(404))
+        let coordinator = try makeCoordinator(now: Date(timeIntervalSince1970: 1_700_000_000))
+        coordinator.handleProgressEvent(.uploadFailed(
+            segment: segment.url.lastPathComponent,
+            error: error.localizedDescription,
+            healthReason: healthReason,
+            requestedPath: IngestProtocolV3.uploadPath
+        ))
+        let presented = overlayIngestOnConnectionVerdict(
+            tunnel: JournalConnectionVerdict(
+                severity: .good,
+                message: "connected",
+                caption: nil,
+                axToken: PairingConnectionAXState.connected.axToken,
+                failureCause: nil
+            ),
+            pairingMismatch: false,
+            healthReason: coordinator.lastHealthReason
+        )
+        #expect(presented.failureCause == .notServing)
+        #expect(presented.axToken == PairingConnectionAXState.notServing.axToken)
+        #expect(coordinator.lastRequestedIngestPath == IngestProtocolV3.uploadPath)
+        #expect(coordinator.lastRequestedIngestPath?.contains("://") == false)
+        #expect(try #require(store.snapshotRequests().first?.url?.path) == IngestProtocolV3.uploadPath)
     }
 
     @Test func awaitingTunnelDoesNotChangeErrorStateOrRetryBudget() throws {
@@ -349,8 +536,17 @@ struct UploadCoordinatorTests {
         coordinator.handleProgressEvent(.journalContactSucceeded)
         coordinator.handleProgressEvent(.syncComplete)
         coordinator.handleProgressEvent(.uploadRetrying(segment: "x", attempt: 1))
-        coordinator.handleProgressEvent(.offline(error: "offline", healthReason: .urlErrorCode(-1009)))
-        coordinator.handleProgressEvent(.uploadFailed(segment: "x", error: "failed", healthReason: .uploadFailed))
+        coordinator.handleProgressEvent(.offline(
+            error: "offline",
+            healthReason: .urlErrorCode(-1009),
+            requestedPath: IngestProtocolV3.manifestPath
+        ))
+        coordinator.handleProgressEvent(.uploadFailed(
+            segment: "x",
+            error: "failed",
+            healthReason: .uploadFailed,
+            requestedPath: IngestProtocolV3.uploadPath
+        ))
         coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
 
         #expect(events.events.isEmpty)
@@ -490,10 +686,19 @@ struct UploadCoordinatorTests {
         .syncProgress(checked: 1, total: 2),
         .uploadStarted(segment: "x"),
         .uploadRetrying(segment: "x", attempt: 2),
-        .uploadFailed(segment: "x", error: "failed", healthReason: .uploadFailed),
+        .uploadFailed(
+            segment: "x",
+            error: "failed",
+            healthReason: .uploadFailed,
+            requestedPath: IngestProtocolV3.uploadPath
+        ),
         .journalContactSucceeded,
         .syncComplete,
-        .offline(error: "offline", healthReason: .urlErrorCode(-1009)),
+        .offline(
+            error: "offline",
+            healthReason: .urlErrorCode(-1009),
+            requestedPath: IngestProtocolV3.manifestPath
+        ),
         .awaitingTunnel
     ]
 

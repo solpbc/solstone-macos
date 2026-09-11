@@ -65,7 +65,7 @@ func shouldShowPairingRetry(for state: TunnelLifecycleState, failureCause: Journ
         switch failureCause {
         case .keychainUnavailable, .noRoute, .unreachable, .loopbackUnavailable:
             return true
-        case .revoked, .notEntitled, .mismatch:
+        case .revoked, .notEntitled, .mismatch, .notServing:
             return false
         }
     }
@@ -1024,17 +1024,28 @@ struct SettingsView: View {
 
                 uploadStatusView
 
-                HStack {
-                    Button("re-link") {
-                        relinkJournal()
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Service.journalRelink)
-                    .disabled(localLinkInProgress || pairingIsBusy)
+                let affordances = journalPanelAffordancesForPresentation
 
-                    if localLinkInProgress {
-                        ProgressView()
-                            .scaleEffect(0.5)
+                if affordances.showRelink {
+                    HStack {
+                        Button("re-link") {
+                            relinkJournal()
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Service.journalRelink)
+                        .disabled(localLinkInProgress || pairingIsBusy)
+
+                        if localLinkInProgress {
+                            ProgressView()
+                                .scaleEffect(0.5)
+                        }
                     }
+                }
+
+                if affordances.showOpenJournal {
+                    Button(UICopy.SETTINGS_JOURNAL_OPEN) {
+                        appState.requestOpenJournal(.root)
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Service.journalOpen)
                 }
 
                 if let localLinkError {
@@ -1043,8 +1054,12 @@ struct SettingsView: View {
                         .foregroundStyle(.red)
                 }
 
-                if showPairingFlow {
+                if affordances.showPairingForm, showPairingFlow {
                     pairingSection
+                }
+
+                if affordances.showTunnelRetry {
+                    tunnelErrorRetryRow
                 }
             }
             .padding(.vertical, 4)
@@ -1299,16 +1314,21 @@ struct SettingsView: View {
     }
 
     private var journalConnectionPresentation: JournalConnectionVerdict {
-        if pairingMismatch {
-            return JournalConnectionVerdict(
-                severity: .attention,
-                message: "can't reach your journal right now",
-                caption: nil,
-                axToken: PairingConnectionAXState.mismatch.axToken,
-                failureCause: .mismatch
+        overlayIngestOnConnectionVerdict(
+            tunnel: appState.tunnelLifecycleOwner.connectionVerdict,
+            pairingMismatch: pairingMismatch,
+            healthReason: appState.uploadCoordinator.lastHealthReason
+        )
+    }
+
+    private var journalPanelAffordancesForPresentation: JournalPanelAffordances {
+        let presentation = journalConnectionPresentation
+        return journalPanelAffordances(
+            for: journalPanelRemedy(
+                failureCause: presentation.failureCause,
+                axToken: presentation.axToken
             )
-        }
-        return appState.tunnelLifecycleOwner.connectionVerdict
+        )
     }
 
     private var externalJournalSyncSection: some View {
@@ -1338,7 +1358,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier(AXID.Settings.Status.lastErrorState)
-                        .accessibilityValue(error)
+                        .accessibilityValue(appState.uploadCoordinator.lastErrorReason ?? "")
                 }
                 Button("resync all") {
                     appState.uploadCoordinator.forceFullSync()
@@ -1543,7 +1563,9 @@ struct SettingsView: View {
 
                 pairingFailureRow
 
-                tunnelErrorRetryRow
+                if !appState.config.isUploadConfigured || !journalPathIsValid {
+                    tunnelErrorRetryRow
+                }
 
                 AXStateCompanion(
                     id: AXID.Settings.Service.pairingFlowState,
@@ -1724,7 +1746,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var tunnelErrorRetryRow: some View {
-        let failureCause = appState.tunnelLifecycleOwner.connectionVerdict.failureCause
+        let failureCause = journalConnectionPresentation.failureCause
         if shouldShowPairingRetry(
             for: appState.pairingCoordinator.tunnelState,
             failureCause: failureCause
@@ -3028,6 +3050,8 @@ struct SettingsView: View {
                 lastDelivery: appState.uploadCoordinator.lastJournalDeliveryOutcome,
                 lastJournalContact: appState.uploadCoordinator.lastSuccessfulJournalContactOutcome,
                 evidence: evidence,
+                ingestReason: appState.uploadCoordinator.lastErrorReason,
+                ingestRoute: appState.uploadCoordinator.lastRequestedIngestPath,
                 now: Date()
             ))
             diagnosticsLoading = false
@@ -3131,6 +3155,10 @@ struct SettingsView: View {
             return AXID.Settings.Help.diagnosticsLastDeliveryRow
         case .lastJournalConnection:
             return AXID.Settings.Help.diagnosticsLastJournalConnectionRow
+        case .ingestReason:
+            return AXID.Settings.Help.diagnosticsIngestReasonRow
+        case .ingestRoute:
+            return AXID.Settings.Help.diagnosticsIngestRouteRow
         case .recentStateCodes:
             return AXID.Settings.Help.diagnosticsRecentStateCodesRow
         }

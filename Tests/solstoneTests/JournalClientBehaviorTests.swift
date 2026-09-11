@@ -133,12 +133,12 @@ struct JournalClientBehaviorTests {
             fetchedName: nil,
             confirmedMark: nil,
             serverURL: "https://journal.example:5015"
-        ) == "journal.example")
+        ) == UICopy.SETTINGS_SETUP_JOURNAL_LINK_LABEL)
         #expect(resolvedJournalDisplayName(
             fetchedName: "",
             confirmedMark: nil,
             serverURL: "https://journal.example"
-        ) == "journal.example")
+        ) == UICopy.SETTINGS_SETUP_JOURNAL_LINK_LABEL)
     }
 
     @Test func bundledStubCaptureNeverQueuesAndShowsMigrationRow() {

@@ -104,6 +104,8 @@
       "settings.help.diagnostics.copy",
       "settings.help.diagnostics.copyResult.state",
       "settings.help.diagnostics.disclosure",
+      "settings.help.diagnostics.ingestReason.row",
+      "settings.help.diagnostics.ingestRoute.row",
       "settings.help.diagnostics.lastDelivery.row",
       "settings.help.diagnostics.lastDelivery.state",
       "settings.help.diagnostics.lastDelivery.timestamp.state",
@@ -168,6 +170,7 @@
       "settings.service.journal.handoff.state",
       "settings.service.journal.mark.state",
       "settings.service.journal.name.state",
+      "settings.service.journal.open",
       "settings.service.journal.pairAnotherDevice",
       "settings.service.journal.relink",
       "settings.service.localJournal.confirm",
@@ -597,7 +600,8 @@
       "keychain_unavailable",
       "no_route",
       "unreachable",
-      "mismatch"
+      "mismatch",
+      "not_serving"
     ],
     "PairingFailure" : [
       "stale_link",

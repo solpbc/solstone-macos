@@ -211,6 +211,7 @@ internal enum PairingConnectionAXState: CaseIterable {
     case noRoute
     case unreachable
     case mismatch
+    case notServing
 }
 
 internal enum JournalHandoffAXState: CaseIterable {
@@ -376,7 +377,8 @@ extension PairingConnectionAXState {
         "keychain_unavailable",
         "no_route",
         "unreachable",
-        "mismatch"
+        "mismatch",
+        "not_serving"
     ]
 
     var axToken: String {
@@ -401,6 +403,8 @@ extension PairingConnectionAXState {
             return "unreachable"
         case .mismatch:
             return "mismatch"
+        case .notServing:
+            return "not_serving"
         }
     }
 }

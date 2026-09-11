@@ -76,7 +76,7 @@ struct UploadClientTests {
 
     @Test func errorMessageFallsBackToLocalizedDescriptionForUnhandledCodes() {
         let error = URLError(.badServerResponse)
-        #expect(UploadClient.errorMessage(for: error, host: "example.com") == error.localizedDescription)
+        #expect(UploadClient.errorMessage(for: error, host: "example.com") != error.localizedDescription)
     }
 
     @Test func manifestReadUsesProtocolHeaderWithoutBearer() async throws {

@@ -42,6 +42,7 @@ struct AXIDTests {
         #expect(AXID.Settings.Service.journalMarkState == "settings.service.journal.mark.state")
         #expect(AXID.Settings.Service.journalConnectionState == "settings.service.journal.connection.state")
         #expect(AXID.Settings.Service.journalRelink == "settings.service.journal.relink")
+        #expect(AXID.Settings.Service.journalOpen == "settings.service.journal.open")
         #expect(AXID.Settings.Service.localJournalDiscoveryState == "settings.service.localJournal.discovery.state")
         #expect(AXID.Settings.Service.localJournalDiscoveryPathState == "settings.service.localJournal.discovery.path.state")
         #expect(AXID.Settings.Service.localJournalConfirm == "settings.service.localJournal.confirm")
@@ -98,6 +99,14 @@ struct AXIDTests {
         expectTokensMatchGrammar(DiagnosticCaptureAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(DiagnosticCopyAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(PairingConnectionAXState.allCases.map(\.axToken))
+        #expect(Set(PairingConnectionAXState.axTokens) == Set(PairingConnectionAXState.allCases.map(\.axToken)))
+        #expect(PairingConnectionAXState.notServing.axToken == "not_serving")
+        #expect(
+            PairingConnectionAXState.allCases
+                .filter { $0 != .notServing }
+                .map(\.axToken)
+                .contains(PairingConnectionAXState.notServing.axToken) == false
+        )
         expectTokensMatchGrammar(JournalHandoffAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(FreshJournalAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(LocalJournalDiscoveryAXState.allCases.map(\.axToken))

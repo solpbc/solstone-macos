@@ -231,5 +231,5 @@ func resolvedJournalDisplayName(
     if let confirmedMark {
         return confirmedMark.words.joined(separator: " ")
     }
-    return journalHost(serverURL)
+    return UICopy.SETTINGS_SETUP_JOURNAL_LINK_LABEL
 }

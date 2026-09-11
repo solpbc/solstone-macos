@@ -6,6 +6,16 @@ import UpdateKit
 
 @Suite("SettingsView")
 struct SettingsViewTests {
+    @Test func configuredJournalPanelWiresAffordancesFromRemedy() throws {
+        let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
+        #expect(wireUpContains(source, "journalPanelAffordances(for:"))
+        #expect(wireUpContains(source, "affordances.showOpenJournal"))
+        #expect(wireUpContains(source, "appState.requestOpenJournal(.root)"))
+        #expect(wireUpContains(source, "affordances.showRelink"))
+        #expect(wireUpContains(source, "affordances.showTunnelRetry"))
+        #expect(wireUpContains(source, "affordances.showPairingForm"))
+    }
+
     @Test func tabRawValuesMatchCaseNames() {
         #expect(SettingsView.Tab.permissions.rawValue == "permissions")
         #expect(SettingsView.Tab.observer.rawValue == "observer")

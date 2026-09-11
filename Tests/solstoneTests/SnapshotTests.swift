@@ -879,6 +879,8 @@ struct SnapshotTests {
                     )
                 ]
             )),
+            ingestReason: nil,
+            ingestRoute: nil,
             now: now
         ))
         let state = AppState.forSnapshot()
@@ -891,7 +893,7 @@ struct SnapshotTests {
                 initialDiagnosticsExpanded: true,
                 initialDiagnosticReport: report
             ),
-            size: settingsSize,
+            size: CGSize(width: settingsSize.width, height: 720),
             to: "settings-help-diagnostics-expanded.png"
         )
     }

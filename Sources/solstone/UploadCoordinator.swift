@@ -86,6 +86,8 @@ public final class UploadCoordinator {
     public internal(set) var lastSyncedAt: Date?
     public internal(set) var recentErrorCount: Int = 0
     public internal(set) var lastErrorReason: String?
+    public internal(set) var lastHealthReason: ObserverHealthFailureReason?
+    public internal(set) var lastRequestedIngestPath: String?
     internal private(set) var lastSuccessfulJournalContactOutcome: SetupLastSyncOutcome = .notLinked
     internal private(set) var lastJournalDeliveryOutcome: LastJournalDeliveryOutcome = .notLinked
     internal private(set) var lastJournalDeliveryWriteFailed: Bool = false
@@ -379,12 +381,8 @@ public final class UploadCoordinator {
         case .uploadSucceeded(_, let proof):
             handleProvenDelivery(proof: JournalConnectionFingerprint(value: proof))
 
-        case .uploadFailed(_, let error, let healthReason):
-            let sanitizedReason = sanitizedObserverHealthErrorReason(healthReason)
-            Logger.upload.info("Upload failed: \(sanitizedReason, privacy: .public)")
-            lastError = error
-            incrementRecentErrorCount()
-            lastErrorReason = sanitizedReason
+        case .uploadFailed(_, _, let healthReason, let requestedPath):
+            recordIngestFailure(healthReason: healthReason, requestedPath: requestedPath)
             // Continue with next segment
 
         case .journalContactSucceeded:
@@ -400,21 +398,17 @@ public final class UploadCoordinator {
                 refreshLastSuccessfulJournalContact()
             }
             recentErrorCount = 0
-            lastErrorReason = nil
-            lastError = nil
+            clearIngestFailure()
 
         case .syncComplete:
             status = .synced
             pendingCount = 0
             recentErrorCount = 0
-            lastError = nil
-            lastErrorReason = nil
+            clearIngestFailure()
 
-        case .offline(let error, let healthReason):
-            lastError = error
-            incrementRecentErrorCount()
-            lastErrorReason = sanitizedObserverHealthErrorReason(healthReason)
-            status = .offline(error)
+        case .offline(_, let healthReason, let requestedPath):
+            recordIngestFailure(healthReason: healthReason, requestedPath: requestedPath)
+            status = .offline(classifiedObserverHealthOwnerCopy(healthReason))
             scheduleRetry()
 
         case .awaitingTunnel:
@@ -447,6 +441,26 @@ public final class UploadCoordinator {
             }
         }
         refreshLastJournalDelivery()
+    }
+
+    private func recordIngestFailure(
+        healthReason: ObserverHealthFailureReason,
+        requestedPath: String
+    ) {
+        let sanitizedReason = sanitizedObserverHealthErrorReason(healthReason)
+        Logger.upload.info("Upload failed: \(sanitizedReason, privacy: .public)")
+        lastError = classifiedObserverHealthOwnerCopy(healthReason)
+        lastErrorReason = sanitizedReason
+        lastHealthReason = healthReason
+        lastRequestedIngestPath = requestedPath
+        incrementRecentErrorCount()
+    }
+
+    private func clearIngestFailure() {
+        lastError = nil
+        lastErrorReason = nil
+        lastHealthReason = nil
+        lastRequestedIngestPath = nil
     }
 
     private func incrementRecentErrorCount() {

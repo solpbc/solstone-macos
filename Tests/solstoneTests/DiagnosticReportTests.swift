@@ -32,6 +32,8 @@ struct DiagnosticReportTests {
         screen and audio: on
         last added to your journal: 2m ago
         last journal connection: just now
+        journal ingest: http_404
+        journal ingest route: /app/devices/ingest/manifest
         recent state codes: app.launch · first 1970-01-01T00:15:00.000Z · last 1970-01-01T00:15:50.000Z · repeat 3
         """)
         #expect(report.screenRecordingState == .granted)
@@ -51,6 +53,17 @@ struct DiagnosticReportTests {
         ] {
             #expect(!report.text.contains(excluded))
         }
+    }
+
+    @Test func ingestReasonAndRouteUseTokenAndPathWithoutHosts() {
+        let report = buildDiagnosticReport(input())
+        let reason = report.rows.first { $0.id == .ingestReason }
+        let route = report.rows.first { $0.id == .ingestRoute }
+        #expect(reason?.value == "http_404")
+        #expect(route?.value == IngestProtocolV3.manifestPath)
+        #expect(route?.value.contains("://") == false)
+        #expect(!report.text.contains("https://"))
+        #expect(!report.text.contains("ZZSENTINELZZ"))
     }
 
     @Test func permissionCaptureDeliveryContactAndEvidenceFallbacksAreExplicit() {
@@ -161,6 +174,8 @@ struct DiagnosticReportTests {
             lastDelivery: .delivered(now.addingTimeInterval(-120)),
             lastJournalContact: .synced(now.addingTimeInterval(-30)),
             evidence: evidence,
+            ingestReason: "http_404",
+            ingestRoute: IngestProtocolV3.manifestPath,
             now: now
         )
     }

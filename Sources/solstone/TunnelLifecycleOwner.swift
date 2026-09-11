@@ -32,6 +32,7 @@ enum JournalConnectionFailureCause: Sendable, Equatable {
     case loopbackUnavailable
     case unreachable(String?)
     case mismatch
+    case notServing
 }
 
 struct JournalConnectionVerdict: Sendable, Equatable {

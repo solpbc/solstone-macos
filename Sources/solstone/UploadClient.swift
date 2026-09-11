@@ -151,7 +151,7 @@ public struct UploadClient: Sendable {
         case .timedOut:
             return "Connection timed out"
         default:
-            return error.localizedDescription
+            return classifiedObserverHealthOwnerCopy(.urlErrorCode(error.code.rawValue))
         }
     }
 
@@ -200,9 +200,9 @@ public struct UploadClient: Sendable {
                 return "journal error (\(statusCode))"
             }
         } catch let error as UploadError {
-            return error.errorDescription ?? "Invalid response"
+            return classifiedObserverHealthOwnerCopy(observerHealthFailureReason(from: error))
         } catch {
-            return error.localizedDescription
+            return classifiedObserverHealthOwnerCopy(observerHealthFailureReason(from: error))
         }
     }
 

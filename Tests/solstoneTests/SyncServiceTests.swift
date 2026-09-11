@@ -130,6 +130,89 @@ struct SyncServiceTests {
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
     }
 
+    @Test func ingestHttp404StampsTheFailedRoutePath() async throws {
+        let html = "<html>not found</html>"
+
+        resetSyncedDaysCache()
+        store.reset()
+        let manifestRoot = try makeTempDirectory("sync-404-manifest")
+        _ = try makeSegment(root: manifestRoot)
+        store.enqueue(statusCode: 404, body: html)
+        let manifestService = makeService(
+            root: manifestRoot,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24701") }
+        )
+        await configure(manifestService)
+        let manifestEvents = ProgressCollector()
+        let manifestListen = Task {
+            for await event in await manifestService.progressStream {
+                manifestEvents.append(event)
+            }
+        }
+        await manifestService.sync()
+        await manifestEvents.waitForOffline()
+        manifestListen.cancel()
+        #expect(manifestEvents.offlinePath() == IngestProtocolV3.manifestPath)
+
+        resetSyncedDaysCache()
+        store.reset()
+        let dayRoot = try makeTempDirectory("sync-404-manifest-day")
+        let daySegment = try makeSegment(root: dayRoot)
+        let day = dayString(for: daySegment.date)
+        store.enqueue(statusCode: 200, body: manifestJSON(day: day))
+        store.enqueue(statusCode: 404, body: html)
+        let dayService = makeService(
+            root: dayRoot,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24702") }
+        )
+        await configure(dayService)
+        let dayEvents = ProgressCollector()
+        let dayListen = Task {
+            for await event in await dayService.progressStream {
+                dayEvents.append(event)
+            }
+        }
+        await dayService.sync()
+        await dayEvents.waitForOffline()
+        dayListen.cancel()
+        #expect(dayEvents.offlinePath() == IngestProtocolV3.manifestDayPath(day))
+
+        resetSyncedDaysCache()
+        store.reset()
+        let segmentsRoot = try makeTempDirectory("sync-404-segments-day")
+        let segmentsSegment = try makeSegment(root: segmentsRoot)
+        let segmentsDay = dayString(for: segmentsSegment.date)
+        let filename = "\(segmentsSegment.url.lastPathComponent)_audio.m4a"
+        let sha = try sha256(of: segmentsSegment.url.appendingPathComponent(filename))
+        store.enqueue(statusCode: 200, body: manifestJSON(day: segmentsDay))
+        store.enqueue(
+            statusCode: 200,
+            body: manifestDayJSON(
+                day: segmentsDay,
+                key: segmentsSegment.url.lastPathComponent,
+                filename: filename,
+                sha: sha,
+                size: 5
+            )
+        )
+        store.enqueue(statusCode: 404, body: html)
+        let segmentsService = makeService(
+            root: segmentsRoot,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24703") }
+        )
+        await configure(segmentsService)
+        let segmentsEvents = ProgressCollector()
+        let segmentsListen = Task {
+            for await event in await segmentsService.progressStream {
+                segmentsEvents.append(event)
+            }
+        }
+        await segmentsService.sync()
+        await segmentsEvents.waitForOffline()
+        segmentsListen.cancel()
+        #expect(segmentsEvents.offlinePath() == IngestProtocolV3.segmentsDayPath(segmentsDay))
+    }
+
     @Test func manifestDayErrorFailsClosedBeforeUpload() async throws {
         resetSyncedDaysCache()
         store.reset()
@@ -919,11 +1002,29 @@ private final class ProgressCollector: @unchecked Sendable {
     var containsConfigChangedFailure: Bool {
         lock.withLock {
             events.contains {
-                if case .uploadFailed(_, _, let reason) = $0, reason == .configChanged {
+                if case .uploadFailed(_, _, let reason, _) = $0, reason == .configChanged {
                     return true
                 }
                 return false
             }
+        }
+    }
+
+    func offlinePath() -> String? {
+        lock.withLock {
+            events.compactMap { event in
+                if case .offline(_, _, let path) = event { return path }
+                return nil
+            }.first
+        }
+    }
+
+    func uploadFailedPath() -> String? {
+        lock.withLock {
+            events.compactMap { event in
+                if case .uploadFailed(_, _, _, let path) = event { return path }
+                return nil
+            }.first
         }
     }
 
@@ -968,6 +1069,14 @@ private final class ProgressCollector: @unchecked Sendable {
 
     func waitForSegmentUnprovable(timeout: Duration = .seconds(10)) async {
         await waitUntil(timeout: timeout) { segmentUnprovableCount > 0 }
+    }
+
+    func waitForOffline(timeout: Duration = .seconds(10)) async {
+        await waitUntil(timeout: timeout) { offlinePath() != nil }
+    }
+
+    func waitForUploadFailurePath(timeout: Duration = .seconds(10)) async {
+        await waitUntil(timeout: timeout) { uploadFailedPath() != nil || offlinePath() != nil }
     }
 
     private func waitUntil(timeout: Duration, _ condition: () -> Bool) async {

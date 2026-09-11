@@ -1549,6 +1549,7 @@ struct TunnelLifecycleOwnerTests {
         #expect(!shouldShowPairingRetry(for: .connecting, failureCause: .revoked))
         #expect(!shouldShowPairingRetry(for: .connecting, failureCause: .notEntitled))
         #expect(!shouldShowPairingRetry(for: .connecting, failureCause: .mismatch))
+        #expect(!shouldShowPairingRetry(for: .connecting, failureCause: .notServing))
     }
 
     @Test func notEntitledDuringBootstrapSetsTerminalOwnerError() async throws {

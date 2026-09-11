@@ -10,6 +10,8 @@ internal enum DiagnosticReportRowID: CaseIterable, Hashable, Sendable {
     case screenAndAudio
     case lastDelivery
     case lastJournalConnection
+    case ingestReason
+    case ingestRoute
     case recentStateCodes
 }
 
@@ -48,6 +50,8 @@ internal struct DiagnosticReportInput: Equatable, Sendable {
     let lastDelivery: LastJournalDeliveryOutcome
     let lastJournalContact: SetupLastSyncOutcome
     let evidence: DiagnosticEvidenceRead
+    let ingestReason: String?
+    let ingestRoute: String?
     let now: Date
 }
 
@@ -109,6 +113,16 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
             id: .lastJournalConnection,
             label: UICopy.SETTINGS_DIAGNOSTICS_LAST_JOURNAL_CONNECTION,
             value: diagnosticContactValue(input.lastJournalContact, now: input.now)
+        ),
+        DiagnosticReportRow(
+            id: .ingestReason,
+            label: UICopy.SETTINGS_DIAGNOSTICS_INGEST_REASON,
+            value: diagnosticIngestTokenValue(input.ingestReason)
+        ),
+        DiagnosticReportRow(
+            id: .ingestRoute,
+            label: UICopy.SETTINGS_DIAGNOSTICS_INGEST_ROUTE,
+            value: diagnosticIngestTokenValue(input.ingestRoute)
         ),
         DiagnosticReportRow(
             id: .recentStateCodes,
@@ -253,6 +267,13 @@ internal func diagnosticContactValue(_ outcome: SetupLastSyncOutcome, now: Date)
     case .couldNotCheck:
         return UICopy.SETTINGS_DIAGNOSTICS_COULD_NOT_CHECK
     }
+}
+
+internal func diagnosticIngestTokenValue(_ value: String?) -> String {
+    guard let value, !value.isEmpty else {
+        return UICopy.SETTINGS_DIAGNOSTICS_COULD_NOT_CHECK
+    }
+    return value
 }
 
 internal func diagnosticEvidenceValue(_ read: DiagnosticEvidenceRead) -> String {
