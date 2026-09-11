@@ -2246,30 +2246,34 @@ struct TunnelLifecycleOwnerTests {
     }
 
     @Test func overlappingProxyStartsOlderEndDoesNotClearNewer() async throws {
-        let transport = FakeTunnelTransport(connection: .init(localPort: 34567, via: .relay))
-        transport.armConnectGate()
-        let factory = FakeTransportFactory([transport])
+        let first = FakeTunnelTransport(connection: .init(localPort: 34567, via: .relay))
+        let successor = FakeTunnelTransport(connection: .init(localPort: 34568, via: .relay))
+        first.armConnectGate()
+        successor.armConnectGate()
+        let factory = FakeTransportFactory([first, successor])
         let owner = makeOwner(factory: factory)
 
         owner.start()
-        try await waitUntil { transport.pendingConnectCount == 1 }
+        try await waitUntil { first.pendingConnectCount == 1 }
+        let firstAttempt = owner.transportAttemptID
         #expect(owner.isProxyStarting)
         #expect(owner.connectionVerdict.severity == StatusDotSeverity.warn)
         #expect(owner.connectionVerdict.axToken == PairingConnectionAXState.connecting.axToken)
 
         // Trigger new generation while transport is still in proxy start
         await owner.requestCoalescedReconnect()
-        try await waitUntil { transport.pendingConnectCount == 1 }
+        try await waitUntil { successor.pendingConnectCount == 1 }
+        let successorAttempt = owner.transportAttemptID
         #expect(owner.isProxyStarting)
         #expect(owner.connectionVerdict.severity == StatusDotSeverity.warn)
 
-        // Older generation attempt 1 ends: must NOT clear newer yellow / isProxyStarting
-        owner.endProxyStart(attempt: 1)
+        // Older generation ends: must NOT clear newer yellow / isProxyStarting
+        owner.endProxyStart(attempt: firstAttempt)
         #expect(owner.isProxyStarting)
         #expect(owner.connectionVerdict.severity == StatusDotSeverity.warn)
 
-        // Current generation attempt 2 ends: clears proxy start
-        owner.endProxyStart(attempt: 2)
+        // Current generation ends: clears proxy start
+        owner.endProxyStart(attempt: successorAttempt)
         #expect(!owner.isProxyStarting)
 
         await owner.stop()
