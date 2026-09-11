@@ -233,15 +233,15 @@ SPL_LINK_TIMINGS_KEYS = frozenset(
 COORDINATOR_TIER_B_KEYS = frozenset(("expected", "baseline", "landing"))
 COORDINATOR_TIER_B_EXPECTED_KEYS = frozenset(("day", "segment", "payload_sha256"))
 COORDINATOR_TIER_B_BASELINE_KEYS = frozenset(
-    ("segments_received", "duplicates_rejected", "identity_absent", "observed_at")
+    ("stream_sequence", "active_rejections", "identity_absent", "observed_at")
 )
 COORDINATOR_TIER_B_LANDING_KEYS = frozenset(
     (
         "attempted",
-        "segments_received_before",
-        "segments_received_after",
-        "duplicates_rejected_before",
-        "duplicates_rejected_after",
+        "stream_sequence_before",
+        "stream_sequence_after",
+        "active_rejections_before",
+        "active_rejections_after",
         "matching_artifacts",
         "digest_match",
         "canonical_path",
@@ -1013,18 +1013,18 @@ def verify_coordinator_tier_b(tier_b, filename, tier_b_identity, landing_verify_
     baseline_label = f"{label}.baseline"
     require_exact_keys(baseline, COORDINATOR_TIER_B_BASELINE_KEYS, baseline_label)
     baseline_segments = require_bounded_integer(
-        baseline["segments_received"], f"{baseline_label}.segments_received"
+        baseline["stream_sequence"], f"{baseline_label}.stream_sequence"
     )
     if baseline_segments != 0:
         raise GateFailure(
-            f"{baseline_label}.segments_received is {baseline_segments!r}, expected 0"
+            f"{baseline_label}.stream_sequence is {baseline_segments!r}, expected 0"
         )
     baseline_duplicates = require_bounded_integer(
-        baseline["duplicates_rejected"], f"{baseline_label}.duplicates_rejected"
+        baseline["active_rejections"], f"{baseline_label}.active_rejections"
     )
     if baseline_duplicates != 0:
         raise GateFailure(
-            f"{baseline_label}.duplicates_rejected is {baseline_duplicates!r}, expected 0"
+            f"{baseline_label}.active_rejections is {baseline_duplicates!r}, expected 0"
         )
     require_true(baseline["identity_absent"], f"{baseline_label}.identity_absent")
     baseline_observed = require_iso_utc(
@@ -1043,36 +1043,36 @@ def verify_coordinator_tier_b(tier_b, filename, tier_b_identity, landing_verify_
     require_none(landing["reason"], f"{landing_label}.reason")
 
     segments_before = require_bounded_integer(
-        landing["segments_received_before"],
-        f"{landing_label}.segments_received_before",
+        landing["stream_sequence_before"],
+        f"{landing_label}.stream_sequence_before",
     )
     if segments_before != baseline_segments:
         raise GateFailure(
-            f"{landing_label}.segments_received_before is {segments_before!r}, "
+            f"{landing_label}.stream_sequence_before is {segments_before!r}, "
             f"expected {baseline_segments!r}"
         )
     duplicates_before = require_bounded_integer(
-        landing["duplicates_rejected_before"],
-        f"{landing_label}.duplicates_rejected_before",
+        landing["active_rejections_before"],
+        f"{landing_label}.active_rejections_before",
     )
     if duplicates_before != baseline_duplicates:
         raise GateFailure(
-            f"{landing_label}.duplicates_rejected_before is {duplicates_before!r}, "
+            f"{landing_label}.active_rejections_before is {duplicates_before!r}, "
             f"expected {baseline_duplicates!r}"
         )
 
     segments_after = require_bounded_integer(
-        landing["segments_received_after"],
-        f"{landing_label}.segments_received_after",
+        landing["stream_sequence_after"],
+        f"{landing_label}.stream_sequence_after",
     )
     if segments_after <= segments_before:
-        raise GateFailure(f"{landing_label}.segments_received_after did not advance")
+        raise GateFailure(f"{landing_label}.stream_sequence_after did not advance")
     duplicates_after = require_bounded_integer(
-        landing["duplicates_rejected_after"],
-        f"{landing_label}.duplicates_rejected_after",
+        landing["active_rejections_after"],
+        f"{landing_label}.active_rejections_after",
     )
     if duplicates_after < duplicates_before:
-        raise GateFailure(f"{landing_label}.duplicates_rejected_after regressed")
+        raise GateFailure(f"{landing_label}.active_rejections_after regressed")
 
     matching_artifacts = require_bounded_integer(
         landing["matching_artifacts"], f"{landing_label}.matching_artifacts"

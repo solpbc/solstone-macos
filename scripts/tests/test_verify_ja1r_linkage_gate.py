@@ -151,17 +151,17 @@ def coordinator_tier_b():
     return {
         "expected": tier_b_expected(),
         "baseline": {
-            "segments_received": 0,
-            "duplicates_rejected": 0,
+            "stream_sequence": 0,
+            "active_rejections": 0,
             "identity_absent": True,
             "observed_at": TIER_B_BASELINE_OBSERVED_AT,
         },
         "landing": {
             "attempted": True,
-            "segments_received_before": 0,
-            "segments_received_after": 1,
-            "duplicates_rejected_before": 0,
-            "duplicates_rejected_after": 0,
+            "stream_sequence_before": 0,
+            "stream_sequence_after": 1,
+            "active_rejections_before": 0,
+            "active_rejections_after": 0,
             "matching_artifacts": 1,
             "digest_match": True,
             "canonical_path": True,
@@ -892,42 +892,42 @@ class SPLLinkCoordinatorReport(GateTestCase):
 
     def test_tier_b_outer_value_refusals(self):
         cases = (
-            ("baseline segments", lambda r: set_path(r, "tier_b.baseline.segments_received", 1)),
+            ("baseline segments", lambda r: set_path(r, "tier_b.baseline.stream_sequence", 1)),
             (
                 "baseline duplicates",
-                lambda r: set_path(r, "tier_b.baseline.duplicates_rejected", 1),
+                lambda r: set_path(r, "tier_b.baseline.active_rejections", 1),
             ),
             ("identity absent", lambda r: set_path(r, "tier_b.baseline.identity_absent", False)),
             (
                 "baseline bool counter",
-                lambda r: set_path(r, "tier_b.baseline.segments_received", True),
+                lambda r: set_path(r, "tier_b.baseline.stream_sequence", True),
             ),
             (
                 "before segments mismatch",
-                lambda r: set_path(r, "tier_b.landing.segments_received_before", 1),
+                lambda r: set_path(r, "tier_b.landing.stream_sequence_before", 1),
             ),
             (
                 "before duplicates mismatch",
-                lambda r: set_path(r, "tier_b.landing.duplicates_rejected_before", 1),
+                lambda r: set_path(r, "tier_b.landing.active_rejections_before", 1),
             ),
             (
                 "segments after no advance",
-                lambda r: set_path(r, "tier_b.landing.segments_received_after", 0),
+                lambda r: set_path(r, "tier_b.landing.stream_sequence_after", 0),
             ),
             (
                 "segments after max",
                 lambda r: set_path(
-                    r, "tier_b.landing.segments_received_after", 1_000_000_001
+                    r, "tier_b.landing.stream_sequence_after", 1_000_000_001
                 ),
             ),
             (
                 "duplicates after negative",
-                lambda r: set_path(r, "tier_b.landing.duplicates_rejected_after", -1),
+                lambda r: set_path(r, "tier_b.landing.active_rejections_after", -1),
             ),
             (
                 "duplicates after max",
                 lambda r: set_path(
-                    r, "tier_b.landing.duplicates_rejected_after", 1_000_000_001
+                    r, "tier_b.landing.active_rejections_after", 1_000_000_001
                 ),
             ),
             ("matching zero", lambda r: set_path(r, "tier_b.landing.matching_artifacts", 0)),
