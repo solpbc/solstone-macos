@@ -47,7 +47,7 @@ struct MenuContent: View {
                 }
             }
             .accessibilityIdentifier(AXID.Menubar.settingsButton)
-            Button("about sol") {
+            Button("about solstone") {
                 openWindow(id: "about")
                 appState.didOpenWindow(.about)
                 NSApp.activate(ignoringOtherApps: true)
@@ -57,7 +57,7 @@ struct MenuContent: View {
 
         Divider()
 
-        Button("quit sol") {
+        Button("quit solstone") {
             appState.appQuitCoordinator.requestAppOwnedQuit()
         }
         .accessibilityIdentifier(AXID.Menubar.quitButton)

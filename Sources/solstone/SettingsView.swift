@@ -149,7 +149,7 @@ func makePairingRelayAccessPresentation(
     case .unavailable:
         return PairingRelayAccessPresentation(
             message: "paired · remote access unavailable",
-            caption: "on the same wi-fi or over your own vpn, sol connects to your journal directly.",
+            caption: "on the same wi-fi or over your own vpn, solstone connects to your journal directly.",
             severity: .warn,
             axToken: PairingRelayAccessAXState.unavailable.axToken
         )
@@ -707,7 +707,7 @@ struct SettingsView: View {
 
     private var permissionsTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("sol needs screen recording and microphone access to build your memory.")
+            Text("solstone needs screen recording and microphone access to build your memory.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -727,7 +727,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("this is how you get searchable memory of every meeting, document, and idea. sol takes in your screen alongside you and keeps everything on your Mac, sent only to your journal.")
+                        Text("this is how you get searchable memory of every meeting, document, and idea. solstone takes in your screen alongside you and keeps everything on your Mac, sent only to your journal.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         if shouldShowScreenRecordingResetHint(
@@ -795,7 +795,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("to take in conversations and meetings, sol needs mic access. same rules: stored locally, sent only to your journal. no third parties, no exceptions.")
+                        Text("to take in conversations and meetings, solstone needs mic access. same rules: stored locally, sent only to your journal. no third parties, no exceptions.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
@@ -967,7 +967,7 @@ struct SettingsView: View {
     private var notificationAuthorizationDetails: some View {
         if appState.notificationAuthorizationStatus == .provisional {
             VStack(alignment: .leading, spacing: 6) {
-                Text("want sol's notes to show up with a banner and sound?")
+                Text("want solstone's notes to show up with a banner and sound?")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("turn on banners") {
@@ -978,7 +978,7 @@ struct SettingsView: View {
             }
         } else if appState.notificationAuthorizationStatus == .denied {
             VStack(alignment: .leading, spacing: 4) {
-                Text("notifications are turned off for sol")
+                Text("notifications are turned off for solstone")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("macOS is blocking these. you can turn them back on anytime.")
@@ -991,7 +991,7 @@ struct SettingsView: View {
                 }
                 .font(.caption)
                 .buttonStyle(.link)
-                Text("System Settings → Notifications → sol")
+                Text("System Settings → Notifications → solstone")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1435,7 +1435,7 @@ struct SettingsView: View {
                     }
                 ))
                 .disabled(!appState.isPairedIngestReady)
-                .help("keeps sol running locally but stops sending to your journal")
+                .help("keeps solstone running locally but stops sending to your journal")
                 .accessibilityIdentifier(AXID.Settings.Status.pauseSync)
                 lastDeliveryDetailRow
                 if let error = appState.uploadCoordinator.lastError {
@@ -2712,7 +2712,7 @@ struct SettingsView: View {
 
             setupGroup
 
-            GroupBox("sol") {
+            GroupBox("solstone") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(renderedObservationText)
                         .font(.title2)

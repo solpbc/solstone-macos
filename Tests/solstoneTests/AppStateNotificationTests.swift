@@ -135,8 +135,8 @@ struct AppStateNotificationTests {
 
         let posts = await notifier.posts
         #expect(posts.first?.identifier == UpdateNotificationIdentifier.make(version: "1.3.9"))
-        #expect(posts.first?.title == "sol 1.3.9 is ready when you are")
-        #expect(posts.first?.body == "it'll be applied the next time you quit and reopen sol.")
+        #expect(posts.first?.title == "solstone 1.3.9 is ready when you are")
+        #expect(posts.first?.body == "it'll be applied the next time you quit and reopen solstone.")
         #expect(posts.first?.sound == false)
         #expect(await notifier.requestedOptions.isEmpty)
     }

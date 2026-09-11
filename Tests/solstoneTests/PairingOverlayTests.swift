@@ -22,7 +22,7 @@ struct PairingOverlayTests {
         let presentation = try #require(makePairingRelayAccessPresentation(for: .unavailable))
 
         #expect(presentation.message == "paired · remote access unavailable")
-        #expect(presentation.caption == "on the same wi-fi or over your own vpn, sol connects to your journal directly.")
+        #expect(presentation.caption == "on the same wi-fi or over your own vpn, solstone connects to your journal directly.")
         #expect(presentation.severity == .warn)
         #expect(presentation.axToken == PairingRelayAccessAXState.unavailable.axToken)
     }

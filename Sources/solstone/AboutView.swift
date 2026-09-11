@@ -20,7 +20,7 @@ struct AboutView: View {
                     .frame(width: 64, height: 64)
                     .accessibilityIdentifier(AXID.About.logo)
 
-                Text("sol")
+                Text("solstone")
                     .font(.title)
                     .fontWeight(.bold)
                     .accessibilityIdentifier(AXID.About.title)

@@ -226,14 +226,14 @@ struct AppPlacementGateTests {
     }
 
     @Test func lockedAlertCopyIsStable() {
-        #expect(AppPlacementAlertCopy.repairTitle == "install sol in Applications")
-        #expect(AppPlacementAlertCopy.repairBody == "sol is running from a location it might not find again next launch, so macOS may not remember its screen recording permission. install sol in Applications, a reliable spot, and it will reopen.")
+        #expect(AppPlacementAlertCopy.repairTitle == "install solstone in Applications")
+        #expect(AppPlacementAlertCopy.repairBody == "solstone is running from a location it might not find again next launch, so macOS may not remember its screen recording permission. install solstone in Applications, a reliable spot, and it will reopen.")
         #expect(AppPlacementAlertCopy.repairPrimaryButton == "install and reopen")
-        #expect(AppPlacementAlertCopy.repairSecondaryButton == "quit sol")
-        #expect(AppPlacementAlertCopy.fallbackTitle == "sol couldn't move itself")
+        #expect(AppPlacementAlertCopy.repairSecondaryButton == "quit solstone")
+        #expect(AppPlacementAlertCopy.fallbackTitle == "solstone couldn't move itself")
         #expect(AppPlacementAlertCopy.fallbackBody == "move solstone.app to Applications in Finder, then open it there.")
         #expect(AppPlacementAlertCopy.fallbackPrimaryButton == "open Applications")
-        #expect(AppPlacementAlertCopy.fallbackSecondaryButton == "quit sol")
+        #expect(AppPlacementAlertCopy.fallbackSecondaryButton == "quit solstone")
     }
 
     private func dependencies(

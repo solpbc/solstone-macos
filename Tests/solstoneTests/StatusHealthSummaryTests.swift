@@ -49,7 +49,7 @@ struct StatusHealthSummaryTests {
         let external = makeSummary(isRecording: false)
         #expect(external.severity == .warn)
         #expect(external.axValue == "off")
-        #expect(external.subtitle == "nothing is reaching x.example while sol is off")
+        #expect(external.subtitle == "nothing is reaching x.example while solstone is off")
     }
 
     @Test func pausedRowUsesSyncSpecificSubtitle() {

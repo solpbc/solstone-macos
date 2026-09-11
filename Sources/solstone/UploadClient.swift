@@ -195,7 +195,7 @@ public struct UploadClient: Sendable {
             case 403:
                 return "this Mac is disabled"
             case 404:
-                return "journal endpoint not found (update sol?)"
+                return "journal endpoint not found (update solstone?)"
             default:
                 return "journal error (\(statusCode))"
             }

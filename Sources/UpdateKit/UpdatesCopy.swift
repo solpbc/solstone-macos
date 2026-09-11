@@ -14,7 +14,7 @@ public struct UpdatesCopyProvider: Sendable {
 
 public extension UpdatesCopyProvider {
     static let solstone = UpdatesCopyProvider(
-        appDisplayName: "sol",
+        appDisplayName: "solstone",
         releaseNotesURL: URL(string: "https://solstone.app/releases/macos")!,
         deferralLine: "deferred, will continue after journal setup."
     )

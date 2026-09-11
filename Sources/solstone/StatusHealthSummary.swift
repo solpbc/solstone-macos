@@ -64,7 +64,7 @@ internal func bundledStatusFooterText(permissionsGranted: Bool, microphoneCount:
 
 internal func externalStatusFooterText(serverURL: String?, permissionsGranted: Bool) -> String {
     let permissions = permissionsGranted ? "permissions granted" : "permissions need attention"
-    return "sol is on · your journal lives on \(journalHost(serverURL))\(encryptionClause(serverURL)) · \(permissions)"
+    return "solstone is on · your journal lives on \(journalHost(serverURL))\(encryptionClause(serverURL)) · \(permissions)"
 }
 
 extension StatusHealthSummary {
@@ -265,10 +265,10 @@ extension StatusHealthSummary {
         if !isRecording {
             return StatusHealthSummary(
                 severity: .warn,
-                title: "sol is off",
+                title: "solstone is off",
                 subtitle: isBundled
-                    ? "your journal is fine. turn sol back on to keep building memory"
-                    : "nothing is reaching \(host) while sol is off",
+                    ? "your journal is fine. turn solstone back on to keep building memory"
+                    : "nothing is reaching \(host) while solstone is off",
                 axValue: "off"
             )
         }
@@ -278,7 +278,7 @@ extension StatusHealthSummary {
                 : (isSynced ? "synced to \(host)" : "paused · \(host)")
             return StatusHealthSummary(
                 severity: .warn,
-                title: "sol is paused",
+                title: "solstone is paused",
                 subtitle: subtitle,
                 axValue: "paused"
             )

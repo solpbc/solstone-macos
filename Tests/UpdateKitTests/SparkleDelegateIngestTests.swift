@@ -596,7 +596,7 @@ struct SparkleDelegateIngestTests {
         #expect(controller.stagedVersion == "1.3.9")
         #expect(UpdatesCopy(provider: .solstone).stagedReadyTitle(version: "1.3.9") == "ready to install v1.3.9")
         #expect(UpdatesCopy(provider: .solstone).actionRelaunchToInstall == "relaunch to install")
-        #expect(UpdatesCopy(provider: .solstone).stagedReadySubtitle == "the update is downloaded and will install when sol relaunches.")
+        #expect(UpdatesCopy(provider: .solstone).stagedReadySubtitle == "the update is downloaded and will install when solstone relaunches.")
     }
 
     private func clearDefaults() {

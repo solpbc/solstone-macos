@@ -9,12 +9,12 @@ struct UpdatesCopyTests {
     }
 
     @Test func updateAvailableSubtitleString() {
-        #expect(UpdatesCopy(provider: .solstone).updateAvailableSubtitle(version: "1.1.0") == "sol 1.1.0 is ready to download.")
+        #expect(UpdatesCopy(provider: .solstone).updateAvailableSubtitle(version: "1.1.0") == "solstone 1.1.0 is ready to download.")
     }
 
     @Test func updateNotificationCopyUsesProviderDisplayName() {
-        #expect(UpdatesCopy(provider: .solstone).updateNotificationTitle(version: "1.1.0") == "sol 1.1.0 is ready when you are")
-        #expect(UpdatesCopy(provider: .solstone).updateNotificationBody == "it'll be applied the next time you quit and reopen sol.")
+        #expect(UpdatesCopy(provider: .solstone).updateNotificationTitle(version: "1.1.0") == "solstone 1.1.0 is ready when you are")
+        #expect(UpdatesCopy(provider: .solstone).updateNotificationBody == "it'll be applied the next time you quit and reopen solstone.")
         #expect(UpdatesCopy(provider: .journal).updateNotificationTitle(version: "1.1.0") == "journal 1.1.0 is ready when you are")
         #expect(UpdatesCopy(provider: .journal).updateNotificationBody == "it'll be applied the next time you quit and reopen journal.")
     }
@@ -33,7 +33,7 @@ struct UpdatesCopyTests {
 
     @Test func stagedReadyStrings() {
         #expect(UpdatesCopy(provider: .solstone).stagedReadyTitle(version: "1.1.0") == "ready to install v1.1.0")
-        #expect(UpdatesCopy(provider: .solstone).stagedReadySubtitle == "the update is downloaded and will install when sol relaunches.")
+        #expect(UpdatesCopy(provider: .solstone).stagedReadySubtitle == "the update is downloaded and will install when solstone relaunches.")
         #expect(UpdatesCopy(provider: .solstone).actionRelaunchToInstall == "relaunch to install")
         #expect(
             UpdatesCopy(provider: .solstone).lastCheckedStaged(relative: "just now", version: "1.1.0")
@@ -46,7 +46,7 @@ struct UpdatesCopyTests {
     }
 
     @Test func installingSubtitleString() {
-        #expect(UpdatesCopy(provider: .solstone).installingSubtitle == "sol is handing off to the installer.")
+        #expect(UpdatesCopy(provider: .solstone).installingSubtitle == "solstone is handing off to the installer.")
     }
 
     @Test func extractingSubtitleString() {
@@ -80,7 +80,7 @@ struct UpdatesCopyTests {
     }
 
     @Test func lastCheckedUpToDateString() {
-        #expect(UpdatesCopy(provider: .solstone).lastCheckedUpToDate(relative: "just now") == "last checked just now · sol is up to date")
+        #expect(UpdatesCopy(provider: .solstone).lastCheckedUpToDate(relative: "just now") == "last checked just now · solstone is up to date")
     }
 
     @Test func deferredStrings() {

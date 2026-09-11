@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- the app now calls itself solstone everywhere it names itself: settings, the menu bar, permission prompts, the about window, and its update messages. a few places still used the old name, and some of those told you to look for it in System Settings, where it has always been listed as solstone.
+
 ## [2.0.0] - 2026-09-08
 
 ### Added

@@ -58,7 +58,7 @@ struct UICopyTests {
     }
 
     @Test func settingsTabUpdatesDoneA11yString() {
-        #expect(UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y == "sol is up to date")
+        #expect(UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y == "solstone is up to date")
     }
 
     @Test func settingsAttentionPermissionsString() {
@@ -83,7 +83,7 @@ struct UICopyTests {
         #expect(UICopy.settingsSetupVerdictNeedsAttention(1) == "1 thing needs attention")
         #expect(UICopy.settingsSetupVerdictNeedsAttention(2) == "2 things need attention")
         #expect(UICopy.SETTINGS_SETUP_VERDICT_UNAVAILABLE == "some setup checks are unavailable")
-        #expect(UICopy.SETTINGS_SETUP_SOL_APP_LABEL == "sol app")
+        #expect(UICopy.SETTINGS_SETUP_SOL_APP_LABEL == "solstone app")
         #expect(UICopy.SETTINGS_SETUP_SOL_APP_READY == "in Applications")
         #expect(UICopy.SETTINGS_SETUP_SOL_APP_NEEDS_ATTENTION == "needs to be moved")
         #expect(UICopy.SETTINGS_SETUP_SOL_APP_ACTION == "open Applications →")
@@ -130,8 +130,8 @@ struct UICopyTests {
         #expect(UICopy.SETTINGS_SETUP_SHARED_GRANTED == "granted")
         #expect(UICopy.SETTINGS_SETUP_SHARED_NOT_GRANTED == "not granted")
         #expect(UICopy.SETTINGS_SETUP_SHARED_CHECKING == "checking")
-        #expect(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT == "if sol is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old sol entry and try enabling screen recording again.")
-        #expect(UICopy.SETTINGS_PERMISSIONS_MIC_DENIED == "microphone access is off. allow sol in Privacy & Security → Microphone.")
+        #expect(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT == "if solstone is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old solstone entry and try enabling screen recording again.")
+        #expect(UICopy.SETTINGS_PERMISSIONS_MIC_DENIED == "microphone access is off. allow solstone in Privacy & Security → Microphone.")
         #expect(UICopy.SETTINGS_PERMISSIONS_MIC_RESTRICTED == "microphone access is restricted by this Mac.")
         #expect(UICopy.SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS == "open system settings →")
     }

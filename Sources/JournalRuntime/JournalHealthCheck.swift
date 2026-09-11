@@ -289,13 +289,13 @@ public func appProbeChecks(
             name: "screen recording",
             granted: screenRecordingGranted,
             permissionCheckComplete: permissionCheckComplete,
-            fix: "open System Settings › Privacy & Security and allow Screen Recording for sol"
+            fix: "open System Settings › Privacy & Security and allow Screen Recording for solstone"
         ),
         permissionProbeCheck(
             name: "microphone",
             granted: microphoneGranted,
             permissionCheckComplete: permissionCheckComplete,
-            fix: "open System Settings › Privacy & Security and allow Microphone for sol"
+            fix: "open System Settings › Privacy & Security and allow Microphone for solstone"
         ),
     ]
 }

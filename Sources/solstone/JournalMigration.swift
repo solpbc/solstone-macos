@@ -67,7 +67,7 @@ extension JournalHandoffStep {
         case .authGate:
             return "checking the saved journal key"
         case .flippingToExternal:
-            return "linking sol to the journal app"
+            return "linking solstone to the journal app"
         case .triggeringSyncDrain:
             return "sending kept segments to your journal"
         case .confirmingMarkBestEffort:
@@ -152,21 +152,21 @@ enum JournalHandoffFailure: Error, Equatable, Sendable {
     var ownerMessage: String {
         switch self {
         case .applicationsDirectoryUnavailable:
-            return "couldn't find /Applications. sol did not change your journal link."
+            return "couldn't find /Applications. solstone did not change your journal link."
         case .applicationsDirectoryUnwritable:
-            return "couldn't install the journal app in /Applications. open sol from an administrator account and try again."
+            return "couldn't install the journal app in /Applications. open solstone from an administrator account and try again."
         case .feedNotYetPublished:
-            return "the journal app isn't available yet. sol is keeping everything safe on this mac"
+            return "the journal app isn't available yet. solstone is keeping everything safe on this mac"
         case .runningJournalWouldNotQuit:
             return "journal is still open. quit journal and try again."
         case .missingJournalPath, .journalPathMissing:
-            return "sol couldn't find your journal folder. open settings and choose your journal again."
+            return "solstone couldn't find your journal folder. open settings and choose your journal again."
         case .authenticationFailed:
-            return "this journal didn't accept sol's saved key. sol did not change your link."
+            return "this journal didn't accept solstone's saved key. solstone did not change your link."
         case .adoptionTimedOut:
-            return "journal didn't finish setup in time. sol did not change your journal link."
+            return "journal didn't finish setup in time. solstone did not change your journal link."
         case .cancelled:
-            return "journal handoff stopped. sol did not change your journal link."
+            return "journal handoff stopped. solstone did not change your journal link."
         case .appcastUnavailable,
              .invalidAppcast,
              .missingLength,
@@ -181,7 +181,7 @@ enum JournalHandoffFailure: Error, Equatable, Sendable {
              .launchFailed,
              .initProbeFailed,
              .writeHandoffFailed:
-            return "journal handoff couldn't finish. sol did not change your journal link."
+            return "journal handoff couldn't finish. solstone did not change your journal link."
         }
     }
 }

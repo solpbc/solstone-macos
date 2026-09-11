@@ -250,7 +250,7 @@ struct SolstoneCaptureApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        Window("sol settings", id: "settings") {
+        Window("solstone settings", id: "settings") {
             if let startup {
                 SettingsSceneRoot(appState: startup.appState, updateController: startup.updateController)
             } else {
@@ -260,7 +260,7 @@ struct SolstoneCaptureApp: App {
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
 
-        Window("about sol", id: "about") {
+        Window("about solstone", id: "about") {
             if startup != nil {
                 AboutView()
             } else {
@@ -301,7 +301,7 @@ internal func statusAccessibilityLabel(
     case .starting:
         UICopy.MENUBAR_A11Y_STARTING
     case .journalMigrationNeeded:
-        "sol · journal link needs attention"
+        "solstone · journal link needs attention"
     case .connectionWaiting:
         UICopy.MENUBAR_A11Y_WAITING_FOR_JOURNAL
     case .localOnly:
