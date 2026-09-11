@@ -214,6 +214,8 @@ public final class AppState {
 
     public var serviceIsDone: Bool {
         tunnelLifecycleOwner.cachedPairingIdentity != nil
+            || (resolvedServiceMode(for: config) == .external && config.isUploadConfigured
+                && !tunnelLifecycleOwner.hasPersistedPairing)
     }
 
     public internal(set) var visitedSettingsTabs: Set<String> = []

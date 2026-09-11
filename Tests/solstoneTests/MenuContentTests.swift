@@ -215,7 +215,7 @@ struct MenuContentTests {
     @Test func openJournalMenuItemKeepsConfigurationGateAndUsesIntentPath() throws {
         let source = try readWireUpSource("Sources/solstone/MenuContent.swift")
 
-        #expect(wireUpContains(source, "if appState.config.isUploadConfigured"))
+        #expect(wireUpContains(source, "if appState.canOpenJournal"))
         #expect(wireUpContains(source, "appState.requestOpenJournal(.root)"))
         #expect(!source.contains("journalURLToOpen"))
         #expect(!source.contains("NSWorkspace.shared.open"))

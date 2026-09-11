@@ -67,6 +67,16 @@ struct AppStateAttentionTests {
         #expect(state.serviceIsDone)
     }
 
+    @Test func savedPairingKeepsSetupCompleteAndNavigationVisibleWhileDisconnected() {
+        let state = AppState.forSnapshot(initialTunnelPairing: pairing())
+
+        #expect(!state.config.isUploadConfigured)
+        #expect(state.serviceIsDone)
+        #expect(state.showsConfiguredJournal)
+        #expect(state.canOpenJournal)
+        #expect(state.serviceNeedsAttention)
+    }
+
     @Test func configuredNilModeUsesExternalFallbackForServiceDone() {
         let state = makeState(config: AppConfig(
             serverURL: "https://example.com",

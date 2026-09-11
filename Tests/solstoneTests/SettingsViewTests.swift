@@ -22,7 +22,7 @@ struct SettingsViewTests {
         #expect(wireUpContains(source, "affordances.showOpenJournal"))
         #expect(wireUpContains(source, "appState.requestOpenJournal(.root)"))
         #expect(wireUpContains(source, "affordances.showRelink"))
-        #expect(wireUpContains(source, "affordances.showPairingForm"))
+        #expect(wireUpContains(source, "if showPairingFlow"))
         #expect(wireUpContains(source, "configuredJournalRecoveryRow(for:"))
         #expect(!wireUpContains(source, "if affordances.showTunnelRetry"))
     }
