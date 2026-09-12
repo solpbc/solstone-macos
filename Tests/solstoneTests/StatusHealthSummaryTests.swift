@@ -62,7 +62,7 @@ struct StatusHealthSummaryTests {
         let blocked = makeSummary(isRecording: false, selectedSources: .all, permittedSources: [])
         #expect(blocked.severity == .attention)
         #expect(blocked.axValue == "sources_unavailable")
-        #expect(blocked.title == "no source is granted")
+        #expect(blocked.title == "what you turned on isn't granted yet")
         #expect(blocked.action?.settingsTab == "permissions")
     }
 

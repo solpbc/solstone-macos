@@ -2,7 +2,7 @@ import SolstoneCore
 
 public enum UICopy {
     public static let SOURCES_TITLE = "sources"
-    public static let SOURCES_HELP = "solstone takes in both, and all of it goes into your journal. turn off either one you'd rather it didn't."
+    public static let SOURCES_HELP = "what you turn on here goes into your journal. both are on unless you turn one off."
     public static let SOURCES_MICROPHONE = "microphone"
     public static let SOURCES_SCREEN = "screen and system audio"
     public static let SOURCES_OFF = "off"
@@ -15,9 +15,10 @@ public enum UICopy {
     public static let SOURCES_NONE_REASON = "nothing is going into your journal until you turn one back on."
 
     // Selected, but macOS hasn't granted either one.
-    public static let SOURCES_UNAVAILABLE = "no selected source is available"
-    public static let SOURCES_NONE_GRANTED = "no source is granted"
-    public static let SOURCES_GRANT_OR_CHANGE = "grant microphone or screen recording below, and what you share goes into your journal."
+    public static let SOURCES_UNAVAILABLE = "the source you turned on didn't start"
+    public static let SOURCES_UNAVAILABLE_REASON = "the device may be in use by another app, or unplugged."
+    public static let SOURCES_NONE_GRANTED = "what you turned on isn't granted yet"
+    public static let SOURCES_GRANT_OR_CHANGE = "grant it below, or turn on the other source instead."
 
     // Per-source notices, shown beside a session that is running on the other source.
     public static let SOURCES_MIC_DENIED = "microphone permission not granted. screen and system audio can run on their own."
@@ -76,7 +77,7 @@ public enum UICopy {
     public static let SETTINGS_ATTENTION_UPDATE_AVAILABLE = "update available"
     public static let SETTINGS_ATTENTION_UPDATE_CHECK_FAILED = "update check failed"
     public static let MENUBAR_SOURCES_OFF_OPEN_SETTINGS = "both sources are off · open sources →"
-    public static let MENUBAR_NO_SOURCE_OPEN_SETTINGS = "no source granted · open permissions →"
+    public static let MENUBAR_NO_SOURCE_OPEN_SETTINGS = "waiting on a permission · open permissions →"
     public static let MENUBAR_OBSERVING_CONNECTED = "on, connected"
     public static let MENUBAR_OBSERVATION_WEDGE_OPEN_SETTINGS = "needs attention · open settings →"
     public static let MENUBAR_OBSERVING_OFFLINE_SAVED_LOCALLY = "on, offline (saved locally) →"
@@ -163,7 +164,7 @@ public enum UICopy {
     public static let SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT = "if solstone is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old solstone entry and try enabling screen recording again."
     public static let SETTINGS_NEXT_GRANT_PERMISSIONS = "next: grant permissions →"
     public static let SETTINGS_PERMISSIONS_SCREEN_EXPLAINER = "macOS lists this as Screen & System Audio Recording. grant it so what you share can go into your journal."
-    public static let SETTINGS_PERMISSIONS_MIC_EXPLAINER = "grant Microphone access so conversations and meetings you share can go into your journal."
+    public static let SETTINGS_PERMISSIONS_MIC_EXPLAINER = "macOS lists this as Microphone. grant it so what you share can go into your journal."
     public static let SETTINGS_PERMISSIONS_MIC_DENIED = "microphone access is off. allow solstone in Privacy & Security → Microphone."
     public static let SETTINGS_PERMISSIONS_MIC_RESTRICTED = "microphone access is restricted by this Mac."
     public static let SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS = "open system settings →"

@@ -423,6 +423,14 @@ public struct AppConfig: Sendable {
     /// `false`, and any config save on that build wrote those `false` values into UserDefaults.
     /// Reading an absent key as `true` (see `load()`) rescues an install that never saved, but
     /// not one that did — so those machines need their sources turned back on exactly once.
+    ///
+    /// Every FRESH 2.0.6 install saved: `loadOrCreateDefault()` persists the default config
+    /// unconditionally when no config exists. An upgraded install saved as soon as anything
+    /// called `updateConfig` — a settings change, journal pairing, observer-name registration —
+    /// or when `syncMicrophonePriorityList()` met a microphone UID it had not seen before.
+    /// So this is not a belt-and-braces migration; without it a large share of 2.0.6 machines
+    /// stay silently off forever.
+    ///
     /// A choice the owner makes after this runs is never touched again.
     public mutating func reseedCaptureSourcesOnIfNeeded() {
         let defaults = UserDefaults.standard

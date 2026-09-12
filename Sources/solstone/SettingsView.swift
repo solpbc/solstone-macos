@@ -668,6 +668,12 @@ struct SettingsView: View {
                         navRow(UICopy.SETTINGS_NEXT_GRANT_PERMISSIONS) {
                             selectedTab = .permissions
                         }
+                    } else if appState.isRecording || appState.isPaused,
+                              appState.captureManager.activeSources.isEmpty {
+                        // Turned on and granted, but the device did not start. Without this the
+                        // one state with no owner action attached is also the only one with no
+                        // reason attached.
+                        Text(UICopy.SOURCES_UNAVAILABLE_REASON).foregroundStyle(.secondary)
                     }
                     if let notice = appState.captureSourceNotice {
                         Text(notice).foregroundStyle(.secondary)
