@@ -923,9 +923,7 @@ public final class AppState {
                 self?.isTerminating = committed
             },
             terminate: {
-                DispatchQueue.main.async {
-                    NSApp.terminate(nil)
-                }
+                terminateFromMainRunLoop()
             },
             launchReplacement: { [weak self] in
                 guard let self else { return }
