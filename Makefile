@@ -1244,7 +1244,14 @@ PUBLISH_PY := uv run --no-project --with 'pynacl>=1.6,<2' --with boto3 python3
 # revision in scripts/ja1r-gate/extro-tools.rev. That file is the ONLY place
 # the sha is written; the sync never follows extro-tools main.
 #
-# Workflow:
+# Workflow — one command runs all three steps:
+#   python3 <gate-dir>/release_gate.py --profile {sol|journal|paired} …
+#   It calls ja1r-gate-sync here, runs every lane on the rig and the spl-link
+#   coordinator locally, collects the reports, calls verify-ja1r-gate-<profile>
+#   here, and retains every raw artifact before teardown. Harness README §
+#   "One command per profile" is the flag reference.
+#
+# The three steps it composes, for a retry or a one-off:
 #   1. make ja1r-gate-sync     — push the pinned harness + this exact HEAD to
 #                                the rig, read the revision marker back off it,
 #                                and write .ja1r-gate/sync-receipt.json.
