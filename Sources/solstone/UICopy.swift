@@ -8,6 +8,7 @@ public enum UICopy {
     public static let SOURCES_OFF = "off"
     public static let SOURCES_STARTING = "starting…"
     public static let SOURCES_OPEN_ACTION = "open sources →"
+    public static let PERMISSIONS_OPEN_ACTION = "open permissions →"
 
     // Both switches off. The owner did that on purpose, so it is a calm state with a way back,
     // never a fault — but it is also the one state where nothing reaches the journal at all.

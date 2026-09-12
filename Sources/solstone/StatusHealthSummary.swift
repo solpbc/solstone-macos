@@ -123,8 +123,10 @@ extension StatusHealthSummary {
                 title: UICopy.SOURCES_NONE_GRANTED,
                 subtitle: UICopy.SOURCES_GRANT_OR_CHANGE,
                 axValue: "sources_unavailable",
+                // The label has to name where the click actually lands. This routes to
+                // solstone's own permissions pane, not to macOS System Settings.
                 action: StatusHealthAction(
-                    label: UICopy.SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS,
+                    label: UICopy.PERMISSIONS_OPEN_ACTION,
                     settingsTab: "permissions"
                 )
             )
