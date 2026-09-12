@@ -66,8 +66,9 @@ struct ExpectedExitMarkerWriterTests {
             .appendingPathComponent("sub", isDirectory: true)
             .appendingPathComponent("expected-exit.json")
 
-        ExpectedExitMarker.markExpectedExit(reason: "blocked", at: url)
+        let succeeded = ExpectedExitMarker.markExpectedExit(reason: "blocked", at: url)
 
+        #expect(!succeeded)
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 

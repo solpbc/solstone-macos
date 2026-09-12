@@ -3,11 +3,15 @@
 
 import Foundation
 import os
+import SolstoneCore
 
 internal enum DiagnosticEvidenceLogEvent: Equatable, Sendable {
     case screenRecordingCDHashMismatch
     case permissionAutoStartSkipped
-    case terminationCommitted
+    case terminationCommitted(ExitReason)
+    case terminationMarkerWriteFailed
+    case terminationSettingsRelaunchSpawnFailed
+    case terminationUpdaterInstallRecovered
     case terminationAppKitBegan
     case terminationDrainTimeout
     case deliveryWriteFailed
@@ -33,8 +37,20 @@ internal struct DiagnosticEvidenceLoggingAdapter {
         sink(.permissionAutoStartSkipped)
     }
 
-    func terminationCommitted() {
-        sink(.terminationCommitted)
+    func terminationCommitted(reason: ExitReason) {
+        sink(.terminationCommitted(reason))
+    }
+
+    func terminationMarkerWriteFailed() {
+        sink(.terminationMarkerWriteFailed)
+    }
+
+    func terminationSettingsRelaunchSpawnFailed() {
+        sink(.terminationSettingsRelaunchSpawnFailed)
+    }
+
+    func terminationUpdaterInstallRecovered() {
+        sink(.terminationUpdaterInstallRecovered)
     }
 
     func terminationAppKitBegan() {
@@ -55,8 +71,25 @@ internal struct DiagnosticEvidenceLoggingAdapter {
             Logger.setup.notice("screen_recording.cdhash_mismatch")
         case .permissionAutoStartSkipped:
             Logger.setup.debug("permission.auto_start_skipped")
-        case .terminationCommitted:
-            Logger.setup.notice("termination.committed")
+        case .terminationCommitted(let reason):
+            switch reason {
+            case .ordinaryQuit:
+                Logger.setup.notice("termination.committed.ordinary_quit")
+            case .externalQuit:
+                Logger.setup.notice("termination.committed.external_quit")
+            case .settingsRestart:
+                Logger.setup.notice("termination.committed.settings_restart")
+            case .updaterInstall:
+                Logger.setup.notice("termination.committed.updater_install")
+            case .placementRepair, .journalUpdaterInstall:
+                assertionFailure("non-sol exit reason reached DiagnosticEvidenceLoggingAdapter")
+            }
+        case .terminationMarkerWriteFailed:
+            Logger.setup.error("termination.marker_write_failed")
+        case .terminationSettingsRelaunchSpawnFailed:
+            Logger.setup.error("termination.settings_relaunch_spawn_failed")
+        case .terminationUpdaterInstallRecovered:
+            Logger.setup.notice("termination.recovered.updater_install")
         case .terminationAppKitBegan:
             Logger.setup.notice("termination.appkit_began")
         case .terminationDrainTimeout:

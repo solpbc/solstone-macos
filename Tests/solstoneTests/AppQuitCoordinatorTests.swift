@@ -244,6 +244,48 @@ struct AppQuitCoordinatorTests {
         #expect(count(events.all, "terminate") == 1)
     }
 
+    @Test func settingsRestartPersistsItsCommittedReason() async {
+        let harness = DiagnosticEvidenceHarness()
+        let coordinator = AppQuitCoordinator(
+            dependencies: .init(
+                writeMarker: { _ in true }
+            ),
+            recorder: harness.recorder
+        )
+
+        coordinator.requestSettingsRestart()
+
+        #expect(await harness.entries().map(\.code) == [.terminationCommittedSettingsRestart])
+    }
+
+    @Test func markerWriteFailureIsPersistedWithoutBlockingQuit() async throws {
+        let events = LockedArray<String>([])
+        let harness = DiagnosticEvidenceHarness()
+        let logEvents = LockedArray<DiagnosticEvidenceLogEvent>([])
+        let coordinator = AppQuitCoordinator(
+            dependencies: .init(
+                writeMarker: { _ in false },
+                terminate: { events.append("terminate") }
+            ),
+            recorder: harness.recorder,
+            logAdapter: DiagnosticEvidenceLoggingAdapter { logEvents.append($0) }
+        )
+
+        coordinator.requestAppOwnedQuit()
+
+        try await waitUntil(timeout: .seconds(5)) {
+            events.all == ["terminate"]
+        }
+        #expect(await harness.entries().map(\.code) == [
+            .terminationCommittedOrdinaryQuit,
+            .terminationMarkerWriteFailed,
+        ])
+        #expect(logEvents.all == [
+            .terminationCommitted(.ordinaryQuit),
+            .terminationMarkerWriteFailed,
+        ])
+    }
+
     @Test func prepareForUpdaterInstallRunsSharedBodyAndMarksPrepared() async {
         let events = LockedArray<String>([])
         let coordinator = makeCoordinator(events: events)
@@ -447,6 +489,7 @@ struct AppQuitCoordinatorTests {
             },
             writeMarker: { reason in
                 events.append("marker:\(reason.markerString)")
+                return true
             },
             invalidateMarker: {
                 events.append("invalidateMarker")

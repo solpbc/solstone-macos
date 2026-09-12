@@ -38,7 +38,7 @@ struct AppKitTerminationTests {
 
         #expect(evidenceCodes(await harness.entries()) == [
             .terminationAppKitBegan,
-            .terminationCommitted,
+            .terminationCommittedExternalQuit,
         ])
     }
 
@@ -77,7 +77,7 @@ struct AppKitTerminationTests {
             Issue.record("AppKit attempt evidence was not durable")
             return
         }
-        #expect(evidenceCodes(envelope.entries) == [.terminationCommitted, .terminationAppKitBegan])
+        #expect(evidenceCodes(envelope.entries) == [.terminationCommittedUpdaterInstall, .terminationAppKitBegan])
         let attempts = envelope.entries.filter { $0.code == .terminationAppKitBegan }
         #expect(attempts.map(\.repeatCount) == [1])
         #expect(logEvents.events.filter { $0 == .terminationAppKitBegan } == [.terminationAppKitBegan])
@@ -181,13 +181,13 @@ struct AppKitTerminationTests {
         #expect(replyCodes.current == [
             .appLaunch,
             .deliveryWriteFailed,
-            .terminationCommitted,
+            .terminationCommittedOrdinaryQuit,
             .terminationDrainTimeout,
             .terminationAppKitBegan,
         ])
         #expect(logEvents.events == [
             .deliveryWriteFailed,
-            .terminationCommitted,
+            .terminationCommitted(.ordinaryQuit),
             .terminationDrainTimeout,
             .terminationAppKitBegan,
         ])
@@ -250,7 +250,7 @@ struct AppKitTerminationTests {
         }
 
         #expect(replies.all == [true])
-        #expect(replyCodes.current == [.appLaunch, .terminationAppKitBegan, .terminationCommitted])
+        #expect(replyCodes.current == [.appLaunch, .terminationAppKitBegan, .terminationCommittedExternalQuit])
     }
 
     @Test func stalledEvidenceDrainDoesNotChangeSettingsRestartOutcome() async throws {
@@ -287,7 +287,10 @@ struct AppKitTerminationTests {
         let coordinator = AppQuitCoordinator(
             dependencies: .init(
                 setCommitted: { events.append("committed:\($0)") },
-                writeMarker: { events.append("marker:\($0)") },
+                writeMarker: {
+                    events.append("marker:\($0)")
+                    return true
+                },
                 invalidateMarker: { events.append("invalidate") },
                 terminate: { events.append("terminate") },
                 launchReplacement: { events.append("replacement") }
@@ -339,7 +342,7 @@ struct AppKitTerminationTests {
             reply: { replies.append($0) }
         )
         #expect(seam.applicationShouldTerminate() == .terminateLater)
-        #expect(diagnosticEvents.all == [.terminationCommitted, .terminationAppKitBegan])
+        #expect(diagnosticEvents.all == [.terminationCommitted(.updaterInstall), .terminationAppKitBegan])
         #expect(await Task.detached { bytes.waitForFirstRead() }.value)
         scheduledRecovery.current?()
         try await waitUntil(timeout: .seconds(5)) {
@@ -356,10 +359,11 @@ struct AppKitTerminationTests {
 
         #expect(seam.applicationShouldTerminate() == .terminateLater)
         #expect(diagnosticEvents.all == [
-            .terminationCommitted,
+            .terminationCommitted(.updaterInstall),
             .terminationAppKitBegan,
+            .terminationUpdaterInstallRecovered,
             .terminationAppKitBegan,
-            .terminationCommitted,
+            .terminationCommitted(.externalQuit),
         ])
         try await waitUntil(timeout: .seconds(5)) {
             replies.all == [false, true]
@@ -371,7 +375,7 @@ struct AppKitTerminationTests {
             return
         }
         let attempts = envelope.entries.filter { $0.code == .terminationAppKitBegan }
-        #expect(attempts.map(\.repeatCount) == [2])
+        #expect(attempts.map(\.repeatCount) == [1, 1])
         #expect(!events.all.contains("terminate"))
         #expect(!events.all.contains("replacement"))
     }
@@ -397,7 +401,10 @@ struct AppKitTerminationTests {
         let coordinator = AppQuitCoordinator(
             dependencies: .init(
                 setCommitted: { events.append("committed:\($0)") },
-                writeMarker: { events.append("marker:\($0)") },
+                writeMarker: {
+                    events.append("marker:\($0)")
+                    return true
+                },
                 prepareForQuit: {
                     events.append("prepared")
                     await gate.wait()

@@ -43,13 +43,15 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
     /// teardown. Best-effort: never throws into the caller, so a failed write can never
     /// block termination. The watchdog reads it without consuming it and invalidates it
     /// only on suppression or when it is corrupt, stale, or PID-mismatched.
+    /// - Returns: `true` when the atomic write completed; otherwise `false`.
+    @discardableResult
     public static func markExpectedExit(
         reason: String,
         now: Date = Date(),
         pid: Int32 = getpid(),
         at url: URL = markerURL,
         fileManager: FileManager = .default
-    ) {
+    ) -> Bool {
         let marker = ExpectedExitMarker(pid: pid, timestamp: now, reason: reason)
         do {
             try fileManager.createDirectory(
@@ -57,8 +59,10 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
                 withIntermediateDirectories: true
             )
             try marker.encoded().write(to: url, options: .atomic)
+            return true
         } catch {
             Logger.general.warning("expected-exit marker write failed (reason=\(reason, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 

@@ -5,8 +5,13 @@ import Testing
 @Suite("AppState replacement launch")
 @MainActor
 struct AppStateReplacementLaunchTests {
-    @Test func replacementLaunchRunnerFailureIsLoggedAndSwallowed() {
-        let state = AppState.forSnapshot()
+    @Test func replacementLaunchRunnerFailureIsLoggedAndSwallowed() async {
+        let harness = DiagnosticEvidenceHarness()
+        var logEvents: [DiagnosticEvidenceLogEvent] = []
+        let state = AppState.forSnapshot(
+            recorder: harness.recorder,
+            logAdapter: DiagnosticEvidenceLoggingAdapter { logEvents.append($0) }
+        )
         var invocations: [ReplacementLaunchCommand] = []
         var runnerReachedThrow = false
         var returned = false
@@ -24,6 +29,8 @@ struct AppStateReplacementLaunchTests {
         #expect(invocations.count == 1)
         #expect(invocations.first?.predecessorPID == getpid())
         #expect(invocations.first?.bundlePath == Bundle.main.bundlePath)
+        #expect(logEvents == [.terminationSettingsRelaunchSpawnFailed])
+        #expect(await harness.entries().map(\.code) == [.terminationSettingsRelaunchSpawnFailed])
     }
 }
 

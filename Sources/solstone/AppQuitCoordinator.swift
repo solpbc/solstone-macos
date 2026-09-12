@@ -50,7 +50,7 @@ final class AppQuitCoordinator {
 
     struct Dependencies {
         let setCommitted: @MainActor (Bool) -> Void
-        let writeMarker: @MainActor (ExitReason) -> Void
+        let writeMarker: @MainActor (ExitReason) -> Bool
         let invalidateMarker: @MainActor () -> Void
         let prepareForQuit: @MainActor () async -> Void
         let prepareForUpdate: @MainActor () async -> Void
@@ -59,7 +59,7 @@ final class AppQuitCoordinator {
 
         init(
             setCommitted: @escaping @MainActor (Bool) -> Void = { _ in },
-            writeMarker: @escaping @MainActor (ExitReason) -> Void = {
+            writeMarker: @escaping @MainActor (ExitReason) -> Bool = {
                 ExpectedExitMarker.markExpectedExit(reason: $0.markerString)
             },
             invalidateMarker: @escaping @MainActor () -> Void = {
@@ -139,6 +139,10 @@ final class AppQuitCoordinator {
     }
 
     func resetAfterFailedUpdaterInstall() {
+        if committedIntent?.reason == .updaterInstall {
+            recorder.enqueue(.terminationUpdaterInstallRecovered)
+            logAdapter.terminationUpdaterInstallRecovered()
+        }
         dependencies.invalidateMarker()
         dependencies.setCommitted(false)
         stateMachine.reset()
@@ -168,8 +172,8 @@ final class AppQuitCoordinator {
             preparationGeneration &+= 1
             let generation = preparationGeneration
             dependencies.setCommitted(true)
-            recorder.enqueue(.terminationCommitted)
-            logAdapter.terminationCommitted()
+            recorder.enqueue(terminationCommittedCode(for: intent.reason))
+            logAdapter.terminationCommitted(reason: intent.reason)
             let task = Task { @MainActor [weak self] in
                 guard let self else { return }
                 await self.performPreparation(generation: generation)
@@ -194,7 +198,10 @@ final class AppQuitCoordinator {
         guard generation == preparationGeneration, let intent = committedIntent else { return }
         await intent.prepare()
         guard generation == preparationGeneration else { return }
-        dependencies.writeMarker(intent.reason)
+        if !dependencies.writeMarker(intent.reason) {
+            recorder.enqueue(.terminationMarkerWriteFailed)
+            logAdapter.terminationMarkerWriteFailed()
+        }
         stateMachine.markPrepared()
         preparationTask = nil
         if claimExternalReplyDrainIfNeeded() {
@@ -282,5 +289,20 @@ final class AppQuitCoordinator {
             prepare: dependencies.prepareForUpdate,
             finalize: nil
         )
+    }
+
+    private func terminationCommittedCode(for reason: ExitReason) -> DiagnosticEvidenceCode {
+        switch reason {
+        case .ordinaryQuit:
+            .terminationCommittedOrdinaryQuit
+        case .externalQuit:
+            .terminationCommittedExternalQuit
+        case .settingsRestart:
+            .terminationCommittedSettingsRestart
+        case .updaterInstall:
+            .terminationCommittedUpdaterInstall
+        case .placementRepair, .journalUpdaterInstall:
+            preconditionFailure("non-sol exit reason reached AppQuitCoordinator")
+        }
     }
 }

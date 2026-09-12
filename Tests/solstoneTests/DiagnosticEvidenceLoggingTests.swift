@@ -14,7 +14,13 @@ struct DiagnosticEvidenceLoggingTests {
 
         adapter.screenRecordingCDHashMismatch()
         adapter.permissionAutoStartSkipped()
-        adapter.terminationCommitted()
+        adapter.terminationCommitted(reason: .ordinaryQuit)
+        adapter.terminationCommitted(reason: .externalQuit)
+        adapter.terminationCommitted(reason: .settingsRestart)
+        adapter.terminationCommitted(reason: .updaterInstall)
+        adapter.terminationMarkerWriteFailed()
+        adapter.terminationSettingsRelaunchSpawnFailed()
+        adapter.terminationUpdaterInstallRecovered()
         adapter.terminationAppKitBegan()
         adapter.terminationDrainTimeout()
         adapter.deliveryWriteFailed()
@@ -22,7 +28,13 @@ struct DiagnosticEvidenceLoggingTests {
         #expect(events == [
             .screenRecordingCDHashMismatch,
             .permissionAutoStartSkipped,
-            .terminationCommitted,
+            .terminationCommitted(.ordinaryQuit),
+            .terminationCommitted(.externalQuit),
+            .terminationCommitted(.settingsRestart),
+            .terminationCommitted(.updaterInstall),
+            .terminationMarkerWriteFailed,
+            .terminationSettingsRelaunchSpawnFailed,
+            .terminationUpdaterInstallRecovered,
             .terminationAppKitBegan,
             .terminationDrainTimeout,
             .deliveryWriteFailed,
@@ -33,7 +45,13 @@ struct DiagnosticEvidenceLoggingTests {
         let source = try readWireUpSource("Sources/solstone/DiagnosticEvidenceLoggingAdapter.swift")
         #expect(wireUpContains(source, "Logger.setup.notice(\"screen_recording.cdhash_mismatch\")"))
         #expect(wireUpContains(source, "Logger.setup.debug(\"permission.auto_start_skipped\")"))
-        #expect(wireUpContains(source, "Logger.setup.notice(\"termination.committed\")"))
+        #expect(wireUpContains(source, "Logger.setup.notice(\"termination.committed.ordinary_quit\")"))
+        #expect(wireUpContains(source, "Logger.setup.notice(\"termination.committed.external_quit\")"))
+        #expect(wireUpContains(source, "Logger.setup.notice(\"termination.committed.settings_restart\")"))
+        #expect(wireUpContains(source, "Logger.setup.notice(\"termination.committed.updater_install\")"))
+        #expect(wireUpContains(source, "Logger.setup.error(\"termination.marker_write_failed\")"))
+        #expect(wireUpContains(source, "Logger.setup.error(\"termination.settings_relaunch_spawn_failed\")"))
+        #expect(wireUpContains(source, "Logger.setup.notice(\"termination.recovered.updater_install\")"))
         #expect(wireUpContains(source, "Logger.setup.notice(\"termination.appkit_began\")"))
         #expect(wireUpContains(source, "Logger.setup.notice(\"termination.drain_timeout\")"))
         #expect(wireUpContains(source, "Logger.setup.notice(\"delivery.write_failed\")"))
@@ -150,7 +168,7 @@ struct DiagnosticEvidenceLoggingTests {
         #expect(wireUpContains(coordinator, "Logger.general.info(\"[Permissions] Recording denied, screen recording permission not granted\")"))
         #expect(wireUpContains(coordinator, "Logger.general.error(\"Recording failed to start:"))
         #expect(!adapter.contains("Logger.general"))
-        #expect(adapter.components(separatedBy: "Logger.setup.").count == 7)
+        #expect(adapter.components(separatedBy: "Logger.setup.").count == 13)
     }
 }
 

@@ -265,6 +265,8 @@ public final class AppState {
         do {
             try replacementLaunchRunner(command)
         } catch {
+            recorder.enqueue(.terminationSettingsRelaunchSpawnFailed)
+            logAdapter.terminationSettingsRelaunchSpawnFailed()
             Logger.setup.error("replacement launch failed to spawn: \(String(describing: error), privacy: .public)")
         }
     }
