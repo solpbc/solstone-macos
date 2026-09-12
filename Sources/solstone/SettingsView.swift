@@ -119,6 +119,7 @@ private struct SettingsPaneScrollEdgeModifier: ViewModifier {
 struct SettingsView: View {
     enum Tab: String, Hashable, CaseIterable {
         case permissions = "permissions"
+        case sources = "sources"
         case observer = "observer"
         case service = "service"
         case microphones = "microphones"
@@ -316,6 +317,7 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    sidebarPlainLabel("sources", tab: .sources, systemImage: "waveform.badge.mic").tag(Tab.sources)
                     sidebarPlainLabel("microphones", tab: .microphones, systemImage: "mic").tag(Tab.microphones)
                     sidebarPlainLabel("privacy", tab: .privacy, systemImage: "eye.slash").tag(Tab.privacy)
                 } header: {
@@ -431,6 +433,8 @@ struct SettingsView: View {
             observerTab.onAppear { appState.markSettingsTabVisited(.observer) }
         case .service:
             serviceTab.onAppear { appState.markSettingsTabVisited(.service) }
+        case .sources:
+            sourcesTab.onAppear { appState.markSettingsTabVisited(.sources) }
         case .microphones:
             microphoneTab.onAppear { appState.markSettingsTabVisited(.microphones) }
         case .privacy:
@@ -454,6 +458,7 @@ struct SettingsView: View {
             case "observer", "general": selectedTab = .observer
             case "permissions": selectedTab = .permissions
             case "service", "journal": selectedTab = .service
+            case "sources": selectedTab = .sources
             case "microphones": selectedTab = .microphones
             case "privacy": selectedTab = .privacy
             case "help": selectedTab = .help
@@ -617,6 +622,63 @@ struct SettingsView: View {
         )
     }
 
+    // MARK: - Sources Tab
+
+    private func setCaptureSource(_ source: CaptureSources, enabled: Bool) {
+        var config = appState.config
+        if source.contains(.microphone) {
+            config.isMicrophoneCaptureEnabled = enabled
+        }
+        if source.contains(.screen) {
+            config.isScreenCaptureEnabled = enabled
+        }
+        appState.updateConfig(config)
+        // A source switch takes effect now. Making the owner stop a session to change what
+        // it takes in is the all-or-nothing gate this feature exists to retire, relocated.
+        Task { await appState.applySelectedSourcesToRunningSession() }
+    }
+
+    private var sourcesTab: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text(UICopy.SOURCES_HELP)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(UICopy.SOURCES_MICROPHONE, isOn: Binding(
+                        get: { appState.config.isMicrophoneCaptureEnabled },
+                        set: { setCaptureSource(.microphone, enabled: $0) }
+                    ))
+                    .accessibilityIdentifier(AXID.Settings.Sources.microphoneCaptureEnabled)
+                    Toggle(UICopy.SOURCES_SCREEN, isOn: Binding(
+                        get: { appState.config.isScreenCaptureEnabled },
+                        set: { setCaptureSource(.screen, enabled: $0) }
+                    ))
+                    .accessibilityIdentifier(AXID.Settings.Sources.screenCaptureEnabled)
+
+                    Divider()
+
+                    Text(appState.captureSourcesStatusText)
+                        .accessibilityIdentifier(AXID.Settings.Sources.sourceStatus)
+                    if appState.config.selectedSources.isEmpty {
+                        Text(UICopy.SOURCES_NONE_REASON).foregroundStyle(.secondary)
+                    } else if appState.availableSelectedSources.isEmpty {
+                        Text(UICopy.SOURCES_GRANT_OR_CHANGE).foregroundStyle(.secondary)
+                        navRow(UICopy.SETTINGS_NEXT_GRANT_PERMISSIONS) {
+                            selectedTab = .permissions
+                        }
+                    }
+                    if let notice = appState.captureSourceNotice {
+                        Text(notice).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
     // MARK: - Permissions Tab
 
     private var screenRecordingPermissionAXState: AXPermissionState {
@@ -637,58 +699,6 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
 
             GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(UICopy.SOURCES_TITLE).font(.headline)
-                    Text(UICopy.SOURCES_HELP).foregroundStyle(.secondary)
-                    Toggle(UICopy.SOURCES_MICROPHONE, isOn: Binding(
-                        get: { appState.config.isMicrophoneCaptureEnabled },
-                        set: { value in
-                            var config = appState.config
-                            config.isMicrophoneCaptureEnabled = value
-                            appState.updateConfig(config)
-                        }
-                    ))
-                    .accessibilityIdentifier(AXID.Settings.Permissions.microphoneCaptureEnabled)
-                    .disabled(appState.isRecording || appState.isPaused)
-                    Toggle(UICopy.SOURCES_SCREEN, isOn: Binding(
-                        get: { appState.config.isScreenCaptureEnabled },
-                        set: { value in
-                            var config = appState.config
-                            config.isScreenCaptureEnabled = value
-                            appState.updateConfig(config)
-                        }
-                    ))
-                    .accessibilityIdentifier(AXID.Settings.Permissions.screenCaptureEnabled)
-                    .disabled(appState.isRecording || appState.isPaused)
-                    Text(appState.captureSourcesStatusText)
-                        .accessibilityIdentifier(AXID.Settings.Permissions.sourceStatus)
-                    if appState.isRecording || appState.isPaused {
-                        Text(UICopy.SOURCES_STOP_TO_CHANGE).foregroundStyle(.secondary)
-                        Button(UICopy.SOURCES_STOP) {
-                            Task { await appState.stopRecording(reason: .user) }
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Permissions.stop)
-                    } else {
-                        if appState.config.selectedSources.isEmpty {
-                            Text(UICopy.SOURCES_CHOOSE).foregroundStyle(.secondary)
-                        } else if appState.availableSelectedSources.isEmpty {
-                            Text(UICopy.SOURCES_GRANT_OR_CHANGE).foregroundStyle(.secondary)
-                        }
-                        Button(UICopy.SOURCES_START) {
-                            Task { await appState.startRecording(reason: .user) }
-                        }
-                        .disabled(appState.availableSelectedSources.isEmpty || !appState.initialPermissionCheckComplete)
-                        .accessibilityIdentifier(AXID.Settings.Permissions.start)
-                    }
-                    if let notice = appState.captureSourceNotice {
-                        Text(notice).foregroundStyle(.secondary)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
-            }
-
-            GroupBox {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("screen recording")
                         .font(.headline)
@@ -697,20 +707,29 @@ struct SettingsView: View {
                         value: screenRecordingPermissionAXState.axToken
                     )
                     if appState.screenRecordingGranted {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                            Text("all good")
-                                .foregroundStyle(.secondary)
-                            if screenRestartPending {
+                        if screenRestartPending {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.clockwise.circle.fill")
+                                    .foregroundStyle(SolstoneColors.solOrange)
                                 Text(UICopy.SOURCES_RESTART_READY)
                                 Spacer()
                                 Button(UICopy.SOURCES_RESTART) { relaunchApp() }
                                     .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingRestartNow)
                             }
+                            AXStateCompanion(
+                                id: AXID.Settings.Permissions.screenRecordingRestartPending,
+                                value: "pending"
+                            )
+                        } else {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("all good")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     } else {
-                        Text(UICopy.SOURCES_SCREEN_DENIED)
+                        Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_EXPLAINER)
                             .font(.body)
                             .foregroundStyle(.secondary)
                         if shouldShowScreenRecordingResetHint(
@@ -763,7 +782,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text(UICopy.SOURCES_MIC_DENIED)
+                        Text(UICopy.SETTINGS_PERMISSIONS_MIC_EXPLAINER)
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
@@ -2561,6 +2580,8 @@ struct SettingsView: View {
             lastDeliveryOutcome: appState.uploadCoordinator.lastJournalDeliveryOutcome,
             serverURL: appState.config.serverURL,
             now: Date(),
+            selectedSources: appState.config.selectedSources,
+            permittedSources: appState.capture.permittedSources,
             setupVerdict: setupPresentation.verdict
         )
     }
@@ -2580,6 +2601,14 @@ struct SettingsView: View {
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+                if let action = summary.action {
+                    Button(action.label) {
+                        selectedTab = SettingsView.Tab(rawValue: action.settingsTab) ?? .status
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .accessibilityIdentifier(AXID.Settings.Status.healthSummaryAction)
                 }
             }
             Spacer(minLength: 0)

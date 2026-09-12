@@ -260,6 +260,35 @@ struct IndependentCapturePipelineTests {
         #expect(starts.count == 1)
     }
 
+    // Turning a source back on must survive the permission arriving later. Without this the
+    // owner turns the microphone on before granting it, grants it in System Settings, and the
+    // poll refuses to auto-start forever with nothing on screen to press.
+    @Test func enablingASourceClearsAnExplicitStopBeforeThePermissionArrives() async throws {
+        let starts = LockedCounter()
+        var permitted = false
+        let (coordinator, root) = try makeCoordinator(
+            configProvider: { (sources: [.microphone], disabled: [], enabled: []) },
+            startOperation: { _, _, _ in starts.increment(); return .committed },
+            screenPermissionProvider: grantedScreenPermissionProvider()
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.microphoneAuthorizationReader = { permitted ? .authorized : .denied }
+
+        _ = await coordinator.stopRecording(reason: .user)
+        await coordinator.checkPermissionsAndAutoStart()
+        #expect(starts.count == 0)
+
+        // The owner turns the source on while it is still ungranted.
+        coordinator.clearExplicitStop()
+        await coordinator.checkPermissionsAndAutoStart()
+        #expect(starts.count == 0)
+
+        // The grant lands.
+        permitted = true
+        await coordinator.checkPermissionsAndAutoStart()
+        #expect(starts.count == 1)
+    }
+
     @Test func anExplicitStopStillSurvivesPermissionPolling() async throws {
         let starts = LockedCounter()
         let (coordinator, root) = try makeCoordinator(

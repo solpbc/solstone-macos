@@ -19,33 +19,12 @@ struct MenuContent: View {
             if hasPauseResumeControl {
                 pauseResumeSection
             }
-            if appState.isRecording {
-                Button(UICopy.SOURCES_STOP) {
-                    Task {
-                        await appState.capture.stopRecording(reason: .user)
-                    }
-                }
-                .accessibilityIdentifier(AXID.Menubar.stopButton)
-            } else {
-                let admissionSet = appState.config.selectedSources.intersection(appState.capture.permittedSources)
-                if admissionSet.isEmpty {
-                    Button(UICopy.SOURCES_START_OPEN) {
-                        openSettings(tab: "permissions")
-                    }
-                    .accessibilityIdentifier(AXID.Menubar.startButton)
-                } else {
-                    Button(UICopy.SOURCES_START) {
-                        Task {
-                            await appState.capture.startRecording(reason: .user)
-                        }
-                    }
-                    .accessibilityIdentifier(AXID.Menubar.startButton)
-                }
-            }
         }
 
-        if (appState.isRecording || appState.isPaused) && statusRowState != .observing {
-            Text(appState.captureSourcesStatusText)
+        // The row answers "is my journal receiving my life right now?"; this line answers
+        // "from what?" — extra room is for more, never for a different answer.
+        if appState.isRecording || appState.isPaused, !appState.captureManager.activeSources.isEmpty {
+            Text(UICopy.sourceNames(appState.captureManager.activeSources))
         }
         Divider()
 
@@ -73,10 +52,6 @@ struct MenuContent: View {
                 }
             }
             .accessibilityIdentifier(AXID.Menubar.settingsButton)
-            Button(UICopy.SOURCES_OPEN) {
-                openSettings(tab: "permissions")
-            }
-            .accessibilityIdentifier(AXID.Menubar.sourcesButton)
             Button("about solstone") {
                 openWindow(id: "about")
                 appState.didOpenWindow(.about)
@@ -119,13 +94,19 @@ struct MenuContent: View {
 
         switch rowState {
         case .stopped:
-            Button(appState.captureSourcesStatusText) {
-                openSettings(tab: "permissions")
+            if appState.config.selectedSources.isEmpty {
+                Button(UICopy.MENUBAR_SOURCES_OFF_OPEN_SETTINGS) {
+                    openSettings(tab: "sources")
+                }
+                .accessibilityIdentifier(AXID.Menubar.statusRowState)
+                .accessibilityValue(rowState.axToken)
+            } else {
+                Text(UICopy.MENUBAR_STARTING)
+                    .accessibilityIdentifier(AXID.Menubar.statusRowState)
+                    .accessibilityValue(rowState.axToken)
             }
-            .accessibilityIdentifier(AXID.Menubar.statusRowState)
-            .accessibilityValue(rowState.axToken)
         case .permissions:
-            Button(UICopy.SOURCES_UNAVAILABLE_OPEN) {
+            Button(UICopy.MENUBAR_NO_SOURCE_OPEN_SETTINGS) {
                 openSettings(tab: "permissions")
             }
             .foregroundStyle(.red)
@@ -189,7 +170,7 @@ struct MenuContent: View {
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
 
         case .observing:
-            Text(appState.captureSourcesStatusText)
+            Text(UICopy.MENUBAR_OBSERVING_CONNECTED)
                 .accessibilityValue(rowState.axToken)
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
         }

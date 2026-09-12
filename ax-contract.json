@@ -44,6 +44,7 @@
       {
         "expansions" : [
           "permissions",
+          "sources",
           "observer",
           "service",
           "microphones",
@@ -58,6 +59,7 @@
       {
         "expansions" : [
           "permissions",
+          "sources",
           "observer",
           "service",
           "microphones",
@@ -83,7 +85,6 @@
       "menubar.navigation.about",
       "menubar.navigation.openJournal",
       "menubar.navigation.settings",
-      "menubar.navigation.sources",
       "menubar.pause.fifteenMinutes",
       "menubar.pause.indefinite",
       "menubar.pause.menu",
@@ -99,8 +100,6 @@
       "menubar.status.offline",
       "menubar.status.permissions",
       "menubar.status.row.state",
-      "menubar.status.start",
-      "menubar.status.stop",
       "settings.help.agentInstructions",
       "settings.help.agentInstructions.copy",
       "settings.help.diagnostics.appVersion.row",
@@ -144,17 +143,12 @@
       "settings.observer.storage.used.state",
       "settings.permissions.microphone.grantAccess",
       "settings.permissions.microphone.state",
-      "settings.permissions.microphoneCapture.enabled",
       "settings.permissions.next.connectJournal",
-      "settings.permissions.screenCapture.enabled",
       "settings.permissions.screenRecording.enable",
       "settings.permissions.screenRecording.resetHint",
-      "settings.permissions.screenRecording.restartCountdown.state",
       "settings.permissions.screenRecording.restartNow",
+      "settings.permissions.screenRecording.restartPending.state",
       "settings.permissions.screenRecording.state",
-      "settings.permissions.sources.start",
-      "settings.permissions.sources.status",
-      "settings.permissions.sources.stop",
       "settings.permissions.systemSettings.open",
       "settings.privacy.excludedApps.add",
       "settings.privacy.excludedApps.field",
@@ -201,8 +195,12 @@
       "settings.service.pairing.switchConfirm",
       "settings.service.pairing.unpair",
       "settings.service.prereq.permissions",
+      "settings.sources.microphoneCapture.enabled",
+      "settings.sources.screenCapture.enabled",
+      "settings.sources.status",
       "settings.status.debug.keepRejectedAudio",
       "settings.status.debug.oneMinuteSegments",
+      "settings.status.health.summary.action",
       "settings.status.health.summary.state",
       "settings.status.observing.nextSegment.state",
       "settings.status.observing.state",
@@ -336,8 +334,8 @@
       "kind" : "enum",
       "vocabulary" : "AXPermissionState"
     },
-    "settings.permissions.screenRecording.restartCountdown.state" : {
-      "kind" : "numeric"
+    "settings.permissions.screenRecording.restartPending.state" : {
+      "kind" : "freeform"
     },
     "settings.permissions.screenRecording.state" : {
       "kind" : "enum",

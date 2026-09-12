@@ -248,6 +248,13 @@ public final class CaptureCoordinator {
         return outcome
     }
 
+    /// Turning a source back on is the owner asking for capture, so it clears an explicit
+    /// stop even when nothing can start yet — otherwise granting the permission afterwards
+    /// leaves the poll refusing to auto-start, with no owner-facing way back.
+    public func clearExplicitStop() {
+        isExplicitlyStopped = false
+    }
+
     public func toggleRecording() async {
         if isUserPaused {
             pauseManager.resume()
