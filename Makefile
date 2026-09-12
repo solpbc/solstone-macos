@@ -1,4 +1,4 @@
-.PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
+.PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot integration-native install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal assemble-journal-app journal-app-unsigned bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
         supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-native-runtime journal-native-runtime-accepted brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
@@ -207,6 +207,21 @@ ax-contract:
 
 ci:
 	@./scripts/run-ci.sh
+
+# On-demand integration tier: the apps' real Journal-runtime code against the
+# staged accepted native journal runtime, inside an isolated home. Opt-in only;
+# `make ci` compiles these suites and lists them as skipped. Stage the runtime
+# first (`make journal-native-runtime-accepted ...`) or set
+# SOLSTONE_NATIVE_RUNTIME_DIR to a runtime tree that contains bin/journal.
+# Not a release gate: signed-artifact, Sparkle and relay acceptance stay on the
+# release rig.
+integration-native:
+	@RUNTIME="$${SOLSTONE_NATIVE_RUNTIME_DIR:-$(JOURNAL_NATIVE_RUNTIME_DIR)}"; \
+		test -x "$$RUNTIME/bin/journal" || { \
+			echo "error: no native journal runtime at $$RUNTIME/bin/journal"; \
+			echo "       stage it with 'make journal-native-runtime-accepted ...' or set SOLSTONE_NATIVE_RUNTIME_DIR"; \
+			exit 1; }
+	@SOLSTONE_NATIVE_INTEGRATION=1 swift test --filter NativeIntegration
 
 # Render view snapshots
 snapshot:

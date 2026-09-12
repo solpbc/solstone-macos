@@ -55,6 +55,7 @@ public actor SyncService {
     // MARK: - State
 
     private var isSyncing = false
+    private var followUpSyncRequested = false
     private var syncTask: Task<Void, Never>?
     private var storedSegmentKeyBySubmittedKey: [SegmentAliasKey: String] = [:]
 
@@ -148,7 +149,10 @@ public actor SyncService {
     /// Trigger a sync (debounced - coalesces rapid calls)
     public func triggerSync() {
         guard !isSyncing else {
-            Logger.upload.info("Sync already in progress, skipping trigger")
+            // A segment that completed after this pass snapshotted the local set would
+            // otherwise wait for the next external trigger. Run one follow-up pass instead.
+            followUpSyncRequested = true
+            Logger.upload.info("Sync already in progress; a follow-up pass will run when it finishes")
             return
         }
 
@@ -186,6 +190,10 @@ public actor SyncService {
 
         defer {
             isSyncing = false
+            if followUpSyncRequested {
+                followUpSyncRequested = false
+                triggerSync()
+            }
         }
 
         // Collect all segments grouped by day
