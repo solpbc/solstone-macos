@@ -5,6 +5,11 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2 (build 36)] - 2026-09-11
+
+### Fixed
+- fixed a timing calculation that could misreport how long it had been since intake last reached your journal, especially around time zone changes.
+
 ## [2.0.1 (build 35)] - 2026-09-11
 
 ### Changed

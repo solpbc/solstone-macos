@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.0.1] - 2026-09-11
+## [2.0.2] - 2026-09-11
 
 ### Added
 - settings now has a "report a problem" button that opens support with your app version, macos version, and recent diagnostic details.
@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - retry in settings now starts a fresh connection attempt when the connection is stuck.
 - when something can't be added to your journal, settings now shows a short explanation instead of raw error-page text.
 - menus, permission instructions, and update messages now use the solstone name. new macos downloads use it too.
+- settings no longer shows the manual pairing-link field after the app has already paired with a journal on the same mac.
 
 ## [2.0.0] - 2026-09-08
 
