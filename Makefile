@@ -1250,18 +1250,17 @@ PUBLISH_PY := uv run --no-project --with 'pynacl>=1.6,<2' --with boto3 python3
 #                                and write .ja1r-gate/sync-receipt.json.
 #   2. run the lanes on ja1r   — redirect each lane's stdout into a report file
 #                                (the direct harness lanes write no files
-#                                themselves). See the README for the eight direct
-#                                names and the spl-link coordinator report.
+#                                themselves). See the README for fresh-use,
+#                                v2-upgrade-{sol,journal} and spl-link coordination.
 #   3. make verify-ja1r-gate-* — offline check of the evidence set; this is what
 #                                publish-appcast depends on.
 #
-# Profile report counts are fail-closed: sol=8, journal=6, paired=9. The extra
-# sol/paired report is spl-link.json, a coordinator envelope around the remote
-# spl-link lane. For sol/paired, the verifier hashes $(DMG_NAME) from CWD and
-# compares that digest to the coordinator report; make release-dmg must therefore
-# precede make publish-appcast, and a missing/unreadable DMG refuses the publish.
-# This binds the DMG co-observed with commit/identity/hash. It does NOT prove DMG
-# build provenance.
+# Three workflows: fresh use, V2 upgrade, remote delivery. Report counts are
+# fail-closed: sol=3, journal=3, paired=4 (one upgrade execution per changed app).
+# Every profile includes spl-link.json and hashes the exact selected sol DMG.
+# For a Journal-only cut, supply DMG_NAME for the RELEASED Solstone companion.
+# This binds observed artifact identity/hash; it does not prove build provenance.
+# App version/build cycles are independent, including when both apps ship together.
 #
 # The verifier never infers an expected identity from the evidence it is
 # checking: every version/build/baseline below is passed in explicitly. Only the
@@ -1275,14 +1274,12 @@ JA1R_HARNESS_DIR        ?= $$HOME/extro-tools/tools/solstone-macos-gate
 JA1R_PRODUCT_DIR        ?= $$HOME/projects/solstone-macos
 JA1R_GATE_SYNC_RECEIPT  ?= .ja1r-gate/sync-receipt.json
 
-# Report directories are scoped per profile AND published identity, so two cuts
-# can never share one. Lane filenames name the lane, not what it proves: five of
-# the six journal reports share a filename with a sol-profile member, and a
-# sol-only cut deliberately holds the journal pin at the RELEASED version — so
-# identically-named reports can assert a different journal identity. The verifier
-# binds every identity explicitly and would refuse a mismatched set anyway; what
-# scoping removes is the hand-clear before each run, which is the step where an
-# operator can go wrong. Set JA1R_GATE_REPORT_DIR to override for a one-off.
+# Default report directories are scoped by profile and app identity, not attempt.
+# Use a fresh JA1R_GATE_REPORTS_ROOT or explicit JA1R_GATE_REPORT_DIR for retries.
+# fresh-use and spl-link share filenames across profiles but can bind different
+# companions: independent cuts hold the other app at its RELEASED identity.
+# Preserve previous evidence; paired subsets are only publication adapters after
+# full paired verification, not qualification of independent cuts.
 JA1R_GATE_REPORTS_ROOT  ?= .ja1r-gate/reports
 JA1R_GATE_REPORT_DIR    ?=
 JA1R_GATE_REPORT_DIR_SOL     = $(JA1R_GATE_REPORTS_ROOT)/sol-$(DIST_VERSION)-$(DIST_BUILD)
