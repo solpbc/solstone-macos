@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import SolstoneCore
 import Testing
 @testable import solstone
 
@@ -30,7 +31,7 @@ struct CaptureManagerDisplayRecoveryTests {
             isScreenLocked: { false },
             unlockResumeDelay: {}
         )
-        let startOutcome = await executor.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+        let startOutcome = await executor.enqueue(.start(reason: .user, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
         guard case .committed = startOutcome else {
             Issue.record("expected start to commit")
             return

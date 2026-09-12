@@ -28,7 +28,7 @@ struct SetupSnapshotBuilderTests {
             screenRecording: .notGranted
         ))
 
-        #expect(presentation.verdict == .needsAttention(count: 3))
+        #expect(presentation.verdict == .needsAttention(count: 2))
         #expect(row(.lastDelivery, in: presentation).votes == false)
     }
 
@@ -40,12 +40,12 @@ struct SetupSnapshotBuilderTests {
 
         #expect(presentation.verdict == .someUnavailable)
         #expect(states(in: presentation)[.journalApp] == .unavailable)
-        #expect(states(in: presentation)[.microphone] == .needsAttention)
+        #expect(states(in: presentation)[.microphone] == .notRequired)
         #expect(row(.microphone, in: presentation).action == .grantPermission)
     }
 
     @Test func checkingRequiredRowFailsClosedUnavailable() {
-        let presentation = buildSetupSnapshot(input(screenRecording: .checking))
+        let presentation = buildSetupSnapshot(input(screenRecording: .checking, microphone: .notGranted))
 
         #expect(presentation.verdict == .someUnavailable)
         #expect(states(in: presentation)[.screenRecording] == .checking)

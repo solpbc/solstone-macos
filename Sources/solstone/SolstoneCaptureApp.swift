@@ -289,9 +289,12 @@ private struct SolstoneNormalStartup {
 
 internal func statusAccessibilityLabel(
     presentation: MenubarPresentation,
-    errorMessage: String?
+    errorMessage: String?,
+    sourceStatus: String? = nil
 ) -> String {
     let baseLabel: String = switch presentation.observation {
+    case .stopped:
+        UICopy.SOURCES_OFF
     case .permissions:
         UICopy.MENUBAR_A11Y_PERMISSIONS_NEEDED
     case .error:
@@ -317,6 +320,7 @@ internal func statusAccessibilityLabel(
     }
 
     var components = [baseLabel]
+    if let sourceStatus { components.append(sourceStatus) }
     if let attention = attentionToSurface(presentation.attention, alreadySaidBy: presentation.observation) {
         components.append(attentionSuffix(attention))
     }
@@ -457,7 +461,8 @@ private struct StatusIcon: View {
         iconContent
             .accessibilityLabel(statusAccessibilityLabel(
                 presentation: presentation,
-                errorMessage: appState.errorMessage
+                errorMessage: appState.errorMessage,
+                sourceStatus: appState.captureSourcesStatusText
             ))
             .task {
                 guard !hasCheckedSetup else { return }
@@ -506,7 +511,7 @@ private struct StatusIcon: View {
     }
 
     private func permissionsMissing() -> Bool {
-        !appState.screenRecordingGranted || !appState.microphoneGranted
+        appState.capture.permittedSources.isEmpty
     }
 
     @ViewBuilder

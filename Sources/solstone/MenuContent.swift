@@ -19,8 +19,34 @@ struct MenuContent: View {
             if hasPauseResumeControl {
                 pauseResumeSection
             }
+            if appState.isRecording {
+                Button(UICopy.SOURCES_STOP) {
+                    Task {
+                        await appState.capture.stopRecording(reason: .user)
+                    }
+                }
+                .accessibilityIdentifier(AXID.Menubar.stopButton)
+            } else {
+                let admissionSet = appState.config.selectedSources.intersection(appState.capture.permittedSources)
+                if admissionSet.isEmpty {
+                    Button(UICopy.SOURCES_START_OPEN) {
+                        openSettings(tab: "permissions")
+                    }
+                    .accessibilityIdentifier(AXID.Menubar.startButton)
+                } else {
+                    Button(UICopy.SOURCES_START) {
+                        Task {
+                            await appState.capture.startRecording(reason: .user)
+                        }
+                    }
+                    .accessibilityIdentifier(AXID.Menubar.startButton)
+                }
+            }
         }
 
+        if (appState.isRecording || appState.isPaused) && statusRowState != .observing {
+            Text(appState.captureSourcesStatusText)
+        }
         Divider()
 
         Section {
@@ -47,6 +73,10 @@ struct MenuContent: View {
                 }
             }
             .accessibilityIdentifier(AXID.Menubar.settingsButton)
+            Button(UICopy.SOURCES_OPEN) {
+                openSettings(tab: "permissions")
+            }
+            .accessibilityIdentifier(AXID.Menubar.sourcesButton)
             Button("about solstone") {
                 openWindow(id: "about")
                 appState.didOpenWindow(.about)
@@ -88,8 +118,14 @@ struct MenuContent: View {
         let rowState = statusRowState
 
         switch rowState {
+        case .stopped:
+            Button(appState.captureSourcesStatusText) {
+                openSettings(tab: "permissions")
+            }
+            .accessibilityIdentifier(AXID.Menubar.statusRowState)
+            .accessibilityValue(rowState.axToken)
         case .permissions:
-            Button(UICopy.MENUBAR_PERMISSIONS_OPEN_SETTINGS) {
+            Button(UICopy.SOURCES_UNAVAILABLE_OPEN) {
                 openSettings(tab: "permissions")
             }
             .foregroundStyle(.red)
@@ -153,7 +189,7 @@ struct MenuContent: View {
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
 
         case .observing:
-            Text(UICopy.MENUBAR_OBSERVING_CONNECTED)
+            Text(appState.captureSourcesStatusText)
                 .accessibilityValue(rowState.axToken)
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
         }

@@ -133,7 +133,7 @@ struct DiagnosticEvidenceLoggingTests {
         let (coordinator, root) = try makeEvidenceCoordinator(
             recorder: harness.recorder,
             screenPermissionProvider: makeScreenPermissionProvider(),
-            startOperation: { _, _ in
+            startOperation: { _, _, _ in
                 target.coordinator?.captureManager.onStateChanged?(.recording)
                 return .committed
             },
@@ -161,7 +161,7 @@ struct DiagnosticEvidenceLoggingTests {
         let coordinator = try readWireUpSource("Sources/solstone/CaptureCoordinator.swift")
         let adapter = try readWireUpSource("Sources/solstone/DiagnosticEvidenceLoggingAdapter.swift")
 
-        #expect(wireUpContains(coordinator, "Logger.general.info(\"[Permissions] all granted, auto-starting observation\")"))
+        #expect(wireUpContains(coordinator, "Logger.general.info(\"[Permissions] admitted sources ["))
         #expect(wireUpContains(coordinator, "Logger.general.info(\"startRecording() ignored because app is terminating\")"))
         #expect(wireUpContains(coordinator, "Logger.general.info(\"startRecording() vetoed\")"))
         #expect(wireUpContains(coordinator, "Logger.general.info(\"startRecording() dropped\")"))

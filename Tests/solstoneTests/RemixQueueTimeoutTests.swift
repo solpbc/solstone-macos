@@ -9,6 +9,42 @@ import Testing
 
 @Suite("RemixQueue timeout")
 struct RemixQueueTimeoutTests {
+    @Test(arguments: [false, true])
+    func microphoneOnlyMediaFinalizesWithoutVideo(orphan: Bool) async throws {
+        let root = try makeTempDirectory("remix-microphone-only")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let source = dir.appendingPathComponent("120000_audio_fixture-mic.m4a")
+        try await makeTinyValidM4A(at: source, seconds: 1.2)
+        let inputs = orphan ? [] : await buildAudioInputs(from: [source], timePrefix: "120000", verbose: false)
+        if !orphan { #expect(inputs.count == 1) }
+        let outcome = LockedValue<SegmentReconciliation>()
+        let remixer = FakeRemixer(.success)
+        let queue = RemixQueue { _, _ in remixer }
+        await queue.setOnSegmentComplete { _, reconciliation in outcome.set(reconciliation) }
+        await queue.enqueue(RemixQueue.RemixJob(
+            segmentDirectory: dir, timePrefix: "120000",
+            capturedDurationSeconds: orphan ? nil : 2, audioInputs: inputs,
+            debugKeepRejected: false, silenceMusic: true, micMetadataJSON: nil
+        ))
+        await queue.waitForCompletion()
+        let result = try #require(outcome.current)
+        switch result {
+        case .normal: #expect(!orphan)
+        case .recovered: #expect(orphan)
+        case .failed: Issue.record("Audio-only media failed reconciliation")
+        }
+        let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
+        let files = try FileManager.default.contentsOfDirectory(at: finalDir, includingPropertiesForKeys: nil)
+        #expect(!files.contains { $0.pathExtension == "mp4" })
+        let mixed = try #require(files.first { $0.lastPathComponent == "\(finalDir.lastPathComponent)_audio.m4a" })
+        #expect(FileManager.default.fileExists(atPath: mixed.path))
+        let remixedInputs = try #require(remixer.recordedInputs.all.first)
+        #expect(remixedInputs.count == 1)
+        #expect(remixedInputs.first?.timingInfo.trackType.sourceID == "fixture-mic")
+        #expect(await queue.inFlightPaths().isEmpty)
+    }
+
     @Test func duplicateEnqueueWhileProcessingIsIgnored() async throws {
         let root = try makeTempDirectory("remix-queue-dedup")
         defer { try? FileManager.default.removeItem(at: root) }

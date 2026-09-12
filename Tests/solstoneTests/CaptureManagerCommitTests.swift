@@ -3,6 +3,7 @@
 
 import Foundation
 @preconcurrency import ScreenCaptureKit
+import SolstoneCore
 import Testing
 @testable import solstone
 
@@ -124,7 +125,7 @@ struct CaptureManagerCommitTests {
             unlockResumeDelay: {}
         )
 
-        let outcome = await executor.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+        let outcome = await executor.enqueue(.start(reason: .user, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
 
         guard case .vetoed = outcome else {
             Issue.record("expected start to be vetoed while locked")
@@ -160,7 +161,7 @@ struct CaptureManagerCommitTests {
             unlockResumeDelay: {}
         )
 
-        let outcome = await executor.enqueue(.start(reason: .autoStart, disabledMicUIDs: [], enabledMicUIDs: []))
+        let outcome = await executor.enqueue(.start(reason: .autoStart, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
 
         guard case .committed = outcome else {
             switch outcome {

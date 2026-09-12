@@ -3,6 +3,7 @@
 
 import Foundation
 import os
+import SolstoneCore
 import Testing
 import UpdateKit
 @testable import solstone
@@ -15,6 +16,9 @@ struct DiagnosticEvidenceNormalCompositionTests {
         let defaultsName = "DiagnosticEvidenceNormalCompositionTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: defaultsName))
         defer { defaults.removePersistentDomain(forName: defaultsName) }
+        defaults.set(true, forKey: "isScreenCaptureEnabled")
+        defaults.set(true, forKey: "isMicrophoneCaptureEnabled")
+        defaults.set(true, forKey: "hasConfirmedCaptureSources")
 
         let state = try #require(makeNormalState(harness: harness, defaults: defaults, useRootRecorder: true))
         state.isTerminating = true
@@ -86,6 +90,11 @@ struct DiagnosticEvidenceNormalCompositionTests {
             makeRecorder: { _, _ in harness.recorder },
             makeState: { recorder, _ in
                 AppState.forSnapshot(
+                    config: AppConfig(
+                        hasConfirmedCaptureSources: defaults.bool(forKey: "hasConfirmedCaptureSources"),
+                        isScreenCaptureEnabled: defaults.bool(forKey: "isScreenCaptureEnabled"),
+                        isMicrophoneCaptureEnabled: defaults.bool(forKey: "isMicrophoneCaptureEnabled")
+                    ),
                     recorder: useRootRecorder ? recorder : .dormant,
                     screenPermissionProvider: makeScreenPermissionProvider()
                 )

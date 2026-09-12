@@ -111,6 +111,7 @@ internal struct MenubarIconOverlayPresentation: Equatable {
 }
 
 internal enum MenubarStatusRowState: CaseIterable {
+    case stopped
     case permissions
     case error
     case starting
@@ -124,6 +125,7 @@ internal enum MenubarStatusRowState: CaseIterable {
 }
 
 internal enum SettingsObservationAXState: CaseIterable {
+    case off
     case observing
     case connecting
     case paused
@@ -135,6 +137,8 @@ internal enum SettingsObservationAXState: CaseIterable {
 
     init(_ rowState: MenubarStatusRowState) {
         switch rowState {
+        case .stopped:
+            self = .off
         case .observing:
             self = .observing
         case .starting:
@@ -643,6 +647,8 @@ extension MenubarIconOverlayState {
 extension MenubarStatusRowState {
     var iconState: MenubarIconState {
         switch self {
+        case .stopped:
+            return .paused
         case .observing:
             return .recording
         case .starting, .connectionWaiting:
@@ -662,6 +668,8 @@ extension MenubarStatusRowState {
 extension MenubarStatusRowState {
     var axToken: String {
         switch self {
+        case .stopped:
+            return "off"
         case .permissions:
             return "permissions"
         case .error:
@@ -689,6 +697,8 @@ extension MenubarStatusRowState {
 extension SettingsObservationAXState {
     var axToken: String {
         switch self {
+        case .off:
+            return "off"
         case .observing:
             return "on"
         case .connecting:
@@ -710,6 +720,8 @@ extension SettingsObservationAXState {
 
     var headline: String {
         switch self {
+        case .off:
+            return "off"
         case .observing:
             return UICopy.SETTINGS_OBSERVATION_OBSERVING
         case .connecting:

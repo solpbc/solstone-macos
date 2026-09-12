@@ -29,7 +29,7 @@ internal func classifyObservationRowState(
         return .journalMigrationNeeded
     }
     if !isRecording && !isPaused {
-        return .error
+        return .stopped
     }
     if isPaused {
         return .paused

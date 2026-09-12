@@ -202,4 +202,26 @@ struct AppConfigTests {
         config.toggleMicrophoneDisabled(uid: "uid-missing")
         #expect(config.microphonePriority.isEmpty)
     }
+
+    // MARK: - Capture Sources
+
+    @Test func captureSourcesDefaultToDisabled() {
+        let config = AppConfig()
+        #expect(!config.isScreenCaptureEnabled)
+        #expect(!config.isMicrophoneCaptureEnabled)
+        #expect(config.selectedSources.isEmpty)
+    }
+
+    @Test func captureSourcesReflectExplicitConfiguration() {
+        var config = AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: false)
+        #expect(config.isScreenCaptureEnabled)
+        #expect(!config.isMicrophoneCaptureEnabled)
+        #expect(config.selectedSources == [.screen])
+
+        config.isMicrophoneCaptureEnabled = true
+        #expect(config.selectedSources == [.screen, .microphone])
+
+        config.isScreenCaptureEnabled = false
+        #expect(config.selectedSources == [.microphone])
+    }
 }

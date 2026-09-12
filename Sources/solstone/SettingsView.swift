@@ -150,7 +150,7 @@ struct SettingsView: View {
 
     // Permissions tab state
     @State private var screenRecordingPrompted = false
-    @State private var restartCountdown: Int? = nil
+    @State private var screenRestartPending = false
 
     // Privacy tab state
     @State private var newTitlePattern = ""
@@ -620,7 +620,7 @@ struct SettingsView: View {
     // MARK: - Permissions Tab
 
     private var screenRecordingPermissionAXState: AXPermissionState {
-        if appState.screenRecordingGranted || restartCountdown != nil {
+        if appState.screenRecordingGranted {
             return .granted
         }
         return screenRecordingPrompted ? .waiting : .denied
@@ -637,6 +637,58 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
 
             GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(UICopy.SOURCES_TITLE).font(.headline)
+                    Text(UICopy.SOURCES_HELP).foregroundStyle(.secondary)
+                    Toggle(UICopy.SOURCES_MICROPHONE, isOn: Binding(
+                        get: { appState.config.isMicrophoneCaptureEnabled },
+                        set: { value in
+                            var config = appState.config
+                            config.isMicrophoneCaptureEnabled = value
+                            appState.updateConfig(config)
+                        }
+                    ))
+                    .accessibilityIdentifier(AXID.Settings.Permissions.microphoneCaptureEnabled)
+                    .disabled(appState.isRecording || appState.isPaused)
+                    Toggle(UICopy.SOURCES_SCREEN, isOn: Binding(
+                        get: { appState.config.isScreenCaptureEnabled },
+                        set: { value in
+                            var config = appState.config
+                            config.isScreenCaptureEnabled = value
+                            appState.updateConfig(config)
+                        }
+                    ))
+                    .accessibilityIdentifier(AXID.Settings.Permissions.screenCaptureEnabled)
+                    .disabled(appState.isRecording || appState.isPaused)
+                    Text(appState.captureSourcesStatusText)
+                        .accessibilityIdentifier(AXID.Settings.Permissions.sourceStatus)
+                    if appState.isRecording || appState.isPaused {
+                        Text(UICopy.SOURCES_STOP_TO_CHANGE).foregroundStyle(.secondary)
+                        Button(UICopy.SOURCES_STOP) {
+                            Task { await appState.stopRecording(reason: .user) }
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Permissions.stop)
+                    } else {
+                        if appState.config.selectedSources.isEmpty {
+                            Text(UICopy.SOURCES_CHOOSE).foregroundStyle(.secondary)
+                        } else if appState.availableSelectedSources.isEmpty {
+                            Text(UICopy.SOURCES_GRANT_OR_CHANGE).foregroundStyle(.secondary)
+                        }
+                        Button(UICopy.SOURCES_START) {
+                            Task { await appState.startRecording(reason: .user) }
+                        }
+                        .disabled(appState.availableSelectedSources.isEmpty || !appState.initialPermissionCheckComplete)
+                        .accessibilityIdentifier(AXID.Settings.Permissions.start)
+                    }
+                    if let notice = appState.captureSourceNotice {
+                        Text(notice).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+
+            GroupBox {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("screen recording")
                         .font(.headline)
@@ -650,6 +702,12 @@ struct SettingsView: View {
                                 .foregroundStyle(.green)
                             Text("all good")
                                 .foregroundStyle(.secondary)
+                            if screenRestartPending {
+                                Text(UICopy.SOURCES_RESTART_READY)
+                                Spacer()
+                                Button(UICopy.SOURCES_RESTART) { relaunchApp() }
+                                    .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingRestartNow)
+                            }
                         }
                     } else {
                         Text("macOS lists this as Screen Recording. grant it so what you share can go into your journal.")
@@ -658,7 +716,7 @@ struct SettingsView: View {
                         if shouldShowScreenRecordingResetHint(
                             hasPromptedScreenRecording: setupProbeSnapshot.hasPromptedScreenRecording,
                             sckFailedAfterPositivePreflight: setupProbeSnapshot.screenDiagnostic?.sckFailedAfterPositivePreflight ?? false,
-                            restartCountdown: restartCountdown
+                            restartCountdown: nil
                         ) {
                             Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT)
                                 .font(.caption)
@@ -666,37 +724,22 @@ struct SettingsView: View {
                                 .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingResetHint)
                         }
                         HStack {
-                            if let countdown = restartCountdown {
+                            if screenRecordingPrompted {
                                 HStack(spacing: 6) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(.green)
-                                    Text("granted, restarting in \(countdown)...")
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("waiting for permission in system settings...")
                                         .foregroundStyle(.secondary)
                                     Spacer()
-                                    Button("restart now") { relaunchApp() }
-                                        .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingRestartNow)
-                                    AXStateCompanion(
-                                        id: AXID.Settings.Permissions.screenRecordingRestartCountdown,
-                                        value: axIntegerString(countdown)
-                                    )
                                 }
                             } else {
                                 Spacer()
-                                if screenRecordingPrompted {
-                                    HStack(spacing: 6) {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                        Text("waiting for permission in system settings...")
-                                            .foregroundStyle(.secondary)
-                                    }
-                                } else {
-                                    Button("enable screen recording →") {
-                                        Logger.setup.info("Button tapped: enable screen recording")
-                                        PermissionChecker().promptScreenRecording()
-                                        screenRecordingPrompted = true
-                                    }
-                                    .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingEnable)
+                                Button("enable screen recording →") {
+                                    Logger.setup.info("Button tapped: enable screen recording")
+                                    PermissionChecker().promptScreenRecording()
+                                    screenRecordingPrompted = true
                                 }
+                                .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingEnable)
                             }
                         }
                     }
@@ -763,8 +806,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier(AXID.Settings.Permissions.systemSettingsOpen)
             }
 
-            if appState.screenRecordingGranted &&
-                appState.microphoneGranted &&
+            if appState.permissionsAreDone &&
                 !appState.config.isUploadConfigured &&
                 !appState.visitedSettingsTabs.contains(Tab.service.rawValue) {
                 navRow(UICopy.SETTINGS_NEXT_CONNECT_JOURNAL) {
@@ -784,25 +826,13 @@ struct SettingsView: View {
                 // when no TCC entry exists yet — i.e. while the user hasn't granted yet.
                 if CGPreflightScreenCaptureAccess() {
                     if await PermissionChecker.checkScreenRecording() {
-                        restartCountdown = 5
+                        screenRestartPending = true
+                        appState.capture.publishScreenRecordingPermission(.granted)
                         return
                     }
                     // else: permission not yet granted
                 }
                 try? await Task.sleep(for: .seconds(1.5))
-            }
-        }
-        .onChange(of: restartCountdown) { _, newValue in
-            if let value = newValue, value > 0 {
-                Task {
-                    try? await Task.sleep(for: .seconds(1))
-                    if restartCountdown == value {
-                        restartCountdown = value - 1
-                    }
-                }
-            } else if newValue == 0 {
-                appState.capture.publishScreenRecordingPermission(.granted)
-                relaunchApp()
             }
         }
     }
@@ -2041,11 +2071,9 @@ struct SettingsView: View {
         config.serviceMode = mode
         appState.clearLastSuccessfulJournalContact()
         appState.updateConfig(config)
-        if appState.microphoneGranted {
-            Task {
-                await appState.startRecording()
-                Task.detached { await appState.uploadCoordinator?.syncOnStartup() }
-            }
+        Task {
+            await appState.capture.checkPermissionsAndAutoStart()
+            Task.detached { await appState.uploadCoordinator?.syncOnStartup() }
         }
     }
 
@@ -2455,7 +2483,10 @@ struct SettingsView: View {
     }
 
     private var renderedObservationText: String {
-        renderedObservationAXState.headline
+        if appState.isRecording || appState.isPaused || appState.errorMessage == nil {
+            return appState.captureSourcesStatusText
+        }
+        return renderedObservationAXState.headline
     }
 
     private func retentionGlanceLabel(_ days: Int) -> String {
@@ -2475,16 +2506,7 @@ struct SettingsView: View {
     }
 
     private var statusFooterText: String {
-        if appState.config.serviceMode == .bundled {
-            return bundledStatusFooterText(
-                permissionsGranted: appState.permissionsAreDone,
-                microphoneCount: appState.config.microphonePriority.count
-            )
-        }
-        return externalStatusFooterText(
-            serverURL: appState.config.serverURL,
-            permissionsGranted: appState.permissionsAreDone
-        )
+        appState.captureSourcesStatusText
     }
 
     private var setupTopology: SetupTopology {
@@ -2518,7 +2540,9 @@ struct SettingsView: View {
             screenRecording: screenOutcome,
             microphone: microphoneOutcome,
             lastDeliveryOutcome: primaryLastDeliveryOutcome,
-            now: Date()
+            now: Date(),
+            selectedSources: appState.config.selectedSources,
+            activeSources: appState.isRecording || appState.isPaused ? appState.captureManager.activeSources : []
         ))
     }
 
@@ -3130,7 +3154,8 @@ struct SettingsView: View {
                 evidence: evidence,
                 ingestReason: appState.uploadCoordinator.lastErrorReason,
                 ingestRoute: appState.uploadCoordinator.lastRequestedIngestPath,
-                now: Date()
+                now: Date(),
+                activeSources: appState.captureManager.activeSources
             ))
             diagnosticsLoading = false
         }

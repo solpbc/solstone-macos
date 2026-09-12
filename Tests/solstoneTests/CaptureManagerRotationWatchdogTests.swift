@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import SolstoneCore
 import Testing
 @testable import solstone
 
@@ -475,6 +476,7 @@ struct CaptureManagerRotationWatchdogTests {
             allowsEmptyDisplayConfigurationForTesting: true
         )
 
+        manager.seedRecordingForTesting(currentSegment: FakeCaptureSegment(outputDirectory: root))
         try await manager.lifecyclePrepareResume(trigger: "test")
         manager.lifecycleCommitResume(trigger: "test")
 
@@ -859,7 +861,7 @@ struct CaptureManagerRotationWatchdogTests {
             isScreenLocked: { false },
             unlockResumeDelay: {}
         )
-        let outcome = await executor.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+        let outcome = await executor.enqueue(.start(reason: .user, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
         guard case .committed = outcome else {
             Issue.record("expected start to commit")
             return

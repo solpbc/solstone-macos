@@ -3,6 +3,7 @@
 
 import Foundation
 import os
+import SolstoneCore
 import Testing
 import UpdateKit
 @testable import solstone
@@ -81,11 +82,16 @@ struct PermissionPollingIsolationTests {
             makeEvidenceStore: { _ in harness.store },
             makeRecorder: { _, _ in harness.recorder },
             makeState: { recorder, _ in
-                AppState.forSnapshot(
+                var config = AppConfig()
+                config.isScreenCaptureEnabled = true
+                config.isMicrophoneCaptureEnabled = true
+                config.hasConfirmedCaptureSources = true
+                return AppState.forSnapshot(
+                    config: config,
                     recorder: recorder,
                     screenPermissionProvider: makeScreenPermissionProvider(),
                     permissionPollScheduler: scheduler.scheduler,
-                    captureStartOperation: { _, _ in
+                    captureStartOperation: { _, _, _ in
                         start.count += 1
                         target.coordinator?.captureManager.onStateChanged?(.recording)
                         return .committed
@@ -130,10 +136,15 @@ struct PermissionPollingIsolationTests {
             makeEvidenceStore: { _ in harness.store },
             makeRecorder: { _, _ in harness.recorder },
             makeState: { recorder, _ in
-                AppState.forSnapshot(
+                var config = AppConfig()
+                config.isScreenCaptureEnabled = true
+                config.isMicrophoneCaptureEnabled = true
+                config.hasConfirmedCaptureSources = true
+                return AppState.forSnapshot(
+                    config: config,
                     recorder: recorder,
                     permissionPollScheduler: scheduler.scheduler,
-                    captureStartOperation: { _, _ in
+                    captureStartOperation: { _, _, _ in
                         start.count += 1
                         return .committed
                     }
@@ -296,11 +307,16 @@ struct PermissionPollingIsolationTests {
             makeEvidenceStore: { _ in store },
             makeRecorder: { _, _ in recorder },
             makeState: { evidenceRecorder, _ in
-                AppState.forSnapshot(
+                var config = AppConfig()
+                config.isScreenCaptureEnabled = true
+                config.isMicrophoneCaptureEnabled = true
+                config.hasConfirmedCaptureSources = true
+                return AppState.forSnapshot(
+                    config: config,
                     recorder: evidenceRecorder,
                     screenPermissionProvider: makeScreenPermissionProvider(),
                     permissionPollScheduler: scheduler.scheduler,
-                    captureStartOperation: { _, _ in
+                    captureStartOperation: { _, _, _ in
                         start.count += 1
                         target.coordinator?.captureManager.onStateChanged?(.recording)
                         return .committed

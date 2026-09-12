@@ -91,7 +91,7 @@ enum RotateReason: Sendable, Equatable {
 }
 
 enum CaptureIntent: Sendable, Equatable {
-    case start(reason: StartReason, disabledMicUIDs: Set<String>, enabledMicUIDs: Set<String>)
+    case start(reason: StartReason, sources: CaptureSources, disabledMicUIDs: Set<String>, enabledMicUIDs: Set<String>)
     case stop(reason: StopReason)
     case rotate(reason: RotateReason)
     case pause(reason: PauseReason, stopAudio: Bool)
@@ -99,7 +99,7 @@ enum CaptureIntent: Sendable, Equatable {
 
     var kind: IntentKind {
         switch self {
-        case .start(let reason, _, _):
+        case .start(let reason, _, _, _):
             .start(reason)
         case .stop(let reason):
             .stop(reason)
@@ -129,7 +129,7 @@ enum CaptureIntent: Sendable, Equatable {
 
     var snapshot: IntentSnapshot {
         switch self {
-        case .start(let reason, _, _):
+        case .start(let reason, _, _, _):
             IntentSnapshot(kind: .start(reason), stopAudio: false)
         case .stop(let reason):
             IntentSnapshot(kind: .stop(reason), stopAudio: false)
@@ -144,8 +144,8 @@ enum CaptureIntent: Sendable, Equatable {
 
     var logDescription: String {
         switch self {
-        case .start(let reason, _, _):
-            "start(\(reason.trigger))"
+        case .start(let reason, let sources, _, _):
+            "start(\(reason.trigger), sources:\(sources.logDescription))"
         case .stop(let reason):
             "stop(\(reason.trigger))"
         case .rotate(let reason):
@@ -159,7 +159,7 @@ enum CaptureIntent: Sendable, Equatable {
 
     func hasSameKindAndReason(as other: CaptureIntent) -> Bool {
         switch (self, other) {
-        case (.start(let lhs, _, _), .start(let rhs, _, _)):
+        case (.start(let lhs, _, _, _), .start(let rhs, _, _, _)):
             lhs == rhs
         case (.stop(let lhs), .stop(let rhs)):
             lhs == rhs
@@ -180,9 +180,9 @@ enum CaptureIntent: Sendable, Equatable {
            case .pause(_, let otherStopAudio) = other {
             self = .pause(reason: reason, stopAudio: stopAudio || otherStopAudio)
         }
-        if case .start(let reason, _, _) = self,
-           case .start(_, let disabledMicUIDs, let enabledMicUIDs) = other {
-            self = .start(reason: reason, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)
+        if case .start(let reason, let sources, _, _) = self,
+           case .start(_, _, let disabledMicUIDs, let enabledMicUIDs) = other {
+            self = .start(reason: reason, sources: sources, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)
         }
         if case .rotate = self,
            case .rotate(let reason) = other {
@@ -400,8 +400,8 @@ final class CaptureExecutor {
         let task = Task<TransitionOutcome, Never> { @MainActor [weak self] in
             guard let self else { return .dropped }
             switch intent {
-            case .start(let reason, let disabledMicUIDs, let enabledMicUIDs):
-                return await self.runStart(reason, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)
+            case .start(let reason, let sources, let disabledMicUIDs, let enabledMicUIDs):
+                return await self.runStart(reason, sources: sources, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)
             case .stop(let reason):
                 return await self.runStop(reason)
             case .rotate(let reason):
@@ -420,6 +420,7 @@ final class CaptureExecutor {
 
     private func runStart(
         _ reason: StartReason,
+        sources: CaptureSources,
         disabledMicUIDs: Set<String>,
         enabledMicUIDs: Set<String>
     ) async -> TransitionOutcome {
@@ -442,6 +443,7 @@ final class CaptureExecutor {
         do {
             let result = try await delegate.lifecycleStartCapture(
                 reason: reason,
+                sources: sources,
                 disabledMicUIDs: disabledMicUIDs,
                 enabledMicUIDs: enabledMicUIDs,
                 shouldVetoCommit: { @MainActor [weak self] in

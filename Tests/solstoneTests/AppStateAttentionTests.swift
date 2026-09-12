@@ -19,22 +19,22 @@ struct AppStateAttentionTests {
         #expect(!state.permissionsNeedAttention)
     }
 
-    @Test func permissionsNeedAttentionTrueWhenScreenMissing() {
+    @Test func permissionsNeedAttentionFalseWhenMicrophoneUsable() {
         let state = makeState()
         state.initialPermissionCheckComplete = true
         state.capture.publishScreenRecordingPermission(.notGranted)
         state.microphoneAuthorizationCause = .authorized
 
-        #expect(state.permissionsNeedAttention)
+        #expect(!state.permissionsNeedAttention)
     }
 
-    @Test func permissionsNeedAttentionTrueWhenMicrophoneMissing() {
+    @Test func permissionsNeedAttentionFalseWhenScreenUsable() {
         let state = makeState()
         state.initialPermissionCheckComplete = true
         state.capture.publishScreenRecordingPermission(.granted)
         state.microphoneAuthorizationCause = .denied
 
-        #expect(state.permissionsNeedAttention)
+        #expect(!state.permissionsNeedAttention)
     }
 
     @Test func permissionsNeedAttentionFalseBeforeInitialPermissionCheck() {
@@ -153,7 +153,7 @@ struct AppStateAttentionTests {
         #expect(resolvedServiceMode(for: AppConfig(serviceMode: .external)) == .external)
     }
 
-    @Test func permissionsAreDoneRequiresAllPermissionInputs() {
+    @Test func permissionsAreDoneRequiresInitialCheckAndEitherPermission() {
         let missingInitialCheck = makeState()
         missingInitialCheck.initialPermissionCheckComplete = false
         missingInitialCheck.capture.publishScreenRecordingPermission(.granted)
@@ -164,13 +164,13 @@ struct AppStateAttentionTests {
         missingScreen.initialPermissionCheckComplete = true
         missingScreen.capture.publishScreenRecordingPermission(.notGranted)
         missingScreen.microphoneAuthorizationCause = .authorized
-        #expect(!missingScreen.permissionsAreDone)
+        #expect(missingScreen.permissionsAreDone)
 
         let missingMicrophone = makeState()
         missingMicrophone.initialPermissionCheckComplete = true
         missingMicrophone.capture.publishScreenRecordingPermission(.granted)
         missingMicrophone.microphoneAuthorizationCause = .denied
-        #expect(!missingMicrophone.permissionsAreDone)
+        #expect(missingMicrophone.permissionsAreDone)
 
         let done = makeState()
         done.initialPermissionCheckComplete = true
@@ -221,13 +221,13 @@ struct AppStateAttentionTests {
         }
     }
 
-    @Test func menubarPresentationSurfacesMicrophoneAuthorizationAttention() {
+    @Test func runningScreenSessionDoesNotRequireMicrophoneAuthorization() {
         let cases: [(MicrophoneAuthorizationCause, Bool)] = [
             (.authorized, false),
-            (.notDetermined, true),
-            (.denied, true),
-            (.restricted, true),
-            (.unknown, true),
+            (.notDetermined, false),
+            (.denied, false),
+            (.restricted, false),
+            (.unknown, false),
         ]
 
         for (cause, expectsPermissionsAttention) in cases {
@@ -260,11 +260,11 @@ struct AppStateAttentionTests {
         #expect(restored.visitedSettingsTabs == ["service"])
     }
 
-    private func makeState(config: AppConfig = AppConfig()) -> AppState {
+    private func makeState(config: AppConfig = AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: true)) -> AppState {
         AppState.forSnapshot(config: config)
     }
 
     private func configuredExternal() -> AppConfig {
-        AppConfig(serverURL: "https://example.com", serverKey: "key", serviceMode: .external)
+        AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: true, serverURL: "https://example.com", serverKey: "key", serviceMode: .external)
     }
 }

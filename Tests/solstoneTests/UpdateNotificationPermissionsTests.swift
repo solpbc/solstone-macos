@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import Foundation
 import os
+import SolstoneCore
 import Testing
 import UpdateKit
 @testable import solstone
@@ -10,7 +12,7 @@ import UpdateKit
 @MainActor
 struct UpdateNotificationPermissionsTests {
     @Test func permissionsAttentionWithoutUpdateDoesNotAnnounce() {
-        let state = AppState.forSnapshot()
+        let state = AppState.forSnapshot(config: AppConfig(isScreenCaptureEnabled: true))
         state.initialPermissionCheckComplete = true
         state.capture.publishScreenRecordingPermission(.notGranted)
         state.microphoneAuthorizationCause = .authorized

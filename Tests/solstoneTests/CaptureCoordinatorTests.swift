@@ -81,7 +81,7 @@ struct CaptureCoordinatorTests {
         var bannerMessages: [String?] = []
         let (throwCoordinator, throwRoot) = try makeCoordinator(
             bannerSink: { bannerMessages.append($0) },
-            startOperation: { _, _ in
+            startOperation: { _, _, _ in
                 throwCount += 1
                 if throwCount == 1 {
                     return .threw(TransitionFailure(message: "failed", isPermissionError: false))
@@ -103,7 +103,7 @@ struct CaptureCoordinatorTests {
         var bannerMessages: [String?] = []
         let (coordinator, root) = try makeCoordinator(
             bannerSink: { bannerMessages.append($0) },
-            startOperation: { _, _ in
+            startOperation: { _, _, _ in
                 .threw(TransitionFailure(message: "permission denied", isPermissionError: true))
             }
         )
@@ -222,7 +222,7 @@ struct CaptureCoordinatorTests {
         pauseManager.pause(for: .minutes(15))
         let (coordinator, root) = try makeCoordinator(
             pauseManager: pauseManager,
-            startOperation: { _, _ in .committed }
+            startOperation: { _, _, _ in .committed }
         )
         defer { try? FileManager.default.removeItem(at: root) }
         var resumeCallbackCount = 0
@@ -269,7 +269,7 @@ struct CaptureCoordinatorTests {
         let startCount = LockedCounter()
         let (coordinator, root) = try makeCoordinator(
             pauseManager: pauseManager,
-            startOperation: { _, _ in
+            startOperation: { _, _, _ in
                 startCount.increment()
                 return .committed
             }
@@ -293,7 +293,7 @@ struct CaptureCoordinatorTests {
     @Test func autoStartPollDefersToScheduledRecoveryAndFiresWhenUnscheduled() async throws {
         let deferredStartCount = LockedCounter()
         let (deferredCoordinator, deferredRoot) = try makeCoordinator(
-            startOperation: { _, _ in
+            startOperation: { _, _, _ in
                 deferredStartCount.increment()
                 return .committed
             },
@@ -316,7 +316,7 @@ struct CaptureCoordinatorTests {
 
         let firedStartCount = LockedCounter()
         let (firedCoordinator, firedRoot) = try makeCoordinator(
-            startOperation: { _, _ in
+            startOperation: { _, _, _ in
                 firedStartCount.increment()
                 return .committed
             },
@@ -413,8 +413,8 @@ struct CaptureCoordinatorTests {
     private func makeCoordinator(
         pauseManager: PauseManager = PauseManager(),
         isTerminating: @escaping CaptureCoordinator.IsTerminatingProvider = { false },
-        configProvider: @escaping CaptureCoordinator.MicUIDConfigProvider = {
-            (disabled: Set<String>(), enabled: Set<String>())
+        configProvider: @escaping CaptureCoordinator.CaptureConfigProvider = {
+            (sources: .all, disabled: Set<String>(), enabled: Set<String>())
         },
         bannerSink: @escaping CaptureCoordinator.BannerSink = { _ in },
         startOperation: CaptureCoordinator.StartOperation? = nil,
@@ -434,6 +434,8 @@ struct CaptureCoordinatorTests {
             screenPermissionProvider: screenPermissionProvider,
             permissionPollScheduler: permissionPollScheduler ?? PermissionPollTestScheduler().scheduler
         )
+        coordinator.microphoneAuthorizationCause = .authorized
+        coordinator.publishScreenRecordingPermission(.granted)
         return (coordinator, root)
     }
 
@@ -494,10 +496,11 @@ private final class StartOperationHarness: CaptureLifecycleDelegate {
         startGate?.release()
     }
 
-    func operation(reason: StartReason, config: CaptureCoordinator.MicUIDConfig) async -> TransitionOutcome {
+    func operation(reason: StartReason, sources: CaptureSources, config: CaptureCoordinator.MicUIDConfig) async -> TransitionOutcome {
         await executor.enqueue(
             .start(
                 reason: reason,
+                sources: sources,
                 disabledMicUIDs: config.disabled,
                 enabledMicUIDs: config.enabled
             )
@@ -506,6 +509,7 @@ private final class StartOperationHarness: CaptureLifecycleDelegate {
 
     func lifecycleStartCapture(
         reason: StartReason,
+        sources: CaptureSources,
         disabledMicUIDs: Set<String>,
         enabledMicUIDs: Set<String>,
         shouldVetoCommit: @escaping @MainActor () -> Bool

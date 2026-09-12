@@ -116,7 +116,7 @@ struct UICopyTests {
         #expect(UICopy.SETTINGS_DIAGNOSTICS_COPIED == "copied")
         #expect(UICopy.SETTINGS_DIAGNOSTICS_COPY_ANNOUNCEMENT == "diagnostics copied to the clipboard")
         #expect(UICopy.SETTINGS_DIAGNOSTICS_COPY_FAILED == "couldn't copy diagnostics")
-        #expect(UICopy.SETTINGS_DIAGNOSTICS_SCREEN_AND_AUDIO == "screen and audio")
+        #expect(UICopy.SETTINGS_DIAGNOSTICS_SCREEN_AND_AUDIO == "sources")
         #expect(UICopy.SETTINGS_DIAGNOSTICS_LAST_JOURNAL_CONNECTION == "last journal connection")
         #expect(UICopy.SETTINGS_DIAGNOSTICS_RECENT_STATE_CODES == "recent state codes")
         #expect(UICopy.SETTINGS_DIAGNOSTICS_NO_CONNECTION == "no connection yet")

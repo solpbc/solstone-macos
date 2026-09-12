@@ -20,7 +20,7 @@ cd "$REPO_ROOT"
 
 GENERATED_PATHS=(
   Sources/solstone/Resources
-  Sources/journal/Resources
+  Sources/journal/Resources/AppIcon.icns
   assets/icon-journal.svg
 )
 

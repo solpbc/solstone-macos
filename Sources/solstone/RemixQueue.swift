@@ -169,19 +169,24 @@ public actor RemixQueue {
             actualDuration = await clampedSegmentDurationSeconds(TimeInterval(capturedDurationSeconds))
         } else {
             do {
-                let primaryMP4 = try fm.contentsOfDirectory(at: job.segmentDirectory, includingPropertiesForKeys: nil)
+                let files = try fm.contentsOfDirectory(at: job.segmentDirectory, includingPropertiesForKeys: nil)
+                let primaryMedia = files
                     .filter { $0.pathExtension == "mp4" }
                     .sorted { $0.lastPathComponent < $1.lastPathComponent }
                     .first
+                    ?? files
+                    .filter { $0.pathExtension == "m4a" }
+                    .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                    .first
 
-                guard let primaryMP4 else {
+                guard let primaryMedia else {
                     await markIncompleteSegmentAsFailed(job.segmentDirectory)
                     return
                 }
 
                 do {
                     let duration = try await withTimeout(seconds: durationProbeTimeoutSeconds) {
-                        try await self.durationLoader(primaryMP4)
+                        try await self.durationLoader(primaryMedia)
                     }
                     actualDuration = await clampedSegmentDurationSeconds(CMTimeGetSeconds(duration))
                 } catch is TimeoutError {

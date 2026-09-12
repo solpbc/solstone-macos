@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import SolstoneCore
 
 internal enum DiagnosticReportRowID: CaseIterable, Hashable, Sendable {
     case appVersion
@@ -53,6 +54,7 @@ internal struct DiagnosticReportInput: Equatable, Sendable {
     let ingestReason: String?
     let ingestRoute: String?
     let now: Date
+    var activeSources: CaptureSources? = nil
 }
 
 internal enum DiagnosticCopyFeedback: Equatable, Sendable {
@@ -98,7 +100,9 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
         DiagnosticReportRow(
             id: .screenAndAudio,
             label: UICopy.SETTINGS_DIAGNOSTICS_SCREEN_AND_AUDIO,
-            value: diagnosticCaptureValue(
+            value: input.activeSources.map {
+                input.isRecording || input.isPaused ? UICopy.sourceStatus($0, isPaused: input.isPaused) : UICopy.SOURCES_OFF
+            } ?? diagnosticCaptureValue(
                 isRecording: input.isRecording,
                 isPaused: input.isPaused,
                 hasError: input.hasError

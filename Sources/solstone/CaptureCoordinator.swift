@@ -6,6 +6,7 @@ import Foundation
 import Observation
 import os
 @preconcurrency import ScreenCaptureKit
+import SolstoneCore
 
 internal enum ScreenRecordingPermissionEvidence: Equatable {
     case granted
@@ -30,14 +31,16 @@ private enum CaptureStateEvidence: Equatable {
 @Observable
 public final class CaptureCoordinator {
     public typealias MicUIDConfig = (disabled: Set<String>, enabled: Set<String>)
+    public typealias CaptureConfig = (sources: CaptureSources, disabled: Set<String>, enabled: Set<String>)
     public typealias IsTerminatingProvider = @MainActor () -> Bool
-    public typealias MicUIDConfigProvider = @MainActor () -> MicUIDConfig
+    public typealias CaptureConfigProvider = @MainActor () -> CaptureConfig
     public typealias BannerSink = @MainActor (String?) -> Void
-    public typealias StartOperation = @MainActor (StartReason, MicUIDConfig) async -> TransitionOutcome
+    public typealias StartOperation = @MainActor (StartReason, CaptureSources, MicUIDConfig) async -> TransitionOutcome
 
     public internal(set) var isRecording = false
     public internal(set) var isPaused = false
     public internal(set) var isUserPaused = false
+    public internal(set) var isExplicitlyStopped = false
     public internal(set) var captureError: String?
     private var storedScreenRecordingGranted = false
     public var screenRecordingGranted: Bool { storedScreenRecordingGranted }
@@ -50,6 +53,17 @@ public final class CaptureCoordinator {
         microphoneAuthorizationCause == .authorized
     }
 
+    public var permittedSources: CaptureSources {
+        var sources: CaptureSources = []
+        if screenRecordingGranted {
+            sources.insert(.screen)
+        }
+        if microphoneGranted {
+            sources.insert(.microphone)
+        }
+        return sources
+    }
+
     public let captureManager: CaptureManager
     public let pauseManager: PauseManager
 
@@ -60,7 +74,9 @@ public final class CaptureCoordinator {
 
     private let audioDeviceMonitor: AudioDeviceMonitor
     private let isTerminating: IsTerminatingProvider
-    private let configProvider: MicUIDConfigProvider
+    private let hasConfirmedSourceSelection: @MainActor () -> Bool
+    private let confirmSourceSelection: @MainActor () -> Void
+    private let configProvider: CaptureConfigProvider
     private let bannerSink: BannerSink
     private let startOperation: StartOperation
     private let recorder: DiagnosticEvidenceRecorder
@@ -79,7 +95,9 @@ public final class CaptureCoordinator {
         pauseManager: PauseManager,
         audioDeviceMonitor: AudioDeviceMonitor,
         isTerminating: @escaping IsTerminatingProvider,
-        configProvider: @escaping MicUIDConfigProvider,
+        configProvider: @escaping CaptureConfigProvider,
+        hasConfirmedSourceSelection: @escaping @MainActor () -> Bool = { true },
+        confirmSourceSelection: @escaping @MainActor () -> Void = {},
         bannerSink: @escaping BannerSink,
         startOperation: StartOperation? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
@@ -92,15 +110,18 @@ public final class CaptureCoordinator {
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isTerminating = isTerminating
         self.configProvider = configProvider
+        self.hasConfirmedSourceSelection = hasConfirmedSourceSelection
+        self.confirmSourceSelection = confirmSourceSelection
         self.bannerSink = bannerSink
         self.recorder = recorder
         self.screenPermissionProvider = screenPermissionProvider
         self.permissionPollScheduler = permissionPollScheduler
         self.logAdapter = logAdapter
-        self.startOperation = startOperation ?? { [captureManager] reason, config in
+        self.startOperation = startOperation ?? { [captureManager] reason, sources, config in
             await captureManager.enqueueTransition(
                 .start(
                     reason: reason,
+                    sources: sources,
                     disabledMicUIDs: config.disabled,
                     enabledMicUIDs: config.enabled
                 )
@@ -176,19 +197,38 @@ public final class CaptureCoordinator {
             return
         }
 
-        let wasUserPaused = isUserPaused
+        if reason == .user {
+            isExplicitlyStopped = false
+            confirmSourceSelection()
+        }
+
         let config = configProvider()
-        let outcome = await startOperation(reason, config)
+        let admissionSet = config.sources.intersection(permittedSources)
+        guard !admissionSet.isEmpty else {
+            if config.sources.isEmpty {
+                Logger.general.info("startRecording() skipped: no capture sources enabled")
+            } else {
+                Logger.general.info("startRecording() skipped: selected sources not permitted")
+            }
+            return
+        }
+
+        let wasUserPaused = isUserPaused
+        let outcome = await startOperation(reason, admissionSet, (disabled: config.disabled, enabled: config.enabled))
         switch outcome {
         case .committed:
-            publishScreenRecordingPermission(.granted)
+            if captureManager.activeSources.contains(.screen) {
+                publishScreenRecordingPermission(.granted)
+            }
             if wasUserPaused {
                 pauseManager.clearPolicyStateSilently()
             }
         case .threw(let failure):
             if failure.isPermissionError {
                 Logger.general.info("[Permissions] Recording denied, screen recording permission not granted")
-                publishScreenRecordingPermission(.notGranted)
+                if admissionSet.contains(.screen) {
+                    publishScreenRecordingPermission(.notGranted)
+                }
             } else {
                 Logger.general.error("Recording failed to start: \(failure.message, privacy: .public)")
                 publishCaptureStateEvidence(for: .error(failure.message))
@@ -204,6 +244,9 @@ public final class CaptureCoordinator {
 
     @discardableResult
     public func stopRecording(reason: StopReason = .user) async -> TransitionOutcome {
+        if reason == .user {
+            isExplicitlyStopped = true
+        }
         let wasUserPaused = isUserPaused
         let outcome = await captureManager.enqueueTransition(.stop(reason: reason))
         if wasUserPaused, case .committed = outcome {
@@ -251,7 +294,9 @@ public final class CaptureCoordinator {
             // entry exists — i.e. while the user has been prompted but hasn't granted yet.
             // CGPreflightScreenCaptureAccess returns true only when a valid TCC entry exists.
             if screenPermissionProvider.preflight() {
-                let granted = await screenPermissionProvider.checkScreenRecording()
+                let granted = configProvider().sources.contains(.screen)
+                    ? await screenPermissionProvider.checkScreenRecording()
+                    : true
                 if granted {
                     publishScreenRecordingPermission(.granted)
                 } else {
@@ -273,15 +318,15 @@ public final class CaptureCoordinator {
         microphoneAuthorizationCause = microphoneCause
         publishMicrophoneAuthorization(microphoneCause)
 
-        let allGranted = screenRecordingGranted && microphoneGranted
+        let admissionSet = configProvider().sources.intersection(permittedSources)
 
-        // Auto-start if permissions are ready, not paused, not already recording, and recovery is not scheduled
-        if allGranted && !isRecording && !isUserPaused && !captureManager.isRecoveryScheduled {
+        // Auto-start if admitted sources exist, not explicitly stopped, not paused, not already recording, and recovery is not scheduled
+        if hasConfirmedSourceSelection() && !isExplicitlyStopped && !admissionSet.isEmpty && !isRecording && !isUserPaused && !captureManager.isRecoveryScheduled {
             if isTerminating() {
                 recorder.enqueue(.permissionAutoStartSkipped)
                 logAdapter.permissionAutoStartSkipped()
             } else {
-                Logger.general.info("[Permissions] all granted, auto-starting observation")
+                Logger.general.info("[Permissions] admitted sources [\(admissionSet.logDescription, privacy: .public)], auto-starting observation")
                 await startRecording(reason: .autoStart)
             }
         }

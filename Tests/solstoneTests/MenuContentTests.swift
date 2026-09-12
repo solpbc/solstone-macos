@@ -55,6 +55,7 @@ struct MenuContentTests {
             (.starting, "sol-ring-icon-connecting-template"),
             (.connectionWaiting, "sol-ring-icon-connecting-template"),
             (.paused, "sol-ring-icon-paused-template"),
+            (.stopped, "sol-ring-icon-paused-template"),
             (.syncPaused, "sol-ring-icon-paused-template"),
             (.localOnly, "sol-ring-icon-paused-template"),
             (.journalMigrationNeeded, "sol-ring-icon-attention-template"),
@@ -85,6 +86,7 @@ struct MenuContentTests {
             (.starting, .connecting),
             (.connectionWaiting, .connecting),
             (.paused, .paused),
+            (.stopped, .off),
             (.syncPaused, .notReaching),
             (.localOnly, .noJournal),
             (.journalMigrationNeeded, .attention),
@@ -117,7 +119,7 @@ struct MenuContentTests {
 
     @Test func settingsObservationAXStateVocabularyDropsStarting() {
         let tokens = SettingsObservationAXState.allCases.map(\.axToken)
-        #expect(tokens.count == 8)
+        #expect(tokens.count == 9)
         #expect(!tokens.contains("starting"))
         #expect(SettingsObservationAXState(.starting).axToken == "connecting")
         #expect(SettingsObservationAXState(.connectionWaiting).axToken == "connecting")
@@ -167,7 +169,7 @@ struct MenuContentTests {
             "permissions": .permissions,
             "error": .error,
             "starting": .starting,
-            "wedge": .error,
+            "wedge": .stopped,
             "paused": .paused,
             "journalMigrationNeeded": .journalMigrationNeeded,
             "connectionWaiting": .connectionWaiting,

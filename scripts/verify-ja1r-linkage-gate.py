@@ -403,8 +403,8 @@ LOCAL_REQUIRED_CHECKS = {
         "journal_ritual_complete", "health_ok", "setup_complete",
         "staging_offer_exact", "staging_offer_stable",
         "journal_window_green_verified", "journal_runtime_stopped",
-        "journal_window_red_state_error", "journal_window_red_affordances_valid",
-        "journal_runtime_restarted", "journal_window_recovery_verified", "restore_verified",
+        "journal_window_unavailable_verified", "journal_window_red_affordances_valid",
+        "journal_runtime_restarted", "journal_window_recovery_verified", "journal_window_pairing_preserved", "restore_verified",
     ),
     "v2-upgrade-sol": (
         "target_upgrade_ok", "target_identity_matches", "target_process_turned_over",
@@ -886,7 +886,69 @@ def verify_local_freshness(report, filename):
             raise GateFailure(f"{filename}: local delivery does not meet the process-start bound")
 
 
+def verify_local_journal_recovery(report, filename):
+    """Validate the observed runtime/AX cycle independently of summary checks."""
+    def require_state(section, key):
+        section_value = report.get(section)
+        wait = section_value.get(key) if isinstance(section_value, dict) else None
+        if not isinstance(wait, dict) or wait.get("ok") is not True or not isinstance(wait.get("state"), dict):
+            raise GateFailure(f"{filename}: missing successful {section}.{key} observations")
+        return wait["state"]
+
+    down = require_state("red", "runtime_down_wait")
+    up = require_state("recovery", "runtime_up_wait")
+    for key in ("journal_app_running", "port_5015_bound", "port_7657_bound"):
+        if down.get(key) is not False or up.get(key) is not True:
+            raise GateFailure(f"{filename}: runtime recovery did not prove {key} down and up")
+    if (down.get("init_status") == 302 or not isinstance(down.get("health_rc"), str) or not down["health_rc"].isdigit()
+            or down["health_rc"] == "0" or up.get("init_status") != 302 or up.get("health_rc") != "0"):
+        raise GateFailure(f"{filename}: runtime recovery health observations invalid")
+    red = require_state("red", "window_wait")
+    recovered = require_state("recovery", "window_wait")
+    for state in (red, recovered):
+        for key in ("journal_window_count", "state_companion_count", "connection_companion_count"):
+            if type(state.get(key)) is not int or state[key] != 1:
+                raise GateFailure(f"{filename}: recovery requires a unique {key}")
+    outcome = red.get("state_token")
+    if red.get("connection_token") not in ("unreachable", "loopback_unavailable") or report.get("red", {}).get("outcome") != outcome:
+        raise GateFailure(f"{filename}: journal unavailability lacks local connection evidence")
+    if outcome == "held":
+        if (red.get("webview_count") != 0 or red.get("retry_count") != 0
+                or red.get("held_message_count") != 1 or red.get("landmark_match_counts") != [0, 0, 0, 0]):
+            raise GateFailure(f"{filename}: held journal retained content or lacked its disconnection message")
+    elif outcome == "error":
+        if (not isinstance(red.get("webview_count"), int) or red["webview_count"] < 1
+                or not isinstance(red.get("retry_count"), int) or red["retry_count"] < 1):
+            raise GateFailure(f"{filename}: journal navigation error lacked Retry recovery")
+    else:
+        raise GateFailure(f"{filename}: journal did not become unavailable")
+    recovery = report.get("recovery", {})
+    before_retry = recovery.get("before_retry", {})
+    if not isinstance(before_retry, dict):
+        raise GateFailure(f"{filename}: missing recovery navigation observation")
+    if (before_retry.get("journal_window_count") != 1 or before_retry.get("state_companion_count") != 1
+            or before_retry.get("state_token") not in ("held", "loading", "loaded", "error")):
+        raise GateFailure(f"{filename}: missing recovery navigation observation")
+    needs_retry = before_retry["state_token"] == "error"
+    if (recovery.get("retry_dispatched") is not needs_retry
+            or recovery.get("mode") != ("retry" if needs_retry else "automatic")
+            or (needs_retry and (not isinstance(before_retry.get("retry_count"), int) or before_retry["retry_count"] < 1))):
+        raise GateFailure(f"{filename}: recovery did not follow the current navigation affordance")
+    landmarks = recovered.get("landmark_match_counts")
+    if (recovered.get("state_token") != "loaded" or recovered.get("connection_token") != "connected"
+            or not isinstance(recovered.get("webview_count"), int) or recovered["webview_count"] < 1
+            or recovered.get("retry_count") != 0 or not isinstance(landmarks, list) or len(landmarks) != 4
+            or any(type(count) is not int or count < 1 for count in landmarks)):
+        raise GateFailure(f"{filename}: journal did not recover connected rendered content")
+    before = report.get("red", {}).get("delivery_identity_before")
+    after = report.get("recovery", {}).get("delivery_identity_after")
+    if not isinstance(before, str) or not re.fullmatch(r"[0-9a-f]{64}", before) or before != after:
+        raise GateFailure(f"{filename}: journal pairing identity was lost during recovery")
+
+
 def verify_local_completion(report, filename):
+    if report["lane"] == "fresh-use":
+        verify_local_journal_recovery(report, filename)
     checks = report.get("checks", {})
     for key in (*LOCAL_REQUIRED_CHECKS[report["lane"]], *LOCAL_DELIVERY_CHECKS):
         require_true(checks.get(key), f"{filename}: checks.{key}")

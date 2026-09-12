@@ -268,6 +268,7 @@ func makeEvidenceCoordinator(
     screenPermissionProvider: ScreenRecordingPermissionProvider,
     permissionPollScheduler: PermissionPollScheduler = PermissionPollTestScheduler().scheduler,
     isTerminating: @escaping CaptureCoordinator.IsTerminatingProvider = { false },
+    sources: CaptureSources = .all,
     startOperation: CaptureCoordinator.StartOperation? = nil,
     logAdapter: DiagnosticEvidenceLoggingAdapter = DiagnosticEvidenceLoggingAdapter()
 ) throws -> (CaptureCoordinator, URL) {
@@ -279,7 +280,7 @@ func makeEvidenceCoordinator(
         pauseManager: PauseManager(),
         audioDeviceMonitor: AudioDeviceMonitor(startListening: false),
         isTerminating: isTerminating,
-        configProvider: { (disabled: [], enabled: []) },
+        configProvider: { (sources: sources, disabled: [], enabled: []) },
         bannerSink: { _ in },
         startOperation: startOperation,
         recorder: recorder,

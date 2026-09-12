@@ -191,79 +191,135 @@ public final class SegmentWriter {
 
     /// Starts recording to this segment
     /// - Parameters:
+    ///   - sources: Capture sources to record (.screen, .microphone, or both)
     ///   - displayInfos: Information about displays to capture
     ///   - filters: Content filters keyed by display ID
     ///   - audioFilter: Content filter to use for persistent system audio
     ///   - mics: Initial microphone devices to start recording (optional)
     ///   - micCaptureManager: Shared capture manager for persistent mic engines (optional)
     ///   - systemAudioCaptureManager: Shared capture manager for persistent system audio stream (optional)
+    @discardableResult
     public func start(
-        displayInfos: [DisplayInfo],
-        filters: [CGDirectDisplayID: SCContentFilter],
-        audioFilter: SCContentFilter?,
+        sources: CaptureSources = .all,
+        displayInfos: [DisplayInfo] = [],
+        filters: [CGDirectDisplayID: SCContentFilter] = [:],
+        audioFilter: SCContentFilter? = nil,
         mics: [AudioInputDevice] = [],
         micCaptureManager: MicrophoneCaptureManager? = nil,
         systemAudioCaptureManager: SystemAudioCaptureManager? = nil
-    ) async throws {
+    ) async throws -> CaptureSources {
         var constructedCapturers: [CGDirectDisplayID: any SegmentScreenshotCapturing] = [:]
-        let manager = audioManagerFactory(outputDirectory, timePrefix, micCaptureManager, verbose)
-        self.audioManager = manager
+        var successfulSources: CaptureSources = []
+        var screenError: Error?
+        var micError: Error?
 
-        do {
-            // Create screenshot capturers for each display
-            for info in displayInfos {
-                let videoURL = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
-                let capturer = try screenshotCapturerFactory(
-                    info,
-                    videoURL,
-                    Self.frameRate,
-                    Self.segmentDuration,
-                    filters[info.displayID],
-                    verbose
-                )
-                constructedCapturers[info.displayID] = capturer
-            }
-
-            screenshotCapturers = constructedCapturers
-
-            // Record segment start time
+        var manager: (any SegmentAudioManaging)?
+        if sources.contains(.microphone) || sources.contains(.screen) {
+            manager = audioManagerFactory(outputDirectory, timePrefix, micCaptureManager, verbose)
+            self.audioManager = manager
             let segmentStartTime = CMClockGetTime(CMClockGetHostTimeClock())
-            manager.setSegmentStartTime(segmentStartTime)
+            manager?.setSegmentStartTime(segmentStartTime)
+        } else {
+            manager = nil
+            self.audioManager = nil
+        }
 
-            // Start system audio writer
-            _ = try manager.startSystemAudio()
-
-            // Store reference to persistent system audio manager
-            self.systemAudioCaptureManager = systemAudioCaptureManager
-
-            // Start persistent system audio stream and wire callback to this segment's manager
-            if let sysAudioManager = systemAudioCaptureManager, let audioFilter {
-                try await sysAudioManager.start(filter: audioFilter)
-                sysAudioManager.setCallback { [weak manager] buffer in
-                    manager?.appendSystemAudio(buffer)
+        // Screen capture subsystem
+        if sources.contains(.screen) {
+            do {
+                guard !displayInfos.isEmpty else { throw CaptureManager.CaptureError.noDisplaysAvailable }
+                if let manager {
+                    _ = try manager.startSystemAudio()
                 }
-            }
-
-            // Start initial microphones
-            for device in mics {
-                do {
-                    _ = try manager.addMicrophone(device)
-                } catch {
-                    Logger.capture.warning("Failed to start mic \(device.name, privacy: .public): \(error, privacy: .public)")
+                if let sysAudioManager = systemAudioCaptureManager, let audioFilter {
+                    self.systemAudioCaptureManager = sysAudioManager
+                    try await sysAudioManager.start(filter: audioFilter)
+                    sysAudioManager.setCallback { [weak manager] buffer in
+                        manager?.appendSystemAudio(buffer)
+                    }
                 }
-            }
 
-            // Start all screenshot capturers
-            for (_, capturer) in screenshotCapturers {
-                try await capturer.start()
+                for info in displayInfos {
+                    let videoURL = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
+                    let capturer = try screenshotCapturerFactory(
+                        info,
+                        videoURL,
+                        Self.frameRate,
+                        Self.segmentDuration,
+                        filters[info.displayID],
+                        verbose
+                    )
+                    constructedCapturers[info.displayID] = capturer
+                }
+                screenshotCapturers = constructedCapturers
+
+                // Start all screenshot capturers
+                for (_, capturer) in screenshotCapturers {
+                    try await capturer.start()
+                }
+                successfulSources.insert(.screen)
+            } catch {
+                screenError = error
+                Logger.capture.error("Failed to start screen capture subsystem: \(error, privacy: .public)")
+                // Use the same bounded cleanup as a failed whole-segment start.
+                await self.systemAudioCaptureManager?.stop()
+                if let failedManager = manager {
+                    await rollbackStart(manager: failedManager, capturers: constructedCapturers)
+                }
+                constructedCapturers.removeAll()
+                manager = nil
+                if sources.contains(.microphone) && !mics.isEmpty {
+                    let microphoneManager = audioManagerFactory(outputDirectory, timePrefix, micCaptureManager, verbose)
+                    microphoneManager.setSegmentStartTime(CMClockGetTime(CMClockGetHostTimeClock()))
+                    manager = microphoneManager
+                    self.audioManager = microphoneManager
+                }
+                for info in displayInfos {
+                    let url = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
+                    try? FileManager.default.removeItem(at: url)
+                }
+                let systemURL = outputDirectory.appendingPathComponent("\(timePrefix)_audio_\(AudioTrackType.systemSourceID).m4a")
+                try? FileManager.default.removeItem(at: systemURL)
+                self.systemAudioCaptureManager = nil
             }
-        } catch {
-            await rollbackStart(manager: manager, capturers: constructedCapturers)
-            throw error
+        }
+
+        // Microphone subsystem
+        if sources.contains(.microphone) {
+            if let manager {
+                var startedAnyMic = false
+                for device in mics {
+                    do {
+                        _ = try manager.addMicrophone(device)
+                        startedAnyMic = true
+                    } catch {
+                        Logger.capture.warning("Failed to start mic \(device.name, privacy: .public): \(error, privacy: .public)")
+                    }
+                }
+                if startedAnyMic {
+                    successfulSources.insert(.microphone)
+                }
+            } else {
+                micError = SegmentError.failedToCreateAudioOutput
+            }
+        }
+
+        if successfulSources.isEmpty {
+            if let manager {
+                await rollbackStart(manager: manager, capturers: constructedCapturers)
+            }
+            if let screenError {
+                throw screenError
+            }
+            if let micError {
+                throw micError
+            }
+            throw SegmentError.failedToCreateAudioOutput
         }
 
         captureStartTime = Date()
-        Logger.capture.info("Started segment using SCScreenshotManager (1fps periodic capture): \(self.outputDirectory.lastPathComponent, privacy: .public)")
+        Logger.capture.info("Started segment (\(successfulSources.logDescription, privacy: .public)): \(self.outputDirectory.lastPathComponent, privacy: .public)")
+        return successfulSources
     }
 
     // MARK: - Dynamic Microphone Management

@@ -14,6 +14,8 @@ enum AXID {
         static let journalMigrationNeededButton = "menubar.status.journalMigrationNeeded"
         static let localOnlyButton = "menubar.status.localOnly"
         static let offlineButton = "menubar.status.offline"
+        static let startButton = "menubar.status.start"
+        static let stopButton = "menubar.status.stop"
         static let pauseMenu = "menubar.pause.menu"
         static let pauseFifteenMinutes = "menubar.pause.fifteenMinutes"
         static let pauseThirtyMinutes = "menubar.pause.thirtyMinutes"
@@ -22,6 +24,7 @@ enum AXID {
         static let resumeButton = "menubar.pause.resume"
         static let openJournalButton = "menubar.navigation.openJournal"
         static let settingsButton = "menubar.navigation.settings"
+        static let sourcesButton = "menubar.navigation.sources"
         static let aboutButton = "menubar.navigation.about"
         static let quitButton = "menubar.app.quit"
     }
@@ -46,6 +49,11 @@ enum AXID {
         }
 
         enum Permissions {
+            static let start = "settings.permissions.sources.start"
+            static let stop = "settings.permissions.sources.stop"
+            static let sourceStatus = "settings.permissions.sources.status"
+            static let screenCaptureEnabled = "settings.permissions.screenCapture.enabled"
+            static let microphoneCaptureEnabled = "settings.permissions.microphoneCapture.enabled"
             static let screenRecordingState = "settings.permissions.screenRecording.state"
             static let screenRecordingEnable = "settings.permissions.screenRecording.enable"
             static let screenRecordingRestartNow = "settings.permissions.screenRecording.restartNow"

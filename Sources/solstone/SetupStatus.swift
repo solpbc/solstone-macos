@@ -201,6 +201,8 @@ internal struct SetupSnapshotInput: Equatable, Sendable {
     let microphone: PermissionOutcome
     let lastDeliveryOutcome: LastJournalDeliveryOutcome
     let now: Date
+    var selectedSources: CaptureSources = .all
+    var activeSources: CaptureSources = []
 }
 
 internal struct SetupProbeSnapshot: Equatable, Sendable {
@@ -227,6 +229,10 @@ internal struct SetupSnapshotPresentation: Equatable, Sendable {
 }
 
 internal func buildSetupSnapshot(_ input: SetupSnapshotInput) -> SetupSnapshotPresentation {
+    let usableSource = !input.activeSources.isEmpty ||
+        (input.selectedSources.contains(.screen) && input.screenRecording == .granted) ||
+        (input.selectedSources.contains(.microphone) && input.microphone == .granted)
+
     let localArtifactsRequired = input.serviceIsDone && input.topology == .local
 
     let rows: [SetupCheckRow] = [
@@ -262,12 +268,14 @@ internal func buildSetupSnapshot(_ input: SetupSnapshotInput) -> SetupSnapshotPr
             id: .screenRecording,
             label: UICopy.SETTINGS_SETUP_SCREEN_RECORDING_LABEL,
             outcome: input.screenRecording,
+            required: !usableSource && input.selectedSources.contains(.screen),
             actionLabel: UICopy.SETTINGS_SETUP_SCREEN_RECORDING_ACTION
         ),
         permissionRow(
             id: .microphone,
             label: UICopy.SETTINGS_SETUP_MICROPHONE_LABEL,
             outcome: input.microphone,
+            required: !usableSource && input.selectedSources.contains(.microphone),
             actionLabel: UICopy.SETTINGS_SETUP_MICROPHONE_ACTION
         ),
         lastDeliveryRow(input.lastDeliveryOutcome, now: input.now)
@@ -402,9 +410,10 @@ private func permissionRow(
     id: SetupCheckRowID,
     label: String,
     outcome: PermissionOutcome,
+    required: Bool,
     actionLabel: String
 ) -> SetupCheckRow {
-    let state: SetupCheckRowAXState
+    var state: SetupCheckRowAXState
     let value: String
     switch outcome {
     case .checking:
@@ -421,15 +430,16 @@ private func permissionRow(
         value = UICopy.SETTINGS_SETUP_SHARED_COULD_NOT_CHECK
     }
 
+    if !required && outcome != .granted { state = .notRequired }
     return SetupCheckRow(
         id: id,
         label: label,
         value: value,
         state: state,
         systemImage: setupSystemImage(for: state),
-        action: state == .needsAttention ? .grantPermission : nil,
-        actionLabel: state == .needsAttention ? actionLabel : nil,
-        votes: true
+        action: outcome == .notGranted ? .grantPermission : nil,
+        actionLabel: outcome == .notGranted ? actionLabel : nil,
+        votes: required
     )
 }
 

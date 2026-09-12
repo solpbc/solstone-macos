@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import SolstoneCore
 @testable import solstone
 
 @Suite("Capture coordinator diagnostic evidence")
@@ -16,7 +17,8 @@ struct CaptureCoordinatorEvidenceTests {
         let (coordinator, root) = try makeEvidenceCoordinator(
             recorder: harness.recorder,
             screenPermissionProvider: values.provider,
-            startOperation: { _, _ in
+            sources: .screen,
+            startOperation: { _, _, _ in
                 start.count += 1
                 return .committed
             }
@@ -246,11 +248,13 @@ struct CaptureCoordinatorEvidenceTests {
         let (coordinator, root) = try makeEvidenceCoordinator(
             recorder: harness.recorder,
             screenPermissionProvider: makeScreenPermissionProvider(),
-            startOperation: { _, _ in
+            sources: .microphone,
+            startOperation: { _, _, _ in
                 .threw(TransitionFailure(message: "test failure", isPermissionError: false))
             }
         )
         defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.microphoneAuthorizationCause = .authorized
 
         await coordinator.startRecording()
 
@@ -266,9 +270,11 @@ struct CaptureCoordinatorEvidenceTests {
             let (coordinator, root) = try makeEvidenceCoordinator(
                 recorder: harness.recorder,
                 screenPermissionProvider: makeScreenPermissionProvider(),
-                startOperation: { _, _ in outcome }
+                sources: .microphone,
+                startOperation: { _, _, _ in outcome }
             )
             defer { try? FileManager.default.removeItem(at: root) }
+            coordinator.microphoneAuthorizationCause = .authorized
 
             await coordinator.startRecording()
 
@@ -284,7 +290,7 @@ struct CaptureCoordinatorEvidenceTests {
             recorder: terminatingHarness.recorder,
             screenPermissionProvider: makeScreenPermissionProvider(),
             isTerminating: { true },
-            startOperation: { _, _ in
+            startOperation: { _, _, _ in
                 terminatingStart.count += 1
                 return .committed
             },
@@ -317,7 +323,7 @@ struct CaptureCoordinatorEvidenceTests {
         let (nonterminating, nonterminatingRoot) = try makeEvidenceCoordinator(
             recorder: nonterminatingHarness.recorder,
             screenPermissionProvider: makeScreenPermissionProvider(),
-            startOperation: { _, _ in
+            startOperation: { _, _, _ in
                 nonterminatingStart.count += 1
                 nonterminatingTarget.coordinator?.captureManager.onStateChanged?(.recording)
                 return .committed
@@ -339,26 +345,35 @@ struct CaptureCoordinatorEvidenceTests {
         #expect(!evidenceCodes(nonterminatingEntries).contains(.permissionAutoStartSkipped))
         #expect(nonterminatingEvents.events.isEmpty)
 
-        let closedGuards: [(String, ScreenRecordingPermissionProvider, MicrophoneAuthorizationCause, @MainActor (CaptureCoordinator) -> Void)] = [
-            ("screen not granted", makeScreenPermissionProvider(prompted: true, preflight: false), .authorized, { _ in }),
-            ("screen unavailable", makeScreenPermissionProvider(prompted: false, preflight: false, screenGranted: false), .authorized, { _ in }),
-            ("microphone denied", makeScreenPermissionProvider(), .denied, { _ in }),
-            ("microphone restricted", makeScreenPermissionProvider(), .restricted, { _ in }),
-            ("microphone not determined", makeScreenPermissionProvider(), .notDetermined, { _ in }),
-            ("microphone unknown", makeScreenPermissionProvider(), .unknown, { _ in }),
-            ("already recording", makeScreenPermissionProvider(), .authorized, { coordinator in
-                coordinator.captureManager.onStateChanged = { [weak coordinator] state in
+        struct ClosedGuard {
+            let name: String
+            let provider: ScreenRecordingPermissionProvider
+            let cause: MicrophoneAuthorizationCause
+            let sources: CaptureSources
+            let close: @MainActor (CaptureCoordinator) -> Void
+        }
+
+        let closedGuards: [ClosedGuard] = [
+            ClosedGuard(name: "screen not granted", provider: makeScreenPermissionProvider(prompted: true, preflight: false), cause: MicrophoneAuthorizationCause.authorized, sources: CaptureSources.screen, close: { (_: CaptureCoordinator) -> Void in }),
+            ClosedGuard(name: "screen unavailable", provider: makeScreenPermissionProvider(prompted: false, preflight: false, screenGranted: false), cause: MicrophoneAuthorizationCause.authorized, sources: CaptureSources.screen, close: { (_: CaptureCoordinator) -> Void in }),
+            ClosedGuard(name: "microphone denied", provider: makeScreenPermissionProvider(), cause: MicrophoneAuthorizationCause.denied, sources: CaptureSources.microphone, close: { (_: CaptureCoordinator) -> Void in }),
+            ClosedGuard(name: "microphone restricted", provider: makeScreenPermissionProvider(), cause: MicrophoneAuthorizationCause.restricted, sources: CaptureSources.microphone, close: { (_: CaptureCoordinator) -> Void in }),
+            ClosedGuard(name: "microphone not determined", provider: makeScreenPermissionProvider(), cause: MicrophoneAuthorizationCause.notDetermined, sources: CaptureSources.microphone, close: { (_: CaptureCoordinator) -> Void in }),
+            ClosedGuard(name: "microphone unknown", provider: makeScreenPermissionProvider(), cause: MicrophoneAuthorizationCause.unknown, sources: CaptureSources.microphone, close: { (_: CaptureCoordinator) -> Void in }),
+            ClosedGuard(name: "all sources disabled", provider: makeScreenPermissionProvider(), cause: MicrophoneAuthorizationCause.authorized, sources: CaptureSources([]), close: { (_: CaptureCoordinator) -> Void in }),
+            ClosedGuard(name: "already recording", provider: makeScreenPermissionProvider(), cause: MicrophoneAuthorizationCause.authorized, sources: CaptureSources.all, close: { (coordinator: CaptureCoordinator) -> Void in
+                coordinator.captureManager.onStateChanged = { [weak coordinator] (state: CaptureManager.State) in
                     coordinator?.handleCaptureStateChange(state)
                 }
                 coordinator.captureManager.onStateChanged?(.recording)
             }),
-            ("user paused", makeScreenPermissionProvider(), .authorized, { coordinator in
-                coordinator.captureManager.onStateChanged = { [weak coordinator] state in
+            ClosedGuard(name: "user paused", provider: makeScreenPermissionProvider(), cause: MicrophoneAuthorizationCause.authorized, sources: CaptureSources.all, close: { (coordinator: CaptureCoordinator) -> Void in
+                coordinator.captureManager.onStateChanged = { [weak coordinator] (state: CaptureManager.State) in
                     coordinator?.handleCaptureStateChange(state)
                 }
                 coordinator.captureManager.onStateChanged?(.paused(reasons: [.user]))
             }),
-            ("recovery scheduled", makeScreenPermissionProvider(), .authorized, { coordinator in
+            ClosedGuard(name: "recovery scheduled", provider: makeScreenPermissionProvider(), cause: MicrophoneAuthorizationCause.authorized, sources: CaptureSources.all, close: { (coordinator: CaptureCoordinator) -> Void in
                 coordinator.captureManager.lifecycleTransitionToError(
                     message: "transient",
                     error: CaptureManager.CaptureError.noDisplaysAvailable,
@@ -367,34 +382,36 @@ struct CaptureCoordinatorEvidenceTests {
             }),
         ]
 
-        for (name, provider, cause, closeGuard) in closedGuards {
+        for guardItem in closedGuards {
             let harness = DiagnosticEvidenceHarness()
             let events = EvidenceLogEvents()
             let start = EvidenceStartSpy()
             let (coordinator, root) = try makeEvidenceCoordinator(
                 recorder: harness.recorder,
-                screenPermissionProvider: provider,
-                startOperation: { _, _ in
+                screenPermissionProvider: guardItem.provider,
+                sources: guardItem.sources,
+                startOperation: { _, _, _ in
                     start.count += 1
                     return .committed
                 },
                 logAdapter: DiagnosticEvidenceLoggingAdapter { events.events.append($0) }
             )
             defer { try? FileManager.default.removeItem(at: root) }
+            let cause = guardItem.cause
             coordinator.microphoneAuthorizationReader = { cause }
             harness.clock.now = harness.clock.now.addingTimeInterval(1)
-            closeGuard(coordinator)
+            guardItem.close(coordinator)
             harness.clock.now = harness.clock.now.addingTimeInterval(1)
             await coordinator.checkPermissionsAndAutoStart()
             let entries = await harness.entries()
-            #expect(start.count == 0, "\(name) must block automatic start")
-            #expect(!evidenceCodes(entries).contains(.permissionAutoStartSkipped), "\(name) must not publish a terminating skip")
-            #expect(events.events.isEmpty, "\(name) must not log a terminating skip")
+            #expect(start.count == 0, "\(guardItem.name) must block automatic start")
+            #expect(!evidenceCodes(entries).contains(.permissionAutoStartSkipped), "\(guardItem.name) must not publish a terminating skip")
+            #expect(events.events.isEmpty, "\(guardItem.name) must not log a terminating skip")
         }
     }
 
     @Test func microphoneRefreshDuringScreenAwaitRemainsLiveInBothDirections() async throws {
-        try await assertRefreshDuringScreenAwait(initial: .authorized, refreshed: .denied, expectedStarts: 0)
+        try await assertRefreshDuringScreenAwait(initial: .authorized, refreshed: .denied, expectedStarts: 1)
         try await assertRefreshDuringScreenAwait(initial: .denied, refreshed: .authorized, expectedStarts: 1)
     }
 
@@ -405,7 +422,8 @@ struct CaptureCoordinatorEvidenceTests {
         let (committed, committedRoot) = try makeEvidenceCoordinator(
             recorder: committedHarness.recorder,
             screenPermissionProvider: permissionValues.provider,
-            startOperation: { _, _ in
+            sources: .screen,
+            startOperation: { _, _, _ in
                 committedTarget.coordinator?.captureManager.onStateChanged?(.recording)
                 return .committed
             }
@@ -431,6 +449,7 @@ struct CaptureCoordinatorEvidenceTests {
         committed.captureManager.onStateChanged?(.idle)
         #expect(committed.isPermissionPollingActiveForTesting)
         committedHarness.clock.now = committedHarness.clock.now.addingTimeInterval(1)
+        committed.publishScreenRecordingPermission(.granted)
         await committed.startRecording()
         let committedEntries = await committedHarness.entries()
         #expect(committed.screenRecordingGranted)
@@ -441,8 +460,8 @@ struct CaptureCoordinatorEvidenceTests {
             .microphoneGranted,
             .screenRecordingUnavailable,
             .captureOff,
-            .captureOn,
             .screenRecordingGranted,
+            .captureOn,
         ])
         let committedBytes = try #require(committedHarness.bytes.stored)
 
@@ -458,27 +477,33 @@ struct CaptureCoordinatorEvidenceTests {
         let (denied, deniedRoot) = try makeEvidenceCoordinator(
             recorder: deniedHarness.recorder,
             screenPermissionProvider: makeScreenPermissionProvider(),
-            startOperation: { _, _ in
+            sources: .screen,
+            startOperation: { _, _, _ in
                 .threw(TransitionFailure(message: "permission", isPermissionError: true))
             }
         )
         defer { try? FileManager.default.removeItem(at: deniedRoot) }
+        denied.publishScreenRecordingPermission(.granted)
+        denied.microphoneAuthorizationCause = .authorized
         deniedHarness.clock.now = deniedHarness.clock.now.addingTimeInterval(1)
         await denied.startRecording()
-        #expect(evidenceCodes(await deniedHarness.entries()) == [.screenRecordingNotGranted])
+        #expect(evidenceCodes(await deniedHarness.entries()) == [.screenRecordingGranted, .screenRecordingNotGranted])
 
         let failureHarness = DiagnosticEvidenceHarness()
         let (failure, failureRoot) = try makeEvidenceCoordinator(
             recorder: failureHarness.recorder,
             screenPermissionProvider: makeScreenPermissionProvider(),
-            startOperation: { _, _ in
+            sources: .screen,
+            startOperation: { _, _, _ in
                 .threw(TransitionFailure(message: "test failure", isPermissionError: false))
             }
         )
         defer { try? FileManager.default.removeItem(at: failureRoot) }
+        failure.publishScreenRecordingPermission(.granted)
+        failure.microphoneAuthorizationCause = .authorized
         failureHarness.clock.now = failureHarness.clock.now.addingTimeInterval(1)
         await failure.startRecording()
-        #expect(evidenceCodes(await failureHarness.entries()) == [.captureError])
+        #expect(evidenceCodes(await failureHarness.entries()) == [.screenRecordingGranted, .captureError])
         let failureBytes = try #require(failureHarness.bytes.stored)
         #expect(!String(decoding: failureBytes, as: UTF8.self).contains("test failure"))
     }
@@ -500,7 +525,8 @@ struct CaptureCoordinatorEvidenceTests {
         let (coordinator, root) = try makeEvidenceCoordinator(
             recorder: harness.recorder,
             screenPermissionProvider: provider,
-            startOperation: { _, _ in
+            sources: .all,
+            startOperation: { _, _, _ in
                 start.count += 1
                 return .committed
             }

@@ -1,4 +1,44 @@
+import SolstoneCore
+
 public enum UICopy {
+    public static let SOURCES_TITLE = "sources"
+    public static let SOURCES_HELP = "choose either source, or both."
+    public static let SOURCES_MICROPHONE = "microphone"
+    public static let SOURCES_SCREEN = "screen and system audio"
+    public static let SOURCES_GRANTED = "permission granted"
+    public static let SOURCES_NOT_GRANTED = "permission not granted"
+    public static let SOURCES_OFF = "off"
+    public static let SOURCES_START = "start"
+    public static let SOURCES_STOP = "stop"
+    public static let SOURCES_OPEN = "sources…"
+    public static let SOURCES_START_OPEN = "start…"
+    public static let SOURCES_STOP_TO_CHANGE = "stop to change sources"
+    public static let SOURCES_NONE = "no sources selected"
+    public static let SOURCES_CHOOSE = "choose microphone, screen and system audio, or both."
+    public static let SOURCES_UNAVAILABLE = "no selected source is available"
+    public static let SOURCES_GRANT_OR_CHANGE = "grant permission for either source below, or change your selection."
+    public static let SOURCES_UNAVAILABLE_OPEN = "no source available · choose sources…"
+    public static let SOURCES_MIC_DENIED = "microphone permission not granted. screen and system audio can run on their own."
+    public static let SOURCES_SCREEN_DENIED = "screen permission not granted. microphone can run on its own."
+    public static let SOURCES_MIC_UNAVAILABLE = "microphone unavailable. screen and system audio are running."
+    public static let SOURCES_SCREEN_UNAVAILABLE = "screen and system audio unavailable. microphone is running."
+    public static let SOURCES_RESTART_READY = "permission granted. restart when you're ready."
+    public static let SOURCES_RESTART = "restart now"
+
+    public static func sourceNames(_ sources: CaptureSources) -> String {
+        switch (sources.contains(.microphone), sources.contains(.screen)) {
+        case (true, true): return "microphone, screen and system audio"
+        case (true, false): return SOURCES_MICROPHONE
+        case (false, true): return SOURCES_SCREEN
+        case (false, false): return SOURCES_OFF
+        }
+    }
+
+    public static func sourceStatus(_ sources: CaptureSources, isPaused: Bool = false) -> String {
+        guard !sources.isEmpty else { return SOURCES_OFF }
+        return "\(isPaused ? "paused" : "on") · \(sourceNames(sources))"
+    }
+
     public static let JOURNAL_WINDOW_TITLE = "your journal"
     public static let JOURNAL_WINDOW_HELD = "your journal isn't connected yet"
     public static let JOURNAL_WINDOW_LOADING = "opening your journal…"
@@ -101,7 +141,7 @@ public enum UICopy {
     public static let SETTINGS_DIAGNOSTICS_APP_VERSION = "app version"
     public static let SETTINGS_DIAGNOSTICS_SCREEN_RECORDING = "screen recording"
     public static let SETTINGS_DIAGNOSTICS_MICROPHONE = "microphone"
-    public static let SETTINGS_DIAGNOSTICS_SCREEN_AND_AUDIO = "screen and audio"
+    public static let SETTINGS_DIAGNOSTICS_SCREEN_AND_AUDIO = "sources"
     public static let SETTINGS_DIAGNOSTICS_LAST_JOURNAL_CONNECTION = "last journal connection"
     public static let SETTINGS_DIAGNOSTICS_INGEST_REASON = "journal intake"
     public static let SETTINGS_DIAGNOSTICS_INGEST_ROUTE = "journal intake address"

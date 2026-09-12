@@ -124,6 +124,27 @@ def base_report(lane, checks, **scenario):
         "attempted": True, "appium_absent": True, "wda_absent": True,
         "no_survivors": True, "lock_released": True, "ok": True, "survivors": [],
     }}
+    if lane == "fresh-use":
+        unique = {"journal_window_count": 1, "state_companion_count": 1, "connection_companion_count": 1}
+        report["red"] = {
+            "delivery_identity_before": "a" * 64, "outcome": "held",
+            "runtime_down_wait": {"ok": True, "state": {
+                "journal_app_running": False, "port_5015_bound": False, "port_7657_bound": False,
+                "init_status": None, "health_rc": "1"}},
+            "window_wait": {"ok": True, "state": {**unique,
+                "state_token": "held", "connection_token": "loopback_unavailable",
+                "webview_count": 0, "retry_count": 0, "held_message_count": 1,
+                "landmark_match_counts": [0, 0, 0, 0]}}}
+        report["recovery"] = {
+            "delivery_identity_after": "a" * 64, "retry_dispatched": False, "mode": "automatic",
+            "before_retry": {**unique, "state_token": "held", "retry_count": 0},
+            "runtime_up_wait": {"ok": True, "state": {
+                "journal_app_running": True, "port_5015_bound": True, "port_7657_bound": True,
+                "init_status": 302, "health_rc": "0"}},
+            "window_wait": {"ok": True, "state": {**unique,
+                "state_token": "loaded", "connection_token": "connected",
+                "webview_count": 1, "retry_count": 0, "held_message_count": 0,
+                "landmark_match_counts": [1, 1, 1, 1]}}}
     report["offer"] = {"ok": True, "enclosure_rehashed": True, "enclosure_signature_present": True,
                        "expected_dmg_sha256": JOURNAL_DMG_SHA, "downloaded_sha256": JOURNAL_DMG_SHA}
     return report
@@ -1539,6 +1560,69 @@ class MakefileContract(unittest.TestCase):
             "verify-ja1r-gate-paired",
         ):
             self.assertIn("--sol-dmg '$(DMG_NAME)'", self.target_block(target))
+
+
+
+
+
+class RecoveryObservationControls(unittest.TestCase):
+    def test_observed_held_recovery_positive_and_corruptions(self):
+        report = _report_for("fresh-use.json")
+        verifier.verify_local_journal_recovery(report, "fresh-use.json")
+        mutations = [
+            ("red.runtime_down_wait.state.port_7657_bound", True),
+            ("red.runtime_down_wait.state.health_rc", "0"),
+            ("recovery.runtime_up_wait.state.journal_app_running", False),
+            ("red.window_wait.state.connection_token", "connected"),
+            ("red.window_wait.state.connection_companion_count", 2),
+            ("red.window_wait.state.state_companion_count", 0),
+            ("red.window_wait.state.held_message_count", 0),
+            ("red.window_wait.state.webview_count", 1),
+            ("red.window_wait.state.retry_count", 1),
+            ("red.window_wait.state.landmark_match_counts", [1, 1, 1, 1]),
+            ("recovery.window_wait.state.state_token", "held"),
+            ("recovery.window_wait.state.connection_token", "loopback_unavailable"),
+            ("recovery.window_wait.state.landmark_match_counts", [0, 0, 0, 0]),
+            ("recovery.delivery_identity_after", "b" * 64),
+            ("red.delivery_identity_before", None),
+            ("recovery.retry_dispatched", True),
+        ]
+        for path, value in mutations:
+            with self.subTest(path=path):
+                broken = json.loads(json.dumps(report))
+                target = broken
+                keys = path.split(".")
+                for key in keys[:-1]:
+                    target = target[key]
+                target[keys[-1]] = value
+                with self.assertRaises(verifier.GateFailure):
+                    verifier.verify_local_journal_recovery(broken, "fresh-use.json")
+
+    def test_managed_pairing_unreachable_is_valid_only_with_local_runtime_evidence(self):
+        report = _report_for("fresh-use.json")
+        state = report["red"]["window_wait"]["state"]
+        for token in ("unreachable", "loopback_unavailable"):
+            state["connection_token"] = token
+            verifier.verify_local_journal_recovery(report, "fresh-use.json")
+        for token in ("connecting", "disconnected", "no_route", "revoked"):
+            state["connection_token"] = token
+            with self.assertRaises(verifier.GateFailure):
+                verifier.verify_local_journal_recovery(report, "fresh-use.json")
+        state["connection_token"] = "unreachable"
+        report["red"]["runtime_down_wait"]["state"]["port_7657_bound"] = True
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_local_journal_recovery(report, "fresh-use.json")
+
+    def test_navigation_error_requires_retry_only_if_still_error(self):
+        report = _report_for("fresh-use.json")
+        report["red"]["outcome"] = "error"
+        report["red"]["window_wait"]["state"].update(state_token="error", webview_count=1, retry_count=1)
+        verifier.verify_local_journal_recovery(report, "fresh-use.json")
+        report["recovery"]["before_retry"].update(state_token="error", retry_count=1)
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_local_journal_recovery(report, "fresh-use.json")
+        report["recovery"].update(mode="retry", retry_dispatched=True)
+        verifier.verify_local_journal_recovery(report, "fresh-use.json")
 
 
 if __name__ == "__main__":

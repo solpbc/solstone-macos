@@ -11,6 +11,7 @@ protocol CaptureLifecycleDelegate: AnyObject {
     var lifecycleCurrentState: CaptureManager.State { get }
     func lifecycleStartCapture(
         reason: StartReason,
+        sources: CaptureSources,
         disabledMicUIDs: Set<String>,
         enabledMicUIDs: Set<String>,
         shouldVetoCommit: @escaping @MainActor () -> Bool

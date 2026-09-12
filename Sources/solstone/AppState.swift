@@ -190,8 +190,42 @@ public final class AppState {
         return "Idle"
     }
 
+    public var availableSelectedSources: CaptureSources {
+        config.selectedSources.intersection(capture.permittedSources)
+    }
+
     public var permissionsNeedAttention: Bool {
-        initialPermissionCheckComplete && (!screenRecordingGranted || !microphoneGranted)
+        initialPermissionCheckComplete && !isRecording && !isPaused &&
+            !config.selectedSources.isEmpty && availableSelectedSources.isEmpty
+    }
+
+    public var captureSourcesStatusText: String {
+        if isRecording || isPaused {
+            guard !captureManager.activeSources.isEmpty else { return UICopy.SOURCES_UNAVAILABLE }
+            return UICopy.sourceStatus(captureManager.activeSources, isPaused: isPaused)
+        }
+        if config.selectedSources.isEmpty { return UICopy.SOURCES_NONE }
+        if availableSelectedSources.isEmpty { return UICopy.SOURCES_UNAVAILABLE }
+        return UICopy.SOURCES_OFF
+    }
+
+    public var captureSourceNotice: String? {
+        let selected = config.selectedSources
+        if selected.contains(.microphone), !microphoneGranted, captureManager.activeSources.contains(.screen) {
+            return UICopy.SOURCES_MIC_DENIED
+        }
+        if selected.contains(.screen), !screenRecordingGranted, captureManager.activeSources.contains(.microphone) {
+            return UICopy.SOURCES_SCREEN_DENIED
+        }
+        if isRecording, !isPaused, !captureManager.activeSources.isEmpty {
+            if selected.contains(.microphone), !captureManager.activeSources.contains(.microphone) {
+                return UICopy.SOURCES_MIC_UNAVAILABLE
+            }
+            if selected.contains(.screen), !captureManager.activeSources.contains(.screen) {
+                return UICopy.SOURCES_SCREEN_UNAVAILABLE
+            }
+        }
+        return nil
     }
 
     public var serviceNeedsAttention: Bool {
@@ -209,7 +243,7 @@ public final class AppState {
     }
 
     public var permissionsAreDone: Bool {
-        screenRecordingGranted && microphoneGranted && initialPermissionCheckComplete
+        initialPermissionCheckComplete && (isRecording || isPaused || !capture.permittedSources.isEmpty)
     }
 
     public var serviceIsDone: Bool {
@@ -847,9 +881,19 @@ public final class AppState {
             configProvider: { [captureTarget, config] in
                 let currentConfig = captureTarget.state?.config ?? config
                 return (
+                    sources: currentConfig.selectedSources,
                     disabled: currentConfig.disabledMicrophoneUIDs,
                     enabled: currentConfig.enabledMicrophoneUIDs
                 )
+            },
+            hasConfirmedSourceSelection: { [captureTarget, config] in
+                (captureTarget.state?.config ?? config).hasConfirmedCaptureSources
+            },
+            confirmSourceSelection: { [captureTarget] in
+                guard let state = captureTarget.state else { return }
+                var config = state.config
+                config.hasConfirmedCaptureSources = true
+                state.updateConfig(config)
             },
             bannerSink: { [captureTarget] message in
                 captureTarget.state?.errorMessage = message
@@ -1135,9 +1179,19 @@ public final class AppState {
             configProvider: { [captureTarget, config] in
                 let currentConfig = captureTarget.state?.config ?? config
                 return (
+                    sources: currentConfig.selectedSources,
                     disabled: currentConfig.disabledMicrophoneUIDs,
                     enabled: currentConfig.enabledMicrophoneUIDs
                 )
+            },
+            hasConfirmedSourceSelection: { [captureTarget, config] in
+                (captureTarget.state?.config ?? config).hasConfirmedCaptureSources
+            },
+            confirmSourceSelection: { [captureTarget] in
+                guard let state = captureTarget.state else { return }
+                var config = state.config
+                config.hasConfirmedCaptureSources = true
+                state.updateConfig(config)
             },
             bannerSink: { [captureTarget] message in
                 captureTarget.state?.errorMessage = message

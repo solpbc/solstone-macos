@@ -29,7 +29,7 @@ struct DiagnosticReportTests {
         app version: 1.2.3
         screen recording: granted
         microphone: not granted
-        screen and audio: on
+        sources: on
         last added to your journal: 2m ago
         last journal connection: just now
         journal intake: http_404

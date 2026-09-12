@@ -4,6 +4,7 @@
 import CoreMedia
 import Foundation
 @preconcurrency import ScreenCaptureKit
+import SolstoneCore
 import Testing
 @testable import solstone
 
@@ -184,6 +185,7 @@ final class FakeAudioManager: SegmentAudioManaging, @unchecked Sendable {
     enum Behavior: Sendable {
         case normal
         case hangFinishAll
+        case throwOnMicrophoneStart
     }
 
     let behavior: Behavior
@@ -206,6 +208,7 @@ final class FakeAudioManager: SegmentAudioManaging, @unchecked Sendable {
 
     func addMicrophone(_ device: AudioInputDevice) throws -> String {
         addMicrophoneCount.increment()
+        if case .throwOnMicrophoneStart = behavior { throw FakeCaptureError.startFailed }
         return device.uid
     }
 
@@ -263,13 +266,14 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
     }
 
     func start(
+        sources: CaptureSources = .all,
         displayInfos: [DisplayInfo],
         filters: [CGDirectDisplayID: SCContentFilter],
         audioFilter: SCContentFilter?,
         mics: [AudioInputDevice],
         micCaptureManager: MicrophoneCaptureManager?,
         systemAudioCaptureManager: SystemAudioCaptureManager?
-    ) async throws {
+    ) async throws -> CaptureSources {
         startCount.increment()
         retainedSystemAudioCaptureManager = systemAudioCaptureManager
         let startBeforeGate = startsPersistentSystemAudio == .beforeGate
@@ -286,6 +290,7 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         if case .throwPartway = startBehavior {
             throw FakeCaptureError.startFailed
         }
+        return sources
     }
 
     func finishCapture() async -> SegmentCaptureResult? {

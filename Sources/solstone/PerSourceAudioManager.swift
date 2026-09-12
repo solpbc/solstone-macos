@@ -26,6 +26,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
     /// Shared capture manager for persistent mic captures
     private let captureManager: MicrophoneCaptureManager?
+    private let startMicrophoneCapture: (@Sendable (AudioInputDevice) throws -> Void)?
 
     /// Microphone gain for legacy path (when captureManager is nil)
     private let gain: Float
@@ -41,11 +42,13 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         outputDirectory: URL,
         timePrefix: String,
         captureManager: MicrophoneCaptureManager,
-        verbose: Bool = false
+        verbose: Bool = false,
+        startMicrophoneCapture: (@Sendable (AudioInputDevice) throws -> Void)? = nil
     ) {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
         self.captureManager = captureManager
+        self.startMicrophoneCapture = startMicrophoneCapture ?? { try captureManager.startCapture(for: $0) }
         self.gain = 2.0  // Not used when captureManager is provided
         self.verbose = verbose
     }
@@ -60,6 +63,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
         self.captureManager = nil
+        self.startMicrophoneCapture = nil
         self.gain = gain
         self.verbose = verbose
     }
@@ -128,6 +132,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
         let url = makeURL(for: sourceID)
         let startTime = segmentStartTime ?? CMClockGetTime(CMClockGetHostTimeClock())
+        lock.unlock()
 
         let writer = try SingleTrackAudioWriter(
             url: url,
@@ -136,28 +141,34 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             verbose: verbose
         )
 
-        sourceWriters[sourceID] = SourceWriter(writer: writer)
-        micMetadata[sourceID] = device
-        lock.unlock()
+        do {
+            // Use shared capture manager if available (keeps engine running across segments)
+            if let captureManager = captureManager {
+                // Start capture if not already running
+                try startMicrophoneCapture?(device)
 
-        // Use shared capture manager if available (keeps engine running across segments)
-        if let captureManager = captureManager {
-            // Start capture if not already running
-            try captureManager.startCapture(for: device)
+                // Wire callback to this segment's writer
+                captureManager.setCallback(for: device.uid) { [weak writer] buffer, time in
+                    writer?.appendPCMBuffer(buffer, presentationTime: time)
+                }
+                Logger.audio.info("Wired mic callback: \(device.name, privacy: .public)")
+            } else {
+                // Legacy path: create capture per segment
+                let capture = ExternalMicCapture(device: device, gain: gain, verbose: verbose)
+                capture.onAudioBuffer = { [weak writer] buffer, time in
+                    writer?.appendPCMBuffer(buffer, presentationTime: time)
+                }
+                try capture.start()
+                Logger.audio.info("Started mic capture (legacy): \(device.name, privacy: .public)")
+            }
 
-            // Wire callback to this segment's writer
-            captureManager.setCallback(for: device.uid) { [weak writer] buffer, time in
-                writer?.appendPCMBuffer(buffer, presentationTime: time)
-            }
-            Logger.audio.info("Wired mic callback: \(device.name, privacy: .public)")
-        } else {
-            // Legacy path: create capture per segment
-            let capture = ExternalMicCapture(device: device, gain: gain, verbose: verbose)
-            capture.onAudioBuffer = { [weak writer] buffer, time in
-                writer?.appendPCMBuffer(buffer, presentationTime: time)
-            }
-            try capture.start()
-            Logger.audio.info("Started mic capture (legacy): \(device.name, privacy: .public)")
+            lock.lock()
+            sourceWriters[sourceID] = SourceWriter(writer: writer)
+            micMetadata[sourceID] = device
+            lock.unlock()
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            throw error
         }
 
         return sourceID
@@ -218,7 +229,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     public func activeMicrophoneUIDs() -> [String] {
         lock.lock()
         defer { lock.unlock() }
-        return sourceWriters.keys.filter { $0 != AudioTrackType.systemSourceID }
+        return sourceWriters.compactMap { key, source in
+            key != AudioTrackType.systemSourceID && !source.finished ? key : nil
+        }
     }
 
     /// Finish all writers and return their inputs for remix

@@ -11,14 +11,16 @@ import SolstoneCore
 public protocol CaptureSegmentWriting: AnyObject, Sendable {
     var outputDirectory: URL { get }
 
+    @discardableResult
     func start(
+        sources: CaptureSources,
         displayInfos: [DisplayInfo],
         filters: [CGDirectDisplayID: SCContentFilter],
         audioFilter: SCContentFilter?,
         mics: [AudioInputDevice],
         micCaptureManager: MicrophoneCaptureManager?,
         systemAudioCaptureManager: SystemAudioCaptureManager?
-    ) async throws
+    ) async throws -> CaptureSources
     func finishCapture() async -> SegmentCaptureResult?
     func updateContentFilter(_ filters: [CGDirectDisplayID: SCContentFilter]) async throws
     func addMicrophone(_ device: AudioInputDevice) throws
@@ -127,6 +129,10 @@ public final class CaptureManager {
     private var disabledMicUIDs: Set<String> = []
     private var enabledMicUIDs: Set<String> = []
 
+    public private(set) var activeSources: CaptureSources = []
+    private var sessionSources: CaptureSources = []
+    private let microphoneDevices: @MainActor () -> [AudioInputDevice]
+    private let shareableContentProvider: @MainActor () async throws -> SCShareableContent
     private(set) var state: State = .idle
 
     /// Called when state changes
@@ -162,7 +168,9 @@ public final class CaptureManager {
         finalizer: any SegmentFinalizing = RemixQueue.shared,
         rotationTimeoutSeconds: TimeInterval = 30,
         now: @escaping @Sendable () -> Date = Date.init,
-        allowsEmptyDisplayConfigurationForTesting: Bool = false
+        allowsEmptyDisplayConfigurationForTesting: Bool = false,
+        microphoneDevices: @escaping @MainActor () -> [AudioInputDevice] = MicrophoneMonitor.listInputDevices,
+        shareableContentProvider: @escaping @MainActor () async throws -> SCShareableContent = { try await SCShareableContent.current }
     ) {
         self.init(
             storageManager: storageManager,
@@ -179,6 +187,8 @@ public final class CaptureManager {
             rotationTimeoutSeconds: rotationTimeoutSeconds,
             now: now,
             allowsEmptyDisplayConfigurationForTesting: allowsEmptyDisplayConfigurationForTesting,
+            microphoneDevices: microphoneDevices,
+            shareableContentProvider: shareableContentProvider,
             streamFactory: defaultCaptureStreamFactory,
             recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler,
             isScreenLocked: CaptureLifecycleManager.defaultIsScreenLocked
@@ -208,6 +218,8 @@ public final class CaptureManager {
         rotationTimeoutSeconds: TimeInterval = 30,
         now: @escaping @Sendable () -> Date = Date.init,
         allowsEmptyDisplayConfigurationForTesting: Bool = false,
+        microphoneDevices: @escaping @MainActor () -> [AudioInputDevice] = MicrophoneMonitor.listInputDevices,
+        shareableContentProvider: @escaping @MainActor () async throws -> SCShareableContent = { try await SCShareableContent.current },
         streamFactory: @escaping CaptureStreamFactory,
         recoveryScheduler: @escaping RecoveryScheduler,
         isScreenLocked: @escaping @MainActor () -> Bool = CaptureLifecycleManager.defaultIsScreenLocked
@@ -222,6 +234,8 @@ public final class CaptureManager {
         self.rotationTimeoutSeconds = rotationTimeoutSeconds
         self.now = now
         self.allowsEmptyDisplayConfigurationForTesting = allowsEmptyDisplayConfigurationForTesting
+        self.microphoneDevices = microphoneDevices
+        self.shareableContentProvider = shareableContentProvider
         self.micCaptureManager = MicrophoneCaptureManager(gain: microphoneGain, verbose: verbose)
         self.systemAudioCaptureManager = SystemAudioCaptureManager(streamFactory: streamFactory)
         self.lifecycleManager = CaptureLifecycleManager(
@@ -248,7 +262,7 @@ public final class CaptureManager {
 
         windowExclusionManager.configure(
             onFiltersChanged: { [weak self] newFilters in
-                guard let self, let segment = self.currentSegment else { return }
+                guard let self, self.sessionSources.contains(.screen), let segment = self.currentSegment else { return }
                 if let audioFilter = self.displays.first.flatMap({ newFilters[$0.displayID] }) {
                     try await self.systemAudioCaptureManager.updateContentFilter(audioFilter)
                 } else {
@@ -259,7 +273,10 @@ public final class CaptureManager {
                 try await segment.updateContentFilter(newFilters)
             },
             allDisplays: { [weak self] in self?.displays },
-            isRecording: { [weak self] in self?.state.isRecording ?? false }
+            isRecording: { [weak self] in
+                guard let self else { return false }
+                return self.state.isRecording && self.sessionSources.contains(.screen)
+            }
         )
         lifecycleManager.configure(delegate: self)
     }
@@ -283,7 +300,7 @@ public final class CaptureManager {
     /// Handles audio device additions/removals
     /// Adds/removes mics from current segment dynamically (no rotation needed)
     public func handleDeviceChange(added: [AudioInputDevice], removed: [AudioInputDevice]) async {
-        guard state.isRecording else { return }
+        guard state.isRecording, sessionSources.contains(.microphone) else { return }
 
         // Add new enabled mics to current segment
         if let segment = currentSegment {
@@ -304,6 +321,11 @@ public final class CaptureManager {
             for device in removed where segment.hasMicrophone(deviceUID: device.uid) {
                 segment.removeMicrophone(deviceUID: device.uid)
                 Logger.capture.info("Removed mic mid-segment: \(device.name, privacy: .public)")
+            }
+            if segment.activeMicrophoneUIDs().isEmpty {
+                activeSources.remove(.microphone)
+            } else {
+                activeSources.insert(.microphone)
             }
         }
 
@@ -355,7 +377,7 @@ public final class CaptureManager {
     // MARK: - Private Methods
 
     private func rebuildDisplaysAndFilters() async throws {
-        let content = try await SCShareableContent.current
+        let content = try await shareableContentProvider()
         let newDisplays = content.displays
         guard !newDisplays.isEmpty else {
             throw CaptureError.noDisplaysAvailable
@@ -370,8 +392,10 @@ public final class CaptureManager {
 
     /// Starts a new recording segment
     private func startNewSegment() async throws {
-        guard allowsEmptyDisplayConfigurationForTesting || (!displays.isEmpty && !filtersByDisplayID.isEmpty) else {
-            throw CaptureError.notInitialized
+        if sessionSources.contains(.screen) {
+            guard allowsEmptyDisplayConfigurationForTesting || (!displays.isEmpty && !filtersByDisplayID.isEmpty) else {
+                throw CaptureError.notInitialized
+            }
         }
 
         // Create segment directory with current time (named HHMMSS.incomplete)
@@ -380,14 +404,19 @@ public final class CaptureManager {
         )
 
         // Collect available mics
-        let availableMics = MicrophoneMonitor.listInputDevices()
-            .filter {
-                MicrophoneSelection.shouldCapture($0, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)
-            }
-            .prefix(4)
+        let availableMics: [AudioInputDevice]
+        if sessionSources.contains(.microphone) {
+            availableMics = Array(microphoneDevices()
+                .filter {
+                    MicrophoneSelection.shouldCapture($0, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)
+                }
+                .prefix(4))
+        } else {
+            availableMics = []
+        }
 
         // Start video/audio capture
-        try await startNewSegmentWithDirectory(segmentDir, timePrefix: timePrefix, mics: Array(availableMics))
+        try await startNewSegmentWithDirectory(segmentDir, timePrefix: timePrefix, mics: availableMics)
     }
 
     /// Starts recording to a pre-created segment directory
@@ -396,18 +425,22 @@ public final class CaptureManager {
     ///   - timePrefix: Time prefix for file naming
     ///   - mics: Microphone devices to start recording
     private func startNewSegmentWithDirectory(_ segmentDir: URL, timePrefix: String, mics: [AudioInputDevice] = []) async throws {
-        guard allowsEmptyDisplayConfigurationForTesting || (!displays.isEmpty && !filtersByDisplayID.isEmpty) else {
-            throw CaptureError.notInitialized
-        }
-        if allowsEmptyDisplayConfigurationForTesting && displays.isEmpty && filtersByDisplayID.isEmpty {
-            Logger.capture.info("Starting test segment with empty display/filter configuration")
+        if sessionSources.contains(.screen) {
+            guard allowsEmptyDisplayConfigurationForTesting || (!displays.isEmpty && !filtersByDisplayID.isEmpty) else {
+                throw CaptureError.notInitialized
+            }
+            if allowsEmptyDisplayConfigurationForTesting && displays.isEmpty && filtersByDisplayID.isEmpty {
+                Logger.capture.info("Starting test segment with empty display/filter configuration")
+            }
         }
 
         segmentStartGeneration += 1
         let generation = segmentStartGeneration
 
         // Reset stream ready flag for new segment
-        windowExclusionManager.resetForNewSegment()
+        if sessionSources.contains(.screen) {
+            windowExclusionManager.resetForNewSegment()
+        }
 
         // Create segment writer
         let segment = segmentFactory(
@@ -420,23 +453,27 @@ public final class CaptureManager {
         currentSegment = segment
 
         // Start recording - convert to DisplayInfo for sendable compliance
-        let displayInfos = displays.map { DisplayInfo(from: $0) }
-        let audioFilter = displays.first.flatMap { filtersByDisplayID[$0.displayID] }
-        if audioFilter == nil {
+        let displayInfos = sessionSources.contains(.screen) ? displays.map { DisplayInfo(from: $0) } : []
+        let audioFilter = sessionSources.contains(.screen) ? displays.first.flatMap { filtersByDisplayID[$0.displayID] } : nil
+        if sessionSources.contains(.screen) && audioFilter == nil {
             let displayID = displays.first.map { String($0.displayID) } ?? "nil"
             let keyList = filtersByDisplayID.keys.sorted().map(String.init).joined(separator: ",")
             Logger.capture.error("Missing audio SCContentFilter for display \(displayID, privacy: .public); available filter keys=[\(keyList, privacy: .public)]")
         }
         do {
-            try await segment.start(
+            let startedSources = try await segment.start(
+                sources: sessionSources,
                 displayInfos: displayInfos,
-                filters: filtersByDisplayID,
+                filters: sessionSources.contains(.screen) ? filtersByDisplayID : [:],
                 audioFilter: audioFilter,
-                mics: mics,
-                micCaptureManager: micCaptureManager,
-                systemAudioCaptureManager: systemAudioCaptureManager
+                mics: sessionSources.contains(.microphone) ? mics : [],
+                micCaptureManager: sessionSources.contains(.microphone) ? micCaptureManager : nil,
+                systemAudioCaptureManager: sessionSources.contains(.screen) ? systemAudioCaptureManager : nil
             )
             try Task.checkCancellation()
+            guard generation == segmentStartGeneration else { throw CancellationError() }
+            guard !startedSources.isEmpty else { throw CaptureError.noSourcesAvailable }
+            self.activeSources = startedSources
         } catch {
             guard generation == segmentStartGeneration else { throw error }
             currentSegment = nil
@@ -448,12 +485,11 @@ public final class CaptureManager {
         guard generation == segmentStartGeneration else { return }
 
         // Mark stream as ready after a short delay to allow capture to stabilize.
-        // The 500ms delay ensures ScreenCaptureKit's stream is fully initialized
-        // before we attempt to update content filters with window exclusions.
-        // Without this delay, filter updates can fail or cause frame drops.
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            await self.windowExclusionManager.streamBecameReady()
+        if sessionSources.contains(.screen) {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                await self.windowExclusionManager.streamBecameReady()
+            }
         }
 
         // Schedule segment rotation
@@ -609,9 +645,11 @@ public final class CaptureManager {
         await stopPersistentAudioForDiscard()
     }
 
-    private func handleDisplayChange() async {
-        guard state.isRecording else {
-            await lifecycleManager.noteDisplayChange()
+    internal func handleDisplayChange() async {
+        guard state.isRecording, activeSources.contains(.screen) else {
+            if activeSources.contains(.screen) {
+                await lifecycleManager.noteDisplayChange()
+            }
             return
         }
 
@@ -656,7 +694,7 @@ public final class CaptureManager {
     }
 
     private func handleDefaultMicChange() async {
-        guard state.isRecording else { return }
+        guard state.isRecording, sessionSources.contains(.microphone) else { return }
 
         let newDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
 
@@ -670,8 +708,10 @@ public final class CaptureManager {
 
     // MARK: - Test Support
 
-    internal func seedRecordingForTesting(currentSegment: any CaptureSegmentWriting) {
+    internal func seedRecordingForTesting(currentSegment: any CaptureSegmentWriting, sources: CaptureSources = .all) {
         self.currentSegment = currentSegment
+        self.activeSources = sources
+        self.sessionSources = sources
         state = .recording
     }
 
@@ -718,11 +758,14 @@ public final class CaptureManager {
     public enum CaptureError: Error, LocalizedError {
         case noDisplaysAvailable
         case notInitialized
+        case noSourcesAvailable
 
         public var errorDescription: String? {
             switch self {
             case .noDisplaysAvailable:
                 return "No displays available for capture"
+            case .noSourcesAvailable:
+                return UICopy.SOURCES_UNAVAILABLE
             case .notInitialized:
                 return "Capture manager not initialized"
             }
@@ -737,12 +780,18 @@ extension CaptureManager: CaptureLifecycleDelegate {
 
     func lifecycleStartCapture(
         reason: StartReason,
+        sources: CaptureSources,
         disabledMicUIDs: Set<String>,
         enabledMicUIDs: Set<String>,
         shouldVetoCommit: @escaping @MainActor () -> Bool
     ) async throws -> StartResult {
+        guard !sources.isEmpty else {
+            throw transitionFailure(for: CaptureError.notInitialized)
+        }
         self.disabledMicUIDs = disabledMicUIDs
         self.enabledMicUIDs = enabledMicUIDs
+        self.sessionSources = sources
+        self.activeSources = []
 
         do {
             recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
@@ -753,24 +802,36 @@ extension CaptureManager: CaptureLifecycleDelegate {
             // Ensure storage directory exists.
             try storageManager.ensureBaseDirectoryExists()
 
-            if !allowsEmptyDisplayConfigurationForTesting {
-                try await rebuildDisplaysAndFilters()
+            if sources.contains(.screen) && !allowsEmptyDisplayConfigurationForTesting {
+                do {
+                    try await rebuildDisplaysAndFilters()
+                } catch {
+                    guard sources.contains(.microphone) else { throw error }
+                    sessionSources.remove(.screen)
+                    Logger.capture.warning("Screen initialization failed; starting selected microphone: \(error, privacy: .public)")
+                }
             }
 
             // Start first segment.
             try await startNewSegment()
         } catch {
+            self.activeSources = []
             throw transitionFailure(for: error)
         }
 
         if shouldVetoCommit() {
             _ = await discardCurrentSegmentWithoutEnqueue(matching: nil)
             await stopPersistentAudioForDiscard()
+            self.activeSources = []
             return .vetoedScreenLocked
         }
 
+        // Freeze the sources that actually started for this session.
+        sessionSources = activeSources
         // Start monitoring for default microphone changes.
-        startDefaultMicMonitoring()
+        if activeSources.contains(.microphone) {
+            startDefaultMicMonitoring()
+        }
 
         let oldState = state.label
         state = .recording
@@ -778,7 +839,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         onStateChanged?(state)
         startHeartbeat()
 
-        Logger.capture.info("Started recording session with \(self.displays.count, privacy: .public) display(s)")
+        Logger.capture.info("Started recording session (\(self.activeSources.logDescription, privacy: .public)) with \(self.displays.count, privacy: .public) display(s)")
         return .committed
     }
 
@@ -833,6 +894,8 @@ extension CaptureManager: CaptureLifecycleDelegate {
         micCaptureManager.stopAll()
         await systemAudioCaptureManager.stop()
 
+        activeSources = []
+        sessionSources = []
         let oldState = state.label
         state = .idle
         Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: \(reason.trigger, privacy: .public))")
@@ -874,7 +937,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
 
         let generationAtSpawn = segmentStartGeneration
         let startTask = Task { @MainActor in
-            let availableMics = MicrophoneMonitor.listInputDevices()
+            let availableMics = (self.sessionSources.contains(.microphone) ? self.microphoneDevices() : [])
                 .filter {
                     MicrophoneSelection.shouldCapture(
                         $0,
@@ -968,7 +1031,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
     func lifecyclePrepareResume(trigger: String) async throws {
         recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
 
-        if !allowsEmptyDisplayConfigurationForTesting {
+        if sessionSources.contains(.screen) && !allowsEmptyDisplayConfigurationForTesting {
             try await withTimeout(seconds: 10) { @MainActor in
                 try await self.rebuildDisplaysAndFilters()
             }
@@ -976,7 +1039,9 @@ extension CaptureManager: CaptureLifecycleDelegate {
 
         try await startNewSegment()
 
-        currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
+        if activeSources.contains(.microphone) {
+            currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
+        }
     }
 
     func lifecycleCommitResume(trigger: String) {

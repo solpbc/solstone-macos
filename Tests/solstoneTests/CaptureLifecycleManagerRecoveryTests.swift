@@ -3,6 +3,7 @@
 
 import Foundation
 import AppKit
+import SolstoneCore
 import Testing
 @testable import solstone
 
@@ -692,7 +693,7 @@ struct CaptureLifecycleManagerRecoveryTests {
             unlockResumeDelay: {}
         )
 
-        let outcome = await executor.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+        let outcome = await executor.enqueue(.start(reason: .user, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
 
         guard case .threw(let failure) = outcome else {
             Issue.record("expected start failure to return .threw")
@@ -711,7 +712,7 @@ struct CaptureLifecycleManagerRecoveryTests {
             unlockResumeDelay: {}
         )
 
-        let outcome = await executor.enqueue(.start(reason: .autoStart, disabledMicUIDs: [], enabledMicUIDs: []))
+        let outcome = await executor.enqueue(.start(reason: .autoStart, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
 
         guard case .committed = outcome else {
             Issue.record("expected start from error to commit")
@@ -734,7 +735,7 @@ struct CaptureLifecycleManagerRecoveryTests {
             manager.noteStartFromErrorFailed(isPermissionError: failure.isPermissionError)
         }
 
-        let outcome = await manager.enqueue(.start(reason: .autoStart, disabledMicUIDs: [], enabledMicUIDs: []))
+        let outcome = await manager.enqueue(.start(reason: .autoStart, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
 
         guard case .threw(let failure) = outcome else {
             Issue.record("expected start from error failure to throw")
@@ -756,7 +757,7 @@ struct CaptureLifecycleManagerRecoveryTests {
             manager.noteStartFromErrorFailed(isPermissionError: failure.isPermissionError)
         }
 
-        let outcome = await manager.enqueue(.start(reason: .autoStart, disabledMicUIDs: [], enabledMicUIDs: []))
+        let outcome = await manager.enqueue(.start(reason: .autoStart, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
 
         guard case .threw(let failure) = outcome else {
             Issue.record("expected permission start failure to throw")
@@ -782,7 +783,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(!manager.isRecoveryScheduled)
 
         delegate.startFailure = nil
-        let outcome = await manager.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+        let outcome = await manager.enqueue(.start(reason: .user, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
 
         guard case .committed = outcome else {
             Issue.record("expected explicit start after exhaustion to commit")
@@ -809,7 +810,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         delegate.onStartFromErrorFailed = { failure in
             manager.noteStartFromErrorFailed(isPermissionError: failure.isPermissionError)
         }
-        let outcome = await manager.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+        let outcome = await manager.enqueue(.start(reason: .user, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
 
         guard case .threw(let failure) = outcome else {
             Issue.record("expected explicit start failure after exhaustion to throw")
@@ -871,7 +872,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         }
         executor.markSuspendedForRecovery()
 
-        let startOutcome = await executor.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+        let startOutcome = await executor.enqueue(.start(reason: .user, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
         guard case .committed = startOutcome else {
             Issue.record("expected start from paused to commit")
             return
@@ -901,7 +902,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         }
 
         let startTask = Task { @MainActor in
-            await executor.enqueue(.start(reason: .user, disabledMicUIDs: [], enabledMicUIDs: []))
+            await executor.enqueue(.start(reason: .user, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
         }
         await delegate.waitForEvent(.startStarted("user"))
 
@@ -1062,6 +1063,7 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
 
     func lifecycleStartCapture(
         reason: StartReason,
+        sources: CaptureSources,
         disabledMicUIDs: Set<String>,
         enabledMicUIDs: Set<String>,
         shouldVetoCommit: @escaping @MainActor () -> Bool

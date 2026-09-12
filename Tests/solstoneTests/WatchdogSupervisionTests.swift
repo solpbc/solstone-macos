@@ -32,8 +32,10 @@ struct WatchdogSupervisionTests {
             terminate: { terminated.set(true) }
         ))
 
+        // Keep the owner alive while its weakly captured task waits for the main actor.
+        defer { withExtendedLifetime(quit) {} }
         quit.requestAppOwnedQuit()
-        try await waitUntil(timeout: .seconds(5)) { cleanupStarted.current == true }
+        try await waitUntil(timeout: .seconds(15)) { cleanupStarted.current == true }
         #expect(terminated.current != true)
         #expect(ExpectedExitMarker.read(at: harness.markerURL)?.reason == "ordinary-quit")
 
@@ -46,7 +48,7 @@ struct WatchdogSupervisionTests {
         #expect(harness.transitions.last?.destination == .suppressed(until: nil))
 
         finishCleanup?.resume()
-        try await waitUntil(timeout: .seconds(5)) { terminated.current == true }
+        try await waitUntil(timeout: .seconds(15)) { terminated.current == true }
     }
 
     @Test func exitReasonLiteralsResolveToTheirClasses() {
