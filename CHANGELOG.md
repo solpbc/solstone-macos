@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- either source runs on its own permission, and what you share through it goes into your journal. grant microphone, or screen and system audio, and solstone starts on that one as soon as the grant lands, with nothing to start by hand.
+- sources now have their own pane in settings, under inputs beside microphones, and turning one on or off applies right away to a session that is already running.
+- when nothing is going into your journal, the menu bar and settings now name the reason, both sources turned off or a permission still to grant, and link straight to the place that fixes it.
+
+### Fixed
+- updating to 2.0.6 left both sources turned off, so nothing new was going into your journal, and settings still reported that your setup was ready. this release turns them back on. a source you turned off yourself stays off.
+- the permissions screen explains what each permission is for and calls it what macos calls it in System Settings. the screen permission also stops reading as all good while solstone still needs a restart to use it.
+- anything taken in while solstone was already syncing used to wait for the next sync to reach your journal. it now goes as soon as the sync in progress finishes.
+
 ## [2.0.6] - 2026-09-12
 
 ### Added
