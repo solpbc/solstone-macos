@@ -120,7 +120,7 @@ extension StatusHealthSummary {
         if !isRecording, !isPaused, selectedSources.intersection(permittedSources).isEmpty {
             return .init(
                 severity: .attention,
-                title: UICopy.SOURCES_UNAVAILABLE,
+                title: UICopy.SOURCES_NONE_GRANTED,
                 subtitle: UICopy.SOURCES_GRANT_OR_CHANGE,
                 axValue: "sources_unavailable",
                 action: StatusHealthAction(
@@ -316,7 +316,7 @@ extension StatusHealthSummary {
         if !isRecording {
             return StatusHealthSummary(
                 severity: .calm,
-                title: "starting up…",
+                title: UICopy.MENUBAR_STARTING,
                 subtitle: isBundled
                     ? "your journal is fine"
                     : "nothing is reaching \(host) yet",

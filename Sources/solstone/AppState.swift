@@ -205,7 +205,7 @@ public final class AppState {
             return UICopy.sourceStatus(captureManager.activeSources, isPaused: isPaused)
         }
         if config.selectedSources.isEmpty { return UICopy.SOURCES_NONE }
-        if availableSelectedSources.isEmpty { return UICopy.SOURCES_UNAVAILABLE }
+        if availableSelectedSources.isEmpty { return UICopy.SOURCES_NONE_GRANTED }
         return UICopy.SOURCES_STARTING
     }
 
