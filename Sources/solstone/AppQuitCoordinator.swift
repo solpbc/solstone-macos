@@ -174,6 +174,9 @@ final class AppQuitCoordinator {
             dependencies.setCommitted(true)
             recorder.enqueue(terminationCommittedCode(for: intent.reason))
             logAdapter.terminationCommitted(reason: intent.reason)
+            // Intent is committed before cleanup can suspend or crash. A death
+            // during cleanup must not turn an accepted quit into a relaunch.
+            writeExpectedExitMarker(reason: intent.reason)
             let task = Task { @MainActor [weak self] in
                 guard let self else { return }
                 await self.performPreparation(generation: generation)
@@ -198,10 +201,9 @@ final class AppQuitCoordinator {
         guard generation == preparationGeneration, let intent = committedIntent else { return }
         await intent.prepare()
         guard generation == preparationGeneration else { return }
-        if !dependencies.writeMarker(intent.reason) {
-            recorder.enqueue(.terminationMarkerWriteFailed)
-            logAdapter.terminationMarkerWriteFailed()
-        }
+        // Refresh after potentially slow cleanup so the marker is still fresh
+        // when the watchdog observes the actual exit.
+        writeExpectedExitMarker(reason: intent.reason)
         stateMachine.markPrepared()
         preparationTask = nil
         if claimExternalReplyDrainIfNeeded() {
@@ -219,6 +221,13 @@ final class AppQuitCoordinator {
         externalReplies.removeAll()
         for reply in replies {
             reply(proceed)
+        }
+    }
+
+    private func writeExpectedExitMarker(reason: ExitReason) {
+        if !dependencies.writeMarker(reason) {
+            recorder.enqueue(.terminationMarkerWriteFailed)
+            logAdapter.terminationMarkerWriteFailed()
         }
     }
 

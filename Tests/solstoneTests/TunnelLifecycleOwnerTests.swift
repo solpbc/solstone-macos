@@ -1570,16 +1570,16 @@ struct TunnelLifecycleOwnerTests {
         #expect(transport.connectAttempts == 1)
     }
 
-    @Test func notEntitledStateUpdateDuringLiveRoutePreservesConnected() async throws {
+    @Test func installedTransportNotEntitledClearsRememberedConnection() async throws {
         let transport = FakeTunnelTransport(connection: .init(localPort: 67676, via: .relay))
         let owner = makeOwner(factory: FakeTransportFactory([transport]))
 
         owner.start()
         try await waitUntil { owner.state == .connected(localPort: 67676, via: .relay) }
         transport.emit(.failed(.notEntitled))
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(owner.state == .connected(localPort: 67676, via: .relay))
-        #expect(owner.connectionVerdict.severity == StatusDotSeverity.good)
+        try await waitUntil { owner.state == .error(.notEntitled) }
+        #expect(owner.localPort == nil)
+        #expect(owner.connectionVerdict.severity == StatusDotSeverity.attention)
         await owner.stop()
     }
 
@@ -1656,6 +1656,7 @@ struct TunnelLifecycleOwnerTests {
 
         await owner.replaceLiveTransport(with: updatedPairing)
 
+        try await waitUntil { failingCandidate.disconnectCount >= 1 }
         #expect(failingCandidate.disconnectCount >= 1)
         #expect(first.disconnectCount == 0)
         #expect(owner.state == .connected(localPort: 11111, via: .relay))
@@ -1663,6 +1664,100 @@ struct TunnelLifecycleOwnerTests {
         first.emit(.connected(via: URL(string: "https://relay.example")!.relayConnectedVia))
         #expect(owner.state == .connected(localPort: 11111, via: .relay))
 
+        await owner.stop()
+    }
+
+    @Test(arguments: [SessionError.authRefreshRequired, .revoked, .notEntitled])
+    func retainedTransportFailureSurvivesRelayCredentialUpdate(failure: SessionError) async throws {
+        let current = pairing(deviceToken: "old-token")
+        let store = PairingStore(pairing: current)
+        let credentials = PairingCredentialStore(store: store)
+        let first = FakeTunnelTransport(connection: .init(localPort: 11111, via: .relay))
+        let failing = FakeTunnelTransport(results: [.failure(SessionError.unreachable)])
+        let recovered = FakeTunnelTransport(connection: .init(localPort: 22222, via: .relay))
+        let refreshed = pairing(deviceToken: "refreshed-token")
+        let refresher = FakeTokenRefresher(
+            ifNeededResults: [.notNeeded(current)], nowResults: [.refreshed(refreshed)]
+        )
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: refresher.seam,
+            makeTransport: FakeTransportFactory([first, failing, recovered]).make,
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true }
+        )
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 11111, via: .relay) }
+        let before = credentials.currentGenerations()
+        let (updated, after) = try credentials.updateRelayAccess(
+            expectedPairingGen: before.pairingGeneration,
+            expectedAccessGen: before.accessMutationGeneration,
+            relayOrigin: current.relayEndpoint,
+            deviceToken: "new-token",
+            expiresAtString: "2030-01-01T00:00:00Z"
+        )
+        await owner.handleRelayAccessOutcome(.ready(
+            pairing: updated, pairingGen: before.pairingGeneration,
+            accessGen: before.accessMutationGeneration, newAccessGen: after
+        ))
+        #expect(first.disconnectCount == 0)
+
+        first.emit(.failed(failure))
+        let expectedState: TunnelLifecycleState = switch failure {
+        case .revoked: .error(.revoked)
+        case .notEntitled: .error(.notEntitled)
+        default: .connected(localPort: 22222, via: .relay)
+        }
+        do {
+            try await waitUntil { owner.state == expectedState }
+        } catch {
+            await owner.stop()
+            throw error
+        }
+        if failure == .authRefreshRequired {
+            #expect(recovered.connectedPairings == [refreshed])
+        }
+        #expect(store.deleted == (failure == .revoked))
+        await owner.stop()
+    }
+
+    @Test func failedReplacementStreamCompletionPreservesInstalledRoute() async throws {
+        let first = FakeTunnelTransport(connection: .init(localPort: 11111, via: .relay))
+        let failing = FakeTunnelTransport(results: [.failure(SessionError.unreachable)])
+        let owner = makeOwner(factory: FakeTransportFactory([first, failing]))
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 11111, via: .relay) }
+        await owner.replaceLiveTransport(with: pairing(deviceToken: "new-token"))
+        // Real SPLTunnelTransport.disconnect finishes its outward streams.
+        failing.finishAttemptUpdates()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(first.disconnectCount == 0)
+        #expect(owner.state == .connected(localPort: 11111, via: .relay))
+        // The installed transport must still be observed after replacement fails.
+        first.emitAttemptState(.attempting)
+        try await waitUntil { owner.supervisorAttemptState == .attempting }
+        await owner.stop()
+    }
+
+    @Test func failedReplacementDoesNotWaitForStalledDisposal() async throws {
+        let first = FakeTunnelTransport(connection: .init(localPort: 11111, via: .relay))
+        let failing = FakeTunnelTransport(results: [.failure(SessionError.unreachable)])
+        failing.armDisconnectGate()
+        let owner = makeOwner(factory: FakeTransportFactory([first, failing]))
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 11111, via: .relay) }
+        let returned = LockedValue<Bool>()
+        let replacement = Task { @MainActor in
+            await owner.replaceLiveTransport(with: pairing(deviceToken: "new-token"))
+            returned.set(true)
+        }
+        try await waitUntil { failing.pendingDisconnectCount > 0 }
+        // Assert before releasing disposal; release even if the assertion fails.
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(returned.current == true)
+        #expect(first.disconnectCount == 0)
+        failing.releaseNextDisconnect()
+        await replacement.value
         await owner.stop()
     }
 

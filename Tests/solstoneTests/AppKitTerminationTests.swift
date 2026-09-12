@@ -269,6 +269,7 @@ struct AppKitTerminationTests {
         #expect(stalled.replyElapsed < .milliseconds(500))
         #expect(stalled.events == [
             "committed:true",
+            "marker:settingsRestart",
             "prepared",
             "marker:settingsRestart",
             "reply:true",

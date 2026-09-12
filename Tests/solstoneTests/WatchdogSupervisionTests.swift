@@ -6,10 +6,49 @@ import Foundation
 import Testing
 @testable import SolstoneCore
 @testable import solstone_watchdog
+@testable import solstone
 
 @Suite("Watchdog supervision", .serialized)
 @MainActor
 struct WatchdogSupervisionTests {
+    @Test func acceptedQuitSuppressesDeathDuringCleanup() async throws {
+        let harness = try WatchdogHarness(startWithOwner: true)
+        defer { harness.removeDirectory() }
+        harness.tick(advance: .seconds(120))
+        var finishCleanup: CheckedContinuation<Void, Never>?
+        let cleanupStarted = LockedValue<Bool>()
+        let terminated = LockedValue<Bool>()
+        let quit = AppQuitCoordinator(dependencies: .init(
+            writeMarker: { reason in
+                harness.writeMarker(reason: reason.markerString, pid: 41)
+                return true
+            },
+            prepareForQuit: {
+                await withCheckedContinuation { continuation in
+                    finishCleanup = continuation
+                    cleanupStarted.set(true)
+                }
+            },
+            terminate: { terminated.set(true) }
+        ))
+
+        quit.requestAppOwnedQuit()
+        try await waitUntil(timeout: .seconds(5)) { cleanupStarted.current == true }
+        #expect(terminated.current != true)
+        #expect(ExpectedExitMarker.read(at: harness.markerURL)?.reason == "ordinary-quit")
+
+        // The process disappears before cleanup returns, as during a teardown
+        // crash or a force quit of an app that is already trying to quit.
+        harness.setCandidates([])
+        harness.tick(advance: .seconds(9))
+        harness.tick(advance: .milliseconds(1_500))
+        #expect(harness.launchCount == 0)
+        #expect(harness.transitions.last?.destination == .suppressed(until: nil))
+
+        finishCleanup?.resume()
+        try await waitUntil(timeout: .seconds(5)) { terminated.current == true }
+    }
+
     @Test func exitReasonLiteralsResolveToTheirClasses() {
         #expect(ExitReason(markerString: "ordinary-quit")?.watchdogExitClass == .ownerIntent)
         #expect(ExitReason(markerString: "external-quit")?.watchdogExitClass == .ownerIntent)

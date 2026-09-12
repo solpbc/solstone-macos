@@ -636,8 +636,9 @@ final class TunnelLifecycleOwner {
         let candidate = makeTransport()
         let wait = CandidateConnectionWait()
         let connection: TunnelTransportConnection
-        attemptObservationTask?.cancel()
-        attemptObservationTask = Task { @MainActor [weak self] in
+        // A speculative replacement does not own the installed transport's
+        // observer. Keep that observer alive if the candidate fails.
+        let candidateAttemptObservation = Task { @MainActor [weak self] in
             for await attemptState in candidate.attemptStateUpdates {
                 guard let self, self.running, !Task.isCancelled, self.transportAttemptID == attempt else {
                     return
@@ -648,6 +649,7 @@ final class TunnelLifecycleOwner {
             guard let self, self.running, !Task.isCancelled, self.transportAttemptID == attempt, !self.isIntentionallyRetiring else { return }
             await self.handleUnexpectedAttemptStreamCompletion(forIncarnation: nil, forAttempt: attempt)
         }
+        defer { candidateAttemptObservation.cancel() }
         do {
             connection = try await wait.connect(
                 candidate,
@@ -663,15 +665,20 @@ final class TunnelLifecycleOwner {
                 }
             )
         } catch {
+            candidateAttemptObservation.cancel()
+            // Teardown can itself stall; it must not extend the dial deadline.
+            Task { await candidate.disconnect() }
             splOwnerLog.error("replacement connect failed: \(String(describing: error), privacy: .public)")
             return
         }
         guard operationIsCurrent(pairing: pGen, access: aGen, attempt: attempt),
               !rejectedAttemptIDs.contains(attempt),
               ContinuousClock.now < deadline else {
+            candidateAttemptObservation.cancel()
             await candidate.disconnect()
             return
         }
+        candidateAttemptObservation.cancel()
         install(candidate, connection: connection, attemptID: attempt, burstID: burstID)
     }
 
@@ -982,7 +989,7 @@ final class TunnelLifecycleOwner {
                     self.publishingOptionalBurstID = initialBurstID
                     firstConnection = false
                 }
-                await self.handle(tunnelState, pairingRevision: observedRevision.pairingGeneration, accessRevision: observedRevision.accessMutationGeneration)
+                await self.handle(tunnelState, pairingRevision: observedRevision.pairingGeneration)
                 self.publishingOptionalBurstID = nil
             }
             guard let self, self.running, !Task.isCancelled, self.transportIncarnation == generation, !self.isIntentionallyRetiring else { return }
@@ -1104,7 +1111,7 @@ final class TunnelLifecycleOwner {
         }
     }
 
-    private func handle(_ tunnelState: TunnelState, pairingRevision: UInt64, accessRevision: UInt64) async {
+    private func handle(_ tunnelState: TunnelState, pairingRevision: UInt64) async {
         guard running else {
             return
         }
@@ -1141,17 +1148,18 @@ final class TunnelLifecycleOwner {
             }
 
         case .failed(let error):
-            guard credentialStore.matches(pairing: pairingRevision, access: accessRevision) else { return }
+            // This is still the installed transport (observe fences incarnation).
+            // Updating relay credentials does not invalidate its failure events;
+            // a failed replacement can leave it installed with older credentials.
+            let currentRevision = credentialStore.currentGenerations()
+            guard currentRevision.pairingGeneration == pairingRevision else { return }
             splOwnerLog.notice("tunnel failed error=\(String(describing: error), privacy: .public)")
             switch error {
             case .authRefreshRequired:
                 beginReactiveTokenRefresh()
             case .revoked:
-                await retirePairingAndFailRevoked(expectedPairing: pairingRevision, expectedAccess: accessRevision)
+                await retirePairingAndFailRevoked(expectedPairing: pairingRevision, expectedAccess: currentRevision.accessMutationGeneration)
             case .notEntitled:
-                if case .connected(let localPort, _) = state, establishedLoopbackPort == localPort, transport != nil {
-                    return
-                }
                 await failWithNotEntitled()
             default:
                 stopProbe()
@@ -1858,21 +1866,18 @@ private final class CandidateConnectionWait {
                         self.finish(.success(connection))
                     } catch {
                         self.finish(.failure(error))
-                        await candidate.disconnect()
                     }
                 }
                 timer = Task { @MainActor in
                     do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
                     self.finish(.failure(BoundedLoopbackClientError.timedOut))
                     self.operation?.cancel()
-                    await candidate.disconnect()
                 }
             }
         } onCancel: {
             Task { @MainActor in
                 self.finish(.failure(CancellationError()))
                 self.operation?.cancel()
-                await candidate.disconnect()
             }
         }
     }

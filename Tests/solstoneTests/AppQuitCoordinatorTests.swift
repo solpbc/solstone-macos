@@ -18,6 +18,7 @@ struct AppQuitCoordinatorTests {
         }
         #expect(events.all == [
             "committed:true",
+            "marker:ordinary-quit",
             "prepareForQuit",
             "marker:ordinary-quit",
             "terminate"
@@ -54,6 +55,7 @@ struct AppQuitCoordinatorTests {
         }
         #expect(events.all == [
             "committed:true",
+            "marker:ordinary-quit",
             "prepareForQuit:start",
             "prepareForQuit:end",
             "marker:ordinary-quit",
@@ -61,7 +63,7 @@ struct AppQuitCoordinatorTests {
         ])
     }
 
-    @Test func prepareDelayLongerThanFreshnessWritesMarkerAfterPrepareCompletes() async throws {
+    @Test func quitWritesIntentImmediatelyAndRefreshesItAfterPreparation() async throws {
         let events = LockedArray<String>([])
         let canFinish = LockedValue<Bool>()
         canFinish.set(false)
@@ -81,7 +83,7 @@ struct AppQuitCoordinatorTests {
         try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("prepareForQuit:start")
         }
-        #expect(!events.all.contains("marker:ordinary-quit"))
+        #expect(count(events.all, "marker:ordinary-quit") == 1)
 
         canFinish.set(true)
 
@@ -90,6 +92,7 @@ struct AppQuitCoordinatorTests {
         }
         #expect(events.all == [
             "committed:true",
+            "marker:ordinary-quit",
             "prepareForQuit:start",
             "prepareForQuit:end",
             "marker:ordinary-quit",
@@ -132,6 +135,7 @@ struct AppQuitCoordinatorTests {
         }
         #expect(events.all == [
             "committed:true",
+            "marker:external-quit",
             "prepareForQuit",
             "marker:external-quit",
             "reply:true"
@@ -170,7 +174,7 @@ struct AppQuitCoordinatorTests {
             events.all.contains("reply1:true") && events.all.contains("reply2:true")
         }
         #expect(count(events.all, "committed:true") == 1)
-        #expect(count(events.all, "marker:external-quit") == 1)
+        #expect(count(events.all, "marker:external-quit") == 2)
         #expect(count(events.all, "prepareForQuit") == 1)
         #expect(count(events.all, "reply1:true") == 1)
         #expect(count(events.all, "reply2:true") == 1)
@@ -206,6 +210,7 @@ struct AppQuitCoordinatorTests {
         }
         #expect(events.all == [
             "committed:true",
+            "marker:ordinary-quit",
             "prepareForQuit",
             "marker:ordinary-quit",
             "reply:true",
@@ -238,7 +243,7 @@ struct AppQuitCoordinatorTests {
         try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("terminate")
         }
-        #expect(count(events.all, "marker:settings-restart") == 1)
+        #expect(count(events.all, "marker:settings-restart") == 2)
         #expect(count(events.all, "prepareForQuit") == 1)
         #expect(count(events.all, "launchReplacement") == 1)
         #expect(count(events.all, "terminate") == 1)
@@ -283,6 +288,7 @@ struct AppQuitCoordinatorTests {
         #expect(logEvents.all == [
             .terminationCommitted(.ordinaryQuit),
             .terminationMarkerWriteFailed,
+            .terminationMarkerWriteFailed,
         ])
     }
 
@@ -294,6 +300,7 @@ struct AppQuitCoordinatorTests {
 
         #expect(events.all == [
             "committed:true",
+            "marker:sparkle-update",
             "prepareForUpdate",
             "marker:sparkle-update"
         ])
@@ -308,6 +315,7 @@ struct AppQuitCoordinatorTests {
 
         #expect(events.all == [
             "committed:true",
+            "marker:sparkle-update",
             "prepareForUpdate",
             "marker:sparkle-update"
         ])
@@ -319,7 +327,7 @@ struct AppQuitCoordinatorTests {
         #expect(count(events.all, "prepareForUpdate") == 1)
         #expect(count(events.all, "prepareForQuit") == 0)
         #expect(count(events.all, "committed:true") == 1)
-        #expect(count(events.all, "marker:sparkle-update") == 1)
+        #expect(count(events.all, "marker:sparkle-update") == 2)
         #expect(count(events.all, "marker:ordinary-quit") == 0)
     }
 
@@ -402,7 +410,7 @@ struct AppQuitCoordinatorTests {
         try await waitUntil(timeout: .seconds(5)) {
             events.all.contains("prepareForQuit")
         }
-        #expect(!events.all.contains("marker:ordinary-quit"))
+        #expect(count(events.all, "marker:ordinary-quit") == 1)
         #expect(!events.all.contains("terminate"))
 
         canFinish.set(true)
