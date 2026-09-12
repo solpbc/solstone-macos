@@ -946,6 +946,45 @@ def verify_local_journal_recovery(report, filename):
         raise GateFailure(f"{filename}: journal pairing identity was lost during recovery")
 
 
+def verify_released_v2_receipt(report, delivery, filename):
+    if delivery.get("observation_source") != "released-v2-startup-receipt":
+        raise GateFailure(f"{filename}: missing released V2 startup receipt observation")
+    expected = {"bundle_id": "app.solstone.observer", "marketing_version": "2.0.0", "build": "71"}
+    restart = delivery.get("restart", {})
+    if (not isinstance(restart, dict) or restart.get("before_identity") != expected or restart.get("after_identity") != expected
+            or restart.get("stopped") is not True
+            or not all(isinstance(restart.get(k), str) and restart[k].isdigit() and int(restart[k]) > 0
+                       for k in ("before_pid", "after_pid"))
+            or restart.get("before_pid") == restart.get("after_pid")):
+        raise GateFailure(f"{filename}: baseline startup substituted identity or lacked process turnover")
+    prefs = report.get("baseline_automatic_updates")
+    if prefs != [{"domain": "app.solstone.observer", "key": key, "actual": "0"}
+                 for key in ("SUEnableAutomaticChecks", "SUAutomaticallyUpdate")]:
+        raise GateFailure(f"{filename}: missing checked baseline automatic update preferences")
+
+    def epoch(receipt):
+        if not isinstance(receipt, dict):
+            raise GateFailure(f"{filename}: missing durable receipt")
+        date = receipt.get("date")
+        if (type(date) not in (int, float) or not math.isfinite(date) or date < 0
+                or not isinstance(receipt.get("fingerprint"), str)
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", receipt["fingerprint"]) is None):
+            raise GateFailure(f"{filename}: malformed durable receipt")
+        return int(date + 978307200)
+
+    contact, after, before = (delivery.get(k) for k in ("contact_before", "receipt_after", "receipt_before"))
+    epoch(contact)
+    after_epoch = epoch(after)
+    before_epoch = epoch(before) if before is not None else None
+    if (after["fingerprint"] != contact["fingerprint"]
+            or (before is not None and before["fingerprint"] != contact["fingerprint"])
+            or delivery.get("last_synced_post_epoch") != after_epoch
+            or delivery.get("last_synced_post_raw") != str(after_epoch)
+            or delivery.get("last_synced_pre_epoch") != before_epoch
+            or delivery.get("last_synced_pre_raw") != (str(before_epoch) if before_epoch is not None else None)):
+        raise GateFailure(f"{filename}: durable receipt pairing or timestamp mismatch")
+
+
 def verify_upgrade_baseline_connection(report, filename):
     baseline = report.get("linked_baseline")
     delivery = report.get("baseline_delivery")
@@ -966,6 +1005,19 @@ def verify_upgrade_baseline_connection(report, filename):
     injection = delivery.get("injection")
     if not isinstance(injection, dict) or not isinstance(injection.get("created_at"), str):
         raise GateFailure(f"{filename}: missing baseline delivery injection")
+    if identity == ("2.0.0", "71"):
+        verify_released_v2_receipt(report, delivery, filename)
+    elif delivery.get("observation_source") == "released-v2-startup-receipt":
+        raise GateFailure(f"{filename}: receipt compatibility is restricted to exact released 2.0.0/71")
+    prefix, suffix = report["run_id"].rsplit("-", 1)
+    baseline_run = f"{prefix}-{(int(suffix, 16) + 1) % (1 << 64):016x}"
+    if injection.get("run_id") != baseline_run:
+        raise GateFailure(f"{filename}: baseline payload is not distinct and derived from this run")
+    verify_local_tier_b_delivery({
+        "run_id": baseline_run,
+        "tier_b": {key: value for key, value in injection.items() if key != "run_id"},
+        "tier_b_landing": delivery.get("landing"),
+    }, filename + ": baseline", parse_run_timestamp(report["run_id"]))
     # Baseline injection precedes the app upgrade and has no process-turnover bound.
     verify_local_freshness({
         "lane": "baseline", "run_id": report["run_id"],

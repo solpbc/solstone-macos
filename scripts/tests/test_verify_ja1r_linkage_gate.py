@@ -129,10 +129,13 @@ def base_report(lane, checks, **scenario):
         baseline.update(connection_state_id=connection_id, local_link={
             "ok": True, "connection_state": "connected", "connection_state_id": connection_id})
         baseline.setdefault("checks", {})["connection_connected"] = True
+        prefix, suffix = report["run_id"].rsplit("-", 1)
+        baseline_run = f"{prefix}-{(int(suffix, 16) + 1) % (1 << 64):016x}"
         report["baseline_delivery"] = {
             **report["freshness"], "connection_state_id": connection_id,
             "anchor_process_start_epoch": None,
-            "injection": {"created_at": TIER_B_CREATED_AT},
+            "injection": {"run_id": baseline_run, **local_tier_b(baseline_run)},
+            "landing": local_tier_b_landing(baseline_run),
         }
     report["checks"].update({key: True for key in (*verifier.LOCAL_REQUIRED_CHECKS[lane], *verifier.LOCAL_DELIVERY_CHECKS)})
     report["evidence"]["automation_lifecycle"] = {"cleanup": {
@@ -304,36 +307,47 @@ def spl_link_report(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA, run_id=RUN_ID):
     }
 
 
+def local_delivery_fixture_identity(run_id):
+    # Fixed known-answer identities from the independent harness tier_b module.
+    if run_id == "20260715T184501Z-a1b2c3d4e5f60719":
+        return {"day": "20260715", "segment": "184501_3429", "payload_bytes": 85,
+                "payload_sha256": "a81db3e5f9d549a0244feb1abfc8106f5dbd67289597838b9973a13f6d5e6625"}
+    assert run_id == RUN_ID
+    return {**tier_b_expected(), "payload_bytes": TIER_B_PAYLOAD_BYTES}
+
+
 def local_tier_b(run_id=RUN_ID, preexisting_completed_segments=0):
+    identity = local_delivery_fixture_identity(run_id)
     return {
-        "day": TIER_B_DAY,
-        "segment": TIER_B_SEGMENT,
-        "payload_sha256": TIER_B_PAYLOAD_SHA256,
-        "payload_bytes": TIER_B_PAYLOAD_BYTES,
+        "day": identity["day"],
+        "segment": identity["segment"],
+        "payload_sha256": identity["payload_sha256"],
+        "payload_bytes": identity["payload_bytes"],
         "created_at": TIER_B_CREATED_AT,
         "preexisting_completed_segments": preexisting_completed_segments,
         "injected": True,
     }
 
 
-def local_tier_b_landing():
+def local_tier_b_landing(run_id=RUN_ID):
+    identity = local_delivery_fixture_identity(run_id)
     return {
         "ok": True,
-        "day": TIER_B_DAY,
-        "segment": TIER_B_SEGMENT,
-        "expected_filename": f"{TIER_B_SEGMENT}_screen.mp4",
-        "expected_sha256": TIER_B_PAYLOAD_SHA256,
+        "day": identity["day"],
+        "segment": identity["segment"],
+        "expected_filename": f"{identity['segment']}_screen.mp4",
+        "expected_sha256": identity["payload_sha256"],
         "matches": [
             {
                 "stream": "device",
-                "requested_segment": TIER_B_SEGMENT,
+                "requested_segment": identity["segment"],
                 "manifest_files": {
-                    f"{TIER_B_SEGMENT}_screen.mp4": {
-                        "sha256": TIER_B_PAYLOAD_SHA256,
-                        "size": TIER_B_PAYLOAD_BYTES,
+                    f"{identity['segment']}_screen.mp4": {
+                        "sha256": identity["payload_sha256"],
+                        "size": identity["payload_bytes"],
                     }
                 },
-                "recomputed_sha256": TIER_B_PAYLOAD_SHA256,
+                "recomputed_sha256": identity["payload_sha256"],
             }
         ],
         "reason": None,
@@ -1640,6 +1654,20 @@ class RecoveryObservationControls(unittest.TestCase):
         verifier.verify_local_journal_recovery(report, "fresh-use.json")
 
 
+def add_released_startup_receipt(report):
+    delivery = report["baseline_delivery"]
+    epoch = delivery["last_synced_post_epoch"]
+    receipt = {"date": epoch - 978307200 + 0.25, "fingerprint": "sha256:" + "a" * 64}
+    delivery.update(observation_source="released-v2-startup-receipt", receipt_before=None,
+                    receipt_after=receipt, contact_before={**receipt, "date": receipt["date"] - 1})
+    identity = {"bundle_id": "app.solstone.observer", "marketing_version": "2.0.0", "build": "71"}
+    delivery["restart"] = {"before_identity": dict(identity), "after_identity": dict(identity),
+                           "before_pid": "10", "after_pid": "20", "stopped": True}
+    report["baseline_automatic_updates"] = [
+        {"domain": "app.solstone.observer", "key": key, "actual": "0"}
+        for key in ("SUEnableAutomaticChecks", "SUAutomaticallyUpdate")]
+
+
 class BaselineConnectionControls(unittest.TestCase):
     def test_released_v2_contract_and_absence_controls(self):
         report = _report_for("v2-upgrade-sol.json")
@@ -1649,6 +1677,7 @@ class BaselineConnectionControls(unittest.TestCase):
         report["linked_baseline"]["connection_state_id"] = old_id
         report["linked_baseline"]["local_link"]["connection_state_id"] = old_id
         report["baseline_delivery"]["connection_state_id"] = old_id
+        add_released_startup_receipt(report)
         verifier.verify_upgrade_baseline_connection(report, "v2-upgrade-sol.json")
         for section, key, value in [
             ("baseline_delivery", "connection_token", None),
@@ -1662,6 +1691,40 @@ class BaselineConnectionControls(unittest.TestCase):
         report["linked_baseline"]["local_link"]["connection_state"] = None
         with self.assertRaises(verifier.GateFailure):
             verifier.verify_upgrade_baseline_connection(report, "v2-upgrade-sol.json")
+
+
+    def test_receipt_and_baseline_payload_cannot_false_green(self):
+        report = _report_for("v2-upgrade-sol.json")
+        report.update({"from": "2.0.0", "from_build": "71"})
+        old_id = "settings.service.pairing.connection.state"
+        report["baseline_connection_state_id"] = old_id
+        report["linked_baseline"]["connection_state_id"] = old_id
+        report["linked_baseline"]["local_link"]["connection_state_id"] = old_id
+        report["baseline_delivery"]["connection_state_id"] = old_id
+        add_released_startup_receipt(report)
+        verifier.verify_upgrade_baseline_connection(report, "v2-upgrade-sol.json")
+        for path, value in [
+            ("baseline_delivery.observation_source", None),
+            ("baseline_delivery.receipt_after.date", 0),
+            ("baseline_delivery.receipt_after.date", True),
+            ("baseline_delivery.receipt_after.fingerprint", "sha256:" + "b" * 64),
+            ("baseline_delivery.contact_before", None),
+            ("baseline_delivery.restart.after_identity.build", "76"),
+            ("baseline_delivery.restart.after_pid", "10"),
+            ("baseline_delivery.restart.stopped", False),
+            ("baseline_automatic_updates", []),
+            ("baseline_delivery.injection.run_id", RUN_ID),
+            ("baseline_delivery.landing.matches", []),
+            ("baseline_delivery.landing.expected_sha256", "0" * 64),
+        ]:
+            broken = json.loads(json.dumps(report))
+            set_path(broken, path, value)
+            with self.subTest(path=path), self.assertRaises(verifier.GateFailure):
+                verifier.verify_upgrade_baseline_connection(broken, "v2-upgrade-sol.json")
+        broken = json.loads(json.dumps(report))
+        broken["baseline_delivery"]["landing"]["matches"][0]["recomputed_sha256"] = "0" * 64
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_upgrade_baseline_connection(broken, "v2-upgrade-sol.json")
 
 
 if __name__ == "__main__":
