@@ -36,7 +36,7 @@ These Make targets build a local test app. They do not build or bundle the journ
 - `make build`: Compile a debug build without assembling an app bundle.
 - `make test`: Run the Swift tests.
 - `make ci`: Run the full project gate.
-- `make integration-native`: Run the on-demand integration tier against the staged accepted native journal runtime in an isolated home. Opt-in; not part of `make ci`.
+- `make integration-native`: Run the on-demand integration tier against a native journal runtime in an isolated home: the staged accepted runtime if present, otherwise the runtime inside the installed journal app. Its first line names what ran. Opt-in; not part of `make ci`.
 - `make icons`: Regenerate app assets when you change their SVG sources.
 - `make clean`: Remove build artifacts.
 
