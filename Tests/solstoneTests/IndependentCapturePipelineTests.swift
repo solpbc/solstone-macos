@@ -292,7 +292,12 @@ struct IndependentCapturePipelineTests {
         let audio = FakeAudioManager()
         let screen = FakeScreenshotCapturer(behavior: .throwOnStart)
         let writer = SegmentWriter(outputDirectory: root, timePrefix: "120000",
-            screenshotCapturerFactory: { _, _, _, _, _, _ in screen },
+            screenshotCapturerFactory: { _, videoURL, _, _, _, _ in
+                // A failed SCK start can leave partial media behind.
+                try Data("partial screen".utf8).write(to: videoURL)
+                try Data("partial system audio".utf8).write(to: root.appendingPathComponent("120000_audio_system.m4a"))
+                return screen
+            },
             audioManagerFactory: { _, _, _, _ in audio })
         let active = try await writer.start(sources: .all, displayInfos: [testDisplay], mics: [testMicrophone])
         #expect(active == .microphone)
