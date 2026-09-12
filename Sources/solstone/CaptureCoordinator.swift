@@ -74,8 +74,6 @@ public final class CaptureCoordinator {
 
     private let audioDeviceMonitor: AudioDeviceMonitor
     private let isTerminating: IsTerminatingProvider
-    private let hasConfirmedSourceSelection: @MainActor () -> Bool
-    private let confirmSourceSelection: @MainActor () -> Void
     private let configProvider: CaptureConfigProvider
     private let bannerSink: BannerSink
     private let startOperation: StartOperation
@@ -96,8 +94,6 @@ public final class CaptureCoordinator {
         audioDeviceMonitor: AudioDeviceMonitor,
         isTerminating: @escaping IsTerminatingProvider,
         configProvider: @escaping CaptureConfigProvider,
-        hasConfirmedSourceSelection: @escaping @MainActor () -> Bool = { true },
-        confirmSourceSelection: @escaping @MainActor () -> Void = {},
         bannerSink: @escaping BannerSink,
         startOperation: StartOperation? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
@@ -110,8 +106,6 @@ public final class CaptureCoordinator {
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isTerminating = isTerminating
         self.configProvider = configProvider
-        self.hasConfirmedSourceSelection = hasConfirmedSourceSelection
-        self.confirmSourceSelection = confirmSourceSelection
         self.bannerSink = bannerSink
         self.recorder = recorder
         self.screenPermissionProvider = screenPermissionProvider
@@ -199,7 +193,6 @@ public final class CaptureCoordinator {
 
         if reason == .user {
             isExplicitlyStopped = false
-            confirmSourceSelection()
         }
 
         let config = configProvider()
@@ -321,7 +314,7 @@ public final class CaptureCoordinator {
         let admissionSet = configProvider().sources.intersection(permittedSources)
 
         // Auto-start if admitted sources exist, not explicitly stopped, not paused, not already recording, and recovery is not scheduled
-        if hasConfirmedSourceSelection() && !isExplicitlyStopped && !admissionSet.isEmpty && !isRecording && !isUserPaused && !captureManager.isRecoveryScheduled {
+        if !isExplicitlyStopped && !admissionSet.isEmpty && !isRecording && !isUserPaused && !captureManager.isRecoveryScheduled {
             if isTerminating() {
                 recorder.enqueue(.permissionAutoStartSkipped)
                 logAdapter.permissionAutoStartSkipped()

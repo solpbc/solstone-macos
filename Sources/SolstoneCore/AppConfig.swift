@@ -57,7 +57,7 @@ public struct AppConfig: Sendable {
     }
 
     public static let knownKeys: [String] = [
-        "isScreenCaptureEnabled", "isMicrophoneCaptureEnabled", "hasConfirmedCaptureSources",
+        "isScreenCaptureEnabled", "isMicrophoneCaptureEnabled",
         "microphonePriority", "excludedApps", "excludedTitlePatterns",
         "excludePrivateBrowsing", "serverURL", "serverKey",
         "cacheRetentionDays", "syncPaused", "debugSegments",
@@ -67,7 +67,6 @@ public struct AppConfig: Sendable {
     ]
 
     private enum Keys {
-        static let hasConfirmedCaptureSources = "hasConfirmedCaptureSources"
         static let isScreenCaptureEnabled = "isScreenCaptureEnabled"
         static let isMicrophoneCaptureEnabled = "isMicrophoneCaptureEnabled"
         static let microphonePriority = "microphonePriority"
@@ -87,6 +86,7 @@ public struct AppConfig: Sendable {
         static let observerName = "observerName"
         static let didMigrateFromJSON = "didMigrateFromJSON"
         static let didReseedOptInMicrophones = "didReseedOptInMicrophones"
+        static let didReseedCaptureSourcesOn = "didReseedCaptureSourcesOn"
     }
 
     private enum LegacyKeys {
@@ -94,8 +94,6 @@ public struct AppConfig: Sendable {
     }
 
     // MARK: - Properties
-
-    public var hasConfirmedCaptureSources: Bool
 
     /// When true, screen capture is enabled by the owner
     public var isScreenCaptureEnabled: Bool
@@ -171,9 +169,8 @@ public struct AppConfig: Sendable {
     ]
 
     public init(
-        hasConfirmedCaptureSources: Bool = false,
-        isScreenCaptureEnabled: Bool = false,
-        isMicrophoneCaptureEnabled: Bool = false,
+        isScreenCaptureEnabled: Bool = true,
+        isMicrophoneCaptureEnabled: Bool = true,
         microphonePriority: [MicrophoneEntry] = [],
         excludedApps: [AppEntry] = [],
         excludedTitlePatterns: [String] = [],
@@ -190,7 +187,6 @@ public struct AppConfig: Sendable {
         journalPath: String? = nil,
         observerName: String? = nil
     ) {
-        self.hasConfirmedCaptureSources = hasConfirmedCaptureSources
         self.isScreenCaptureEnabled = isScreenCaptureEnabled
         self.isMicrophoneCaptureEnabled = isMicrophoneCaptureEnabled
         self.microphonePriority = microphonePriority
@@ -250,9 +246,8 @@ public struct AppConfig: Sendable {
         }
 
         let config = AppConfig(
-            hasConfirmedCaptureSources: defaults.bool(forKey: Keys.hasConfirmedCaptureSources),
-            isScreenCaptureEnabled: defaults.bool(forKey: Keys.isScreenCaptureEnabled),
-            isMicrophoneCaptureEnabled: defaults.bool(forKey: Keys.isMicrophoneCaptureEnabled),
+            isScreenCaptureEnabled: defaults.object(forKey: Keys.isScreenCaptureEnabled) as? Bool ?? true,
+            isMicrophoneCaptureEnabled: defaults.object(forKey: Keys.isMicrophoneCaptureEnabled) as? Bool ?? true,
             microphonePriority: microphonePriority,
             excludedApps: excludedApps,
             excludedTitlePatterns: defaults.stringArray(forKey: Keys.excludedTitlePatterns) ?? [],
@@ -310,7 +305,6 @@ public struct AppConfig: Sendable {
     public func save() throws {
         let defaults = UserDefaults.standard
 
-        defaults.set(hasConfirmedCaptureSources, forKey: Keys.hasConfirmedCaptureSources)
         defaults.set(isScreenCaptureEnabled, forKey: Keys.isScreenCaptureEnabled)
         defaults.set(isMicrophoneCaptureEnabled, forKey: Keys.isMicrophoneCaptureEnabled)
 
@@ -421,6 +415,42 @@ public struct AppConfig: Sendable {
     /// Returns UIDs of enabled microphones
     public var enabledMicrophoneUIDs: Set<String> {
         Set(microphonePriority.filter { !$0.isDisabled }.map { $0.uid })
+    }
+
+    /// One-shot repair for installs that persisted both capture sources as off.
+    ///
+    /// 2.0.6 shipped `isScreenCaptureEnabled` / `isMicrophoneCaptureEnabled` defaulting to
+    /// `false`, and any config save on that build wrote those `false` values into UserDefaults.
+    /// Reading an absent key as `true` (see `load()`) rescues an install that never saved, but
+    /// not one that did — so those machines need their sources turned back on exactly once.
+    /// A choice the owner makes after this runs is never touched again.
+    public mutating func reseedCaptureSourcesOnIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Keys.didReseedCaptureSourcesOn) else {
+            return
+        }
+
+        guard !isScreenCaptureEnabled, !isMicrophoneCaptureEnabled else {
+            // Nothing to repair: at least one source is already on, which is either the
+            // healthy default or a choice the owner made. Close the one-shot either way.
+            defaults.set(true, forKey: Keys.didReseedCaptureSourcesOn)
+            return
+        }
+
+        var reseeded = self
+        reseeded.isScreenCaptureEnabled = true
+        reseeded.isMicrophoneCaptureEnabled = true
+
+        do {
+            try reseeded.save()
+            self = reseeded
+            // Only close the one-shot once the repair is actually persisted — a failed save
+            // must leave the install eligible for the repair on its next launch.
+            defaults.set(true, forKey: Keys.didReseedCaptureSourcesOn)
+            Logger.general.info("Re-seeded both capture sources on after the 2.0.6 default-off regression")
+        } catch {
+            Logger.general.warning("Failed to re-seed capture sources on: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// One-shot migration that disables connected opt-in-only microphones previously saved as enabled.

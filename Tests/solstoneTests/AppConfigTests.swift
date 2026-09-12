@@ -205,11 +205,11 @@ struct AppConfigTests {
 
     // MARK: - Capture Sources
 
-    @Test func captureSourcesDefaultToDisabled() {
+    @Test func captureSourcesDefaultToEnabled() {
         let config = AppConfig()
-        #expect(!config.isScreenCaptureEnabled)
-        #expect(!config.isMicrophoneCaptureEnabled)
-        #expect(config.selectedSources.isEmpty)
+        #expect(config.isScreenCaptureEnabled)
+        #expect(config.isMicrophoneCaptureEnabled)
+        #expect(config.selectedSources == [.screen, .microphone])
     }
 
     @Test func captureSourcesReflectExplicitConfiguration() {

@@ -886,15 +886,6 @@ public final class AppState {
                     enabled: currentConfig.enabledMicrophoneUIDs
                 )
             },
-            hasConfirmedSourceSelection: { [captureTarget, config] in
-                (captureTarget.state?.config ?? config).hasConfirmedCaptureSources
-            },
-            confirmSourceSelection: { [captureTarget] in
-                guard let state = captureTarget.state else { return }
-                var config = state.config
-                config.hasConfirmedCaptureSources = true
-                state.updateConfig(config)
-            },
             bannerSink: { [captureTarget] message in
                 captureTarget.state?.errorMessage = message
             },
@@ -958,6 +949,7 @@ public final class AppState {
             .filter { $0.isOptInOnlyMicrophone }
             .map { $0.uid })
         self.config.reseedOptInOnlyMicrophonesIfNeeded(connectedOptInOnlyUIDs: connectedOptInOnlyUIDs)
+        self.config.reseedCaptureSourcesOnIfNeeded()
 
         // Sync microphone priority list with available devices
         syncMicrophonePriorityList()
@@ -1181,15 +1173,6 @@ public final class AppState {
                     disabled: currentConfig.disabledMicrophoneUIDs,
                     enabled: currentConfig.enabledMicrophoneUIDs
                 )
-            },
-            hasConfirmedSourceSelection: { [captureTarget, config] in
-                (captureTarget.state?.config ?? config).hasConfirmedCaptureSources
-            },
-            confirmSourceSelection: { [captureTarget] in
-                guard let state = captureTarget.state else { return }
-                var config = state.config
-                config.hasConfirmedCaptureSources = true
-                state.updateConfig(config)
             },
             bannerSink: { [captureTarget] message in
                 captureTarget.state?.errorMessage = message

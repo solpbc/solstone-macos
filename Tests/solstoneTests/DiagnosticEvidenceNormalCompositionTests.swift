@@ -18,7 +18,6 @@ struct DiagnosticEvidenceNormalCompositionTests {
         defer { defaults.removePersistentDomain(forName: defaultsName) }
         defaults.set(true, forKey: "isScreenCaptureEnabled")
         defaults.set(true, forKey: "isMicrophoneCaptureEnabled")
-        defaults.set(true, forKey: "hasConfirmedCaptureSources")
 
         let state = try #require(makeNormalState(harness: harness, defaults: defaults, useRootRecorder: true))
         state.isTerminating = true
@@ -91,7 +90,6 @@ struct DiagnosticEvidenceNormalCompositionTests {
             makeState: { recorder, _ in
                 AppState.forSnapshot(
                     config: AppConfig(
-                        hasConfirmedCaptureSources: defaults.bool(forKey: "hasConfirmedCaptureSources"),
                         isScreenCaptureEnabled: defaults.bool(forKey: "isScreenCaptureEnabled"),
                         isMicrophoneCaptureEnabled: defaults.bool(forKey: "isMicrophoneCaptureEnabled")
                     ),
