@@ -45,11 +45,34 @@ struct StatusHealthSummaryTests {
         #expect(waiting.subtitle == "2 segments waiting here")
     }
 
-    @Test func observingOffRowUsesExternalSubtitle() {
-        let external = makeSummary(isRecording: false)
-        #expect(external.severity == .warn)
-        #expect(external.axValue == "off")
-        #expect(external.subtitle == "nothing is reaching x.example while solstone is off")
+    // An owner who turned both switches off chose this, so it is calm, it says what it is,
+    // and it carries the one action that undoes it. It must NOT read as a fault.
+    @Test func bothSourcesOffIsCalmAndNamesItsCauseAndItsWayBack() {
+        let off = makeSummary(isRecording: false, selectedSources: [])
+        #expect(off.severity == .calm)
+        #expect(off.axValue == "sources_off")
+        #expect(off.title == "both sources are off")
+        #expect(off.subtitle == "nothing is going into your journal until you turn one back on.")
+        #expect(off.action?.settingsTab == "sources")
+    }
+
+    // Wanting a source macOS has not granted is a fault, and it routes to the grant, not
+    // to the switches the owner already set correctly.
+    @Test func selectedButUngrantedSourcesNeedAttentionAndRouteToPermissions() {
+        let blocked = makeSummary(isRecording: false, selectedSources: .all, permittedSources: [])
+        #expect(blocked.severity == .attention)
+        #expect(blocked.axValue == "sources_unavailable")
+        #expect(blocked.title == "what you turned on isn't granted yet")
+        #expect(blocked.action?.settingsTab == "permissions")
+    }
+
+    // Selected, permitted, and not running yet is the brief window before auto-start.
+    @Test func notRunningWithAUsableSourceReadsAsStartingUp() {
+        let starting = makeSummary(isRecording: false)
+        #expect(starting.severity == .calm)
+        #expect(starting.axValue == "off")
+        #expect(starting.title == "starting…")
+        #expect(starting.subtitle == "nothing is reaching x.example yet")
     }
 
     @Test func pausedRowUsesSyncSpecificSubtitle() {
@@ -197,6 +220,8 @@ struct StatusHealthSummaryTests {
         lastDeliveryOutcome: LastJournalDeliveryOutcome = .delivered(statusSummaryRecentDelivery),
         serverURL: String? = statusSummaryServerURL,
         now: Date = statusSummaryNow,
+        selectedSources: CaptureSources = .all,
+        permittedSources: CaptureSources = .all,
         setupVerdict: SetupGroupVerdict? = nil
     ) -> StatusHealthSummary {
         StatusHealthSummary.make(
@@ -208,6 +233,8 @@ struct StatusHealthSummaryTests {
             lastDeliveryOutcome: lastDeliveryOutcome,
             serverURL: serverURL,
             now: now,
+            selectedSources: selectedSources,
+            permittedSources: permittedSources,
             setupVerdict: setupVerdict
         )
     }

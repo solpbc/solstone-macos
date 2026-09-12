@@ -447,6 +447,69 @@ struct SyncServiceTests {
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
     }
 
+    @Test func triggerDuringInFlightPassRunsOneFollowUpPass() async throws {
+        resetSyncedDaysCache()
+        store.reset()
+        SyncServiceHoldingURLProtocol.reset()
+        defer { SyncServiceHoldingURLProtocol.releaseHold() }
+        let root = try makeTempDirectory("sync-follow-up")
+        let segment = try makeSegment(root: root)
+        let day = dayString(for: segment.date)
+        let service = makeHoldingService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24711") }
+        )
+        await configure(service)
+
+        let holdingStore = SyncServiceHoldingURLProtocol.store
+        holdingStore.enqueue(statusCode: 200, body: manifestJSON())
+        holdingStore.enqueue(statusCode: 200, body: #"{"status":"ok","segment":"120000_300"}"#)
+        holdingStore.enqueue(statusCode: 200, body: manifestJSON(day: day))
+
+        let firstPass = Task { await service.sync() }
+        await holdingStore.waitForRequestCount(2)
+        #expect(SyncServiceHoldingURLProtocol.hold.waitUntilWaiting())
+
+        // Arrives while the upload is still in flight.
+        await service.triggerSync()
+
+        SyncServiceHoldingURLProtocol.releaseHold()
+        await firstPass.value
+
+        await holdingStore.waitForRequestCount(3, timeout: .seconds(5))
+        let manifestRequests = holdingStore.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.manifestPath }
+        #expect(manifestRequests.count == 2, "expected one follow-up pass, saw \(manifestRequests.count) manifest reads")
+    }
+
+    @Test func passWithoutMidFlightTriggerRunsNoFollowUp() async throws {
+        resetSyncedDaysCache()
+        store.reset()
+        SyncServiceHoldingURLProtocol.reset()
+        defer { SyncServiceHoldingURLProtocol.releaseHold() }
+        let root = try makeTempDirectory("sync-no-follow-up")
+        _ = try makeSegment(root: root)
+        let service = makeHoldingService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24712") }
+        )
+        await configure(service)
+
+        let holdingStore = SyncServiceHoldingURLProtocol.store
+        holdingStore.enqueue(statusCode: 200, body: manifestJSON())
+        holdingStore.enqueue(statusCode: 200, body: #"{"status":"ok","segment":"120000_300"}"#)
+
+        let firstPass = Task { await service.sync() }
+        await holdingStore.waitForRequestCount(2)
+        #expect(SyncServiceHoldingURLProtocol.hold.waitUntilWaiting())
+        SyncServiceHoldingURLProtocol.releaseHold()
+        await firstPass.value
+
+        // Longer than the trigger debounce, so a spurious follow-up would have shown up.
+        try await Task.sleep(for: .milliseconds(1_200))
+        let manifestRequests = holdingStore.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.manifestPath }
+        #expect(manifestRequests.count == 1, "unexpected follow-up pass: \(manifestRequests.count) manifest reads")
+    }
+
     private func makeService(root: URL, resolver: HomeBaseURLResolver) -> SyncService {
         SyncService(
             storageManager: StorageManager(baseDirectory: root),

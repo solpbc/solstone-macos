@@ -7,37 +7,6 @@ import Testing
 
 @Suite("SolstoneRuntimeLayout")
 struct SolstoneRuntimeLayoutTests {
-    @Test func uvEnvironmentContainsAllFiveUVKeys() {
-        let environment = makeLayout().uvEnvironment()
-
-        for key in uvKeys {
-            #expect(environment[key] != nil)
-        }
-    }
-
-    @Test func uvEnvironmentMapsKeysToMatchingSubdirs() {
-        let layout = makeLayout()
-        let environment = layout.uvEnvironment()
-
-        #expect(environment["UV_PYTHON_INSTALL_DIR"] == layout.pythonDir.path)
-        #expect(environment["UV_PYTHON_CACHE_DIR"] == layout.pythonDir.path)
-        #expect(environment["UV_CACHE_DIR"] == layout.cacheDir.path)
-        #expect(environment["UV_TOOL_DIR"] == layout.toolsDir.path)
-        #expect(environment["UV_TOOL_BIN_DIR"] == layout.binDir.path)
-    }
-
-    @Test func uvEnvironmentPreservesInheritedPATHAndHOME() {
-        let inherited = ProcessInfo.processInfo.environment
-        let environment = makeLayout().uvEnvironment()
-
-        if let path = inherited["PATH"] {
-            #expect(environment["PATH"] == path)
-        }
-        if let home = inherited["HOME"] {
-            #expect(environment["HOME"] == home)
-        }
-    }
-
     @Test func ensureCreatedIsIdempotent() throws {
         let root = try makeTemporaryDirectory().appendingPathComponent("runtime", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
@@ -46,38 +15,21 @@ struct SolstoneRuntimeLayoutTests {
         try layout.ensureCreated()
         try layout.ensureCreated()
 
-        for dir in [layout.rootURL, layout.pythonDir, layout.cacheDir, layout.toolsDir, layout.binDir] {
+        for dir in [layout.rootURL, layout.binDir] {
             var isDirectory: ObjCBool = false
             #expect(FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDirectory))
             #expect(isDirectory.boolValue)
         }
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("python").path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("cache").path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("tools").path))
     }
 
     @Test func pathConstantsHaveStableSuffixes() {
         let layout = makeLayout()
 
-        #expect(layout.pythonDir.path.hasSuffix("/python"))
-        #expect(layout.cacheDir.path.hasSuffix("/cache"))
-        #expect(layout.toolsDir.path.hasSuffix("/tools"))
         #expect(layout.binDir.path.hasSuffix("/bin"))
-        #expect(layout.solBinary.path.hasSuffix("/bin/sol"))
         #expect(layout.journalBinary.path.hasSuffix("/bin/journal"))
-    }
-
-    @Test func bundledPythonURLResolvesInsideAppResources() {
-        let bundleURL = URL(fileURLWithPath: "/tmp/Solstone.app", isDirectory: true)
-
-        #expect(SolstoneRuntimeLayout.bundledPythonURL(bundleURL: bundleURL).path == "/tmp/Solstone.app/Contents/Resources/python/bin/python3.13")
-    }
-
-    private var uvKeys: [String] {
-        [
-            "UV_PYTHON_INSTALL_DIR",
-            "UV_PYTHON_CACHE_DIR",
-            "UV_CACHE_DIR",
-            "UV_TOOL_DIR",
-            "UV_TOOL_BIN_DIR"
-        ]
     }
 
     private func makeLayout() -> SolstoneRuntimeLayout {

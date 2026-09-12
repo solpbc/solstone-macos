@@ -31,9 +31,9 @@ struct JournalSetupRunnerTests {
         _ = try await runner.run(journalRoot: workspace.appendingPathComponent("journal", isDirectory: true))
 
         let layout = SolstoneRuntimeLayout(rootURL: runtimeRoot)
-        #expect(!FileManager.default.fileExists(atPath: layout.pythonDir.path))
-        #expect(!FileManager.default.fileExists(atPath: layout.cacheDir.path))
-        #expect(!FileManager.default.fileExists(atPath: layout.toolsDir.path))
+        #expect(!FileManager.default.fileExists(atPath: runtimeRoot.appendingPathComponent("python").path))
+        #expect(!FileManager.default.fileExists(atPath: runtimeRoot.appendingPathComponent("cache").path))
+        #expect(!FileManager.default.fileExists(atPath: runtimeRoot.appendingPathComponent("tools").path))
         let setup = try #require(subprocess.invocations.first { $0.arguments.first == "setup" })
         #expect(setup.executable == layout.journalBinary)
     }

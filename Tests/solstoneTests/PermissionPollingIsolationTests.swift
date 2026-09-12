@@ -85,7 +85,6 @@ struct PermissionPollingIsolationTests {
                 var config = AppConfig()
                 config.isScreenCaptureEnabled = true
                 config.isMicrophoneCaptureEnabled = true
-                config.hasConfirmedCaptureSources = true
                 return AppState.forSnapshot(
                     config: config,
                     recorder: recorder,
@@ -139,7 +138,6 @@ struct PermissionPollingIsolationTests {
                 var config = AppConfig()
                 config.isScreenCaptureEnabled = true
                 config.isMicrophoneCaptureEnabled = true
-                config.hasConfirmedCaptureSources = true
                 return AppState.forSnapshot(
                     config: config,
                     recorder: recorder,
@@ -310,7 +308,6 @@ struct PermissionPollingIsolationTests {
                 var config = AppConfig()
                 config.isScreenCaptureEnabled = true
                 config.isMicrophoneCaptureEnabled = true
-                config.hasConfirmedCaptureSources = true
                 return AppState.forSnapshot(
                     config: config,
                     recorder: evidenceRecorder,

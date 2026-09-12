@@ -12,7 +12,13 @@ import UpdateKit
 @MainActor
 struct UpdateNotificationPermissionsTests {
     @Test func permissionsAttentionWithoutUpdateDoesNotAnnounce() {
-        let state = AppState.forSnapshot(config: AppConfig(isScreenCaptureEnabled: true))
+        // Screen is the only source the owner wants, and macOS has not granted it — so there
+        // is no usable source and permissions genuinely need attention. Spelling the microphone
+        // out matters: it is on by default, and a granted second source would make this state
+        // an honest "running on the microphone" instead.
+        let state = AppState.forSnapshot(
+            config: AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: false)
+        )
         state.initialPermissionCheckComplete = true
         state.capture.publishScreenRecordingPermission(.notGranted)
         state.microphoneAuthorizationCause = .authorized

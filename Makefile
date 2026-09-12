@@ -1,6 +1,6 @@
-.PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
+.PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot integration-native install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal assemble-journal-app journal-app-unsigned bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
-        vendor-uv vendor-python vendor-wheelhouse generate-bundle-config check-versions supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-native-runtime journal-native-runtime-accepted brand-sync \
+        supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-native-runtime journal-native-runtime-accepted brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
 
 # Default goal when running bare `make` — build the project. brand-sync is
@@ -46,9 +46,9 @@ DMG_ICON               ?= solstone.app
 SPARKLE_ARTIFACT_DIR   ?= .build/artifacts/sparkle/Sparkle
 SPARKLE_FRAMEWORK      ?= $(SPARKLE_ARTIFACT_DIR)/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
 ENTITLEMENTS_PLIST     := Sources/solstone/entitlements.plist
-# App-only entitlements (adds the DP-keychain keychain-access-groups). Helpers like the
-# bundled python3.13 keep the base ENTITLEMENTS_PLIST — a profile-less helper signed with
-# the restricted keychain entitlements is SIGKILLed by amfi (exit 137).
+# App-only entitlements (adds the DP-keychain keychain-access-groups). Profile-less
+# bundled helpers keep the base ENTITLEMENTS_PLIST — a helper signed with the restricted
+# keychain entitlements is SIGKILLed by amfi (exit 137).
 APP_ENTITLEMENTS_PLIST := Sources/solstone/entitlements-app.plist
 # Local ad-hoc test builds only; never shipped; never referenced by any production
 # or CI target. ADHOC_SIGN_ID resolves to the optional stable dev-cert CN when present,
@@ -64,37 +64,6 @@ BUNDLE_CONFIGURATION ?= Release
 # swap in --build-system swiftbuild, which writes to .build/out/Products/Release instead.
 JOURNAL_RELEASE_APPLE_ARCH_FLAGS := --arch arm64 --arch arm64
 
-# uv vendoring
-UV_VERSION ?= 0.11.13
-UV_TARBALL_NAME := uv-aarch64-apple-darwin.tar.gz
-UV_RELEASE_URL_BASE ?= https://releases.astral.sh/github/uv/releases/download/$(UV_VERSION)
-UV_RELEASE_URL := $(UV_RELEASE_URL_BASE)/$(UV_TARBALL_NAME)
-UV_VENDOR_DIR := vendor
-UV_SHA256_FILE := $(UV_VENDOR_DIR)/uv-aarch64-apple-darwin.sha256
-UV_VENDOR_BINARY := $(UV_VENDOR_DIR)/uv
-
-# version pins for installer (consumed by BundleConfig)
-SOLSTONE_PIN_VERSION ?= 1.0.22
-SOLSTONE_MIN_VERSION ?= 1.0.22
-
-# python-build-standalone vendoring
-PYTHON_BUILD_STANDALONE_VERSION ?= 20260510
-PYTHON_VERSION ?= 3.13.13
-PYTHON_TARBALL_NAME := cpython-$(PYTHON_VERSION)+$(PYTHON_BUILD_STANDALONE_VERSION)-aarch64-apple-darwin-install_only.tar.gz
-PYTHON_RELEASE_URL_BASE ?= https://github.com/astral-sh/python-build-standalone/releases/download/$(PYTHON_BUILD_STANDALONE_VERSION)
-PYTHON_RELEASE_URL := $(PYTHON_RELEASE_URL_BASE)/$(PYTHON_TARBALL_NAME)
-PYTHON_VENDOR_DIR := vendor/python
-PYTHON_VENDOR_SHA_FILE := vendor/python-aarch64-apple-darwin.sha256
-
-# bundled backend wheelhouse
-SOLSTONE_SRC_DIR ?= ../solstone
-SOLSTONE_REF ?= v1.0.22
-WHEELHOUSE_DIR := vendor/solstone-wheelhouse
-WHEELHOUSE_MANIFEST := $(WHEELHOUSE_DIR)/MANIFEST.sha256
-WHEELHOUSE_PLATFORM_TAG ?= macosx_15_0_arm64
-WHEELHOUSE_ABI ?= cp313
-WHEELHOUSE_PYTHON_TAG ?= 3.13
-
 # journal.app carries the Rust-native distribution tree directly. Development
 # builds bind a clean source commit; shipping builds consume an already-accepted
 # archive by SHA-256. Both embed a provenance receipt beside the entrypoints.
@@ -103,6 +72,8 @@ JOURNAL_NATIVE_EXPECTED_COMMIT ?=
 JOURNAL_NATIVE_TARGET ?= macos-arm64
 JOURNAL_NATIVE_OUTPUT_DIR ?= .build/journal-native-output
 JOURNAL_NATIVE_RUNTIME_DIR ?= .build/journal-native-runtime
+# The released runtime every owner runs, embedded in the installed journal app.
+INSTALLED_JOURNAL_RUNTIME ?= /Applications/journal.app/Contents/Resources/solstone-runtime
 JOURNAL_NATIVE_PROVENANCE_RECEIPT ?= $(JOURNAL_NATIVE_RUNTIME_DIR)/journal-native-provenance.json
 JOURNAL_NATIVE_ACCEPTED_ARCHIVE ?=
 JOURNAL_NATIVE_ACCEPTED_SHA256 ?=
@@ -114,128 +85,6 @@ JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT ?=
 JOURNAL_NATIVE_MINISIGN ?= /opt/homebrew/bin/minisign
 JOURNAL_NATIVE_RUNTIME_TREE_MAP ?= .build/journal-native-runtime-tree.map
 JOURNAL_NATIVE_RUNTIME_ENTRY_PROVENANCE := journal.app/Contents/Resources/solstone_journal.bundle/Contents/Resources/Resources/runtime-entry-candidate-provenance.json
-
-check-versions:
-	@[ -n "$(SOLSTONE_PIN_VERSION)" ] || { echo "error: solstone pin version must not be empty"; exit 1; }
-	@printf '0.2.1\n%s\n' "$(SOLSTONE_MIN_VERSION)" | sort -V -C || { echo "error: solstone minimum version must be >= 0.2.1 (got $(SOLSTONE_MIN_VERSION))"; exit 1; }
-
-vendor-uv:
-	@mkdir -p "$(UV_VENDOR_DIR)"
-	@if [ -f "$(UV_VENDOR_BINARY)" ] && [ -f "$(UV_VENDOR_DIR)/$(UV_TARBALL_NAME)" ] && \
-	    (cd "$(UV_VENDOR_DIR)" && shasum -a 256 -c "$(notdir $(UV_SHA256_FILE))" >/dev/null 2>&1); then \
-	    echo "vendor: uv $(UV_VERSION) already present and sha matches"; \
-	else \
-	    echo "vendor: fetching uv $(UV_VERSION) from $(UV_RELEASE_URL)"; \
-	    rm -rf "$(UV_VENDOR_DIR)/uv-aarch64-apple-darwin" "$(UV_VENDOR_BINARY)" "$(UV_VENDOR_DIR)/$(UV_TARBALL_NAME)"; \
-	    curl --fail --location --retry 3 --retry-delay 2 --output "$(UV_VENDOR_DIR)/$(UV_TARBALL_NAME)" "$(UV_RELEASE_URL)"; \
-	    (cd "$(UV_VENDOR_DIR)" && shasum -a 256 -c "$(notdir $(UV_SHA256_FILE))") || { echo "error: uv tarball sha256 mismatch"; exit 1; }; \
-	    tar -xzf "$(UV_VENDOR_DIR)/$(UV_TARBALL_NAME)" -C "$(UV_VENDOR_DIR)"; \
-	    mv "$(UV_VENDOR_DIR)/uv-aarch64-apple-darwin/uv" "$(UV_VENDOR_BINARY)"; \
-	    chmod +x "$(UV_VENDOR_BINARY)"; \
-	    echo "vendor: uv $(UV_VERSION) extracted to $(UV_VENDOR_BINARY)"; \
-	fi
-
-vendor-python:
-	@mkdir -p "$(UV_VENDOR_DIR)"
-	@if [ -x "$(PYTHON_VENDOR_DIR)/bin/python3.13" ] && [ -f "$(UV_VENDOR_DIR)/$(PYTHON_TARBALL_NAME)" ] && \
-	    (cd "$(UV_VENDOR_DIR)" && shasum -a 256 -c "$(notdir $(PYTHON_VENDOR_SHA_FILE))" >/dev/null 2>&1); then \
-	    echo "vendor: python-build-standalone $(PYTHON_VERSION)+$(PYTHON_BUILD_STANDALONE_VERSION) already present and sha matches"; \
-	else \
-	    echo "vendor: fetching python-build-standalone $(PYTHON_VERSION)+$(PYTHON_BUILD_STANDALONE_VERSION) from $(PYTHON_RELEASE_URL)"; \
-	    rm -rf "$(PYTHON_VENDOR_DIR)" "$(UV_VENDOR_DIR)/$(PYTHON_TARBALL_NAME)"; \
-	    curl --fail --location --retry 3 --retry-delay 2 --output "$(UV_VENDOR_DIR)/$(PYTHON_TARBALL_NAME)" "$(PYTHON_RELEASE_URL)"; \
-	    (cd "$(UV_VENDOR_DIR)" && shasum -a 256 -c "$(notdir $(PYTHON_VENDOR_SHA_FILE))") || { echo "error: python-build-standalone tarball sha256 mismatch; re-pin intentionally before updating $(PYTHON_VENDOR_SHA_FILE)"; exit 1; }; \
-	    tar -xzf "$(UV_VENDOR_DIR)/$(PYTHON_TARBALL_NAME)" -C "$(UV_VENDOR_DIR)"; \
-	    [ -d "$(PYTHON_VENDOR_DIR)" ] || { echo "error: python-build-standalone did not extract to $(PYTHON_VENDOR_DIR)"; exit 1; }; \
-	    [ -x "$(PYTHON_VENDOR_DIR)/bin/python3.13" ] || { echo "error: bundled python missing executable"; exit 1; }; \
-	    [ -f "$(PYTHON_VENDOR_DIR)/lib/libpython3.13.dylib" ] || { echo "error: bundled python missing libpython3.13.dylib"; exit 1; }; \
-	    [ -d "$(PYTHON_VENDOR_DIR)/lib/python3.13/lib-dynload" ] || { echo "error: bundled python missing lib-dynload"; exit 1; }; \
-	    "$(PYTHON_VENDOR_DIR)/bin/python3.13" --version 2>&1 | grep -F "Python $(PYTHON_VERSION)" >/dev/null || { echo "error: bundled python reported wrong version"; exit 1; }; \
-	    echo "vendor: python-build-standalone $(PYTHON_VERSION)+$(PYTHON_BUILD_STANDALONE_VERSION) extracted to $(PYTHON_VENDOR_DIR)"; \
-	fi
-
-vendor-wheelhouse: check-versions vendor-uv vendor-python
-	@# wheel-macos signs+notarizes the helper inside the wheel; requires the sol-signing keychain unlocked and the sol-pbc-notary profile (bundle-dist orders unlock-signing/signing-check first).
-	@set -e; \
-	    if [ "$$(uname -s)" != "Darwin" ] || [ "$$(uname -m)" != "arm64" ]; then \
-	        echo "error: vendor-wheelhouse must run on a macOS arm64 host (pip evaluates dependency markers against the running host; mlx requires darwin+arm64)"; \
-	        exit 1; \
-	    fi; \
-	    if [ ! -d "$(SOLSTONE_SRC_DIR)/.git" ]; then \
-	        echo "error: SOLSTONE_SRC_DIR '$(SOLSTONE_SRC_DIR)' is not a git repo; set SOLSTONE_SRC_DIR=/path/to/solstone"; \
-	        exit 1; \
-	    fi; \
-	    git -C "$(SOLSTONE_SRC_DIR)" rev-parse --verify "$(SOLSTONE_REF)" >/dev/null 2>&1 || { echo "vendor: SOLSTONE_REF '$(SOLSTONE_REF)' not in $(SOLSTONE_SRC_DIR) yet; fetching tags from origin..."; git -C "$(SOLSTONE_SRC_DIR)" fetch --quiet --tags origin >/dev/null 2>&1 || true; }; \
-	    git -C "$(SOLSTONE_SRC_DIR)" rev-parse --verify "$(SOLSTONE_REF)" >/dev/null 2>&1 || { echo "error: SOLSTONE_REF '$(SOLSTONE_REF)' not found in $(SOLSTONE_SRC_DIR) (even after a tag fetch from origin)"; exit 1; }; \
-	    if python3 scripts/wheelhouse_helper.py verify-wheelhouse "$(WHEELHOUSE_DIR)" "$(SOLSTONE_PIN_VERSION)" >/dev/null 2>&1; then \
-	        echo "vendor: solstone wheelhouse $(SOLSTONE_PIN_VERSION) already present and verified"; \
-	        exit 0; \
-	    fi; \
-	    EXPORT_DIR="$$(mktemp -d -t solstone-export)"; \
-	    BUILD_DIR="$$(mktemp -d -t solstone-wheelhouse)"; \
-	    trap 'rm -rf "$$EXPORT_DIR" "$$BUILD_DIR"' EXIT; \
-	    echo "vendor: building solstone wheelhouse from $(SOLSTONE_SRC_DIR) at $(SOLSTONE_REF)"; \
-	    git clone --quiet --shared --no-checkout "$(SOLSTONE_SRC_DIR)" "$$EXPORT_DIR" || { echo "error: failed to clone $(SOLSTONE_SRC_DIR) for isolated build"; exit 1; }; \
-	    git -C "$$EXPORT_DIR" checkout --quiet --detach "$(SOLSTONE_REF)" || { echo "error: failed to check out $(SOLSTONE_REF) in isolated build"; exit 1; }; \
-	    PATH="$(abspath $(PYTHON_VENDOR_DIR))/bin:$$PATH" $(MAKE) -C "$$EXPORT_DIR" UV="$(abspath $(UV_VENDOR_BINARY))" wheel-macos || { echo "error: wheel-macos build failed for $(SOLSTONE_SRC_DIR) at $(SOLSTONE_REF)"; exit 1; }; \
-	    BUILT_COUNT="$$(find "$$EXPORT_DIR/dist" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
-	    [ "$$BUILT_COUNT" = "1" ] || { echo "error: expected exactly one built solstone wheel in $$EXPORT_DIR/dist, found $$BUILT_COUNT"; exit 1; }; \
-	    BUILT_WHEEL="$$(find "$$EXPORT_DIR/dist" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | head -n 1)"; \
-	    BUILT_VERSION="$$(python3 scripts/wheelhouse_helper.py wheel-version "$$BUILT_WHEEL")"; \
-	    [ "$$BUILT_VERSION" = "$(SOLSTONE_PIN_VERSION)" ] || { echo "error: sibling backend version $$BUILT_VERSION != pinned $(SOLSTONE_PIN_VERSION) — re-pin or update sibling"; exit 1; }; \
-	    rm -rf "$(WHEELHOUSE_DIR)"; \
-	    mkdir -p "$(WHEELHOUSE_DIR)"; \
-	    mv "$$BUILT_WHEEL" "$(WHEELHOUSE_DIR)/"; \
-	    REQS="$$BUILD_DIR/requirements.txt"; \
-	    (cd "$$EXPORT_DIR" && "$(abspath $(UV_VENDOR_BINARY))" export --frozen --no-dev --package solstone-journal --no-emit-workspace --no-editable --python "$(abspath $(PYTHON_VENDOR_DIR))/bin/python3.13" -o "$$REQS") || { echo "error: uv export failed"; exit 1; }; \
-	    "$(PYTHON_VENDOR_DIR)/bin/python3.13" -m pip download -r "$$REQS" --only-binary=:all: --dest "$(WHEELHOUSE_DIR)" --platform "$(WHEELHOUSE_PLATFORM_TAG)" --python-version "$(WHEELHOUSE_PYTHON_TAG)" --implementation cp --abi "$(WHEELHOUSE_ABI)" || { echo "error: pip wheel download failed"; exit 1; }; \
-	    LEAF_BUILD_DIR="$$BUILD_DIR/leaf"; \
-	    mkdir -p "$$LEAF_BUILD_DIR"; \
-	    (cd "$$EXPORT_DIR" && "$(abspath $(UV_VENDOR_BINARY))" build --package solstone-journal --wheel --out-dir "$$LEAF_BUILD_DIR") || { echo "error: solstone-journal wheel build failed"; exit 1; }; \
-	    LEAF_WHEEL="$$(find "$$LEAF_BUILD_DIR" -maxdepth 1 -type f -name 'solstone_journal-$(SOLSTONE_PIN_VERSION)-*.whl' | head -n 1)"; \
-	    [ -n "$$LEAF_WHEEL" ] || { echo "error: solstone-journal wheel not produced for $(SOLSTONE_PIN_VERSION)"; exit 1; }; \
-	    mv "$$LEAF_WHEEL" "$(WHEELHOUSE_DIR)/"; \
-	    MODELS_BUILD_DIR="$$BUILD_DIR/models"; \
-	    mkdir -p "$$MODELS_BUILD_DIR"; \
-	    (cd "$$EXPORT_DIR" && "$(abspath $(UV_VENDOR_BINARY))" build --package solstone-journal-models --wheel --out-dir "$$MODELS_BUILD_DIR") || { echo "error: solstone journal models wheel build failed"; exit 1; }; \
-	    MODELS_WHEEL="$$(find "$$MODELS_BUILD_DIR" -maxdepth 1 -type f -name 'solstone_journal_models-*.whl' | head -n 1)"; \
-	    [ -n "$$MODELS_WHEEL" ] || { echo "error: solstone journal models wheel not produced"; exit 1; }; \
-	    mv "$$MODELS_WHEEL" "$(WHEELHOUSE_DIR)/"; \
-	    PINNED_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
-	    [ "$$PINNED_COUNT" = "1" ] || { echo "error: expected exactly one solstone-$(SOLSTONE_PIN_VERSION)-*.whl in $(WHEELHOUSE_DIR)"; exit 1; }; \
-	    LEAF_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone_journal-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
-	    [ "$$LEAF_COUNT" = "1" ] || { echo "error: expected exactly one solstone_journal-$(SOLSTONE_PIN_VERSION)-*.whl in $(WHEELHOUSE_DIR)"; exit 1; }; \
-	    MODELS_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone_journal_models-*.whl' | wc -l | tr -d ' ')"; \
-	    [ "$$MODELS_COUNT" = "1" ] || { echo "error: expected exactly one solstone_journal_models-*.whl in $(WHEELHOUSE_DIR)"; exit 1; }; \
-	    "$(PYTHON_VENDOR_DIR)/bin/python3.13" -m pip download "solstone-core==$(SOLSTONE_PIN_VERSION)" --no-deps --only-binary=:all: --dest "$(WHEELHOUSE_DIR)" --platform "$(WHEELHOUSE_PLATFORM_TAG)" --python-version "$(WHEELHOUSE_PYTHON_TAG)" --implementation cp --abi "$(WHEELHOUSE_ABI)" || { echo "error: solstone-core wheel download failed"; exit 1; }; \
-	    CORE_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone_core-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
-	    [ "$$CORE_COUNT" = "1" ] || { echo "error: expected exactly one solstone_core-$(SOLSTONE_PIN_VERSION)-*.whl in $(WHEELHOUSE_DIR)"; exit 1; }; \
-	    "$(PYTHON_VENDOR_DIR)/bin/python3.13" -m pip download "solstone-core-speakers-analyze==$(SOLSTONE_PIN_VERSION)" --no-deps --only-binary=:all: --dest "$(WHEELHOUSE_DIR)" --platform "$(WHEELHOUSE_PLATFORM_TAG)" --python-version "$(WHEELHOUSE_PYTHON_TAG)" --implementation cp --abi "$(WHEELHOUSE_ABI)" || { echo "error: solstone-core-speakers-analyze wheel download failed"; exit 1; }; \
-	    SPEAKERS_ANALYZE_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name 'solstone_core_speakers_analyze-$(SOLSTONE_PIN_VERSION)-*.whl' | wc -l | tr -d ' ')"; \
-	    [ "$$SPEAKERS_ANALYZE_COUNT" = "1" ] || { echo "error: expected exactly one solstone_core_speakers_analyze-$(SOLSTONE_PIN_VERSION)-*.whl in $(WHEELHOUSE_DIR)"; exit 1; }; \
-	    WHEEL_COUNT="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f -name '*.whl' | wc -l | tr -d ' ')"; \
-	    [ "$$WHEEL_COUNT" -gt 1 ] || { echo "error: dependency wheel download produced no dependency wheels"; exit 1; }; \
-	    NON_WHEELS="$$(find "$(WHEELHOUSE_DIR)" -maxdepth 1 -type f ! -name '*.whl' -print)"; \
-	    [ -z "$$NON_WHEELS" ] || { echo "error: wheelhouse contains non-wheel payload files"; echo "$$NON_WHEELS"; exit 1; }; \
-	    RUNTIME_DIRS="$$(find "$(WHEELHOUSE_DIR)" -mindepth 1 -type d \( -name '__pycache__' -o -name '.venv' -o -name 'venv' -o -name 'cache' -o -name 'model' -o -name 'models' \) -print)"; \
-	    [ -z "$$RUNTIME_DIRS" ] || { echo "error: wheelhouse contains runtime/cache/model dirs"; echo "$$RUNTIME_DIRS"; exit 1; }; \
-	    (cd "$(WHEELHOUSE_DIR)" && shasum -a 256 *.whl > "$(notdir $(WHEELHOUSE_MANIFEST))"); \
-	    python3 scripts/wheelhouse_helper.py verify-wheelhouse "$(WHEELHOUSE_DIR)" "$(SOLSTONE_PIN_VERSION)" || { echo "error: wheelhouse verification failed"; exit 1; }; \
-	    echo "vendor: solstone wheelhouse $(SOLSTONE_PIN_VERSION) built at $(WHEELHOUSE_DIR)"
-
-generate-bundle-config: check-versions
-	@SHA="$$(awk '{print $$1; exit}' "$(UV_SHA256_FILE)")"; \
-	    [ -n "$$SHA" ] || { echo "error: could not read sha from $(UV_SHA256_FILE)"; exit 1; }; \
-	    { \
-	        printf '%s\n' '/// machine-generated by `make generate-bundle-config`; do not edit.'; \
-	        printf '%s\n' 'public enum BundleConfig {'; \
-	        printf '    public static let solstonePinVersion = "%s"\n' "$(SOLSTONE_PIN_VERSION)"; \
-	        printf '    public static let solstoneMinVersion = "%s"\n' "$(SOLSTONE_MIN_VERSION)"; \
-	        printf '    public static let bundledUVVersion = "%s"\n' "$(UV_VERSION)"; \
-	        printf '    public static let bundledPythonBuild = "%s"\n' "$(PYTHON_BUILD_STANDALONE_VERSION)"; \
-	        printf '%s\n' '}'; \
-	    } > Sources/JournalRuntime/BundleConfig.swift
-	@echo "generated: Sources/JournalRuntime/BundleConfig.swift"
 
 # Re-vendor brand SVGs from the canonical source. `make ci` gates on the
 # committed *generated* output staying current with these SVGs (via
@@ -360,6 +209,27 @@ ax-contract:
 
 ci:
 	@./scripts/run-ci.sh
+
+# On-demand integration tier: the apps' real Journal-runtime code against a
+# native journal runtime, inside an isolated home. Opt-in only; `make ci`
+# compiles these suites and lists them as skipped. Runtime selection, in order:
+# SOLSTONE_NATIVE_RUNTIME_DIR, the staged accepted runtime (a release clone has
+# one after `make journal-native-runtime-accepted ...`), then the runtime inside
+# the installed journal app. The first output line names what actually ran: the
+# version and a digest over the whole runtime tree (the launcher binaries are
+# identical across releases, so a single file's digest would not tell them apart).
+# Not a release gate: signed-artifact, Sparkle and relay acceptance stay on the
+# release rig.
+integration-native:
+	@RUNTIME="$${SOLSTONE_NATIVE_RUNTIME_DIR:-}"; \
+		if [ -z "$$RUNTIME" ]; then \
+			if [ -x "$(JOURNAL_NATIVE_RUNTIME_DIR)/bin/journal" ]; then RUNTIME="$(JOURNAL_NATIVE_RUNTIME_DIR)"; \
+			elif [ -x "$(INSTALLED_JOURNAL_RUNTIME)/bin/journal" ]; then RUNTIME="$(INSTALLED_JOURNAL_RUNTIME)"; \
+			else echo "error: no native journal runtime: stage one, install journal.app, or set SOLSTONE_NATIVE_RUNTIME_DIR"; exit 1; fi; \
+		fi; \
+		test -x "$$RUNTIME/bin/journal" || { echo "error: no journal binary at $$RUNTIME/bin/journal"; exit 1; }; \
+		echo "integration-native: runtime $$("$$RUNTIME/bin/journal" --version) tree-sha256=$$(cd "$$RUNTIME" && find bin lib share -type f | sort | xargs shasum -a 256 | shasum -a 256 | cut -d' ' -f1) at $$RUNTIME"; \
+		SOLSTONE_NATIVE_INTEGRATION=1 SOLSTONE_NATIVE_RUNTIME_DIR="$$RUNTIME" swift test --filter NativeIntegration
 
 # Render view snapshots
 snapshot:
@@ -562,24 +432,7 @@ bundle-dist: unlock-signing signing-check $(BUNDLE_BUILD_TARGET)
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		--entitlements "$(APP_ENTITLEMENTS_PLIST)" \
 		solstone.app
-	@VERIFY_OUT="$$(mktemp -t solstone-codesign-verify)"; \
-		if codesign --verify --strict --deep --verbose=2 solstone.app >"$$VERIFY_OUT" 2>&1; then \
-			rm -f "$$VERIFY_OUT"; \
-		elif grep -Eq '(__pycache__|\.pyc)' "$$VERIFY_OUT"; then \
-			cat "$$VERIFY_OUT"; \
-			echo "codesign verify failed on python bytecode; removing __pycache__ and re-sealing"; \
-			rm -rf solstone.app/Contents/Resources/python/lib/python3.13/encodings/__pycache__; \
-			codesign --force --options runtime --timestamp \
-				--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-				--entitlements "$(APP_ENTITLEMENTS_PLIST)" \
-				solstone.app; \
-			codesign --verify --strict --deep --verbose=2 solstone.app; \
-			rm -f "$$VERIFY_OUT"; \
-		else \
-			cat "$$VERIFY_OUT"; \
-			rm -f "$$VERIFY_OUT"; \
-			exit 1; \
-		fi
+	@codesign --verify --strict --deep --verbose=2 solstone.app
 	@test -f solstone.app/Contents/embedded.provisionprofile || { echo "error: embedded.provisionprofile missing from bundle"; exit 1; }
 	@codesign -d --entitlements - --xml solstone.app 2>/dev/null | plutil -p - 2>/dev/null | grep -q '7QCG8V4M6H.app.solstone.observer.spl' || { echo "error: keychain-access-group entitlement missing from signed app (DP keychain would -34018)"; exit 1; }
 	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
@@ -969,27 +822,20 @@ release-dmg-both:
 	@echo "   journal: $(JOURNAL_DMG_NAME)"
 	@echo "   both:    $(BOTH_DMG_NAME)"
 
-supply-chain-check: vendor-uv vendor-python generate-bundle-config
+supply-chain-check:
 	@echo "── supply chain checklist ──"
-	@echo "uv version: $(UV_VERSION)"
-	@echo "uv release url: $(UV_RELEASE_URL)"
-	@echo "uv sha256: $$(awk '{print $$1; exit}' "$(UV_SHA256_FILE)")"
-	@echo "python-build-standalone release: $(PYTHON_BUILD_STANDALONE_VERSION)"
-	@echo "python version: $(PYTHON_VERSION)"
-	@echo "python release url: $(PYTHON_RELEASE_URL)"
-	@echo "python sha256: $$(awk '{print $$1; exit}' "$(PYTHON_VENDOR_SHA_FILE)")"
-	@echo "── BundleConfig.swift ──"
-	@cat Sources/JournalRuntime/BundleConfig.swift
+	@test -f THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing"; exit 1; }
+	@grep -qiE '^##[[:space:]]+Sparkle' THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing Sparkle entry"; exit 1; }
+	@grep -qiE '^##[[:space:]]+swift-crypto' THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing swift-crypto entry"; exit 1; }
+	@if grep -qiE '^##[[:space:]]+(uv|python-build-standalone)$$' THIRD_PARTY_NOTICES.md; then \
+	    echo "error: THIRD_PARTY_NOTICES.md still lists the retired python-era runtime"; exit 1; \
+	fi
 	@echo "── native journal runtime ──"
 	@if [ -x journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal ]; then \
 	    codesign -dvvv journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal 2>&1 || true; \
 	else \
 	    echo "(not built yet — run make bundle-dist-journal to assemble the signed native runtime)"; \
 	fi
-	@echo "── THIRD_PARTY_NOTICES.md ──"
-	@test -f THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing"; exit 1; }
-	@grep -qiE '^##[[:space:]]+uv' THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing uv entry"; exit 1; }
-	@grep -qiE '^##[[:space:]]+python-build-standalone' THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing python-build-standalone entry"; exit 1; }
 	@echo "supply-chain checklist: ok"
 
 release-dmg-smoke:

@@ -135,6 +135,74 @@ struct AppConfigMigrationTests {
         #expect(config.microphonePriority[0].isDisabled == false)
     }
 
+    // MARK: - Capture sources
+
+    // 2.0.6 read an absent key as `false`, so every install that upgraded into it stopped
+    // capturing. An absent key means "never chosen", which is on.
+    @Test func absentCaptureSourceKeysLoadAsEnabled() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+
+        let loaded = AppConfig.load()
+        #expect(loaded.isScreenCaptureEnabled)
+        #expect(loaded.isMicrophoneCaptureEnabled)
+        #expect(loaded.selectedSources == [.screen, .microphone])
+    }
+
+    @Test func explicitlyDisabledCaptureSourcesSurviveLoad() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+
+        var config = AppConfig()
+        config.isScreenCaptureEnabled = false
+        try config.save()
+
+        let loaded = AppConfig.load()
+        #expect(!loaded.isScreenCaptureEnabled)
+        #expect(loaded.isMicrophoneCaptureEnabled)
+    }
+
+    // A 2.0.6 install that saved its config persisted both sources as off, so reading an
+    // absent key as on cannot reach it. The one-shot repair does, exactly once.
+    @Test func reseedTurnsBothSourcesBackOnExactlyOnce() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+
+        var config = AppConfig()
+        config.isScreenCaptureEnabled = false
+        config.isMicrophoneCaptureEnabled = false
+        try config.save()
+
+        var repaired = AppConfig.load()
+        repaired.reseedCaptureSourcesOnIfNeeded()
+        #expect(repaired.isScreenCaptureEnabled)
+        #expect(repaired.isMicrophoneCaptureEnabled)
+        #expect(AppConfig.load().selectedSources == [.screen, .microphone])
+
+        // A later deliberate both-off choice is the owner's, and the repair never fires again.
+        var ownerChoice = AppConfig.load()
+        ownerChoice.isScreenCaptureEnabled = false
+        ownerChoice.isMicrophoneCaptureEnabled = false
+        try ownerChoice.save()
+        ownerChoice.reseedCaptureSourcesOnIfNeeded()
+        #expect(!ownerChoice.isScreenCaptureEnabled)
+        #expect(!ownerChoice.isMicrophoneCaptureEnabled)
+    }
+
+    @Test func reseedLeavesASingleDisabledSourceAlone() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+
+        var config = AppConfig()
+        config.isScreenCaptureEnabled = false
+        try config.save()
+
+        var loaded = AppConfig.load()
+        loaded.reseedCaptureSourcesOnIfNeeded()
+        #expect(!loaded.isScreenCaptureEnabled)
+        #expect(loaded.isMicrophoneCaptureEnabled)
+    }
+
     private func clearServiceDefaults() {
         for key in ["serverURL", "serverKey", "serviceMode"] {
             UserDefaults.standard.removeObject(forKey: key)
@@ -147,6 +215,7 @@ struct AppConfigMigrationTests {
             "didReseedNotificationPreference",
             "solInitiatedChatNotificationsEnabled",
             "didReseedOptInMicrophones",
+            "didReseedCaptureSourcesOn",
             "localRetentionMB"
         ] {
             UserDefaults.standard.removeObject(forKey: key)

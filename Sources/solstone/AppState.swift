@@ -205,8 +205,8 @@ public final class AppState {
             return UICopy.sourceStatus(captureManager.activeSources, isPaused: isPaused)
         }
         if config.selectedSources.isEmpty { return UICopy.SOURCES_NONE }
-        if availableSelectedSources.isEmpty { return UICopy.SOURCES_UNAVAILABLE }
-        return UICopy.SOURCES_OFF
+        if availableSelectedSources.isEmpty { return UICopy.SOURCES_NONE_GRANTED }
+        return UICopy.SOURCES_STARTING
     }
 
     public var captureSourceNotice: String? {
@@ -886,15 +886,6 @@ public final class AppState {
                     enabled: currentConfig.enabledMicrophoneUIDs
                 )
             },
-            hasConfirmedSourceSelection: { [captureTarget, config] in
-                (captureTarget.state?.config ?? config).hasConfirmedCaptureSources
-            },
-            confirmSourceSelection: { [captureTarget] in
-                guard let state = captureTarget.state else { return }
-                var config = state.config
-                config.hasConfirmedCaptureSources = true
-                state.updateConfig(config)
-            },
             bannerSink: { [captureTarget] message in
                 captureTarget.state?.errorMessage = message
             },
@@ -958,6 +949,7 @@ public final class AppState {
             .filter { $0.isOptInOnlyMicrophone }
             .map { $0.uid })
         self.config.reseedOptInOnlyMicrophonesIfNeeded(connectedOptInOnlyUIDs: connectedOptInOnlyUIDs)
+        self.config.reseedCaptureSourcesOnIfNeeded()
 
         // Sync microphone priority list with available devices
         syncMicrophonePriorityList()
@@ -1182,15 +1174,6 @@ public final class AppState {
                     enabled: currentConfig.enabledMicrophoneUIDs
                 )
             },
-            hasConfirmedSourceSelection: { [captureTarget, config] in
-                (captureTarget.state?.config ?? config).hasConfirmedCaptureSources
-            },
-            confirmSourceSelection: { [captureTarget] in
-                guard let state = captureTarget.state else { return }
-                var config = state.config
-                config.hasConfirmedCaptureSources = true
-                state.updateConfig(config)
-            },
             bannerSink: { [captureTarget] message in
                 captureTarget.state?.errorMessage = message
             },
@@ -1318,6 +1301,40 @@ public final class AppState {
 
     public func toggleRecording() async {
         await capture.toggleRecording()
+    }
+
+    /// Brings a running session in line with the owner's current source switches.
+    ///
+    /// A session freezes the sources it actually started with, so a switch flipped mid-session
+    /// needs the session rebuilt to take effect. That rebuild is ours to do — the owner flipped
+    /// a switch, they did not ask to stop and restart their capture.
+    public func applySelectedSourcesToRunningSession() async {
+        if !config.selectedSources.isEmpty {
+            capture.clearExplicitStop()
+        }
+
+        guard isRecording || isPaused else {
+            // Not running. Start now if a source is already usable; if the owner turned one on
+            // but macOS hasn't granted it yet, the latch is clear above, so the permission poll
+            // picks it up the moment the grant lands.
+            if !availableSelectedSources.isEmpty {
+                await startRecording(reason: .user)
+            }
+            return
+        }
+
+        let desired = availableSelectedSources
+        guard desired != captureManager.activeSources else { return }
+
+        let wasPaused = isPaused
+        await stopRecording(reason: .user)
+
+        guard !desired.isEmpty else { return }
+
+        await startRecording(reason: .user)
+        if wasPaused {
+            pauseManager.pause(for: .indefinite)
+        }
     }
 
     private func configureJournalServicesIfNeeded() {

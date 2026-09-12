@@ -354,6 +354,100 @@ struct SnapshotTests {
     private let settingsSize = CGSize(width: 800, height: 560)
     private let emptinessThreshold = 0.95  // blank-pane regressions (5fd16e5) rendered ~99% near-white; healthy snapshots stay below ~85%
 
+    // MARK: - Capture sources
+
+    @Test func settingsSourcesBothOn() throws {
+        let state = AppState.forSnapshot()
+        markPermissionsReady(state)
+        state.isRecording = true
+        state.captureManager.seedRecordingForTesting(
+            currentSegment: FakeCaptureSegment(outputDirectory: FileManager.default.temporaryDirectory),
+            sources: .all
+        )
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .sources, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "settings-sources-both-on.png"
+        )
+    }
+
+    @Test func settingsSourcesMicrophoneOnly() throws {
+        let state = AppState.forSnapshot(
+            config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: true)
+        )
+        markPermissionsReady(state)
+        state.isRecording = true
+        state.captureManager.seedRecordingForTesting(
+            currentSegment: FakeCaptureSegment(outputDirectory: FileManager.default.temporaryDirectory),
+            sources: .microphone
+        )
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .sources, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "settings-sources-microphone-only.png"
+        )
+    }
+
+    @Test func settingsSourcesBothOff() throws {
+        let state = AppState.forSnapshot(
+            config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false)
+        )
+        markPermissionsReady(state)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .sources, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "settings-sources-both-off.png"
+        )
+    }
+
+    // The screen the founder was looking at: everything granted, nothing running.
+    @Test func settingsStatusBothSourcesOff() throws {
+        let state = AppState.forSnapshot(
+            config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false)
+        )
+        markPermissionsReady(state)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .status, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "settings-status-both-sources-off.png"
+        )
+    }
+
+    @Test func menuBothSourcesOff() throws {
+        let state = AppState.forSnapshot(
+            config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false)
+        )
+        markPermissionsReady(state)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            MenuContent(appState: state, updateController: updateController),
+            size: menuSize,
+            to: "menu-both-sources-off.png"
+        )
+    }
+
+    @Test func menuObservingMicrophoneOnly() throws {
+        let state = AppState.forSnapshot(
+            config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: true)
+        )
+        markPermissionsReady(state)
+        state.isRecording = true
+        state.captureManager.seedRecordingForTesting(
+            currentSegment: FakeCaptureSegment(outputDirectory: FileManager.default.temporaryDirectory),
+            sources: .microphone
+        )
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            MenuContent(appState: state, updateController: updateController),
+            size: menuSize,
+            to: "menu-observing-microphone-only.png"
+        )
+    }
+
     @Test func settingsObserver() throws {
         let state = AppState.forSnapshot()
         let updateController = makeSnapshotUpdateController()

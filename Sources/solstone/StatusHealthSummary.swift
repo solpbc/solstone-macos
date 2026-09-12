@@ -19,11 +19,33 @@ internal enum StatusDotSeverity: Equatable, Sendable {
     }
 }
 
+/// The single recovery action a health callout may carry. A callout the owner can do
+/// nothing with is noise, so a non-green verdict names the one place that fixes it.
+internal struct StatusHealthAction: Equatable, Sendable {
+    let label: String
+    let settingsTab: String
+}
+
 internal struct StatusHealthSummary: Equatable, Sendable {
     let severity: StatusDotSeverity
     let title: String
     let subtitle: String?
     let axValue: String
+    let action: StatusHealthAction?
+
+    init(
+        severity: StatusDotSeverity,
+        title: String,
+        subtitle: String?,
+        axValue: String,
+        action: StatusHealthAction? = nil
+    ) {
+        self.severity = severity
+        self.title = title
+        self.subtitle = subtitle
+        self.axValue = axValue
+        self.action = action
+    }
 }
 
 internal func journalHost(_ serverURL: String?) -> String {
@@ -77,8 +99,37 @@ extension StatusHealthSummary {
         lastDeliveryOutcome: LastJournalDeliveryOutcome,
         serverURL: String?,
         now: Date,
+        selectedSources: CaptureSources = .all,
+        permittedSources: CaptureSources = .all,
         setupVerdict: SetupGroupVerdict? = nil
     ) -> StatusHealthSummary {
+        // The owner turning every source off is a choice, not a fault — but it is also the one
+        // state in which nothing reaches the journal at all, so it leads the card and says why.
+        // It outranks the setup rollup below, which reads green precisely BECAUSE an unselected
+        // source cannot fail a setup check.
+        if !isRecording, !isPaused, selectedSources.isEmpty {
+            return .init(
+                severity: .calm,
+                title: UICopy.SOURCES_NONE,
+                subtitle: UICopy.SOURCES_NONE_REASON,
+                axValue: "sources_off",
+                action: StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources")
+            )
+        }
+
+        if !isRecording, !isPaused, selectedSources.intersection(permittedSources).isEmpty {
+            return .init(
+                severity: .attention,
+                title: UICopy.SOURCES_NONE_GRANTED,
+                subtitle: UICopy.SOURCES_GRANT_OR_CHANGE,
+                axValue: "sources_unavailable",
+                action: StatusHealthAction(
+                    label: UICopy.SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS,
+                    settingsTab: "permissions"
+                )
+            )
+        }
+
         let operational = makeOperational(
             serviceMode: serviceMode,
             isRecording: isRecording,
@@ -264,11 +315,11 @@ extension StatusHealthSummary {
     ) -> StatusHealthSummary? {
         if !isRecording {
             return StatusHealthSummary(
-                severity: .warn,
-                title: "solstone is off",
+                severity: .calm,
+                title: UICopy.MENUBAR_STARTING,
                 subtitle: isBundled
-                    ? "your journal is fine. turn solstone back on to keep building memory"
-                    : "nothing is reaching \(host) while solstone is off",
+                    ? "your journal is fine"
+                    : "nothing is reaching \(host) yet",
                 axValue: "off"
             )
         }

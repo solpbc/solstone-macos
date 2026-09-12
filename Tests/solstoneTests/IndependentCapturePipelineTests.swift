@@ -247,12 +247,9 @@ struct IndependentCapturePipelineTests {
         #expect(state.permissionsAreDone)
     }
 
-    @Test func firstSourceChoiceWaitsForExplicitStart() async throws {
-        var confirmed = false
+    @Test func aSelectedPermittedSourceStartsWithoutAnExplicitStart() async throws {
         let starts = LockedCounter()
         let (coordinator, root) = try makeCoordinator(
-            hasConfirmedSourceSelection: { confirmed },
-            confirmSourceSelection: { confirmed = true },
             configProvider: { (sources: [.microphone], disabled: [], enabled: []) },
             startOperation: { _, _, _ in starts.increment(); return .committed },
             screenPermissionProvider: grantedScreenPermissionProvider()
@@ -260,10 +257,50 @@ struct IndependentCapturePipelineTests {
         defer { try? FileManager.default.removeItem(at: root) }
         coordinator.microphoneAuthorizationReader = { .authorized }
         await coordinator.checkPermissionsAndAutoStart()
-        #expect(starts.count == 0)
-        await coordinator.startRecording(reason: .user)
-        #expect(confirmed)
         #expect(starts.count == 1)
+    }
+
+    // Turning a source back on must survive the permission arriving later. Without this the
+    // owner turns the microphone on before granting it, grants it in System Settings, and the
+    // poll refuses to auto-start forever with nothing on screen to press.
+    @Test func enablingASourceClearsAnExplicitStopBeforeThePermissionArrives() async throws {
+        let starts = LockedCounter()
+        var permitted = false
+        let (coordinator, root) = try makeCoordinator(
+            configProvider: { (sources: [.microphone], disabled: [], enabled: []) },
+            startOperation: { _, _, _ in starts.increment(); return .committed },
+            screenPermissionProvider: grantedScreenPermissionProvider()
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.microphoneAuthorizationReader = { permitted ? .authorized : .denied }
+
+        _ = await coordinator.stopRecording(reason: .user)
+        await coordinator.checkPermissionsAndAutoStart()
+        #expect(starts.count == 0)
+
+        // The owner turns the source on while it is still ungranted.
+        coordinator.clearExplicitStop()
+        await coordinator.checkPermissionsAndAutoStart()
+        #expect(starts.count == 0)
+
+        // The grant lands.
+        permitted = true
+        await coordinator.checkPermissionsAndAutoStart()
+        #expect(starts.count == 1)
+    }
+
+    @Test func anExplicitStopStillSurvivesPermissionPolling() async throws {
+        let starts = LockedCounter()
+        let (coordinator, root) = try makeCoordinator(
+            configProvider: { (sources: [.microphone], disabled: [], enabled: []) },
+            startOperation: { _, _, _ in starts.increment(); return .committed },
+            screenPermissionProvider: grantedScreenPermissionProvider()
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.microphoneAuthorizationReader = { .authorized }
+        _ = await coordinator.stopRecording(reason: .user)
+        await coordinator.checkPermissionsAndAutoStart()
+        #expect(starts.count == 0)
     }
 
     @Test(arguments: [false, true])
@@ -389,8 +426,6 @@ struct IndependentCapturePipelineTests {
     private func makeCoordinator(
         pauseManager: PauseManager = PauseManager(),
         isTerminating: @escaping CaptureCoordinator.IsTerminatingProvider = { false },
-        hasConfirmedSourceSelection: @escaping @MainActor () -> Bool = { true },
-        confirmSourceSelection: @escaping @MainActor () -> Void = {},
         configProvider: @escaping CaptureCoordinator.CaptureConfigProvider = {
             (sources: .all, disabled: Set<String>(), enabled: Set<String>())
         },
@@ -407,8 +442,6 @@ struct IndependentCapturePipelineTests {
             audioDeviceMonitor: AudioDeviceMonitor(startListening: false),
             isTerminating: isTerminating,
             configProvider: configProvider,
-            hasConfirmedSourceSelection: hasConfirmedSourceSelection,
-            confirmSourceSelection: confirmSourceSelection,
             bannerSink: bannerSink,
             startOperation: startOperation,
             screenPermissionProvider: screenPermissionProvider,
