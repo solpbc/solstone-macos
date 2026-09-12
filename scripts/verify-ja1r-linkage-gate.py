@@ -1432,11 +1432,15 @@ def verify_coordinator_tier_b(tier_b, filename, tier_b_identity, landing_verify_
         raise GateFailure(
             f"{landing_label}.matching_artifacts is {matching_artifacts!r}, expected 1"
         )
-    if landing["last_segment"] != tier_b_identity["segment"]:
-        raise GateFailure(
-            f"{landing_label}.last_segment is {landing['last_segment']!r}, "
-            f"expected {tier_b_identity['segment']!r}"
-        )
+    # This is the stream-wide tail, not the independently matched fixture.
+    # Other queued uploads may land later; identity is bound by expected and
+    # the coordinator's exact canonical-path, manifest and digest proof above.
+    last_segment = landing["last_segment"]
+    if last_segment is not None and (
+        not isinstance(last_segment, str)
+        or re.fullmatch(r"[0-9]{6}_[0-9]+", last_segment) is None
+    ):
+        raise GateFailure(f"{landing_label}.last_segment is not a segment or null")
 
     landing_observed = require_iso_utc(
         landing["observed_at"], f"{landing_label}.observed_at"

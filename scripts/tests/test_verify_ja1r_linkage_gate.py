@@ -1101,11 +1101,57 @@ class SPLLinkCoordinatorReport(GateTestCase):
                 lambda r: set_path(r, "lane.tier_b.payload_sha256", "0" * 64),
             ),
             ("nested bytes", lambda r: set_path(r, "lane.tier_b.payload_bytes", 84)),
-            ("last segment", lambda r: set_path(r, "tier_b.landing.last_segment", "184501_1")),
         )
         for label, mutate in cases:
             with self.subTest(label=label):
                 self.assert_spl_mutation_refused(mutate)
+
+    def test_tier_b_last_segment_is_an_observation_not_fixture_identity(self):
+        # Another queued upload can finish after the run's exact payload lands.
+        # The coordinator also permits an absent stream-tail observation.
+        for profile in ("sol", "journal", "paired"):
+            for last_segment in ("022000_299", None):
+                with self.subTest(profile=profile, last_segment=last_segment):
+                    self.reports = self.root / f"reports-{profile}-{last_segment}"
+                    self.reports.mkdir()
+                    self.write_set(profile)
+                    report = self.read_spl()
+                    report["tier_b"]["landing"].update(
+                        last_segment=last_segment, stream_sequence_after=106
+                    )
+                    self.write_spl(report)
+                    code, out, err = self.run_gate(profile)
+                    self.assertEqual(code, 0, err)
+                    self.assertEqual(json.loads(out)["result"], "PASS")
+
+    def test_tier_b_last_segment_observation_must_match_its_schema(self):
+        for value in ("", "not-a-segment", "../022000_299", 106, True, [], {}):
+            with self.subTest(value=value):
+                err = self.assert_spl_mutation_refused(
+                    lambda r: set_path(r, "tier_b.landing.last_segment", value)
+                )
+                self.assertIn("last_segment", err)
+
+    def test_other_last_segment_does_not_replace_exact_landing_proof(self):
+        cases = (
+            ("expected.segment", "022000_299"),
+            ("expected.payload_sha256", "0" * 64),
+            ("landing.matching_artifacts", 0),
+            ("landing.matching_artifacts", 2),
+            ("landing.canonical_path", False),
+            ("landing.manifest_ok", False),
+            ("landing.digest_match", False),
+        )
+        for path, value in cases:
+            with self.subTest(path=path, value=value):
+                def mutate(report):
+                    report["tier_b"]["landing"].update(
+                        last_segment="022000_299", stream_sequence_after=106
+                    )
+                    set_path(report, "tier_b." + path, value)
+
+                err = self.assert_spl_mutation_refused(mutate)
+                self.assertIn(path, err)
 
     def test_tier_b_outer_value_refusals(self):
         cases = (
