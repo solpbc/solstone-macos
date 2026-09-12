@@ -12,6 +12,23 @@ import Testing
 @MainActor
 @Suite("JournalFirstRunModel")
 struct JournalFirstRunModelTests {
+    @Test func terminationAwaitsCancelledSetupAndNeverStartsSupervisor() async throws {
+        let setup = CancellationAwareSetupRunner()
+        var starts = 0
+        let model = JournalFirstRunModel(
+            config: makeConfig(), setupRunner: setup,
+            startSupervisor: { _ in starts += 1; return true }
+        )
+        let task = Task { await model.runSetupThenStartSupervisor() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !(await setup.entered), ContinuousClock.now < deadline { await Task.yield() }
+        #expect(await setup.entered)
+        await model.prepareForTermination()
+        #expect(await setup.cancelled)
+        await task.value
+        #expect(starts == 0)
+    }
+
     @Test func createFlowOrdersSetupSupervisorMarkLockFinalizeThenNameWrite() async throws {
         let trace = FirstRunTrace()
         let fixture = makeModel(
@@ -745,4 +762,21 @@ extension JournalInitMarkResponse {
 
 extension JournalInitFinalizeResponse {
     static let success = JournalInitFinalizeResponse(success: true, redirect: "/", warnings: [])
+}
+
+private actor CancellationAwareSetupRunner: JournalSetupRunning {
+    private(set) var entered = false
+    private(set) var cancelled = false
+
+    func run(journalRoot: URL, skipService: Bool,
+             progress: @escaping @Sendable (JournalSetupProgressEvent) async -> Void) async throws -> JournalSetupResult {
+        entered = true
+        do {
+            try await Task.sleep(for: .seconds(120))
+        } catch {
+            cancelled = true
+            throw error
+        }
+        throw CancellationError()
+    }
 }

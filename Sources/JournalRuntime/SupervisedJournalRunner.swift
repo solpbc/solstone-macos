@@ -230,11 +230,15 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
     private var stabilityTask: Task<Void, Never>?
     private var relaunchTask: Task<Void, Never>?
     private var pendingRelaunchGeneration: UInt64?
+    private let requiredModels: (any JournalRequiredModelsReconciling)?
+    private var preparationGeneration: UInt64 = 0
+    private var requiredModelsTask: Task<Void, Error>?
 
     public init(
         clock: any MonotonicClock = SystemMonotonicClock(),
         statusSink: @escaping @Sendable (JournalRuntimeStatus) -> Void,
         gate: any SingleSupervisorGating = SingleSupervisorGate(),
+        requiredModels: any JournalRequiredModelsReconciling = JournalRequiredModelsReconciler(),
         pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
             if Darwin.kill(pid, 0) == 0 { return true }
             return errno == EPERM
@@ -247,6 +251,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
             clock: clock,
             statusSink: statusSink,
             gate: gate,
+            requiredModels: requiredModels,
             containmentEvidenceReader: LiveJournalProcessContainmentEvidenceReader(),
             processSpawner: FoundationSupervisedJournalProcessSpawner(),
             pidExists: pidExists,
@@ -258,6 +263,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         clock: any MonotonicClock = SystemMonotonicClock(),
         statusSink: @escaping @Sendable (JournalRuntimeStatus) -> Void,
         gate: any SingleSupervisorGating = SingleSupervisorGate(),
+        requiredModels: (any JournalRequiredModelsReconciling)? = nil,
         containmentEvidenceReader: any JournalProcessContainmentEvidenceReading = LiveJournalProcessContainmentEvidenceReader(),
         processSpawner: any SupervisedJournalProcessSpawning,
         pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
@@ -271,6 +277,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         self.clock = clock
         self.statusSink = statusSink
         self.gate = gate
+        self.requiredModels = requiredModels
         self.containmentEvidenceReader = containmentEvidenceReader
         self.processSpawner = processSpawner
         self.pidExists = pidExists
@@ -286,8 +293,13 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         guard !hasContainingGeneration else {
             throw SupervisedJournalRunnerError.launchFailed("journal child containment is in progress")
         }
+        preparationGeneration &+= 1
+        let operation = preparationGeneration
+        await cancelRequiredModelsPreparation()
         Logger.journal.notice("journal-lifecycle: runner-start port=\(port, privacy: .public)")
         await cancelPendingRelaunch()
+        try Task.checkCancellation()
+        guard operation == preparationGeneration else { throw CancellationError() }
         launchRequest = LaunchRequest(
             runtime: runtime,
             journalRoot: journalRoot,
@@ -313,11 +325,18 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         guard !hasContainingGeneration else {
             throw SupervisedJournalRunnerError.launchFailed("journal child containment is in progress")
         }
+        preparationGeneration &+= 1
+        let operation = preparationGeneration
+        await cancelRequiredModelsPreparation()
+        try Task.checkCancellation()
+        guard operation == preparationGeneration else { throw CancellationError() }
         Logger.journal.notice("journal-lifecycle: runner-restart transition=restarting")
         statusSink(.restarting(generation: nil))
         stopping = true
         await cancelPendingRelaunch()
         await stopCurrentProcess()
+        try Task.checkCancellation()
+        guard operation == preparationGeneration else { throw CancellationError() }
         stopping = false
         breakerTripped = false
         terminalDiagnostic = nil
@@ -330,8 +349,10 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
     }
 
     public func stop() async {
-        Logger.journal.notice("journal-lifecycle: runner-stop")
         stopping = true
+        preparationGeneration &+= 1
+        await cancelRequiredModelsPreparation()
+        Logger.journal.notice("journal-lifecycle: runner-stop")
         await cancelPendingRelaunch()
         await stopCurrentProcess()
         launchRequest = nil
@@ -342,8 +363,10 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
     }
 
     public func stopForTermination() async {
-        Logger.journal.notice("journal-lifecycle: runner-stop-for-termination")
         stopping = true
+        preparationGeneration &+= 1
+        await cancelRequiredModelsPreparation()
+        Logger.journal.notice("journal-lifecycle: runner-stop-for-termination")
         await cancelPendingRelaunch()
         await stopCurrentProcess()
     }
@@ -400,6 +423,14 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         return true
     }
 
+    private func cancelRequiredModelsPreparation() async {
+        let task = requiredModelsTask
+        let operation = preparationGeneration
+        task?.cancel()
+        _ = try? await task?.value
+        if operation == preparationGeneration { requiredModelsTask = nil }
+    }
+
     private func launch(
         runtime: MaterializedRuntime,
         journalRoot: URL,
@@ -407,9 +438,13 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         receiptContext: JournalRuntimeEntryReceiptContext,
         automaticReplacement: Bool = false
     ) async throws {
+        preparationGeneration &+= 1
+        let preparation = preparationGeneration
         if process?.isRunning == true {
             await stopCurrentProcess()
         }
+        try Task.checkCancellation()
+        guard preparation == preparationGeneration, !stopping else { throw CancellationError() }
 
         let canonicalJournalRoot = URL(fileURLWithPath: canonicalPath(journalRoot), isDirectory: true)
         let spawnRequest = SupervisedJournalSpawnRequest(
@@ -423,6 +458,43 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
             Logger.journal.notice("journal-lifecycle: runner-gate-open")
         case .blocked(let blockage):
             throw SupervisedJournalRunnerError.gateBlocked(blockage)
+        }
+
+        try Task.checkCancellation()
+        guard preparation == preparationGeneration, !stopping else {
+            throw CancellationError()
+        }
+        if let requiredModels {
+            let task = Task {
+                try await requiredModels.reconcile(runtime: runtime, journalRoot: canonicalJournalRoot)
+            }
+            requiredModelsTask = task
+            do {
+                try await withTaskCancellationHandler {
+                    try await task.value
+                } onCancel: {
+                    task.cancel()
+                }
+            } catch {
+                if preparation == preparationGeneration { requiredModelsTask = nil }
+                throw error
+            }
+            if preparation == preparationGeneration { requiredModelsTask = nil }
+            // Preparation yields while repairing files. Recheck exclusion before spawn.
+            try Task.checkCancellation()
+            guard preparation == preparationGeneration, !stopping else {
+                throw CancellationError()
+            }
+            switch await gate.prepareForSpawn(journalRoot: canonicalJournalRoot) {
+            case .success:
+                break
+            case .blocked(let blockage):
+                throw SupervisedJournalRunnerError.gateBlocked(blockage)
+            }
+        }
+        try Task.checkCancellation()
+        guard preparation == preparationGeneration, !stopping else {
+            throw CancellationError()
         }
 
         let child = processSpawner.makeChildProcess(for: spawnRequest)

@@ -77,6 +77,9 @@ final class JournalFirstRunModel {
     var adoptMessage: String?
     var errorMessage: String?
 
+    @ObservationIgnored private var setupTask: Task<JournalSetupResult, Error>?
+    private var isTerminating = false
+
     private var hasPostedJournalMarkLocked = false
     private var pendingDiscoveryHandoff: JournalHandoff?
 
@@ -229,20 +232,41 @@ final class JournalFirstRunModel {
         }
     }
 
+    func prepareForTermination() async {
+        isTerminating = true
+        let task = setupTask
+        task?.cancel()
+        _ = try? await task?.value
+    }
+
+    func resetAfterFailedUpdaterInstall() {
+        isTerminating = false
+    }
+
     private func runSetup(at journalRoot: URL) async throws {
+        guard !isTerminating, setupTask == nil else { throw CancellationError() }
         setupEvents = []
         setupRenderedLog = ""
         currentStep = nil
 
-        let result = try await setupRunner.run(
-            journalRoot: journalRoot,
-            skipService: true,
-            progress: { [weak self] event in
-                await MainActor.run {
-                    self?.applySetupEvent(event)
+        let task = Task { [setupRunner, weak self] in
+            try await setupRunner.run(
+                journalRoot: journalRoot,
+                skipService: true,
+                progress: { [weak self] event in
+                    await MainActor.run { self?.applySetupEvent(event) }
                 }
-            }
-        )
+            )
+        }
+        setupTask = task
+        defer { setupTask = nil }
+        let result = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        try Task.checkCancellation()
+        guard !isTerminating, !task.isCancelled else { throw CancellationError() }
         setupRenderedLog = result.renderedLog
     }
 

@@ -37,6 +37,7 @@ public enum JournalSetupRunnerError: Error, Equatable {
 
 public struct JournalSetupRunner: Sendable {
     private let subprocessRunner: any SubprocessRunning
+    private let makeModelRunner: @Sendable (URL) -> any SubprocessRunning
     private let gate: any SingleSupervisorGating
     private let materializer: any RuntimeMaterializing
     private let setupTimeout: Duration
@@ -46,12 +47,13 @@ public struct JournalSetupRunner: Sendable {
     }
 
     public init(
-        subprocessRunner: any SubprocessRunning = SubprocessRunner(),
+        subprocessRunner: (any SubprocessRunning)? = nil,
         gate: any SingleSupervisorGating = SingleSupervisorGate(),
         materializer: any RuntimeMaterializing = NativeJournalRuntimeMaterializer(),
         setupTimeout: Duration = .seconds(180)
     ) {
-        self.subprocessRunner = subprocessRunner
+        self.subprocessRunner = subprocessRunner ?? SubprocessRunner()
+        self.makeModelRunner = { subprocessRunner ?? SubprocessRunner(currentDirectoryURL: $0) }
         self.gate = gate
         self.materializer = materializer
         self.setupTimeout = setupTimeout
@@ -107,28 +109,34 @@ public struct JournalSetupRunner: Sendable {
 
         let result: SubprocessResult
         do {
-            result = try await subprocessRunner.run(
-                executable: runtime.layout.journalBinary,
-                arguments: JournalSetupCommand.setupArguments(journalURL: journalRoot, skipService: skipService),
-                environment: setupEnvironment,
-                timeout: setupTimeout,
-                stdoutHandler: { [output, progressContinuation] data in
-                    for event in output.appendStdout(data) {
-                        progressContinuation.yield(event)
+            result = try await withTaskCancellationHandler {
+                try await subprocessRunner.run(
+                    executable: runtime.layout.journalBinary,
+                    arguments: JournalSetupCommand.setupArguments(journalURL: journalRoot, skipService: skipService),
+                    environment: setupEnvironment,
+                    timeout: setupTimeout,
+                    stdoutHandler: { [output, progressContinuation] data in
+                        for event in output.appendStdout(data) {
+                            progressContinuation.yield(event)
+                        }
+                    },
+                    stderrHandler: { [output] data in
+                        output.appendStderr(data)
                     }
-                },
-                stderrHandler: { [output] data in
-                    output.appendStderr(data)
-                }
-            )
+                )
+            } onCancel: {
+                subprocessRunner.cancelAll()
+            }
         } catch {
             finish(output: output, continuation: progressContinuation)
             await progressTask.value
+            try Task.checkCancellation()
             throw JournalSetupRunnerError.subprocessLaunchFailed(message: error.localizedDescription)
         }
 
         finish(output: output, continuation: progressContinuation)
         await progressTask.value
+        try Task.checkCancellation()
 
         let summary = output.summary()
 
@@ -154,7 +162,7 @@ public struct JournalSetupRunner: Sendable {
             throw JournalSetupRunnerError.missingCompletion
         }
 
-        launchInstallModels(runtime: runtime)
+        try await installModels(runtime: runtime, journalRoot: journalRoot)
 
         return JournalSetupResult(
             runtime: runtime,
@@ -173,23 +181,35 @@ public struct JournalSetupRunner: Sendable {
         continuation.finish()
     }
 
-    private func launchInstallModels(runtime: MaterializedRuntime) {
-        let runner = subprocessRunner
-        let journalBinary = runtime.layout.journalBinary
-        let environment = runtime.environment
-        Task {
-            do {
-                _ = try await runner.run(
-                    executable: journalBinary,
+    private func installModels(runtime: MaterializedRuntime, journalRoot: URL) async throws {
+        // Preserve optional first-setup installation, but finish or cancel it before
+        // runtime startup can reconcile the same required model cache.
+        let runner = makeModelRunner(journalRoot)
+        var environment = runtime.environment
+        environment.removeValue(forKey: "SOLSTONE_JOURNAL")
+        let inheritedPath = environment["PATH"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        environment["PATH"] = runtime.layout.binDir.path + ":" + inheritedPath
+        let commandEnvironment = environment
+        try Task.checkCancellation()
+        do {
+            _ = try await withTaskCancellationHandler {
+                try await runner.run(
+                    executable: runtime.layout.journalBinary,
                     arguments: ["install-models"],
-                    environment: environment,
+                    environment: commandEnvironment,
+                    timeout: setupTimeout,
                     stdoutHandler: { _ in },
                     stderrHandler: { _ in }
                 )
-            } catch {
-                Logger.setup.warning("journal setup runner: install-models failed: \(error.localizedDescription, privacy: .public)")
+            } onCancel: {
+                runner.cancelAll()
             }
+        } catch {
+            try Task.checkCancellation()
+            Logger.setup.warning("journal setup runner: install-models failed: \(error.localizedDescription, privacy: .public)")
         }
+        try Task.checkCancellation()
     }
 
     private static let stdoutTailLimit = 16 * 1024

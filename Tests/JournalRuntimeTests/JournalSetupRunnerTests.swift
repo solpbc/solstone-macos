@@ -204,6 +204,51 @@ struct JournalSetupRunnerTests {
         #expect(result.renderedLog.contains("setup ok"))
     }
 
+    @Test func optionalInstallationIsAwaitedBoundedAndRemainsBestEffort() async throws {
+        let runtime = try makeRuntime()
+        defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
+        let journalRoot = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: journalRoot) }
+        let marker = journalRoot.appendingPathComponent("models-finished")
+        let subprocess = FakeSubprocessRunner()
+        subprocess.enqueue("setup", .success(stdout: Data(Self.okSetupJSONL.utf8)))
+        subprocess.enqueue("install-models", .success(exitCode: 65, delay: .milliseconds(50), sideEffect: {
+            FileManager.default.createFile(atPath: marker.path, contents: Data())
+        }))
+        let runner = JournalSetupRunner(
+            subprocessRunner: subprocess, gate: MockSingleSupervisorGate(),
+            materializer: MockRuntimeMaterializer(result: .success(runtime)), setupTimeout: .seconds(3)
+        )
+        _ = try await runner.run(journalRoot: journalRoot)
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+        let install = try #require(subprocess.invocations.last)
+        #expect(install.arguments == ["install-models"])
+        #expect(install.timeout == .seconds(3))
+        #expect(install.environment?["SOLSTONE_JOURNAL"] == nil)
+    }
+
+    @Test func cancellationDuringOptionalInstallationDoesNotReturnSetupSuccess() async throws {
+        let runtime = try makeRuntime()
+        defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
+        let journalRoot = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: journalRoot) }
+        let subprocess = FakeSubprocessRunner()
+        subprocess.enqueue("setup", .success(stdout: Data(Self.okSetupJSONL.utf8)))
+        subprocess.enqueue("install-models", .success(delay: .seconds(3)))
+        let runner = JournalSetupRunner(
+            subprocessRunner: subprocess, gate: MockSingleSupervisorGate(),
+            materializer: MockRuntimeMaterializer(result: .success(runtime))
+        )
+        let task = Task { try await runner.run(journalRoot: journalRoot) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !subprocess.invocations.contains(where: { $0.arguments == ["install-models"] }), ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(subprocess.invocations.contains(where: { $0.arguments == ["install-models"] }))
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+    }
+
     @Test func timeoutFailsWithTypedTimeout() async throws {
         try await expectSetupError(
             response: .success(delay: .milliseconds(5)),
@@ -262,7 +307,7 @@ struct JournalSetupRunnerTests {
         )
     }
 
-    @Test func installModelsIsInvokedAndDoesNotBlockCompletion() async throws {
+    @Test func optionalModelTimeoutIsBoundedWithoutFailingSuccessfulSetup() async throws {
         let runtime = try makeRuntime()
         defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
         let subprocess = FakeSubprocessRunner()
@@ -271,7 +316,8 @@ struct JournalSetupRunnerTests {
         let runner = JournalSetupRunner(
             subprocessRunner: subprocess,
             gate: MockSingleSupervisorGate(),
-            materializer: MockRuntimeMaterializer(result: .success(runtime))
+            materializer: MockRuntimeMaterializer(result: .success(runtime)),
+            setupTimeout: .milliseconds(50)
         )
         let start = ContinuousClock.now
 

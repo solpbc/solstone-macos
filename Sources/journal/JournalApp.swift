@@ -72,6 +72,7 @@ final class JournalAppModel {
         guard !terminationPrepared else { return }
         terminationPrepared = true
         startupTask?.cancel()
+        await firstRunModel.prepareForTermination()
         await supervisor.terminate(reason: "ordinary-quit")
     }
 
@@ -80,6 +81,7 @@ final class JournalAppModel {
     }
 
     func resetAfterFailedUpdaterInstall() {
+        firstRunModel.resetAfterFailedUpdaterInstall()
         terminationPrepared = false
         appKitTerminationBegan = false
     }

@@ -10,6 +10,134 @@ import Testing
 
 @Suite("SupervisedJournalRunner")
 struct SupervisedJournalRunnerTests {
+    @Test func waitsForRequiredModelRepairBeforeSpawning() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let repair = DeferredRequiredModels()
+        let spawner = RecordingProcessSpawner(pid: 4242)
+        let gate = RecordingRunnerGate(result: .success)
+        let runner = SupervisedJournalRunner(
+            statusSink: { _ in }, gate: gate, requiredModels: repair,
+            containmentEvidenceReader: FixedStartTimeReader(startTime: 1_000),
+            processSpawner: spawner, pidExists: { _ in false }
+        )
+        let start = Task {
+            try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot,
+                                   port: 5015, receiptContext: makeReceiptFixture().context)
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !(await repair.entered), ContinuousClock.now < deadline { await Task.yield() }
+        #expect(await repair.entered)
+        #expect(spawner.spawnRequests().isEmpty)
+        await repair.finish()
+        try await start.value
+        #expect(spawner.spawnRequests().count == 1)
+        #expect(gate.roots().count == 2)
+        await runner.stop()
+    }
+
+    @Test func terminationCancelsAndReapsBlockedModelInstallerBeforeReturning() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let helper = fixture.runtime.layout.journalBinary
+        try Data("#!/bin/sh\nprintf '%s\\n' \"$$\" > preparation.pid\nexec /bin/sleep 120\n".utf8).write(to: helper)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+        let spawner = RecordingProcessSpawner(pid: 4242)
+        let runner = SupervisedJournalRunner(
+            statusSink: { _ in }, gate: RecordingRunnerGate(result: .success),
+            requiredModels: JournalRequiredModelsReconciler(),
+            containmentEvidenceReader: FixedStartTimeReader(startTime: 1_000),
+            processSpawner: spawner, pidExists: { _ in false }
+        )
+        let start = Task {
+            try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot,
+                                   port: 5015, receiptContext: makeReceiptFixture().context)
+        }
+        let pidFile = fixture.realJournalRoot.appendingPathComponent("preparation.pid")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !FileManager.default.fileExists(atPath: pidFile.path), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let pidText = try? String(contentsOf: pidFile, encoding: .utf8)
+        let pid = pidText.flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        #expect(pid != nil)
+        #expect(spawner.spawnRequests().isEmpty)
+        let stoppedAt = ContinuousClock.now
+        await runner.stopForTermination()
+        #expect(stoppedAt.duration(to: .now) < .seconds(5))
+        await #expect(throws: CancellationError.self) { try await start.value }
+        if let pid {
+            #expect(Darwin.kill(pid, 0) == -1)
+            #expect(errno == ESRCH)
+        }
+        #expect(spawner.spawnRequests().isEmpty)
+        #expect(await runner.currentIdentity() == nil)
+    }
+
+    @Test func requiredModelFailureNeverSpawnsOrAdmitsRuntime() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let subprocess = FakeSubprocessRunner()
+        subprocess.enqueue("install-models", .success(exitCode: 65))
+        let spawner = RecordingProcessSpawner(pid: 4242)
+        let receipts = makeReceiptFixture()
+        let runner = SupervisedJournalRunner(
+            statusSink: { _ in },
+            gate: RecordingRunnerGate(result: .success),
+            requiredModels: JournalRequiredModelsReconciler(makeRunner: { _ in subprocess }),
+            containmentEvidenceReader: FixedStartTimeReader(startTime: 1_000),
+            processSpawner: spawner,
+            pidExists: { _ in false }
+        )
+        await #expect(throws: SupervisedJournalRunnerError.self) {
+            try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot,
+                                   port: 5015, receiptContext: receipts.context)
+        }
+        #expect(spawner.spawnRequests().isEmpty)
+        #expect(await runner.currentIdentity() == nil)
+        #expect(payloadEntries(receipts.sink.storedRecords(attemptID: receipts.context.attemptID)).isEmpty)
+        #expect(subprocess.invocations.count == 1)
+    }
+
+    @Test func blockedSupervisorGateDoesNotMutateRequiredModels() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let subprocess = FakeSubprocessRunner()
+        let diagnostic = JournalDiagnostic(commandLabel: "gate", outputExcerpt: "blocked")
+        let spawner = RecordingProcessSpawner(pid: 4242)
+        let runner = SupervisedJournalRunner(
+            statusSink: { _ in },
+            gate: RecordingRunnerGate(result: .blocked(.portConflict(diagnostic))),
+            requiredModels: JournalRequiredModelsReconciler(makeRunner: { _ in subprocess }),
+            containmentEvidenceReader: FixedStartTimeReader(startTime: 1_000),
+            processSpawner: spawner,
+            pidExists: { _ in false }
+        )
+        await #expect(throws: SupervisedJournalRunnerError.self) {
+            try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot,
+                                   port: 5015, receiptContext: makeReceiptFixture().context)
+        }
+        #expect(subprocess.invocations.isEmpty)
+        #expect(spawner.spawnRequests().isEmpty)
+    }
+
+    @Test func supervisorGateClosingDuringModelRepairPreventsSpawn() async throws {
+        let fixture = try RunnerFixture()
+        defer { fixture.clear() }
+        let spawner = RecordingProcessSpawner(pid: 4242)
+        let runner = SupervisedJournalRunner(
+            statusSink: { _ in }, gate: GateClosingAfterPreparation(),
+            requiredModels: JournalRequiredModelsReconciler(makeRunner: { _ in FakeSubprocessRunner() }),
+            containmentEvidenceReader: FixedStartTimeReader(startTime: 1_000),
+            processSpawner: spawner, pidExists: { _ in false }
+        )
+        await #expect(throws: SupervisedJournalRunnerError.self) {
+            try await runner.start(runtime: fixture.runtime, journalRoot: fixture.realJournalRoot,
+                                   port: 5015, receiptContext: makeReceiptFixture().context)
+        }
+        #expect(spawner.spawnRequests().isEmpty)
+    }
+
     @Test func launchGatesWithCanonicalRootAndDoesNotStampJournalEnvironment() async throws {
         let fixture = try RunnerFixture()
         defer { fixture.clear() }
@@ -965,5 +1093,32 @@ private final class RunnerStatusRecorder: @unchecked Sendable {
 
     func snapshot() -> [JournalRuntimeStatus] {
         lock.withLock { statuses }
+    }
+}
+
+private actor DeferredRequiredModels: JournalRequiredModelsReconciling {
+    private(set) var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func reconcile(runtime: MaterializedRuntime, journalRoot: URL) async throws {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            entered = true
+        }
+    }
+
+    func finish() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private actor GateClosingAfterPreparation: SingleSupervisorGating {
+    private var calls = 0
+
+    func prepareForSpawn(journalRoot: URL) async -> SingleSupervisorGateResult {
+        calls += 1
+        if calls == 1 { return .success }
+        return .blocked(.portConflict(JournalDiagnostic(commandLabel: "gate", outputExcerpt: "new owner")))
     }
 }

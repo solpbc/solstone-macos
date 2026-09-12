@@ -52,6 +52,7 @@ public final class SubprocessRunner: SubprocessRunning {
     private let pidExists: @Sendable (pid_t) -> Bool
     private let terminate: @Sendable (pid_t, Int32) -> Int32
     private let timeoutGracePeriod: Duration
+    private let currentDirectoryURL: URL?
 
     public init(
         pidExists: @escaping @Sendable (pid_t) -> Bool = { pid in
@@ -61,11 +62,13 @@ public final class SubprocessRunner: SubprocessRunning {
         terminate: @escaping @Sendable (pid_t, Int32) -> Int32 = { pid, signal in
             Darwin.kill(pid, signal)
         },
-        timeoutGracePeriod: Duration = .seconds(2)
+        timeoutGracePeriod: Duration = .seconds(2),
+        currentDirectoryURL: URL? = nil
     ) {
         self.pidExists = pidExists
         self.terminate = terminate
         self.timeoutGracePeriod = timeoutGracePeriod
+        self.currentDirectoryURL = currentDirectoryURL
     }
 
     public func run(
@@ -76,9 +79,11 @@ public final class SubprocessRunner: SubprocessRunning {
         stdoutHandler: @escaping @Sendable (Data) -> Void,
         stderrHandler: @escaping @Sendable (Data) -> Void
     ) async throws -> SubprocessResult {
-        try await withCheckedThrowingContinuation { continuation in
+        try Task.checkCancellation()
+        return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = executable
+            process.currentDirectoryURL = currentDirectoryURL
             process.arguments = arguments
             // Explicit inheritance: when caller passes nil, fall back to the .app's
             // own environment. process.environment = nil documents as "inherit" but
@@ -172,6 +177,7 @@ public final class SubprocessRunner: SubprocessRunning {
             do {
                 registry.register(process, token: processToken)
                 try process.run()
+                if Task.isCancelled { registry.cancelAll() }
                 if let timeout {
                     timeoutHandle.schedule(
                         timeout: timeout,
