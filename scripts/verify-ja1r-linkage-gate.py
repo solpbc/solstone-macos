@@ -946,9 +946,38 @@ def verify_local_journal_recovery(report, filename):
         raise GateFailure(f"{filename}: journal pairing identity was lost during recovery")
 
 
+def verify_upgrade_baseline_connection(report, filename):
+    baseline = report.get("linked_baseline")
+    delivery = report.get("baseline_delivery")
+    if not isinstance(baseline, dict) or not isinstance(delivery, dict):
+        raise GateFailure(f"{filename}: missing connected baseline observations")
+    identity = ((report.get("from"), report.get("from_build")) if report["lane"] == "v2-upgrade-sol"
+                else (report.get("to"), report.get("to_build")))
+    expected_id = ("settings.service.pairing.connection.state" if identity == ("2.0.0", "71")
+                   else "settings.service.journal.connection.state")
+    link = baseline.get("local_link")
+    if not isinstance(link, dict) or link.get("ok") is not True or link.get("connection_state") != "connected":
+        raise GateFailure(f"{filename}: released baseline did not observe a connected link")
+    for observed in (report.get("baseline_connection_state_id"), baseline.get("connection_state_id"),
+                     link.get("connection_state_id"), delivery.get("connection_state_id")):
+        if observed != expected_id:
+            raise GateFailure(f"{filename}: baseline connection observation used the wrong app contract")
+    require_true(baseline.get("checks", {}).get("connection_connected"), f"{filename}: baseline connection check")
+    injection = delivery.get("injection")
+    if not isinstance(injection, dict) or not isinstance(injection.get("created_at"), str):
+        raise GateFailure(f"{filename}: missing baseline delivery injection")
+    # Baseline injection precedes the app upgrade and has no process-turnover bound.
+    verify_local_freshness({
+        "lane": "baseline", "run_id": report["run_id"],
+        "freshness": delivery, "tier_b": injection,
+    }, filename + ": baseline")
+
+
 def verify_local_completion(report, filename):
     if report["lane"] == "fresh-use":
         verify_local_journal_recovery(report, filename)
+    else:
+        verify_upgrade_baseline_connection(report, filename)
     checks = report.get("checks", {})
     for key in (*LOCAL_REQUIRED_CHECKS[report["lane"]], *LOCAL_DELIVERY_CHECKS):
         require_true(checks.get(key), f"{filename}: checks.{key}")

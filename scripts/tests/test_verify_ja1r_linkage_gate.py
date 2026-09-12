@@ -119,6 +119,21 @@ def base_report(lane, checks, **scenario):
         "last_synced_post_raw": str(delivery_epoch), "last_synced_post_epoch": delivery_epoch,
         "anchor_process_start_epoch": delivery_epoch if lane.startswith("v2-upgrade-") else None,
     }
+    if lane.startswith("v2-upgrade-"):
+        identity = ((report.get("from"), report.get("from_build")) if lane == "v2-upgrade-sol"
+                    else (report.get("to"), report.get("to_build")))
+        connection_id = ("settings.service.pairing.connection.state" if identity == ("2.0.0", "71")
+                         else "settings.service.journal.connection.state")
+        report["baseline_connection_state_id"] = connection_id
+        baseline = report.setdefault("linked_baseline", {})
+        baseline.update(connection_state_id=connection_id, local_link={
+            "ok": True, "connection_state": "connected", "connection_state_id": connection_id})
+        baseline.setdefault("checks", {})["connection_connected"] = True
+        report["baseline_delivery"] = {
+            **report["freshness"], "connection_state_id": connection_id,
+            "anchor_process_start_epoch": None,
+            "injection": {"created_at": TIER_B_CREATED_AT},
+        }
     report["checks"].update({key: True for key in (*verifier.LOCAL_REQUIRED_CHECKS[lane], *verifier.LOCAL_DELIVERY_CHECKS)})
     report["evidence"]["automation_lifecycle"] = {"cleanup": {
         "attempted": True, "appium_absent": True, "wda_absent": True,
@@ -1623,6 +1638,30 @@ class RecoveryObservationControls(unittest.TestCase):
             verifier.verify_local_journal_recovery(report, "fresh-use.json")
         report["recovery"].update(mode="retry", retry_dispatched=True)
         verifier.verify_local_journal_recovery(report, "fresh-use.json")
+
+
+class BaselineConnectionControls(unittest.TestCase):
+    def test_released_v2_contract_and_absence_controls(self):
+        report = _report_for("v2-upgrade-sol.json")
+        report.update({"from": "2.0.0", "from_build": "71"})
+        old_id = "settings.service.pairing.connection.state"
+        report["baseline_connection_state_id"] = old_id
+        report["linked_baseline"]["connection_state_id"] = old_id
+        report["linked_baseline"]["local_link"]["connection_state_id"] = old_id
+        report["baseline_delivery"]["connection_state_id"] = old_id
+        verifier.verify_upgrade_baseline_connection(report, "v2-upgrade-sol.json")
+        for section, key, value in [
+            ("baseline_delivery", "connection_token", None),
+            ("baseline_delivery", "last_synced_post_raw", "1"),
+            ("baseline_delivery", "connection_state_id", "settings.service.journal.connection.state"),
+        ]:
+            broken = json.loads(json.dumps(report))
+            broken[section][key] = value
+            with self.subTest(key=key), self.assertRaises(verifier.GateFailure):
+                verifier.verify_upgrade_baseline_connection(broken, "v2-upgrade-sol.json")
+        report["linked_baseline"]["local_link"]["connection_state"] = None
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_upgrade_baseline_connection(report, "v2-upgrade-sol.json")
 
 
 if __name__ == "__main__":
