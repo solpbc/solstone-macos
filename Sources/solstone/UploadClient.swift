@@ -62,16 +62,19 @@ public enum UploadError: Error, LocalizedError {
 public struct UploadClient: Sendable {
     private let session: URLSession
 
+    /// Ingest runs long requests, so it keeps its own pool rather than sharing
+    /// the bounded loopback one — but it declares its share of the door's
+    /// per-carrier stream budget instead of taking the platform default.
+    public static func defaultSessionConfiguration() -> URLSessionConfiguration {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 300  // 5 min for large files
+        config.timeoutIntervalForResource = 600  // 10 min total
+        config.httpMaximumConnectionsPerHost = BoundedLoopbackClient.uploadConnectionsPerHost
+        return config
+    }
+
     public init(sessionConfiguration: URLSessionConfiguration? = nil) {
-        let config: URLSessionConfiguration
-        if let sessionConfiguration {
-            config = sessionConfiguration
-        } else {
-            config = .default
-            config.timeoutIntervalForRequest = 300  // 5 min for large files
-            config.timeoutIntervalForResource = 600  // 10 min total
-        }
-        self.session = URLSession(configuration: config)
+        self.session = URLSession(configuration: sessionConfiguration ?? Self.defaultSessionConfiguration())
     }
 
     static func isLocalNetworkHost(_ host: String) -> Bool {

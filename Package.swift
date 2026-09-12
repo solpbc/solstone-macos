@@ -12,7 +12,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.1"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
-        .package(url: "https://github.com/solpbc/spl-swift.git", revision: "e3e4ea55811ce591dcf86cbf4d200a5fb65f6258")
+        .package(url: "https://github.com/solpbc/spl-swift.git", revision: "38c2993ac747920289789b6eb35c515e69d8238d")
     ],
     targets: [
         .target(

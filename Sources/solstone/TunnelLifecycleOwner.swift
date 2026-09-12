@@ -284,7 +284,7 @@ final class TunnelLifecycleOwner {
         self.unlockNotificationCenter = unlockNotificationCenter
         self.unlockNotificationName = unlockNotificationName
 
-        let session = loopbackSession ?? BoundedLoopbackClient.makeSession()
+        let session = loopbackSession ?? BoundedLoopbackClient.sharedSession
         let jv = self.journalVersion
         self.clientSelfSequencer = clientSelfSequencer ?? JournalClientSelfSequencer(
             session: session,
@@ -1803,7 +1803,9 @@ final class TunnelLifecycleOwner {
         request.timeoutInterval = timeout.timeInterval
 
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            // URLSession.shared is a pool this process cannot configure, and it
+            // aims at the same tunnel as everything else.
+            let (_, response) = try await BoundedLoopbackClient.sharedSession.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 return false
             }

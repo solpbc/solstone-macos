@@ -253,7 +253,7 @@ public actor JournalClientSelfSequencer {
     private var publicationFence: MetadataPublicationFence?
 
     public init(
-        session: URLSession = BoundedLoopbackClient.makeSession(),
+        session: URLSession = BoundedLoopbackClient.sharedSession,
         deadline: Duration = BoundedLoopbackClient.defaultDeadline,
         onJournalMetadataUpdated: @escaping @Sendable (String, UInt64, String?, String?, Bool, ContinuousClock.Instant, MetadataPublicationFence) async -> Void
     ) {

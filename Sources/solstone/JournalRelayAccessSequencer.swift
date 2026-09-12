@@ -51,7 +51,7 @@ public actor JournalRelayAccessSequencer {
 
     public init(
         credentialStore: PairingCredentialStore,
-        session: URLSession = BoundedLoopbackClient.makeSession(),
+        session: URLSession = BoundedLoopbackClient.sharedSession,
         deadline: Duration = BoundedLoopbackClient.defaultDeadline,
         now: @escaping @Sendable () -> Date = { Date() },
         onOutcome: @escaping @Sendable (AccessUpdateOutcome) async -> Void

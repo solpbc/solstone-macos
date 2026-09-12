@@ -27,6 +27,31 @@ public enum BoundedLoopbackClient {
     public static let maxResponseBodyBytes = 64 * 1024 // 64 KiB
     public static let defaultDeadline: Duration = .seconds(15)
 
+    /// Concurrent streams the journal door admits on one carrier.
+    ///
+    /// The loopback tunnel maps one remote stream to each persistent TCP
+    /// connection and holds it for that connection's whole life, so every
+    /// URLSession pool pointing at the tunnel has to fit inside this budget
+    /// together. Exceeding it does not degrade: the door refuses the next
+    /// stream and the request fails as a bare connection loss.
+    public static let tunnelStreamBudget = 8
+
+    /// Persistent connections the shared loopback control pool may hold.
+    public static let loopbackConnectionsPerHost = 4
+
+    /// Persistent connections the ingest pool may hold. Kept with
+    /// `loopbackConnectionsPerHost` so the sum stays inside the budget.
+    public static let uploadConnectionsPerHost = 2
+
+    /// The one pool for loopback control traffic.
+    ///
+    /// Every caller used to take `makeSession()` as a default argument, which
+    /// mints a fresh `URLSession` — and therefore a fresh connection pool — on
+    /// every call, and nothing ever invalidated one. The number of pools aimed
+    /// at the tunnel scaled with client instantiations while the door's budget
+    /// stayed at eight.
+    public static let sharedSession: URLSession = makeSession()
+
     public static func makeSessionConfiguration(
         additionalProtocolClasses: [AnyClass]? = nil,
         additionalHeaders: [String: String]? = nil
@@ -35,6 +60,9 @@ public enum BoundedLoopbackClient {
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 15
         config.connectionProxyDictionary = [:]
+        // Never the platform default here: it is six per host per pool, and the
+        // tunnel budget is eight across every pool.
+        config.httpMaximumConnectionsPerHost = loopbackConnectionsPerHost
         if let additionalProtocolClasses {
             config.protocolClasses = additionalProtocolClasses
         }

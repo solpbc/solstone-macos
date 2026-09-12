@@ -146,7 +146,7 @@ final class JournalVersionMetadata {
 enum JournalVersionStatusClient {
     static func fetch(
         localPort: Int,
-        session: URLSession = BoundedLoopbackClient.makeSession(),
+        session: URLSession = BoundedLoopbackClient.sharedSession,
         deadline: Duration = .seconds(5)
     ) async -> String? {
         guard (1...65535).contains(localPort),
