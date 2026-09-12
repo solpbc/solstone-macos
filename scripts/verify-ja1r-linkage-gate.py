@@ -22,11 +22,15 @@ Side effects:
 This verifier does NOT re-implement the harness's oracles: a PASS report's own
 checks remain authoritative. Its job is narrow -- freshness, completeness,
 scenario identity, provenance, the target journal-runtime pin, for
-journal-upgrade the explicitly supplied baseline journal-runtime pin required by
-the journal and paired profiles from LANE_SPECS, and, for the sol/paired
-spl-link coordinator report, an independently recomputed Tier B synthetic-segment
-identity that must land exactly once on a clean disposable-home baseline -- so
-that a prior release's green JSON cannot authorize this one.
+v2-upgrade-journal the explicitly supplied baseline journal-runtime pin
+required by the journal and paired profiles from LANE_SPECS, an independently
+recomputed local Tier B delivery identity for fresh-use and both v2-upgrade
+subcases (self-consistent against each report's own run_id, so a doctored or
+stale report cannot pass), and for the spl-link coordinator report (required
+by every profile now, not only sol/paired), an independently recomputed
+remote Tier B synthetic-segment identity that must land exactly once on a
+clean disposable-home baseline -- so that a prior release's green JSON cannot
+authorize this one.
 
 Exit 0 prints one JSON verdict on stdout. Every other path exits nonzero with
 no stdout verdict.
@@ -271,14 +275,9 @@ SPL_LINK_TIER_B_KEYS = frozenset(
 # for each; scripts/tests/test_verify_ja1r_linkage_gate.py asserts the README
 # list and this constant cannot drift apart.
 REPORT_FILENAMES = (
-    "drag.json",
-    "sparkle.json",
-    "fresh-journal-first.json",
-    "fresh-sol-first.json",
-    "fresh-acquire.json",
-    "discovered-adopt.json",
-    "sol-upgrade.json",
-    "journal-upgrade.json",
+    "fresh-use.json",
+    "v2-upgrade-sol.json",
+    "v2-upgrade-journal.json",
 )
 
 # Identity keys, as passed on the CLI. Each maps to one scenario field in some
@@ -294,7 +293,6 @@ IDENTITY_KEYS = (
     "journal_baseline_build",
     "companion_sol_version",
     "companion_sol_build",
-    "legacy_sol_baseline_version",
 )
 
 
@@ -334,15 +332,7 @@ class BaselinePinSpec:
         self.fingerprint_key = fingerprint_key
 
 
-_DRAG_SPARKLE_IDENTITY = {
-    "from": "legacy_sol_baseline_version",
-    "to": "sol_target_version",
-    "to_build": "sol_target_build",
-    "journal": "journal_target_version",
-    "journal_build": "journal_target_build",
-}
-
-_FRESH_IDENTITY = {
+_FRESH_USE_IDENTITY = {
     "to": "sol_target_version",
     "to_build": "sol_target_build",
     "journal": "journal_target_version",
@@ -350,52 +340,18 @@ _FRESH_IDENTITY = {
 }
 
 # Lane -> shape. Derived from the pinned harness's report emitter (gate.py
-# new_report), not from a captured run.
+# new_report), not from a captured run. Three workflows now: fresh use, V2
+# upgrade (sol/journal subcases), remote delivery (SPL_LINK_REPORT_FILENAME,
+# verified separately by verify_coordinator_report -- not in LANE_SPECS).
 LANE_SPECS = {
-    "drag.json": LaneSpec(
-        lane="drag",
-        identity=_DRAG_SPARKLE_IDENTITY,
-        pin_check_key="solstone_pin_matches",
-        observes_runtime=True,
-    ),
-    "sparkle.json": LaneSpec(
-        lane="sparkle",
-        identity=_DRAG_SPARKLE_IDENTITY,
-        pin_check_key="solstone_pin_matches",
-        observes_runtime=True,
-    ),
-    # Both fresh reports carry lane "fresh"; only `order` tells them apart.
-    "fresh-journal-first.json": LaneSpec(
-        lane="fresh",
-        identity=_FRESH_IDENTITY,
-        pin_check_key="solstone_pin_matches",
-        observes_runtime=False,
-        order="journal-first",
-    ),
-    "fresh-sol-first.json": LaneSpec(
-        lane="fresh",
-        identity=_FRESH_IDENTITY,
-        pin_check_key="solstone_pin_matches",
-        observes_runtime=False,
-        order="sol-first",
-    ),
-    # Both acquire-driven lanes mirror the fresh identity echo and, like fresh,
-    # run the oracles + pin check without storing the fingerprint at top-level
-    # `post` -- the strict check-key assertion is the whole of the pin proof.
-    "fresh-acquire.json": LaneSpec(
-        lane="fresh-acquire",
-        identity=_FRESH_IDENTITY,
+    "fresh-use.json": LaneSpec(
+        lane="fresh-use",
+        identity=_FRESH_USE_IDENTITY,
         pin_check_key="solstone_pin_matches",
         observes_runtime=False,
     ),
-    "discovered-adopt.json": LaneSpec(
-        lane="discovered-adopt",
-        identity=_FRESH_IDENTITY,
-        pin_check_key="solstone_pin_matches",
-        observes_runtime=False,
-    ),
-    "sol-upgrade.json": LaneSpec(
-        lane="sol-upgrade",
+    "v2-upgrade-sol.json": LaneSpec(
+        lane="v2-upgrade-sol",
         identity={
             "from": "sol_baseline_version",
             "from_build": "sol_baseline_build",
@@ -407,8 +363,8 @@ LANE_SPECS = {
         pin_check_key="runtime_pin_matches",
         observes_runtime=True,
     ),
-    "journal-upgrade.json": LaneSpec(
-        lane="journal-upgrade",
+    "v2-upgrade-journal.json": LaneSpec(
+        lane="v2-upgrade-journal",
         identity={
             # `to` here is the COMPANION sol riding along, not the sol being
             # published -- it gets its own explicit input.
@@ -430,25 +386,12 @@ LANE_SPECS = {
     ),
 }
 
+# discovered-adopt is a focused integration lane, not part of the standing
+# release profile (review doc: "Move to focused integration testing"). It is
+# not verified here and carries no LANE_SPECS entry.
 PROFILES = {
-    "sol": (
-        "drag.json",
-        "sparkle.json",
-        "fresh-journal-first.json",
-        "fresh-sol-first.json",
-        "fresh-acquire.json",
-        "discovered-adopt.json",
-        "sol-upgrade.json",
-        SPL_LINK_REPORT_FILENAME,
-    ),
-    "journal": (
-        "drag.json",
-        "fresh-journal-first.json",
-        "fresh-sol-first.json",
-        "fresh-acquire.json",
-        "discovered-adopt.json",
-        "journal-upgrade.json",
-    ),
+    "sol": ("fresh-use.json", "v2-upgrade-sol.json", SPL_LINK_REPORT_FILENAME),
+    "journal": ("fresh-use.json", "v2-upgrade-journal.json", SPL_LINK_REPORT_FILENAME),
     "paired": REPORT_FILENAMES + (SPL_LINK_REPORT_FILENAME,),
 }
 
@@ -468,12 +411,12 @@ def verify_report_dir_holds_only_this_profile(report_dir, profile):
     to work out which set you are looking at, plus a hand-clear before the run,
     which is the step where an operator can go wrong.
 
-    Lane filenames name the lane, not what it proves: five of the six journal
-    reports share a name with a sol-profile member, and a sol-only cut holds the
-    journal pin at the released version, so identically-named reports can assert
-    a different journal identity. With per-profile scoped report directories this
-    check is unreachable in normal use, which is exactly why it is worth
-    asserting rather than leaving implicit.
+    `fresh-use.json` is shared by all three profiles: a sol-only cut and a
+    journal-only cut both hold the companion at its released identity, so an
+    identically-named report can assert a different companion identity across
+    profiles. With per-profile scoped report directories this check is
+    unreachable in normal use, which is exactly why it is worth asserting
+    rather than leaving implicit.
     """
     expected = set(PROFILES[profile])
     try:
@@ -778,6 +721,91 @@ def verify_provenance(report, filename, expected_commit):
             raise GateFailure(
                 f"{filename}: provenance.contracts.{key} is not a 64-hex sha256: {digest!r}"
             )
+
+
+TIER_B_INJECTION_KEYS = frozenset(
+    (
+        "day",
+        "segment",
+        "payload_sha256",
+        "payload_bytes",
+        "created_at",
+        "preexisting_completed_segments",
+        "injected",
+    )
+)
+
+
+def verify_local_tier_b_delivery(report, filename, now):
+    """Prove a real Tier B segment was injected through the actual local
+    uploader and its digest independently verified in the linked journal's own
+    chronicle storage -- fresh-use's and v2-upgrade's local-delivery proof,
+    the same discipline spl-link already applies remotely. A last-synced AX
+    label alone is not this proof (review doc); this binds to the segment
+    bytes actually landed, not a timestamp.
+
+    Self-consistency, not an externally supplied expectation: the injected
+    identity must match what the report's own run_id deterministically
+    derives, so a doctored or copy-pasted tier_b block cannot pass, and the
+    run_id must be fresh (same bound as spl-link) so stale evidence cannot be
+    replayed onto a new cut.
+    """
+    run_id = report.get("run_id")
+    if not isinstance(run_id, str) or RUN_ID_RE.match(run_id) is None:
+        raise GateFailure(f"{filename}: run_id is missing or invalid: {run_id!r}")
+
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise GateFailure(f"{filename}: verifier clock must be timezone-aware UTC")
+    run_timestamp = datetime.strptime(
+        run_id.split("-", 1)[0], "%Y%m%dT%H%M%SZ"
+    ).replace(tzinfo=timezone.utc)
+    age_s = (now.astimezone(timezone.utc) - run_timestamp).total_seconds()
+    if age_s > SPL_LINK_MAX_RUN_AGE_S:
+        raise GateFailure(f"{filename}: run_id is older than 24 hours -- stale delivery evidence")
+    if age_s < -SPL_LINK_FUTURE_SKEW_S:
+        raise GateFailure(f"{filename}: run_id is more than 5 minutes in the future")
+
+    identity = derive_tier_b_identity(run_id)
+
+    tier_b = report.get("tier_b")
+    if not isinstance(tier_b, dict):
+        raise GateFailure(f"{filename}: tier_b is missing or not an object")
+    require_exact_keys(tier_b, TIER_B_INJECTION_KEYS, f"{filename}: tier_b")
+    for key in ("day", "segment", "payload_sha256"):
+        if tier_b[key] != identity[key]:
+            raise GateFailure(
+                f"{filename}: tier_b.{key} is {tier_b[key]!r}, expected {identity[key]!r} "
+                "derived from this report's own run_id"
+            )
+    payload_bytes = require_bounded_integer(
+        tier_b["payload_bytes"], f"{filename}: tier_b.payload_bytes"
+    )
+    if payload_bytes != identity["payload_bytes"]:
+        raise GateFailure(
+            f"{filename}: tier_b.payload_bytes is {payload_bytes!r}, expected "
+            f"{identity['payload_bytes']!r}"
+        )
+    require_iso_utc(tier_b["created_at"], f"{filename}: tier_b.created_at")
+    require_bounded_integer(
+        tier_b["preexisting_completed_segments"],
+        f"{filename}: tier_b.preexisting_completed_segments",
+    )
+    require_true(tier_b["injected"], f"{filename}: tier_b.injected")
+
+    landing = report.get("tier_b_landing")
+    if not isinstance(landing, dict):
+        raise GateFailure(f"{filename}: tier_b_landing is missing or not an object")
+    require_true(landing.get("ok"), f"{filename}: tier_b_landing.ok")
+    if landing.get("day") != identity["day"] or landing.get("segment") != identity["segment"]:
+        raise GateFailure(
+            f"{filename}: tier_b_landing day/segment does not match the injected identity "
+            "-- landing evidence is for a different run"
+        )
+    if landing.get("expected_sha256") != identity["payload_sha256"]:
+        raise GateFailure(
+            f"{filename}: tier_b_landing.expected_sha256 does not match the injected "
+            "payload digest"
+        )
 
 
 def verify_runtime_pin(report, filename, spec, expected_runtime):
@@ -1308,6 +1336,7 @@ def verify_report(
     expected_commit,
     expected_runtime,
     expected_baseline_runtime,
+    now,
 ):
     report = load_json_object(path, filename)
 
@@ -1344,6 +1373,7 @@ def verify_report(
     verify_provenance(report, filename, expected_commit)
     verify_runtime_pin(report, filename, spec, expected_runtime)
     verify_baseline_runtime_pin(report, filename, spec, expected_baseline_runtime)
+    verify_local_tier_b_delivery(report, filename, now)
 
 
 def build_parser():
@@ -1400,18 +1430,13 @@ def main(argv=None, *, now=None):
         )
         return 2
 
-    profile_requires_spl_link = SPL_LINK_REPORT_FILENAME in PROFILES[args.profile]
+    # Every profile now includes SPL_LINK_REPORT_FILENAME -- remote delivery is one of
+    # the three required workflows for any cut, not an extra only sol/paired carried.
+    assert SPL_LINK_REPORT_FILENAME in PROFILES[args.profile]
     verification_now = now or datetime.now(timezone.utc)
 
     try:
-        sol_dmg_sha256 = None
-        if profile_requires_spl_link:
-            sol_dmg_sha256 = hash_file_sha256(args.sol_dmg, "--sol-dmg")
-        elif args.sol_dmg is not None:
-            raise GateFailure(
-                f"profile {args.profile!r} does not include {SPL_LINK_REPORT_FILENAME} "
-                "and must not supply --sol-dmg"
-            )
+        sol_dmg_sha256 = hash_file_sha256(args.sol_dmg, "--sol-dmg")
 
         pin = read_pin()
         verify_receipt(args.sync_receipt, pin, args.product_commit)
@@ -1440,6 +1465,7 @@ def main(argv=None, *, now=None):
                         if needs_baseline_runtime
                         else None
                     ),
+                    verification_now,
                 )
     except GateFailure as failure:
         print(f"ja1r linkage gate: REFUSED -- {failure}", file=sys.stderr)

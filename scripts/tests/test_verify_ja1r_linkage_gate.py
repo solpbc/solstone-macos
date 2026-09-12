@@ -2,17 +2,19 @@
 
 FIXTURE HONESTY: the reports built here are SCHEMA-DERIVED, not captured. No
 real PASS report exists in the harness repo or anywhere on disk, so these are
-constructed from the pinned harness's own report emitters -- extro-tools
-8bc4ab50, tools/solstone-macos-gate/gate.py: new_report() (direct-lane shape,
-schema_version, lane, result), the per-lane scenario fields it sets, the
-provenance block it fills, oracles() -> rep["post"] (the observed
-journal_version), _run_linked_upgrade_lane() / establish_linked_baseline()
-(linked_baseline.expected_runtime_version,
-linked_baseline.journal_fingerprint.journal_version), and runtime_pin_check()
-(the pin check keys, including checks.baseline_solstone_pin_matches), plus
-tools/solstone-macos-gate/spl_link_coordinator.py
-(coordinator envelope and sanitized spl-link lane subset). They are not dressed
-up as recordings of a real run.
+constructed from the pinned harness's own report emitters --
+tools/solstone-macos-gate/gate.py: new_report() (fresh-use/v2-upgrade-sol/
+v2-upgrade-journal shapes, schema_version, lane, result), the per-lane
+scenario fields it sets, the provenance block it fills, oracles() ->
+rep["post"] (the observed journal_version), v2_upgrade_lane() /
+establish_linked_baseline() (linked_baseline.expected_runtime_version,
+linked_baseline.journal_fingerprint.journal_version), runtime_pin_check()
+(the pin check keys, including checks.baseline_solstone_pin_matches), and
+_prove_tier_b_local_delivery() / verify_local_tier_b_landing() (the real
+local Tier B delivery/digest proof fresh-use and both v2-upgrade subcases now
+carry), plus tools/solstone-macos-gate/spl_link_coordinator.py (coordinator
+envelope and sanitized spl-link lane subset). They are not dressed up as
+recordings of a real run.
 """
 from __future__ import annotations
 
@@ -53,7 +55,6 @@ JOURNAL_V, JOURNAL_B = "1.0.4", "5"
 SOL_BASE_V, SOL_BASE_B = "1.4.4", "55"
 JOURNAL_BASE_V, JOURNAL_BASE_B = "1.0.3", "4"
 COMPANION_SOL_V, COMPANION_SOL_B = "1.4.5", "56"
-LEGACY_SOL_V = "1.3.31"
 RUN_ID = "20260715T184501Z-a1b2c3d4e5f60718"
 FIXED_NOW = datetime(2026, 7, 15, 18, 50, 0, tzinfo=timezone.utc)
 DEFAULT_SOL_DMG_SHA = "e" * 64
@@ -77,7 +78,6 @@ IDENTITY_ARGS = {
     "journal-baseline-build": JOURNAL_BASE_B,
     "companion-sol-version": COMPANION_SOL_V,
     "companion-sol-build": COMPANION_SOL_B,
-    "legacy-sol-baseline-version": LEGACY_SOL_V,
 }
 
 
@@ -250,53 +250,71 @@ def spl_link_report(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA, run_id=RUN_ID):
     }
 
 
+def local_tier_b(run_id=RUN_ID, preexisting_completed_segments=0):
+    return {
+        "day": TIER_B_DAY,
+        "segment": TIER_B_SEGMENT,
+        "payload_sha256": TIER_B_PAYLOAD_SHA256,
+        "payload_bytes": TIER_B_PAYLOAD_BYTES,
+        "created_at": TIER_B_CREATED_AT,
+        "preexisting_completed_segments": preexisting_completed_segments,
+        "injected": True,
+    }
+
+
+def local_tier_b_landing():
+    return {
+        "ok": True,
+        "day": TIER_B_DAY,
+        "segment": TIER_B_SEGMENT,
+        "expected_filename": f"{TIER_B_SEGMENT}_screen.mp4",
+        "expected_sha256": TIER_B_PAYLOAD_SHA256,
+        "matches": [
+            {
+                "stream": "device",
+                "requested_segment": TIER_B_SEGMENT,
+                "manifest_files": {
+                    f"{TIER_B_SEGMENT}_screen.mp4": {
+                        "sha256": TIER_B_PAYLOAD_SHA256,
+                        "size": TIER_B_PAYLOAD_BYTES,
+                    }
+                },
+                "recomputed_sha256": TIER_B_PAYLOAD_SHA256,
+            }
+        ],
+        "reason": None,
+        "journal_root_present": True,
+        "manifest_ok": True,
+        "digest_match": True,
+    }
+
+
 def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
     """One honest PASS report per canonical filename."""
     if filename == verifier.SPL_LINK_REPORT_FILENAME:
         return spl_link_report(sol_dmg_sha256)
-    if filename in ("drag.json", "sparkle.json"):
-        lane = "drag" if filename == "drag.json" else "sparkle"
+    if filename == "fresh-use.json":
+        # Derived from gate.py: new_report()'s fresh-use scenario fields, plus
+        # the real local Tier B delivery/digest proof (_prove_tier_b_local_delivery,
+        # verify_local_tier_b_landing) folded in -- not the migration-era fresh/
+        # fresh-acquire split this used to be.
         return base_report(
-            lane,
-            {"solstone_pin_matches": True},
-            **{
-                "from": LEGACY_SOL_V,
-                "to": SOL_V,
-                "to_build": SOL_B,
-                "journal": JOURNAL_V,
-                "journal_build": JOURNAL_B,
-            },
-            post={"journal_version": OBSERVED_RUNTIME},
-        )
-    if filename in ("fresh-acquire.json", "discovered-adopt.json"):
-        # Derived from gate.py at 8bc4ab50: new_report() scenario fields for the
-        # acquire-driven lanes. Like fresh, they run the oracles + pin check but
-        # store the fingerprint under linked_finish, never top-level `post` --
-        # the pin is proved by the check alone.
-        return base_report(
-            filename.removesuffix(".json"),
+            "fresh-use",
             {"solstone_pin_matches": True},
             to=SOL_V,
             to_build=SOL_B,
             journal=JOURNAL_V,
             journal_build=JOURNAL_B,
+            run_id=RUN_ID,
+            tier_b=local_tier_b(),
+            tier_b_landing=local_tier_b_landing(),
         )
-    if filename.startswith("fresh-"):
-        order = "journal-first" if "journal-first" in filename else "sol-first"
-        # The fresh lane runs the oracles but never stores the fingerprint, so
-        # its report carries no `post` -- the pin is proved by the check alone.
+    if filename == "v2-upgrade-sol.json":
+        # Derived from gate.py: v2_upgrade_lane(target_name="sol") -- the former
+        # sol-upgrade lane with the staging-update offer/lifecycle proof and the
+        # real Tier B post-turnover delivery proof folded in.
         return base_report(
-            "fresh",
-            {"solstone_pin_matches": True},
-            to=SOL_V,
-            to_build=SOL_B,
-            journal=JOURNAL_V,
-            journal_build=JOURNAL_B,
-            order=order,
-        )
-    if filename == "sol-upgrade.json":
-        return base_report(
-            "sol-upgrade",
+            "v2-upgrade-sol",
             {"runtime_pin_matches": True},
             **{
                 "from": SOL_BASE_V,
@@ -307,12 +325,16 @@ def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
                 "journal_build": JOURNAL_B,
             },
             post={"journal_version": OBSERVED_RUNTIME},
+            run_id=RUN_ID,
+            tier_b=local_tier_b(),
+            tier_b_landing=local_tier_b_landing(),
         )
-    if filename == "journal-upgrade.json":
-        # Derived from gate.py at 8bc4ab50: new_report(),
-        # _run_linked_upgrade_lane(), and establish_linked_baseline().
+    if filename == "v2-upgrade-journal.json":
+        # Derived from gate.py: v2_upgrade_lane(target_name="journal"),
+        # establish_linked_baseline(), and the same real Tier B post-turnover
+        # delivery proof as v2-upgrade-sol.
         return base_report(
-            "journal-upgrade",
+            "v2-upgrade-journal",
             {"runtime_pin_matches": True, "baseline_solstone_pin_matches": True},
             to=COMPANION_SOL_V,
             to_build=COMPANION_SOL_B,
@@ -328,6 +350,9 @@ def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
                 "journal_fingerprint": {"journal_version": OBSERVED_BASELINE_RUNTIME},
             },
             post={"journal_version": OBSERVED_RUNTIME},
+            run_id=RUN_ID,
+            tier_b=local_tier_b(),
+            tier_b_landing=local_tier_b_landing(),
         )
     raise AssertionError(f"no fixture for {filename}")
 
@@ -445,7 +470,7 @@ class ValidSetsPass(GateTestCase):
         self.assertEqual(verdict["product_commit"], COMMIT)
         self.assertEqual(verdict["harness_revision"], PIN)
         self.assertNotIn("expected_journal_baseline_runtime", verdict)
-        self.assertEqual(len(verdict["reports_verified"]), 8)
+        self.assertEqual(len(verdict["reports_verified"]), 3)
 
     def test_valid_journal_set_passes(self):
         self.write_set("journal")
@@ -454,47 +479,48 @@ class ValidSetsPass(GateTestCase):
         verdict = json.loads(out)
         self.assertEqual(verdict["profile"], "journal")
         self.assertEqual(verdict["expected_journal_baseline_runtime"], BASELINE_RUNTIME_PIN)
-        self.assertEqual(len(verdict["reports_verified"]), 6)
+        self.assertEqual(len(verdict["reports_verified"]), 3)
 
     def test_valid_paired_set_passes(self):
         self.write_set("paired")
         code, out, _ = self.run_gate("paired")
         self.assertEqual(code, 0)
         verdict = json.loads(out)
-        self.assertEqual(len(verdict["reports_verified"]), 9)
+        self.assertEqual(len(verdict["reports_verified"]), 4)
         self.assertEqual(verdict["expected_journal_baseline_runtime"], BASELINE_RUNTIME_PIN)
 
-    def test_journal_profile_requires_drag(self):
-        self.assertIn("drag.json", verifier.PROFILES["journal"])
+    def test_every_profile_requires_remote_delivery(self):
+        for profile in ("sol", "journal", "paired"):
+            self.assertIn(verifier.SPL_LINK_REPORT_FILENAME, verifier.PROFILES[profile])
 
 
 class FreshnessAndProvenance(GateTestCase):
     def test_stale_product_commit_is_refused(self):
         self.write_set("sol")
-        stale = report_for("drag.json")
+        stale = report_for("fresh-use.json")
         stale["provenance"]["commit"] = OTHER_COMMIT
-        self.write_report("drag.json", stale)
+        self.write_report("fresh-use.json", stale)
         self.assertIn("another build", self.assert_refused())
 
     def test_dirty_contract_scope_is_refused(self):
         self.write_set("sol")
-        dirty = report_for("sparkle.json")
+        dirty = report_for("v2-upgrade-sol.json")
         dirty["provenance"]["clean"] = False
-        self.write_report("sparkle.json", dirty)
+        self.write_report("v2-upgrade-sol.json", dirty)
         self.assertIn("clean", self.assert_refused())
 
     def test_missing_provenance_is_refused(self):
         self.write_set("sol")
-        broken = report_for("drag.json")
+        broken = report_for("fresh-use.json")
         del broken["provenance"]
-        self.write_report("drag.json", broken)
+        self.write_report("fresh-use.json", broken)
         self.assert_refused()
 
     def test_missing_contract_hash_is_refused(self):
         self.write_set("sol")
-        broken = report_for("drag.json")
+        broken = report_for("fresh-use.json")
         del broken["provenance"]["contracts"]["journal_sha256"]
-        self.write_report("drag.json", broken)
+        self.write_report("fresh-use.json", broken)
         self.assertIn("journal_sha256", self.assert_refused())
 
 
@@ -523,13 +549,13 @@ class ReceiptBinding(GateTestCase):
 class Completeness(GateTestCase):
     def test_missing_member_is_refused(self):
         self.write_set("sol")
-        (self.reports / "sol-upgrade.json").unlink()
+        (self.reports / "v2-upgrade-sol.json").unlink()
         self.assertIn("missing", self.assert_refused())
 
     def test_sol_reports_cannot_authorize_a_journal_publish(self):
         # A complete, valid sol set lacks journal-upgrade.json entirely.
         self.write_set("sol")
-        (self.reports / "journal-upgrade.json").unlink(missing_ok=True)
+        (self.reports / "v2-upgrade-journal.json").unlink(missing_ok=True)
         self.assert_refused("journal")
 
     def test_empty_report_dir_is_refused(self):
@@ -540,9 +566,9 @@ class Completeness(GateTestCase):
         # from another cut sitting alongside them used to be silently ignored.
         # A mixed directory is refused, and the offending file is named.
         self.write_set("journal")
-        self.write_report("sol-upgrade.json", report_for("sol-upgrade.json", self.sol_dmg_sha))
+        self.write_report("v2-upgrade-sol.json", report_for("v2-upgrade-sol.json", self.sol_dmg_sha))
         err = self.assert_refused("journal")
-        self.assertIn("sol-upgrade.json", err)
+        self.assertIn("v2-upgrade-sol.json", err)
         self.assertIn("outside profile", err)
 
     def test_non_report_files_beside_a_complete_set_are_ignored(self):
@@ -582,18 +608,15 @@ class SPLLinkCoordinatorReport(GateTestCase):
                 self.spl_path().unlink()
                 self.assertIn("missing", self.assert_refused(profile))
 
-    def test_sol_dmg_argument_is_profile_conditional(self):
-        self.write_set("sol")
-        code, out, err = self.run_gate("sol", include_sol_dmg=False)
-        self.assertNotEqual(code, 0)
-        self.assertEqual(out.strip(), "")
-        self.assertIn("--sol-dmg", err)
-
-        self.write_set("journal")
-        code, out, err = self.run_gate("journal", include_sol_dmg=True)
-        self.assertNotEqual(code, 0)
-        self.assertEqual(out.strip(), "")
-        self.assertIn("must not supply --sol-dmg", err)
+    def test_sol_dmg_argument_is_required_on_every_profile(self):
+        # Remote delivery is one of the three required workflows for any cut now,
+        # not an extra only sol/paired carried -- every profile needs --sol-dmg.
+        for profile in ("sol", "journal", "paired"):
+            self.write_set(profile)
+            code, out, err = self.run_gate(profile, include_sol_dmg=False)
+            self.assertNotEqual(code, 0)
+            self.assertEqual(out.strip(), "")
+            self.assertIn("--sol-dmg", err)
 
     def test_sol_dmg_file_failures_are_refused(self):
         missing = self.root / "missing.dmg"
@@ -1066,46 +1089,39 @@ class SPLLinkCoordinatorReport(GateTestCase):
 
 
 class ScenarioIdentity(GateTestCase):
-    def test_wrong_fresh_order_is_refused(self):
-        self.write_set("sol")
-        # Both fresh files present, but both ran sol-first.
-        wrong = report_for("fresh-sol-first.json")
-        self.write_report("fresh-journal-first.json", wrong)
-        self.assertIn("order", self.assert_refused())
-
     def test_prior_version_is_refused(self):
         self.write_set("sol")
-        stale = report_for("drag.json")
+        stale = report_for("fresh-use.json")
         stale["to"] = "1.4.4"
-        self.write_report("drag.json", stale)
+        self.write_report("fresh-use.json", stale)
         self.assertIn("expected", self.assert_refused())
 
     def test_prior_build_is_refused(self):
         self.write_set("sol")
-        stale = report_for("sol-upgrade.json")
+        stale = report_for("v2-upgrade-sol.json")
         stale["to_build"] = "55"
-        self.write_report("sol-upgrade.json", stale)
+        self.write_report("v2-upgrade-sol.json", stale)
         self.assert_refused()
 
     def test_wrong_lane_is_refused(self):
         self.write_set("sol")
-        swapped = report_for("drag.json")
-        swapped["lane"] = "sparkle"
-        self.write_report("drag.json", swapped)
+        swapped = report_for("fresh-use.json")
+        swapped["lane"] = "v2-upgrade-sol"
+        self.write_report("fresh-use.json", swapped)
         self.assertIn("lane", self.assert_refused())
 
     def test_missing_scenario_field_is_refused(self):
         self.write_set("sol")
-        broken = report_for("drag.json")
+        broken = report_for("v2-upgrade-sol.json")
         del broken["from"]
-        self.write_report("drag.json", broken)
+        self.write_report("v2-upgrade-sol.json", broken)
         self.assert_refused()
 
     def test_journal_upgrade_companion_sol_is_checked(self):
         self.write_set("journal")
-        report = report_for("journal-upgrade.json")
+        report = report_for("v2-upgrade-journal.json")
         report["to"] = "9.9.9"
-        self.write_report("journal-upgrade.json", report)
+        self.write_report("v2-upgrade-journal.json", report)
         self.assert_refused("journal")
 
 
@@ -1114,129 +1130,225 @@ class RuntimePin(GateTestCase):
         # The trap: runtime_pin_check returns this truthy STRING when
         # --expect-solstone was not passed, and the lane can still say PASS.
         self.write_set("sol")
-        skipped = report_for("drag.json")
+        skipped = report_for("fresh-use.json")
         skipped["checks"]["solstone_pin_matches"] = "SKIPPED (no --expect-solstone)"
-        self.write_report("drag.json", skipped)
+        self.write_report("fresh-use.json", skipped)
         self.assertIn("not true", self.assert_refused())
 
     def test_false_pin_check_is_refused(self):
         self.write_set("sol")
-        failed = report_for("sol-upgrade.json")
+        failed = report_for("v2-upgrade-sol.json")
         failed["checks"]["runtime_pin_matches"] = False
-        self.write_report("sol-upgrade.json", failed)
+        self.write_report("v2-upgrade-sol.json", failed)
         self.assert_refused()
 
     def test_absent_pin_check_is_refused(self):
         self.write_set("sol")
-        broken = report_for("fresh-sol-first.json")
+        broken = report_for("fresh-use.json")
         broken["checks"] = {}
-        self.write_report("fresh-sol-first.json", broken)
+        self.write_report("fresh-use.json", broken)
         self.assertIn("solstone_pin_matches", self.assert_refused())
 
     def test_observed_runtime_without_the_pin_is_refused(self):
         self.write_set("sol")
-        wrong = report_for("sol-upgrade.json")
+        wrong = report_for("v2-upgrade-sol.json")
         wrong["post"]["journal_version"] = "journal 0.7.9 (build 41)"
-        self.write_report("sol-upgrade.json", wrong)
+        self.write_report("v2-upgrade-sol.json", wrong)
         self.assertIn("expected pin", self.assert_refused())
 
     def test_missing_observed_runtime_is_refused(self):
         self.write_set("sol")
-        wrong = report_for("drag.json")
+        wrong = report_for("v2-upgrade-sol.json")
         del wrong["post"]
-        self.write_report("drag.json", wrong)
+        self.write_report("v2-upgrade-sol.json", wrong)
         self.assert_refused()
 
     def test_mismatched_baseline_report_input_is_refused(self):
         self.write_set("journal")
-        wrong = report_for("journal-upgrade.json")
+        wrong = report_for("v2-upgrade-journal.json")
         wrong["expect_solstone_baseline"] = RUNTIME_PIN
-        self.write_report("journal-upgrade.json", wrong)
+        self.write_report("v2-upgrade-journal.json", wrong)
         self.assertIn("--expected-journal-baseline-runtime", self.assert_refused("journal"))
 
     def test_mismatched_linked_baseline_runtime_is_refused(self):
         self.write_set("journal")
-        wrong = report_for("journal-upgrade.json")
+        wrong = report_for("v2-upgrade-journal.json")
         wrong["linked_baseline"]["expected_runtime_version"] = RUNTIME_PIN
-        self.write_report("journal-upgrade.json", wrong)
+        self.write_report("v2-upgrade-journal.json", wrong)
         self.assertIn("linked_baseline.expected_runtime_version", self.assert_refused("journal"))
 
     def test_skipped_baseline_pin_check_is_refused(self):
         self.write_set("journal")
-        wrong = report_for("journal-upgrade.json")
+        wrong = report_for("v2-upgrade-journal.json")
         wrong["checks"]["baseline_solstone_pin_matches"] = "SKIPPED (no --expect-solstone)"
-        self.write_report("journal-upgrade.json", wrong)
+        self.write_report("v2-upgrade-journal.json", wrong)
         self.assertIn("baseline_solstone_pin_matches", self.assert_refused("journal"))
 
     def test_false_baseline_pin_check_is_refused(self):
         self.write_set("journal")
-        wrong = report_for("journal-upgrade.json")
+        wrong = report_for("v2-upgrade-journal.json")
         wrong["checks"]["baseline_solstone_pin_matches"] = False
-        self.write_report("journal-upgrade.json", wrong)
+        self.write_report("v2-upgrade-journal.json", wrong)
         self.assertIn("not true", self.assert_refused("journal"))
 
     def test_absent_baseline_pin_check_is_refused(self):
         self.write_set("journal")
-        wrong = report_for("journal-upgrade.json")
+        wrong = report_for("v2-upgrade-journal.json")
         del wrong["checks"]["baseline_solstone_pin_matches"]
-        self.write_report("journal-upgrade.json", wrong)
+        self.write_report("v2-upgrade-journal.json", wrong)
         self.assertIn("baseline_solstone_pin_matches", self.assert_refused("journal"))
 
     def test_baseline_observed_runtime_without_the_pin_is_refused(self):
         self.write_set("journal")
-        wrong = report_for("journal-upgrade.json")
+        wrong = report_for("v2-upgrade-journal.json")
         wrong["linked_baseline"]["journal_fingerprint"]["journal_version"] = OBSERVED_RUNTIME
-        self.write_report("journal-upgrade.json", wrong)
+        self.write_report("v2-upgrade-journal.json", wrong)
         self.assertIn("expected baseline pin", self.assert_refused("journal"))
 
     def test_missing_baseline_observed_runtime_is_refused(self):
         self.write_set("journal")
-        wrong = report_for("journal-upgrade.json")
+        wrong = report_for("v2-upgrade-journal.json")
         del wrong["linked_baseline"]["journal_fingerprint"]["journal_version"]
-        self.write_report("journal-upgrade.json", wrong)
+        self.write_report("v2-upgrade-journal.json", wrong)
         self.assertIn("linked_baseline.journal_fingerprint.journal_version", self.assert_refused("journal"))
 
     def test_baseline_and_target_pins_are_not_interchangeable(self):
         self.write_set("journal")
-        baseline_has_target = report_for("journal-upgrade.json")
+        baseline_has_target = report_for("v2-upgrade-journal.json")
         baseline_has_target["linked_baseline"]["journal_fingerprint"]["journal_version"] = (
             OBSERVED_RUNTIME
         )
-        self.write_report("journal-upgrade.json", baseline_has_target)
+        self.write_report("v2-upgrade-journal.json", baseline_has_target)
         self.assert_refused("journal")
 
         self.write_set("journal")
-        target_has_baseline = report_for("journal-upgrade.json")
+        target_has_baseline = report_for("v2-upgrade-journal.json")
         target_has_baseline["post"]["journal_version"] = OBSERVED_BASELINE_RUNTIME
-        self.write_report("journal-upgrade.json", target_has_baseline)
+        self.write_report("v2-upgrade-journal.json", target_has_baseline)
         self.assert_refused("journal")
+
+
+class LocalTierBDelivery(GateTestCase):
+    """fresh-use and both v2-upgrade subcases now carry the same real local
+    delivery/digest proof spl-link proves remotely -- these prove the new
+    check actually rejects wrong/stale/mismatched evidence, not only that it
+    lets a fixture-shaped honest report through (ValidSetsPass already does
+    that)."""
+
+    def test_missing_run_id_is_refused(self):
+        self.write_set("sol")
+        broken = report_for("fresh-use.json")
+        del broken["run_id"]
+        self.write_report("fresh-use.json", broken)
+        self.assertIn("run_id", self.assert_refused())
+
+    def test_malformed_run_id_is_refused(self):
+        self.write_set("sol")
+        broken = report_for("v2-upgrade-sol.json")
+        broken["run_id"] = "not-a-run-id"
+        self.write_report("v2-upgrade-sol.json", broken)
+        self.assertIn("run_id", self.assert_refused())
+
+    def test_stale_run_id_is_refused(self):
+        self.write_set("sol")
+        code, out, err = self.run_gate("sol", now=FIXED_NOW + timedelta(hours=25))
+        self.assertNotEqual(code, 0)
+        self.assertEqual(out.strip(), "")
+        self.assertIn("older than 24 hours", err)
+
+    def test_future_run_id_is_refused(self):
+        self.write_set("sol")
+        code, out, err = self.run_gate(
+            "sol", now=FIXED_NOW - timedelta(hours=1)
+        )
+        self.assertNotEqual(code, 0)
+        self.assertEqual(out.strip(), "")
+        self.assertIn("more than 5 minutes in the future", err)
+
+    def test_tier_b_day_mismatch_is_refused(self):
+        self.write_set("sol")
+        wrong = report_for("fresh-use.json")
+        wrong["tier_b"]["day"] = "20260716"
+        self.write_report("fresh-use.json", wrong)
+        self.assertIn("tier_b.day", self.assert_refused())
+
+    def test_tier_b_payload_sha256_mismatch_is_refused(self):
+        self.write_set("sol")
+        wrong = report_for("v2-upgrade-sol.json")
+        wrong["tier_b"]["payload_sha256"] = "0" * 64
+        self.write_report("v2-upgrade-sol.json", wrong)
+        self.assertIn("tier_b.payload_sha256", self.assert_refused())
+
+    def test_tier_b_not_injected_is_refused(self):
+        self.write_set("sol")
+        wrong = report_for("fresh-use.json")
+        wrong["tier_b"]["injected"] = False
+        self.write_report("fresh-use.json", wrong)
+        self.assertIn("tier_b.injected", self.assert_refused())
+
+    def test_missing_tier_b_landing_is_refused(self):
+        self.write_set("sol")
+        broken = report_for("v2-upgrade-sol.json")
+        del broken["tier_b_landing"]
+        self.write_report("v2-upgrade-sol.json", broken)
+        self.assertIn("tier_b_landing", self.assert_refused())
+
+    def test_tier_b_landing_not_ok_is_refused(self):
+        # This is the exact trap the review doc names: a last-synced label is
+        # not delivery proof. digest_match False with ok still True must not
+        # happen from the harness, but the verifier checks `ok` directly, not
+        # digest_match, so a landing that never confirmed the digest is caught
+        # here regardless of how it got there.
+        self.write_set("sol")
+        wrong = report_for("fresh-use.json")
+        wrong["tier_b_landing"]["ok"] = False
+        wrong["tier_b_landing"]["reason"] = "tier_b_segment_not_landed"
+        self.write_report("fresh-use.json", wrong)
+        self.assertIn("tier_b_landing.ok", self.assert_refused())
+
+    def test_tier_b_landing_wrong_segment_is_refused(self):
+        # Stale delivery with no matching payload: landing evidence for a
+        # different run's segment must not authorize this run.
+        self.write_set("sol")
+        wrong = report_for("fresh-use.json")
+        wrong["tier_b_landing"]["segment"] = "999999_1"
+        self.write_report("fresh-use.json", wrong)
+        self.assertIn("does not match the injected identity", self.assert_refused())
+
+    def test_valid_local_tier_b_delivery_passes(self):
+        # Positive control: an honest, fresh, self-consistent report is not
+        # collateral damage from the checks above.
+        self.write_set("sol")
+        code, out, err = self.run_gate("sol")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["result"], "PASS")
 
 
 class MalformedReports(GateTestCase):
     def test_trailing_json_is_refused(self):
         self.write_set("sol")
-        good = json.dumps(report_for("drag.json"))
-        (self.reports / "drag.json").write_text(good + "\n{}\n")
+        good = json.dumps(report_for("fresh-use.json"))
+        (self.reports / "fresh-use.json").write_text(good + "\n{}\n")
         self.assertIn("trailing", self.assert_refused())
 
     def test_non_object_json_is_refused(self):
         self.write_set("sol")
-        (self.reports / "drag.json").write_text("[]")
+        (self.reports / "fresh-use.json").write_text("[]")
         self.assert_refused()
 
     def test_wrong_schema_version_is_refused(self):
         self.write_set("sol")
-        report = report_for("drag.json")
+        report = report_for("fresh-use.json")
         report["schema_version"] = 2
-        self.write_report("drag.json", report)
+        self.write_report("fresh-use.json", report)
         self.assertIn("schema_version", self.assert_refused())
 
     def test_non_pass_result_is_refused(self):
         self.write_set("sol")
         for bad in ("FAIL", "RED", "ERROR", "INCONCLUSIVE"):
-            report = report_for("drag.json")
+            report = report_for("fresh-use.json")
             report["result"] = bad
-            self.write_report("drag.json", report)
+            self.write_report("fresh-use.json", report)
             self.assertIn("result", self.assert_refused())
 
 
@@ -1256,7 +1368,7 @@ class MissingIdentityInputs(GateTestCase):
         self.assertNotEqual(code, 0)
         self.assertEqual(out.getvalue().strip(), "")
         self.assertIn("--sol-target-version", err.getvalue())
-        self.assertIn("--legacy-sol-baseline-version", err.getvalue())
+        self.assertIn("--sol-baseline-version", err.getvalue())
 
     def test_sol_profile_does_not_demand_journal_baseline(self):
         # Only the identities the profile's lanes actually assert are required.
@@ -1333,14 +1445,15 @@ class MakefileContract(unittest.TestCase):
             self.assertIn(baseline_var, block)
             self.assertIn(baseline_flag, block)
 
-    def test_sol_dmg_is_only_forwarded_for_profiles_with_spl_link(self):
-        sol = self.target_block("verify-ja1r-gate-sol")
-        journal = self.target_block("verify-ja1r-gate-journal")
-        paired = self.target_block("verify-ja1r-gate-paired")
-
-        self.assertIn("--sol-dmg '$(DMG_NAME)'", sol)
-        self.assertNotIn("--sol-dmg", journal)
-        self.assertIn("--sol-dmg '$(DMG_NAME)'", paired)
+    def test_sol_dmg_is_forwarded_on_every_profile(self):
+        # Remote delivery (spl-link) is one of the three required workflows for
+        # every profile now -- all three targets forward --sol-dmg.
+        for target in (
+            "verify-ja1r-gate-sol",
+            "verify-ja1r-gate-journal",
+            "verify-ja1r-gate-paired",
+        ):
+            self.assertIn("--sol-dmg '$(DMG_NAME)'", self.target_block(target))
 
 
 if __name__ == "__main__":

@@ -1323,8 +1323,13 @@ define require_gate_vars
 	fi
 endef
 
+# Remote delivery (spl-link) is one of the three required workflows for every
+# profile now, not an extra only sol/paired carried -- all three targets pass
+# --sol-dmg. For a journal-only cut this hashes the RELEASED (unchanged) sol
+# DMG the operator staged at $(DMG_NAME); DIST_VERSION stays at the last
+# released sol version when only the journal candidate moved.
 verify-ja1r-gate-sol: ja1r-gate-clean-tree
-	$(call require_gate_vars,sol,JA1R_GATE_JOURNAL_VERSION JA1R_GATE_JOURNAL_BUILD JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN)
+	$(call require_gate_vars,sol,JA1R_GATE_JOURNAL_VERSION JA1R_GATE_JOURNAL_BUILD JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_JOURNAL_RUNTIME_PIN)
 	$(VERIFY_JA1R) --profile sol \
 		--report-dir '$(or $(JA1R_GATE_REPORT_DIR),$(JA1R_GATE_REPORT_DIR_SOL))' \
 		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
@@ -1335,17 +1340,17 @@ verify-ja1r-gate-sol: ja1r-gate-clean-tree
 		--journal-target-version '$(JA1R_GATE_JOURNAL_VERSION)' \
 		--journal-target-build '$(JA1R_GATE_JOURNAL_BUILD)' \
 		--sol-baseline-version '$(JA1R_GATE_SOL_BASELINE_VERSION)' \
-		--sol-baseline-build '$(JA1R_GATE_SOL_BASELINE_BUILD)' \
-		--legacy-sol-baseline-version '$(JA1R_GATE_LEGACY_SOL_VERSION)'
+		--sol-baseline-build '$(JA1R_GATE_SOL_BASELINE_BUILD)'
 
 verify-ja1r-gate-journal: ja1r-gate-clean-tree
-	$(call require_gate_vars,journal,JA1R_GATE_SOL_VERSION JA1R_GATE_SOL_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)
+	$(call require_gate_vars,journal,JA1R_GATE_SOL_VERSION JA1R_GATE_SOL_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_JOURNAL_RUNTIME_PIN JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)
 	$(VERIFY_JA1R) --profile journal \
 		--report-dir '$(or $(JA1R_GATE_REPORT_DIR),$(JA1R_GATE_REPORT_DIR_JOURNAL))' \
 		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
 		--product-commit '$(PRODUCT_HEAD)' \
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
 		--expected-journal-baseline-runtime '$(JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)' \
+		--sol-dmg '$(DMG_NAME)' \
 		--sol-target-version '$(JA1R_GATE_SOL_VERSION)' \
 		--sol-target-build '$(JA1R_GATE_SOL_BUILD)' \
 		--companion-sol-version '$(JA1R_GATE_SOL_VERSION)' \
@@ -1353,11 +1358,10 @@ verify-ja1r-gate-journal: ja1r-gate-clean-tree
 		--journal-target-version '$(JOURNAL_DIST_VERSION)' \
 		--journal-target-build '$(JOURNAL_DIST_BUILD)' \
 		--journal-baseline-version '$(JA1R_GATE_JOURNAL_BASELINE_VERSION)' \
-		--journal-baseline-build '$(JA1R_GATE_JOURNAL_BASELINE_BUILD)' \
-		--legacy-sol-baseline-version '$(JA1R_GATE_LEGACY_SOL_VERSION)'
+		--journal-baseline-build '$(JA1R_GATE_JOURNAL_BASELINE_BUILD)'
 
 verify-ja1r-gate-paired: ja1r-gate-clean-tree
-	$(call require_gate_vars,paired,JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_LEGACY_SOL_VERSION JA1R_GATE_JOURNAL_RUNTIME_PIN JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)
+	$(call require_gate_vars,paired,JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_JOURNAL_RUNTIME_PIN JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)
 	$(VERIFY_JA1R) --profile paired \
 		--report-dir '$(or $(JA1R_GATE_REPORT_DIR),$(JA1R_GATE_REPORT_DIR_PAIRED))' \
 		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
@@ -1372,8 +1376,7 @@ verify-ja1r-gate-paired: ja1r-gate-clean-tree
 		--sol-baseline-version '$(JA1R_GATE_SOL_BASELINE_VERSION)' \
 		--sol-baseline-build '$(JA1R_GATE_SOL_BASELINE_BUILD)' \
 		--journal-baseline-version '$(JA1R_GATE_JOURNAL_BASELINE_VERSION)' \
-		--journal-baseline-build '$(JA1R_GATE_JOURNAL_BASELINE_BUILD)' \
-		--legacy-sol-baseline-version '$(JA1R_GATE_LEGACY_SOL_VERSION)'
+		--journal-baseline-build '$(JA1R_GATE_JOURNAL_BASELINE_BUILD)'
 
 # Production publishes are gated. Staging is NOT — it must stay runnable before
 # the rig has produced any evidence at all.
