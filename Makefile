@@ -482,6 +482,7 @@ bump-release-journal:
 		{ echo "error: BUILD=$(BUILD) must be strictly greater than current journal build $$CURRENT_BUILD"; exit 1; }
 	@/usr/bin/plutil -replace CFBundleShortVersionString -string "$(VERSION)" Sources/journal/Info.plist
 	@/usr/bin/plutil -replace CFBundleVersion -string "$(BUILD)" Sources/journal/Info.plist
+	@python3 -c 'import json, pathlib, plistlib; p = pathlib.Path("Sources/journal/Resources/runtime-entry-candidate-provenance.json"); data = json.loads(p.read_text()); info = plistlib.loads(pathlib.Path("Sources/journal/Info.plist").read_bytes()); data["target"] = dict(zip(("bundle_identifier", "bundle_short_version", "bundle_version"), (info["CFBundleIdentifier"], info["CFBundleShortVersionString"], info["CFBundleVersion"]))); p.write_text(json.dumps(data, indent=2) + "\n")'
 	@echo "✓ journal Info.plist: CFBundleShortVersionString=$(VERSION), CFBundleVersion=$(BUILD)"
 	@CHANGELOG_KEY="$$( $(RELEASE_IDENTITY) identity --app journal --version "$(VERSION)" --build "$(BUILD)" --field changelog_key )"; \
 	if grep -Fq "## [$$CHANGELOG_KEY]" CHANGELOG-journal.md; then \
@@ -1336,6 +1337,7 @@ verify-ja1r-gate-sol: ja1r-gate-clean-tree
 		--product-commit '$(PRODUCT_HEAD)' \
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
 		--sol-dmg '$(DMG_NAME)' \
+		--journal-dmg '$(JOURNAL_DMG_NAME)' \
 		--sol-target-version '$(DIST_VERSION)' --sol-target-build '$(DIST_BUILD)' \
 		--journal-target-version '$(JA1R_GATE_JOURNAL_VERSION)' \
 		--journal-target-build '$(JA1R_GATE_JOURNAL_BUILD)' \
@@ -1351,6 +1353,7 @@ verify-ja1r-gate-journal: ja1r-gate-clean-tree
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
 		--expected-journal-baseline-runtime '$(JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)' \
 		--sol-dmg '$(DMG_NAME)' \
+		--journal-dmg '$(JOURNAL_DMG_NAME)' \
 		--sol-target-version '$(JA1R_GATE_SOL_VERSION)' \
 		--sol-target-build '$(JA1R_GATE_SOL_BUILD)' \
 		--companion-sol-version '$(JA1R_GATE_SOL_VERSION)' \
@@ -1369,6 +1372,7 @@ verify-ja1r-gate-paired: ja1r-gate-clean-tree
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
 		--expected-journal-baseline-runtime '$(JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)' \
 		--sol-dmg '$(DMG_NAME)' \
+		--journal-dmg '$(JOURNAL_DMG_NAME)' \
 		--sol-target-version '$(DIST_VERSION)' --sol-target-build '$(DIST_BUILD)' \
 		--companion-sol-version '$(DIST_VERSION)' --companion-sol-build '$(DIST_BUILD)' \
 		--journal-target-version '$(JOURNAL_DIST_VERSION)' \

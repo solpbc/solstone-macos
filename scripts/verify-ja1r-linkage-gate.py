@@ -348,7 +348,7 @@ LANE_SPECS = {
         lane="fresh-use",
         identity=_FRESH_USE_IDENTITY,
         pin_check_key="solstone_pin_matches",
-        observes_runtime=False,
+        observes_runtime=True,
     ),
     "v2-upgrade-sol.json": LaneSpec(
         lane="v2-upgrade-sol",
@@ -394,6 +394,34 @@ PROFILES = {
     "journal": ("fresh-use.json", "v2-upgrade-journal.json", SPL_LINK_REPORT_FILENAME),
     "paired": REPORT_FILENAMES + (SPL_LINK_REPORT_FILENAME,),
 }
+
+
+# Critical observations must be present even if a malformed report says PASS.
+LOCAL_REQUIRED_CHECKS = {
+    "fresh-use": (
+        "installed_sol_matches", "installed_journal_matches", "local_link_complete",
+        "journal_ritual_complete", "health_ok", "setup_complete",
+        "staging_offer_exact", "staging_offer_stable",
+        "journal_window_green_verified", "journal_runtime_stopped",
+        "journal_window_red_state_error", "journal_window_red_affordances_valid",
+        "journal_runtime_restarted", "journal_window_recovery_verified", "restore_verified",
+    ),
+    "v2-upgrade-sol": (
+        "target_upgrade_ok", "target_identity_matches", "target_process_turned_over",
+        "staging_offer_exact", "staging_offer_stable", "candidate_relaunch_and_quit",
+        "serverkey_preserved", "pairing_identity_preserved", "config_preserved",
+        "supported_state_preserved", "journal_identity_unchanged",
+        "journal_process_unchanged", "runtime_process_unchanged",
+    ),
+    "v2-upgrade-journal": (
+        "target_upgrade_ok", "target_identity_matches", "target_process_turned_over",
+        "staging_offer_exact", "staging_offer_stable", "candidate_relaunch_and_quit",
+        "serverkey_preserved", "pairing_identity_preserved", "config_preserved",
+        "supported_state_preserved", "sol_identity_unchanged", "sol_process_unchanged",
+        "journal_process_turned_over", "runtime_process_turned_over",
+    ),
+}
+LOCAL_DELIVERY_CHECKS = ("tier_b_segment_injected", "tier_b_landing_verified", "fresh_connection")
 
 
 class GateFailure(Exception):
@@ -756,9 +784,10 @@ def verify_local_tier_b_delivery(report, filename, now):
 
     if now.tzinfo is None or now.utcoffset() is None:
         raise GateFailure(f"{filename}: verifier clock must be timezone-aware UTC")
-    run_timestamp = datetime.strptime(
-        run_id.split("-", 1)[0], "%Y%m%dT%H%M%SZ"
-    ).replace(tzinfo=timezone.utc)
+    try:
+        run_timestamp = parse_run_timestamp(run_id)
+    except GateFailure:
+        raise GateFailure(f"{filename}: run_id has an invalid timestamp") from None
     age_s = (now.astimezone(timezone.utc) - run_timestamp).total_seconds()
     if age_s > SPL_LINK_MAX_RUN_AGE_S:
         raise GateFailure(f"{filename}: run_id is older than 24 hours -- stale delivery evidence")
@@ -807,6 +836,93 @@ def verify_local_tier_b_delivery(report, filename, now):
             "payload digest"
         )
 
+    for key in ("journal_root_present", "manifest_ok", "digest_match"):
+        require_true(landing.get(key), f"{filename}: tier_b_landing.{key}")
+    require_none(landing.get("reason"), f"{filename}: tier_b_landing.reason")
+    expected_filename = f"{identity['segment']}_screen.mp4"
+    if landing.get("expected_filename") != expected_filename:
+        raise GateFailure(f"{filename}: tier_b_landing.expected_filename mismatch")
+    matches = landing.get("matches")
+    if not isinstance(matches, list) or len(matches) != 1 or not isinstance(matches[0], dict):
+        raise GateFailure(f"{filename}: tier_b_landing.matches must hold exactly one artifact")
+    match = matches[0]
+    if match.get("requested_segment") != identity["segment"]:
+        raise GateFailure(f"{filename}: tier_b_landing requested segment mismatch")
+    if match.get("recomputed_sha256") != identity["payload_sha256"]:
+        raise GateFailure(f"{filename}: tier_b_landing recomputed digest mismatch")
+    expected_files = {expected_filename: {"sha256": identity["payload_sha256"], "size": identity["payload_bytes"]}}
+    if match.get("manifest_files") != expected_files:
+        raise GateFailure(f"{filename}: tier_b_landing manifest bytes mismatch")
+
+
+def verify_local_freshness(report, filename):
+    freshness = report.get("freshness")
+    if not isinstance(freshness, dict):
+        raise GateFailure(f"{filename}: missing local freshness evidence")
+    require_true(freshness.get("ok"), f"{filename}: freshness.ok")
+    if freshness.get("connection_token") != "connected":
+        raise GateFailure(f"{filename}: local delivery is not connected")
+    started = freshness.get("delivery_started_epoch")
+    if isinstance(started, bool) or not isinstance(started, int) or started <= 0:
+        raise GateFailure(f"{filename}: missing or invalid pre-injection clock bound")
+    injected_at = require_iso_utc(report["tier_b"]["created_at"], f"{filename}: tier_b.created_at")
+    run_at = parse_run_timestamp(report["run_id"])
+    if not run_at.timestamp() <= started <= injected_at.timestamp():
+        raise GateFailure(f"{filename}: pre-injection clock bound is outside this run's injection interval")
+    post_raw = freshness.get("last_synced_post_raw")
+    require_raw_epoch(post_raw, f"{filename}: freshness.last_synced_post_raw")
+    if post_raw is None:
+        raise GateFailure(f"{filename}: no observed local delivery timestamp")
+    post = int(post_raw)
+    if freshness.get("last_synced_post_epoch") != post or post < started:
+        raise GateFailure(f"{filename}: local delivery timestamp precedes injection or contradicts raw observation")
+    pre_raw = freshness.get("last_synced_pre_raw")
+    require_raw_epoch(pre_raw, f"{filename}: freshness.last_synced_pre_raw")
+    if pre_raw is not None and post <= int(pre_raw):
+        raise GateFailure(f"{filename}: local delivery did not advance past its previous timestamp")
+    anchor = freshness.get("anchor_process_start_epoch")
+    if report["lane"].startswith("v2-upgrade-") or anchor is not None:
+        if isinstance(anchor, bool) or not isinstance(anchor, int) or anchor <= 0 or post < anchor:
+            raise GateFailure(f"{filename}: local delivery does not meet the process-start bound")
+
+
+def verify_local_completion(report, filename):
+    checks = report.get("checks", {})
+    for key in (*LOCAL_REQUIRED_CHECKS[report["lane"]], *LOCAL_DELIVERY_CHECKS):
+        require_true(checks.get(key), f"{filename}: checks.{key}")
+    evidence = report.get("evidence")
+    if not isinstance(evidence, dict):
+        raise GateFailure(f"{filename}: missing evidence")
+    lifecycle = evidence.get("automation_lifecycle")
+    if not isinstance(lifecycle, dict):
+        raise GateFailure(f"{filename}: missing automation lifecycle")
+    cleanup = lifecycle.get("cleanup")
+    if not isinstance(cleanup, dict):
+        raise GateFailure(f"{filename}: missing automation cleanup")
+    for key in ("attempted", "appium_absent", "wda_absent", "no_survivors", "lock_released", "ok"):
+        require_true(cleanup.get(key), f"{filename}: cleanup.{key}")
+    if cleanup.get("survivors") != []:
+        raise GateFailure(f"{filename}: cleanup has survivors or missing survivor evidence")
+
+
+def verify_local_artifacts(report, filename, dmg_hashes):
+    lane = report["lane"]
+    if lane == "fresh-use":
+        inputs = report["evidence"].get("inputs")
+        dmgs = inputs.get("dmgs") if isinstance(inputs, dict) else None
+        actual = dmgs.get("to") if isinstance(dmgs, dict) else None
+        if actual != dmg_hashes["sol"]:
+            raise GateFailure(f"{filename}: sol dmg_sha256 does not match --sol-dmg")
+    target = "sol" if lane == "v2-upgrade-sol" else "journal"
+    offer = report.get("offer")
+    if not isinstance(offer, dict):
+        raise GateFailure(f"{filename}: missing candidate enclosure evidence")
+    for key in ("ok", "enclosure_rehashed", "enclosure_signature_present"):
+        require_true(offer.get(key), f"{filename}: offer.{key}")
+    for key in ("expected_dmg_sha256", "downloaded_sha256"):
+        if offer.get(key) != dmg_hashes[target]:
+            raise GateFailure(f"{filename}: offer.{key} does not match --{target}-dmg")
+
 
 def verify_runtime_pin(report, filename, spec, expected_runtime):
     """Prove the journal runtime pin was actually enforced for this lane.
@@ -817,12 +933,8 @@ def verify_runtime_pin(report, filename, spec, expected_runtime):
     the check from its `must` list, so the report can still say PASS. A
     truthiness test would sail straight past that. Hence `is True`.
 
-    The observed-runtime substring check is the stronger one, but only the
-    lanes that store the oracles fingerprint at top-level `post` can carry it.
-    The fresh lane runs the oracles and checks the pin, but never writes that
-    fingerprint into its report -- so for fresh, the strict check-key assertion
-    below is the whole of the enforcement. We do not invent a path that the
-    harness does not emit.
+    Also require the actual observed version, including fresh-use's linked_finish
+    fingerprint. Match a complete version token, never a prefix of another release.
     """
     checks = report.get("checks")
     if not isinstance(checks, dict):
@@ -845,6 +957,9 @@ def verify_runtime_pin(report, filename, spec, expected_runtime):
         return
 
     post = report.get("post")
+    if spec.lane == "fresh-use":
+        finish = report.get("linked_finish")
+        post = finish.get("fingerprint") if isinstance(finish, dict) else None
     if not isinstance(post, dict):
         raise GateFailure(
             f"{filename}: post is missing or not an object -- no observed journal "
@@ -856,7 +971,7 @@ def verify_runtime_pin(report, filename, spec, expected_runtime):
             f"{filename}: post.journal_version is missing or empty -- no observed "
             "journal runtime to check the pin against"
         )
-    if expected_runtime not in observed:
+    if re.search(r"(?<![\w.+-])" + re.escape(expected_runtime) + r"(?![\w.+-])", observed) is None:
         raise GateFailure(
             f"{filename}: observed journal runtime {observed!r} does not carry the "
             f"expected pin {expected_runtime!r}"
@@ -951,7 +1066,7 @@ def verify_baseline_runtime_pin(report, filename, spec, expected_baseline_runtim
     observed = _require_string(
         fingerprint, pin.fingerprint_key, filename, observed_key, flag
     )
-    if expected_baseline_runtime not in observed:
+    if re.search(r"(?<![\w.+-])" + re.escape(expected_baseline_runtime) + r"(?![\w.+-])", observed) is None:
         raise GateFailure(
             f"{filename}: observed baseline journal runtime {observed!r} does not "
             f"carry the expected baseline pin {expected_baseline_runtime!r} from "
@@ -1337,6 +1452,7 @@ def verify_report(
     expected_runtime,
     expected_baseline_runtime,
     now,
+    dmg_hashes,
 ):
     report = load_json_object(path, filename)
 
@@ -1374,6 +1490,9 @@ def verify_report(
     verify_runtime_pin(report, filename, spec, expected_runtime)
     verify_baseline_runtime_pin(report, filename, spec, expected_baseline_runtime)
     verify_local_tier_b_delivery(report, filename, now)
+    verify_local_completion(report, filename)
+    verify_local_freshness(report, filename)
+    verify_local_artifacts(report, filename, dmg_hashes)
 
 
 def build_parser():
@@ -1387,6 +1506,7 @@ def build_parser():
     parser.add_argument("--expected-journal-runtime", required=True)
     parser.add_argument("--expected-journal-baseline-runtime", default=None)
     parser.add_argument("--sol-dmg", default=None, type=pathlib.Path)
+    parser.add_argument("--journal-dmg", default=None, type=pathlib.Path)
     for key in IDENTITY_KEYS:
         parser.add_argument(f"--{key.replace('_', '-')}", dest=key, default=None)
     return parser
@@ -1437,6 +1557,7 @@ def main(argv=None, *, now=None):
 
     try:
         sol_dmg_sha256 = hash_file_sha256(args.sol_dmg, "--sol-dmg")
+        journal_dmg_sha256 = hash_file_sha256(args.journal_dmg, "--journal-dmg")
 
         pin = read_pin()
         verify_receipt(args.sync_receipt, pin, args.product_commit)
@@ -1466,6 +1587,7 @@ def main(argv=None, *, now=None):
                         else None
                     ),
                     verification_now,
+                    {"sol": sol_dmg_sha256, "journal": journal_dmg_sha256},
                 )
     except GateFailure as failure:
         print(f"ja1r linkage gate: REFUSED -- {failure}", file=sys.stderr)

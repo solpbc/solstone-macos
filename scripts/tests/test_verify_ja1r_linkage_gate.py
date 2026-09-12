@@ -19,6 +19,7 @@ recordings of a real run.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import io
@@ -58,6 +59,8 @@ COMPANION_SOL_V, COMPANION_SOL_B = "1.4.5", "56"
 RUN_ID = "20260715T184501Z-a1b2c3d4e5f60718"
 FIXED_NOW = datetime(2026, 7, 15, 18, 50, 0, tzinfo=timezone.utc)
 DEFAULT_SOL_DMG_SHA = "e" * 64
+JOURNAL_DMG_BYTES = b"schema-derived journal dmg fixture"
+JOURNAL_DMG_SHA = hashlib.sha256(JOURNAL_DMG_BYTES).hexdigest()
 TIER_B_DAY = "20260715"
 TIER_B_SEGMENT = "184501_3428"
 TIER_B_PAYLOAD_SHA256 = "94ece5bc14ef9efdb8f8ccf0d63f44eb275a76a6180c999e56427fcc70d0d337"
@@ -108,6 +111,21 @@ def base_report(lane, checks, **scenario):
         "evidence": {"inputs": {}, "observations": {}, "actions": []},
     }
     report.update(scenario)
+    delivery_epoch = int(datetime.fromisoformat(TIER_B_CREATED_AT).timestamp())
+    report["freshness"] = {
+        "ok": True, "connection_token": "connected",
+        "delivery_started_epoch": delivery_epoch,
+        "last_synced_pre_raw": None, "last_synced_pre_epoch": None,
+        "last_synced_post_raw": str(delivery_epoch), "last_synced_post_epoch": delivery_epoch,
+        "anchor_process_start_epoch": delivery_epoch if lane.startswith("v2-upgrade-") else None,
+    }
+    report["checks"].update({key: True for key in (*verifier.LOCAL_REQUIRED_CHECKS[lane], *verifier.LOCAL_DELIVERY_CHECKS)})
+    report["evidence"]["automation_lifecycle"] = {"cleanup": {
+        "attempted": True, "appium_absent": True, "wda_absent": True,
+        "no_survivors": True, "lock_released": True, "ok": True, "survivors": [],
+    }}
+    report["offer"] = {"ok": True, "enclosure_rehashed": True, "enclosure_signature_present": True,
+                       "expected_dmg_sha256": JOURNAL_DMG_SHA, "downloaded_sha256": JOURNAL_DMG_SHA}
     return report
 
 
@@ -289,7 +307,7 @@ def local_tier_b_landing():
     }
 
 
-def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
+def _report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
     """One honest PASS report per canonical filename."""
     if filename == verifier.SPL_LINK_REPORT_FILENAME:
         return spl_link_report(sol_dmg_sha256)
@@ -301,6 +319,7 @@ def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
         return base_report(
             "fresh-use",
             {"solstone_pin_matches": True},
+            linked_finish={"fingerprint": {"journal_version": OBSERVED_RUNTIME}},
             to=SOL_V,
             to_build=SOL_B,
             journal=JOURNAL_V,
@@ -357,6 +376,16 @@ def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
     raise AssertionError(f"no fixture for {filename}")
 
 
+def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
+    report = _report_for(filename, sol_dmg_sha256)
+    if filename == "fresh-use.json":
+        report["evidence"]["inputs"]["dmgs"] = {"to": sol_dmg_sha256}
+    if filename == "v2-upgrade-sol.json":
+        report["offer"]["expected_dmg_sha256"] = sol_dmg_sha256
+        report["offer"]["downloaded_sha256"] = sol_dmg_sha256
+    return report
+
+
 def set_path(mapping, path, value):
     target = mapping
     parts = path.split(".")
@@ -383,8 +412,62 @@ class GateTestCase(unittest.TestCase):
         self.receipt = self.root / "sync-receipt.json"
         self.sol_dmg = self.root / "sol.dmg"
         self.sol_dmg.write_bytes(b"schema-derived sol dmg fixture")
+        self.journal_dmg = self.root / "journal.dmg"
+        self.journal_dmg.write_bytes(JOURNAL_DMG_BYTES)
         self.sol_dmg_sha = verifier.hash_file_sha256(self.sol_dmg, "--sol-dmg")
         self.write_receipt()
+
+    def test_local_release_negative_controls(self):
+        self.write_set("paired")
+        mutations = [
+            ("fresh-use.json", "checks.journal_window_recovery_verified", False),
+            ("fresh-use.json", "freshness.delivery_started_epoch", None),
+            ("fresh-use.json", "freshness.delivery_started_epoch", 1),
+            ("fresh-use.json", "freshness.last_synced_post_raw", None),
+            ("fresh-use.json", "freshness.last_synced_post_raw", "1"),
+            ("fresh-use.json", "freshness.connection_token", "disconnected"),
+            ("v2-upgrade-journal.json", "freshness.anchor_process_start_epoch", None),
+            ("fresh-use.json", "freshness.last_synced_pre_raw", "9999999999"),
+            ("fresh-use.json", "linked_finish.fingerprint.journal_version", "journal 0.8.30"),
+            ("v2-upgrade-sol.json", "checks.pairing_identity_preserved", False),
+            ("v2-upgrade-journal.json", "checks.config_preserved", False),
+            ("v2-upgrade-journal.json", "checks.runtime_process_turned_over", False),
+            ("v2-upgrade-journal.json", "post.journal_version", "journal 0.8.30"),
+            ("v2-upgrade-sol.json", "checks.candidate_relaunch_and_quit", False),
+            ("fresh-use.json", "evidence.automation_lifecycle.cleanup.wda_absent", False),
+            ("fresh-use.json", "evidence.automation_lifecycle.cleanup.survivors", ["wda"]),
+            ("fresh-use.json", "tier_b_landing.digest_match", False),
+            ("fresh-use.json", "tier_b_landing.matches", []),
+            ("fresh-use.json", "offer.downloaded_sha256", "0" * 64),
+            ("v2-upgrade-sol.json", "offer.downloaded_sha256", "0" * 64),
+            ("v2-upgrade-journal.json", "offer.downloaded_sha256", "0" * 64),
+            ("fresh-use.json", "evidence.inputs.dmgs.to", "0" * 64),
+            ("fresh-use.json", "run_id", "20261315T184501Z-a1b2c3d4e5f60718"),
+        ]
+        for filename, path, value in mutations:
+            with self.subTest(filename=filename, path=path):
+                report = report_for(filename, self.sol_dmg_sha)
+                set_path(report, path, value)
+                self.write_report(filename, report)
+                code, out, err = self.run_gate("paired")
+                self.assertEqual(code, 1, err)
+                self.assertEqual(out, "")
+                self.write_report(filename, report_for(filename, self.sol_dmg_sha))
+        for filename in verifier.REPORT_FILENAMES:
+            report = report_for(filename, self.sol_dmg_sha)
+            report["tier_b_landing"]["matches"][0]["recomputed_sha256"] = "0" * 64
+            self.write_report(filename, report)
+            self.assertEqual(self.run_gate("paired")[0], 1)
+            self.write_report(filename, report_for(filename, self.sol_dmg_sha))
+        for filename, key in (("fresh-use.json", "journal_window_recovery_verified"),
+                              ("v2-upgrade-sol.json", "pairing_identity_preserved")):
+            report = report_for(filename, self.sol_dmg_sha)
+            del report["checks"][key]
+            self.write_report(filename, report)
+            self.assertEqual(self.run_gate("paired")[0], 1)
+            self.write_report(filename, report_for(filename, self.sol_dmg_sha))
+        self.journal_dmg.write_bytes(b"wrong artifact with the same version label")
+        self.assertEqual(self.run_gate("paired")[0], 1)
 
     def write_receipt(self, **overrides):
         payload = {
@@ -417,6 +500,7 @@ class GateTestCase(unittest.TestCase):
             "--sync-receipt", str(self.receipt),
             "--product-commit", COMMIT,
             "--expected-journal-runtime", RUNTIME_PIN,
+            "--journal-dmg", str(self.journal_dmg),
         ]
         if include_baseline_runtime is None:
             include_baseline_runtime = verifier.requires_baseline_runtime(profile)
@@ -1361,6 +1445,7 @@ class MissingIdentityInputs(GateTestCase):
             "--sync-receipt", str(self.receipt),
             "--product-commit", COMMIT,
             "--expected-journal-runtime", RUNTIME_PIN,
+            "--journal-dmg", str(self.journal_dmg),
         ]
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
