@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-09-11
+
+### Added
+- settings now has a "report a problem" button that opens support with your app version, macos version, and recent diagnostic details.
+
+### Changed
+- settings keeps your paired journal visible, with separate connection and sync status, an "open journal" button, and short explanations when something can't be added to your journal.
+
+### Fixed
+- on audio interfaces with more than two inputs, microphones beyond the first input are no longer missing from your journal. all inputs are mixed together. contributed by David Van Duzer.
+- retry in settings now starts a fresh attempt when the connection to your journal is stuck. the app also continues recovering if a replacement connection fails.
+- settings no longer asks you to paste a pairing link after it has already paired with a journal on the same mac.
+- quitting the solstone app now keeps it closed even if shutdown is interrupted partway through.
+
 ## [2.0.2] - 2026-09-11
 
 ### Added
