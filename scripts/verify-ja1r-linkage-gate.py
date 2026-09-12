@@ -38,7 +38,7 @@ no stdout verdict.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
@@ -1010,7 +1010,8 @@ def verify_upgrade_baseline_connection(report, filename):
     elif delivery.get("observation_source") == "released-v2-startup-receipt":
         raise GateFailure(f"{filename}: receipt compatibility is restricted to exact released 2.0.0/71")
     prefix, suffix = report["run_id"].rsplit("-", 1)
-    baseline_run = f"{prefix}-{(int(suffix, 16) + 1) % (1 << 64):016x}"
+    baseline_time = parse_run_timestamp(report["run_id"]) + timedelta(seconds=1)
+    baseline_run = f"{baseline_time:%Y%m%dT%H%M%SZ}-{(int(suffix, 16) + 1) % (1 << 64):016x}"
     if injection.get("run_id") != baseline_run:
         raise GateFailure(f"{filename}: baseline payload is not distinct and derived from this run")
     verify_local_tier_b_delivery({
@@ -1023,6 +1024,38 @@ def verify_upgrade_baseline_connection(report, filename):
         "lane": "baseline", "run_id": report["run_id"],
         "freshness": delivery, "tier_b": injection,
     }, filename + ": baseline")
+
+
+def verify_distinct_capture_starts(reports):
+    """Preserved rig captures share native ingest's day/start key across lanes."""
+    seen = {}
+    for filename, report in reports.items():
+        runs = [(filename, report.get("run_id"))]
+        if filename.startswith("v2-upgrade-"):
+            runs.append((filename + ": baseline", report.get("baseline_delivery", {}).get("injection", {}).get("run_id")))
+        for label, run_id in runs:
+            timestamp = parse_run_timestamp(run_id)
+            key = timestamp.strftime("%Y%m%d/%H%M%S")
+            if key in seen:
+                raise GateFailure(f"capture start collision: {label} and {seen[key]} share native ingest key {key}")
+            seen[key] = label
+
+
+def verify_sol_preservation(report, filename):
+    preservation = report.get("preservation")
+    if not isinstance(preservation, dict):
+        raise GateFailure(f"{filename}: missing supported state observations")
+    before, after = preservation.get("before"), preservation.get("after")
+    expected_keys = {"pairing", "service_mode", "server_url", "server_key_sha256", "journal_path"}
+    for snapshot in (before, after):
+        if not isinstance(snapshot, dict) or set(snapshot) != expected_keys:
+            raise GateFailure(f"{filename}: incomplete supported state snapshot")
+        pairing = snapshot.get("pairing")
+        if (not isinstance(pairing, dict) or pairing.get("service_tab_present") is not True
+                or pairing.get("connection_state") != "connected" or pairing.get("flow_state") is None):
+            raise GateFailure(f"{filename}: preserved pairing lacks observed connectivity")
+    if before != after:
+        raise GateFailure(f"{filename}: supported pairing or configuration changed during upgrade")
 
 
 def verify_sol_candidate_quit(report, filename):
@@ -1061,6 +1094,7 @@ def verify_local_completion(report, filename):
         verify_upgrade_baseline_connection(report, filename)
     if report["lane"] == "v2-upgrade-sol":
         verify_sol_candidate_quit(report, filename)
+        verify_sol_preservation(report, filename)
     checks = report.get("checks", {})
     for key in (*LOCAL_REQUIRED_CHECKS[report["lane"]], *LOCAL_DELIVERY_CHECKS):
         require_true(checks.get(key), f"{filename}: checks.{key}")
@@ -1763,6 +1797,10 @@ def main(argv=None, *, now=None):
                     verification_now,
                     {"sol": sol_dmg_sha256, "journal": journal_dmg_sha256},
                 )
+        verify_distinct_capture_starts({
+            filename: load_json_object(args.report_dir / filename, filename)
+            for filename in PROFILES[args.profile]
+        })
     except GateFailure as failure:
         print(f"ja1r linkage gate: REFUSED -- {failure}", file=sys.stderr)
         return 1

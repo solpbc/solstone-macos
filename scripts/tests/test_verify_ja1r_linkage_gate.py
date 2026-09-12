@@ -130,7 +130,8 @@ def base_report(lane, checks, **scenario):
             "ok": True, "connection_state": "connected", "connection_state_id": connection_id})
         baseline.setdefault("checks", {})["connection_connected"] = True
         prefix, suffix = report["run_id"].rsplit("-", 1)
-        baseline_run = f"{prefix}-{(int(suffix, 16) + 1) % (1 << 64):016x}"
+        baseline_time = datetime.strptime(prefix, "%Y%m%dT%H%M%SZ") + timedelta(seconds=1)
+        baseline_run = f"{baseline_time:%Y%m%dT%H%M%SZ}-{(int(suffix, 16) + 1) % (1 << 64):016x}"
         report["baseline_delivery"] = {
             **report["freshness"], "connection_state_id": connection_id,
             "anchor_process_start_epoch": None,
@@ -139,6 +140,14 @@ def base_report(lane, checks, **scenario):
         }
     if lane == "v2-upgrade-sol":
         app_identity = {"bundle_id": "app.solstone.observer", "marketing_version": report["to"], "build": report["to_build"]}
+        supported = {
+            "pairing": {"service_tab_present": True, "flow_state": "idle", "connection_state": "connected",
+                        "failure_token": None, "mark_present": False},
+            "service_mode": {"present": False, "sha256": None},
+            "server_url": {"present": False, "sha256": None},
+            "server_key_sha256": "NONE", "journal_path": {"present": False, "sha256": None},
+        }
+        report["preservation"] = {"before": supported, "after": json.loads(json.dumps(supported))}
         report["candidate_lifecycle"] = {
             "ok": True, "first_pid": "10", "first_identity": dict(app_identity),
             "first_quit_action": {"method": "status-menu", "action": "quit solstone", "returncode": 0,
@@ -319,9 +328,9 @@ def spl_link_report(sol_dmg_sha256=DEFAULT_SOL_DMG_SHA, run_id=RUN_ID):
 
 def local_delivery_fixture_identity(run_id):
     # Fixed known-answer identities from the independent harness tier_b module.
-    if run_id == "20260715T184501Z-a1b2c3d4e5f60719":
-        return {"day": "20260715", "segment": "184501_3429", "payload_bytes": 85,
-                "payload_sha256": "a81db3e5f9d549a0244feb1abfc8106f5dbd67289597838b9973a13f6d5e6625"}
+    if run_id == "20260715T184502Z-a1b2c3d4e5f60719":
+        return {"day": "20260715", "segment": "184502_3429", "payload_bytes": 85,
+                "payload_sha256": "c3849961fa94ce4039dea563a1be8cda7a728a63b247c1c705300a75ed9a8414"}
     assert run_id == RUN_ID
     return {**tier_b_expected(), "payload_bytes": TIER_B_PAYLOAD_BYTES}
 
@@ -436,6 +445,44 @@ def _report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
     raise AssertionError(f"no fixture for {filename}")
 
 
+def space_fixture_capture_time(report, seconds):
+    # Known-answer vectors emitted by the independent harness tier_b module.
+    vectors = {
+        2: ("e559926639a6236e903cce5bdd024619ec507608cbfca0eda7b2f8449caf2754", "5a58fa209341f9cb3f6b289f9fdefe65498bb983455fdf94fdced7ef2bd58943"),
+        4: ("3eb2186594d99493cc56fc06dd2a84f4b6d603bda0ba0ad457048f4fdc0c6711", "052a809dc1834091448246e48216b4a59e7f4d80dd7ef30bc56a284db7258117"),
+        6: ("bb2113e1a1eac00e08189b38046b96225cf37bcf4c081919724789fc9068ec4f", None),
+    }
+    hashes = vectors[seconds]
+    replacements = {
+        TIER_B_PAYLOAD_SHA256: hashes[0],
+        "c3849961fa94ce4039dea563a1be8cda7a728a63b247c1c705300a75ed9a8414": hashes[1],
+        "20260715T184501Z": f"20260715T1845{1 + seconds:02}Z",
+        "20260715T184502Z": f"20260715T1845{2 + seconds:02}Z",
+        "184501_3428": f"1845{1 + seconds:02}_3428",
+        "184502_3429": f"1845{2 + seconds:02}_3429",
+    }
+    epoch = int(datetime.fromisoformat(TIER_B_CREATED_AT).timestamp())
+
+    def shift(value):
+        if isinstance(value, dict):
+            return {shift(key): shift(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [shift(item) for item in value]
+        if type(value) is int and epoch - 60 <= value <= epoch + 60:
+            return value + seconds
+        if isinstance(value, str):
+            if value.isdigit() and epoch - 60 <= int(value) <= epoch + 60:
+                return str(int(value) + seconds)
+            if value.startswith("2026-07-15T"):
+                return (datetime.fromisoformat(value) + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            for old, new in replacements.items():
+                if new is not None and old in value:
+                    return value.replace(old, new)
+        return value
+
+    return shift(report)
+
+
 def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
     report = _report_for(filename, sol_dmg_sha256)
     if filename == "fresh-use.json":
@@ -443,6 +490,9 @@ def report_for(filename, sol_dmg_sha256=DEFAULT_SOL_DMG_SHA):
     if filename == "v2-upgrade-sol.json":
         report["offer"]["expected_dmg_sha256"] = sol_dmg_sha256
         report["offer"]["downloaded_sha256"] = sol_dmg_sha256
+    offsets = {"v2-upgrade-sol.json": 2, "v2-upgrade-journal.json": 4, "spl-link.json": 6}
+    if filename in offsets:
+        report = space_fixture_capture_time(report, offsets[filename])
     return report
 
 
@@ -1758,6 +1808,54 @@ class SolMenuQuitControls(unittest.TestCase):
             set_path(broken, path, value)
             with self.subTest(path=path), self.assertRaises(verifier.GateFailure):
                 verifier.verify_sol_candidate_quit(broken, "v2-upgrade-sol.json")
+
+
+class PreservedStateControls(unittest.TestCase):
+    def test_missing_connectivity_or_changed_configuration_refuses_even_with_green_check(self):
+        report = _report_for("v2-upgrade-sol.json")
+        verifier.verify_sol_preservation(report, "v2-upgrade-sol.json")
+        for path, value in [
+            ("preservation.before.pairing.connection_state", None),
+            ("preservation.after.pairing.connection_state", None),
+            ("preservation.after.server_key_sha256", "b" * 64),
+            ("preservation.after.pairing.flow_state", "unpairing"),
+        ]:
+            broken = json.loads(json.dumps(report))
+            set_path(broken, path, value)
+            with self.subTest(path=path), self.assertRaises(verifier.GateFailure):
+                verifier.verify_sol_preservation(broken, "v2-upgrade-sol.json")
+        report["preservation"]["before"]["pairing"]["connection_state"] = None
+        report["preservation"]["after"]["pairing"]["connection_state"] = None
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_sol_preservation(report, "v2-upgrade-sol.json")
+
+    def test_same_start_baseline_replay_and_extra_manifest_content_refuse(self):
+        report = _report_for("v2-upgrade-sol.json")
+        verifier.verify_upgrade_baseline_connection(report, "v2-upgrade-sol.json")
+        replay = json.loads(json.dumps(report))
+        replay["baseline_delivery"]["injection"]["run_id"] = "20260715T184501Z-a1b2c3d4e5f60719"
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_upgrade_baseline_connection(replay, "v2-upgrade-sol.json")
+        extra = json.loads(json.dumps(report))
+        extra["tier_b_landing"]["matches"][0]["manifest_files"]["184502_3429_screen.mp4"] = {
+            "sha256": "c3849961fa94ce4039dea563a1be8cda7a728a63b247c1c705300a75ed9a8414", "size": 85}
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_local_tier_b_delivery(extra, "v2-upgrade-sol.json", FIXED_NOW)
+
+
+class DistinctCaptureStartControls(unittest.TestCase):
+    def test_shared_start_different_nonce_and_baseline_collision_refuse(self):
+        reports = {name: report_for(name) for name in verifier.PROFILES["paired"]}
+        verifier.verify_distinct_capture_starts(reports)
+        for filename, baseline in [("v2-upgrade-sol.json", False), ("v2-upgrade-journal.json", True), ("spl-link.json", False)]:
+            broken = json.loads(json.dumps(reports))
+            collision = RUN_ID.rsplit("-", 1)[0] + "-0000000000000001"
+            if baseline:
+                broken[filename]["baseline_delivery"]["injection"]["run_id"] = collision
+            else:
+                broken[filename]["run_id"] = collision
+            with self.subTest(filename=filename, baseline=baseline), self.assertRaisesRegex(verifier.GateFailure, "capture start collision"):
+                verifier.verify_distinct_capture_starts(broken)
 
 
 if __name__ == "__main__":
