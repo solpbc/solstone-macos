@@ -710,7 +710,7 @@ struct SettingsView: View {
                             }
                         }
                     } else {
-                        Text("macOS lists this as Screen Recording. grant it so what you share can go into your journal.")
+                        Text(UICopy.SOURCES_SCREEN_DENIED)
                             .font(.body)
                             .foregroundStyle(.secondary)
                         if shouldShowScreenRecordingResetHint(
@@ -763,7 +763,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("grant Microphone access so conversations and meetings you share can go into your journal.")
+                        Text(UICopy.SOURCES_MIC_DENIED)
                             .font(.body)
                             .foregroundStyle(.secondary)
                         HStack {
