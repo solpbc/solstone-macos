@@ -1598,6 +1598,21 @@ class RecoveryObservationControls(unittest.TestCase):
                 with self.assertRaises(verifier.GateFailure):
                     verifier.verify_local_journal_recovery(broken, "fresh-use.json")
 
+    def test_managed_pairing_unreachable_is_valid_only_with_local_runtime_evidence(self):
+        report = _report_for("fresh-use.json")
+        state = report["red"]["window_wait"]["state"]
+        for token in ("unreachable", "loopback_unavailable"):
+            state["connection_token"] = token
+            verifier.verify_local_journal_recovery(report, "fresh-use.json")
+        for token in ("connecting", "disconnected", "no_route", "revoked"):
+            state["connection_token"] = token
+            with self.assertRaises(verifier.GateFailure):
+                verifier.verify_local_journal_recovery(report, "fresh-use.json")
+        state["connection_token"] = "unreachable"
+        report["red"]["runtime_down_wait"]["state"]["port_7657_bound"] = True
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_local_journal_recovery(report, "fresh-use.json")
+
     def test_navigation_error_requires_retry_only_if_still_error(self):
         report = _report_for("fresh-use.json")
         report["red"]["outcome"] = "error"

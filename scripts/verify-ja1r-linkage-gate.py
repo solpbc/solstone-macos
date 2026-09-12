@@ -910,7 +910,7 @@ def verify_local_journal_recovery(report, filename):
             if type(state.get(key)) is not int or state[key] != 1:
                 raise GateFailure(f"{filename}: recovery requires a unique {key}")
     outcome = red.get("state_token")
-    if red.get("connection_token") != "loopback_unavailable" or report.get("red", {}).get("outcome") != outcome:
+    if red.get("connection_token") not in ("unreachable", "loopback_unavailable") or report.get("red", {}).get("outcome") != outcome:
         raise GateFailure(f"{filename}: journal unavailability lacks local connection evidence")
     if outcome == "held":
         if (red.get("webview_count") != 0 or red.get("retry_count") != 0
