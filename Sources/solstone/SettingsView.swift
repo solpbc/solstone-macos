@@ -2497,6 +2497,19 @@ struct SettingsView: View {
 
     // MARK: - Status Tab
 
+    /// True when the health card above has already claimed the source state as its verdict and
+    /// this group would render an empty box under its own heading.
+    private var statusGroupIsFullyClaimedByVerdict: Bool {
+        guard !appState.isRecording, !appState.isPaused, appState.config.selectedSources.isEmpty else {
+            return false
+        }
+        return observationRecoveryPresentation(
+            observationRowState: appState.observationRowState,
+            errorMessage: appState.errorMessage,
+            tryAgainInFlight: tryAgainInFlight
+        ) == nil
+    }
+
     private var renderedObservationAXState: SettingsObservationAXState {
         SettingsObservationAXState(appState.observationRowState)
     }
@@ -2796,6 +2809,10 @@ struct SettingsView: View {
 
             setupGroup
 
+            // Promoting a state into the verdict card REMOVES it from here rather than showing
+            // it twice. When the owner has turned every source off, the card above says so and
+            // carries the way back, and this group has nothing left of its own to say.
+            if !statusGroupIsFullyClaimedByVerdict {
             GroupBox("solstone") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(renderedObservationText)
@@ -2840,6 +2857,7 @@ struct SettingsView: View {
                 }
                 .padding(.vertical, 4)
             }
+            }
 
             if resolvedServiceMode(for: appState.config) == .external {
                 GroupBox("kept on this Mac") {
@@ -2859,9 +2877,13 @@ struct SettingsView: View {
                 }
             }
 
-            Text(statusFooterText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            // Same rule as the group above: the verdict card owns this state, so the quiet
+            // footer does not restate it a third time.
+            if !statusGroupIsFullyClaimedByVerdict {
+                Text(statusFooterText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             #if DEBUG
             GroupBox("debug") {
