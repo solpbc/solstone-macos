@@ -230,6 +230,10 @@ final class TunnelLifecycleOwner {
     @ObservationIgnored
     private var screenUnlockedObserver: NSObjectProtocol?
     @ObservationIgnored
+    private let unlockNotificationCenter: NotificationCenter
+    @ObservationIgnored
+    private let unlockNotificationName: Notification.Name
+    @ObservationIgnored
     private var establishedLoopbackPort: Int?
     @ObservationIgnored
     private var establishmentInFlight = false
@@ -262,7 +266,9 @@ final class TunnelLifecycleOwner {
         clientSelfSequencer: JournalClientSelfSequencer? = nil,
         relayAccessSequencer: JournalRelayAccessSequencer? = nil,
         loopbackSession: URLSession? = nil,
-        optionalJobDeadline: Duration = .seconds(15)
+        optionalJobDeadline: Duration = .seconds(15),
+        unlockNotificationCenter: NotificationCenter = DistributedNotificationCenter.default(),
+        unlockNotificationName: Notification.Name = Notification.Name("com.apple.screenIsUnlocked")
     ) {
         let store = credentialStore ?? PairingCredentialStore(store: keychainStore)
         self.credentialStore = store
@@ -275,6 +281,8 @@ final class TunnelLifecycleOwner {
         self.probe = probe
         self.sleep = sleep
         self.now = now
+        self.unlockNotificationCenter = unlockNotificationCenter
+        self.unlockNotificationName = unlockNotificationName
 
         let session = loopbackSession ?? BoundedLoopbackClient.makeSession()
         let jv = self.journalVersion
@@ -1088,8 +1096,8 @@ final class TunnelLifecycleOwner {
         }
 
         if screenUnlockedObserver == nil {
-            screenUnlockedObserver = DistributedNotificationCenter.default().addObserver(
-                forName: NSNotification.Name("com.apple.screenIsUnlocked"),
+            screenUnlockedObserver = unlockNotificationCenter.addObserver(
+                forName: unlockNotificationName,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
@@ -1106,7 +1114,7 @@ final class TunnelLifecycleOwner {
             didWakeObserver = nil
         }
         if let observer = screenUnlockedObserver {
-            DistributedNotificationCenter.default().removeObserver(observer)
+            unlockNotificationCenter.removeObserver(observer)
             screenUnlockedObserver = nil
         }
     }

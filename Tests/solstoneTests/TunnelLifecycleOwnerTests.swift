@@ -588,12 +588,14 @@ struct TunnelLifecycleOwnerTests {
     }
 
     @Test func wakeObserversAreRemovedOnStopAndNotDuplicatedAcrossRestart() async throws {
+        let unlockCenter = NotificationCenter()
         let probe = ProbeScript(results: [false, false])
         let first = FakeTunnelTransport(connection: .init(localPort: 45682, via: .relay))
         let second = FakeTunnelTransport(connection: .init(localPort: 45683, via: .relay))
         let owner = makeOwner(
             factory: FakeTransportFactory([first, second]),
-            probe: { port, _ in await probe.run(port: port) }
+            probe: { port, _ in await probe.run(port: port) },
+            unlockNotificationCenter: unlockCenter
         )
 
         owner.start()
@@ -606,19 +608,36 @@ struct TunnelLifecycleOwnerTests {
 
         await owner.stop()
         NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
-        DistributedNotificationCenter.default().post(name: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil)
+        unlockCenter.post(name: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil)
         await waitBrieflyUntil { first.requestReconnectCount > 1 }
         #expect(first.requestReconnectCount == 1)
 
         owner.start()
         owner.start()
         try await waitUntil { owner.state == .connected(localPort: 45683, via: .relay) }
-        DistributedNotificationCenter.default().post(name: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil)
+        unlockCenter.post(name: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil)
         try await waitUntil { second.requestReconnectCount == 1 }
         await waitBrieflyUntil { second.requestReconnectCount > 1 }
         await owner.stop()
 
         #expect(second.requestReconnectCount == 1)
+    }
+
+    @Test func injectedUnlockCenterIgnoresGlobalScreenUnlockPosts() async throws {
+        let unlockCenter = NotificationCenter()
+        let transport = FakeTunnelTransport(connection: .init(localPort: 45684, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            unlockNotificationCenter: unlockCenter
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 45684, via: .relay) }
+        let before = transport.requestReconnectCount
+        DistributedNotificationCenter.default().post(name: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil)
+        await waitBrieflyUntil { transport.requestReconnectCount != before }
+        #expect(transport.requestReconnectCount == before)
+        await owner.stop()
     }
 
     @Test func proactiveRefreshSavesAndConnectsUpdatedPairing() async throws {
@@ -1832,7 +1851,8 @@ struct TunnelLifecycleOwnerTests {
         factory: FakeTransportFactory,
         pathSource: (any PathMonitoringSource)? = NoopPathMonitoringSource(),
         probe: @escaping @Sendable (Int, Duration) async -> Bool = { _, _ in true },
-        sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in try await Task.sleep(for: .seconds(10)) }
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in try await Task.sleep(for: .seconds(10)) },
+        unlockNotificationCenter: NotificationCenter = NotificationCenter()
     ) -> TunnelLifecycleOwner {
         let credStore = PairingCredentialStore(store: store)
         return TunnelLifecycleOwner(
@@ -1841,7 +1861,8 @@ struct TunnelLifecycleOwnerTests {
             makeTransport: { factory.make() },
             pathMonitoringSource: pathSource,
             probe: probe,
-            sleep: sleep
+            sleep: sleep,
+            unlockNotificationCenter: unlockNotificationCenter
         )
     }
 

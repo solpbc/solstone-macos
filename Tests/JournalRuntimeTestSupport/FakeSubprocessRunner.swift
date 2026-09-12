@@ -42,10 +42,6 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
     private let lock = NSLock()
     private var responses: [String: [Response]] = [:]
     private var recordedInvocations: [SubprocessInvocation] = []
-    private var materializedToolBinariesSideEffect: (@Sendable () -> Void)?
-    public var materializedExposureOverride: [String]?
-    public var preferQueuedVersionResponses = false
-    public var uvPlainShebangNames: Set<String> = []
 
     public init() {}
 
@@ -63,12 +59,6 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
 
     public func enqueueLsof(port: Int, _ response: Response) {
         enqueue("lsof:\(port)", response)
-    }
-
-    public func onMaterializedToolBinaries(_ sideEffect: @escaping @Sendable () -> Void) {
-        lock.lock()
-        materializedToolBinariesSideEffect = sideEffect
-        lock.unlock()
     }
 
     public func run(
@@ -95,10 +85,6 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
             try? await Task.sleep(for: response.delay)
         }
         response.sideEffect?()
-        if response.exitCode == 0, arguments.starts(with: ["tool", "install"]) {
-            createMaterializedToolBinaries(environment: environment, arguments: arguments)
-            materializedToolBinariesHook()?()
-        }
         if let message = response.throwMessage {
             throw FakeRunError(message: message)
         }
@@ -120,22 +106,7 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
 
         recordedInvocations.append(SubprocessInvocation(executable: executable, arguments: arguments, environment: environment, timeout: timeout))
         let keys = responseKeys(for: executable, arguments: arguments)
-        if preferQueuedVersionResponses, arguments == ["--version"],
-           let response = dequeueResponse(for: keys) {
-            return response
-        }
-        if arguments == ["--version"],
-           environment?["UV_TOOL_DIR"] != nil,
-           ["journal", "sol"].contains(executable.lastPathComponent) {
-            return .success(stdout: Data("solstone \(BundleConfig.solstonePinVersion)\n".utf8))
-        }
-        guard let response = dequeueResponse(for: keys) else {
-            if arguments == ["-c", "print(1)"] {
-                return .success(stdout: Data("1\n".utf8))
-            }
-            return .success()
-        }
-        return response
+        return dequeueResponse(for: keys) ?? .success()
     }
 
     private func dequeueResponse(for keys: [String]) -> Response? {
@@ -175,84 +146,6 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
             return Int(argument.dropFirst("-iTCP:".count))
         }
         return nil
-    }
-
-    private func materializedToolBinariesHook() -> (@Sendable () -> Void)? {
-        lock.lock()
-        defer { lock.unlock() }
-        return materializedToolBinariesSideEffect
-    }
-
-    private func createMaterializedToolBinaries(environment: [String: String]?, arguments: [String]) {
-        guard let binPath = environment?["UV_TOOL_BIN_DIR"],
-              let toolsPath = environment?["UV_TOOL_DIR"] else { return }
-        let exposesSolstoneExecutables = arguments.indices.contains { i in
-            i + 1 < arguments.count
-                && arguments[i] == "--with-executables-from"
-                && arguments[i + 1] == "solstone"
-        }
-        let exposedNames = materializedExposureOverride
-            ?? (exposesSolstoneExecutables
-                ? ["sol", "journal", "solstone", "mlx-vlm-server"]
-                : ["journal", "mlx-vlm-server"])
-        let binURL = URL(fileURLWithPath: binPath, isDirectory: true)
-        let toolBinURL = URL(fileURLWithPath: toolsPath, isDirectory: true)
-            .appendingPathComponent("solstone-journal/bin", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: binURL, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: toolBinURL, withIntermediateDirectories: true)
-            let python = toolBinURL.appendingPathComponent("python")
-            let pythonBody = """
-            #!/bin/sh
-            echo "solstone \(BundleConfig.solstonePinVersion)"
-            """
-            try Data((pythonBody + "\n").utf8).write(to: python)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: python.path)
-
-            let uvPolyglotNames: Set<String> = ["journal", "mlx-vlm-server"]
-            for name in ["sol", "journal", "solstone", "mlx-vlm-server"] {
-                let exportedTool = toolBinURL.appendingPathComponent(name)
-                let body: String
-                if uvPlainShebangNames.contains(name) {
-                    body = """
-                    #!\(python.path)
-                    # -*- coding: utf-8 -*-
-                    # fake uv plain shebang entry
-                    """
-                } else if uvPolyglotNames.contains(name) {
-                    body = """
-                    #!/bin/sh
-                    '''exec' \(shellSingleQuoted(python.path)) "$0" "$@"
-                    ' '''
-                    # -*- coding: utf-8 -*-
-                    # fake uv polyglot entry
-                    """
-                } else {
-                    body = """
-                    #!/bin/sh
-                    echo "solstone \(BundleConfig.solstonePinVersion)"
-                    """
-                }
-                try Data((body + "\n").utf8).write(to: exportedTool)
-                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exportedTool.path)
-
-                if exposedNames.contains(name) {
-                    let entrypoint = binURL.appendingPathComponent(name)
-                    if FileManager.default.fileExists(atPath: entrypoint.path) {
-                        try FileManager.default.removeItem(at: entrypoint)
-                    }
-                    try FileManager.default.createSymbolicLink(
-                        atPath: entrypoint.path,
-                        withDestinationPath: exportedTool.path
-                    )
-                }
-            }
-        } catch {
-        }
-    }
-
-    private func shellSingleQuoted(_ value: String) -> String {
-        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }
 

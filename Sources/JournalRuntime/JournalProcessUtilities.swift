@@ -8,6 +8,14 @@ import SolstoneCore
 
 internal let journalPortProbeTimeout: Duration = .seconds(10)
 
+public enum CleanupStep: String, Sendable, Equatable, CaseIterable {
+    case resolveJournal = "resolve-journal"
+    case serviceUninstall = "service-uninstall"
+    case waitForDeath = "wait-for-death"
+    case orphanSweep = "orphan-sweep"
+    case ports
+}
+
 internal struct CleanupFailure {
     let step: CleanupStep
     let message: String
