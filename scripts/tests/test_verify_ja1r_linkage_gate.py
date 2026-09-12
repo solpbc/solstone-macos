@@ -111,6 +111,14 @@ def base_report(lane, checks, **scenario):
         "evidence": {"inputs": {}, "observations": {}, "actions": []},
     }
     report.update(scenario)
+    delivery_epoch = int(datetime.fromisoformat(TIER_B_CREATED_AT).timestamp())
+    report["freshness"] = {
+        "ok": True, "connection_token": "connected",
+        "delivery_started_epoch": delivery_epoch,
+        "last_synced_pre_raw": None, "last_synced_pre_epoch": None,
+        "last_synced_post_raw": str(delivery_epoch), "last_synced_post_epoch": delivery_epoch,
+        "anchor_process_start_epoch": delivery_epoch if lane.startswith("v2-upgrade-") else None,
+    }
     report["checks"].update({key: True for key in (*verifier.LOCAL_REQUIRED_CHECKS[lane], *verifier.LOCAL_DELIVERY_CHECKS)})
     report["evidence"]["automation_lifecycle"] = {"cleanup": {
         "attempted": True, "appium_absent": True, "wda_absent": True,
@@ -413,6 +421,13 @@ class GateTestCase(unittest.TestCase):
         self.write_set("paired")
         mutations = [
             ("fresh-use.json", "checks.journal_window_recovery_verified", False),
+            ("fresh-use.json", "freshness.delivery_started_epoch", None),
+            ("fresh-use.json", "freshness.delivery_started_epoch", 1),
+            ("fresh-use.json", "freshness.last_synced_post_raw", None),
+            ("fresh-use.json", "freshness.last_synced_post_raw", "1"),
+            ("fresh-use.json", "freshness.connection_token", "disconnected"),
+            ("v2-upgrade-journal.json", "freshness.anchor_process_start_epoch", None),
+            ("fresh-use.json", "freshness.last_synced_pre_raw", "9999999999"),
             ("fresh-use.json", "linked_finish.fingerprint.journal_version", "journal 0.8.30"),
             ("v2-upgrade-sol.json", "checks.pairing_identity_preserved", False),
             ("v2-upgrade-journal.json", "checks.config_preserved", False),

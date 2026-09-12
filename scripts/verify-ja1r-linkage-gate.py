@@ -855,6 +855,37 @@ def verify_local_tier_b_delivery(report, filename, now):
         raise GateFailure(f"{filename}: tier_b_landing manifest bytes mismatch")
 
 
+def verify_local_freshness(report, filename):
+    freshness = report.get("freshness")
+    if not isinstance(freshness, dict):
+        raise GateFailure(f"{filename}: missing local freshness evidence")
+    require_true(freshness.get("ok"), f"{filename}: freshness.ok")
+    if freshness.get("connection_token") != "connected":
+        raise GateFailure(f"{filename}: local delivery is not connected")
+    started = freshness.get("delivery_started_epoch")
+    if isinstance(started, bool) or not isinstance(started, int) or started <= 0:
+        raise GateFailure(f"{filename}: missing or invalid pre-injection clock bound")
+    injected_at = require_iso_utc(report["tier_b"]["created_at"], f"{filename}: tier_b.created_at")
+    run_at = parse_run_timestamp(report["run_id"])
+    if not run_at.timestamp() <= started <= injected_at.timestamp():
+        raise GateFailure(f"{filename}: pre-injection clock bound is outside this run's injection interval")
+    post_raw = freshness.get("last_synced_post_raw")
+    require_raw_epoch(post_raw, f"{filename}: freshness.last_synced_post_raw")
+    if post_raw is None:
+        raise GateFailure(f"{filename}: no observed local delivery timestamp")
+    post = int(post_raw)
+    if freshness.get("last_synced_post_epoch") != post or post < started:
+        raise GateFailure(f"{filename}: local delivery timestamp precedes injection or contradicts raw observation")
+    pre_raw = freshness.get("last_synced_pre_raw")
+    require_raw_epoch(pre_raw, f"{filename}: freshness.last_synced_pre_raw")
+    if pre_raw is not None and post <= int(pre_raw):
+        raise GateFailure(f"{filename}: local delivery did not advance past its previous timestamp")
+    anchor = freshness.get("anchor_process_start_epoch")
+    if report["lane"].startswith("v2-upgrade-") or anchor is not None:
+        if isinstance(anchor, bool) or not isinstance(anchor, int) or anchor <= 0 or post < anchor:
+            raise GateFailure(f"{filename}: local delivery does not meet the process-start bound")
+
+
 def verify_local_completion(report, filename):
     checks = report.get("checks", {})
     for key in (*LOCAL_REQUIRED_CHECKS[report["lane"]], *LOCAL_DELIVERY_CHECKS):
@@ -1460,6 +1491,7 @@ def verify_report(
     verify_baseline_runtime_pin(report, filename, spec, expected_baseline_runtime)
     verify_local_tier_b_delivery(report, filename, now)
     verify_local_completion(report, filename)
+    verify_local_freshness(report, filename)
     verify_local_artifacts(report, filename, dmg_hashes)
 
 
