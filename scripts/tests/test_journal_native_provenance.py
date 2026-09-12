@@ -242,6 +242,7 @@ class JournalNativeProvenanceTest(unittest.TestCase):
             "placeholder": placeholder,
             "tree_map": tree_map,
             "minisign": minisign,
+            "info": info,
         }
 
     def test_check_source_requires_exact_clean_commit(self):
@@ -448,7 +449,7 @@ class JournalNativeProvenanceTest(unittest.TestCase):
         with info_path.open("wb") as handle:
             plistlib.dump(
                 {
-                    "CFBundleIdentifier": "app.solstone.journal",
+                    "CFBundleIdentifier": "app.solstone.wrong",
                     "CFBundleShortVersionString": "2.0.1",
                     "CFBundleVersion": "30",
                 },
@@ -456,7 +457,39 @@ class JournalNativeProvenanceTest(unittest.TestCase):
             )
         target = self.run_script("write-candidate", *fixture["arguments"])
         self.assertNotEqual(target.returncode, 0)
-        self.assertIn("identity does not match", target.stderr)
+        self.assertIn("identity is invalid", target.stderr)
+
+    def test_wrapper_version_is_independent_but_provenance_binds_both_inputs(self):
+        fixture = self.candidate_fixture()
+        info = plistlib.loads(fixture["info"].read_bytes())
+        info["CFBundleShortVersionString"] = "2.0.4"
+        info["CFBundleVersion"] = "38"
+        fixture["info"].write_bytes(plistlib.dumps(info))
+        written = self.run_script("write-candidate", *fixture["arguments"])
+        self.assertEqual(written.returncode, 0, written.stdout + written.stderr)
+        provenance = json.loads(fixture["output"].read_text())
+        self.assertEqual(provenance["target"]["bundle_short_version"], "2.0.4")
+        self.assertEqual(provenance["target"]["bundle_version"], "38")
+        self.assertEqual(provenance["runtime_archive_sha256"], fixture["archive_sha256"])
+        self.assertEqual(json.loads(fixture["manifest"].read_text())["version"], "2.0.0")
+        verified = self.run_script("verify-candidate", *fixture["arguments"])
+        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
+
+        # A receipt written for a different wrapper is still rejected.
+        info["CFBundleShortVersionString"] = "2.0.5"
+        fixture["info"].write_bytes(plistlib.dumps(info))
+        changed = self.run_script("verify-candidate", *fixture["arguments"])
+        self.assertNotEqual(changed.returncode, 0)
+        self.assertIn("does not match", changed.stderr)
+
+    def test_candidate_provenance_refuses_invalid_wrapper_version(self):
+        fixture = self.candidate_fixture()
+        info = plistlib.loads(fixture["info"].read_bytes())
+        info["CFBundleShortVersionString"] = "not-a-version"
+        fixture["info"].write_bytes(plistlib.dumps(info))
+        refused = self.run_script("write-candidate", *fixture["arguments"])
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("identity is invalid", refused.stderr)
 
     def test_stage_accepted_verifies_digest_and_records_handoff(self):
         archive = self.root / "accepted.tar.gz"

@@ -375,13 +375,16 @@ def candidate_provenance(args: argparse.Namespace) -> tuple[dict, str]:
     }
     if not all(isinstance(value, str) and value for value in target.values()):
         die("journal app Info.plist identity is incomplete")
+    # The wrapper can ship independently of its accepted native payload. Bind
+    # this app's identity in the generated provenance; native identity remains
+    # authenticated above by the signed manifest and matching release receipt.
     if (
         target["bundle_identifier"] != "app.solstone.journal"
-        or target["bundle_short_version"] != version
+        or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", target["bundle_short_version"])
         or not target["bundle_version"].isdigit()
         or int(target["bundle_version"]) < 1
     ):
-        die("journal app identity does not match the accepted native release")
+        die("journal app identity is invalid")
 
     tree_map, tree_sha256 = runtime_tree_map(runtime_dir)
     provenance = {
