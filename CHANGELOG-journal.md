@@ -7,9 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.3 (build 37)] - 2026-09-11
 
-### Changed
-- updated the bundled journal to [2.0.3](https://solstone.app/releases#v2.0.3) →
-
 ### Fixed
 - fresh setup no longer says the installation couldn't be verified when another copy of the journal command is already installed.
 
