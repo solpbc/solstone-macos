@@ -137,6 +137,16 @@ def base_report(lane, checks, **scenario):
             "injection": {"run_id": baseline_run, **local_tier_b(baseline_run)},
             "landing": local_tier_b_landing(baseline_run),
         }
+    if lane == "v2-upgrade-sol":
+        app_identity = {"bundle_id": "app.solstone.observer", "marketing_version": report["to"], "build": report["to_build"]}
+        report["candidate_lifecycle"] = {
+            "ok": True, "first_pid": "10", "first_identity": dict(app_identity),
+            "first_quit_action": {"method": "status-menu", "action": "quit solstone", "returncode": 0,
+                                  "receipt": "clicked:quit solstone", "ok": True},
+            "first_quit": {"ok": True, "pid": ""}, "relaunch": {"ok": True, "pid": "20"},
+            "relaunch_identity": dict(app_identity), "final_quit_method": "apple-event",
+            "final_quit": {"ok": True, "pid": ""},
+        }
     report["checks"].update({key: True for key in (*verifier.LOCAL_REQUIRED_CHECKS[lane], *verifier.LOCAL_DELIVERY_CHECKS)})
     report["evidence"]["automation_lifecycle"] = {"cleanup": {
         "attempted": True, "appium_absent": True, "wda_absent": True,
@@ -1725,6 +1735,29 @@ class BaselineConnectionControls(unittest.TestCase):
         broken["baseline_delivery"]["landing"]["matches"][0]["recomputed_sha256"] = "0" * 64
         with self.assertRaises(verifier.GateFailure):
             verifier.verify_upgrade_baseline_connection(broken, "v2-upgrade-sol.json")
+
+
+class SolMenuQuitControls(unittest.TestCase):
+    def test_menu_receipt_identity_and_both_process_exits_are_required(self):
+        report = _report_for("v2-upgrade-sol.json")
+        verifier.verify_sol_candidate_quit(report, "v2-upgrade-sol.json")
+        for path, value in [
+            ("candidate_lifecycle.first_quit_action", None),
+            ("candidate_lifecycle.first_quit_action.receipt", "NOT_FOUND:quit solstone"),
+            ("candidate_lifecycle.first_quit_action.method", "apple-event"),
+            ("candidate_lifecycle.first_quit_action.returncode", 1),
+            ("candidate_lifecycle.first_quit_action.returncode", False),
+            ("candidate_lifecycle.first_quit_action.ok", 1),
+            ("candidate_lifecycle.first_quit.pid", "10"),
+            ("candidate_lifecycle.final_quit.pid", "20"),
+            ("candidate_lifecycle.relaunch.pid", "10"),
+            ("candidate_lifecycle.first_identity.build", "71"),
+            ("candidate_lifecycle.final_quit_method", None),
+        ]:
+            broken = json.loads(json.dumps(report))
+            set_path(broken, path, value)
+            with self.subTest(path=path), self.assertRaises(verifier.GateFailure):
+                verifier.verify_sol_candidate_quit(broken, "v2-upgrade-sol.json")
 
 
 if __name__ == "__main__":

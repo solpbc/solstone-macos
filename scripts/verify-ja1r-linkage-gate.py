@@ -1025,11 +1025,42 @@ def verify_upgrade_baseline_connection(report, filename):
     }, filename + ": baseline")
 
 
+def verify_sol_candidate_quit(report, filename):
+    lifecycle = report.get("candidate_lifecycle")
+    if not isinstance(lifecycle, dict):
+        raise GateFailure(f"{filename}: missing candidate lifecycle observations")
+    action = lifecycle.get("first_quit_action")
+    expected_action = {"method": "status-menu", "action": "quit solstone", "returncode": 0,
+                       "receipt": "clicked:quit solstone", "ok": True}
+    if (action != expected_action or type(action.get("returncode")) is not int
+            or action.get("ok") is not True):
+        raise GateFailure(f"{filename}: candidate did not prove actual status-menu quit action")
+    expected = {"bundle_id": "app.solstone.observer", "marketing_version": report["to"], "build": report["to_build"]}
+    if lifecycle.get("first_identity") != expected or lifecycle.get("relaunch_identity") != expected:
+        raise GateFailure(f"{filename}: menu quit or relaunch used the wrong candidate identity")
+    first_pid = lifecycle.get("first_pid")
+    relaunch = lifecycle.get("relaunch")
+    if (not isinstance(first_pid, str) or not first_pid.isdigit() or int(first_pid) <= 0
+            or not isinstance(relaunch, dict) or relaunch.get("ok") is not True
+            or not isinstance(relaunch.get("pid"), str) or not relaunch["pid"].isdigit()
+            or int(relaunch["pid"]) <= 0 or relaunch["pid"] == first_pid):
+        raise GateFailure(f"{filename}: candidate relaunch did not prove a new process")
+    for key in ("first_quit", "final_quit"):
+        observation = lifecycle.get(key)
+        if (not isinstance(observation, dict) or observation.get("ok") is not True
+                or "pid" not in observation or observation["pid"] not in (None, "")):
+            raise GateFailure(f"{filename}: {key} did not observe process absence")
+    if lifecycle.get("final_quit_method") != "apple-event" or lifecycle.get("ok") is not True:
+        raise GateFailure(f"{filename}: candidate did not complete both quit paths")
+
+
 def verify_local_completion(report, filename):
     if report["lane"] == "fresh-use":
         verify_local_journal_recovery(report, filename)
     else:
         verify_upgrade_baseline_connection(report, filename)
+    if report["lane"] == "v2-upgrade-sol":
+        verify_sol_candidate_quit(report, filename)
     checks = report.get("checks", {})
     for key in (*LOCAL_REQUIRED_CHECKS[report["lane"]], *LOCAL_DELIVERY_CHECKS):
         require_true(checks.get(key), f"{filename}: checks.{key}")
