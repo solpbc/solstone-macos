@@ -72,6 +72,8 @@ JOURNAL_NATIVE_EXPECTED_COMMIT ?=
 JOURNAL_NATIVE_TARGET ?= macos-arm64
 JOURNAL_NATIVE_OUTPUT_DIR ?= .build/journal-native-output
 JOURNAL_NATIVE_RUNTIME_DIR ?= .build/journal-native-runtime
+# The released runtime every owner runs, embedded in the installed journal app.
+INSTALLED_JOURNAL_RUNTIME ?= /Applications/journal.app/Contents/Resources/solstone-runtime
 JOURNAL_NATIVE_PROVENANCE_RECEIPT ?= $(JOURNAL_NATIVE_RUNTIME_DIR)/journal-native-provenance.json
 JOURNAL_NATIVE_ACCEPTED_ARCHIVE ?=
 JOURNAL_NATIVE_ACCEPTED_SHA256 ?=
@@ -208,20 +210,26 @@ ax-contract:
 ci:
 	@./scripts/run-ci.sh
 
-# On-demand integration tier: the apps' real Journal-runtime code against the
-# staged accepted native journal runtime, inside an isolated home. Opt-in only;
-# `make ci` compiles these suites and lists them as skipped. Stage the runtime
-# first (`make journal-native-runtime-accepted ...`) or set
-# SOLSTONE_NATIVE_RUNTIME_DIR to a runtime tree that contains bin/journal.
+# On-demand integration tier: the apps' real Journal-runtime code against a
+# native journal runtime, inside an isolated home. Opt-in only; `make ci`
+# compiles these suites and lists them as skipped. Runtime selection, in order:
+# SOLSTONE_NATIVE_RUNTIME_DIR, the staged accepted runtime (a release clone has
+# one after `make journal-native-runtime-accepted ...`), then the runtime inside
+# the installed journal app. The first output line names what actually ran: the
+# version and a digest over the whole runtime tree (the launcher binaries are
+# identical across releases, so a single file's digest would not tell them apart).
 # Not a release gate: signed-artifact, Sparkle and relay acceptance stay on the
 # release rig.
 integration-native:
-	@RUNTIME="$${SOLSTONE_NATIVE_RUNTIME_DIR:-$(JOURNAL_NATIVE_RUNTIME_DIR)}"; \
-		test -x "$$RUNTIME/bin/journal" || { \
-			echo "error: no native journal runtime at $$RUNTIME/bin/journal"; \
-			echo "       stage it with 'make journal-native-runtime-accepted ...' or set SOLSTONE_NATIVE_RUNTIME_DIR"; \
-			exit 1; }
-	@SOLSTONE_NATIVE_INTEGRATION=1 swift test --filter NativeIntegration
+	@RUNTIME="$${SOLSTONE_NATIVE_RUNTIME_DIR:-}"; \
+		if [ -z "$$RUNTIME" ]; then \
+			if [ -x "$(JOURNAL_NATIVE_RUNTIME_DIR)/bin/journal" ]; then RUNTIME="$(JOURNAL_NATIVE_RUNTIME_DIR)"; \
+			elif [ -x "$(INSTALLED_JOURNAL_RUNTIME)/bin/journal" ]; then RUNTIME="$(INSTALLED_JOURNAL_RUNTIME)"; \
+			else echo "error: no native journal runtime: stage one, install journal.app, or set SOLSTONE_NATIVE_RUNTIME_DIR"; exit 1; fi; \
+		fi; \
+		test -x "$$RUNTIME/bin/journal" || { echo "error: no journal binary at $$RUNTIME/bin/journal"; exit 1; }; \
+		echo "integration-native: runtime $$("$$RUNTIME/bin/journal" --version) tree-sha256=$$(cd "$$RUNTIME" && find bin lib share -type f | sort | xargs shasum -a 256 | shasum -a 256 | cut -d' ' -f1) at $$RUNTIME"; \
+		SOLSTONE_NATIVE_INTEGRATION=1 SOLSTONE_NATIVE_RUNTIME_DIR="$$RUNTIME" swift test --filter NativeIntegration
 
 # Render view snapshots
 snapshot:
