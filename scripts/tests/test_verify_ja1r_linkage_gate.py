@@ -38,6 +38,8 @@ SCRIPTS = REPO_ROOT / "scripts"
 def parse_iso8601(value):
     """Parse the fixture's UTC timestamps on Python versions before 3.11."""
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 MAKEFILE = REPO_ROOT / "Makefile"
 
 # The verifier's filename is not a valid module name, so load it by path.
