@@ -7,7 +7,7 @@ import SolstoneCore
 import SPLTunnel
 import os
 
-private let pairingLog = Logger(subsystem: "app.solstone.observer.spl", category: "pairing")
+private let pairingLog = Logger(subsystem: SolstoneLogSubsystem.observerSPL, category: "pairing")
 
 enum PairingFlowState: Equatable, Sendable {
     case idle
@@ -66,6 +66,8 @@ final class PairingCoordinator {
     private let clearLastSuccessfulJournalContact: ClearLastSuccessfulJournalContact
     @ObservationIgnored
     private var pendingSwitchPairing: StoredPairing?
+    @ObservationIgnored
+    private let classifiedLog: any ClassifiedLogSinking
 
     var tunnelState: TunnelLifecycleState {
         ownerState()
@@ -83,7 +85,8 @@ final class PairingCoordinator {
         ownerState: @escaping OwnerState = { .disconnected },
         relayEndpoint: @escaping RelayEndpointSource = { SPLPairingDefaults.relayEndpointURL },
         deviceLabel: @escaping DeviceLabelSource = { SPLPairingDefaults.deviceLabel },
-        clearLastSuccessfulJournalContact: @escaping ClearLastSuccessfulJournalContact = {}
+        clearLastSuccessfulJournalContact: @escaping ClearLastSuccessfulJournalContact = {},
+        classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink(logger: pairingLog)
     ) {
         let store = credentialStore ?? PairingCredentialStore(store: keychainStore)
         self.pair = pair ?? { pairURL, deviceLabel, relayEndpoint in
@@ -97,6 +100,7 @@ final class PairingCoordinator {
         self.relayEndpoint = relayEndpoint
         self.deviceLabel = deviceLabel
         self.clearLastSuccessfulJournalContact = clearLastSuccessfulJournalContact
+        self.classifiedLog = classifiedLog
     }
 
     func submitPairingLink(_ rawLink: String) async {
@@ -167,7 +171,13 @@ final class PairingCoordinator {
         do {
             newPairing = try await pair(pairURL, deviceLabel(), relayEndpoint())
         } catch {
-            pairingLog.info("pairing ceremony failed: \(String(describing: type(of: error)), privacy: .public)")
+            classifiedLog.emit(
+                ClassifiedLogEmission(
+                    level: .notice,
+                    classification: "pairing-refused",
+                    publicFields: ["errorType": String(describing: type(of: error))]
+                )
+            )
             state = .failed(Self.failure(for: error))
             return
         }

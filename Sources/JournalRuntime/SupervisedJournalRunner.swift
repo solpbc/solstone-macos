@@ -101,8 +101,10 @@ private final class FoundationSupervisedJournalChildProcess: SupervisedJournalCh
     private let parentWriteHandle: FileHandle
     private let stdoutReadHandle: FileHandle
     private let stderrReadHandle: FileHandle
+    private let outputHandler = SupervisedJournalChildOutputHandler()
     private let lock = NSLock()
     private var parentInputClosed = false
+    private var finished = false
 
     init(request: SupervisedJournalSpawnRequest) {
         process.executableURL = request.executableURL
@@ -117,19 +119,16 @@ private final class FoundationSupervisedJournalChildProcess: SupervisedJournalCh
         let stdoutPipe = Pipe()
         stdoutReadHandle = stdoutPipe.fileHandleForReading
         process.standardOutput = stdoutPipe
+        let outputHandler = self.outputHandler
         stdoutReadHandle.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            Logger.journal.info("\(text.trimmingCharacters(in: .whitespacesAndNewlines), privacy: .public)")
+            consumeSupervisedJournalChildOutput(from: handle, stream: .stdout, handler: outputHandler)
         }
 
         let stderrPipe = Pipe()
         stderrReadHandle = stderrPipe.fileHandleForReading
         process.standardError = stderrPipe
         stderrReadHandle.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            Logger.journal.warning("\(text.trimmingCharacters(in: .whitespacesAndNewlines), privacy: .public)")
+            consumeSupervisedJournalChildOutput(from: handle, stream: .stderr, handler: outputHandler)
         }
     }
 
@@ -142,7 +141,8 @@ private final class FoundationSupervisedJournalChildProcess: SupervisedJournalCh
     }
 
     func setTerminationHandler(_ handler: @escaping @Sendable (Int32, pid_t) -> Void) {
-        process.terminationHandler = { child in
+        process.terminationHandler = { [weak self] child in
+            self?.finish(exitStatus: child.terminationStatus)
             handler(child.terminationStatus, child.processIdentifier)
         }
     }
@@ -161,9 +161,22 @@ private final class FoundationSupervisedJournalChildProcess: SupervisedJournalCh
     }
 
     deinit {
+        finish(exitStatus: nil)
+        closeParentInput()
+    }
+
+    private func finish(exitStatus: Int32?) {
+        let shouldFinish = lock.withLock { () -> Bool in
+            guard !finished else { return false }
+            finished = true
+            return true
+        }
+        guard shouldFinish else { return }
         stdoutReadHandle.readabilityHandler = nil
         stderrReadHandle.readabilityHandler = nil
-        closeParentInput()
+        consumeSupervisedJournalChildOutput(from: stdoutReadHandle, stream: .stdout, handler: outputHandler)
+        consumeSupervisedJournalChildOutput(from: stderrReadHandle, stream: .stderr, handler: outputHandler)
+        outputHandler.end(exitStatus: exitStatus)
     }
 }
 

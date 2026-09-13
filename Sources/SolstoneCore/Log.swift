@@ -8,8 +8,7 @@ import os
 /// Use `Logger.<category>.<level>(...)` at call sites for compile-time
 /// optimized logging with per-value privacy control and accurate source location.
 ///
-/// View logs with:
-///   log stream --predicate 'subsystem == "app.solstone.observer"' --level debug
+/// View persisted logs with:
 ///   log show --predicate 'subsystem == "app.solstone.observer"' --last 1h
 ///
 /// Filter by category:
@@ -17,7 +16,7 @@ import os
 ///
 /// Or use Console.app and filter by subsystem "app.solstone.observer"
 extension Logger {
-    private static let subsystem = "app.solstone.observer"
+    private static let subsystem = SolstoneLogSubsystem.observer
 
     public static let general = Logger(subsystem: subsystem, category: "general")
     public static let capture = Logger(subsystem: subsystem, category: "capture")

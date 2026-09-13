@@ -5,7 +5,7 @@ import os
 import SolstoneCore
 
 extension Logger {
-    static let watchdogBootstrap = Logger(subsystem: "app.solstone.watchdog", category: "watchdog")
+    static let watchdogBootstrap = Logger(subsystem: SolstoneLogSubsystem.watchdog, category: "watchdog")
 
     static func watchdog(for product: WatchdogProduct) -> Logger {
         Logger(subsystem: product.loggerSubsystem, category: "watchdog")

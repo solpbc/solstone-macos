@@ -33,6 +33,7 @@ final class JournalSupervisor {
     private let port: Int
     private let readinessTimeout: Duration
     private let receiptContextFactory: () -> JournalRuntimeEntryReceiptContext
+    private let classifiedLog: any ClassifiedLogSinking
     private var receiptContext: JournalRuntimeEntryReceiptContext?
     private var replacementReadinessTask: Task<Void, Never>?
     private var replacementReadinessGeneration: UInt64?
@@ -53,7 +54,8 @@ final class JournalSupervisor {
         readinessTimeout: Duration = .seconds(120),
         receiptContextFactory: @escaping () -> JournalRuntimeEntryReceiptContext = {
             JournalRuntimeEntryReceiptLaunch.begin(provenanceBundle: .module)
-        }
+        },
+        classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink(logger: .journalSupervisor)
     ) {
         let bridge = StatusBridge()
         self.materializer = materializer
@@ -70,6 +72,7 @@ final class JournalSupervisor {
         self.port = port
         self.readinessTimeout = readinessTimeout
         self.receiptContextFactory = receiptContextFactory
+        self.classifiedLog = classifiedLog
         bridge.supervisor = self
     }
 
@@ -83,7 +86,11 @@ final class JournalSupervisor {
 
     func applyRuntimeStatus(_ status: JournalRuntimeStatus) {
         runtimeStatus = status
-        Logger.journalSupervisor.notice("journal runtime status: \(String(describing: status), privacy: .public)")
+        emitClassified(
+            .notice,
+            "journal-lifecycle: runtime-status",
+            runtimeStatusFields(status)
+        )
         guard case .restarting(let generation?) = status else { return }
         beginReplacementReadiness(generation: generation)
     }
@@ -113,7 +120,7 @@ final class JournalSupervisor {
             )
             state = .failed(diagnostic)
             applyRuntimeStatus(.unknown(diagnostic))
-            Logger.journalSupervisor.error("journal runtime materialize failed: \(error.localizedDescription, privacy: .public)")
+            emitBootFailure(.error, reason: "materialize-failed", diagnostic: diagnostic)
             return false
         }
 
@@ -129,7 +136,7 @@ final class JournalSupervisor {
             let diagnostic = blockage.diagnostic
             state = .blocked(diagnostic)
             blockedReason = blockage.ownerMessage
-            Logger.journalSupervisor.warning("journal supervisor gate blocked: \(diagnostic.outputExcerpt ?? blockage.ownerMessage, privacy: .public)")
+            emitBootFailure(.warning, reason: "gate-blocked", diagnostic: diagnostic)
             return false
         } catch {
             let diagnostic = JournalDiagnostic(
@@ -138,7 +145,7 @@ final class JournalSupervisor {
             )
             state = .failed(diagnostic)
             applyRuntimeStatus(.unknown(diagnostic))
-            Logger.journalSupervisor.error("journal spawn failed: \(error.localizedDescription, privacy: .public)")
+            emitBootFailure(.error, reason: "spawn-failed", diagnostic: diagnostic)
             return false
         }
 
@@ -178,7 +185,7 @@ final class JournalSupervisor {
             let diagnostic = blockage.diagnostic
             state = .blocked(diagnostic)
             blockedReason = blockage.ownerMessage
-            Logger.journalSupervisor.warning("journal supervisor gate blocked: \(diagnostic.outputExcerpt ?? blockage.ownerMessage, privacy: .public)")
+            emitBootFailure(.warning, reason: "gate-blocked", diagnostic: diagnostic)
             return false
         } catch {
             let diagnostic = JournalDiagnostic(
@@ -187,6 +194,7 @@ final class JournalSupervisor {
             )
             state = .failed(diagnostic)
             applyRuntimeStatus(.unknown(diagnostic))
+            emitBootFailure(.error, reason: "spawn-failed", diagnostic: diagnostic)
             return false
         }
 
@@ -232,7 +240,7 @@ final class JournalSupervisor {
             activeJournalRoot = nil
             state = .failed(diagnostic)
             applyRuntimeStatus(.unknown(diagnostic))
-            Logger.journalSupervisor.warning("journal readiness failed: \(diagnostic.outputExcerpt ?? diagnostic.commandLabel, privacy: .public)")
+            emitBootFailure(.warning, reason: "readiness-failed", diagnostic: diagnostic)
             return false
         case .failedTerminal(let diagnostic):
             guard readinessAttemptIsCurrent(replacementGeneration) else { return false }
@@ -242,9 +250,64 @@ final class JournalSupervisor {
             activeJournalRoot = nil
             state = .failed(diagnostic)
             applyRuntimeStatus(.stopped(diagnostic))
-            Logger.journalSupervisor.warning("journal readiness failed: \(diagnostic.outputExcerpt ?? diagnostic.commandLabel, privacy: .public)")
+            emitBootFailure(.warning, reason: "readiness-failed", diagnostic: diagnostic)
             return false
         }
+    }
+
+    private func emitBootFailure(
+        _ level: ClassifiedLogLevel,
+        reason: String,
+        diagnostic: JournalDiagnostic
+    ) {
+        emitClassified(level, "journal-lifecycle: supervisor-not-booting", diagnosticFields(diagnostic, extra: ["reason": reason]))
+    }
+
+    private func emitClassified(
+        _ level: ClassifiedLogLevel,
+        _ classification: String,
+        _ publicFields: [String: String]
+    ) {
+        classifiedLog.emit(
+            ClassifiedLogEmission(
+                level: level,
+                classification: classification,
+                publicFields: publicFields
+            )
+        )
+    }
+
+    private func runtimeStatusFields(_ status: JournalRuntimeStatus) -> [String: String] {
+        var fields = ["kind": runtimeStatusKind(status)]
+        if let diagnostic = status.diagnostic {
+            fields.merge(diagnosticFields(diagnostic), uniquingKeysWith: { _, new in new })
+        }
+        return fields
+    }
+
+    private func runtimeStatusKind(_ status: JournalRuntimeStatus) -> String {
+        switch status {
+        case .unobserved: "unobserved"
+        case .running: "running"
+        case .stopped: "stopped"
+        case .stoppedByUser: "stopped-by-user"
+        case .restarting: "restarting"
+        case .setupNeeded: "setup-needed"
+        case .unknown: "unknown"
+        }
+    }
+
+    private func diagnosticFields(
+        _ diagnostic: JournalDiagnostic,
+        extra: [String: String] = [:]
+    ) -> [String: String] {
+        var fields = extra
+        fields["commandLabel"] = diagnostic.commandLabel
+        fields["timedOut"] = diagnostic.timedOut ? "true" : "false"
+        if let exitCode = diagnostic.exitCode {
+            fields["exitCode"] = String(exitCode)
+        }
+        return fields
     }
 
     private func resolvedReceiptContext() -> JournalRuntimeEntryReceiptContext {

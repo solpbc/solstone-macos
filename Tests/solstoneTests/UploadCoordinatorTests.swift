@@ -528,6 +528,31 @@ struct UploadCoordinatorTests {
         #expect(events.events.isEmpty)
     }
 
+    @Test func ingestFailureEmitsUploadFailingClassification() throws {
+        let log = RecordingClassifiedLogSink()
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let coordinator = try makeDeliveryCoordinator(
+            now: now,
+            delivery: InMemoryLastJournalDeliveryStore(),
+            identity: .identified(canonicalDeliveryFingerprint()),
+            classifiedLog: log
+        )
+
+        coordinator.handleProgressEvent(.uploadFailed(
+            segment: "x",
+            error: "peer body must not appear",
+            healthReason: .httpStatus(503),
+            requestedPath: IngestProtocolV3.uploadPath
+        ))
+
+        let emission = try #require(log.emissions.first)
+        #expect(emission.level == .notice)
+        #expect(emission.classification == "upload-failing")
+        #expect(emission.publicFields["reason"] == "http_503")
+        let concatenated = emission.classification + emission.publicFields.values.joined()
+        #expect(!concatenated.contains("peer body"))
+    }
+
     @Test func matchingProofWritesDeliveryPayload() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let fingerprint = canonicalDeliveryFingerprint()
@@ -685,7 +710,8 @@ struct UploadCoordinatorTests {
         identityProvider: (@MainActor @Sendable () -> JournalIdentityRead)? = nil,
         contact: InMemoryLastSuccessfulJournalContactStore = InMemoryLastSuccessfulJournalContactStore(),
         recorder: DiagnosticEvidenceRecorder = .dormant,
-        logAdapter: DiagnosticEvidenceLoggingAdapter = .live
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
+        classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.upload
     ) throws -> UploadCoordinator {
         let root = try makeTempDirectory("upload-coordinator-delivery")
         let coordinator = UploadCoordinator(
@@ -695,7 +721,8 @@ struct UploadCoordinatorTests {
             lastDeliveryStore: delivery,
             journalIdentityProvider: identityProvider ?? { identity },
             recorder: recorder,
-            logAdapter: logAdapter
+            logAdapter: logAdapter,
+            classifiedLog: classifiedLog
         )
         coordinator.nowProvider = { now }
         coordinator.refreshLastJournalDelivery()

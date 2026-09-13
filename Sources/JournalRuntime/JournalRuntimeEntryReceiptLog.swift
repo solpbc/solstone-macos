@@ -2,10 +2,11 @@
 // Copyright (c) 2026 sol pbc
 
 import os
+import SolstoneCore
 
 extension Logger {
     static let journalRuntimeEntryReceipts = Logger(
-        subsystem: "app.solstone.journal",
+        subsystem: SolstoneLogSubsystem.journal,
         category: "runtime-entry-receipts"
     )
 }

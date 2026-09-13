@@ -73,6 +73,83 @@ struct JournalSupervisorTests {
         #expect(supervisor.runtimeStatus == .stopped(diagnostic))
     }
 
+    @Test func bootFailuresEmitSupervisorNotBootingWithoutExcerpt() async throws {
+        let marker = "AC9-SUPERVISOR-EXCERPT-MARKER"
+        let log = RecordingClassifiedLogSink()
+        let events = EventRecorder()
+        let diagnostic = JournalDiagnostic(commandLabel: "gate", outputExcerpt: marker)
+        let blockage = SingleSupervisorGateBlockage.portConflict(diagnostic)
+        let supervisor = JournalSupervisor(
+            gate: RecordingGate(events: events, result: .success),
+            materializer: try await RecordingMaterializer(events: events),
+            runner: RecordingRunner(
+                events: events,
+                gate: RecordingGate(events: events, result: .blocked(blockage))
+            ),
+            readinessGate: RecordingReadinessGate(events: events, result: .ready),
+            classifiedLog: log
+        )
+        _ = configureInMemoryReceiptContext(supervisor)
+
+        let started = await supervisor.start(journalRoot: try makeTemporaryDirectory())
+
+        #expect(!started)
+        let boot = try #require(log.emissions.first { $0.classification == "journal-lifecycle: supervisor-not-booting" })
+        #expect(boot.level == .warning)
+        #expect(boot.publicFields["reason"] == "gate-blocked")
+        #expect(boot.publicFields["commandLabel"] == "gate")
+        let concatenated = log.emissions.map {
+            $0.classification + $0.publicFields.values.joined() + $0.publicFields.keys.joined()
+        }.joined()
+        #expect(!concatenated.contains(marker))
+    }
+
+    @Test func runtimeStatusOmitsDiagnosticDump() async throws {
+        let marker = "AC6-STATUS-DUMP-MARKER"
+        let log = RecordingClassifiedLogSink()
+        let supervisor = JournalSupervisor(
+            gate: RecordingGate(events: EventRecorder(), result: .success),
+            materializer: try await RecordingMaterializer(events: EventRecorder()),
+            runner: RecordingRunner(events: EventRecorder()),
+            readinessGate: RecordingReadinessGate(events: EventRecorder(), result: .ready),
+            classifiedLog: log
+        )
+        let diagnostic = JournalDiagnostic(commandLabel: "journal", outputExcerpt: marker)
+
+        supervisor.applyRuntimeStatus(.stopped(diagnostic))
+
+        let emission = try #require(log.emissions.first)
+        #expect(emission.classification == "journal-lifecycle: runtime-status")
+        #expect(emission.publicFields["kind"] == "stopped")
+        #expect(emission.publicFields["commandLabel"] == "journal")
+        let concatenated = emission.classification + emission.publicFields.values.joined()
+        #expect(!concatenated.contains(marker))
+        #expect(!concatenated.contains("outputExcerpt"))
+    }
+
+    @Test func restartSpawnFailureEmitsSupervisorNotBooting() async throws {
+        let log = RecordingClassifiedLogSink()
+        let events = EventRecorder()
+        let runner = RecordingRunner(events: events, restartFails: true)
+        let supervisor = JournalSupervisor(
+            gate: RecordingGate(events: events, result: .success),
+            materializer: try await RecordingMaterializer(events: events),
+            runner: runner,
+            readinessGate: RecordingReadinessGate(events: events, result: .ready),
+            classifiedLog: log
+        )
+        _ = configureInMemoryReceiptContext(supervisor)
+        _ = await supervisor.start(journalRoot: try makeTemporaryDirectory())
+        let before = log.emissions.count
+
+        let restarted = await supervisor.restart()
+
+        #expect(!restarted)
+        let boot = try #require(log.emissions.dropFirst(before).first { $0.classification == "journal-lifecycle: supervisor-not-booting" })
+        #expect(boot.level == .error)
+        #expect(boot.publicFields["reason"] == "spawn-failed")
+    }
+
     @Test func stopAppliesStoppedByUserBecauseRunnerStopIsSilent() async throws {
         let events = EventRecorder()
         let runner = RecordingRunner(

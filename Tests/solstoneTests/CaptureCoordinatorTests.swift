@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import JournalRuntimeTestSupport
 import SolstoneCore
 import Testing
 @testable import solstone
@@ -410,6 +411,75 @@ struct CaptureCoordinatorTests {
         #expect(passStarts.count == 3)
     }
 
+    @Test func startRecordingLogsCaptureNotRunningWhenNoSourcesEnabled() async throws {
+        let log = RecordingClassifiedLogSink()
+        let (coordinator, root) = try makeCoordinator(
+            configProvider: { (sources: CaptureSources(), disabled: Set<String>(), enabled: Set<String>()) },
+            classifiedLog: log
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        await coordinator.startRecording()
+
+        let emission = try #require(log.emissions.first)
+        #expect(emission.level == .notice)
+        #expect(emission.classification == "capture-not-running")
+        #expect(emission.publicFields["reason"] == "no-sources")
+    }
+
+    @Test func startRecordingLogsCaptureNotRunningWhenSourcesNotPermitted() async throws {
+        let log = RecordingClassifiedLogSink()
+        let (coordinator, root) = try makeCoordinator(classifiedLog: log)
+        defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.publishScreenRecordingPermission(.notGranted)
+        coordinator.microphoneAuthorizationCause = .denied
+
+        await coordinator.startRecording()
+
+        let emission = try #require(log.emissions.first)
+        #expect(emission.level == .notice)
+        #expect(emission.classification == "capture-not-running")
+        #expect(emission.publicFields["reason"] == "not-permitted")
+    }
+
+    @Test func startRecordingLogsPermissionRefused() async throws {
+        let log = RecordingClassifiedLogSink()
+        let (coordinator, root) = try makeCoordinator(
+            startOperation: { _, _, _ in
+                .threw(TransitionFailure(message: "permission", isPermissionError: true))
+            },
+            classifiedLog: log
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        await coordinator.startRecording()
+
+        let emission = try #require(log.emissions.first)
+        #expect(emission.level == .notice)
+        #expect(emission.classification == "permission-refused")
+    }
+
+    @Test func startRecordingLogsStartFailedWithoutFailureMessage() async throws {
+        let log = RecordingClassifiedLogSink()
+        let marker = "AC11-START-FAILED-SECRET"
+        let (coordinator, root) = try makeCoordinator(
+            startOperation: { _, _, _ in
+                .threw(TransitionFailure(message: marker, isPermissionError: false))
+            },
+            classifiedLog: log
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        await coordinator.startRecording()
+
+        let emission = try #require(log.emissions.first)
+        #expect(emission.level == .error)
+        #expect(emission.classification == "capture-not-running")
+        #expect(emission.publicFields["reason"] == "start-failed")
+        let concatenated = emission.classification + emission.publicFields.values.joined()
+        #expect(!concatenated.contains(marker))
+    }
+
     private func makeCoordinator(
         pauseManager: PauseManager = PauseManager(),
         isTerminating: @escaping CaptureCoordinator.IsTerminatingProvider = { false },
@@ -419,7 +489,8 @@ struct CaptureCoordinatorTests {
         bannerSink: @escaping CaptureCoordinator.BannerSink = { _ in },
         startOperation: CaptureCoordinator.StartOperation? = nil,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
-        permissionPollScheduler: PermissionPollScheduler? = nil
+        permissionPollScheduler: PermissionPollScheduler? = nil,
+        classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.general
     ) throws -> (CaptureCoordinator, URL) {
         let root = try makeTempDirectory("capture-coordinator")
         let captureManager = CaptureManager(storageManager: StorageManager(baseDirectory: root))
@@ -432,7 +503,8 @@ struct CaptureCoordinatorTests {
             bannerSink: bannerSink,
             startOperation: startOperation,
             screenPermissionProvider: screenPermissionProvider,
-            permissionPollScheduler: permissionPollScheduler ?? PermissionPollTestScheduler().scheduler
+            permissionPollScheduler: permissionPollScheduler ?? PermissionPollTestScheduler().scheduler,
+            classifiedLog: classifiedLog
         )
         coordinator.microphoneAuthorizationCause = .authorized
         coordinator.publishScreenRecordingPermission(.granted)

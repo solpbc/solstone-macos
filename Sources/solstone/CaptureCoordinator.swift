@@ -81,6 +81,7 @@ public final class CaptureCoordinator {
     private let screenPermissionProvider: ScreenRecordingPermissionProvider
     private let permissionPollScheduler: PermissionPollScheduler
     private let logAdapter: DiagnosticEvidenceLoggingAdapter
+    private let classifiedLog: any ClassifiedLogSinking
 
     private var permissionPollCancellation: PermissionPollScheduler.Cancellation?
     private var isCheckingPermissions = false
@@ -99,7 +100,8 @@ public final class CaptureCoordinator {
         recorder: DiagnosticEvidenceRecorder = .dormant,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
         permissionPollScheduler: PermissionPollScheduler = .live(),
-        logAdapter: DiagnosticEvidenceLoggingAdapter = .live
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
+        classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.general
     ) {
         self.captureManager = captureManager
         self.pauseManager = pauseManager
@@ -111,6 +113,7 @@ public final class CaptureCoordinator {
         self.screenPermissionProvider = screenPermissionProvider
         self.permissionPollScheduler = permissionPollScheduler
         self.logAdapter = logAdapter
+        self.classifiedLog = classifiedLog
         self.startOperation = startOperation ?? { [captureManager] reason, sources, config in
             await captureManager.enqueueTransition(
                 .start(
@@ -199,9 +202,21 @@ public final class CaptureCoordinator {
         let admissionSet = config.sources.intersection(permittedSources)
         guard !admissionSet.isEmpty else {
             if config.sources.isEmpty {
-                Logger.general.info("startRecording() skipped: no capture sources enabled")
+                classifiedLog.emit(
+                    ClassifiedLogEmission(
+                        level: .notice,
+                        classification: "capture-not-running",
+                        publicFields: ["reason": "no-sources"]
+                    )
+                )
             } else {
-                Logger.general.info("startRecording() skipped: selected sources not permitted")
+                classifiedLog.emit(
+                    ClassifiedLogEmission(
+                        level: .notice,
+                        classification: "capture-not-running",
+                        publicFields: ["reason": "not-permitted"]
+                    )
+                )
             }
             return
         }
@@ -218,12 +233,24 @@ public final class CaptureCoordinator {
             }
         case .threw(let failure):
             if failure.isPermissionError {
-                Logger.general.info("[Permissions] Recording denied, screen recording permission not granted")
+                classifiedLog.emit(
+                    ClassifiedLogEmission(
+                        level: .notice,
+                        classification: "permission-refused",
+                        publicFields: [:]
+                    )
+                )
                 if admissionSet.contains(.screen) {
                     publishScreenRecordingPermission(.notGranted)
                 }
             } else {
-                Logger.general.error("Recording failed to start: \(failure.message, privacy: .public)")
+                classifiedLog.emit(
+                    ClassifiedLogEmission(
+                        level: .error,
+                        classification: "capture-not-running",
+                        publicFields: ["reason": "start-failed"]
+                    )
+                )
                 publishCaptureStateEvidence(for: .error(failure.message))
                 captureError = UICopy.ERROR_START_OBSERVING
                 bannerSink(UICopy.ERROR_START_OBSERVING)

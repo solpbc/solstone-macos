@@ -108,7 +108,7 @@ public func moveAsideStaleStateFiles(
             return JournalRestartLogEvent(
                 step: .staleStateMoveAside,
                 outcome: "error",
-                detail: "\(relativePath):\(error.localizedDescription)"
+                detail: "\(relativePath):move-failed"
             )
         }
     }
@@ -204,7 +204,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
                     outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
                 )
             )
-            emit(step: .serviceRestart, outcome: "error", detail: error.localizedDescription)
+            emit(step: .serviceRestart, outcome: "error", detail: "launch-failed")
             return .failure(failure)
         }
         guard restartResult.exitCode == 0 else {
@@ -234,7 +234,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
                     ownerMessage: "restart failed: journal did not come back",
                     diagnostic: diagnostic
                 )
-                emit(step: .reProbe, outcome: "error", detail: "\(outcome)")
+                emit(step: .reProbe, outcome: "error", detail: probeOutcomeKind(outcome))
                 return .failure(failure)
             }
             emit(step: .reProbe, outcome: "success", detail: nil)
@@ -249,7 +249,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
                     outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
                 )
             )
-            emit(step: .reProbe, outcome: "error", detail: error.localizedDescription)
+            emit(step: .reProbe, outcome: "error", detail: error is TimeoutError ? "timed-out" : "launch-failed")
             return .failure(failure)
         }
     }
@@ -316,6 +316,15 @@ public struct JournalRestartRunner: @unchecked Sendable {
             emit(step: .staleStateMoveAside, outcome: "noop", detail: "moved=0")
         } else {
             emit(step: .staleStateMoveAside, outcome: "success", detail: "moved=\(moved)")
+        }
+    }
+
+    private func probeOutcomeKind(_ outcome: JournalRuntimeProbeOutcome) -> String {
+        switch outcome {
+        case .reachable: "reachable"
+        case .unreachable: "unreachable"
+        case .unknown: "unknown"
+        case .binaryMissing: "binary-missing"
         }
     }
 

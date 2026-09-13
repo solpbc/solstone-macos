@@ -133,7 +133,7 @@ public final class VideoWriter: @unchecked Sendable {
             started = true
             captureStartTime = pts
             guard writer.startWriting() else {
-                Logger.capture.error("VideoWriter: startWriting failed for \(self.writer.outputURL.path, privacy: .public), status=\(self.writer.status.rawValue, privacy: .public), error=\(String(describing: self.writer.error), privacy: .public)")
+                Logger.capture.error("VideoWriter: startWriting failed for \(self.writer.outputURL.lastPathComponent, privacy: .public), status=\(self.writer.status.rawValue, privacy: .public), error=\(String(describing: self.writer.error), privacy: .public)")
                 startFailed = true
                 return
             }
@@ -142,11 +142,11 @@ public final class VideoWriter: @unchecked Sendable {
                     writer.startSession(atSourceTime: pts)
                 }
             } catch {
-                Logger.capture.error("VideoWriter: startSession threw for \(self.writer.outputURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                Logger.capture.error("VideoWriter: startSession threw for \(self.writer.outputURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 startFailed = true
                 return
             }
-            Logger.capture.info("Started video recording to \(self.writer.outputURL.path, privacy: .public)")
+            Logger.capture.info("Started video recording to \(self.writer.outputURL.lastPathComponent, privacy: .public)")
         }
 
         guard !startFailed else { return }

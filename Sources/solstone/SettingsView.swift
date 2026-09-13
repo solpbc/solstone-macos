@@ -3038,7 +3038,7 @@ struct SettingsView: View {
         the solstone app takes in what you share with it, and all of it goes into your journal.
         installed at: \(Bundle.main.bundlePath)
         files: ~/Library/Application Support/Solstone/captures/
-        logs: /usr/bin/log stream --predicate 'subsystem == "app.solstone.observer"' --level debug
+        logs: /usr/bin/log show --predicate '\(SolstoneLogSubsystem.persistedHelpPredicate)' --last 1h
         journal: \(appState.config.serverURL ?? "not configured")
 
         if intake isn't running, check settings → permissions.

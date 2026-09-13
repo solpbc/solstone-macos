@@ -276,8 +276,7 @@ public struct UploadClient: Sendable {
                 return .failure(UploadError.invalidResponse)
             }
 
-            let responseBody = String(data: data.prefix(500), encoding: .utf8) ?? "<binary>"
-            Logger.upload.info("Response: HTTP \(httpResponse.statusCode, privacy: .public) - \(responseBody, privacy: .public)")
+            Logger.upload.info("Response: HTTP \(httpResponse.statusCode, privacy: .public) bytes=\(data.count, privacy: .public)")
 
             if (200...299).contains(httpResponse.statusCode) {
                 let parsed = try JSONDecoder().decode(IngestProtocolV3.UploadResponse.self, from: data)

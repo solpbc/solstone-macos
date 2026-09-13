@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import JournalRuntimeTestSupport
 import SolstoneCore
 import SPLTunnel
 import Testing
@@ -321,6 +322,22 @@ struct PairingCoordinatorTests {
         #expect(PairingCoordinator.failure(for: DialError.wsHandshakeFailed(httpStatus: nil)) == .network)
     }
 
+    @Test func ceremonyFailureEmitsPairingRefusedClassification() async throws {
+        let log = RecordingClassifiedLogSink()
+        let coordinator = makeCoordinator(
+            store: PairingStore(pairing: nil),
+            outcomes: [.failure(PairError.nonceExpired)],
+            classifiedLog: log
+        )
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: "11111111-1111-1111-1111-111111111111"))
+
+        let emission = try #require(log.emissions.first)
+        #expect(emission.level == .notice)
+        #expect(emission.classification == "pairing-refused")
+        #expect(emission.publicFields["errorType"] == "PairError")
+    }
+
     private func expectCeremonyFailure(_ error: any Error & Sendable, mapsTo failure: PairingFailure) async {
         let instanceID = "11111111-1111-1111-1111-111111111111"
         let coordinator = makeCoordinator(
@@ -337,13 +354,15 @@ struct PairingCoordinatorTests {
         store: PairingStore,
         outcomes: [PairScriptOutcome],
         reactivate: ReactivateRecorder = ReactivateRecorder(),
-        clear: ClearRecorder = ClearRecorder()
+        clear: ClearRecorder = ClearRecorder(),
+        classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.general
     ) -> PairingCoordinator {
         makeCoordinator(
             store: store,
             script: PairScript(outcomes),
             reactivate: reactivate,
-            clear: clear
+            clear: clear,
+            classifiedLog: classifiedLog
         )
     }
 
@@ -352,7 +371,8 @@ struct PairingCoordinatorTests {
         script: PairScript,
         reactivate: ReactivateRecorder = ReactivateRecorder(),
         ownerState: TunnelLifecycleState = .disconnected,
-        clear: ClearRecorder = ClearRecorder()
+        clear: ClearRecorder = ClearRecorder(),
+        classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.general
     ) -> PairingCoordinator {
         PairingCoordinator(
             pair: { pairURL, deviceLabel, relayEndpoint in
@@ -367,7 +387,8 @@ struct PairingCoordinatorTests {
             ownerState: { ownerState },
             relayEndpoint: { URL(string: "https://relay.test")! },
             deviceLabel: { "test mac" },
-            clearLastSuccessfulJournalContact: { clear.record() }
+            clearLastSuccessfulJournalContact: { clear.record() },
+            classifiedLog: classifiedLog
         )
     }
 }

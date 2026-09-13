@@ -3,6 +3,7 @@
 
 import Foundation
 import JournalRuntimeTestSupport
+import SolstoneCore
 import Testing
 @testable import JournalRuntime
 
@@ -55,5 +56,30 @@ struct JournalRequiredModelsTests {
         await #expect(throws: SupervisedJournalRunnerError.self) {
             try await reconciler.reconcile(runtime: runtime, journalRoot: runtime.layout.rootURL)
         }
+    }
+
+    @Test func reconcileSummaryOmitsChildPayloadAndKeepsByteCount() async throws {
+        let runtime = try makeRuntime()
+        defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
+        let marker = "AC8-REQUIRED-MODELS-MARKER-9c2e"
+        let subprocess = FakeSubprocessRunner()
+        subprocess.enqueue(
+            "install-models",
+            .success(stdout: Data("installed \(marker)\n".utf8), stderr: Data("warn \(marker)\n".utf8))
+        )
+        let log = RecordingClassifiedLogSink()
+        let reconciler = JournalRequiredModelsReconciler(makeRunner: { _ in subprocess }, log: log)
+
+        try await reconciler.reconcile(runtime: runtime, journalRoot: runtime.layout.rootURL)
+
+        let emission = try #require(log.emissions.first)
+        #expect(emission.classification == "journal-lifecycle: required-models")
+        #expect(emission.level == .notice)
+        let concatenated = emission.classification + emission.publicFields.values.joined()
+        #expect(!concatenated.contains(marker))
+        #expect(emission.publicFields["stdoutEmpty"] == "false")
+        #expect(emission.publicFields["stderrEmpty"] == "false")
+        #expect(emission.publicFields["exit"] == "0")
+        #expect(Int(emission.publicFields["stdoutBytes"] ?? "0") ?? 0 > 0)
     }
 }

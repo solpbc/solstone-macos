@@ -61,7 +61,7 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
             try marker.encoded().write(to: url, options: .atomic)
             return true
         } catch {
-            Logger.general.warning("expected-exit marker write failed (reason=\(reason, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+            Logger.general.warning("expected-exit marker write failed (reason=\(reason, privacy: .public))")
             return false
         }
     }
@@ -169,7 +169,7 @@ public struct ExpectedExitMarker: Codable, Sendable, Equatable {
         do {
             try fileManager.removeItem(at: url)
         } catch {
-            Logger.general.warning("expected-exit marker invalidate failed: \(error.localizedDescription, privacy: .public)")
+            Logger.general.warning("expected-exit marker invalidate failed")
         }
     }
 }

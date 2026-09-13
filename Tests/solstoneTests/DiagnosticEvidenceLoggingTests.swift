@@ -165,8 +165,9 @@ struct DiagnosticEvidenceLoggingTests {
         #expect(wireUpContains(coordinator, "Logger.general.info(\"startRecording() ignored because app is terminating\")"))
         #expect(wireUpContains(coordinator, "Logger.general.info(\"startRecording() vetoed\")"))
         #expect(wireUpContains(coordinator, "Logger.general.info(\"startRecording() dropped\")"))
-        #expect(wireUpContains(coordinator, "Logger.general.info(\"[Permissions] Recording denied, screen recording permission not granted\")"))
-        #expect(wireUpContains(coordinator, "Logger.general.error(\"Recording failed to start:"))
+        #expect(wireUpContains(coordinator, "classification: \"permission-refused\""))
+        #expect(wireUpContains(coordinator, "classification: \"capture-not-running\""))
+        #expect(wireUpContains(coordinator, "\"start-failed\""))
         #expect(!adapter.contains("Logger.general"))
         #expect(adapter.components(separatedBy: "Logger.setup.").count == 13)
     }

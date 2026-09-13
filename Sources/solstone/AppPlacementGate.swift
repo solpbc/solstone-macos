@@ -63,8 +63,8 @@ enum AppPlacementGate {
             },
             log: @escaping (AppPlacementDiagnostic) -> Void = { diagnostic in
                 switch diagnostic {
-                case .appTranslocationPathObserved(let path):
-                    Logger.setup.warning("bundle path contains AppTranslocation diagnostic segment: \(path, privacy: .public)")
+                case .appTranslocationPathObserved:
+                    Logger.setup.warning("bundle path contains AppTranslocation diagnostic segment: app-translocation")
                 }
             }
         ) {

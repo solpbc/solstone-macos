@@ -113,6 +113,7 @@ public final class UploadCoordinator {
     private let journalIdentityProvider: @MainActor @Sendable () -> JournalIdentityRead
     private let recorder: DiagnosticEvidenceRecorder
     private let logAdapter: DiagnosticEvidenceLoggingAdapter
+    private let classifiedLog: any ClassifiedLogSinking
     private var config: AppConfig
     private var pairedIngestIdentity: TunnelPairingIdentity?
     private var pushedJournalFingerprint: JournalConnectionFingerprint?
@@ -133,7 +134,8 @@ public final class UploadCoordinator {
         lastDeliveryStore: any LastJournalDeliveryStoring = UserDefaultsLastJournalDeliveryStore(),
         journalIdentityProvider: @escaping @MainActor @Sendable () -> JournalIdentityRead = { .absent },
         recorder: DiagnosticEvidenceRecorder = .dormant,
-        logAdapter: DiagnosticEvidenceLoggingAdapter = .live
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
+        classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.upload
     ) {
         self.config = config
         self.client = client
@@ -145,6 +147,7 @@ public final class UploadCoordinator {
         self.journalIdentityProvider = journalIdentityProvider
         self.recorder = recorder
         self.logAdapter = logAdapter
+        self.classifiedLog = classifiedLog
         self.syncService = SyncService(
             storageManager: storageManager,
             client: client,
@@ -180,7 +183,8 @@ public final class UploadCoordinator {
         lastDeliveryStore: any LastJournalDeliveryStoring = InMemoryLastJournalDeliveryStore(),
         journalIdentityProvider: @escaping @MainActor @Sendable () -> JournalIdentityRead = { .absent },
         recorder: DiagnosticEvidenceRecorder = .dormant,
-        logAdapter: DiagnosticEvidenceLoggingAdapter = .live
+        logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
+        classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.upload
     ) {
         self.config = config
         self.client = client
@@ -189,6 +193,7 @@ public final class UploadCoordinator {
         self.journalIdentityProvider = journalIdentityProvider
         self.recorder = recorder
         self.logAdapter = logAdapter
+        self.classifiedLog = classifiedLog
         let snapshotResolver = resolver ?? HomeBaseURLResolver { .held }
         self.syncService = SyncService(
             storageManager: storageManager,
@@ -448,7 +453,13 @@ public final class UploadCoordinator {
         requestedPath: String
     ) {
         let sanitizedReason = sanitizedObserverHealthErrorReason(healthReason)
-        Logger.upload.info("Upload failed: \(sanitizedReason, privacy: .public)")
+        classifiedLog.emit(
+            ClassifiedLogEmission(
+                level: .notice,
+                classification: "upload-failing",
+                publicFields: ["reason": sanitizedReason]
+            )
+        )
         lastError = classifiedObserverHealthOwnerCopy(healthReason)
         lastErrorReason = sanitizedReason
         lastHealthReason = healthReason

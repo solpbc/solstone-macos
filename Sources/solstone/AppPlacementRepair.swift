@@ -309,7 +309,7 @@ struct AppPlacementRepairService {
         do {
             try dependencies.removeItem(url)
         } catch {
-            dependencies.logger("placement repair cleanup failed: \(url.path) \(describe(error))")
+            dependencies.logger("placement repair cleanup failed: \(url.lastPathComponent) \(describe(error))")
         }
     }
 

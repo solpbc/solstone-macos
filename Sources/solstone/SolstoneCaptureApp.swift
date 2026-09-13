@@ -216,7 +216,7 @@ struct SolstoneCaptureApp: App {
     init() {
         // Configure unbuffered output for stderr
         Stderr.setUnbuffered()
-        SPLLogging.configure(subsystem: "app.solstone.observer.spl")
+        SPLLogging.configure(subsystem: SolstoneLogSubsystem.observerSPL)
 
 #if DEBUG
         let liveProbeLaunch = IngestV3LiveProbe.configure()

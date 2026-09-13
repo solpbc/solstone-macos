@@ -1,4 +1,5 @@
 import Foundation
+import JournalRuntimeTestSupport
 import Testing
 import SolstoneCore
 
@@ -87,6 +88,33 @@ struct AppConfigMigrationTests {
         #expect(UserDefaults.standard.bool(forKey: "didMigrateFromJSON"))
         #expect(!FileManager.default.fileExists(atPath: configURL.path))
         #expect(FileManager.default.fileExists(atPath: configURL.appendingPathExtension("migrated").path))
+    }
+
+    @Test func migrateLogsFilenameWithoutAccountPathComponent() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        let account = "alice-account"
+        let temp = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let home = temp.appendingPathComponent("Users").appendingPathComponent(account)
+        let configURL = home.appendingPathComponent("config.json")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try Data("""
+        {
+          "serverURL": "https://example.com",
+          "serverKey": "key"
+        }
+        """.utf8).write(to: configURL)
+        let log = RecordingClassifiedLogSink()
+
+        _ = AppConfig.loadOrCreateDefault(legacyConfigPaths: [configURL], log: log)
+
+        let emission = try #require(log.emissions.first)
+        let concatenated = emission.classification + emission.publicFields.values.joined() + emission.publicFields.keys.joined()
+        #expect(!concatenated.contains(account))
+        #expect(!concatenated.contains("/Users/\(account)"))
+        #expect(emission.publicFields["filename"] == "config.json")
+        #expect(emission.publicFields["source"] == "legacy-config")
     }
 
     @Test func optInMicrophoneReseedDoesNotRunWhenFlagIsSet() throws {

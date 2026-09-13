@@ -126,11 +126,11 @@ final class WatchdogCoordinator {
             try dependencies.writeStateRecord(record)
         } catch {
             dependencies.logBootstrapFault(
-                "watchdog refusal record write failed cause=\(refusal.cause.rawValue) writer=\(refusal.writerExecutableURL.path) app=\(refusal.enclosingBundleURL?.path ?? "none") error=\(error.localizedDescription)"
+                "watchdog refusal record write failed cause=\(refusal.cause.rawValue) writer=\(refusal.writerExecutableURL.lastPathComponent) app=\(refusal.enclosingBundleURL?.lastPathComponent ?? "none") error=\(String(describing: type(of: error)))"
             )
         }
         Logger.watchdogBootstrap.error(
-            "watchdog refusal cause=\(refusal.cause.rawValue, privacy: .public) writer=\(refusal.writerExecutableURL.path, privacy: .public) app=\(refusal.enclosingBundleURL?.path ?? "none", privacy: .public)"
+            "watchdog refusal cause=\(refusal.cause.rawValue, privacy: .public) writer=\(refusal.writerExecutableURL.lastPathComponent, privacy: .public) app=\(refusal.enclosingBundleURL?.lastPathComponent ?? "none", privacy: .public)"
         )
         dependencies.terminator(status)
     }
@@ -388,11 +388,11 @@ final class WatchdogCoordinator {
             try dependencies.writeStateRecord(record)
         } catch {
             dependencies.logBootstrapFault(
-                "watchdog conflict record write failed cause=\(WatchdogStateCause.conflictingCopy.rawValue) writer=\(identity.writerExecutableURL.path) conflict=\(bundleURL?.path ?? "none") error=\(error.localizedDescription)"
+                "watchdog conflict record write failed cause=\(WatchdogStateCause.conflictingCopy.rawValue) writer=\(identity.writerExecutableURL.lastPathComponent) conflict=\(bundleURL?.lastPathComponent ?? "none") error=\(String(describing: type(of: error)))"
             )
         }
         activeLogger.fault(
-            "conflicting watchdog copy observed bundle=\(bundleURL?.path ?? "none", privacy: .public) short_version=\(shortVersion ?? "none", privacy: .public) build=\(buildVersion ?? "none", privacy: .public)"
+            "conflicting watchdog copy observed bundle=\(bundleURL?.lastPathComponent ?? "none", privacy: .public) short_version=\(shortVersion ?? "none", privacy: .public) build=\(buildVersion ?? "none", privacy: .public)"
         )
     }
 

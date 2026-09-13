@@ -269,14 +269,17 @@ public struct AppConfig: Sendable {
 
     /// Loads config or creates with defaults if missing
     /// Also migrates from config.json if present
-    public static func loadOrCreateDefault(legacyConfigPaths: [URL]? = nil) -> AppConfig {
+    public static func loadOrCreateDefault(
+        legacyConfigPaths: [URL]? = nil,
+        log: any ClassifiedLogSinking = LoggerClassifiedLogSink.general
+    ) -> AppConfig {
         let defaults = UserDefaults.standard
         let legacyConfigPaths = legacyConfigPaths ?? productionLegacyConfigPaths
         var config: AppConfig?
 
         // Check for migration from JSON config
         if !defaults.bool(forKey: Keys.didMigrateFromJSON) {
-            if let migrated = migrateFromJSON(legacyConfigPaths: legacyConfigPaths) {
+            if let migrated = migrateFromJSON(legacyConfigPaths: legacyConfigPaths, log: log) {
                 config = migrated
             } else {
                 // Mark migration as complete even if no file existed
@@ -361,7 +364,10 @@ public struct AppConfig: Sendable {
     }
 
     /// Migrates from legacy JSON config if present
-    private static func migrateFromJSON(legacyConfigPaths pathsToTry: [URL]) -> AppConfig? {
+    private static func migrateFromJSON(
+        legacyConfigPaths pathsToTry: [URL],
+        log: any ClassifiedLogSinking
+    ) -> AppConfig? {
         let defaults = UserDefaults.standard
 
         for path in pathsToTry {
@@ -390,7 +396,13 @@ public struct AppConfig: Sendable {
 
                 try config.save()
                 defaults.set(true, forKey: Keys.didMigrateFromJSON)
-                Logger.general.info("Migrated config from \(path.path, privacy: .public) to UserDefaults")
+                log.emit(
+                    ClassifiedLogEmission(
+                        level: .info,
+                        classification: "config-migrated",
+                        publicFields: legacyMigrationFields(for: path)
+                    )
+                )
 
                 // Optionally rename old file to indicate migration
                 let backupPath = path.appendingPathExtension("migrated")
@@ -398,11 +410,29 @@ public struct AppConfig: Sendable {
 
                 return config
             } catch {
-                Logger.general.warning("Failed to migrate config from \(path.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                log.emit(
+                    ClassifiedLogEmission(
+                        level: .warning,
+                        classification: "config-migrate-failed",
+                        publicFields: legacyMigrationFields(for: path)
+                    )
+                )
             }
         }
 
         return nil
+    }
+
+    private static func legacyMigrationFields(for path: URL) -> [String: String] {
+        let filename = path.lastPathComponent
+        let source: String
+        switch filename {
+        case ".sck-cli.json":
+            source = "legacy-sck-cli"
+        default:
+            source = "legacy-config"
+        }
+        return ["source": source, "filename": filename]
     }
 
     // MARK: - Microphone Methods

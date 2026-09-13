@@ -8,7 +8,7 @@ import SolstoneCore
 import SPLTunnel
 import os
 
-private let splOwnerLog = Logger(subsystem: "app.solstone.observer.spl", category: "owner")
+private let splOwnerLog = Logger(subsystem: SolstoneLogSubsystem.observerSPL, category: "owner")
 
 enum TunnelLifecycleState: Sendable, Equatable {
     case disconnected
@@ -542,7 +542,7 @@ final class TunnelLifecycleOwner {
                     setCachedPairingOutcome(.loaded(persisted))
                     await replaceLiveTransport(with: persisted, deadline: deadline, burstID: burstID)
                 } catch {
-                    splOwnerLog.error("relay access save failed: \(String(describing: error), privacy: .public)")
+                    splOwnerLog.error("relay access save failed: \(String(describing: type(of: error)), privacy: .public)")
                 }
             case .notConfigured:
                 await performLiveDisable(deadline: deadline, burstID: burstID)
@@ -610,7 +610,7 @@ final class TunnelLifecycleOwner {
             setCachedPairingOutcome(.loaded(cleared))
         } catch {
             pendingDurableClear = (pairingGen: pGen, accessGen: aGen)
-            splOwnerLog.error("durable clear failed; live relay remains disabled: \(String(describing: error), privacy: .public)")
+            splOwnerLog.error("durable clear failed; live relay remains disabled: \(String(describing: type(of: error)), privacy: .public)")
         }
         guard let pairing = currentStoredPairing() else { return }
         await replaceLiveTransport(with: pairing, deadline: deadline, burstID: burstID)
@@ -676,7 +676,7 @@ final class TunnelLifecycleOwner {
             candidateAttemptObservation.cancel()
             // Teardown can itself stall; it must not extend the dial deadline.
             Task { await candidate.disconnect() }
-            splOwnerLog.error("replacement connect failed: \(String(describing: error), privacy: .public)")
+            splOwnerLog.error("replacement connect failed: \(String(describing: type(of: error)), privacy: .public)")
             return
         }
         guard operationIsCurrent(pairing: pGen, access: aGen, attempt: attempt),
@@ -773,7 +773,7 @@ final class TunnelLifecycleOwner {
                 transportAttemptID &+= 1
                 setCachedPairingOutcome(.loaded(persisted))
             } catch {
-                splOwnerLog.info("proactive token refresh CAS save failed: \(String(describing: error), privacy: .public)")
+                splOwnerLog.info("proactive token refresh CAS save failed: \(String(describing: type(of: error)), privacy: .public)")
             }
             await connect()
 
@@ -1161,7 +1161,7 @@ final class TunnelLifecycleOwner {
             // a failed replacement can leave it installed with older credentials.
             let currentRevision = credentialStore.currentGenerations()
             guard currentRevision.pairingGeneration == pairingRevision else { return }
-            splOwnerLog.notice("tunnel failed error=\(String(describing: error), privacy: .public)")
+            splOwnerLog.notice("tunnel failed error=\(String(describing: type(of: error)), privacy: .public)")
             switch error {
             case .authRefreshRequired:
                 beginReactiveTokenRefresh()
@@ -1274,7 +1274,7 @@ final class TunnelLifecycleOwner {
                     transportAttemptID &+= 1
                     setCachedPairingOutcome(.loaded(persisted))
                 } catch {
-                    splOwnerLog.info("reactive token refresh CAS failed: \(String(describing: error), privacy: .public)")
+                    splOwnerLog.info("reactive token refresh CAS failed: \(String(describing: type(of: error)), privacy: .public)")
                     return
                 }
 

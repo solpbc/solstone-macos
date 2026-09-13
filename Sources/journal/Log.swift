@@ -2,9 +2,10 @@
 // Copyright (c) 2026 sol pbc
 
 import os
+import SolstoneCore
 
 extension Logger {
-    private static let journalSubsystem = "app.solstone.journal"
+    private static let journalSubsystem = SolstoneLogSubsystem.journal
 
     static let journalApp = Logger(subsystem: journalSubsystem, category: "app")
     static let journalSupervisor = Logger(subsystem: journalSubsystem, category: "supervisor")
