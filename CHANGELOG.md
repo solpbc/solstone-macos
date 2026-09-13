@@ -8,16 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- read recent logs from settings help, then save a copy if you want
+- read recent logs from settings help, then save a copy if you want.
 
 ### Changed
-- either source runs on its own permission, and what you share through it goes into your journal. grant microphone, or screen and system audio, and solstone starts on that one as soon as the grant lands, with nothing to start by hand.
-- sources now have their own pane in settings, under inputs beside microphones, and turning one on or off applies right away to a session that is already running.
-- when nothing is going into your journal, the menu bar and settings now name the reason, both sources turned off or a permission still to grant, and link straight to the place that fixes it.
+- microphone and screen and system audio now run independently, and what you share through either goes into your journal. their switches live under inputs in settings and apply right away; when a switch is on, granting its permission starts that source without another step.
+- when nothing is going into your journal, the menu bar and settings now say whether both sources are off, a permission is still to grant, or a source failed to start. when a setting can resolve it, they link straight there.
 
 ### Fixed
 - a recent update left both sources turned off, so nothing new was going into your journal, and settings still reported that your setup was ready. this release turns them back on. a source you turned off yourself stays off.
-- the permissions screen explains what each permission is for and calls it what macos calls it in System Settings. the screen permission also stops reading as all good while solstone still needs a restart to use it.
 - anything taken in while solstone was already syncing used to wait for the next sync to reach your journal. it now goes as soon as the sync in progress finishes.
 - after solstone had been running a while, it could stop reaching your journal and report that "the network connection was lost" even though your journal was right there on the same mac. if you ran into that, this resolves it.
 
