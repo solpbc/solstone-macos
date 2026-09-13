@@ -56,7 +56,20 @@ def validate(lines: list[bytes], version: str, path: Path) -> int:
     )
     staged_lines = lines[headings[0] + 1 : next_heading]
     if not any(line.lstrip().startswith(b"- ") for line in staged_lines):
-        fail(f"{path} has no staged release-note bullets under '## [Unreleased]'")
+        # Staging the notes is the release session's job and this refusal is
+        # how it gets enforced. The trap is what happens next: a cut empties
+        # [Unreleased], so the following release meets this message with a
+        # blank section, and the cheapest way past it is pasting the previous
+        # version's bullets. 2.0.4, 2.0.5 and 2.0.6 all shipped that way --
+        # 2.0.4 and 2.0.5 byte-identical, and neither 2.0.5's required-model
+        # repair nor 2.0.6's connection repair reaching the notes at all.
+        # A release whose owner-visible change is genuinely small gets a short
+        # section saying what changed. It does not get the last one's.
+        fail(
+            f"{path} has no staged release-note bullets under '## [Unreleased]'. "
+            f"Write what THIS version changes; do not copy the previous section "
+            f"forward."
+        )
 
     return headings[0]
 
