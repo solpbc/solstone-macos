@@ -355,12 +355,12 @@ bump-release-journal:
 	@python3 -c 'import json, pathlib, plistlib; p = pathlib.Path("Sources/journal/Resources/runtime-entry-candidate-provenance.json"); data = json.loads(p.read_text()); info = plistlib.loads(pathlib.Path("Sources/journal/Info.plist").read_bytes()); data["target"] = dict(zip(("bundle_identifier", "bundle_short_version", "bundle_version"), (info["CFBundleIdentifier"], info["CFBundleShortVersionString"], info["CFBundleVersion"]))); p.write_text(json.dumps(data, indent=2) + "\n")'
 	@echo "✓ journal Info.plist: CFBundleShortVersionString=$(VERSION), CFBundleVersion=$(BUILD)"
 # The scaffold below writes placeholder bullets and trusts you to replace
-# them. Measured 2026-09-12, CHANGELOG-journal.md: [2.0.6] and [2.0.5]
-# byte-identical, [2.0.4] and [2.0.3] byte-identical, and five separate
-# [2.0.1 (build 31-35)] blocks collapsing into three identical bodies.
-# Filling a scaffold by pasting the previous block is how that happens,
-# and it publishes a release that tells owners nothing about itself.
-# Write what THIS build changes; a short honest section beats a copy.
+# them. Pasting the previous block satisfies it just as well as writing
+# the delta, and that is how nine published blocks came to hold five
+# distinct texts: 2.0.6 identical to 2.0.5, 2.0.4 identical to 2.0.3,
+# and five 2.0.1 builds collapsing into three. Repaired 2026-09-12.
+# Write what THIS build changes. A build with no journal-visible change
+# gets one honest line saying so; it does not get the last one back.
 	@CHANGELOG_KEY="$$( $(RELEASE_IDENTITY) identity --app journal --version "$(VERSION)" --build "$(BUILD)" --field changelog_key )"; \
 	if grep -Fq "## [$$CHANGELOG_KEY]" CHANGELOG-journal.md; then \
 		echo "note: CHANGELOG-journal.md already has an entry for $$CHANGELOG_KEY; leaving it alone"; \

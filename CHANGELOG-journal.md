@@ -7,25 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.6 (build 40)] - 2026-09-12
 
-### Fixed
-- fresh setup no longer says the installation couldn't be verified when another copy of the journal command is already installed.
-- journal updates now refresh bundled models before starting, fixing a case where object detection stopped working after an update.
+### Changed
+- nothing changed in the journal app itself. this release keeps its version in step with the solstone app, which shipped its own changes the same day and carries its own notes.
 
 ## [2.0.5 (build 39)] - 2026-09-12
 
 ### Fixed
-- fresh setup no longer says the installation couldn't be verified when another copy of the journal command is already installed.
-- journal updates now refresh bundled models before starting, fixing a case where object detection stopped working after an update.
+- the journal app now checks its bundled models and repairs anything missing before it starts your journal. if something that depends on them stopped working after an update, this resolves it.
+- quitting the journal app while first-time setup is running now stops setup, instead of letting it continue after you have quit.
 
 ## [2.0.4 (build 38)] - 2026-09-12
 
-### Fixed
-- fresh setup no longer says the installation couldn't be verified when another copy of the journal command is already installed.
+### Changed
+- nothing changed in the journal app itself. this release keeps its version in step with the solstone app, which shipped its own changes the same day and carries its own notes.
 
 ## [2.0.3 (build 37)] - 2026-09-11
 
-### Fixed
-- fresh setup no longer says the installation couldn't be verified when another copy of the journal command is already installed.
+### Changed
+- nothing changed in the journal app itself. this release keeps its version in step with the solstone app, which shipped its own changes the same day and carries its own notes.
 
 ## [2.0.2 (build 36)] - 2026-09-11
 
@@ -35,32 +34,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.1 (build 35)] - 2026-09-11
 
 ### Changed
-- updated the bundled journal to [2.0.1](https://solstone.app/releases#v2.0.1) →
-- confirmed journal marks now use neutral colors in setup and settings.
-
-### Fixed
-- fresh setup no longer says the installation couldn't be verified when another copy of the journal command is already installed.
+- nothing in the journal app changed in this build.
 
 ## [2.0.1 (build 34)] - 2026-09-11
 
 ### Changed
-- updated the bundled journal to [2.0.1](https://solstone.app/releases#v2.0.1) →
-- confirmed journal marks now use neutral colors in setup and settings.
+- nothing in the journal app changed in this build.
+
+## [2.0.1 (build 33)] - 2026-09-11
 
 ### Fixed
 - fresh setup no longer says the installation couldn't be verified when another copy of the journal command is already installed.
 
-## [2.0.1 (build 33)] - 2026-09-11
-
-### Changed
-- updated the bundled journal to [2.0.1](https://solstone.app/releases#v2.0.1) →
-- confirmed journal marks now use neutral colors in setup and settings.
-
 ## [2.0.1 (build 32)] - 2026-09-11
 
 ### Changed
-- updated the bundled journal to [2.0.1](https://solstone.app/releases#v2.0.1) →
-- confirmed journal marks now use neutral colors in setup and settings.
+- nothing in the journal app changed in this build.
 
 ## [2.0.1 (build 31)] - 2026-09-11
 
