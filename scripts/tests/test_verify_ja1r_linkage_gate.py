@@ -33,6 +33,11 @@ import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPTS = REPO_ROOT / "scripts"
+
+
+def parse_iso8601(value):
+    """Parse the fixture's UTC timestamps on Python versions before 3.11."""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 MAKEFILE = REPO_ROOT / "Makefile"
 
 # The verifier's filename is not a valid module name, so load it by path.
@@ -111,7 +116,7 @@ def base_report(lane, checks, **scenario):
         "evidence": {"inputs": {}, "observations": {}, "actions": []},
     }
     report.update(scenario)
-    delivery_epoch = int(datetime.fromisoformat(TIER_B_CREATED_AT).timestamp())
+    delivery_epoch = int(parse_iso8601(TIER_B_CREATED_AT).timestamp())
     report["freshness"] = {
         "ok": True, "connection_token": "connected",
         "delivery_started_epoch": delivery_epoch,
@@ -461,7 +466,7 @@ def space_fixture_capture_time(report, seconds):
         "184501_3428": f"1845{1 + seconds:02}_3428",
         "184502_3429": f"1845{2 + seconds:02}_3429",
     }
-    epoch = int(datetime.fromisoformat(TIER_B_CREATED_AT).timestamp())
+    epoch = int(parse_iso8601(TIER_B_CREATED_AT).timestamp())
 
     def shift(value):
         if isinstance(value, dict):
@@ -474,7 +479,7 @@ def space_fixture_capture_time(report, seconds):
             if value.isdigit() and epoch - 60 <= int(value) <= epoch + 60:
                 return str(int(value) + seconds)
             if value.startswith("2026-07-15T"):
-                return (datetime.fromisoformat(value) + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                return (parse_iso8601(value) + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
             for old, new in replacements.items():
                 if new is not None and old in value:
                     return value.replace(old, new)
