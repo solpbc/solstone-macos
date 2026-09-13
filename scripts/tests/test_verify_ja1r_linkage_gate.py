@@ -1866,6 +1866,30 @@ class SolMenuQuitControls(unittest.TestCase):
 
 
 class PreservedStateControls(unittest.TestCase):
+    def test_completed_pairing_flow_may_settle_to_idle(self):
+        report = _report_for("v2-upgrade-sol.json")
+        for completed in ("paired", "already_connected", "switched"):
+            with self.subTest(completed=completed):
+                candidate = json.loads(json.dumps(report))
+                candidate["preservation"]["before"]["pairing"]["flow_state"] = completed
+                verifier.verify_sol_preservation(candidate, "v2-upgrade-sol.json")
+
+    def test_transient_or_failed_pairing_flow_is_never_preserved(self):
+        report = _report_for("v2-upgrade-sol.json")
+        for unstable in (
+            "pairing",
+            "switch_confirm_pending",
+            "unpairing",
+            "failed",
+            "save_failed",
+        ):
+            with self.subTest(unstable=unstable):
+                candidate = json.loads(json.dumps(report))
+                candidate["preservation"]["before"]["pairing"]["flow_state"] = unstable
+                candidate["preservation"]["after"]["pairing"]["flow_state"] = unstable
+                with self.assertRaises(verifier.GateFailure):
+                    verifier.verify_sol_preservation(candidate, "v2-upgrade-sol.json")
+
     def test_missing_connectivity_or_changed_configuration_refuses_even_with_green_check(self):
         report = _report_for("v2-upgrade-sol.json")
         verifier.verify_sol_preservation(report, "v2-upgrade-sol.json")

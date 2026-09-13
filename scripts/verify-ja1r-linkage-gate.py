@@ -1062,14 +1062,21 @@ def verify_sol_preservation(report, filename):
         raise GateFailure(f"{filename}: missing supported state observations")
     before, after = preservation.get("before"), preservation.get("after")
     expected_keys = {"pairing", "service_mode", "server_url", "server_key_sha256", "journal_path"}
+    stable_flows = {"idle", "paired", "already_connected", "switched"}
+    normalized = []
     for snapshot in (before, after):
         if not isinstance(snapshot, dict) or set(snapshot) != expected_keys:
             raise GateFailure(f"{filename}: incomplete supported state snapshot")
         pairing = snapshot.get("pairing")
         if (not isinstance(pairing, dict) or pairing.get("service_tab_present") is not True
-                or pairing.get("connection_state") != "connected" or pairing.get("flow_state") is None):
+                or pairing.get("connection_state") != "connected"
+                or pairing.get("flow_state") not in stable_flows):
             raise GateFailure(f"{filename}: preserved pairing lacks observed connectivity")
-    if before != after:
+        normalized.append({
+            **snapshot,
+            "pairing": {**pairing, "flow_state": "idle"},
+        })
+    if normalized[0] != normalized[1]:
         raise GateFailure(f"{filename}: supported pairing or configuration changed during upgrade")
 
 
