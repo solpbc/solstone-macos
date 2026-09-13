@@ -164,6 +164,8 @@ def base_report(lane, checks, **scenario):
             "final_quit": {"ok": True, "pid": ""},
         }
     report["checks"].update({key: True for key in (*verifier.LOCAL_REQUIRED_CHECKS[lane], *verifier.LOCAL_DELIVERY_CHECKS)})
+    if lane == "fresh-use":
+        report["checks"].update({key: True for key in verifier.LOCAL_CAPTURE_CHECKS})
     report["evidence"]["automation_lifecycle"] = {"cleanup": {
         "attempted": True, "appium_absent": True, "wda_absent": True,
         "no_survivors": True, "lock_released": True, "ok": True, "survivors": [],
@@ -1935,6 +1937,43 @@ class DistinctCaptureStartControls(unittest.TestCase):
                 broken[filename]["run_id"] = collision
             with self.subTest(filename=filename, baseline=baseline), self.assertRaisesRegex(verifier.GateFailure, "capture start collision"):
                 verifier.verify_distinct_capture_starts(broken)
+
+
+class CaptureLoopControls(unittest.TestCase):
+    """The publisher must refuse a fresh-use report whose capture loop is not proven.
+
+    The lane already refuses to return PASS without these, but that is a claim about a
+    check list the harness owns. Asserting them here too is what keeps a future harness
+    edit that drops one from leaving the publisher reading a PASS that no longer means
+    what it meant.
+    """
+
+    def test_a_green_fresh_use_report_carries_every_capture_check(self):
+        report = report_for("fresh-use.json")
+        for key in verifier.LOCAL_CAPTURE_CHECKS:
+            self.assertIs(report["checks"][key], True, key)
+        verifier.verify_local_completion(report, "fresh-use.json")
+
+    def test_each_missing_or_false_capture_check_refuses(self):
+        for key in verifier.LOCAL_CAPTURE_CHECKS:
+            for mutation in ("false", "absent"):
+                broken = report_for("fresh-use.json")
+                if mutation == "false":
+                    broken["checks"][key] = False
+                else:
+                    del broken["checks"][key]
+                with self.subTest(key=key, mutation=mutation), self.assertRaisesRegex(
+                    verifier.GateFailure, f"checks.{key}"
+                ):
+                    verifier.verify_local_completion(broken, "fresh-use.json")
+
+    def test_the_upgrade_lanes_are_not_asked_for_a_capture_window(self):
+        for lane in ("v2-upgrade-sol", "v2-upgrade-journal"):
+            report = report_for(f"{lane}.json")
+            for key in verifier.LOCAL_CAPTURE_CHECKS:
+                self.assertNotIn(key, report["checks"])
+            with self.subTest(lane=lane):
+                verifier.verify_local_completion(report, f"{lane}.json")
 
 
 if __name__ == "__main__":

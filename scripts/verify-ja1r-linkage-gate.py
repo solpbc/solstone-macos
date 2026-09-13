@@ -437,6 +437,18 @@ LOCAL_REQUIRED_CHECKS = {
     ),
 }
 LOCAL_DELIVERY_CHECKS = ("tier_b_segment_injected", "tier_b_landing_verified", "fresh_connection")
+# The capture loop: a source admitted, one real segment landed in the journal's own
+# chronicle storage, a transcript beside its audio. Asserted here as well as in the lane,
+# because the lane's own PASS is a claim about a check list the harness controls -- a
+# future edit that drops one of these from that list would leave the publisher reading a
+# PASS that no longer means what it meant. Fresh-use only; the upgrade lanes do not run a
+# capture window.
+LOCAL_CAPTURE_CHECKS = (
+    "capture_source_admitted",
+    "capture_segment_completed",
+    "capture_segment_landed",
+    "capture_transcript_present",
+)
 
 
 class GateFailure(Exception):
@@ -1118,7 +1130,10 @@ def verify_local_completion(report, filename):
         verify_sol_candidate_quit(report, filename)
         verify_sol_preservation(report, filename)
     checks = report.get("checks", {})
-    for key in (*LOCAL_REQUIRED_CHECKS[report["lane"]], *LOCAL_DELIVERY_CHECKS):
+    required = [*LOCAL_REQUIRED_CHECKS[report["lane"]], *LOCAL_DELIVERY_CHECKS]
+    if report["lane"] == "fresh-use":
+        required.extend(LOCAL_CAPTURE_CHECKS)
+    for key in required:
         require_true(checks.get(key), f"{filename}: checks.{key}")
     evidence = report.get("evidence")
     if not isinstance(evidence, dict):
