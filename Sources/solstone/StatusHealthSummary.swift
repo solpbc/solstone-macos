@@ -101,6 +101,7 @@ extension StatusHealthSummary {
         now: Date,
         selectedSources: CaptureSources = .all,
         permittedSources: CaptureSources = .all,
+        errorMessage: String? = nil,
         setupVerdict: SetupGroupVerdict? = nil
     ) -> StatusHealthSummary {
         // The owner turning every source off is a choice, not a fault — but it is also the one
@@ -129,6 +130,22 @@ extension StatusHealthSummary {
                     label: UICopy.PERMISSIONS_OPEN_ACTION,
                     settingsTab: "permissions"
                 )
+            )
+        }
+
+        // A capture that FAILED is not a capture that is starting. The menubar has always
+        // known this — its classifier takes errorMessage and renders a red error row — while
+        // this card took no error input at all and fell through to the calm "starting…" that
+        // every not-recording state shares. Two renderers of one truth, one of them blind.
+        // Ordered after the source branches to match the menubar's own precedence
+        // (a configuration fault outranks a run fault), and before the operational summary,
+        // which cannot see an error either.
+        if let errorMessage, !errorMessage.isEmpty, !isRecording, !isPaused {
+            return .init(
+                severity: .attention,
+                title: UICopy.STATUS_CAPTURE_ERROR_TITLE,
+                subtitle: errorMessage,
+                axValue: "capture_error"
             )
         }
 

@@ -175,6 +175,9 @@ public enum UICopy {
     public static let SETTINGS_HELP_ICON_ATTENTION = "needs your attention"
     public static let SETTINGS_HELP_ICON_OFFLINE = "on · saved on this mac, not reaching your journal right now"
     public static let SETTINGS_HELP_ICON_ERROR = "something's broken"
+    // The status card names the same state the help legend names, in the same words,
+    // so the red dot and its explanation cannot drift apart.
+    public static let STATUS_CAPTURE_ERROR_TITLE = "something's broken"
     public static let ERROR_LOGIN_ITEM = "couldn't update your login setting. try again, or toggle it off and on."
     public static let ERROR_SAVE_CONFIG = "couldn't save your settings. try again, or restart solstone."
     public static let ERROR_START_OBSERVING = "couldn't turn intake on. check permissions in settings, then try again."

@@ -2601,6 +2601,7 @@ struct SettingsView: View {
             now: Date(),
             selectedSources: appState.config.selectedSources,
             permittedSources: appState.capture.permittedSources,
+            errorMessage: appState.errorMessage,
             setupVerdict: setupPresentation.verdict
         )
     }

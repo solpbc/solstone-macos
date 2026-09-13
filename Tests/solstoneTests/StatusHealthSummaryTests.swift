@@ -211,6 +211,50 @@ struct StatusHealthSummaryTests {
         #expect(coarseRelativeTime(statusSummaryNow.addingTimeInterval(-172_800), now: statusSummaryNow) == "2d ago")
     }
 
+    // MARK: - a failed capture is not a starting capture
+
+    @Test func captureErrorLeadsTheCardInsteadOfStarting() {
+        let summary = makeSummary(
+            isRecording: false,
+            errorMessage: UICopy.ERROR_START_OBSERVING
+        )
+        #expect(summary.severity == .attention)
+        #expect(summary.title == UICopy.STATUS_CAPTURE_ERROR_TITLE)
+        #expect(summary.subtitle == UICopy.ERROR_START_OBSERVING)
+        #expect(summary.axValue == "capture_error")
+        #expect(summary.title != UICopy.MENUBAR_STARTING)
+    }
+
+    // The inverted direction: without an error the calm starting state must survive, so an
+    // implementation that simply reddens every not-recording card fails this.
+    @Test func noErrorStillReadsAsStarting() {
+        let summary = makeSummary(isRecording: false, errorMessage: nil)
+        #expect(summary.title == UICopy.MENUBAR_STARTING)
+        #expect(summary.severity == .calm)
+    }
+
+    @Test func emptyErrorIsNotAnError() {
+        let summary = makeSummary(isRecording: false, errorMessage: "")
+        #expect(summary.title == UICopy.MENUBAR_STARTING)
+    }
+
+    // Precedence: a configuration fault the owner chose outranks a run fault, matching the
+    // menubar classifier, which tests permissions before errorMessage.
+    @Test func bothSourcesOffOutranksACaptureError() {
+        let summary = makeSummary(
+            isRecording: false,
+            selectedSources: [],
+            errorMessage: UICopy.ERROR_START_OBSERVING
+        )
+        #expect(summary.title == UICopy.SOURCES_NONE)
+    }
+
+    // A running or paused session is never relabelled by a stale error string.
+    @Test func aRunningSessionIsNotRelabelledByAnError() {
+        let summary = makeSummary(isRecording: true, errorMessage: UICopy.ERROR_START_OBSERVING)
+        #expect(summary.title != UICopy.STATUS_CAPTURE_ERROR_TITLE)
+    }
+
     private func makeSummary(
         serviceMode: ServiceMode? = .external,
         isRecording: Bool = true,
@@ -222,6 +266,7 @@ struct StatusHealthSummaryTests {
         now: Date = statusSummaryNow,
         selectedSources: CaptureSources = .all,
         permittedSources: CaptureSources = .all,
+        errorMessage: String? = nil,
         setupVerdict: SetupGroupVerdict? = nil
     ) -> StatusHealthSummary {
         StatusHealthSummary.make(
@@ -235,6 +280,7 @@ struct StatusHealthSummaryTests {
             now: now,
             selectedSources: selectedSources,
             permittedSources: permittedSources,
+            errorMessage: errorMessage,
             setupVerdict: setupVerdict
         )
     }
