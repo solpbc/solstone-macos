@@ -531,6 +531,7 @@ class GateTestCase(unittest.TestCase):
         self.write_set("paired")
         mutations = [
             ("fresh-use.json", "checks.journal_window_recovery_verified", False),
+            ("fresh-use.json", "checks.journal_search_destination_loaded", False),
             ("fresh-use.json", "freshness.delivery_started_epoch", None),
             ("fresh-use.json", "freshness.delivery_started_epoch", 1),
             ("fresh-use.json", "freshness.last_synced_post_raw", None),
@@ -570,6 +571,7 @@ class GateTestCase(unittest.TestCase):
             self.assertEqual(self.run_gate("paired")[0], 1)
             self.write_report(filename, report_for(filename, self.sol_dmg_sha))
         for filename, key in (("fresh-use.json", "journal_window_recovery_verified"),
+                              ("fresh-use.json", "journal_home_return_loaded"),
                               ("v2-upgrade-sol.json", "pairing_identity_preserved")):
             report = report_for(filename, self.sol_dmg_sha)
             del report["checks"][key]
