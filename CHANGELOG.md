@@ -20,49 +20,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.6] - 2026-09-12
 
-### Added
-- settings now has a "report a problem" button that opens support with your app version, macos version, and recent diagnostic details.
-
-### Changed
-- you can choose microphone, screen, both, or neither. each source needs only its own permission, and the menu shows which sources are running.
-- settings keeps your paired journal visible, with separate connection and sync status, an "open journal" button, and short explanations when something can't be added to your journal.
-
 ### Fixed
-- fixed a case where opening your journal in the solstone app stayed on the loading screen.
-- on audio interfaces with more than two inputs, microphones beyond the first input are no longer missing from your journal. all inputs are mixed together. contributed by David Van Duzer.
-- retry in settings now starts a fresh attempt when the connection to your journal is stuck. the app also continues recovering if a replacement connection fails.
-- settings no longer asks you to paste a pairing link after it has already paired with a journal on the same mac.
-- quitting the solstone app now finishes closing it instead of leaving the process running. it also stays closed if shutdown is interrupted partway through.
+- opening your journal in the solstone app could stay on the loading screen. if you ran into that, this resolves it.
 
 ## [2.0.5] - 2026-09-12
 
-### Added
-- settings now has a "report a problem" button that opens support with your app version, macos version, and recent diagnostic details.
-
 ### Changed
-- you can choose microphone, screen, both, or neither. each source needs only its own permission, and the menu shows which sources are running.
-- settings keeps your paired journal visible, with separate connection and sync status, an "open journal" button, and short explanations when something can't be added to your journal.
-
-### Fixed
-- on audio interfaces with more than two inputs, microphones beyond the first input are no longer missing from your journal. all inputs are mixed together. contributed by David Van Duzer.
-- retry in settings now starts a fresh attempt when the connection to your journal is stuck. the app also continues recovering if a replacement connection fails.
-- settings no longer asks you to paste a pairing link after it has already paired with a journal on the same mac.
-- quitting the solstone app now finishes closing it instead of leaving the process running. it also stays closed if shutdown is interrupted partway through.
+- nothing changed in the solstone app itself. this release keeps it on the same version as the journal app, which shipped its own update the same day and carries its own notes.
 
 ## [2.0.4] - 2026-09-12
 
 ### Added
-- settings now has a "report a problem" button that opens support with your app version, macos version, and recent diagnostic details.
+- settings now lets you choose your sources: microphone, screen and system audio, or both. what you share through them goes into your journal.
+- the menu bar shows which sources are running, and you can start and stop them there without opening settings.
 
 ### Changed
-- you can choose microphone, screen, both, or neither. each source needs only its own permission, and the menu shows which sources are running.
-- settings keeps your paired journal visible, with separate connection and sync status, an "open journal" button, and short explanations when something can't be added to your journal.
+- each source runs on its own permission, so granting one is enough to start. if the other is still missing, settings names it and the first one keeps running.
+- granting screen permission no longer restarts solstone on a countdown. settings tells you the permission landed and leaves the restart to you.
 
 ### Fixed
-- on audio interfaces with more than two inputs, microphones beyond the first input are no longer missing from your journal. all inputs are mixed together. contributed by David Van Duzer.
-- retry in settings now starts a fresh attempt when the connection to your journal is stuck. the app also continues recovering if a replacement connection fails.
-- settings no longer asks you to paste a pairing link after it has already paired with a journal on the same mac.
-- quitting the solstone app now finishes closing it instead of leaving the process running. it also stays closed if shutdown is interrupted partway through.
+- quitting the solstone app now finishes closing it instead of leaving the process running.
 
 ## [2.0.3] - 2026-09-11
 
