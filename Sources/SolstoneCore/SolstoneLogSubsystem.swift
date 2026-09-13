@@ -18,6 +18,24 @@ public enum SolstoneLogSubsystem {
         ]
     }
 
+    /// What an owner is shown when a subsystem has to be named on screen.
+    /// The identifiers themselves are symbols and are never renamed, but they carry
+    /// retired customer-facing vocabulary, so they never reach an owner-visible surface.
+    public static func displayName(for subsystem: String) -> String {
+        switch subsystem {
+        case observer:
+            return "the solstone app"
+        case journal:
+            return "your journal"
+        case observerSPL:
+            return "the private network"
+        case watchdog, WatchdogProduct.observer.loggerSubsystem, WatchdogProduct.journal.loggerSubsystem:
+            return "the helper that keeps them running"
+        default:
+            return "another part of solstone"
+        }
+    }
+
     public static var persistedHelpPredicate: String {
         allForPersistedHelp.map { "subsystem == \"\($0)\"" }.joined(separator: " OR ")
     }

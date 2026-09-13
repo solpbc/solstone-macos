@@ -3339,7 +3339,11 @@ struct SettingsView: View {
         case .partial(let lost):
             Text(UICopy.SETTINGS_LOG_EXPORT_PARTIAL)
                 .foregroundStyle(.secondary)
-            Text(lost.map(\.subsystem).joined(separator: ", "))
+            Text(
+                NSOrderedSet(
+                    array: lost.map { SolstoneLogSubsystem.displayName(for: $0.subsystem) }
+                ).array.compactMap { $0 as? String }.joined(separator: ", ")
+            )
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .failed(let reason):
