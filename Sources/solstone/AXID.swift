@@ -229,6 +229,11 @@ enum AXID {
             static let supportSite = "settings.help.support.site"
             static let supportEmail = "settings.help.support.email"
             static let versionState = "settings.help.version.state"
+            static let logExport = "settings.help.log.export"
+            static let logExportPreview = "settings.help.log.export.preview"
+            static let logExportSave = "settings.help.log.export.save"
+            static let logExportState = "settings.help.log.export.state"
+            static let logExportFailureReason = "settings.help.log.export.failure-reason"
         }
     }
 

@@ -204,6 +204,16 @@ internal enum DiagnosticCopyAXState: CaseIterable, Equatable, Sendable {
     case failed
 }
 
+internal enum LogExportAXState: CaseIterable, Equatable, Sendable {
+    case idle
+    case working
+    case empty
+    case ready
+    case partial
+    case failed
+    case write_failed
+}
+
 internal enum PairingConnectionAXState: CaseIterable {
     case disconnected
     case connecting
@@ -592,6 +602,27 @@ extension DiagnosticCopyAXState {
             return "copied"
         case .failed:
             return "failed"
+        }
+    }
+}
+
+extension LogExportAXState {
+    var axToken: String {
+        switch self {
+        case .idle:
+            return "idle"
+        case .working:
+            return "working"
+        case .empty:
+            return "empty"
+        case .ready:
+            return "ready"
+        case .partial:
+            return "partial"
+        case .failed:
+            return "failed"
+        case .write_failed:
+            return "write_failed"
         }
     }
 }

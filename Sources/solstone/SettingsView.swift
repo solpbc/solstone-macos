@@ -5,6 +5,7 @@ import AppKit
 import JournalMarkKit
 @preconcurrency import ScreenCaptureKit
 import SwiftUI
+import UniformTypeIdentifiers
 import UserNotifications
 import os
 import SolstoneCore
@@ -149,6 +150,12 @@ struct SettingsView: View {
     @State private var diagnosticReport: DiagnosticReport?
     @State private var diagnosticCopyFeedback: DiagnosticCopyFeedback?
 
+    @State private var logExportGeneration: UInt = 0
+    @State private var logExportLoading = false
+    @State private var logExportDocument: LogExportDocument?
+    @State private var logExportTask: Task<Void, Never>?
+    @State private var logExportWriteFeedback: LogExportWriteFeedback?
+
     // Permissions tab state
     @State private var screenRecordingPrompted = false
     @State private var screenRestartPending = false
@@ -197,6 +204,9 @@ struct SettingsView: View {
     private let diagnosticClipboardWrite: @MainActor (String) -> Bool
     private let diagnosticAnnouncement: @MainActor (String) -> Void
     private let openURL: @MainActor (URL) -> Bool
+    private let logExportSource: any LogExportEntrySourcing
+    private let logExportWriter: any LogExportFileWriting
+    private let logExportChooseSaveURL: @MainActor (LogExportDocument) -> URL?
 
     init(
         appState: AppState,
@@ -246,6 +256,11 @@ struct SettingsView: View {
             )
         },
         openURL: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        logExportSource: any LogExportEntrySourcing = HostLocalLogExportSource(),
+        logExportWriter: any LogExportFileWriting = LogExportAtomicWriter(),
+        logExportChooseSaveURL: @escaping @MainActor (LogExportDocument) -> URL? = { _ in
+            presentLogExportSavePanel()
+        },
         initialEntitlementOpenFailed: Bool = false,
         initialSupportOpenFailed: Bool = false,
         initialPairingMismatch: Bool = false
@@ -262,6 +277,9 @@ struct SettingsView: View {
         self.diagnosticClipboardWrite = diagnosticClipboardWrite
         self.diagnosticAnnouncement = diagnosticAnnouncement
         self.openURL = openURL
+        self.logExportSource = logExportSource
+        self.logExportWriter = logExportWriter
+        self.logExportChooseSaveURL = logExportChooseSaveURL
         self._selectedTab = State(initialValue: selectedTab)
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
         self._setupProbeSnapshot = State(initialValue: initialSetupProbeSnapshot)
@@ -448,7 +466,9 @@ struct SettingsView: View {
             UpdatesTabView(controller: updateController, copy: UpdatesCopy(provider: .solstone))
                 .onAppear { appState.markSettingsTabVisited(.updates) }
         case .help:
-            helpTab.onAppear { appState.markSettingsTabVisited(.help) }
+            helpTab
+                .onAppear { appState.markSettingsTabVisited(.help) }
+                .onDisappear { cancelLogExportRead() }
         }
     }
 
@@ -3152,6 +3172,41 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
+            GroupBox(UICopy.SETTINGS_LOG_EXPORT_TITLE) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(UICopy.SETTINGS_LOG_EXPORT_INTRO)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button(UICopy.SETTINGS_LOG_EXPORT_ACTION) {
+                        startLogExportRead()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Help.logExport)
+
+                    if logExportLoading {
+                        Text(UICopy.SETTINGS_LOG_EXPORT_WORKING)
+                            .foregroundStyle(.secondary)
+                    } else if let document = logExportDocument {
+                        logExportOutcomeViews(document)
+                    }
+
+                    AXStateCompanion(
+                        id: AXID.Settings.Help.logExportState,
+                        value: logExportAXState(
+                            loading: logExportLoading,
+                            document: logExportDocument,
+                            writeFailed: logExportWriteFeedback == .failed
+                        ).axToken
+                    )
+                    AXStateCompanion(
+                        id: AXID.Settings.Help.logExportFailureReason,
+                        value: logExportFailureReasonValue
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+
             GroupBox("agent instructions") {
                 VStack(alignment: .trailing, spacing: 8) {
                     Text("working with a coding agent? hand it this context.")
@@ -3266,6 +3321,131 @@ struct SettingsView: View {
         )
     }
 
+    private var logExportFailureReasonValue: String {
+        guard case .failed(let reason) = logExportDocument?.outcome else {
+            return ""
+        }
+        return reason
+    }
+
+    @ViewBuilder
+    private func logExportOutcomeViews(_ document: LogExportDocument) -> some View {
+        switch document.outcome {
+        case .empty:
+            Text(UICopy.SETTINGS_LOG_EXPORT_EMPTY)
+                .foregroundStyle(.secondary)
+        case .complete:
+            EmptyView()
+        case .partial(let lost):
+            Text(UICopy.SETTINGS_LOG_EXPORT_PARTIAL)
+                .foregroundStyle(.secondary)
+            Text(lost.map(\.subsystem).joined(separator: ", "))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .failed(let reason):
+            Text(UICopy.SETTINGS_LOG_EXPORT_FAILED)
+                .foregroundStyle(.red)
+            Text(reason)
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
+
+        if logExportOffersSave(document.outcome) {
+            ScrollView {
+                Text(logExportPreviewText(from: document))
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: 160)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(AXID.Settings.Help.logExportPreview)
+
+            if document.entryCount > LogExportBounds.previewEntryLimit {
+                Text(
+                    String(
+                        format: UICopy.SETTINGS_LOG_EXPORT_PREVIEW_SUBSET,
+                        LogExportBounds.previewEntryLimit,
+                        document.entryCount
+                    )
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                if logExportWriteFeedback == .failed {
+                    Text(UICopy.SETTINGS_LOG_EXPORT_WRITE_FAILED)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+                Button(UICopy.SETTINGS_LOG_EXPORT_SAVE) {
+                    saveLogExport(document)
+                }
+                .accessibilityIdentifier(AXID.Settings.Help.logExportSave)
+            }
+        }
+    }
+
+    private func startLogExportRead() {
+        logExportTask?.cancel()
+        logExportGeneration &+= 1
+        let generation = logExportGeneration
+        logExportWriteFeedback = nil
+        logExportDocument = nil
+        logExportLoading = true
+        let source = logExportSource
+        let version = AppVersion.short
+        let build = AppVersion.build
+        let now = Date()
+        logExportTask = Task { @MainActor in
+            let work = Task.detached {
+                try await buildLogExport(
+                    source: source,
+                    now: now,
+                    version: version,
+                    build: build
+                )
+            }
+            do {
+                let document = try await withTaskCancellationHandler {
+                    try await work.value
+                } onCancel: {
+                    work.cancel()
+                }
+                guard shouldPublishLogExportLoad(generation, activeGeneration: logExportGeneration) else {
+                    return
+                }
+                logExportDocument = document
+                logExportLoading = false
+            } catch is CancellationError {
+                if shouldPublishLogExportLoad(generation, activeGeneration: logExportGeneration) {
+                    logExportLoading = false
+                }
+            } catch {
+                if shouldPublishLogExportLoad(generation, activeGeneration: logExportGeneration) {
+                    logExportLoading = false
+                }
+            }
+        }
+    }
+
+    private func cancelLogExportRead() {
+        logExportTask?.cancel()
+        logExportTask = nil
+        logExportGeneration &+= 1
+        logExportLoading = false
+    }
+
+    private func saveLogExport(_ document: LogExportDocument) {
+        logExportWriteFeedback = performLogExportSave(
+            document: document,
+            chooseURL: logExportChooseSaveURL,
+            writer: logExportWriter
+        )
+    }
+
     @ViewBuilder
     private func diagnosticAXCompanions(_ report: DiagnosticReport) -> some View {
         AXStateCompanion(
@@ -3325,6 +3505,16 @@ struct SettingsView: View {
         }
     }
 
+}
+
+func presentLogExportSavePanel() -> URL? {
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "solstone-logs.txt"
+    panel.allowedContentTypes = [.plainText]
+    panel.canCreateDirectories = true
+    NSApp.activate(ignoringOtherApps: true)
+    guard panel.runModal() == .OK else { return nil }
+    return panel.url
 }
 
 func updatesSidebarBadge(for status: DurableUpdateStatus) -> SettingsView.SidebarBadgeState {

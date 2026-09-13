@@ -128,6 +128,11 @@
       "settings.help.iconState.offline",
       "settings.help.iconState.paused",
       "settings.help.iconState.recording",
+      "settings.help.log.export",
+      "settings.help.log.export.failure-reason",
+      "settings.help.log.export.preview",
+      "settings.help.log.export.save",
+      "settings.help.log.export.state",
       "settings.help.support.email",
       "settings.help.support.site",
       "settings.help.version.state",
@@ -314,6 +319,13 @@
     "settings.help.diagnostics.screenRecording.state" : {
       "kind" : "enum",
       "vocabulary" : "AXPermissionState"
+    },
+    "settings.help.log.export.failure-reason" : {
+      "kind" : "freeform"
+    },
+    "settings.help.log.export.state" : {
+      "kind" : "enum",
+      "vocabulary" : "LogExportAXState"
     },
     "settings.help.version.state" : {
       "kind" : "freeform"
@@ -571,6 +583,15 @@
       "found_running",
       "found_on_disk",
       "not_found"
+    ],
+    "LogExportAXState" : [
+      "idle",
+      "working",
+      "empty",
+      "ready",
+      "partial",
+      "failed",
+      "write_failed"
     ],
     "MenubarIconOverlayState" : [
       "none",

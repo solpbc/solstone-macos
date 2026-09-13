@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- read recent logs from settings help, then save a copy if you want
+
 ### Changed
 - either source runs on its own permission, and what you share through it goes into your journal. grant microphone, or screen and system audio, and solstone starts on that one as soon as the grant lands, with nothing to start by hand.
 - sources now have their own pane in settings, under inputs beside microphones, and turning one on or off applies right away to a session that is already running.

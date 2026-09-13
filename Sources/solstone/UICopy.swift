@@ -175,6 +175,16 @@ public enum UICopy {
     public static let SETTINGS_HELP_ICON_ATTENTION = "needs your attention"
     public static let SETTINGS_HELP_ICON_OFFLINE = "on · saved on this mac, not reaching your journal right now"
     public static let SETTINGS_HELP_ICON_ERROR = "something's broken"
+    public static let SETTINGS_LOG_EXPORT_TITLE = "recent logs"
+    public static let SETTINGS_LOG_EXPORT_INTRO = "read what this app has been doing, then save a copy if you want."
+    public static let SETTINGS_LOG_EXPORT_ACTION = "show recent logs"
+    public static let SETTINGS_LOG_EXPORT_WORKING = "reading recent logs…"
+    public static let SETTINGS_LOG_EXPORT_SAVE = "save logs…"
+    public static let SETTINGS_LOG_EXPORT_FAILED = "couldn't read recent logs"
+    public static let SETTINGS_LOG_EXPORT_PARTIAL = "this copy is incomplete"
+    public static let SETTINGS_LOG_EXPORT_EMPTY = "nothing in the last 24 hours"
+    public static let SETTINGS_LOG_EXPORT_WRITE_FAILED = "couldn't save the file"
+    public static let SETTINGS_LOG_EXPORT_PREVIEW_SUBSET = "showing the newest %d of %d entries. save writes the full copy."
     // The status card names the same state the help legend names, in the same words,
     // so the red dot and its explanation cannot drift apart.
     public static let STATUS_CAPTURE_ERROR_TITLE = "something's broken"

@@ -168,6 +168,11 @@ enum AXContract {
         AXID.Settings.Help.supportSite,
         AXID.Settings.Help.supportEmail,
         AXID.Settings.Help.versionState,
+        AXID.Settings.Help.logExport,
+        AXID.Settings.Help.logExportPreview,
+        AXID.Settings.Help.logExportSave,
+        AXID.Settings.Help.logExportState,
+        AXID.Settings.Help.logExportFailureReason,
         UpdatesAXID.statusState,
         UpdatesAXID.unavailable,
         UpdatesAXID.notRunning,
@@ -275,6 +280,7 @@ enum AXContract {
             "LastJournalContactAXState": LastJournalContactAXState.allCases.map(\.axToken),
             "DiagnosticCaptureAXState": DiagnosticCaptureAXState.allCases.map(\.axToken),
             "DiagnosticCopyAXState": DiagnosticCopyAXState.allCases.map(\.axToken),
+            "LogExportAXState": LogExportAXState.allCases.map(\.axToken),
             "SidebarBadgeState": SettingsView.SidebarBadgeState.allCases.map(\.axToken),
             "UploadCoordinator.Status": UploadCoordinator.Status.axTokens,
             "ConnectionTestState": ConnectionTestState.axTokens,
@@ -346,6 +352,8 @@ enum AXContract {
             AXID.Settings.Help.diagnosticsLastJournalConnectionState: .enum("LastJournalContactAXState"),
             AXID.Settings.Help.diagnosticsLastJournalConnectionTimestamp: .numeric,
             AXID.Settings.Help.versionState: .freeform,
+            AXID.Settings.Help.logExportState: .enum("LogExportAXState"),
+            AXID.Settings.Help.logExportFailureReason: .freeform,
             UpdatesAXID.statusState: .enum("UpdateStatus"),
             UpdatesAXID.checkState: .freeform,
             UpdatesAXID.downloadState: .freeform,
@@ -362,11 +370,12 @@ enum AXContract {
     }
 
     static var requiredStateKeys: Set<String> {
-        let keys = Set(
+        var keys = Set(
             enumerableIDs
                 .filter { $0.hasSuffix(".state") }
                 .map(stateKey(for:))
         )
+        keys.insert(AXID.Settings.Help.logExportFailureReason)
         return keys
     }
 
