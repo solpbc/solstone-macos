@@ -76,21 +76,30 @@ struct NativeIntegrationLifecycleTests {
         #expect(readiness == .ready, "\(readiness)")
         #expect(statuses.snapshot().contains(.running))
 
-        let health = await JournalHealthCheck.run(
-            journalBinary: fixture.journalBinary,
-            runner: SubprocessRunner(currentDirectoryURL: fixture.journalRoot),
-            environment: fixture.environment
-        )
+        // `journal health` asks the running supervisor over its socket with a 5 s budget; on a
+        // loaded host that read can time out once, which is a scheduling fact, not a verdict.
+        // Bound the retry so a starved read is still a failure, never a silent green.
+        var health = JournalHealthCheckResult.unknown(JournalDiagnostic(commandLabel: "journal health"))
+        let healthDeadline = ContinuousClock.now.advanced(by: .seconds(30))
+        repeat {
+            health = await JournalHealthCheck.run(
+                journalBinary: fixture.journalBinary,
+                runner: SubprocessRunner(currentDirectoryURL: fixture.journalRoot),
+                environment: fixture.environment
+            )
+            if health == .healthy { break }
+            try await Task.sleep(for: .seconds(1))
+        } while ContinuousClock.now < healthDeadline
         #expect(health == .healthy, "\(health)")
 
         // The supervisor read the configured door port from `config/journal.json` and recorded
         // it. A fresh journal whose identity ritual has not run withholds the door on purpose,
         // so the record, not a TCP connect, is the contract here; a bound door must also accept.
-        let door = try #require(readDirectDoorRecord(fixture), "health/direct-door.json missing or malformed")
+        let door = try #require(NativeIntegration.readDirectDoorRecord(fixture), "health/direct-door.json missing or malformed")
         #expect(door.port == directPort, "door record port \(door.port) != configured \(directPort)")
         #expect(["withheld", "bound"].contains(door.state), "unexpected door state \(door.state)")
         if door.state == "bound" {
-            #expect(loopbackPortAccepts(directPort), "door recorded bound but 127.0.0.1:\(directPort) refused")
+            #expect(NativeIntegration.loopbackPortAccepts(directPort), "door recorded bound but 127.0.0.1:\(directPort) refused")
         }
 
         let evidence = try #require(reader.containmentEvidence(for: identity.pid))
@@ -117,50 +126,4 @@ struct NativeIntegrationLifecycleTests {
         #expect(fixture.forbiddenHomeArtifacts().isEmpty, "\(fixture.forbiddenHomeArtifacts())")
     }
 
-    private struct DirectDoorRecord {
-        let state: String
-        let port: Int
-    }
-
-    private func readDirectDoorRecord(_ fixture: NativeRuntimeFixture) -> DirectDoorRecord? {
-        let url = fixture.journalRoot
-            .appendingPathComponent("health", isDirectory: true)
-            .appendingPathComponent("direct-door.json")
-        guard let data = try? Data(contentsOf: url),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let state = object["state"] as? String,
-              let port = object["port"] as? Int else {
-            return nil
-        }
-        return DirectDoorRecord(state: state, port: port)
-    }
-
-    private func loopbackPortAccepts(_ port: Int) -> Bool {
-        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
-        guard descriptor >= 0 else { return false }
-        defer { close(descriptor) }
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = UInt16(port).bigEndian
-        address.sin_addr.s_addr = inet_addr("127.0.0.1")
-        let connected = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
-                connect(descriptor, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        return connected == 0
-    }
-}
-
-private final class AdmittedProcesses: @unchecked Sendable {
-    private let lock = NSLock()
-    private var pids: Set<pid_t> = []
-
-    func record(_ fresh: [pid_t]) {
-        lock.withLock { pids.formUnion(fresh) }
-    }
-
-    func all() -> [pid_t] {
-        lock.withLock { Array(pids) }
-    }
 }

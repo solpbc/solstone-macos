@@ -3,8 +3,8 @@
 
 import Foundation
 
-enum JournalSetupCommand {
-    static func setupArguments(journalURL: URL, skipService: Bool) -> [String] {
+public enum JournalSetupCommand {
+    public static func setupArguments(journalURL: URL, skipService: Bool) -> [String] {
         var arguments = [
             "setup",
             "--jsonl",
