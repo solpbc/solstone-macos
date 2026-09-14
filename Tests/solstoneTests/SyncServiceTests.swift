@@ -495,12 +495,1511 @@ struct SyncServiceTests {
     }
 
     @Test func segmentDirectoryListabilityDistinguishesMissingFromEmpty() async throws {
-        let root = try makeTempDirectory("sync-listability")
-        let existing = try makeSegment(root: root)
-        let missing = root.appendingPathComponent("does-not-exist", isDirectory: true)
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24692") })
-        #expect(await service.segmentDirectoryIsListableForTesting(existing.url) == true)
-        #expect(await service.segmentDirectoryIsListableForTesting(missing) == false)
+        store.reset()
+        let root = try makeTempDirectory("sync-listability-empty")
+        let dayDir = root.appendingPathComponent("2026-09-14", isDirectory: true)
+        let emptySegment = dayDir.appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: emptySegment, withIntermediateDirectories: true)
+        store.enqueue(statusCode: 200, body: manifestJSON())
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24740") })
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(collector.segmentUnprovableCount == 1)
+        #expect(collector.containsSyncComplete == true)
+        #expect(collector.containsOffline == false)
+
+        // Contrast: an unlistable segment directory fails discovery, emitting discovery offline, no syncComplete, and making no HTTP requests
+        store.reset()
+        let rootUnlistable = try makeTempDirectory("sync-listability-unlistable")
+        let dayDir2 = rootUnlistable.appendingPathComponent("2026-09-14", isDirectory: true)
+        let unlistableSegment = dayDir2.appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: unlistableSegment, withIntermediateDirectories: true)
+        store.enqueue(statusCode: 200, body: manifestJSON())
+
+        let serviceUnlistable = makeService(
+            root: rootUnlistable,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24740") },
+            listDirectory: { url in
+                if url.lastPathComponent == unlistableSegment.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+                }
+                return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            }
+        )
+        await configure(serviceUnlistable)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await serviceUnlistable.progressStream {
+                collector2.append(event)
+            }
+        }
+        await serviceUnlistable.sync()
+        await collector2.waitForOffline()
+        listen2.cancel()
+
+        #expect(store.snapshotRequests().isEmpty)
+        #expect(collector2.segmentUnprovableCount == 0)
+        #expect(collector2.containsSyncComplete == false)
+        #expect(collector2.containsOffline == true)
+        #expect(collector2.offlinePath() == "")
+    }
+
+    @Test func discoveryBaseDirectoryListFailureFailsClosedWithoutNetwork() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-base-list-fail")
+        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let seg = try makeSegment(root: root, date: pastDate, segmentName: "120000_300")
+        let audioFile = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        let audioSHA = try sha256(of: audioFile)
+
+        // Pass 1: base directory listing fails
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24741") },
+            listDirectory: { url in
+                if url.resolvingSymlinksInPath().path == root.resolvingSymlinksInPath().path {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))
+                }
+                return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().isEmpty)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.containsOffline == true)
+        #expect(collector.offlineEvents.count == 1)
+        let offline = collector.offlineEvents.first
+        #expect(offline?.healthReason == .uploadFailed)
+        #expect(offline?.requestedPath == "")
+        #expect(FileManager.default.fileExists(atPath: audioFile.path) == true)
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+
+        // Pass 2: recovered default service uploads the segment
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: "120000_300_audio.m4a", sha: audioSHA, size: 5))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24741") })
+        await configure(service2)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await service2.progressStream {
+                collector2.append(event)
+            }
+        }
+        await service2.sync()
+        await collector2.waitForSyncComplete()
+        listen2.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector2.containsSyncComplete == true)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+    }
+
+    @Test func discoveryDateDirectoryListFailureWithNoDiscoverableSegmentFailsClosed() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-date-list-fail-empty")
+        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let seg = try makeSegment(root: root, date: pastDate, segmentName: "120000_300")
+        let dateDir = seg.url.deletingLastPathComponent()
+        let audioFile = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        let audioSHA = try sha256(of: audioFile)
+
+        // Pass 1: the only date directory throws from listDirectory
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24742") },
+            listDirectory: { url in
+                if url.lastPathComponent == dateDir.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+                }
+                return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().isEmpty)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.containsOffline == true)
+        #expect(collector.offlineEvents.count == 1)
+        let offline = collector.offlineEvents.first
+        #expect(offline?.healthReason == .uploadFailed)
+        #expect(offline?.requestedPath == "")
+        #expect(FileManager.default.fileExists(atPath: audioFile.path) == true)
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+
+        // Pass 2: recovered default service uploads the segment
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: "120000_300_audio.m4a", sha: audioSHA, size: 5))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24742") })
+        await configure(service2)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await service2.progressStream {
+                collector2.append(event)
+            }
+        }
+        await service2.sync()
+        await collector2.waitForSyncComplete()
+        listen2.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector2.containsSyncComplete == true)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+    }
+
+    @Test func discoverySegmentDirectoryListFailureWithNoSiblingFailsClosed() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-seg-list-fail-empty")
+        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let seg = try makeSegment(root: root, date: pastDate, segmentName: "120000_300")
+        let audioFile = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        let audioSHA = try sha256(of: audioFile)
+
+        // Pass 1: the only segment directory throws from listDirectory
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24743") },
+            listDirectory: { url in
+                if url.lastPathComponent == seg.url.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+                }
+                return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().isEmpty)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.containsOffline == true)
+        #expect(collector.offlineEvents.count == 1)
+        let offline = collector.offlineEvents.first
+        #expect(offline?.healthReason == .uploadFailed)
+        #expect(offline?.requestedPath == "")
+        #expect(FileManager.default.fileExists(atPath: audioFile.path) == true)
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+
+        // Pass 2: recovered default service uploads the segment
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: "120000_300_audio.m4a", sha: audioSHA, size: 5))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24743") })
+        await configure(service2)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await service2.progressStream {
+                collector2.append(event)
+            }
+        }
+        await service2.sync()
+        await collector2.waitForSyncComplete()
+        listen2.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector2.containsSyncComplete == true)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+    }
+
+    @Test func discoveryRootChildClassifyErrorWithNoSiblingFailsClosed() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-root-classify-err-empty")
+        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let seg = try makeSegment(root: root, date: pastDate, segmentName: "120000_300")
+        let dateDir = seg.url.deletingLastPathComponent()
+        let audioFile = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        let audioSHA = try sha256(of: audioFile)
+
+        // Pass 1: root child date dir classify throws
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24744") },
+            classifyEntry: { url in
+                if url.lastPathComponent == dateDir.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+                }
+                var info = stat()
+                guard lstat(url.path, &info) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+                let ft = info.st_mode & mode_t(S_IFMT)
+                return ft == mode_t(S_IFDIR) ? .directory : (ft == mode_t(S_IFREG) ? .regularFile : .unsupported)
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().isEmpty)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.containsOffline == true)
+        #expect(collector.offlineEvents.count == 1)
+        let offline = collector.offlineEvents.first
+        #expect(offline?.healthReason == .uploadFailed)
+        #expect(offline?.requestedPath == "")
+        #expect(FileManager.default.fileExists(atPath: audioFile.path) == true)
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+
+        // Pass 2: recovered default service uploads the segment
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: "120000_300_audio.m4a", sha: audioSHA, size: 5))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24744") })
+        await configure(service2)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await service2.progressStream {
+                collector2.append(event)
+            }
+        }
+        await service2.sync()
+        await collector2.waitForSyncComplete()
+        listen2.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector2.containsSyncComplete == true)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+    }
+
+    @Test func discoveryUploadMediaChildClassifyErrorWithNoSiblingFailsClosed() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-media-classify-err-empty")
+        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let seg = try makeSegment(root: root, date: pastDate, segmentName: "120000_300")
+        let audioFile = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        let audioSHA = try sha256(of: audioFile)
+
+        store.enqueue(statusCode: 200, body: manifestJSON())
+
+        // Pass 1: only upload-eligible media child classify throws
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24745") },
+            classifyEntry: { url in
+                if url.lastPathComponent == audioFile.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))
+                }
+                var info = stat()
+                guard lstat(url.path, &info) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+                let ft = info.st_mode & mode_t(S_IFMT)
+                return ft == mode_t(S_IFDIR) ? .directory : (ft == mode_t(S_IFREG) ? .regularFile : .unsupported)
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        let pass1UploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(pass1UploadRequests.isEmpty)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.containsOffline == true)
+        #expect(collector.offlineEvents.count == 1)
+        let offline = collector.offlineEvents.first
+        #expect(offline?.healthReason == .uploadFailed)
+        #expect(offline?.requestedPath == "")
+        #expect(FileManager.default.fileExists(atPath: audioFile.path) == true)
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+
+        // Pass 2: recovered default service uploads the segment
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: "120000_300_audio.m4a", sha: audioSHA, size: 5))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24745") })
+        await configure(service2)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await service2.progressStream {
+                collector2.append(event)
+            }
+        }
+        await service2.sync()
+        await collector2.waitForSyncComplete()
+        listen2.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector2.containsSyncComplete == true)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+    }
+
+    @Test func discoveryRootChildClassifyErrorRecordsFailureUploadsValidAndFailsClosed() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-root-classify-err")
+        let today = Date()
+        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: today)!
+        let validSegment = try makeSegment(root: root, date: pastDate, segmentName: "120000_300")
+        let otherDateDir = root.appendingPathComponent("2026-09-10", isDirectory: true)
+        let otherSegDir = otherDateDir.appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: otherSegDir, withIntermediateDirectories: true)
+        let otherAudio = otherSegDir.appendingPathComponent("120000_300_audio.m4a")
+        try Data("other".utf8).write(to: otherAudio)
+        let otherSHA = try sha256(of: otherAudio)
+
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: validSegment.url.appendingPathComponent(filename))
+
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24748") },
+            classifyEntry: { url in
+                if url.lastPathComponent == otherDateDir.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+                }
+                var info = stat()
+                guard lstat(url.path, &info) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+                let ft = info.st_mode & mode_t(S_IFMT)
+                return ft == mode_t(S_IFDIR) ? .directory : (ft == mode_t(S_IFREG) ? .regularFile : .unsupported)
+            }
+        )
+        await configure(service, cacheRetentionDays: 0)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector.containsUploadSucceeded == true)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.containsOffline == true)
+        #expect(collector.offlineEvents.count == 1)
+        #expect(collector.offlinePath() == "")
+        #expect(FileManager.default.fileExists(atPath: validSegment.url.appendingPathComponent(filename).path) == true)
+        let validAckURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: validSegment.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: validAckURL.path) == true)
+
+        // Pass 2: default service recovers; sibling not re-posted, other posted once
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: "120000_300_audio.m4a", sha: otherSHA, size: 5))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24748") })
+        await configure(service2)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await service2.progressStream {
+                collector2.append(event)
+            }
+        }
+        await service2.sync()
+        await collector2.waitForSyncComplete()
+        listen2.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector2.containsSyncComplete == true)
+    }
+
+    @Test func discoveryRootChildNonDirectoryIgnored() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-root-non-dir")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let strayFile = root.appendingPathComponent("stray.txt")
+        try Data("stray".utf8).write(to: strayFile)
+
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24751") })
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector.containsSyncComplete == true)
+        #expect(collector.containsOffline == false)
+    }
+
+    @Test func discoveryDateDirectoryListFailureRecordsFailureAndFailsClosed() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-date-list-fail")
+        let validSegment = try makeSegment(root: root, date: Date(), segmentName: "120000_300")
+        let failingDateDir = root.appendingPathComponent("2026-09-01", isDirectory: true)
+        let failingSegDir = failingDateDir.appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: failingSegDir, withIntermediateDirectories: true)
+        let failingAudio = failingSegDir.appendingPathComponent("120000_300_audio.m4a")
+        try Data("failing".utf8).write(to: failingAudio)
+        let failingSHA = try sha256(of: failingAudio)
+
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: validSegment.url.appendingPathComponent(filename))
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24746") },
+            listDirectory: { url in
+                if url.lastPathComponent == failingDateDir.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+                }
+                return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.containsOffline == true)
+        #expect(collector.offlineEvents.count == 1)
+        #expect(collector.offlinePath() == "")
+        let validAckURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: validSegment.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: validAckURL.path) == true)
+
+        // Pass 2: default service recovers; sibling not re-posted, failing segment posted once
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: "120000_300_audio.m4a", sha: failingSHA, size: 7))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24746") })
+        await configure(service2)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await service2.progressStream {
+                collector2.append(event)
+            }
+        }
+        await service2.sync()
+        await collector2.waitForSyncComplete()
+        listen2.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector2.containsSyncComplete == true)
+    }
+
+    @Test func discoveryDateChildClassifyErrorRecordsFailureAndFailsClosed() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-date-child-classify-err")
+        let seg1 = try makeSegment(root: root, segmentName: "120000_300")
+        let seg2 = try makeSegment(root: root, segmentName: "120500_300")
+
+        let filename1 = "120000_300_audio.m4a"
+        let sha1 = try sha256(of: seg1.url.appendingPathComponent(filename1))
+        let filename2 = "120500_300_audio.m4a"
+        let sha2 = try sha256(of: seg2.url.appendingPathComponent(filename2))
+
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename1, sha: sha1, size: 5))
+
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24749") },
+            classifyEntry: { url in
+                if url.lastPathComponent == seg2.url.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))
+                }
+                var info = stat()
+                guard lstat(url.path, &info) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+                let ft = info.st_mode & mode_t(S_IFMT)
+                return ft == mode_t(S_IFDIR) ? .directory : (ft == mode_t(S_IFREG) ? .regularFile : .unsupported)
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.containsOffline == true)
+        #expect(collector.offlineEvents.count == 1)
+        #expect(collector.offlinePath() == "")
+        let seg1AckURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg1.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: seg1AckURL.path) == true)
+
+        // Pass 2: default service recovers; seg1 not re-posted, seg2 posted once
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(submitted: "120500_300", stored: "120500_300", filename: filename2, sha: sha2, size: 5))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24749") })
+        await configure(service2)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await service2.progressStream {
+                collector2.append(event)
+            }
+        }
+        await service2.sync()
+        await collector2.waitForSyncComplete()
+        listen2.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector2.containsSyncComplete == true)
+    }
+
+    @Test func discoveryDateChildNonDirectoryIgnored() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-date-child-non-dir")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let dateDir = seg.url.deletingLastPathComponent()
+        let strayFile = dateDir.appendingPathComponent("stray.tmp")
+        try Data("stray".utf8).write(to: strayFile)
+
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24752") })
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector.containsSyncComplete == true)
+        #expect(collector.containsOffline == false)
+    }
+
+    @Test func discoveryIncompleteAndFailedSegmentDirectoriesSkipped() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-skipped-suffixes")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let dateDir = seg.url.deletingLastPathComponent()
+        let incompleteDir = dateDir.appendingPathComponent("120500_300.incomplete", isDirectory: true)
+        let failedDir = dateDir.appendingPathComponent("121000_300.failed", isDirectory: true)
+        try FileManager.default.createDirectory(at: incompleteDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: failedDir, withIntermediateDirectories: true)
+
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24753") })
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector.containsSyncComplete == true)
+        #expect(collector.containsOffline == false)
+    }
+
+    @Test func discoverySegmentDirectoryListFailureRecordsFailureOmittedFromCandidates() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-segment-list-fail")
+        let seg1 = try makeSegment(root: root, segmentName: "120000_300")
+        let seg2 = try makeSegment(root: root, segmentName: "120500_300")
+
+        let filename1 = "120000_300_audio.m4a"
+        let sha1 = try sha256(of: seg1.url.appendingPathComponent(filename1))
+        let filename2 = "120500_300_audio.m4a"
+        let sha2 = try sha256(of: seg2.url.appendingPathComponent(filename2))
+
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename1, sha: sha1, size: 5))
+
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24747") },
+            listDirectory: { url in
+                if url.lastPathComponent == seg2.url.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+                }
+                return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(collector.segmentUnprovableCount == 0)
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.containsOffline == true)
+        #expect(collector.offlineEvents.count == 1)
+        #expect(collector.offlinePath() == "")
+        let seg1AckURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg1.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: seg1AckURL.path) == true)
+
+        // Pass 2: default service recovers; seg1 not re-posted, seg2 posted once
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(submitted: "120500_300", stored: "120500_300", filename: filename2, sha: sha2, size: 5))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24747") })
+        await configure(service2)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await service2.progressStream {
+                collector2.append(event)
+            }
+        }
+        await service2.sync()
+        await collector2.waitForSyncComplete()
+        listen2.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector2.containsSyncComplete == true)
+    }
+
+    @Test func discoveryUploadMediaChildClassifyErrorRecordsFailureAndFailsClosed() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-media-classify-err")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let screenURL = seg.url.appendingPathComponent("120000_300_display_1_screen.mp4")
+        try Data("screen".utf8).write(to: screenURL)
+        let audioURL = seg.url.appendingPathComponent("120000_300_audio.m4a")
+
+        let screenSHA = try sha256(of: screenURL)
+        let audioSHA = try sha256(of: audioURL)
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: "120000_300_display_1_screen.mp4", sha: screenSHA, size: 6))
+
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24750") },
+            classifyEntry: { url in
+                if url.lastPathComponent == audioURL.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))
+                }
+                var info = stat()
+                guard lstat(url.path, &info) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+                let ft = info.st_mode & mode_t(S_IFMT)
+                return ft == mode_t(S_IFDIR) ? .directory : (ft == mode_t(S_IFREG) ? .regularFile : .unsupported)
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.containsOffline == true)
+        #expect(collector.offlineEvents.count == 1)
+        #expect(collector.offlinePath() == "")
+        let segAckURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: segAckURL.path) == true)
+
+        // Pass 2: default service recovers; uploads entire segment (including previously omitted audio)
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: completeUploadResponseJSON(
+            descriptors: [
+                ("120000_300_audio.m4a", "120000_300_audio.m4a", 5, audioSHA, "written"),
+                ("120000_300_display_1_screen.mp4", "120000_300_display_1_screen.mp4", 6, screenSHA, "written"),
+            ]
+        ))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24750") })
+        await configure(service2)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await service2.progressStream {
+                collector2.append(event)
+            }
+        }
+        await service2.sync()
+        await collector2.waitForSyncComplete()
+        listen2.cancel()
+
+        let pass2UploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(pass2UploadRequests.count == 1)
+        let bodies = store.snapshotRequestBodyData().compactMap { $0 }
+        let bodyString = String(data: bodies[0], encoding: .utf8) ?? ""
+        #expect(bodyString.contains("120000_300_audio.m4a") == true)
+        #expect(bodyString.contains("120000_300_display_1_screen.mp4") == true)
+        #expect(collector2.containsSyncComplete == true)
+    }
+
+    @Test func discoveryUploadMediaSymlinkTreatedAsUnsupportedAndOmitted() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-media-symlink")
+        let dateDir = root.appendingPathComponent("2026-09-14", isDirectory: true)
+        let segDir = dateDir.appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: segDir, withIntermediateDirectories: true)
+        let outsideFile = root.appendingPathComponent("outside.mp4")
+        try Data("outside".utf8).write(to: outsideFile)
+        let symlinkMedia = segDir.appendingPathComponent("120000_300_display_1_screen.mp4")
+        try FileManager.default.createSymbolicLink(at: symlinkMedia, withDestinationURL: outsideFile)
+
+        store.enqueue(statusCode: 200, body: manifestJSON())
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24755") })
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(collector.segmentUnprovableCount == 1)
+        #expect(collector.containsSyncComplete == true)
+        #expect(collector.containsOffline == false)
+    }
+
+    @Test func discoveryNonMediaFilesIgnoredWithoutClassification() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-non-media-filter")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let metaURL = seg.url.appendingPathComponent("120000_300_meta.json")
+        try Data("{}".utf8).write(to: metaURL)
+        let systemAudioURL = seg.url.appendingPathComponent("120000_300_audio_system.m4a")
+        try Data("system".utf8).write(to: systemAudioURL)
+        let strayURL = seg.url.appendingPathComponent("stray.txt")
+        try Data("stray".utf8).write(to: strayURL)
+
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        final class ClassifyCounter: @unchecked Sendable {
+            private let lock = NSLock()
+            private var classifiedURLs: [URL] = []
+            func record(_ url: URL) {
+                lock.withLock { classifiedURLs.append(url) }
+            }
+            var all: [URL] { lock.withLock { classifiedURLs } }
+        }
+        let counter = ClassifyCounter()
+
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24754") },
+            classifyEntry: { url in
+                counter.record(url)
+                var info = stat()
+                guard lstat(url.path, &info) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+                let ft = info.st_mode & mode_t(S_IFMT)
+                return ft == mode_t(S_IFDIR) ? .directory : (ft == mode_t(S_IFREG) ? .regularFile : .unsupported)
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector.containsSyncComplete == true)
+        let classifiedNames = Set(counter.all.map(\.lastPathComponent))
+        #expect(classifiedNames.contains("120000_300_audio.m4a") == true)
+        #expect(classifiedNames.contains("120000_300_meta.json") == false)
+        #expect(classifiedNames.contains("120000_300_audio_system.m4a") == false)
+        #expect(classifiedNames.contains("stray.txt") == false)
+    }
+
+    @Test func discoveryDateListingFailureSkipsCleanupOfEligibleSibling() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-date-list-skip-cleanup")
+        let pastDate1 = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let pastDate2 = Calendar.current.date(byAdding: .day, value: -3, to: Date())!
+        let day1 = dayString(for: pastDate1)
+        let day2 = dayString(for: pastDate2)
+        let folder2 = dateFolderString(for: pastDate2)
+
+        let seg1 = try makeSegment(root: root, date: pastDate1, segmentName: "120000_300")
+        let audio1 = seg1.url.appendingPathComponent("120000_300_audio.m4a")
+        let sha1 = try sha256(of: audio1)
+
+        let seg2 = try makeSegment(root: root, date: pastDate2, segmentName: "120000_300")
+        let audio2 = seg2.url.appendingPathComponent("120000_300_audio.m4a")
+        let sha2 = try sha256(of: audio2)
+
+        // Write usable acks for both segments
+        let ack1 = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day1,
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: sha1, size: 5)],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(ack1, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg1.url, segment: "120000_300"))
+
+        let ack2 = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day2,
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: sha2, size: 5)],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(ack2, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg2.url, segment: "120000_300"))
+
+        // Pass 1: listDirectory throws on folder2; two-read facts for day1 are ready
+        store.enqueue(statusCode: 200, body: manifestJSON(day: day1))
+        store.enqueue(statusCode: 200, body: manifestDayJSON(day: day1, key: "120000_300", filename: "120000_300_audio.m4a", sha: sha1, size: 5))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(key: "120000_300", filename: "120000_300_audio.m4a", sha: sha1, size: 5))
+
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24756") },
+            listDirectory: { url in
+                if url.lastPathComponent == folder2 {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+                }
+                return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            }
+        )
+        await configure(service, cacheRetentionDays: 0)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(FileManager.default.fileExists(atPath: audio1.path) == true)
+        #expect(collector.offlineEvents.count == 1)
+        #expect(collector.containsSyncComplete == false)
+        let pass1UploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(pass1UploadRequests.isEmpty)
+
+        // Pass 2: default service on same root deletes both eligible siblings
+        store.reset()
+        store.enqueue(statusCode: 200, body: "{\"days\":{\"\(day1)\":{\"segments\":1},\"\(day2)\":{\"segments\":1}}}")
+        store.enqueue(statusCode: 200, body: manifestDayJSON(day: day1, key: "120000_300", filename: "120000_300_audio.m4a", sha: sha1, size: 5))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(key: "120000_300", filename: "120000_300_audio.m4a", sha: sha1, size: 5))
+        store.enqueue(statusCode: 200, body: manifestDayJSON(day: day2, key: "120000_300", filename: "120000_300_audio.m4a", sha: sha2, size: 5))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(key: "120000_300", filename: "120000_300_audio.m4a", sha: sha2, size: 5))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24756") })
+        await configure(service2, cacheRetentionDays: 0)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await service2.progressStream {
+                collector2.append(event)
+            }
+        }
+        await service2.sync()
+        await collector2.waitForSyncComplete()
+        listen2.cancel()
+
+        #expect(FileManager.default.fileExists(atPath: audio1.path) == false)
+        #expect(FileManager.default.fileExists(atPath: audio2.path) == false)
+        #expect(collector2.containsSyncComplete == true)
+    }
+
+    @Test func lateArrivalMediaFileIsolatedFromCurrentSyncPass() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-late-media")
+        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let day = dayString(for: pastDate)
+        let seg = try makeSegment(root: root, date: pastDate, segmentName: "120000_300")
+        let audioFile = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        let audioSHA = try sha256(of: audioFile)
+
+        let screenURL = seg.url.appendingPathComponent("120000_300_display_1_screen.mp4")
+        let screenData = Data("late-screen-bytes".utf8)
+        let screenTemp = try makeTempDirectory("sync-late-screen-temp").appendingPathComponent("screen.mp4")
+        try screenData.write(to: screenTemp)
+        let screenSHA = try sha256(of: screenTemp)
+
+        // Ack covering BOTH audio and screen files
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day,
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [
+                    IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: audioSHA, size: 5),
+                    IngestAcknowledgedFileProof(submitted: "120000_300_display_1_screen.mp4", sha256: screenSHA, size: UInt64(screenData.count)),
+                ],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
+
+        store.enqueue(statusCode: 200, body: manifestJSON(day: day))
+        store.enqueue(statusCode: 200, body: manifestDayJSON(
+            day: day,
+            entries: [
+                ("120000_300", "120000_300_audio.m4a", audioSHA, 5, "present"),
+                ("120000_300", "120000_300_display_1_screen.mp4", screenSHA, screenData.count, "present"),
+            ]
+        ))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(
+            entries: [
+                ("120000_300", nil, "120000_300_audio.m4a", audioSHA, 5, "present"),
+                ("120000_300", nil, "120000_300_display_1_screen.mp4", screenSHA, screenData.count, "present"),
+            ]
+        ))
+
+        let resolver = ResolverScript([.url("http://127.0.0.1:24758"), .url("http://127.0.0.1:24758")], parkAfterImmediateCount: 0)
+        let service = makeService(root: root, resolver: resolver.resolver)
+        await configure(service, cacheRetentionDays: 0)
+
+        let syncing = Task { await service.sync() }
+        await resolver.waitUntilParked()
+
+        // Plant late screen media file while sync is parked after discovery
+        try screenData.write(to: screenURL)
+
+        await resolver.releasePark()
+        await syncing.value
+
+        // Pass 1: snapshotted audio file deleted; late screen file remains
+        #expect(FileManager.default.fileExists(atPath: audioFile.path) == false)
+        #expect(FileManager.default.fileExists(atPath: screenURL.path) == true)
+
+        // Pass 2: subsequent sync discovers and cleans up the late screen file
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON(day: day))
+        store.enqueue(statusCode: 200, body: manifestDayJSON(
+            day: day,
+            entries: [
+                ("120000_300", "120000_300_audio.m4a", audioSHA, 5, "present"),
+                ("120000_300", "120000_300_display_1_screen.mp4", screenSHA, screenData.count, "present"),
+            ]
+        ))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(
+            entries: [
+                ("120000_300", nil, "120000_300_audio.m4a", audioSHA, 5, "present"),
+                ("120000_300", nil, "120000_300_display_1_screen.mp4", screenSHA, screenData.count, "present"),
+            ]
+        ))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24758") })
+        await configure(service2, cacheRetentionDays: 0)
+        await service2.sync()
+
+        #expect(FileManager.default.fileExists(atPath: screenURL.path) == false)
+    }
+
+    @Test func lateArrivalSegmentIsolatedFromCurrentSyncPass() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-late-segment")
+        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let day = dayString(for: pastDate)
+        let seg1 = try makeSegment(root: root, date: pastDate, segmentName: "120000_300")
+        let audio1 = seg1.url.appendingPathComponent("120000_300_audio.m4a")
+        let sha1 = try sha256(of: audio1)
+
+        let ack1 = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day,
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: sha1, size: 5)],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(ack1, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg1.url, segment: "120000_300"))
+
+        let dateDir = seg1.url.deletingLastPathComponent()
+        let seg2Dir = dateDir.appendingPathComponent("120500_300", isDirectory: true)
+        let audio2URL = seg2Dir.appendingPathComponent("120500_300_audio.m4a")
+        let audio2Data = Data("late-audio".utf8)
+        let audio2Temp = try makeTempDirectory("sync-late-audio-temp").appendingPathComponent("audio.m4a")
+        try audio2Data.write(to: audio2Temp)
+        let sha2 = try sha256(of: audio2Temp)
+
+        store.enqueue(statusCode: 200, body: manifestJSON(day: day))
+        store.enqueue(statusCode: 200, body: manifestDayJSON(
+            day: day,
+            entries: [
+                ("120000_300", "120000_300_audio.m4a", sha1, 5, "present"),
+                ("120500_300", "120500_300_audio.m4a", sha2, audio2Data.count, "present"),
+            ]
+        ))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(
+            entries: [
+                ("120000_300", nil, "120000_300_audio.m4a", sha1, 5, "present"),
+                ("120500_300", nil, "120500_300_audio.m4a", sha2, audio2Data.count, "present"),
+            ]
+        ))
+
+        let resolver = ResolverScript([.url("http://127.0.0.1:24757"), .url("http://127.0.0.1:24757")], parkAfterImmediateCount: 0)
+        let service = makeService(root: root, resolver: resolver.resolver)
+        await configure(service, cacheRetentionDays: 0)
+
+        let syncing = Task { await service.sync() }
+        await resolver.waitUntilParked()
+
+        // Plant late segment while sync is parked after discovery
+        try FileManager.default.createDirectory(at: seg2Dir, withIntermediateDirectories: true)
+        try audio2Data.write(to: audio2URL)
+        let ack2 = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day,
+            submittedSegment: "120500_300",
+            storedSegmentKey: "120500_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120500_300_audio.m4a", sha256: sha2, size: UInt64(audio2Data.count))],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(ack2, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg2Dir, segment: "120500_300"))
+
+        await resolver.releasePark()
+        await syncing.value
+
+        // Pass 1: control media deleted; late segment media remains
+        #expect(FileManager.default.fileExists(atPath: audio1.path) == false)
+        #expect(FileManager.default.fileExists(atPath: audio2URL.path) == true)
+
+        // Pass 2: subsequent sync discovers and cleans up late segment
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON(day: day))
+        store.enqueue(statusCode: 200, body: manifestDayJSON(
+            day: day,
+            entries: [
+                ("120000_300", "120000_300_audio.m4a", sha1, 5, "present"),
+                ("120500_300", "120500_300_audio.m4a", sha2, audio2Data.count, "present"),
+            ]
+        ))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(
+            entries: [
+                ("120000_300", nil, "120000_300_audio.m4a", sha1, 5, "present"),
+                ("120500_300", nil, "120500_300_audio.m4a", sha2, audio2Data.count, "present"),
+            ]
+        ))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24757") })
+        await configure(service2, cacheRetentionDays: 0)
+        await service2.sync()
+
+        #expect(FileManager.default.fileExists(atPath: audio2URL.path) == false)
+    }
+
+    @Test func discoverySymlinksIsolatedAtAllLevels() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-symlink-isolation")
+        let realSegment = try makeSegment(root: root, segmentName: "120000_300")
+        let dateDir = realSegment.url.deletingLastPathComponent()
+
+        // Root level: symlinked date dir pointing at outside tree with real segment & media
+        let outsideDir = try makeTempDirectory("sync-outside-date")
+        let outsideSeg = outsideDir.appendingPathComponent("130000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: outsideSeg, withIntermediateDirectories: true)
+        try Data("outside-date-media".utf8).write(to: outsideSeg.appendingPathComponent("130000_300_audio.m4a"))
+        let symlinkDate = root.appendingPathComponent("2026-09-01")
+        try FileManager.default.createSymbolicLink(at: symlinkDate, withDestinationURL: outsideDir)
+
+        // Date level: symlinked segment dir pointing at outside segment dir with real media
+        let outsideSegDir = try makeTempDirectory("sync-outside-seg")
+        try Data("outside-seg-media".utf8).write(to: outsideSegDir.appendingPathComponent("140000_300_audio.m4a"))
+        let symlinkSeg = dateDir.appendingPathComponent("140000_300")
+        try FileManager.default.createSymbolicLink(at: symlinkSeg, withDestinationURL: outsideSegDir)
+
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: realSegment.url.appendingPathComponent(filename))
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24759") })
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForSyncComplete()
+        listen.cancel()
+
+        let uploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploadRequests.count == 1)
+        let bodies = store.snapshotRequestBodyData().compactMap { $0 }
+        let bodyString = String(data: bodies[0], encoding: .utf8) ?? ""
+        #expect(bodyString.contains("120000_300_audio.m4a") == true)
+        #expect(bodyString.contains("130000_300_audio.m4a") == false)
+        #expect(bodyString.contains("140000_300_audio.m4a") == false)
+        #expect(collector.containsSyncComplete == true)
+        #expect(collector.containsOffline == false)
+    }
+
+    @Test func outsideRootDateDirectorySymlinkIsNotCleanedWhenInTreeControlIs() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-symlink-cleanup-date")
+        let outsideRoot = try makeTempDirectory("sync-symlink-cleanup-outside-date")
+
+        let pastDate1 = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let pastDate2 = Calendar.current.date(byAdding: .day, value: -3, to: Date())!
+        let day1 = dayString(for: pastDate1)
+        let day2 = dayString(for: pastDate2)
+        let folder2 = dateFolderString(for: pastDate2)
+
+        // In-tree real CONTROL segment
+        let controlSeg = try makeSegment(root: root, date: pastDate1, segmentName: "120000_300")
+        let controlAudio = controlSeg.url.appendingPathComponent("120000_300_audio.m4a")
+        let controlSHA = try sha256(of: controlAudio)
+        let controlAck = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day1,
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: controlSHA, size: 5)],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(controlAck, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: controlSeg.url, segment: "120000_300"))
+
+        // Outside tree with date folder2 and segment
+        let outsideDateDir = outsideRoot.appendingPathComponent(folder2, isDirectory: true)
+        let outsideSegDir = outsideDateDir.appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: outsideSegDir, withIntermediateDirectories: true)
+        let outsideAudio = outsideSegDir.appendingPathComponent("120000_300_audio.m4a")
+        let outsideBytes = Data("outside-media-bytes".utf8)
+        try outsideBytes.write(to: outsideAudio)
+        let outsideSHA = try sha256(of: outsideAudio)
+        let outsideAck = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day2,
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: outsideSHA, size: UInt64(outsideBytes.count))],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(outsideAck, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: outsideSegDir, segment: "120000_300"))
+
+        // In-tree symlink pointing at outside date dir
+        let symlinkDate = root.appendingPathComponent(folder2)
+        try FileManager.default.createSymbolicLink(at: symlinkDate, withDestinationURL: outsideDateDir)
+
+        store.enqueue(statusCode: 200, body: "{\"days\":{\"\(day1)\":{\"segments\":1},\"\(day2)\":{\"segments\":1}}}")
+        store.enqueue(statusCode: 200, body: manifestDayJSON(day: day1, key: "120000_300", filename: "120000_300_audio.m4a", sha: controlSHA, size: 5))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(key: "120000_300", filename: "120000_300_audio.m4a", sha: controlSHA, size: 5))
+        store.enqueue(statusCode: 200, body: manifestDayJSON(day: day2, key: "120000_300", filename: "120000_300_audio.m4a", sha: outsideSHA, size: outsideBytes.count))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(key: "120000_300", filename: "120000_300_audio.m4a", sha: outsideSHA, size: outsideBytes.count))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24760") })
+        await configure(service, cacheRetentionDays: 0)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(FileManager.default.fileExists(atPath: controlAudio.path) == false)
+        #expect(FileManager.default.fileExists(atPath: outsideAudio.path) == true)
+        let actualDateBytes = try Data(contentsOf: outsideAudio)
+        #expect(actualDateBytes == outsideBytes)
+        let uploadRequestsDate = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploadRequestsDate.isEmpty)
+        #expect(collector.containsSyncComplete == true)
+    }
+
+    @Test func outsideRootSegmentDirectorySymlinkIsNotCleanedWhenInTreeControlIs() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-symlink-cleanup-seg")
+        let outsideRoot = try makeTempDirectory("sync-symlink-cleanup-outside-seg")
+
+        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let day = dayString(for: pastDate)
+
+        // In-tree real date dir and CONTROL segment
+        let controlSeg = try makeSegment(root: root, date: pastDate, segmentName: "120000_300")
+        let controlAudio = controlSeg.url.appendingPathComponent("120000_300_audio.m4a")
+        let controlSHA = try sha256(of: controlAudio)
+        let controlAck = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day,
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: controlSHA, size: 5)],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(controlAck, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: controlSeg.url, segment: "120000_300"))
+
+        // Outside segment dir
+        let outsideSegDir = outsideRoot.appendingPathComponent("120500_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: outsideSegDir, withIntermediateDirectories: true)
+        let outsideAudio = outsideSegDir.appendingPathComponent("120500_300_audio.m4a")
+        let outsideBytes = Data("outside-seg-bytes".utf8)
+        try outsideBytes.write(to: outsideAudio)
+        let outsideSHA = try sha256(of: outsideAudio)
+        let outsideAck = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day,
+            submittedSegment: "120500_300",
+            storedSegmentKey: "120500_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120500_300_audio.m4a", sha256: outsideSHA, size: UInt64(outsideBytes.count))],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(outsideAck, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: outsideSegDir, segment: "120500_300"))
+
+        // In-tree symlink inside date dir pointing at outside segment dir
+        let dateDir = controlSeg.url.deletingLastPathComponent()
+        let symlinkSeg = dateDir.appendingPathComponent("120500_300")
+        try FileManager.default.createSymbolicLink(at: symlinkSeg, withDestinationURL: outsideSegDir)
+
+        store.enqueue(statusCode: 200, body: manifestJSON(day: day))
+        store.enqueue(statusCode: 200, body: manifestDayJSON(
+            day: day,
+            entries: [
+                ("120000_300", "120000_300_audio.m4a", controlSHA, 5, "present"),
+                ("120500_300", "120500_300_audio.m4a", outsideSHA, outsideBytes.count, "present"),
+            ]
+        ))
+        store.enqueue(statusCode: 200, body: segmentsDayJSON(
+            entries: [
+                ("120000_300", nil, "120000_300_audio.m4a", controlSHA, 5, "present"),
+                ("120500_300", nil, "120500_300_audio.m4a", outsideSHA, outsideBytes.count, "present"),
+            ]
+        ))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24761") })
+        await configure(service, cacheRetentionDays: 0)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(FileManager.default.fileExists(atPath: controlAudio.path) == false)
+        #expect(FileManager.default.fileExists(atPath: outsideAudio.path) == true)
+        let actualSegBytes = try Data(contentsOf: outsideAudio)
+        #expect(actualSegBytes == outsideBytes)
+        let uploadRequestsSeg = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploadRequestsSeg.isEmpty)
+        #expect(collector.containsSyncComplete == true)
+    }
+
+    @Test func discoveryFailureAndUploadFailureYieldsSingleDiscoveryOffline() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-disc-upload-fail")
+        let seg1 = try makeSegment(root: root, segmentName: "120000_300")
+        let dateDir = seg1.url.deletingLastPathComponent()
+        let failingSeg = dateDir.appendingPathComponent("120500_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: failingSeg, withIntermediateDirectories: true)
+
+        let filename1 = "120000_300_audio.m4a"
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 500, body: #"{"error":"internal"}"#)
+
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24762") },
+            listDirectory: { url in
+                if url.lastPathComponent == failingSeg.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+                }
+                return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(collector.containsUploadFailed == true)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.offlineEvents.count == 1)
+        let offline = collector.offlineEvents.first
+        #expect(offline?.requestedPath == "")
+        #expect(offline?.healthReason == .uploadFailed)
+        #expect(FileManager.default.fileExists(atPath: seg1.url.appendingPathComponent(filename1).path) == true)
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg1.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+    }
+
+    @Test func unprovableSegmentWithDiscoveryFailureEmitsUnprovableAndDiscoveryOffline() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-unprovable-disc-fail")
+        let dateDir = root.appendingPathComponent("2026-09-14", isDirectory: true)
+        let emptySeg = dateDir.appendingPathComponent("120000_300", isDirectory: true)
+        let failingSeg = dateDir.appendingPathComponent("120500_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: emptySeg, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: failingSeg, withIntermediateDirectories: true)
+
+        store.enqueue(statusCode: 200, body: manifestJSON())
+
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24763") },
+            listDirectory: { url in
+                if url.lastPathComponent == failingSeg.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+                }
+                return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(collector.segmentUnprovableCount == 1)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.containsOffline == true)
+        #expect(collector.offlinePath() == "")
     }
 
     @Test func duplicateAliasConfirmsWithinServiceAndFreshServiceFailsClosed() async throws {
@@ -1474,13 +2973,45 @@ struct SyncServiceTests {
         #expect(FileManager.default.fileExists(atPath: segment.url.path))
     }
 
-    private func makeService(root: URL, resolver: HomeBaseURLResolver) -> SyncService {
-        SyncService(
-            storageManager: StorageManager(baseDirectory: root),
-            client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
-            resolver: resolver,
-            retryDelays: Array(repeating: 0, count: 10)
-        )
+    private func makeService(
+        root: URL,
+        resolver: HomeBaseURLResolver,
+        listDirectory: (@Sendable (URL) throws -> [URL])? = nil,
+        classifyEntry: (@Sendable (URL) throws -> SyncService.DiscoveredEntryKind)? = nil
+    ) -> SyncService {
+        if let listDirectory, let classifyEntry {
+            return SyncService(
+                storageManager: StorageManager(baseDirectory: root),
+                client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
+                resolver: resolver,
+                retryDelays: Array(repeating: 0, count: 10),
+                listDirectory: listDirectory,
+                classifyEntry: classifyEntry
+            )
+        } else if let listDirectory {
+            return SyncService(
+                storageManager: StorageManager(baseDirectory: root),
+                client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
+                resolver: resolver,
+                retryDelays: Array(repeating: 0, count: 10),
+                listDirectory: listDirectory
+            )
+        } else if let classifyEntry {
+            return SyncService(
+                storageManager: StorageManager(baseDirectory: root),
+                client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
+                resolver: resolver,
+                retryDelays: Array(repeating: 0, count: 10),
+                classifyEntry: classifyEntry
+            )
+        } else {
+            return SyncService(
+                storageManager: StorageManager(baseDirectory: root),
+                client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
+                resolver: resolver,
+                retryDelays: Array(repeating: 0, count: 10)
+            )
+        }
     }
 
     private func makeHoldingService(root: URL, resolver: HomeBaseURLResolver) -> SyncService {
@@ -1765,6 +3296,15 @@ private final class ProgressCollector: @unchecked Sendable {
         }
     }
 
+    var containsUploadFailed: Bool {
+        lock.withLock {
+            events.contains {
+                if case .uploadFailed = $0 { return true }
+                return false
+            }
+        }
+    }
+
     var uploadSucceededFingerprint: String? {
         lock.withLock {
             for event in events {
@@ -1793,6 +3333,29 @@ private final class ProgressCollector: @unchecked Sendable {
                 if case .segmentUnprovable = $0 { return true }
                 return false
             }.count
+        }
+    }
+
+    var containsSyncComplete: Bool {
+        lock.withLock {
+            events.contains { if case .syncComplete = $0 { return true }; return false }
+        }
+    }
+
+    var containsOffline: Bool {
+        lock.withLock {
+            events.contains { if case .offline = $0 { return true }; return false }
+        }
+    }
+
+    var offlineEvents: [(error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)] {
+        lock.withLock {
+            events.compactMap {
+                if case .offline(let error, let healthReason, let path) = $0 {
+                    return (error, healthReason, path)
+                }
+                return nil
+            }
         }
     }
 

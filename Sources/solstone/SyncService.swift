@@ -23,8 +23,25 @@ public actor SyncService {
         case awaitingTunnel
         /// Local content cannot establish a complete transfer: no selectable media,
         /// changed metadata after media offload, or unreadable metadata. Independent
-        /// segments can still sync. A failed directory listing remains retryable.
+        /// segments can still sync.
         case segmentUnprovable(segment: String)
+    }
+
+    internal enum DiscoveredEntryKind: Sendable, Equatable {
+        case directory
+        case regularFile
+        case unsupported
+    }
+
+    private struct DiscoveredCandidate: Sendable {
+        let day: String
+        let segmentURL: URL
+        let media: [URL]
+    }
+
+    private struct DiscoverySnapshot: Sendable {
+        var candidatesByDay: [String: [DiscoveredCandidate]]
+        var failure: Error?
     }
 
     internal enum SegmentMetadataState: Sendable, Equatable {
@@ -47,6 +64,8 @@ public actor SyncService {
     private let storageManager: StorageManager
     private let persistAcknowledgment: @Sendable (IngestAcknowledgment, URL) throws -> Void
     private let removeItem: @Sendable (URL) throws -> Void
+    private let listDirectory: @Sendable (URL) throws -> [URL]
+    private let classifyEntry: @Sendable (URL) throws -> DiscoveredEntryKind
 
     // MARK: - Configuration
 
@@ -82,6 +101,27 @@ public actor SyncService {
             guard Darwin.unlink(url.path) == 0 else {
                 throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
             }
+        },
+        listDirectory: @escaping @Sendable (URL) throws -> [URL] = { url in
+            try FileManager.default.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        },
+        classifyEntry: @escaping @Sendable (URL) throws -> DiscoveredEntryKind = { url in
+            var info = stat()
+            guard lstat(url.path, &info) == 0 else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
+            let fileType = info.st_mode & mode_t(S_IFMT)
+            if fileType == mode_t(S_IFDIR) {
+                return .directory
+            } else if fileType == mode_t(S_IFREG) {
+                return .regularFile
+            } else {
+                return .unsupported
+            }
         }
     ) {
         self.storageManager = storageManager
@@ -90,6 +130,8 @@ public actor SyncService {
         self.retryDelays = retryDelays
         self.persistAcknowledgment = persistAcknowledgment
         self.removeItem = removeItem
+        self.listDirectory = listDirectory
+        self.classifyEntry = classifyEntry
 
         var continuation: AsyncStream<ProgressEvent>.Continuation!
         self.progressStream = AsyncStream { continuation = $0 }
@@ -118,19 +160,6 @@ public actor SyncService {
     /// Check if sync has a coherent journal upload context
     public var isConfigured: Bool {
         journalContext != nil
-    }
-
-    /// `false` only when the segment directory itself could not be listed (missing,
-    /// permission fault, a race with deletion) — distinct from a listing that succeeded
-    /// and simply matched no file `selectFilesForUpload` recognizes. A segment must clear
-    /// this before it is treated as structurally unprovable; a transient listing failure
-    /// must not be, so a later pass gets the chance to retry once it clears.
-    func segmentDirectoryIsListableForTesting(_ segmentDirectory: URL) -> Bool {
-        segmentDirectoryIsListable(segmentDirectory)
-    }
-
-    private nonisolated func segmentDirectoryIsListable(_ segmentDirectory: URL) -> Bool {
-        (try? FileManager.default.contentsOfDirectory(atPath: segmentDirectory.path)) != nil
     }
 
     // MARK: - Sync Trigger
@@ -184,15 +213,25 @@ public actor SyncService {
             }
         }
 
-        // Collect all segments grouped by day
-        let segmentsByDay = collectSegmentsByDay()
-        guard !segmentsByDay.isEmpty else {
+        let snapshot = discover()
+        let totalSegments = snapshot.candidatesByDay.values.reduce(0) { $0 + $1.count }
+
+        if let failure = snapshot.failure, totalSegments == 0 {
+            Logger.upload.info("Discovery incomplete: \(failure.localizedDescription, privacy: .public)")
+            progressContinuation.yield(.offline(
+                error: failure.localizedDescription,
+                healthReason: .uploadFailed,
+                requestedPath: ""
+            ))
+            return
+        }
+
+        if snapshot.failure == nil && totalSegments == 0 {
             Logger.upload.info("No local segments found")
             progressContinuation.yield(.syncComplete)
             return
         }
 
-        let totalSegments = segmentsByDay.values.reduce(0) { $0 + $1.count }
         var checked = 0
 
         var terminalUploadFailure: (error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)?
@@ -216,7 +255,7 @@ public actor SyncService {
         var reconciledDays: [String: [String: ServerSegmentInfo]] = [:]
 
         // Walk days from newest to oldest
-        for (day, localSegments) in segmentsByDay.sorted(by: { $0.key > $1.key }) {
+        for (day, localCandidates) in snapshot.candidatesByDay.sorted(by: { $0.key > $1.key }) {
             progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
 
             switch manifest.days[day] {
@@ -260,13 +299,14 @@ public actor SyncService {
                 break
             }
 
-            Logger.upload.info("Day \(day, privacy: .public): \(localSegments.count, privacy: .public) local")
+            Logger.upload.info("Day \(day, privacy: .public): \(localCandidates.count, privacy: .public) local")
 
             // Walk local segments newest to oldest (already sorted descending)
-            for segmentURL in localSegments {
+            for candidate in localCandidates {
+                let segmentURL = candidate.segmentURL
                 let (_, segment) = convertSegmentPath(segmentURL)
                 let metaState = readSegmentMetadata(segmentURL: segmentURL, segment: segment)
-                let filesToUpload = selectFilesForUpload(segmentDirectory: segmentURL)
+                let filesToUpload = candidate.media
 
                 if filesToUpload.isEmpty {
                     if metaState != .unreadable {
@@ -290,12 +330,6 @@ public actor SyncService {
                         }
                     }
 
-                    guard segmentDirectoryIsListable(segmentURL) else {
-                        Logger.upload.info("Segment \(segment, privacy: .public): directory could not be listed, retaining")
-                        checked += 1
-                        progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
-                        continue
-                    }
                     Logger.upload.info("Segment \(segment, privacy: .public): no files available to establish a hold")
                     progressContinuation.yield(.segmentUnprovable(segment: segment))
                     checked += 1
@@ -348,7 +382,17 @@ public actor SyncService {
             }
         }
 
-        guard await cleanupSyncedSegments(context: context, reconciledDays: reconciledDays) else {
+        if let failure = snapshot.failure {
+            Logger.upload.info("Sync finished with discovery failure: \(failure.localizedDescription, privacy: .public)")
+            progressContinuation.yield(.offline(
+                error: failure.localizedDescription,
+                healthReason: .uploadFailed,
+                requestedPath: ""
+            ))
+            return
+        }
+
+        guard await cleanupSyncedSegments(context: context, reconciledDays: reconciledDays, candidatesByDay: snapshot.candidatesByDay) else {
             return
         }
 
@@ -715,90 +759,110 @@ public actor SyncService {
         return .stopped
     }
 
-    // MARK: - File Selection
+    // MARK: - Discovery
 
-    /// Select files to upload from a segment directory
-    /// Only uploads: video files (*_display_*_screen.mp4) and combined audio (*_audio.m4a)
-    /// Skips: individual source audio files (*_audio_system.m4a, *_audio_<device>.m4a, *_mic_*.m4a)
-    private func selectFilesForUpload(segmentDirectory: URL) -> [URL] {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: segmentDirectory, includingPropertiesForKeys: nil) else {
-            return []
+    /// Perform a single non-following discovery walk of the capture hierarchy.
+    private func discover() -> DiscoverySnapshot {
+        var candidatesByDay: [String: [DiscoveredCandidate]] = [:]
+        var firstFailure: Error?
+
+        func recordFailure(_ error: Error) {
+            if firstFailure == nil {
+                firstFailure = error
+                Logger.upload.info("Discovery incomplete: \(error.localizedDescription, privacy: .public)")
+            } else {
+                Logger.upload.info("Discovery encountered additional error: \(error.localizedDescription, privacy: .public)")
+            }
         }
 
-        let segment = segmentDirectory.lastPathComponent
-
-        var result: [URL] = []
-
-        for file in files {
-            let name = file.lastPathComponent
-            guard IngestAcknowledgment.isUploadMediaName(name, segment: segment),
-                  IngestLocalFileVersion.read(file) != nil else { continue }
-            result.append(file)
+        let dateURLs: [URL]
+        do {
+            dateURLs = try listDirectory(storageManager.baseDirectory)
+        } catch {
+            recordFailure(error)
+            return DiscoverySnapshot(candidatesByDay: [:], failure: firstFailure)
         }
 
-        return result
-    }
-
-    // MARK: - Segment Collection
-
-    /// Collect segments grouped by day (YYYYMMDD format)
-    /// Returns segments sorted newest to oldest within each day
-    private func collectSegmentsByDay() -> [String: [URL]] {
-        let fm = FileManager.default
-        var segmentsByDay: [String: [URL]] = [:]
-
-        guard let dateDirs = try? fm.contentsOfDirectory(
-            at: storageManager.baseDirectory,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return [:]
-        }
-
-        for dateDir in dateDirs {
-            var isDirectory: ObjCBool = false
-            guard fm.fileExists(atPath: dateDir.path, isDirectory: &isDirectory),
-                  isDirectory.boolValue else {
+        for dateURL in dateURLs {
+            let dateKind: DiscoveredEntryKind
+            do {
+                dateKind = try classifyEntry(dateURL)
+            } catch {
+                recordFailure(error)
                 continue
             }
 
-            // Convert date folder to server format (YYYY-MM-DD -> YYYYMMDD)
-            let dayFolder = dateDir.lastPathComponent
+            guard dateKind == .directory else { continue }
+
+            let dayFolder = dateURL.lastPathComponent
             let day = dayFolder.replacingOccurrences(of: "-", with: "")
 
-            guard let segmentDirs = try? fm.contentsOfDirectory(
-                at: dateDir,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) else {
+            let segmentURLs: [URL]
+            do {
+                segmentURLs = try listDirectory(dateURL)
+            } catch {
+                recordFailure(error)
                 continue
             }
 
-            var segments: [URL] = []
-            for segmentDir in segmentDirs {
-                isDirectory = false
-                guard fm.fileExists(atPath: segmentDir.path, isDirectory: &isDirectory),
-                      isDirectory.boolValue else {
+            var candidatesForDay: [DiscoveredCandidate] = []
+            for segmentURL in segmentURLs {
+                let segmentKind: DiscoveredEntryKind
+                do {
+                    segmentKind = try classifyEntry(segmentURL)
+                } catch {
+                    recordFailure(error)
                     continue
                 }
 
-                // Skip incomplete and failed segments
-                let dirName = segmentDir.lastPathComponent
+                guard segmentKind == .directory else { continue }
+
+                let dirName = segmentURL.lastPathComponent
                 if dirName.hasSuffix(".incomplete") || dirName.hasSuffix(".failed") {
                     continue
                 }
 
-                segments.append(segmentDir)
+                let segment = dirName
+                let fileURLs: [URL]
+                do {
+                    fileURLs = try listDirectory(segmentURL)
+                } catch {
+                    recordFailure(error)
+                    continue
+                }
+
+                var mediaFiles: [URL] = []
+                for fileURL in fileURLs {
+                    let name = fileURL.lastPathComponent
+                    guard IngestAcknowledgment.isUploadMediaName(name, segment: segment) else {
+                        continue
+                    }
+                    let fileKind: DiscoveredEntryKind
+                    do {
+                        fileKind = try classifyEntry(fileURL)
+                    } catch {
+                        recordFailure(error)
+                        continue
+                    }
+                    if fileKind == .regularFile {
+                        mediaFiles.append(fileURL)
+                    }
+                }
+
+                candidatesForDay.append(DiscoveredCandidate(
+                    day: day,
+                    segmentURL: segmentURL,
+                    media: mediaFiles
+                ))
             }
 
-            if !segments.isEmpty {
+            if !candidatesForDay.isEmpty {
                 // Sort segments newest to oldest (descending by path/name)
-                segmentsByDay[day] = segments.sorted { $0.path > $1.path }
+                candidatesByDay[day] = candidatesForDay.sorted { $0.segmentURL.path > $1.segmentURL.path }
             }
         }
 
-        return segmentsByDay
+        return DiscoverySnapshot(candidatesByDay: candidatesByDay, failure: firstFailure)
     }
 
     /// Convert local segment path to server format
@@ -834,15 +898,15 @@ public actor SyncService {
     /// Never deletes sidecars, metadata, source audio, or segment/date directories.
     private func cleanupSyncedSegments(
         context: JournalUploadContext,
-        reconciledDays: [String: [String: ServerSegmentInfo]]
+        reconciledDays: [String: [String: ServerSegmentInfo]],
+        candidatesByDay: [String: [DiscoveredCandidate]]
     ) async -> Bool {
         guard cacheRetentionDays >= 0 else {
             Logger.upload.info("Cache retention: keep forever, skipping cleanup")
             return true
         }
 
-        let segmentsByDay = collectSegmentsByDay()
-        guard !segmentsByDay.isEmpty else { return true }
+        guard !candidatesByDay.isEmpty else { return true }
 
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
@@ -854,7 +918,7 @@ public actor SyncService {
         // custody after the journal may have changed.
         var serverSegmentsCache = reconciledDays
 
-        for (day, segments) in segmentsByDay.sorted(by: { $0.key < $1.key }) {
+        for (day, candidates) in candidatesByDay.sorted(by: { $0.key < $1.key }) {
             // Gate 1: age check
             guard let dayDate = dateFormatter.date(from: day) else {
                 Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - cannot parse date")
@@ -885,7 +949,8 @@ public actor SyncService {
             let serverByKey = serverSegmentsCache[day] ?? [:]
 
             // Gate 3 & 4: per-segment acknowledgment and per-file proof
-            for segmentURL in segments {
+            for candidate in candidates {
+                let segmentURL = candidate.segmentURL
                 let (_, segment) = convertSegmentPath(segmentURL)
 
                 let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
@@ -898,7 +963,7 @@ public actor SyncService {
                 }
 
                 let metadataState = readSegmentMetadata(segmentURL: segmentURL, segment: segment)
-                let localMedia = selectFilesForUpload(segmentDirectory: segmentURL)
+                let localMedia = candidate.media
                 guard metadataState != .unreadable,
                       !segmentNeedsUpload(
                         segmentURL: segmentURL, day: day, segment: segment,
@@ -965,7 +1030,7 @@ public actor SyncService {
         guard let context = journalContext, !syncPaused else {
             throw UploadError.invalidResponse
         }
-        let filesToUpload = selectFilesForUpload(segmentDirectory: segmentURL)
+        let filesToUpload = selectFilesForUploadLive(segmentDirectory: segmentURL)
         guard !filesToUpload.isEmpty else {
             throw UploadError.noFiles
         }
@@ -1004,6 +1069,25 @@ public actor SyncService {
             throw UploadError.invalidResponse
         }
         return file
+    }
+
+    private func selectFilesForUploadLive(segmentDirectory: URL) -> [URL] {
+        let files: [URL]
+        do {
+            files = try listDirectory(segmentDirectory)
+        } catch {
+            return []
+        }
+        let segment = segmentDirectory.lastPathComponent
+        var result: [URL] = []
+        for file in files {
+            let name = file.lastPathComponent
+            guard IngestAcknowledgment.isUploadMediaName(name, segment: segment) else { continue }
+            if let kind = try? classifyEntry(file), kind == .regularFile {
+                result.append(file)
+            }
+        }
+        return result
     }
 #endif
 }
