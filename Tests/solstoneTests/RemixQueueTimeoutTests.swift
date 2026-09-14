@@ -32,6 +32,7 @@ struct RemixQueueTimeoutTests {
         switch result {
         case .normal: #expect(!orphan)
         case .recovered: #expect(orphan)
+        case .audioLoss: Issue.record("Audio-only media had unexpected audioLoss")
         case .failed: Issue.record("Audio-only media failed reconciliation")
         }
         let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
@@ -712,6 +713,17 @@ struct RemixQueueTimeoutTests {
         return Int(CMTimeGetSeconds(duration))
     }
 
+    private func makeInput(url: URL, sourceID: String) -> AudioRemixerInput {
+        AudioRemixerInput(
+            url: url,
+            timingInfo: AudioTrackTimingInfo(
+                startOffset: .zero,
+                endOffset: CMTime(seconds: 1, preferredTimescale: 600),
+                trackType: sourceID == "system" ? .systemAudio : .microphone(name: sourceID, deviceUID: sourceID)
+            )
+        )
+    }
+
     private func segmentDirectories(in root: URL) throws -> [String] {
         try FileManager.default.contentsOfDirectory(atPath: root.path)
     }
@@ -724,5 +736,439 @@ struct RemixQueueTimeoutTests {
             return nil
         }
         return root.appendingPathComponent(name, isDirectory: true)
+    }
+
+    @Test func liveTruncatedInputsWithMicsFinalizesScreenOnlyAndMergesMetadata() async throws {
+        let root = try makeTempDirectory("remix-live-truncated-mics")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let screen = dir.appendingPathComponent("120000_display_1_screen.mp4")
+        try Data("video".utf8).write(to: screen)
+
+        let first = dir.appendingPathComponent("120000_audio_first.m4a")
+        let second = dir.appendingPathComponent("120000_audio_second.m4a")
+        try corruptM4A(at: first)
+        try corruptM4A(at: second)
+
+        let micsJSON = "{\"mics\":[{\"device_name\":\"BuiltInMic\",\"device_uid\":\"second\",\"sample_rate\":48000,\"transport_type\":\"builtin\"}]}"
+        let recordingRemixer = RecordingRemixer()
+        let queue = RemixQueue { _, _ in recordingRemixer }
+        let outcome = LockedValue<SegmentReconciliation>()
+        await queue.setOnSegmentComplete { _, reconciliation in
+            outcome.set(reconciliation)
+        }
+
+        let job = RemixQueue.RemixJob(
+            segmentDirectory: dir,
+            timePrefix: "120000",
+            capturedDurationSeconds: 1,
+            audioInputs: [
+                makeInput(url: first, sourceID: "first"),
+                makeInput(url: second, sourceID: "second"),
+            ],
+            debugKeepRejected: false,
+            silenceMusic: true,
+            micMetadataJSON: micsJSON
+        )
+
+        await queue.enqueue(job)
+        await queue.waitForCompletion()
+
+        let thrown = recordingRemixer.thrown
+        guard let remixerError = thrown as? AudioRemixerError else {
+            Issue.record("expected AudioRemixerError, got: \(String(describing: thrown))")
+            return
+        }
+        if case .noTracksToWrite = remixerError {
+            Issue.record("truncated polarity must not be noTracksToWrite")
+        }
+        guard case .unreadableSources(let sourceIDs) = remixerError else {
+            Issue.record("expected unreadableSources, got: \(remixerError)")
+            return
+        }
+        #expect(Set(sourceIDs) == Set(["first", "second"]))
+
+        let reconciliation = try #require(outcome.current)
+        guard case .audioLoss(let count) = reconciliation else {
+            Issue.record("expected .audioLoss, got: \(reconciliation)")
+            return
+        }
+        #expect(count == 2)
+
+        let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
+        let files = try FileManager.default.contentsOfDirectory(at: finalDir, includingPropertiesForKeys: nil)
+        #expect(files.contains { $0.lastPathComponent == "\(finalDir.lastPathComponent)_display_1_screen.mp4" })
+        #expect(!files.contains { $0.lastPathComponent.hasSuffix("_audio.m4a") })
+
+        let metaURL = finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_meta.json")
+        #expect(FileManager.default.fileExists(atPath: metaURL.path))
+        let metaData = try Data(contentsOf: metaURL)
+        let meta = try #require(try JSONSerialization.jsonObject(with: metaData) as? [String: Any])
+        #expect(meta["mics"] != nil)
+        let loss = try #require(meta["unreadable_audio_sources"] as? [String: Any])
+        #expect(loss["count"] as? Int == 2)
+        #expect(Set(loss["source_ids"] as? [String] ?? []) == Set(["first", "second"]))
+    }
+
+    @Test func liveTruncatedInputsWithoutMicsWritesLossOnlyMetadata() async throws {
+        let root = try makeTempDirectory("remix-live-truncated-no-mics")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let screen = dir.appendingPathComponent("120000_display_1_screen.mp4")
+        try Data("video".utf8).write(to: screen)
+
+        let first = dir.appendingPathComponent("120000_audio_first.m4a")
+        let second = dir.appendingPathComponent("120000_audio_second.m4a")
+        try corruptM4A(at: first)
+        try corruptM4A(at: second)
+
+        let recordingRemixer = RecordingRemixer()
+        let queue = RemixQueue { _, _ in recordingRemixer }
+        let outcome = LockedValue<SegmentReconciliation>()
+        await queue.setOnSegmentComplete { _, reconciliation in
+            outcome.set(reconciliation)
+        }
+
+        let job = RemixQueue.RemixJob(
+            segmentDirectory: dir,
+            timePrefix: "120000",
+            capturedDurationSeconds: 1,
+            audioInputs: [
+                makeInput(url: first, sourceID: "first"),
+                makeInput(url: second, sourceID: "second"),
+            ],
+            debugKeepRejected: false,
+            silenceMusic: true,
+            micMetadataJSON: nil
+        )
+
+        await queue.enqueue(job)
+        await queue.waitForCompletion()
+
+        let reconciliation = try #require(outcome.current)
+        guard case .audioLoss(let count) = reconciliation else {
+            Issue.record("expected .audioLoss, got: \(reconciliation)")
+            return
+        }
+        #expect(count == 2)
+
+        let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
+        let metaURL = finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_meta.json")
+        #expect(FileManager.default.fileExists(atPath: metaURL.path))
+        let metaData = try Data(contentsOf: metaURL)
+        let meta = try #require(try JSONSerialization.jsonObject(with: metaData) as? [String: Any])
+        #expect(meta["mics"] == nil)
+        let loss = try #require(meta["unreadable_audio_sources"] as? [String: Any])
+        #expect(loss["count"] as? Int == 2)
+        #expect(Set(loss["source_ids"] as? [String] ?? []) == Set(["first", "second"]))
+    }
+
+    @Test func liveTruncatedInputsWithMalformedMicsWritesValidLossMetadata() async throws {
+        let root = try makeTempDirectory("remix-live-truncated-bad-mics")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let screen = dir.appendingPathComponent("120000_display_1_screen.mp4")
+        try Data("video".utf8).write(to: screen)
+
+        let first = dir.appendingPathComponent("120000_audio_first.m4a")
+        try corruptM4A(at: first)
+
+        let recordingRemixer = RecordingRemixer()
+        let queue = RemixQueue { _, _ in recordingRemixer }
+        let outcome = LockedValue<SegmentReconciliation>()
+        await queue.setOnSegmentComplete { _, reconciliation in
+            outcome.set(reconciliation)
+        }
+
+        let job = RemixQueue.RemixJob(
+            segmentDirectory: dir,
+            timePrefix: "120000",
+            capturedDurationSeconds: 1,
+            audioInputs: [makeInput(url: first, sourceID: "first")],
+            debugKeepRejected: false,
+            silenceMusic: true,
+            micMetadataJSON: "{ not valid json"
+        )
+
+        await queue.enqueue(job)
+        await queue.waitForCompletion()
+
+        let reconciliation = try #require(outcome.current)
+        guard case .audioLoss(let count) = reconciliation else {
+            Issue.record("expected .audioLoss, got: \(reconciliation)")
+            return
+        }
+        #expect(count == 1)
+
+        let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
+        let metaURL = finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_meta.json")
+        #expect(FileManager.default.fileExists(atPath: metaURL.path))
+        let metaData = try Data(contentsOf: metaURL)
+        let meta = try #require(try JSONSerialization.jsonObject(with: metaData) as? [String: Any])
+        let loss = try #require(meta["unreadable_audio_sources"] as? [String: Any])
+        #expect(loss["count"] as? Int == 1)
+        #expect(loss["source_ids"] as? [String] == ["first"])
+    }
+
+    @Test func bothLiveAndReconstructionUnreadableSourcesReachNamedDisposition() async throws {
+        let root = try makeTempDirectory("remix-both-arms-unreadable")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Live arm
+        let liveDir = try makeDir(root: root, name: "120000.incomplete")
+        let liveScreen = liveDir.appendingPathComponent("120000_display_1_screen.mp4")
+        try Data("video".utf8).write(to: liveScreen)
+        let liveAudio = liveDir.appendingPathComponent("120000_audio_system.m4a")
+        try corruptM4A(at: liveAudio)
+
+        let liveRemixer = RecordingRemixer()
+        let liveQueue = RemixQueue { _, _ in liveRemixer }
+        let liveOutcome = LockedValue<SegmentReconciliation>()
+        await liveQueue.setOnSegmentComplete { _, reconciliation in
+            liveOutcome.set(reconciliation)
+        }
+
+        await liveQueue.enqueue(RemixQueue.RemixJob(
+            segmentDirectory: liveDir,
+            timePrefix: "120000",
+            capturedDurationSeconds: 1,
+            audioInputs: [makeInput(url: liveAudio, sourceID: "system")],
+            debugKeepRejected: false,
+            silenceMusic: true,
+            micMetadataJSON: nil
+        ))
+        await liveQueue.waitForCompletion()
+
+        let liveRec = try #require(liveOutcome.current)
+        guard case .audioLoss(let liveCount) = liveRec else {
+            Issue.record("Live arm expected .audioLoss, got: \(liveRec)")
+            return
+        }
+        #expect(liveCount == 1)
+        let liveFinalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
+        #expect(FileManager.default.fileExists(atPath: liveFinalDir.appendingPathComponent("\(liveFinalDir.lastPathComponent)_meta.json").path))
+
+        // Reconstruction arm
+        let reconDir = try makeDir(root: root, name: "120500.incomplete")
+        let tempMP4 = root.appendingPathComponent("temp_recon_video.mp4")
+        try await makeTinyValidMP4(at: tempMP4, seconds: 1.2)
+        let reconScreen = reconDir.appendingPathComponent("120500_display_1_screen.mp4")
+        try FileManager.default.copyItem(at: tempMP4, to: reconScreen)
+
+        let reconAudio = reconDir.appendingPathComponent("120500_audio_system.m4a")
+        try FileManager.default.copyItem(at: tempMP4, to: reconAudio)
+
+        let reconFiles = try FileManager.default.contentsOfDirectory(at: reconDir, includingPropertiesForKeys: nil)
+        let readiness = await classifyAudioSources(in: reconFiles, timePrefix: "120500", verbose: false)
+        guard case .ready(let reconInputs) = readiness else {
+            Issue.record("classifyAudioSources must return .ready for video-only container named audio.m4a, got: \(readiness)")
+            return
+        }
+        #expect(reconInputs.count == 1)
+
+        let reconRemixer = RecordingRemixer()
+        let reconQueue = RemixQueue { _, _ in reconRemixer }
+        let reconOutcome = LockedValue<SegmentReconciliation>()
+        await reconQueue.setOnSegmentComplete { _, reconciliation in
+            reconOutcome.set(reconciliation)
+        }
+
+        await reconQueue.enqueue(RemixQueue.RemixJob(
+            segmentDirectory: reconDir,
+            timePrefix: "120500",
+            capturedDurationSeconds: nil,
+            audioInputs: [],
+            debugKeepRejected: false,
+            silenceMusic: true,
+            micMetadataJSON: nil
+        ))
+        await reconQueue.waitForCompletion()
+
+        let reconRec = try #require(reconOutcome.current)
+        guard case .audioLoss(let reconCount) = reconRec else {
+            Issue.record("Reconstruction arm expected .audioLoss, got: \(reconRec)")
+            return
+        }
+        #expect(reconCount == 1)
+
+        let reconFinalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120500"))
+        let reconMetaURL = reconFinalDir.appendingPathComponent("\(reconFinalDir.lastPathComponent)_meta.json")
+        #expect(FileManager.default.fileExists(atPath: reconMetaURL.path))
+        let reconMetaData = try Data(contentsOf: reconMetaURL)
+        let reconMeta = try #require(try JSONSerialization.jsonObject(with: reconMetaData) as? [String: Any])
+        let reconLoss = try #require(reconMeta["unreadable_audio_sources"] as? [String: Any])
+        #expect(reconLoss["count"] as? Int == 1)
+        #expect(reconLoss["source_ids"] as? [String] == ["system"])
+    }
+
+    @Test func mixedTruncatedAndSilentInputsThrowsUnreadableSourcesAndFinalizes() async throws {
+        let root = try makeTempDirectory("remix-mixed-truncated-silent")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let screen = dir.appendingPathComponent("120000_display_1_screen.mp4")
+        try Data("video".utf8).write(to: screen)
+
+        let badAudio = dir.appendingPathComponent("120000_audio_bad.m4a")
+        let silentAudio = dir.appendingPathComponent("120000_audio_silent.m4a")
+        try corruptM4A(at: badAudio)
+        try await makeTinyValidM4A(at: silentAudio, seconds: 1.2)
+
+        let recordingRemixer = RecordingRemixer()
+        let queue = RemixQueue { _, _ in recordingRemixer }
+        let outcome = LockedValue<SegmentReconciliation>()
+        await queue.setOnSegmentComplete { _, reconciliation in
+            outcome.set(reconciliation)
+        }
+
+        let job = RemixQueue.RemixJob(
+            segmentDirectory: dir,
+            timePrefix: "120000",
+            capturedDurationSeconds: 1,
+            audioInputs: [
+                makeInput(url: badAudio, sourceID: "bad-source"),
+                makeInput(url: silentAudio, sourceID: "silent-source"),
+            ],
+            debugKeepRejected: false,
+            silenceMusic: true,
+            micMetadataJSON: nil
+        )
+
+        await queue.enqueue(job)
+        await queue.waitForCompletion()
+
+        let thrown = recordingRemixer.thrown
+        guard let remixerError = thrown as? AudioRemixerError else {
+            Issue.record("expected AudioRemixerError, got: \(String(describing: thrown))")
+            return
+        }
+        if case .noTracksToWrite = remixerError {
+            Issue.record("mixed truncated+silent must not throw noTracksToWrite")
+        }
+        guard case .unreadableSources(let sourceIDs) = remixerError else {
+            Issue.record("expected unreadableSources, got: \(remixerError)")
+            return
+        }
+        #expect(sourceIDs == ["bad-source"])
+
+        let reconciliation = try #require(outcome.current)
+        guard case .audioLoss(let count) = reconciliation else {
+            Issue.record("expected .audioLoss, got: \(reconciliation)")
+            return
+        }
+        #expect(count == 1)
+
+        let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
+        let metaURL = finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_meta.json")
+        #expect(FileManager.default.fileExists(atPath: metaURL.path))
+        let metaData = try Data(contentsOf: metaURL)
+        let meta = try #require(try JSONSerialization.jsonObject(with: metaData) as? [String: Any])
+        let loss = try #require(meta["unreadable_audio_sources"] as? [String: Any])
+        #expect(loss["count"] as? Int == 1)
+        #expect(loss["source_ids"] as? [String] == ["bad-source"])
+    }
+
+    @Test func systemAudioAnalyzerReportsNoSpeechOnSilentFixture() async throws {
+        let root = try makeTempDirectory("analyzer-silent-fixture")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let silentAudio = root.appendingPathComponent("silent.m4a")
+        try await makeTinyValidM4A(at: silentAudio, seconds: 1.2)
+
+        let result = await SystemAudioAnalyzer.shared.analyze(url: silentAudio)
+        #expect(!result.hasSpeech, "SystemAudioAnalyzer must report hasSpeech == false on silent fixture")
+    }
+
+    @Test func realRemixerWithSilentSourcesThrowsNoTracksToWriteAndFinalizesWithoutLossMeta() async throws {
+        let root = try makeTempDirectory("remix-real-silent-sources")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let screen = dir.appendingPathComponent("120000_display_1_screen.mp4")
+        try Data("video".utf8).write(to: screen)
+
+        let silentFirst = dir.appendingPathComponent("120000_audio_first.m4a")
+        let silentSecond = dir.appendingPathComponent("120000_audio_second.m4a")
+        try await makeTinyValidM4A(at: silentFirst, seconds: 1.2)
+        try await makeTinyValidM4A(at: silentSecond, seconds: 1.2)
+
+        let recordingRemixer = RecordingRemixer()
+        let queue = RemixQueue { _, _ in recordingRemixer }
+        let outcome = LockedValue<SegmentReconciliation>()
+        await queue.setOnSegmentComplete { _, reconciliation in
+            outcome.set(reconciliation)
+        }
+
+        let job = RemixQueue.RemixJob(
+            segmentDirectory: dir,
+            timePrefix: "120000",
+            capturedDurationSeconds: 1,
+            audioInputs: [
+                makeInput(url: silentFirst, sourceID: "first"),
+                makeInput(url: silentSecond, sourceID: "second"),
+            ],
+            debugKeepRejected: false,
+            silenceMusic: true,
+            micMetadataJSON: nil
+        )
+
+        await queue.enqueue(job)
+        await queue.waitForCompletion()
+
+        let thrown = recordingRemixer.thrown
+        guard let remixerError = thrown as? AudioRemixerError else {
+            Issue.record("expected AudioRemixerError, got: \(String(describing: thrown))")
+            return
+        }
+        guard case .noTracksToWrite = remixerError else {
+            Issue.record("expected noTracksToWrite for purely silent inputs, got: \(remixerError)")
+            return
+        }
+
+        let reconciliation = try #require(outcome.current)
+        guard case .normal = reconciliation else {
+            Issue.record("expected .normal for purely silent inputs, got: \(reconciliation)")
+            return
+        }
+
+        let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
+        let metaURL = finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_meta.json")
+        #expect(!FileManager.default.fileExists(atPath: metaURL.path))
+    }
+}
+
+final class RecordingRemixer: AudioRemixing, @unchecked Sendable {
+    private let inner: AudioRemixer
+    private let lock = NSLock()
+    private var _thrown: (any Error)?
+
+    init(verbose: Bool = false, debugKeepRejected: Bool = false) {
+        self.inner = AudioRemixer(verbose: verbose, debugKeepRejected: debugKeepRejected)
+    }
+
+    var thrown: (any Error)? {
+        lock.withLock { _thrown }
+    }
+
+    func remix(
+        inputs: [AudioRemixerInput],
+        to outputURL: URL,
+        deleteSourceFiles: Bool,
+        silenceMusic: Bool
+    ) async throws -> AudioRemixerResult {
+        do {
+            return try await inner.remix(
+                inputs: inputs,
+                to: outputURL,
+                deleteSourceFiles: deleteSourceFiles,
+                silenceMusic: silenceMusic
+            )
+        } catch {
+            lock.withLock { _thrown = error }
+            throw error
+        }
     }
 }

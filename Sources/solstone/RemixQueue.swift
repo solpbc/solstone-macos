@@ -32,6 +32,7 @@ public protocol TerminationDraining: Sendable {
 public enum SegmentReconciliation: Sendable {
     case normal
     case recovered(Int)
+    case audioLoss(Int)
     case failed(String)
 }
 
@@ -205,6 +206,7 @@ public actor RemixQueue {
         // Create output with final name directly (no rename needed)
         let audioOutputURL = job.segmentDirectory.appendingPathComponent("\(segmentKey)_audio.m4a")
         var reconciliation: SegmentReconciliation = .normal
+        var unreadableSourceIDs: [String]?
 
         if !job.audioInputs.isEmpty {
             do {
@@ -218,6 +220,10 @@ public actor RemixQueue {
                     )
                 }
                 Logger.storage.info("Remix complete: \(result.tracksWritten, privacy: .public) tracks, \(result.tracksSkipped, privacy: .public) skipped")
+            } catch AudioRemixerError.unreadableSources(let sourceIDs) {
+                Logger.storage.error("audio source(s) unreadable for \(job.timePrefix, privacy: .public): \(sourceIDs.joined(separator: ", "), privacy: .public); finalizing screen-only with loss record")
+                reconciliation = .audioLoss(sourceIDs.count)
+                unreadableSourceIDs = sourceIDs
             } catch AudioRemixerError.noTracksToWrite {
                 Logger.storage.info("No audio tracks to write (all silent)")
             } catch is TimeoutError {
@@ -254,6 +260,10 @@ public actor RemixQueue {
                         }
                         Logger.storage.info("reconstruction recovered \(result.tracksWritten, privacy: .public) track(s) for \(job.timePrefix, privacy: .public)")
                         reconciliation = .recovered(result.tracksWritten)
+                    } catch AudioRemixerError.unreadableSources(let sourceIDs) {
+                        Logger.storage.error("reconstruction audio source(s) unreadable for \(job.timePrefix, privacy: .public): \(sourceIDs.joined(separator: ", "), privacy: .public); finalizing screen-only with loss record")
+                        reconciliation = .audioLoss(sourceIDs.count)
+                        unreadableSourceIDs = sourceIDs
                     } catch AudioRemixerError.noTracksToWrite {
                         Logger.storage.info("reconstruction found all sources silent for \(job.timePrefix, privacy: .public); finalizing screen-only")
                     } catch {
@@ -263,7 +273,7 @@ public actor RemixQueue {
                         return
                     }
                 case .unreadable:
-                    Logger.storage.error("audio source(s) present but unreadable for \(job.timePrefix, privacy: .public); marking segment failed (closes req_3f7idhvd)")
+                    Logger.storage.error("audio source(s) present but unreadable for \(job.timePrefix, privacy: .public); marking segment failed")
                     await markIncompleteSegmentAsFailed(job.segmentDirectory)
                     await onSegmentComplete?(job.segmentDirectory, .failed("audio sources unreadable; segment preserved for recovery"))
                     return
@@ -271,16 +281,13 @@ public actor RemixQueue {
             }
         }
 
-        // Write metadata file if we have mic metadata
-        if let metadataJSON = job.micMetadataJSON {
-            let metaURL = job.segmentDirectory.appendingPathComponent("\(segmentKey)_meta.json")
-            do {
-                try metadataJSON.write(to: metaURL, atomically: true, encoding: .utf8)
-                if false { Logger.storage.debug("Wrote metadata file: \(metaURL.lastPathComponent, privacy: .public)") }
-            } catch {
-                Logger.storage.warning("Failed to write metadata file: \(error, privacy: .public)")
-            }
-        }
+        // Write metadata file if we have mic metadata or audio loss
+        writeMetadataIfNeeded(
+            segmentDirectory: job.segmentDirectory,
+            segmentKey: segmentKey,
+            micMetadataJSON: job.micMetadataJSON,
+            unreadableSourceIDs: unreadableSourceIDs
+        )
 
         // Rename segment files to include duration
         do {
@@ -318,6 +325,53 @@ public actor RemixQueue {
             await onSegmentComplete?(finalDirectory, reconciliation)
         } catch {
             Logger.storage.warning("Failed to rename segment directory: \(error, privacy: .public)")
+        }
+    }
+
+    private func writeMetadataIfNeeded(
+        segmentDirectory: URL,
+        segmentKey: String,
+        micMetadataJSON: String?,
+        unreadableSourceIDs: [String]?
+    ) {
+        let metaURL = segmentDirectory.appendingPathComponent("\(segmentKey)_meta.json")
+
+        if let sourceIDs = unreadableSourceIDs {
+            let lossDict: [String: Any] = [
+                "count": sourceIDs.count,
+                "source_ids": sourceIDs,
+            ]
+
+            var rootDict: [String: Any] = [
+                "unreadable_audio_sources": lossDict,
+            ]
+
+            if let micJSON = micMetadataJSON {
+                if let data = micJSON.data(using: .utf8),
+                   let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                {
+                    for (k, v) in parsed {
+                        if k != "unreadable_audio_sources" {
+                            rootDict[k] = v
+                        }
+                    }
+                } else {
+                    Logger.storage.warning("Malformed micMetadataJSON for \(segmentKey, privacy: .public); writing loss metadata without mics")
+                }
+            }
+
+            do {
+                let data = try JSONSerialization.data(withJSONObject: rootDict, options: [.sortedKeys])
+                try data.write(to: metaURL, options: .atomic)
+            } catch {
+                Logger.storage.warning("Failed to write metadata file with loss key: \(error, privacy: .public)")
+            }
+        } else if let metadataJSON = micMetadataJSON {
+            do {
+                try metadataJSON.write(to: metaURL, atomically: true, encoding: .utf8)
+            } catch {
+                Logger.storage.warning("Failed to write metadata file: \(error, privacy: .public)")
+            }
         }
     }
 }

@@ -22,11 +22,12 @@ struct AudioRemixerTests {
 
         let result = await filterReadableAudioInputs([goodInput, corruptInput])
 
-        #expect(result.skippedUnreadable == 1)
+        #expect(result.unreadable.count == 1)
+        #expect(result.unreadable.map(\.url) == [corrupt])
         #expect(result.readable.map(\.url) == [good])
     }
 
-    @Test func remixWithOnlyUnreadableInputsThrowsNoTracksToWrite() async throws {
+    @Test func remixWithOnlyUnreadableInputsThrowsUnreadableSources() async throws {
         let root = try makeTempDirectory("audio-remixer-unreadable")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -47,8 +48,11 @@ struct AudioRemixerTests {
                 to: output,
                 deleteSourceFiles: false
             )
-            Issue.record("expected noTracksToWrite")
+            Issue.record("expected unreadableSources")
         } catch AudioRemixerError.noTracksToWrite {
+            Issue.record("must not be noTracksToWrite")
+        } catch AudioRemixerError.unreadableSources(let sourceIDs) {
+            #expect(sourceIDs == ["first", "second"])
             #expect(!FileManager.default.fileExists(atPath: output.path))
         } catch {
             Issue.record("unexpected error: \(error)")

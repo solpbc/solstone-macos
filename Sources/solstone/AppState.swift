@@ -945,6 +945,8 @@ public final class AppState {
                         case .recovered:
                             self.audioReconciledCount += 1
                             self.uploadCoordinator.triggerSync()
+                        case .audioLoss:
+                            self.uploadCoordinator.triggerSync()
                         case .failed(let message):
                             self.errorMessage = message
                         }

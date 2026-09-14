@@ -19,22 +19,22 @@ public struct AudioRemixerInput: Sendable {
     }
 }
 
-internal func filterReadableAudioInputs(_ inputs: [AudioRemixerInput]) async -> (readable: [AudioRemixerInput], skippedUnreadable: Int) {
+internal func filterReadableAudioInputs(_ inputs: [AudioRemixerInput]) async -> (readable: [AudioRemixerInput], unreadable: [AudioRemixerInput]) {
     var readable: [AudioRemixerInput] = []
-    var skippedUnreadable = 0
+    var unreadable: [AudioRemixerInput] = []
 
     for input in inputs {
         let tracks = try? await AVURLAsset(url: input.url).loadTracks(withMediaType: .audio)
         guard let tracks, !tracks.isEmpty else {
             Logger.audio.warning("Unreadable audio source skipped: \(input.url.lastPathComponent, privacy: .public)")
-            skippedUnreadable += 1
+            unreadable.append(input)
             continue
         }
 
         readable.append(input)
     }
 
-    return (readable, skippedUnreadable)
+    return (readable, unreadable)
 }
 
 /// Result of the remix operation
@@ -103,7 +103,7 @@ public final class AudioRemixer: Sendable {
         // Filter inputs - skip tracks with no audio or no speech
         let filterStart = ContinuousClock.now
         var tracksToProcess: [(input: AudioRemixerInput, asset: AVURLAsset)] = []
-        var skippedCount = readableInputs.skippedUnreadable
+        var skippedCount = readableInputs.unreadable.count
         // Silence ranges for system audio tracks (keyed by index in tracksToProcess)
         var silenceRangesMap: [Int: [CMTimeRange]] = [:]
 
@@ -149,6 +149,9 @@ public final class AudioRemixer: Sendable {
         Logger.audio.info("Speech analysis completed in \(filterDuration.formatted(.units(allowed: [.seconds, .milliseconds])), privacy: .public): \(tracksToProcess.count, privacy: .public) to process, \(skippedCount, privacy: .public) skipped")
 
         guard !tracksToProcess.isEmpty else {
+            if !readableInputs.unreadable.isEmpty {
+                throw AudioRemixerError.unreadableSources(sourceIDs: readableInputs.unreadable.map(\.timingInfo.trackType.sourceID))
+            }
             throw AudioRemixerError.noTracksToWrite
         }
 
@@ -177,16 +180,32 @@ public final class AudioRemixer: Sendable {
             startOffset: CMTime,
             trackType: AudioTrackType
         )] = []
+        var writeSideUnreadableIDs: [String] = []
 
         for (input, asset) in tracksToProcess {
-            let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+            let audioTracks: [AVAssetTrack]
+            do {
+                audioTracks = try await asset.loadTracks(withMediaType: .audio)
+            } catch {
+                Logger.audio.warning("Failed to load audio tracks in \(input.url.lastPathComponent, privacy: .public): \(error, privacy: .public)")
+                writeSideUnreadableIDs.append(input.timingInfo.trackType.sourceID)
+                continue
+            }
             guard let sourceTrack = audioTracks.first else {
                 Logger.audio.warning("No audio track in: \(input.url.lastPathComponent, privacy: .public)")
+                writeSideUnreadableIDs.append(input.timingInfo.trackType.sourceID)
                 continue
             }
 
             // Create reader
-            let assetReader = try AVAssetReader(asset: asset)
+            let assetReader: AVAssetReader
+            do {
+                assetReader = try AVAssetReader(asset: asset)
+            } catch {
+                Logger.audio.warning("Failed to create AVAssetReader for \(input.url.lastPathComponent, privacy: .public): \(error, privacy: .public)")
+                writeSideUnreadableIDs.append(input.timingInfo.trackType.sourceID)
+                continue
+            }
 
             // Create reader output with PCM decode
             let readerOutput = AVAssetReaderTrackOutput(
@@ -201,6 +220,10 @@ public final class AudioRemixer: Sendable {
 
             if assetReader.canAdd(readerOutput) {
                 assetReader.add(readerOutput)
+            } else {
+                Logger.audio.warning("Cannot add reader output for \(input.url.lastPathComponent, privacy: .public)")
+                writeSideUnreadableIDs.append(input.timingInfo.trackType.sourceID)
+                continue
             }
 
             // Create writer input
@@ -216,11 +239,19 @@ public final class AudioRemixer: Sendable {
                     startOffset: input.timingInfo.startOffset,
                     trackType: input.timingInfo.trackType
                 ))
+            } else {
+                Logger.audio.warning("Cannot add writer input for \(input.url.lastPathComponent, privacy: .public)")
+                writeSideUnreadableIDs.append(input.timingInfo.trackType.sourceID)
+                continue
             }
         }
 
         guard !trackPairs.isEmpty else {
-            throw AudioRemixerError.noTracksToWrite
+            var combinedIDs = readableInputs.unreadable.map(\.timingInfo.trackType.sourceID)
+            for id in writeSideUnreadableIDs where !combinedIDs.contains(id) {
+                combinedIDs.append(id)
+            }
+            throw AudioRemixerError.unreadableSources(sourceIDs: combinedIDs)
         }
 
         // Start all readers
@@ -399,6 +430,7 @@ public final class AudioRemixer: Sendable {
 public enum AudioRemixerError: Error, LocalizedError {
     case noInputs
     case noTracksToWrite
+    case unreadableSources(sourceIDs: [String])
     case failedToStartReader(Error?)
     case failedToStartWriter(Error?)
     case writeFailed(Error?)
@@ -409,6 +441,8 @@ public enum AudioRemixerError: Error, LocalizedError {
             return "No input files provided"
         case .noTracksToWrite:
             return "No tracks to write after filtering"
+        case let .unreadableSources(sourceIDs):
+            return "\(sourceIDs.count) audio source(s) unreadable: \(sourceIDs.joined(separator: ", "))"
         case let .failedToStartReader(error):
             return "Failed to start reader: \(error?.localizedDescription ?? "unknown error")"
         case let .failedToStartWriter(error):
