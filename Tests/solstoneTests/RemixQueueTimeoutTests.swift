@@ -653,6 +653,160 @@ struct RemixQueueTimeoutTests {
         #expect(await queue.inFlightPaths().isEmpty)
     }
 
+    @Test func orphanWithMultipleScreenFilesStampsFromLexicallyFirstNotLongest() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-lexical-first")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_2_screen.mp4"))
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        let probed = LockedArray<String>([])
+        let completionCount = LockedCounter()
+        let completedOutcome = LockedValue<SegmentReconciliation>()
+        let queue = RemixQueue(
+            durationLoader: { url in
+                probed.append(url.lastPathComponent)
+                switch url.lastPathComponent {
+                case "120000_display_2_screen.mp4":
+                    return CMTime(seconds: 12, preferredTimescale: 600)
+                case "120000_display_42_screen.mp4":
+                    return CMTime(seconds: 300, preferredTimescale: 600)
+                default:
+                    throw SyntheticRemixError()
+                }
+            }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+        await queue.setOnSegmentComplete { _, reconciliation in
+            completedOutcome.set(reconciliation)
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_12", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+    }
+
+    @Test func orphanLexicalFirstScreenProbeThrowFailsWithoutFallbackToSecondScreenFile() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-lexical-no-fallback")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_2_screen.mp4"))
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        let probed = LockedArray<String>([])
+        let completionCount = LockedCounter()
+        let completedOutcome = LockedValue<SegmentReconciliation>()
+        let queue = RemixQueue(
+            durationLoader: { url in
+                probed.append(url.lastPathComponent)
+                switch url.lastPathComponent {
+                case "120000_display_2_screen.mp4":
+                    throw SyntheticRemixError()
+                case "120000_display_42_screen.mp4":
+                    return CMTime(seconds: 300, preferredTimescale: 600)
+                default:
+                    throw SyntheticRemixError()
+                }
+            }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+        await queue.setOnSegmentComplete { _, reconciliation in
+            completedOutcome.set(reconciliation)
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: failedDir.path))
+        #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
+        #expect(probed.all.contains("120000_display_2_screen.mp4"))
+        #expect(!probed.all.contains("120000_display_42_screen.mp4"))
+        #expect(completionCount.count == 0)
+    }
+
+    @MainActor
+    @Test func orphanCompletingNonFiniteDurationProbeStampsCeilingWithoutFailure() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-invalid-cmtime-ceiling")
+        let previousDuration = SegmentWriter.segmentDuration
+        SegmentWriter.segmentDuration = 300
+        defer {
+            SegmentWriter.segmentDuration = previousDuration
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        let completionCount = LockedCounter()
+        let completedOutcome = LockedValue<SegmentReconciliation>()
+        let queue = RemixQueue(
+            durationLoader: { _ in CMTime.invalid }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+        await queue.setOnSegmentComplete { _, reconciliation in
+            completedOutcome.set(reconciliation)
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        let outcome = try #require(completedOutcome.current)
+        if case .failed = outcome {
+            Issue.record("Expected non-failed reconciliation")
+        }
+    }
+
+    @Test func liveShapedUnreadableAudioDiscardsRecoverableVideoIntoFailed() async throws {
+        let root = try makeTempDirectory("remix-queue-live-unreadable-preserves-video")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try corruptM4A(at: dir.appendingPathComponent("120000_audio_system.m4a"))
+        let recoverableVideo = Data("recoverable-screen-video".utf8)
+        try recoverableVideo.write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        // .success is the trap-guard: .failed is reachable here ONLY via correct .unreadable
+        // classification. A wrong .unreadable->.ready impl would finalize _NNN and fail this test.
+        let fakeRemixer = FakeRemixer(.success)
+        let completionCount = LockedCounter()
+        let completedOutcome = LockedValue<SegmentReconciliation>()
+        let queue = RemixQueue { _, _ in fakeRemixer }
+        await queue.setOnSegmentComplete { _, reconciliation in
+            completedOutcome.set(reconciliation)
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000"))
+
+        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
+        await queue.waitForCompletion()
+
+        #expect(fakeRemixer.remixCount.count == 0)
+        #expect(FileManager.default.fileExists(atPath: failedDir.path))
+        #expect(!FileManager.default.fileExists(atPath: dir.path))
+        #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
+        #expect(try Data(contentsOf: failedDir.appendingPathComponent("120000_display_42_screen.mp4")) == recoverableVideo)
+        #expect(completionCount.count == 1)
+        let outcome = try #require(completedOutcome.current)
+        guard case .failed = outcome else {
+            Issue.record("Expected failed reconciliation")
+            return
+        }
+    }
+
     private func makeDir(root: URL, name: String) throws -> URL {
         let dir = root.appendingPathComponent(name, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
