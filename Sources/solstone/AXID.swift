@@ -219,6 +219,7 @@ enum AXID {
             static let diagnosticsLastJournalConnectionTimestamp = "settings.help.diagnostics.lastJournalConnection.timestamp.state"
             static let diagnosticsIngestReasonRow = "settings.help.diagnostics.ingestReason.row"
             static let diagnosticsIngestRouteRow = "settings.help.diagnostics.ingestRoute.row"
+            static let diagnosticsJournalLinkRow = "settings.help.diagnostics.journalLink.row"
             static let diagnosticsRecentStateCodesRow = "settings.help.diagnostics.recentStateCodes.row"
             static let iconStateRecording = "settings.help.iconState.recording"
             static let iconStateOffline = "settings.help.iconState.offline"

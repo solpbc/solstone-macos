@@ -151,6 +151,18 @@ public enum UICopy {
     public static let SETTINGS_DIAGNOSTICS_LAST_JOURNAL_CONNECTION = "last journal connection"
     public static let SETTINGS_DIAGNOSTICS_INGEST_REASON = "journal intake"
     public static let SETTINGS_DIAGNOSTICS_INGEST_ROUTE = "journal intake address"
+    public static let SETTINGS_DIAGNOSTICS_JOURNAL_LINK = "journal link"
+    public static let SETTINGS_DIAGNOSTICS_NO_LINK_REFUSALS = "nothing turned away or ended early"
+    public static func diagnosticsStreamLimitRefused(count: Int, last: String) -> String {
+        "your journal turned away \(count) requests at its limit · last \(last)"
+    }
+    // ⛔ Never "lost the connection": this line exists only because the journal
+    // sent a reset, which it can only do over a live link. Saying the
+    // connection dropped would print the misleading symptom back as the
+    // diagnosis, which is the failure this row was added to end.
+    public static func diagnosticsStreamDropped(count: Int, last: String) -> String {
+        "your journal ended \(count) requests early · last \(last)"
+    }
     public static let SETTINGS_DIAGNOSTICS_RECENT_STATE_CODES = "recent state codes"
     public static let SETTINGS_DIAGNOSTICS_GRANTED = "granted"
     public static let SETTINGS_DIAGNOSTICS_NOT_GRANTED = "not granted"

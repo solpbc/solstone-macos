@@ -259,6 +259,7 @@ final class TunnelLifecycleOwner {
         clientInfo: SPLClientInfo = SPLRuntime.clientInfo,
         tokenRefresher: TunnelDeviceTokenRefreshing? = nil,
         makeTransport: (@MainActor @Sendable () -> any TunnelTransporting)? = nil,
+        onPeerStreamReset: PeerStreamResetObserver? = nil,
         pathMonitoringSource: (any PathMonitoringSource)? = nil,
         probe: @escaping @Sendable (Int, Duration) async -> Bool = TunnelLifecycleOwner.httpStatusProbe(localPort:timeout:),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
@@ -276,7 +277,9 @@ final class TunnelLifecycleOwner {
         self.savePairing = savePairing ?? { try store.save($0) }
         self.deletePairing = deletePairing ?? { try store.delete() }
         self.tokenRefresher = tokenRefresher ?? .live(clientInfo: clientInfo)
-        self.makeTransport = makeTransport ?? { SPLTunnelTransport(clientInfo: clientInfo) }
+        self.makeTransport = makeTransport ?? {
+            SPLTunnelTransport(clientInfo: clientInfo, onPeerStreamReset: onPeerStreamReset)
+        }
         self.pathMonitor = pathMonitoringSource.map { PathMonitor(source: $0) } ?? PathMonitor()
         self.probe = probe
         self.sleep = sleep

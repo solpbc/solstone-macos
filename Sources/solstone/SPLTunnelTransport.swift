@@ -4,6 +4,16 @@
 import Foundation
 import SPLTunnel
 
+/// Which durable observation a peer stream reset earns.
+///
+/// `streamLimitExceeded` is the journal telling us its carrier already holds as
+/// many concurrent streams as it admits. Every other reason is some form of the
+/// stream dying, which is what an owner already assumes when an upload fails —
+/// so both are recorded, and only the pair makes the distinction readable.
+internal func diagnosticEvidenceCode(forPeerStreamReset reason: ResetReason) -> DiagnosticEvidenceCode {
+    reason == .streamLimitExceeded ? .tunnelStreamLimitRefused : .tunnelStreamReset
+}
+
 enum TunnelConnectionRoute: Sendable, Equatable {
     case lan
     case relay
@@ -97,6 +107,7 @@ final class SPLTunnelTransport: TunnelTransporting {
 
     private let clientInfo: SPLClientInfo
     private let policy: SessionPolicy
+    private let onPeerStreamReset: PeerStreamResetObserver?
     private let makeSession: @Sendable (StoredPairing, SPLClientInfo, SessionPolicy) -> any TunnelReconnecting
 
     private var generation: UInt64 = 0
@@ -109,12 +120,14 @@ final class SPLTunnelTransport: TunnelTransporting {
     init(
         clientInfo: SPLClientInfo = SPLRuntime.clientInfo,
         policy: SessionPolicy = SessionPolicy(keepalive: KeepalivePolicy(runsOnRelayPath: true)),
+        onPeerStreamReset: PeerStreamResetObserver? = nil,
         makeSession: @escaping @Sendable (StoredPairing, SPLClientInfo, SessionPolicy) -> any TunnelReconnecting = {
             TunnelSupervisor(pairing: $0, clientInfo: $1, policy: $2)
         }
     ) {
         self.clientInfo = clientInfo
         self.policy = policy
+        self.onPeerStreamReset = onPeerStreamReset
         self.makeSession = makeSession
     }
 
@@ -136,7 +149,11 @@ final class SPLTunnelTransport: TunnelTransporting {
             throw CancellationError()
         }
         connectionMode = mode
-        let proxy = LoopbackProxy(opener: session)
+        // A refused stream leaves the carrier up and reaches URLSession as a
+        // bare -1005, so the observer is the only thing that can tell an owner
+        // afterwards which of the two happened. The proxy is rebuilt on every
+        // reconnect, so its own counters cannot carry that across one.
+        let proxy = LoopbackProxy(opener: session, onPeerStreamReset: onPeerStreamReset)
         self.proxy = proxy
         onLocalProxyStart?(true)
         defer { onLocalProxyStart?(false) }

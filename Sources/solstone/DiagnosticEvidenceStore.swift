@@ -31,6 +31,13 @@ internal enum DiagnosticEvidenceCode: String, Codable, Equatable, Sendable, Case
     case terminationDrainTimeout = "termination.drain_timeout"
     case deliveryWriteFailed = "delivery.write_failed"
     case syncSegmentUnprovable = "sync.segment_unprovable"
+    // The journal refused a stream because the carrier's concurrent-stream
+    // budget was already full. It reaches URLSession as -1005, the same code a
+    // genuine network loss produces, so without this the two are one symptom.
+    case tunnelStreamLimitRefused = "tunnel.stream_limit_refused"
+    // Any other reason the journal reset a tunnel stream. Recorded so the code
+    // above means something: a lone flag cannot be read as a distinction.
+    case tunnelStreamReset = "tunnel.stream_reset"
 }
 
 internal struct DiagnosticEvidenceEntry: Equatable, Sendable {

@@ -3504,6 +3504,8 @@ struct SettingsView: View {
             return AXID.Settings.Help.diagnosticsIngestReasonRow
         case .ingestRoute:
             return AXID.Settings.Help.diagnosticsIngestRouteRow
+        case .journalLink:
+            return AXID.Settings.Help.diagnosticsJournalLinkRow
         case .recentStateCodes:
             return AXID.Settings.Help.diagnosticsRecentStateCodesRow
         }

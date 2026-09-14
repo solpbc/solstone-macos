@@ -108,6 +108,7 @@
       "settings.help.diagnostics.disclosure",
       "settings.help.diagnostics.ingestReason.row",
       "settings.help.diagnostics.ingestRoute.row",
+      "settings.help.diagnostics.journalLink.row",
       "settings.help.diagnostics.lastDelivery.row",
       "settings.help.diagnostics.lastDelivery.state",
       "settings.help.diagnostics.lastDelivery.timestamp.state",

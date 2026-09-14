@@ -13,6 +13,7 @@ internal enum DiagnosticReportRowID: CaseIterable, Hashable, Sendable {
     case lastJournalConnection
     case ingestReason
     case ingestRoute
+    case journalLink
     case recentStateCodes
 }
 
@@ -127,6 +128,11 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
             id: .ingestRoute,
             label: UICopy.SETTINGS_DIAGNOSTICS_INGEST_ROUTE,
             value: diagnosticIngestTokenValue(input.ingestRoute)
+        ),
+        DiagnosticReportRow(
+            id: .journalLink,
+            label: UICopy.SETTINGS_DIAGNOSTICS_JOURNAL_LINK,
+            value: diagnosticJournalLinkValue(input.evidence)
         ),
         DiagnosticReportRow(
             id: .recentStateCodes,
@@ -292,6 +298,35 @@ internal func diagnosticEvidenceValue(_ read: DiagnosticEvidenceRead) -> String 
             "\(entry.code.rawValue) · first \(diagnosticUTCString(entry.firstAt)) · last \(diagnosticUTCString(entry.lastAt)) · repeat \(entry.repeatCount)"
         }.joined(separator: "\n")
     }
+}
+
+/// Says, in a sentence, whether the journal has been refusing this Mac's
+/// streams — the one failure that is otherwise indistinguishable from the
+/// network dropping, because both arrive as `url_error_-1005`.
+///
+/// Read from the persisted evidence rather than the live tunnel: the tunnel's
+/// own counters restart on every reconnect, which is exactly the moment an
+/// owner goes looking.
+internal func diagnosticJournalLinkValue(_ read: DiagnosticEvidenceRead) -> String {
+    guard case .available(let envelope) = read else {
+        return UICopy.SETTINGS_DIAGNOSTICS_COULD_NOT_CHECK
+    }
+    let refusals = envelope.entries.first { $0.code == .tunnelStreamLimitRefused }
+    let resets = envelope.entries.first { $0.code == .tunnelStreamReset }
+    var clauses: [String] = []
+    if let refusals {
+        clauses.append(UICopy.diagnosticsStreamLimitRefused(
+            count: refusals.repeatCount,
+            last: diagnosticUTCString(refusals.lastAt)
+        ))
+    }
+    if let resets {
+        clauses.append(UICopy.diagnosticsStreamDropped(
+            count: resets.repeatCount,
+            last: diagnosticUTCString(resets.lastAt)
+        ))
+    }
+    return clauses.isEmpty ? UICopy.SETTINGS_DIAGNOSTICS_NO_LINK_REFUSALS : clauses.joined(separator: "\n")
 }
 
 internal func diagnosticUTCString(_ date: Date) -> String {

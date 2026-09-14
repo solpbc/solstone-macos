@@ -824,7 +824,15 @@ public final class AppState {
         let splCredentialStore = PairingCredentialStore(store: splKeychainStore)
         let tunnelLifecycleOwner = TunnelLifecycleOwner(
             credentialStore: splCredentialStore,
-            clientInfo: splClientInfo
+            clientInfo: splClientInfo,
+            // Write the refusal down where the owner can read it back. The
+            // observer runs on the tunnel's own teardown path, so it hands off
+            // to the main actor and returns rather than doing work there.
+            onPeerStreamReset: { [recorder] reason in
+                Task { @MainActor in
+                    recorder.enqueue(diagnosticEvidenceCode(forPeerStreamReset: reason))
+                }
+            }
         )
         self.tunnelLifecycleOwner = tunnelLifecycleOwner
         self.pairingCoordinator = PairingCoordinator(

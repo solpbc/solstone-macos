@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import SPLTunnel
 import Testing
 @testable import solstone
 
@@ -9,7 +10,7 @@ import Testing
 struct DiagnosticReportTests {
     private let now = Date(timeIntervalSince1970: 1_000)
 
-    @Test func reportUsesOnlyTheSevenFixedRowsAndDeterministicEvidence() throws {
+    @Test func reportUsesOnlyTheFixedRowsAndDeterministicEvidence() throws {
         let report = buildDiagnosticReport(input(
             evidence: .available(DiagnosticEvidenceEnvelope(
                 schemaVersion: DiagnosticEvidenceEnvelope.currentSchemaVersion,
@@ -34,6 +35,7 @@ struct DiagnosticReportTests {
         last journal connection: just now
         journal intake: http_404
         journal intake address: /app/devices/ingest/manifest
+        journal link: nothing turned away or ended early
         recent state codes: app.launch · first 1970-01-01T00:15:00.000Z · last 1970-01-01T00:15:50.000Z · repeat 3
         """)
         #expect(report.screenRecordingState == .granted)
@@ -156,6 +158,68 @@ struct DiagnosticReportTests {
             activeGeneration: 2,
             diagnosticsExpanded: false
         ))
+    }
+
+    @Test func aStreamLimitRefusalAndATransportDeathReadDifferentlyToTheOwner() {
+        // The whole item: both arrive as url_error_-1005, so the owner-reachable
+        // diagnostic is the only place the two can be told apart.
+        let refused = journalLinkValue(for: .tunnelStreamLimitRefused)
+        let dropped = journalLinkValue(for: .tunnelStreamReset)
+
+        #expect(refused == "your journal turned away 4 requests at its limit · last 1970-01-01T00:15:50.000Z")
+        #expect(dropped == "your journal ended 4 requests early · last 1970-01-01T00:15:50.000Z")
+        #expect(refused != dropped)
+    }
+
+    @Test func aLinkThatHasRefusedNothingSaysSoRatherThanGoingBlank() {
+        // The negative control. An empty row would read the same as a row whose
+        // producer never ran, which is the failure mode this item exists to fix.
+        #expect(diagnosticJournalLinkValue(.available(DiagnosticEvidenceEnvelope(
+            schemaVersion: DiagnosticEvidenceEnvelope.currentSchemaVersion,
+            entries: []
+        ))) == "nothing turned away or ended early")
+        #expect(diagnosticJournalLinkValue(.unavailable) == "couldn't check")
+    }
+
+    @Test func bothRefusalClassesAreReportedTogetherWhenBothHappened() {
+        let value = diagnosticJournalLinkValue(.available(DiagnosticEvidenceEnvelope(
+            schemaVersion: DiagnosticEvidenceEnvelope.currentSchemaVersion,
+            entries: [
+                entry(.tunnelStreamReset, repeatCount: 2),
+                entry(.tunnelStreamLimitRefused, repeatCount: 9)
+            ]
+        )))
+        // Refusals lead regardless of entry order: it is the actionable one.
+        #expect(value == """
+        your journal turned away 9 requests at its limit · last 1970-01-01T00:15:50.000Z
+        your journal ended 2 requests early · last 1970-01-01T00:15:50.000Z
+        """)
+    }
+
+    @Test func everyPeerResetReasonMapsToExactlyOneEvidenceCode() {
+        #expect(diagnosticEvidenceCode(forPeerStreamReset: .streamLimitExceeded) == .tunnelStreamLimitRefused)
+        for other in [ResetReason.protocolError, .flowControlError, .internalError, .cancel, .unspecified] {
+            #expect(diagnosticEvidenceCode(forPeerStreamReset: other) == .tunnelStreamReset)
+        }
+    }
+
+    private func journalLinkValue(for code: DiagnosticEvidenceCode) -> String {
+        let report = buildDiagnosticReport(input(
+            evidence: .available(DiagnosticEvidenceEnvelope(
+                schemaVersion: DiagnosticEvidenceEnvelope.currentSchemaVersion,
+                entries: [entry(code, repeatCount: 4)]
+            ))
+        ))
+        return report.rows.first { $0.id == .journalLink }?.value ?? ""
+    }
+
+    private func entry(_ code: DiagnosticEvidenceCode, repeatCount: Int) -> DiagnosticEvidenceEntry {
+        DiagnosticEvidenceEntry(
+            code: code,
+            firstAt: Date(timeIntervalSince1970: 900),
+            lastAt: Date(timeIntervalSince1970: 950),
+            repeatCount: repeatCount
+        )
     }
 
     private func input(

@@ -158,6 +158,7 @@ enum AXContract {
         AXID.Settings.Help.diagnosticsLastJournalConnectionTimestamp,
         AXID.Settings.Help.diagnosticsIngestReasonRow,
         AXID.Settings.Help.diagnosticsIngestRouteRow,
+        AXID.Settings.Help.diagnosticsJournalLinkRow,
         AXID.Settings.Help.diagnosticsRecentStateCodesRow,
         AXID.Settings.Help.iconStateRecording,
         AXID.Settings.Help.iconStateOffline,
