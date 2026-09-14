@@ -29,8 +29,9 @@ enum UploadResult: Sendable {
 }
 
 struct UploadSuccessInfo: Sendable, Equatable {
-    let status: IngestProtocolV3.UploadStatus
-    let storedSegmentKey: String
+    let response: IngestProtocolV3.UploadResponse
+    var status: IngestProtocolV3.UploadStatus { response.status }
+    var storedSegmentKey: String { response.storedSegmentKey }
 }
 
 /// Upload errors
@@ -237,7 +238,64 @@ public struct UploadClient: Sendable {
 
     // MARK: - Upload
 
-    /// Upload a segment to the server
+    /// Prepares the multipart upload request and staging file once.
+    func prepareUpload(
+        serverURL: String = "http://127.0.0.1",
+        day: String,
+        segment: String,
+        mediaFiles: [URL],
+        metadata: [String: IngestJSONValue]?,
+        boundary: String = UUID().uuidString,
+        bodyURL: URL
+    ) throws -> PreparedIngestV3Upload {
+        guard !mediaFiles.isEmpty else {
+            throw UploadError.noFiles
+        }
+        return try IngestV3UploadRequestBuilder.build(
+            baseURL: serverURL,
+            day: day,
+            segment: segment,
+            selectedFiles: mediaFiles,
+            meta: metadata,
+            boundary: boundary,
+            bodyURL: bodyURL
+        )
+    }
+
+    /// Uploads an already staged body file and validates the complete response.
+    func uploadStaged(
+        prepared: PreparedIngestV3Upload
+    ) async -> UploadResult {
+        do {
+            let (data, response) = try await session.upload(for: prepared.request, fromFile: prepared.bodyURL)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return .failure(UploadError.invalidResponse)
+            }
+
+            Logger.upload.info("Response: HTTP \(httpResponse.statusCode, privacy: .public) bytes=\(data.count, privacy: .public)")
+
+            if (200...299).contains(httpResponse.statusCode) {
+                let parsed = try JSONDecoder().decode(IngestProtocolV3.UploadResponse.self, from: data)
+                guard parsed.validate(
+                    stagedFiles: prepared.stagedParts,
+                    stagedMeta: prepared.metadata,
+                    submittedSegment: prepared.submittedSegment
+                ) else {
+                    Logger.upload.error("Upload response validation failed against staged parts/meta")
+                    return .failure(UploadError.invalidResponse)
+                }
+                return .success(UploadSuccessInfo(response: parsed))
+            } else {
+                let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+                return .failure(UploadError.serverError(statusCode: httpResponse.statusCode, message: errorMessage))
+            }
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// Upload a segment to the server (convenience wrapper for standalone tests)
     func uploadSegment(
         serverURL: String,
         day: String,
@@ -254,39 +312,24 @@ public struct UploadClient: Sendable {
         let fileNames = mediaFiles.map { $0.lastPathComponent }.joined(separator: ", ")
         Logger.upload.info("POST day=\(day, privacy: .public) segment=\(segment, privacy: .public) files=[\(fileNames, privacy: .public)]")
         let tempURL = fm.temporaryDirectory.appendingPathComponent("upload-\(UUID().uuidString).tmp")
+        defer { try? fm.removeItem(at: tempURL) }
 
         do {
-            let prepared = try IngestV3UploadRequestBuilder.build(
-                baseURL: serverURL,
+            let prepared = try prepareUpload(
+                serverURL: serverURL,
                 day: day,
                 segment: segment,
-                selectedFiles: mediaFiles,
-                meta: metadata,
+                mediaFiles: mediaFiles,
+                metadata: metadata,
                 boundary: boundary,
                 bodyURL: tempURL
             )
-            defer { try? fm.removeItem(at: tempURL) }
 
             let totalSize = try fm.attributesOfItem(atPath: tempURL.path)[.size] as? Int ?? 0
             Logger.upload.info("Total request body: \(totalSize, privacy: .public) bytes")
 
-            let (data, response) = try await session.upload(for: prepared.request, fromFile: prepared.bodyURL)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                return .failure(UploadError.invalidResponse)
-            }
-
-            Logger.upload.info("Response: HTTP \(httpResponse.statusCode, privacy: .public) bytes=\(data.count, privacy: .public)")
-
-            if (200...299).contains(httpResponse.statusCode) {
-                let parsed = try JSONDecoder().decode(IngestProtocolV3.UploadResponse.self, from: data)
-                return .success(UploadSuccessInfo(status: parsed.status, storedSegmentKey: parsed.storedSegmentKey))
-            } else {
-                let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-                return .failure(UploadError.serverError(statusCode: httpResponse.statusCode, message: errorMessage))
-            }
+            return await uploadStaged(prepared: prepared)
         } catch {
-            try? fm.removeItem(at: tempURL)
             return .failure(error)
         }
     }

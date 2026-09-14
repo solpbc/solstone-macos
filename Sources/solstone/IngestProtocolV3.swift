@@ -205,14 +205,85 @@ enum IngestProtocolV3 {
         }
     }
 
+    enum UploadFileDisposition: Codable, Sendable, Equatable {
+        case written
+        case alreadyHeld
+        case receivedNotWritten
+        case outOfContract(String)
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            switch raw {
+            case "written": self = .written
+            case "already_held": self = .alreadyHeld
+            case "received_not_written": self = .receivedNotWritten
+            default: self = .outOfContract(raw)
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            switch self {
+            case .written: try container.encode("written")
+            case .alreadyHeld: try container.encode("already_held")
+            case .receivedNotWritten: try container.encode("received_not_written")
+            case .outOfContract(let value): try container.encode(value)
+            }
+        }
+    }
+
+    struct UploadFileDescriptor: Codable, Sendable, Equatable {
+        let submitted: String
+        let written: String
+        let size: UInt64
+        let sha256: String
+        let disposition: UploadFileDisposition
+
+        enum CodingKeys: String, CodingKey {
+            case submitted
+            case written
+            case size
+            case sha256
+            case disposition
+        }
+    }
+
     struct UploadResponse: Decodable, Sendable, Equatable {
         let status: UploadStatus
         let storedSegmentKey: String
+        let segmentOriginal: String?
+        let fileDescriptors: [UploadFileDescriptor]
+        let meta: [String: IngestJSONValue]
+        let files: [String]?
+        let bytes: UInt64?
 
         private enum CodingKeys: String, CodingKey {
             case status
             case segment
             case existingSegment = "existing_segment"
+            case segmentOriginal = "segment_original"
+            case fileDescriptors = "file_descriptors"
+            case meta
+            case files
+            case bytes
+        }
+
+        init(
+            status: UploadStatus,
+            storedSegmentKey: String,
+            segmentOriginal: String? = nil,
+            fileDescriptors: [UploadFileDescriptor] = [],
+            meta: [String: IngestJSONValue] = [:],
+            files: [String]? = nil,
+            bytes: UInt64? = nil
+        ) {
+            self.status = status
+            self.storedSegmentKey = storedSegmentKey
+            self.segmentOriginal = segmentOriginal
+            self.fileDescriptors = fileDescriptors
+            self.meta = meta
+            self.files = files
+            self.bytes = bytes
         }
 
         init(from decoder: Decoder) throws {
@@ -221,7 +292,71 @@ enum IngestProtocolV3 {
             let keyName: CodingKeys = status == .duplicate ? .existingSegment : .segment
             storedSegmentKey = try values.decode(String.self, forKey: keyName)
             guard !storedSegmentKey.isEmpty else { throw UploadError.invalidResponse }
+            segmentOriginal = try values.decodeIfPresent(String.self, forKey: .segmentOriginal)
+            if status == .collision {
+                guard let segmentOriginal, !segmentOriginal.isEmpty else {
+                    throw UploadError.invalidResponse
+                }
+            }
+            fileDescriptors = try values.decode([UploadFileDescriptor].self, forKey: .fileDescriptors)
+            meta = try values.decode([String: IngestJSONValue].self, forKey: .meta)
+            files = try values.decodeIfPresent([String].self, forKey: .files)
+            bytes = try values.decodeIfPresent(UInt64.self, forKey: .bytes)
         }
+
+        func validate(
+            stagedFiles: [IngestAcknowledgedFileProof],
+            stagedMeta: [String: IngestJSONValue]?,
+            submittedSegment: String
+        ) -> Bool {
+            guard IngestProtocolV3.isSafePathComponent(storedSegmentKey),
+                  IngestProtocolV3.isSafePathComponent(submittedSegment),
+                  Set(stagedFiles.map(\.submitted)).count == stagedFiles.count else { return false }
+            if status == .ok && storedSegmentKey != submittedSegment { return false }
+            if status == .collision {
+                guard segmentOriginal == submittedSegment else { return false }
+            }
+            guard !fileDescriptors.isEmpty, fileDescriptors.count == stagedFiles.count else {
+                return false
+            }
+
+            var descriptorBySubmitted: [String: UploadFileDescriptor] = [:]
+            for descriptor in fileDescriptors {
+                guard IngestProtocolV3.isSafePathComponent(descriptor.submitted),
+                      IngestProtocolV3.isSafePathComponent(descriptor.written),
+                      descriptorBySubmitted[descriptor.submitted] == nil else {
+                    return false
+                }
+                descriptorBySubmitted[descriptor.submitted] = descriptor
+            }
+
+            for staged in stagedFiles {
+                guard let descriptor = descriptorBySubmitted[staged.submitted] else {
+                    return false
+                }
+                guard descriptor.sha256 == staged.sha256,
+                      descriptor.size == staged.size else {
+                    return false
+                }
+                guard descriptor.disposition == .written || descriptor.disposition == .alreadyHeld else {
+                    return false
+                }
+            }
+
+            let expectedMeta = stagedMeta ?? [:]
+            guard meta == expectedMeta else {
+                return false
+            }
+
+            return true
+        }
+    }
+
+    static func isSafePathComponent(_ value: String) -> Bool {
+        !value.isEmpty && value != "." && value != ".."
+            && !value.contains("/")
+            && value.utf8.allSatisfy { $0 >= 32 && $0 != 127 }
+            && (value as NSString).lastPathComponent == value
     }
 
     private static func validateFiles(_ files: [ReadFile]) throws {

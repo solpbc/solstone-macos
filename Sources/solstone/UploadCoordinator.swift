@@ -311,15 +311,14 @@ public final class UploadCoordinator {
         }
     }
 
-    /// Force a full re-sync, clearing cached synced days
+    /// Force a sync
     public func forceFullSync() {
         guard automaticSyncEnabled, isPairedIngestReady else {
             return
         }
 
         Task {
-            await syncService.clearSyncedDaysCache()
-            await syncService.sync(forceFullSync: true)
+            await syncService.sync()
         }
     }
 

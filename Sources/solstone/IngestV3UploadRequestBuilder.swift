@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import CryptoKit
 import Foundation
 
 struct PreparedIngestV3Upload: Sendable {
-    let request: URLRequest
+    var request: URLRequest
     let bodyURL: URL
+    let stagedParts: [IngestAcknowledgedFileProof]
+    let submittedSegment: String
+    let metadata: [String: IngestJSONValue]?
 }
 
 /// Builds the v3 multipart request independently from HTTP. The caller owns the
@@ -72,6 +76,8 @@ struct IngestV3UploadRequestBuilder {
         let bodyHandle = try FileHandle(forWritingTo: bodyURL)
         defer { try? bodyHandle.close() }
 
+        var stagedParts: [IngestAcknowledgedFileProof] = []
+
         try bodyHandle.writeMultipartField(boundary: boundary, name: "envelope", value: envelopeString)
         for fileURL in selectedFiles {
             let filename = fileURL.lastPathComponent
@@ -83,13 +89,27 @@ struct IngestV3UploadRequestBuilder {
                 mimeType: mimeType
             )
 
+            var hasher = SHA256()
+            var partSize: UInt64 = 0
             let sourceHandle = try FileHandle(forReadingFrom: fileURL)
             defer { try? sourceHandle.close() }
+            let sourceVersion = IngestLocalFileVersion.read(fileDescriptor: sourceHandle.fileDescriptor)
             while true {
                 let chunk = sourceHandle.readData(ofLength: 1_024 * 1_024)
                 if chunk.isEmpty { break }
+                hasher.update(data: chunk)
+                partSize += UInt64(chunk.count)
                 try bodyHandle.write(contentsOf: chunk)
             }
+            let digest = hasher.finalize()
+            let hex = digest.map { String(format: "%02x", $0) }.joined()
+            let unchangedSource = sourceVersion != nil
+                && sourceVersion == IngestLocalFileVersion.read(fileDescriptor: sourceHandle.fileDescriptor)
+                && sourceVersion == IngestLocalFileVersion.read(fileURL)
+            stagedParts.append(IngestAcknowledgedFileProof(
+                submitted: filename, sha256: hex, size: partSize,
+                localVersion: unchangedSource ? sourceVersion : nil
+            ))
             try bodyHandle.write(contentsOf: Data("\r\n".utf8))
         }
         try bodyHandle.write(contentsOf: Data("--\(boundary)--\r\n".utf8))
@@ -104,7 +124,10 @@ struct IngestV3UploadRequestBuilder {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(IngestProtocolV3.headerValue, forHTTPHeaderField: IngestProtocolV3.headerName)
-        return PreparedIngestV3Upload(request: request, bodyURL: bodyURL)
+        return PreparedIngestV3Upload(
+            request: request, bodyURL: bodyURL, stagedParts: stagedParts,
+            submittedSegment: segment, metadata: meta
+        )
     }
 }
 

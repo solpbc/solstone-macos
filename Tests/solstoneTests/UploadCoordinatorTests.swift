@@ -328,6 +328,11 @@ struct UploadCoordinatorTests {
         store.enqueue(statusCode: 200, body: #"{"days":{"\#(day)":{"segments":1}}}"#)
         store.enqueue(statusCode: 200, body: #"{"version":1,"day":"\#(day)","segments":{"\#(segment.url.lastPathComponent)":{"files":[{"name":"audio.m4a","submitted_name":"\#(filename)","sha256":"\#(sha)","size":5,"status":"present"}]}}}"#)
         store.enqueue(statusCode: 200, body: #"{"protocol_version":3,"total":1,"items":[{"key":"\#(segment.url.lastPathComponent)","observed":true,"files":[{"name":"audio.m4a","submitted_name":"\#(filename)","sha256":"\#(sha)","size":5,"status":"present"}]}]}"#)
+        store.enqueue(statusCode: 200, body: completeUploadResponseJSON(
+            status: "ok",
+            segment: segment.url.lastPathComponent,
+            descriptors: [(filename, filename, 5, sha, "written")]
+        ))
         let pairing = TunnelPairingIdentity(instanceID: "instance", fingerprint: "fingerprint")
         let coordinator = UploadCoordinator(
             storageManager: StorageManager(baseDirectory: root),
@@ -341,12 +346,15 @@ struct UploadCoordinatorTests {
         let syncTask = Task {
             await coordinator.syncOnStartup()
         }
-        await store.waitForRequestCount(3)
+        await store.waitForRequestCount(4)
         await syncTask.value
 
         let request = try #require(store.snapshotRequests().first)
         #expect(request.httpMethod == "GET")
         #expect(request.url?.path == IngestProtocolV3.manifestPath)
+        let uploadReq = try #require(store.snapshotRequests().last)
+        #expect(uploadReq.httpMethod == "POST")
+        #expect(uploadReq.url?.path == IngestProtocolV3.uploadPath)
     }
 
     @Test func nonDeliveryEventsNeverCreateDeliveryFact() throws {

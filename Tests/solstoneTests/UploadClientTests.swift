@@ -157,17 +157,92 @@ struct UploadClientTests {
     }
 
     @Test func uploadAcceptsOnlyDocumentedSuccessBodies() async throws {
-        let ok = try await uploadResult(body: #"{"status":"ok","segment":"120000_300"}"#)
-        #expect(ok == UploadSuccessInfo(status: .ok, storedSegmentKey: "120000_300"))
-        let duplicate = try await uploadResult(body: #"{"status":"duplicate","existing_segment":"115959_300"}"#)
-        #expect(duplicate == UploadSuccessInfo(status: .duplicate, storedSegmentKey: "115959_300"))
-        let collision = try await uploadResult(body: #"{"status":"collision","segment":"120000_300"}"#)
-        #expect(collision == UploadSuccessInfo(status: .collision, storedSegmentKey: "120000_300"))
+        let sha = "6ed8919ce20490a5e3ad8630a4fab69475297abd07db73918dd5f36fcfaeb11b"
+        let okBody = completeUploadResponseJSON(
+            status: "ok",
+            segment: "120000_300",
+            descriptors: [("120000_300_audio.m4a", "120000_300_audio.m4a", 5, sha, "written")]
+        )
+        let ok = try await uploadResult(body: okBody)
+        #expect(ok.status == .ok)
+        #expect(ok.storedSegmentKey == "120000_300")
 
-        for body in ["", "not-json", #"{"status":"failed","error":"no"}"#, #"{"status":"conflict","error":"no"}"#, #"{"status":"unknown","segment":"120000_300"}"#, #"{"status":"ok"}"#] {
+        let duplicateBody = completeUploadResponseJSON(
+            status: "duplicate",
+            existingSegment: "115959_300",
+            descriptors: [("120000_300_audio.m4a", "115959_300_audio.m4a", 5, sha, "already_held")]
+        )
+        let duplicate = try await uploadResult(body: duplicateBody)
+        #expect(duplicate.status == .duplicate)
+        #expect(duplicate.storedSegmentKey == "115959_300")
+
+        let collisionBody = completeUploadResponseJSON(
+            status: "collision",
+            segment: "120001_300",
+            segmentOriginal: "120000_300",
+            descriptors: [("120000_300_audio.m4a", "120000_300_audio.m4a", 5, sha, "written")]
+        )
+        let collision = try await uploadResult(body: collisionBody)
+        #expect(collision.status == .collision)
+        #expect(collision.storedSegmentKey == "120001_300")
+
+        // Incomplete legacy shapes and malformed responses must be rejected
+        for body in [
+            "",
+            "not-json",
+            #"{"status":"failed","error":"no"}"#,
+            #"{"status":"conflict","error":"no"}"#,
+            #"{"status":"unknown","segment":"120000_300"}"#,
+            #"{"status":"ok"}"#,
+            #"{"status":"ok","segment":"120000_300"}"#,
+            #"{"status":"duplicate","existing_segment":"115959_300"}"#,
+            #"{"status":"collision","segment":"120000_300"}"#,
+        ] {
             let result = try await uploadRawResult(body: body)
             guard case .failure = result else {
-                Issue.record("Expected failed v3 upload body")
+                Issue.record("Expected failed v3 upload body for: \(body)")
+                continue
+            }
+        }
+    }
+
+    @Test func uploadRejectsMalformedAndIncompleteFileDescriptors() async throws {
+        let sha = "6ed8919ce20490a5e3ad8630a4fab69475297abd07db73918dd5f36fcfaeb11b"
+        let negativeBodies = [
+            completeUploadResponseJSON(segment: "different", descriptors: [("120000_300_audio.m4a", "120000_300_audio.m4a", 5, sha, "written")]),
+            completeUploadResponseJSON(status: "collision", segment: "120001_300", segmentOriginal: "wrong", descriptors: [("120000_300_audio.m4a", "120000_300_audio.m4a", 5, sha, "written")]),
+            // received_not_written disposition
+            completeUploadResponseJSON(descriptors: [("120000_300_audio.m4a", "120000_300_audio.m4a", 5, sha, "received_not_written")]),
+            // out of contract disposition
+            completeUploadResponseJSON(descriptors: [("120000_300_audio.m4a", "120000_300_audio.m4a", 5, sha, "something_else")]),
+            // missing descriptor (empty descriptor set)
+            completeUploadResponseJSON(descriptors: []),
+            // extra descriptor
+            completeUploadResponseJSON(descriptors: [
+                ("120000_300_audio.m4a", "120000_300_audio.m4a", 5, sha, "written"),
+                ("extra.m4a", "extra.m4a", 5, sha, "written"),
+            ]),
+            // duplicate descriptor
+            completeUploadResponseJSON(descriptors: [
+                ("120000_300_audio.m4a", "120000_300_audio.m4a", 5, sha, "written"),
+                ("120000_300_audio.m4a", "120000_300_audio.m4a", 5, sha, "written"),
+            ]),
+            // hash mismatch
+            completeUploadResponseJSON(descriptors: [("120000_300_audio.m4a", "120000_300_audio.m4a", 5, "wrong_hash", "written")]),
+            // size mismatch
+            completeUploadResponseJSON(descriptors: [("120000_300_audio.m4a", "120000_300_audio.m4a", 999, sha, "written")]),
+            // meta mismatch (when metadata was staged as nil / absent, response must be {})
+            completeUploadResponseJSON(descriptors: [("120000_300_audio.m4a", "120000_300_audio.m4a", 5, sha, "written")], meta: #"{"source":"unexpected"}"#),
+            // collision without segment_original
+            #"{"status":"collision","segment":"120000_300","file_descriptors":[{"submitted":"120000_300_audio.m4a","written":"120000_300_audio.m4a","size":5,"sha256":"\#(sha)","disposition":"written"}],"meta":{}}"#,
+            // written path with traversal / slash
+            completeUploadResponseJSON(descriptors: [("120000_300_audio.m4a", "../120000_300_audio.m4a", 5, sha, "written")]),
+        ]
+
+        for body in negativeBodies {
+            let result = try await uploadRawResult(body: body)
+            guard case .failure = result else {
+                Issue.record("Expected upload validation failure for body: \(body)")
                 continue
             }
         }

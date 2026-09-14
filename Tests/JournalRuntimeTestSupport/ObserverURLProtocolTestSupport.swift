@@ -19,6 +19,7 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
     private var routeHandlers: [@Sendable (URLRequest) -> Response?] = []
     private(set) var requests: [URLRequest] = []
     public private(set) var requestBodies: [String?] = []
+    public private(set) var requestBodyData: [Data?] = []
 
     public init() {}
 
@@ -28,6 +29,7 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
             routeHandlers.removeAll()
             requests.removeAll()
             requestBodies.removeAll()
+            requestBodyData.removeAll()
         }
     }
 
@@ -94,9 +96,11 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
 
     public func next(for request: URLRequest) -> Response {
         let response: Response
+        let data = Self.bodyData(from: request)
         lock.lock()
         requests.append(request)
-        requestBodies.append(Self.bodyString(from: request))
+        requestBodyData.append(data)
+        requestBodies.append(data.flatMap { String(data: $0, encoding: .utf8) })
         if let match = routeHandlers.lazy.compactMap({ $0(request) }).first {
             response = match
         } else if responses.isEmpty {
@@ -113,6 +117,10 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
         lock.withLock { requests }
     }
 
+    public func snapshotRequestBodyData() -> [Data?] {
+        lock.withLock { requestBodyData }
+    }
+
     public func waitForRequestCount(_ target: Int, timeout: Duration = .seconds(10)) async {
         let deadline = ContinuousClock.now.advanced(by: timeout)
         while ContinuousClock.now < deadline {
@@ -121,9 +129,9 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
         }
     }
 
-    private static func bodyString(from request: URLRequest) -> String? {
+    private static func bodyData(from request: URLRequest) -> Data? {
         if let body = request.httpBody {
-            return String(data: body, encoding: .utf8)
+            return body
         }
         guard let stream = request.httpBodyStream else {
             return nil
@@ -138,7 +146,7 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
             if read <= 0 { break }
             data.append(buffer, count: read)
         }
-        return String(data: data, encoding: .utf8)
+        return data
     }
 }
 

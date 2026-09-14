@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- when freeing space, the solstone app on your mac now leaves the details accompanying your media in place, along with audio that has not reached your journal.
+
 ## [2.0.8] - 2026-09-14
 
 ### Changed
