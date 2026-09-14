@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### changed
-- when something stops reaching your journal, diagnostics in settings help now says which of two things happened: your journal turned the request away because the connection was already carrying as many as it takes, or your journal ended the request early. both used to look like the network dropping.
+## [2.0.8] - 2026-09-14
+
+### Changed
+- when a request to your journal ends early, diagnostics in settings help now show whether the connection was already full or your journal ended the request. both used to look like the network dropping.
 
 ## [2.0.7] - 2026-09-13
 
