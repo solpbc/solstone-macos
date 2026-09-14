@@ -884,6 +884,72 @@ struct SyncServiceTests {
         #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
     }
 
+    @Test func discoveryDateChildClassifyErrorWithNoSiblingFailsClosed() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-date-child-classify-err-empty")
+        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let seg = try makeSegment(root: root, date: pastDate, segmentName: "120000_300")
+        let audioFile = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        let audioSHA = try sha256(of: audioFile)
+
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24764") },
+            classifyEntry: { url in
+                if url.lastPathComponent == seg.url.lastPathComponent {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))
+                }
+                var info = stat()
+                guard lstat(url.path, &info) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+                let ft = info.st_mode & mode_t(S_IFMT)
+                return ft == mode_t(S_IFDIR) ? .directory : (ft == mode_t(S_IFREG) ? .regularFile : .unsupported)
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().isEmpty)
+        #expect(collector.containsSyncComplete == false)
+        #expect(collector.containsOffline == true)
+        #expect(collector.offlineEvents.count == 1)
+        let offline = collector.offlineEvents.first
+        #expect(offline?.healthReason == .uploadFailed)
+        #expect(offline?.requestedPath == "")
+        #expect(FileManager.default.fileExists(atPath: audioFile.path) == true)
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+
+        store.reset()
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: "120000_300_audio.m4a", sha: audioSHA, size: 5))
+
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24764") })
+        await configure(service2)
+        let collector2 = ProgressCollector()
+        let listen2 = Task {
+            for await event in await service2.progressStream {
+                collector2.append(event)
+            }
+        }
+        await service2.sync()
+        await collector2.waitForSyncComplete()
+        listen2.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(collector2.containsSyncComplete == true)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+    }
+
     @Test func discoveryRootChildClassifyErrorRecordsFailureUploadsValidAndFailsClosed() async throws {
         store.reset()
         let root = try makeTempDirectory("sync-root-classify-err")
@@ -1711,6 +1777,16 @@ struct SyncServiceTests {
         let root = try makeTempDirectory("sync-symlink-isolation")
         let realSegment = try makeSegment(root: root, segmentName: "120000_300")
         let dateDir = realSegment.url.deletingLastPathComponent()
+
+        // A date symlink to an in-tree date must not replay the real segment under
+        // a second day, and a segment symlink from another real date must not replay
+        // it there either.
+        let inTreeDateLink = root.appendingPathComponent("1999-01-01")
+        try FileManager.default.createSymbolicLink(at: inTreeDateLink, withDestinationURL: dateDir)
+        let inTreeAliasDate = root.appendingPathComponent("1999-01-02", isDirectory: true)
+        try FileManager.default.createDirectory(at: inTreeAliasDate, withIntermediateDirectories: true)
+        let inTreeSegmentLink = inTreeAliasDate.appendingPathComponent("120000_300")
+        try FileManager.default.createSymbolicLink(at: inTreeSegmentLink, withDestinationURL: realSegment.url)
 
         // Root level: symlinked date dir pointing at outside tree with real segment & media
         let outsideDir = try makeTempDirectory("sync-outside-date")
