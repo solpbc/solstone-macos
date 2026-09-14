@@ -653,7 +653,7 @@ struct RemixQueueTimeoutTests {
         #expect(await queue.inFlightPaths().isEmpty)
     }
 
-    @Test func orphanWithMultipleScreenFilesStampsFromLexicallyFirstNotLongest() async throws {
+    @Test func orphanWithMultipleScreenFilesStampsFromLongestNotLexicallyFirst() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-lexical-first")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -687,11 +687,13 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
 
-        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_12", isDirectory: true).path))
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_12", isDirectory: true).path))
+        #expect(probed.all.contains("120000_display_2_screen.mp4"))
+        #expect(probed.all.contains("120000_display_42_screen.mp4"))
     }
 
-    @Test func orphanLexicalFirstScreenProbeThrowFailsWithoutFallbackToSecondScreenFile() async throws {
+    @Test func orphanLexicalFirstScreenProbeThrowFallsBackToSecondScreenFile() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-lexical-no-fallback")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -725,12 +727,286 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
 
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        #expect(probed.all.contains("120000_display_2_screen.mp4"))
+        #expect(probed.all.contains("120000_display_42_screen.mp4"))
+        #expect(completionCount.count == 1)
+    }
+
+    @MainActor
+    @Test func orphanMixedThrowAndTimeoutStampsCeilingWithoutFailure() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-throw-and-timeout")
+        let previousDuration = SegmentWriter.segmentDuration
+        SegmentWriter.segmentDuration = 300
+        defer {
+            SegmentWriter.segmentDuration = previousDuration
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_2_screen.mp4"))
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        let queue = RemixQueue(
+            durationProbeTimeoutSeconds: 0.01,
+            durationLoader: { url in
+                switch url.lastPathComponent {
+                case "120000_display_2_screen.mp4":
+                    throw SyntheticRemixError()
+                case "120000_display_42_screen.mp4":
+                    try await Task.sleep(for: .seconds(60))
+                    return CMTime(seconds: 1, preferredTimescale: 600)
+                default:
+                    throw SyntheticRemixError()
+                }
+            }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+    }
+
+    @Test func orphanAllScreenProbesThrowMarksFailedWithoutCompletion() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-all-throw")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_2_screen.mp4"))
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        let completionCount = LockedCounter()
+        let queue = RemixQueue(
+            durationLoader: { _ in throw SyntheticRemixError() }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+        await queue.setOnSegmentComplete { _, _ in
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
         let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
         #expect(FileManager.default.fileExists(atPath: failedDir.path))
         #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
-        #expect(probed.all.contains("120000_display_2_screen.mp4"))
-        #expect(!probed.all.contains("120000_display_42_screen.mp4"))
         #expect(completionCount.count == 0)
+    }
+
+    @MainActor
+    @Test func orphanRealDurationOutranksTimeoutAndStampsMeasured() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-real-outranks-timeout")
+        let previousDuration = SegmentWriter.segmentDuration
+        SegmentWriter.segmentDuration = 300
+        defer {
+            SegmentWriter.segmentDuration = previousDuration
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_2_screen.mp4"))
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        let queue = RemixQueue(
+            durationProbeTimeoutSeconds: 0.01,
+            durationLoader: { url in
+                switch url.lastPathComponent {
+                case "120000_display_2_screen.mp4":
+                    try await Task.sleep(for: .seconds(60))
+                    return CMTime(seconds: 1, preferredTimescale: 600)
+                case "120000_display_42_screen.mp4":
+                    return CMTime(seconds: 45, preferredTimescale: 600)
+                default:
+                    throw SyntheticRemixError()
+                }
+            }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_45", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+    }
+
+    @MainActor
+    @Test func orphanAllScreenProbesTimeoutStampsCeilingWithoutFailure() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-all-timeout")
+        let previousDuration = SegmentWriter.segmentDuration
+        SegmentWriter.segmentDuration = 300
+        defer {
+            SegmentWriter.segmentDuration = previousDuration
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_2_screen.mp4"))
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        let queue = RemixQueue(
+            durationProbeTimeoutSeconds: 0.01,
+            durationLoader: { _ in
+                try await Task.sleep(for: .seconds(60))
+                return CMTime(seconds: 1, preferredTimescale: 600)
+            }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+    }
+
+    @MainActor
+    @Test func orphanAllGarbageStampsFromLexicallyFirstNotLaterClamp() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-all-garbage")
+        let previousDuration = SegmentWriter.segmentDuration
+        SegmentWriter.segmentDuration = 300
+        defer {
+            SegmentWriter.segmentDuration = previousDuration
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_2_screen.mp4"))
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        let queue = RemixQueue(
+            durationLoader: { url in
+                switch url.lastPathComponent {
+                case "120000_display_2_screen.mp4":
+                    return CMTime.invalid
+                case "120000_display_42_screen.mp4":
+                    return CMTime.zero
+                default:
+                    throw SyntheticRemixError()
+                }
+            }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_1", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+    }
+
+    @MainActor
+    @Test func orphanTimeoutOutranksGarbageAndStampsCeiling() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-timeout-outranks-garbage")
+        let previousDuration = SegmentWriter.segmentDuration
+        SegmentWriter.segmentDuration = 300
+        defer {
+            SegmentWriter.segmentDuration = previousDuration
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_2_screen.mp4"))
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        let queue = RemixQueue(
+            durationProbeTimeoutSeconds: 0.01,
+            durationLoader: { url in
+                switch url.lastPathComponent {
+                case "120000_display_2_screen.mp4":
+                    return CMTime.zero
+                case "120000_display_42_screen.mp4":
+                    try await Task.sleep(for: .seconds(60))
+                    return CMTime(seconds: 1, preferredTimescale: 600)
+                default:
+                    throw SyntheticRemixError()
+                }
+            }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_1", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+    }
+
+    @MainActor
+    @Test func orphanGarbageOutranksThrowAndStampsFirstGarbage() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-garbage-outranks-throw")
+        let previousDuration = SegmentWriter.segmentDuration
+        SegmentWriter.segmentDuration = 300
+        defer {
+            SegmentWriter.segmentDuration = previousDuration
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_2_screen.mp4"))
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        let queue = RemixQueue(
+            durationLoader: { url in
+                switch url.lastPathComponent {
+                case "120000_display_2_screen.mp4":
+                    return CMTime.zero
+                case "120000_display_42_screen.mp4":
+                    throw SyntheticRemixError()
+                default:
+                    throw SyntheticRemixError()
+                }
+            }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_1", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+    }
+
+    @Test func orphanMultipleHangingDurationProbesCompleteWithinTwoSeconds() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-hanging-bound")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_2_screen.mp4"))
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        let queue = RemixQueue(
+            durationProbeTimeoutSeconds: 0.01,
+            durationLoader: { _ in
+                try await Task.sleep(for: .seconds(60))
+                return CMTime(seconds: 1, preferredTimescale: 600)
+            }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+
+        let started = Date()
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+        let elapsed = Date().timeIntervalSince(started)
+
+        #expect(elapsed <= 2)
+        #expect(await queue.inFlightPaths().isEmpty)
     }
 
     @MainActor

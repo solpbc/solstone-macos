@@ -171,27 +171,62 @@ public actor RemixQueue {
         } else {
             do {
                 let files = try fm.contentsOfDirectory(at: job.segmentDirectory, includingPropertiesForKeys: nil)
-                let primaryMedia = files
+                let screenCandidates = files
                     .filter { $0.pathExtension == "mp4" }
                     .sorted { $0.lastPathComponent < $1.lastPathComponent }
-                    .first
-                    ?? files
-                    .filter { $0.pathExtension == "m4a" }
-                    .sorted { $0.lastPathComponent < $1.lastPathComponent }
-                    .first
 
-                guard let primaryMedia else {
-                    await markIncompleteSegmentAsFailed(job.segmentDirectory)
-                    return
-                }
+                if !screenCandidates.isEmpty {
+                    var realSeconds: [TimeInterval] = []
+                    var sawTimeout = false
+                    var garbageSeconds: [TimeInterval] = []
 
-                do {
-                    let duration = try await withTimeout(seconds: durationProbeTimeoutSeconds) {
-                        try await self.durationLoader(primaryMedia)
+                    for candidate in screenCandidates {
+                        do {
+                            let duration = try await withTimeout(seconds: durationProbeTimeoutSeconds) {
+                                try await self.durationLoader(candidate)
+                            }
+                            let seconds = CMTimeGetSeconds(duration)
+                            if seconds.isFinite && seconds > 0 {
+                                realSeconds.append(seconds)
+                            } else {
+                                garbageSeconds.append(seconds)
+                            }
+                        } catch is TimeoutError {
+                            sawTimeout = true
+                        } catch {
+                            // unusable — continue to the next candidate
+                        }
                     }
-                    actualDuration = await clampedSegmentDurationSeconds(CMTimeGetSeconds(duration))
-                } catch is TimeoutError {
-                    actualDuration = await clampedSegmentDurationSeconds(.infinity)
+
+                    if let maxReal = realSeconds.max() {
+                        actualDuration = await clampedSegmentDurationSeconds(maxReal)
+                    } else if sawTimeout {
+                        actualDuration = await clampedSegmentDurationSeconds(.infinity)
+                    } else if let firstGarbage = garbageSeconds.first {
+                        actualDuration = await clampedSegmentDurationSeconds(firstGarbage)
+                    } else {
+                        await markIncompleteSegmentAsFailed(job.segmentDirectory)
+                        return
+                    }
+                } else {
+                    let primaryMedia = files
+                        .filter { $0.pathExtension == "m4a" }
+                        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                        .first
+
+                    guard let primaryMedia else {
+                        await markIncompleteSegmentAsFailed(job.segmentDirectory)
+                        return
+                    }
+
+                    do {
+                        let duration = try await withTimeout(seconds: durationProbeTimeoutSeconds) {
+                            try await self.durationLoader(primaryMedia)
+                        }
+                        actualDuration = await clampedSegmentDurationSeconds(CMTimeGetSeconds(duration))
+                    } catch is TimeoutError {
+                        actualDuration = await clampedSegmentDurationSeconds(.infinity)
+                    }
                 }
             } catch {
                 await markIncompleteSegmentAsFailed(job.segmentDirectory)
