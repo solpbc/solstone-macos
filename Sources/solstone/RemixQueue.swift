@@ -271,10 +271,12 @@ public actor RemixQueue {
                         return
                     }
                 case .unreadable:
-                    Logger.storage.error("audio source(s) present but unreadable for \(job.timePrefix, privacy: .public); marking segment failed")
-                    await markIncompleteSegmentAsFailed(job.segmentDirectory)
-                    await onSegmentComplete?(job.segmentDirectory, .failed("audio sources unreadable; segment preserved for recovery"))
-                    return
+                    let unreadableFiles = audioSourceFiles(in: files, timePrefix: job.timePrefix)
+                    let sourceIDs = unreadableFiles.map { parseTrackType(from: $0.lastPathComponent, timePrefix: job.timePrefix).sourceID }
+                    Logger.storage.info("audio source(s) present but unreadable for \(job.timePrefix, privacy: .public): \(sourceIDs.joined(separator: ", "), privacy: .public); finalizing screen-only with loss record")
+                    reconciliation = .audioLoss(sourceIDs.count)
+                    unreadableSourceIDs = sourceIDs
+                    // fall through — no markIncompleteSegmentAsFailed, no return
                 }
             }
         }

@@ -310,17 +310,18 @@ struct RemixQueueTimeoutTests {
         #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
     }
 
-    @Test func emptyInputsWithUnreadableAudioSourcesMarksFailedWithoutFinalizing() async throws {
+    @Test func emptyInputsWithUnreadableAudioSourcesFinalizesScreenOnlyWithAudioLoss() async throws {
         let root = try makeTempDirectory("remix-queue-unreadable")
         defer { try? FileManager.default.removeItem(at: root) }
 
         let dir = try makeDir(root: root, name: "120000.incomplete")
         let corruptAudio = dir.appendingPathComponent("120000_audio_system.m4a")
         try corruptM4A(at: corruptAudio)
-        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+        let videoBytes = Data("video".utf8)
+        try videoBytes.write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
 
-        // .success is the trap-guard: .failed is reachable here ONLY via correct .unreadable
-        // classification. A wrong .unreadable->.ready impl would finalize _NNN and fail this test.
+        // FakeRemixer(.success) trap-guards: remix must not run (remixCount == 0).
+        // A wrong .unreadable → .ready impl would remix and miss .audioLoss.
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
         let completedOutcome = LockedValue<SegmentReconciliation>()
@@ -331,16 +332,61 @@ struct RemixQueueTimeoutTests {
         }
 
         await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000"))
-
-        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
         await queue.waitForCompletion()
 
         #expect(completionCount.count == 1)
         let outcome = try #require(completedOutcome.current)
-        guard case .failed = outcome else { Issue.record("Expected failed reconciliation"); return }
+        guard case .audioLoss(let count) = outcome else {
+            Issue.record("Expected audioLoss reconciliation")
+            return
+        }
+        #expect(count == 1)
         #expect(fakeRemixer.remixCount.count == 0)  // unreadable path never remixes
-        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("120000_audio_system.m4a").path))
-        #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
+        let segmentKey = finalDir.lastPathComponent
+        #expect(try Data(contentsOf: finalDir.appendingPathComponent("\(segmentKey)_display_42_screen.mp4")) == videoBytes)
+    }
+
+    @Test func emptyInputsWithUnreadableSystemAndMicSourcesRecordsBothSourceIDs() async throws {
+        let root = try makeTempDirectory("remix-queue-unreadable-system-and-mic")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try corruptM4A(at: dir.appendingPathComponent("120000_audio_system.m4a"))
+        try corruptM4A(at: dir.appendingPathComponent("120000_audio_BuiltInMicrophoneDevice.m4a"))
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
+
+        let fakeRemixer = FakeRemixer(.success)
+        let completionCount = LockedCounter()
+        let completedOutcome = LockedValue<SegmentReconciliation>()
+        let queue = RemixQueue { _, _ in fakeRemixer }
+        await queue.setOnSegmentComplete { _, reconciliation in
+            completedOutcome.set(reconciliation)
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(completionCount.count == 1)
+        let outcome = try #require(completedOutcome.current)
+        guard case .audioLoss(let count) = outcome else {
+            Issue.record("Expected audioLoss reconciliation")
+            return
+        }
+        #expect(count == 2)
+        #expect(fakeRemixer.remixCount.count == 0)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
+        #expect(finalDir.lastPathComponent == "120000_1")
+        let metaURL = finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_meta.json")
+        #expect(FileManager.default.fileExists(atPath: metaURL.path))
+        let metaData = try Data(contentsOf: metaURL)
+        let meta = try #require(try JSONSerialization.jsonObject(with: metaData) as? [String: Any])
+        let loss = try #require(meta["unreadable_audio_sources"] as? [String: Any])
+        #expect(loss["count"] as? Int == 2)
+        #expect(Set(loss["source_ids"] as? [String] ?? []) == Set([AudioTrackType.systemAudio.sourceID, "BuiltInMicrophoneDevice"]))
     }
 
     @Test func orphanWithReadableAudioSourcesReconstructsAndFinalizes() async throws {
@@ -489,12 +535,14 @@ struct RemixQueueTimeoutTests {
         #expect(completionCount.count == 0)
     }
 
-    @Test func orphanWithCorruptAudioMarksFailedAndReportsReconciliation() async throws {
+    @Test func orphanWithCorruptAudioFinalizesScreenOnlyWithAudioLoss() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-corrupt-audio")
         defer { try? FileManager.default.removeItem(at: root) }
 
         let dir = try makeDir(root: root, name: "120000.incomplete")
-        try await makeTinyValidMP4(at: dir.appendingPathComponent("120000_display_42_screen.mp4"), seconds: 1.2)
+        let screenURL = dir.appendingPathComponent("120000_display_42_screen.mp4")
+        try await makeTinyValidMP4(at: screenURL, seconds: 1.2)
+        let videoBytes = try Data(contentsOf: screenURL)
         let corruptAudio = dir.appendingPathComponent("120000_audio_system.m4a")
         try corruptM4A(at: corruptAudio)
 
@@ -508,18 +556,28 @@ struct RemixQueueTimeoutTests {
         }
 
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
-
-        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
         await queue.waitForCompletion()
 
         #expect(completionCount.count == 1)
         let outcome = try #require(completedOutcome.current)
-        guard case .failed = outcome else {
-            Issue.record("Expected failed reconciliation")
+        guard case .audioLoss(let count) = outcome else {
+            Issue.record("Expected audioLoss reconciliation")
             return
         }
+        #expect(count == 1)
         #expect(fakeRemixer.remixCount.count == 0)
-        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent(corruptAudio.lastPathComponent).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
+        let segmentKey = finalDir.lastPathComponent
+        #expect(try Data(contentsOf: finalDir.appendingPathComponent("\(segmentKey)_display_42_screen.mp4")) == videoBytes)
+        #expect(FileManager.default.fileExists(atPath: finalDir.appendingPathComponent("\(segmentKey)_audio_system.m4a").path))
+        let metaURL = finalDir.appendingPathComponent("\(segmentKey)_meta.json")
+        #expect(FileManager.default.fileExists(atPath: metaURL.path))
+        let metaData = try Data(contentsOf: metaURL)
+        let meta = try #require(try JSONSerialization.jsonObject(with: metaData) as? [String: Any])
+        let loss = try #require(meta["unreadable_audio_sources"] as? [String: Any])
+        #expect(loss["count"] as? Int == 1)
+        #expect(Set(loss["source_ids"] as? [String] ?? []) == Set([AudioTrackType.systemAudio.sourceID]))
     }
 
     @Test func emptyInputsWithPreexistingConsolidatedAudioDoesNotReconstruct() async throws {
@@ -1045,7 +1103,7 @@ struct RemixQueueTimeoutTests {
         }
     }
 
-    @Test func liveShapedUnreadableAudioDiscardsRecoverableVideoIntoFailed() async throws {
+    @Test func liveShapedUnreadableAudioPreservesRecoverableVideoOnFinalize() async throws {
         let root = try makeTempDirectory("remix-queue-live-unreadable-preserves-video")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -1054,8 +1112,8 @@ struct RemixQueueTimeoutTests {
         let recoverableVideo = Data("recoverable-screen-video".utf8)
         try recoverableVideo.write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
 
-        // .success is the trap-guard: .failed is reachable here ONLY via correct .unreadable
-        // classification. A wrong .unreadable->.ready impl would finalize _NNN and fail this test.
+        // FakeRemixer(.success) trap-guards: remix must not run (remixCount == 0).
+        // A wrong .unreadable → .ready impl would remix and miss .audioLoss.
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
         let completedOutcome = LockedValue<SegmentReconciliation>()
@@ -1066,21 +1124,21 @@ struct RemixQueueTimeoutTests {
         }
 
         await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000"))
-
-        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
         await queue.waitForCompletion()
 
         #expect(fakeRemixer.remixCount.count == 0)
-        #expect(FileManager.default.fileExists(atPath: failedDir.path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
         #expect(!FileManager.default.fileExists(atPath: dir.path))
-        #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
-        #expect(try Data(contentsOf: failedDir.appendingPathComponent("120000_display_42_screen.mp4")) == recoverableVideo)
+        let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
+        let segmentKey = finalDir.lastPathComponent
+        #expect(try Data(contentsOf: finalDir.appendingPathComponent("\(segmentKey)_display_42_screen.mp4")) == recoverableVideo)
         #expect(completionCount.count == 1)
         let outcome = try #require(completedOutcome.current)
-        guard case .failed = outcome else {
-            Issue.record("Expected failed reconciliation")
+        guard case .audioLoss(let count) = outcome else {
+            Issue.record("Expected audioLoss reconciliation")
             return
         }
+        #expect(count == 1)
     }
 
     private func makeDir(root: URL, name: String) throws -> URL {
