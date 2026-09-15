@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.9] - 2026-09-14
+
 ### Fixed
 - when part of what you shared could not be read, the solstone app on your mac used to say everything had reached your journal, but now it keeps trying.
 - when freeing space, details accompanying your media stay in place, along with audio that has not reached your journal.
