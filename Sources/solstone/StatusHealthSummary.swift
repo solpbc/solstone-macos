@@ -102,7 +102,8 @@ extension StatusHealthSummary {
         selectedSources: CaptureSources = .all,
         permittedSources: CaptureSources = .all,
         errorMessage: String? = nil,
-        setupVerdict: SetupGroupVerdict? = nil
+        setupVerdict: SetupGroupVerdict? = nil,
+        lastHealthReason: ObserverHealthFailureReason? = nil
     ) -> StatusHealthSummary {
         // The owner turning every source off is a choice, not a fault — but it is also the one
         // state in which nothing reaches the journal at all, so it leads the card and says why.
@@ -157,7 +158,8 @@ extension StatusHealthSummary {
             pendingCount: pendingCount,
             lastDeliveryOutcome: lastDeliveryOutcome,
             serverURL: serverURL,
-            now: now
+            now: now,
+            lastHealthReason: lastHealthReason
         )
         guard let setupVerdict, setupVerdict.severity == .attention else {
             return operational
@@ -178,7 +180,8 @@ extension StatusHealthSummary {
         pendingCount: Int,
         lastDeliveryOutcome: LastJournalDeliveryOutcome,
         serverURL: String?,
-        now: Date
+        now: Date,
+        lastHealthReason: ObserverHealthFailureReason? = nil
     ) -> StatusHealthSummary {
         let host = journalHost(serverURL)
         let isBundled = serviceMode == .bundled
@@ -203,6 +206,19 @@ extension StatusHealthSummary {
                     axValue: "external_awaiting_tunnel"
                 )
             case .offline:
+                if case .journalRejectedDay(let day, _)? = lastHealthReason {
+                    // The journal is reachable and said it cannot read one day. Sending the
+                    // owner to their network here would be wrong twice over.
+                    let subtitle = pendingCount > 0
+                        ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here · nothing is lost, sync resumes once your journal can read that day"
+                        : "nothing is lost · sync resumes once your journal can read that day"
+                    return .init(
+                        severity: .attention,
+                        title: "your journal couldn't read \(ownerDayLabel(day))",
+                        subtitle: subtitle,
+                        axValue: "external_offline"
+                    )
+                }
                 let subtitle = pendingCount > 0
                     ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here · nothing is lost, sync resumes when it's back"
                     : "nothing is lost · sync resumes when it's back"

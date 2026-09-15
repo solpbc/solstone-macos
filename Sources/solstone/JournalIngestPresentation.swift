@@ -42,7 +42,18 @@ func classifiedObserverHealthOwnerCopy(_ reason: ObserverHealthFailureReason) ->
         return "your journal isn't linked"
     case .uploadFailed:
         return "couldn't add this to your journal"
+    case .journalRejectedDay(let day, _):
+        return "your journal couldn't read \(ownerDayLabel(day))"
     }
+}
+
+/// `20260915` reads as `2026-09-15` to an owner; anything else is shown as sent.
+func ownerDayLabel(_ day: String) -> String {
+    guard day.count == 8, day.allSatisfy(\.isNumber) else { return day }
+    let year = day.prefix(4)
+    let month = day.dropFirst(4).prefix(2)
+    let dayOfMonth = day.suffix(2)
+    return "\(year)-\(month)-\(dayOfMonth)"
 }
 
 enum JournalPanelRemedy: Equatable {

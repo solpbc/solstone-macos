@@ -87,7 +87,10 @@ public actor SyncService {
     // MARK: - Retry Configuration
 
     private let retryDelays: [TimeInterval]
-    private let maxRetries = 10
+    /// Attempts one segment gets within a single sync pass before the walk moves on. The
+    /// segment is retried on the next pass, so a body the link keeps dropping cannot hold
+    /// every segment behind it for the whole backoff ladder.
+    private let maxAttemptsPerPass: Int
 
     // MARK: - Initialization
 
@@ -96,6 +99,7 @@ public actor SyncService {
         client: UploadClient = UploadClient(),
         resolver: HomeBaseURLResolver,
         retryDelays: [TimeInterval] = [5, 30, 120, 300],
+        maxAttemptsPerPass: Int = 3,
         persistAcknowledgment: @escaping @Sendable (IngestAcknowledgment, URL) throws -> Void = IngestAcknowledgmentStore.write,
         removeItem: @escaping @Sendable (URL) throws -> Void = { url in
             guard Darwin.unlink(url.path) == 0 else {
@@ -128,6 +132,7 @@ public actor SyncService {
         self.client = client
         self.resolver = resolver
         self.retryDelays = retryDelays
+        self.maxAttemptsPerPass = max(maxAttemptsPerPass, 1)
         self.persistAcknowledgment = persistAcknowledgment
         self.removeItem = removeItem
         self.listDirectory = listDirectory
@@ -259,11 +264,14 @@ public actor SyncService {
             progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
 
             switch manifest.days[day] {
-            case .error:
-                Logger.upload.info("Day \(day, privacy: .public): manifest reported an error")
+            case .error(let reasonCode):
+                // The journal answered; it could not read this day's stored files. That is a
+                // journal-side condition, not a connection fault, and it is reported as one so
+                // the owner is not sent to check their network.
+                Logger.upload.notice("Day \(day, privacy: .public): journal manifest rejected the day reason=\(reasonCode, privacy: .public)")
                 progressContinuation.yield(.offline(
                     error: "journal manifest rejected \(day)",
-                    healthReason: .uploadFailed,
+                    healthReason: .journalRejectedDay(day: day, reasonCode: reasonCode),
                     requestedPath: IngestProtocolV3.manifestPath
                 ))
                 return
@@ -617,7 +625,7 @@ public actor SyncService {
 
         var attempts = 0
 
-        while attempts < maxRetries {
+        while attempts < maxAttemptsPerPass {
             // Capture before the attempt's first suspension so a later reconfigure
             // cannot relabel this attempt's bytes.
             guard !syncPaused, let attemptContext = journalContext, attemptContext == context else {
@@ -715,7 +723,7 @@ public actor SyncService {
                 let healthReason = observerHealthFailureReason(from: error)
                 Logger.upload.info("Attempt \(attempts, privacy: .public) failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
 
-                if attempts >= maxRetries {
+                if attempts >= maxAttemptsPerPass {
                     progressContinuation.yield(.uploadFailed(
                         segment: segment,
                         error: error.localizedDescription,

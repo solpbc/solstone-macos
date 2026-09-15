@@ -14,6 +14,9 @@ public enum ObserverHealthFailureReason: Sendable, Equatable {
     case configChanged
     case notConfigured
     case uploadFailed
+    /// The journal answered, and reported that it could not read this day's
+    /// stored files. `reasonCode` is the journal's own token for why.
+    case journalRejectedDay(day: String, reasonCode: String)
 }
 
 internal func observerHealthFailureReason(from error: Error) -> ObserverHealthFailureReason {
@@ -58,6 +61,9 @@ internal func sanitizedObserverHealthErrorReason(_ reason: ObserverHealthFailure
         token = "not_configured"
     case .uploadFailed:
         token = "upload_failed"
+    case .journalRejectedDay(let day, let reasonCode):
+        let safeCode = reasonCode.filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }.lowercased()
+        token = "journal_rejected_day_\(day)_\(safeCode.isEmpty ? "unknown" : safeCode)"
     }
     return String(token.prefix(200))
 }

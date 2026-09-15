@@ -2420,6 +2420,98 @@ struct SyncServiceTests {
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
     }
 
+    // MARK: - Journal-rejected day and the per-pass attempt cap
+
+    @Test func manifestErrorDayIsReportedAsTheJournalRejectingThatDayNotAsOffline() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-rejected-day")
+        let segment = try makeSegment(root: root)
+        let day = dayString(for: segment.date)
+        // The journal answered, and it could not read this day's stored files.
+        store.enqueue(statusCode: 200, body: #"{"days":{"\#(day)":{"error":"journal_read_failed"}}}"#)
+
+        let service = SyncService(
+            storageManager: StorageManager(baseDirectory: root),
+            client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24692") },
+            retryDelays: [0]
+        )
+        await configure(service)
+
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        let offline = collector.allEvents.compactMap { event -> (ObserverHealthFailureReason, String)? in
+            if case .offline(_, let reason, let path) = event { return (reason, path) }
+            return nil
+        }.first
+        #expect(offline?.0 == .journalRejectedDay(day: day, reasonCode: "journal_read_failed"))
+        #expect(offline?.1 == IngestProtocolV3.manifestPath)
+        // Nothing was offered for that day, and nothing older was walked either.
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 0)
+        // The owner reads the day, not a network fault; the diagnostic token keeps the journal's reason.
+        #expect(classifiedObserverHealthOwnerCopy(.journalRejectedDay(day: "20260915", reasonCode: "journal_read_failed")) == "your journal couldn't read 2026-09-15")
+        #expect(sanitizedObserverHealthErrorReason(.journalRejectedDay(day: "20260915", reasonCode: "Journal Read/Failed")) == "journal_rejected_day_20260915_journalreadfailed")
+    }
+
+    @Test func aSegmentThatKeepsFailingYieldsToTheRestOfThePassAfterThreeAttempts() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-attempt-cap")
+        let date = Date()
+        // Walked newest key first, so the failing segment is in front of the good one.
+        _ = try makeSegment(root: root, date: date, segmentName: "120000_300")
+        let small = try makeSegment(root: root, date: date, segmentName: "110000_300")
+        let smallSHA = try sha256(of: small.url.appendingPathComponent("110000_300_audio.m4a"))
+
+        store.enqueue(statusCode: 200, body: manifestJSON())
+        // The link drops the first segment's body three times running.
+        for _ in 0..<3 {
+            store.enqueue(statusCode: 0, error: URLError(.networkConnectionLost))
+        }
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(
+            status: .ok,
+            submitted: "110000_300",
+            stored: "110000_300",
+            filename: "110000_300_audio.m4a",
+            sha: smallSHA,
+            size: 5
+        ))
+
+        let service = SyncService(
+            storageManager: StorageManager(baseDirectory: root),
+            client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24693") },
+            retryDelays: [0, 0, 0]
+        )
+        await configure(service)
+
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+        await collector.waitForOffline()
+        listen.cancel()
+
+        // Three attempts on the failing segment, then the pass moved on and the next segment
+        // landed: four uploads in one pass, not ten attempts on the first.
+        let uploads = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploads.count == 4)
+        #expect(collector.containsUploadFailed)
+        #expect(collector.containsUploadSucceeded)
+        // The pass still ends offline, so the failing segment is retried on the next pass.
+        #expect(collector.containsOffline)
+    }
+
     // MARK: - New Ingest Acknowledgment and Persistence Tests
 
     @Test func atomicAcknowledgmentPersistenceFailureFailsUploadAndRetries() async throws {
@@ -2894,7 +2986,9 @@ struct SyncServiceTests {
         await service.sync()
         #expect(try Data(contentsOf: file) == Data("audio".utf8))
         #expect(try Data(contentsOf: receiptURL) == previousBytes)
-        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == (malformed ? 0 : 10))
+        // An unacknowledged update is retried within the pass up to the per-pass attempt cap,
+        // then left for the next pass; the receipt on disk is never replaced by a non-answer.
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == (malformed ? 0 : 3))
     }
 
     @Test func duplicateWrittenNameSurvivesServiceRecreationAndEnablesCleanup() async throws {

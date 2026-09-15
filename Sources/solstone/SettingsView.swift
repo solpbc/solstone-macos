@@ -2622,7 +2622,8 @@ struct SettingsView: View {
             selectedSources: appState.config.selectedSources,
             permittedSources: appState.capture.permittedSources,
             errorMessage: appState.errorMessage,
-            setupVerdict: setupPresentation.verdict
+            setupVerdict: setupPresentation.verdict,
+            lastHealthReason: appState.uploadCoordinator.lastHealthReason
         )
     }
 

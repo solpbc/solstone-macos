@@ -43,6 +43,30 @@ struct NativeIntegrationDoorTests {
     private static let doorStreamLimit = 8
     private static let browserNeed = 6
     private static let assetPath = "/static/shell_gate.js"
+    /// Comfortably past the ~18 MB boundary the September 2026 report measured, and well
+    /// under the ingest contract's per-part and per-connection limits.
+    private static let largeUploadBytes = 40 * 1024 * 1024
+
+    private static func writePseudoRandomBytes(count: Int, to url: URL) throws {
+        // Incompressible bytes, so nothing between here and the door can shrink the body.
+        var state: UInt64 = 0x9E37_79B9_7F4A_7C15
+        var buffer = [UInt8](repeating: 0, count: 1 << 20)
+        let handle = try FileHandle(forWritingTo: { () throws -> URL in
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            return url
+        }())
+        defer { try? handle.close() }
+        var remaining = count
+        while remaining > 0 {
+            let chunk = min(remaining, buffer.count)
+            for index in 0..<chunk {
+                state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+                buffer[index] = UInt8(truncatingIfNeeded: state >> 33)
+            }
+            try handle.write(contentsOf: buffer[0..<chunk])
+            remaining -= chunk
+        }
+    }
 
     @Test func proxyServesThroughRealDoorUnderIdlePreconnectionsAndHeldStreams() async throws {
         let fixture = try NativeRuntimeFixture(label: "door")
@@ -190,6 +214,45 @@ struct NativeIntegrationDoorTests {
         // Releasing the held streams restores service.
         let afterRelease = try LoopbackHTTP.request(port: proxyPort, path: Self.assetPath)
         #expect(afterRelease.hasPrefix("HTTP/1.1 200"), "after release: \(afterRelease.prefix(120))")
+
+        // A large body through the real tunnel, first attempt. The mux keepalive pings at
+        // 500 ms and used to declare the path lost after three unanswered PONGs, which a
+        // PING queued behind tens of megabytes of buffered DATA reliably produced: the
+        // September 2026 report where every segment over ~18 MB failed on a healthy LAN link
+        // while smaller ones passed. The upload runs through the same `UploadClient`, proxy
+        // and door as the app's sync. One call must succeed, and the proxy port must still
+        // serve afterwards: a keepalive teardown mid-upload would fail the call and rebuild
+        // the proxy on a new port.
+        // Scratch outside the fixture home, which is checked for forbidden artifacts at the end.
+        let largeSegmentRoot = try makeTempDirectory("native-integration-large-upload")
+        defer { try? FileManager.default.removeItem(at: largeSegmentRoot) }
+        let largeSegmentDirectory = largeSegmentRoot
+            .appendingPathComponent("20260101", isDirectory: true)
+            .appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: largeSegmentDirectory, withIntermediateDirectories: true)
+        let largeMedia = largeSegmentDirectory.appendingPathComponent("120000_300_audio.m4a")
+        try Self.writePseudoRandomBytes(count: Self.largeUploadBytes, to: largeMedia)
+        let stagedBody = largeSegmentRoot.appendingPathComponent("staged-body.tmp")
+        let uploadClient = UploadClient()
+        let prepared = try uploadClient.prepareUpload(
+            serverURL: "http://127.0.0.1:\(proxyPort)",
+            day: "20260101",
+            segment: "120000_300",
+            mediaFiles: [largeMedia],
+            metadata: nil,
+            bodyURL: stagedBody
+        )
+        let uploadStarted = ContinuousClock.now
+        let uploaded = await uploadClient.uploadStaged(prepared: prepared)
+        let uploadElapsed = uploadStarted.duration(to: .now)
+        switch uploaded {
+        case .success(let info):
+            #expect(info.status == .ok, "\(info.status)")
+        case .failure(let error):
+            Issue.record("\(Self.largeUploadBytes) bytes did not reach the journal in one attempt after \(uploadElapsed): \(error)")
+        }
+        let afterUpload = try LoopbackHTTP.request(port: proxyPort, path: Self.assetPath)
+        #expect(afterUpload.hasPrefix("HTTP/1.1 200"), "proxy port did not survive the large upload: \(afterUpload.prefix(120))")
 
         await transport.disconnect()
         await runner.stopForTermination()

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- uploading a large segment no longer drops the connection to your journal partway through. the connection's liveness check used to give up while a big upload was still moving, and every retry hit the same wall; it now keeps going as long as your journal is still taking the upload in.
+- one segment that keeps failing to upload no longer holds up everything behind it. the solstone app on your mac now moves on after three tries within a sync pass and comes back to that segment on the next pass, instead of waiting up to half an hour on it.
+- when your journal cannot read one day's stored files, the status now says so and names the day, instead of reporting that your journal can't be reached.
+
 ## [2.0.9] - 2026-09-14
 
 ### Fixed
