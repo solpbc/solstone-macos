@@ -176,57 +176,20 @@ public actor RemixQueue {
                     .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
                 if !screenCandidates.isEmpty {
-                    var realSeconds: [TimeInterval] = []
-                    var sawTimeout = false
-                    var garbageSeconds: [TimeInterval] = []
-
-                    for candidate in screenCandidates {
-                        do {
-                            let duration = try await withTimeout(seconds: durationProbeTimeoutSeconds) {
-                                try await self.durationLoader(candidate)
-                            }
-                            let seconds = CMTimeGetSeconds(duration)
-                            if seconds.isFinite && seconds > 0 {
-                                realSeconds.append(seconds)
-                            } else {
-                                garbageSeconds.append(seconds)
-                            }
-                        } catch is TimeoutError {
-                            sawTimeout = true
-                        } catch {
-                            // unusable — continue to the next candidate
-                        }
-                    }
-
-                    if let maxReal = realSeconds.max() {
-                        actualDuration = await clampedSegmentDurationSeconds(maxReal)
-                    } else if sawTimeout {
-                        actualDuration = await clampedSegmentDurationSeconds(.infinity)
-                    } else if let firstGarbage = garbageSeconds.first {
-                        actualDuration = await clampedSegmentDurationSeconds(firstGarbage)
-                    } else {
+                    guard let resolved = await resolveOrphanDuration(candidates: screenCandidates) else {
                         await markIncompleteSegmentAsFailed(job.segmentDirectory)
                         return
                     }
+                    actualDuration = resolved
                 } else {
-                    let primaryMedia = files
+                    let audioCandidates = files
                         .filter { $0.pathExtension == "m4a" }
                         .sorted { $0.lastPathComponent < $1.lastPathComponent }
-                        .first
-
-                    guard let primaryMedia else {
+                    guard let resolved = await resolveOrphanDuration(candidates: audioCandidates) else {
                         await markIncompleteSegmentAsFailed(job.segmentDirectory)
                         return
                     }
-
-                    do {
-                        let duration = try await withTimeout(seconds: durationProbeTimeoutSeconds) {
-                            try await self.durationLoader(primaryMedia)
-                        }
-                        actualDuration = await clampedSegmentDurationSeconds(CMTimeGetSeconds(duration))
-                    } catch is TimeoutError {
-                        actualDuration = await clampedSegmentDurationSeconds(.infinity)
-                    }
+                    actualDuration = resolved
                 }
             } catch {
                 await markIncompleteSegmentAsFailed(job.segmentDirectory)
@@ -360,6 +323,40 @@ public actor RemixQueue {
             await onSegmentComplete?(finalDirectory, reconciliation)
         } catch {
             Logger.storage.warning("Failed to rename segment directory: \(error, privacy: .public)")
+        }
+    }
+
+    private func resolveOrphanDuration(candidates: [URL]) async -> Int? {
+        var realSeconds: [TimeInterval] = []
+        var sawTimeout = false
+        var garbageSeconds: [TimeInterval] = []
+
+        for candidate in candidates {
+            do {
+                let duration = try await withTimeout(seconds: durationProbeTimeoutSeconds) {
+                    try await self.durationLoader(candidate)
+                }
+                let seconds = CMTimeGetSeconds(duration)
+                if seconds.isFinite && seconds > 0 {
+                    realSeconds.append(seconds)
+                } else {
+                    garbageSeconds.append(seconds)
+                }
+            } catch is TimeoutError {
+                sawTimeout = true
+            } catch {
+                // unusable — continue to the next candidate
+            }
+        }
+
+        if let maxReal = realSeconds.max() {
+            return await clampedSegmentDurationSeconds(maxReal)
+        } else if sawTimeout {
+            return await clampedSegmentDurationSeconds(.infinity)
+        } else if let firstGarbage = garbageSeconds.first {
+            return await clampedSegmentDurationSeconds(firstGarbage)
+        } else {
+            return nil
         }
     }
 

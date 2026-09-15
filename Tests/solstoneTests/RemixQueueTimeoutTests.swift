@@ -1568,6 +1568,111 @@ struct RemixQueueTimeoutTests {
         let metaURL = finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_meta.json")
         #expect(!FileManager.default.fileExists(atPath: metaURL.path))
     }
+
+    @MainActor
+    @Test func orphanWithMultipleM4AFilesStampsFromLongestNotLexicallyFirst() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-m4a-lexical-first")
+        let previousDuration = SegmentWriter.segmentDuration
+        SegmentWriter.segmentDuration = 300
+        defer {
+            SegmentWriter.segmentDuration = previousDuration
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("audio".utf8).write(to: dir.appendingPathComponent("120000_probe_2.m4a"))
+        try Data("audio".utf8).write(to: dir.appendingPathComponent("120000_probe_42.m4a"))
+
+        let probed = LockedArray<String>([])
+        let queue = RemixQueue(
+            durationLoader: { url in
+                probed.append(url.lastPathComponent)
+                switch url.lastPathComponent {
+                case "120000_probe_2.m4a":
+                    return CMTime(seconds: 12, preferredTimescale: 600)
+                case "120000_probe_42.m4a":
+                    return CMTime(seconds: 300, preferredTimescale: 600)
+                default:
+                    throw SyntheticRemixError()
+                }
+            }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_12", isDirectory: true).path))
+        #expect(probed.all.contains("120000_probe_2.m4a"))
+        #expect(probed.all.contains("120000_probe_42.m4a"))
+    }
+
+    @Test func orphanLexicalFirstM4AProbeThrowFallsBackToSecondM4AFile() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-m4a-lexical-fallback")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try Data("audio".utf8).write(to: dir.appendingPathComponent("120000_probe_2.m4a"))
+        try Data("audio".utf8).write(to: dir.appendingPathComponent("120000_probe_42.m4a"))
+
+        let probed = LockedArray<String>([])
+        let completionCount = LockedCounter()
+        let queue = RemixQueue(
+            durationLoader: { url in
+                probed.append(url.lastPathComponent)
+                switch url.lastPathComponent {
+                case "120000_probe_2.m4a":
+                    throw SyntheticRemixError()
+                case "120000_probe_42.m4a":
+                    return CMTime(seconds: 300, preferredTimescale: 600)
+                default:
+                    throw SyntheticRemixError()
+                }
+            }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+        await queue.setOnSegmentComplete { _, _ in
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        #expect(probed.all.contains("120000_probe_2.m4a"))
+        #expect(probed.all.contains("120000_probe_42.m4a"))
+        #expect(completionCount.count == 1)
+    }
+
+    @Test func orphanSingleM4AProbeThrowMarksFailedWithoutCompletion() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-m4a-throw")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        try corruptM4A(at: dir.appendingPathComponent("120000_probe.m4a"))
+
+        let completionCount = LockedCounter()
+        let queue = RemixQueue(
+            durationLoader: { _ in throw SyntheticRemixError() }
+        ) { _, _ in
+            FakeRemixer(.success)
+        }
+        await queue.setOnSegmentComplete { _, _ in
+            completionCount.increment()
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: failedDir.path))
+        #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
+        #expect(completionCount.count == 0)
+    }
 }
 
 final class RecordingRemixer: AudioRemixing, @unchecked Sendable {
