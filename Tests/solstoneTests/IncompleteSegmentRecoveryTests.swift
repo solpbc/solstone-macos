@@ -253,7 +253,7 @@ struct IncompleteSegmentRecoveryTests {
         let parent = readable.dir.deletingLastPathComponent()
         #expect(count == 3)
         #expect(try finalizedSegmentDirectory(in: parent, timePrefix: "140000") != nil)
-        #expect(FileManager.default.fileExists(atPath: parent.appendingPathComponent("141500.failed", isDirectory: true).path))
+        #expect(try finalizedSegmentDirectory(in: parent, timePrefix: "141500") != nil)
         #expect(FileManager.default.fileExists(atPath: parent.appendingPathComponent("143000.failed", isDirectory: true).path))
         #expect(!FileManager.default.fileExists(atPath: readable.dir.path))
         #expect(!FileManager.default.fileExists(atPath: corrupt.dir.path))
