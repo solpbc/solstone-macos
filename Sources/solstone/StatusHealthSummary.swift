@@ -209,9 +209,11 @@ extension StatusHealthSummary {
                 if case .journalRejectedDay(let day, _)? = lastHealthReason {
                     // The journal is reachable and said it cannot read one day. Sending the
                     // owner to their network here would be wrong twice over.
+                    // No "nothing is lost" here: the journal has reported a day it cannot read, and
+                    // this app can vouch only for what is still on this mac.
                     let subtitle = pendingCount > 0
-                        ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here · nothing is lost, sync resumes once your journal can read that day"
-                        : "nothing is lost · sync resumes once your journal can read that day"
+                        ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here · kept on this mac until your journal can read that day"
+                        : "sync resumes once your journal can read that day"
                     return .init(
                         severity: .attention,
                         title: "your journal couldn't read \(ownerDayLabel(day))",
