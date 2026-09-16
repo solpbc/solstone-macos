@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - the exclude list now lets you pick which currently open apps to keep out of your journal, so the saved name matches what the app calls itself while running. typing a name is still available as a fallback, but only takes effect on an exact match against the name the app reports while running.
 
+### Fixed
+- clicking macOS's own Stop Sharing control used to leave solstone's screen intake running anyway, which could block protected video (like the Apple TV app) from playing. solstone now honors Stop Sharing, and screen intake stays stopped until you start it again.
+
 ## [2.0.9] - 2026-09-15
 
 ### Fixed
