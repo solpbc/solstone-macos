@@ -7,17 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.9] - 2026-09-15
+
 ### Fixed
-- uploading a large segment no longer drops the connection to your journal partway through. it now keeps going as long as your journal is still taking the upload in.
-- one segment that keeps failing to upload no longer holds up everything behind it. the solstone app on your mac now moves on after three tries within a sync pass and comes back to that segment on the next pass, instead of waiting up to half an hour on it.
+- when audio in a segment could not be read, the whole segment used to be lost. its screen frames now still go into your journal, with a note that the audio was lost.
+- uploading a large segment no longer drops the connection to your journal partway through. it now keeps going as long as the upload is still going into your journal.
+- one segment that keeps failing to upload no longer holds up everything behind it. the solstone app on your mac now moves on after three tries, then tries that segment again later, instead of waiting up to half an hour on it.
 - when your journal cannot read one day, the status now says so and names the day, instead of reporting that your journal can't be reached.
-
-## [2.0.9] - 2026-09-14
-
-### Fixed
 - when part of what you shared could not be read, the solstone app on your mac used to say everything had reached your journal, but now it keeps trying.
 - when freeing space, details accompanying your media stay in place, along with audio that has not reached your journal.
-- when audio in a segment could not be read, the whole segment used to be lost. its screen frames now still go into your journal, with a note that the audio was lost.
 
 ## [2.0.8] - 2026-09-14
 
