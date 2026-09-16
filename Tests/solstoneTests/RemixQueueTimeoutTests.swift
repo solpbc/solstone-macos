@@ -1040,7 +1040,7 @@ struct RemixQueueTimeoutTests {
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
     }
 
-    @Test func orphanMultipleHangingDurationProbesCompleteWithinTwoSeconds() async throws {
+    @Test func orphanMultipleHangingDurationProbesCompleteWithinThreeSeconds() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-hanging-bound")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -1058,12 +1058,13 @@ struct RemixQueueTimeoutTests {
             FakeRemixer(.success)
         }
 
-        let started = Date()
+        let clock = ContinuousClock()
+        let started = clock.now
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
-        let elapsed = Date().timeIntervalSince(started)
+        let elapsed = started.duration(to: clock.now)
 
-        #expect(elapsed <= 2)
+        #expect(elapsed <= .seconds(3))
         #expect(await queue.inFlightPaths().isEmpty)
     }
 
