@@ -135,6 +135,8 @@ enum AXID {
 
         enum Privacy {
             static let excludedAppsList = "settings.privacy.excludedApps.list"
+            static let excludedAppsPicker = "settings.privacy.excludedApps.picker"
+            static let excludedAppsPickerState = "settings.privacy.excludedApps.picker.state"
             static let excludedAppField = "settings.privacy.excludedApps.field"
             static let excludedAppAdd = "settings.privacy.excludedApps.add"
             static let titlePatternsList = "settings.privacy.titlePatterns.list"

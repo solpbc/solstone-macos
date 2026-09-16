@@ -96,6 +96,8 @@ enum AXContract {
         AXID.Settings.Microphones.gainState,
         AXID.Settings.Microphones.silenceMusic,
         AXID.Settings.Privacy.excludedAppsList,
+        AXID.Settings.Privacy.excludedAppsPicker,
+        AXID.Settings.Privacy.excludedAppsPickerState,
         AXID.Settings.Privacy.excludedAppField,
         AXID.Settings.Privacy.excludedAppAdd,
         AXID.Settings.Privacy.titlePatternsList,
@@ -294,7 +296,8 @@ enum AXContract {
             "JournalWindowAXState": JournalWindowAXState.allCases.map(\.axToken),
             "UpdateActivity": UpdateActivity.axTokens,
             "FrequencyOption": FrequencyOption.allCases.map(\.rawValue),
-            "UpdateStatus": UpdateStatus.axTokens
+            "UpdateStatus": UpdateStatus.axTokens,
+            "ExcludedAppPickerAvailability": ExcludedAppPickerAvailability.allCases.map(\.axToken)
         ]
     }
 
@@ -312,6 +315,7 @@ enum AXContract {
             AXID.Settings.Observer.notificationDeniedState: .freeform,
             AXID.Settings.Observer.storageUsedState: .numeric,
             AXID.Settings.Observer.cacheRetentionState: .numeric,
+            AXID.Settings.Privacy.excludedAppsPickerState: .enum("ExcludedAppPickerAvailability"),
             AXID.Settings.Service.journalNameState: .freeform,
             AXID.Settings.Service.journalMarkState: .freeform,
             AXID.Settings.Service.journalConnectionState: .enum("PairingConnectionAXState"),

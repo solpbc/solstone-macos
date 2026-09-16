@@ -11,6 +11,7 @@ public final class WindowExclusionDetector: @unchecked Sendable {
     private let targetAppNames: Set<String>  // Lowercase for case-insensitive matching
     private let detectPrivateBrowsing: Bool
     private let titlePatterns: [String]  // Patterns to match in any window title
+    private let windowRecordProvider: @Sendable () -> [OnScreenWindowRecord]
 
     /// Track last log time for periodic summaries
     private var lastLogTime: Date = .distantPast
@@ -24,10 +25,17 @@ public final class WindowExclusionDetector: @unchecked Sendable {
     ///   - appNames: Application names to match (case-insensitive, exact match)
     ///   - detectPrivateBrowsing: Whether to also detect private/incognito browser windows
     ///   - titlePatterns: Patterns to match in any window title - exclude window if any pattern matches
-    public init(appNames: [String], detectPrivateBrowsing: Bool = false, titlePatterns: [String] = []) {
+    ///   - windowRecordProvider: Provider of on-screen layer-0 window records
+    public init(
+        appNames: [String],
+        detectPrivateBrowsing: Bool = false,
+        titlePatterns: [String] = [],
+        windowRecordProvider: @escaping @Sendable () -> [OnScreenWindowRecord] = OnScreenWindowList.onScreenLayer0Windows
+    ) {
         self.targetAppNames = Set(appNames.map { $0.lowercased() })
         self.detectPrivateBrowsing = detectPrivateBrowsing
         self.titlePatterns = titlePatterns.map { $0.lowercased() }
+        self.windowRecordProvider = windowRecordProvider
     }
 
     /// Detects windows to exclude and returns their SCWindow objects
@@ -51,10 +59,11 @@ public final class WindowExclusionDetector: @unchecked Sendable {
         }
     }
 
-    /// Detects window IDs to exclude using CGWindowList
+    /// Detects window IDs to exclude using OnScreenWindowList records
     /// - Returns: Set of window IDs that should be excluded
-    private func detectExcludedWindowIDs() -> Set<CGWindowID> {
-        guard let windowList = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] else {
+    func detectExcludedWindowIDs() -> Set<CGWindowID> {
+        let records = windowRecordProvider()
+        guard !records.isEmpty else {
             return []
         }
 
@@ -63,15 +72,10 @@ public final class WindowExclusionDetector: @unchecked Sendable {
         var titlePatternCount = 0
         var privateBrowsingCount = 0
 
-        for window in windowList {
-            // Only consider normal layer windows (layer 0)
-            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0 else {
-                continue
-            }
-
-            let ownerName = window[kCGWindowOwnerName as String] as? String ?? ""
+        for record in records {
+            let ownerName = record.ownerName
             let ownerNameLower = ownerName.lowercased()
-            let windowTitle = window[kCGWindowName as String] as? String ?? ""
+            let windowTitle = record.title
 
             var reasonToken: String? = nil
             if targetAppNames.contains(ownerNameLower) {
@@ -91,8 +95,8 @@ public final class WindowExclusionDetector: @unchecked Sendable {
                 }
             }
 
-            if let reasonToken, let windowID = window[kCGWindowNumber as String] as? CGWindowID {
-                excludedIDs.insert(windowID)
+            if let reasonToken {
+                excludedIDs.insert(record.windowID)
                 switch reasonToken {
                 case "excluded-app": excludedAppCount += 1
                 case "title-pattern": titlePatternCount += 1

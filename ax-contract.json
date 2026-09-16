@@ -159,6 +159,8 @@
       "settings.privacy.excludedApps.add",
       "settings.privacy.excludedApps.field",
       "settings.privacy.excludedApps.list",
+      "settings.privacy.excludedApps.picker",
+      "settings.privacy.excludedApps.picker.state",
       "settings.privacy.privateBrowsing.exclude",
       "settings.privacy.titlePatterns.add",
       "settings.privacy.titlePatterns.field",
@@ -354,6 +356,10 @@
       "kind" : "enum",
       "vocabulary" : "AXPermissionState"
     },
+    "settings.privacy.excludedApps.picker.state" : {
+      "kind" : "enum",
+      "vocabulary" : "ExcludedAppPickerAvailability"
+    },
     "settings.service.external.connectionTest.state" : {
       "kind" : "enum",
       "vocabulary" : "ConnectionTestState"
@@ -533,6 +539,11 @@
       "idle",
       "copied",
       "failed"
+    ],
+    "ExcludedAppPickerAvailability" : [
+      "needs_screen_recording",
+      "nothing_available",
+      "ready"
     ],
     "FrequencyOption" : [
       "day",

@@ -2397,15 +2397,59 @@ struct SettingsView: View {
                         .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppsList)
                     }
 
-                    HStack {
-                        TextField("app name (e.g., slack)", text: $newExcludedApp)
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit { addExcludedApp() }
-                            .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppField)
-                        Button("add") { addExcludedApp() }
-                            .disabled(newExcludedApp.trimmingCharacters(in: .whitespaces).isEmpty)
-                            .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppAdd)
+                    let pickerEvaluation = ExcludedAppPicker.evaluate(
+                        screenRecordingGranted: appState.screenRecordingGranted,
+                        records: OnScreenWindowList.onScreenLayer0Windows(),
+                        alreadyExcludedNames: appState.config.excludedApps.map(\.name)
+                    )
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("currently open apps")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        switch pickerEvaluation.availability {
+                        case .needsScreenRecording:
+                            Text("grant access to see open apps")
+                                .foregroundStyle(.secondary)
+                        case .nothingAvailable:
+                            Text("nothing available right now")
+                                .foregroundStyle(.secondary)
+                        case .ready:
+                            Picker("", selection: Binding<String?>(
+                                get: { nil },
+                                set: { if let app = $0 { addExcludedApp(name: app) } }
+                            )) {
+                                Text("choose an open app…").tag(String?.none)
+                                ForEach(pickerEvaluation.candidateNames, id: \.self) { name in
+                                    Text(name).tag(String?.some(name))
+                                }
+                            }
+                            .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppsPicker)
+                        }
+
+                        AXStateCompanion(
+                            id: AXID.Settings.Privacy.excludedAppsPickerState,
+                            value: pickerEvaluation.availability.axToken
+                        )
                     }
+                    .padding(.top, 4)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            TextField("exact window-server name", text: $newExcludedApp)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { addExcludedApp() }
+                                .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppField)
+                            Button("add") { addExcludedApp() }
+                                .disabled(newExcludedApp.trimmingCharacters(in: .whitespaces).isEmpty)
+                                .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppAdd)
+                        }
+                        Text("typed names only take effect if they exactly match the name the app reports while running")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 4)
                 }
                 .padding(.vertical, 4)
             }
@@ -2500,16 +2544,12 @@ struct SettingsView: View {
         appState.updateConfig(config)
     }
 
-    private func addExcludedApp() {
-        let name = newExcludedApp.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
-
-        var config = appState.config
-        // Check if already excluded (case-insensitive)
-        if !config.excludedApps.contains(where: { $0.name.lowercased() == name.lowercased() }) {
-            // Use a simple bundle ID based on the name
-            let bundleID = "user.excluded.\(name.lowercased().replacingOccurrences(of: " ", with: "-"))"
-            config.excludedApps.append(AppEntry(bundleID: bundleID, name: name))
+    private func addExcludedApp(name: String? = nil) {
+        let rawName = name ?? newExcludedApp
+        let updated = ExcludedAppPicker.appending(rawName, to: appState.config.excludedApps)
+        if updated.count != appState.config.excludedApps.count {
+            var config = appState.config
+            config.excludedApps = updated
             appState.updateConfig(config)
         }
         newExcludedApp = ""
