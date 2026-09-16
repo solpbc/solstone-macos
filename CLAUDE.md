@@ -125,7 +125,7 @@ Specialized knowledge packs in `skills/`, symlinked from `.claude/skills/` and `
 
 - Sync vendored brand SVGs with `make brand-sync` (writes into `assets/`).
 - The brand source directory is kept outside this repo; set `BRAND_DIR=/path/to/brand make brand-sync` to point at it.
-- `Sources/solstone/Resources/Assets.xcassets/AccentColor.colorset/` carries canonical `solOrange` (`#E8923A`) for the mark accent. `#B06A1A` is orange ink for text, links, and focus rings only; do not use it for the mark.
+- `Sources/solstone/Resources/Assets.xcassets/AccentColor.colorset/` carries canonical `solOrange` (`#E8913A`) for the mark accent. `#B06A1A` is orange ink for text, links, and focus rings only; do not use it for the mark.
 - Render PNGs from the SVG sources via `make icons` — never downsample a larger PNG. Per-size hand-tuned variants live alongside the canonical (`assets/icon-app-16.svg`, `assets/icon-app-32.svg`).
 - Data covenants: no analytics, no tracking, no telemetry, no phone-home — see sol pbc charter.
 
