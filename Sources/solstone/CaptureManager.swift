@@ -27,6 +27,14 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
     func removeMicrophone(deviceUID: String)
     func hasMicrophone(deviceUID: String) -> Bool
     func activeMicrophoneUIDs() -> [String]
+    var onTerminalStop: (@MainActor () -> Void)? { get set }
+}
+
+public extension CaptureSegmentWriting {
+    var onTerminalStop: (@MainActor () -> Void)? {
+        get { nil }
+        set {}
+    }
 }
 
 extension SegmentWriter: CaptureSegmentWriting {}
@@ -137,6 +145,13 @@ public final class CaptureManager {
 
     /// Called when state changes
     var onStateChanged: ((State) -> Void)?
+
+    /// Called when an underlying stream encounters a terminal stop (e.g. macOS Stop Sharing)
+    public var onTerminalStreamStop: (@MainActor () -> Void)?
+
+    public func handleTerminalStreamStop() {
+        onTerminalStreamStop?()
+    }
 
     /// Time remaining in current segment
     public var segmentTimeRemaining: TimeInterval {
@@ -279,6 +294,9 @@ public final class CaptureManager {
             }
         )
         lifecycleManager.configure(delegate: self)
+        self.systemAudioCaptureManager.onTerminalStop = { [weak self] in
+            self?.handleTerminalStreamStop()
+        }
     }
 
     deinit {
@@ -450,6 +468,9 @@ public final class CaptureManager {
             silenceMusic(),
             verbose
         )
+        segment.onTerminalStop = { [weak self] in
+            self?.handleTerminalStreamStop()
+        }
         currentSegment = segment
 
         // Start recording - convert to DisplayInfo for sendable compliance

@@ -480,6 +480,88 @@ struct CaptureCoordinatorTests {
         #expect(!concatenated.contains(marker))
     }
 
+    @Test func userStoppedStreamSuppressesAutoStartUntilExplicitUserStart() async throws {
+        let scheduler = PermissionPollTestScheduler()
+        let startCounter = LockedCounter()
+        let (coordinator, root) = try makeCoordinator(
+            startOperation: { _, _, _ in
+                startCounter.increment()
+                return .committed
+            },
+            screenPermissionProvider: grantedScreenPermissionProvider(),
+            permissionPollScheduler: scheduler.scheduler
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        coordinator.activate()
+        await scheduler.fireOutstandingPasses()
+        #expect(startCounter.count == 1)
+
+        coordinator.handleCaptureStateChange(.recording)
+
+        await coordinator.stopRecording(reason: .userStopped)
+        #expect(coordinator.isUserStopped)
+
+        coordinator.handleCaptureStateChange(.idle)
+
+        await scheduler.fireOutstandingPasses()
+        #expect(startCounter.count == 1)
+
+        coordinator.clearExplicitStop()
+        #expect(coordinator.isUserStopped)
+        await scheduler.fireOutstandingPasses()
+        #expect(startCounter.count == 1)
+
+        await coordinator.startRecording(reason: .user)
+        #expect(!coordinator.isUserStopped)
+        #expect(startCounter.count == 2)
+    }
+
+    @Test func userStoppedStopPathDoesNotEmitPermissionRefused() async throws {
+        let log = RecordingClassifiedLogSink()
+        let (coordinator, root) = try makeCoordinator(
+            classifiedLog: log
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        coordinator.handleCaptureStateChange(.recording)
+        await coordinator.stopRecording(reason: .userStopped)
+        coordinator.handleCaptureStateChange(.idle)
+
+        let permissionRefused = log.emissions.filter { $0.classification == "permission-refused" }
+        #expect(permissionRefused.isEmpty)
+    }
+
+    @Test func userStoppedProjectsStoppedUIStateNotPermissions() async throws {
+        let (coordinator, root) = try makeCoordinator(
+            screenPermissionProvider: grantedScreenPermissionProvider()
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        coordinator.initialPermissionCheckComplete = true
+        coordinator.handleCaptureStateChange(.recording)
+        await coordinator.stopRecording(reason: .userStopped)
+        coordinator.handleCaptureStateChange(.idle)
+
+        #expect(!coordinator.isRecording)
+        #expect(coordinator.screenRecordingGranted)
+        #expect(coordinator.captureError == nil)
+
+        let status = classifyObservationRowState(
+            permissionsNeedAttention: false,
+            errorMessage: coordinator.captureError,
+            initialPermissionCheckComplete: coordinator.initialPermissionCheckComplete,
+            isRecording: coordinator.isRecording,
+            isPaused: coordinator.isPaused,
+            serviceMode: nil,
+            syncPaused: false,
+            isUploadConfigured: false,
+            isPairedIngestReady: false,
+            uploadStatus: .notSynced
+        )
+        #expect(status == .stopped)
+    }
+
     private func makeCoordinator(
         pauseManager: PauseManager = PauseManager(),
         isTerminating: @escaping CaptureCoordinator.IsTerminatingProvider = { false },

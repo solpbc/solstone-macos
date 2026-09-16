@@ -62,12 +62,14 @@ public enum StopReason: Sendable, Equatable {
     case user
     case quit
     case update
+    case userStopped
 
     var trigger: String {
         switch self {
         case .user: "user"
         case .quit: "quit"
         case .update: "update"
+        case .userStopped: "userStopped"
         }
     }
 }

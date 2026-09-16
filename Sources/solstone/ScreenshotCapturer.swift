@@ -13,6 +13,7 @@ import CoreVideo
 public final class ScreenshotCapturer {
     public let displayID: CGDirectDisplayID
     public var onHealthFailure: (() -> Void)?
+    public var onTerminalStop: (@MainActor () -> Void)?
 
     private let videoWriter: VideoWriter
     private let verbose: Bool
@@ -434,6 +435,15 @@ public final class ScreenshotCapturer {
         if isPermissionError(error) {
             Logger.capture.info("ScreenshotCapturer: Permission error, not restarting (requires user action in System Settings)")
             stopHealthCheck()
+            return
+        } else if isUserStoppedStreamError(error) {
+            Logger.capture.info("ScreenshotCapturer: Stream stopped by user (Stop Sharing)")
+            stopHealthCheck()
+            stream = nil
+            streamOutput = nil
+            streamDelegate = nil
+            isRunning = false
+            onTerminalStop?()
             return
         }
 

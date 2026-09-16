@@ -44,10 +44,18 @@ public struct SegmentCaptureResult: Sendable {
 
 @MainActor
 public protocol SegmentScreenshotCapturing: AnyObject, Sendable {
+    var onTerminalStop: (@MainActor () -> Void)? { get set }
     func start() async throws
     func stop() async
     func updateContentFilter(_ filter: SCContentFilter) async
     func finishWithTimeout(seconds: Double) async -> Result<(URL, Int), Error>?
+}
+
+public extension SegmentScreenshotCapturing {
+    var onTerminalStop: (@MainActor () -> Void)? {
+        get { nil }
+        set {}
+    }
 }
 
 public protocol SegmentAudioManaging: AnyObject, Sendable {
@@ -90,6 +98,8 @@ public final class SegmentWriter {
 
     /// The time prefix for file naming (e.g., "143022")
     public let timePrefix: String
+
+    public var onTerminalStop: (@MainActor () -> Void)?
 
     private var screenshotCapturers: [CGDirectDisplayID: any SegmentScreenshotCapturing] = [:]
     private var audioManager: (any SegmentAudioManaging)?
@@ -249,6 +259,9 @@ public final class SegmentWriter {
                         filters[info.displayID],
                         verbose
                     )
+                    capturer.onTerminalStop = { [weak self] in
+                        self?.onTerminalStop?()
+                    }
                     constructedCapturers[info.displayID] = capturer
                 }
                 screenshotCapturers = constructedCapturers

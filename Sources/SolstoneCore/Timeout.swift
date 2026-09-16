@@ -20,6 +20,13 @@ public func isPermissionError(_ error: Error) -> Bool {
         && nsError.code == SCStreamError.Code.userDeclined.rawValue
 }
 
+/// Check if an error indicates the user stopped stream capture via macOS Stop Sharing (a terminal user action, not a permission denial).
+public func isUserStoppedStreamError(_ error: Error) -> Bool {
+    let nsError = error as NSError
+    return nsError.domain == SCStreamErrorDomain
+        && nsError.code == SCStreamError.Code.userStopped.rawValue
+}
+
 public func withTimeout<T: Sendable>(
     seconds: Double,
     operation: @Sendable @escaping () async throws -> T

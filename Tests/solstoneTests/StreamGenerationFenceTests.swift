@@ -365,6 +365,61 @@ struct ScreenshotCapturerStreamGenerationFenceTests {
         #expect(factory.createdStreams.count == 4)
     }
 
+    @Test func screenshotStreamUserStoppedDoesNotRestartAndCleansUp() async throws {
+        let root = try makeTempDirectory("screenshot-user-stopped")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let initialStream = FakeCaptureStream()
+        let factory = FakeCaptureStreamFactory([initialStream, FakeCaptureStream()])
+        let capturer = try makeScreenshotCapturer(root: root, factory: factory)
+        try await capturer.start()
+
+        let terminalStopCount = LockedCounter()
+        capturer.onTerminalStop = {
+            terminalStopCount.increment()
+        }
+
+        let error = NSError(
+            domain: SCStreamErrorDomain,
+            code: SCStreamError.Code.userStopped.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "Stream stopped by user"]
+        )
+
+        await capturer._handleStreamErrorForTesting(error)
+
+        #expect(factory.createdStreams.count == 1)
+        #expect(!capturer._restartDecisionTraceForTesting.contains(proceedingTrace))
+        #expect(capturer._isRunningForTesting == false)
+        #expect(capturer._hasStreamForTesting == false)
+        #expect(capturer._isHealthCheckActiveForTesting == false)
+        #expect(terminalStopCount.count == 1)
+    }
+
+    @Test func systemAudioStreamUserStoppedDoesNotRestartAndCleansUp() async throws {
+        let initialStream = FakeCaptureStream()
+        let factory = FakeCaptureStreamFactory([initialStream, FakeCaptureStream()])
+        let manager = SystemAudioCaptureManager(verbose: false, streamFactory: factory.factory)
+        try await manager.start(filter: SCContentFilter())
+
+        let terminalStopCount = LockedCounter()
+        manager.onTerminalStop = {
+            terminalStopCount.increment()
+        }
+
+        let error = NSError(
+            domain: SCStreamErrorDomain,
+            code: SCStreamError.Code.userStopped.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "Stream stopped by user"]
+        )
+
+        await manager._handleStreamErrorForTesting(error)
+
+        #expect(factory.createdStreams.count == 1)
+        #expect(!manager._restartDecisionTraceForTesting.contains(proceedingTrace))
+        #expect(manager.isRunning == false)
+        #expect(terminalStopCount.count == 1)
+    }
+
     private func makeScreenshotCapturer(
         root: URL,
         factory: FakeCaptureStreamFactory

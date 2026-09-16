@@ -28,4 +28,25 @@ struct PermissionErrorClassificationTests {
 
         #expect(!isPermissionError(error))
     }
+
+    @Test func screenCaptureKitUserStoppedIsUserStoppedAndNotPermissionError() {
+        let error = NSError(
+            domain: SCStreamErrorDomain,
+            code: SCStreamError.Code.userStopped.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "The stream was stopped by the user"]
+        )
+
+        #expect(isUserStoppedStreamError(error))
+        #expect(!isPermissionError(error))
+    }
+
+    @Test func wrongDomainWithUserStoppedCodeIsNotUserStopped() {
+        let error = NSError(
+            domain: "not.ScreenCaptureKit",
+            code: SCStreamError.Code.userStopped.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "The stream was stopped by the user"]
+        )
+
+        #expect(!isUserStoppedStreamError(error))
+    }
 }

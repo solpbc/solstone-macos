@@ -77,6 +77,44 @@ struct IndependentCapturePipelineTests {
         #expect(startCount.count == 2)
     }
 
+    @Test func coordinatorUserStoppedPreventsAutoStartUntilExplicitStart() async throws {
+        let startCount = LockedCounter()
+        let (coordinator, root) = try makeCoordinator(
+            startOperation: { _, _, _ in
+                startCount.increment()
+                return .committed
+            },
+            screenPermissionProvider: grantedScreenPermissionProvider()
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.microphoneAuthorizationReader = { .authorized }
+
+        // Initial auto-start succeeds
+        await coordinator.checkPermissionsAndAutoStart()
+        #expect(startCount.count == 1)
+        #expect(!coordinator.isUserStopped)
+
+        // Stream encounters terminal Stop Sharing -> isUserStopped becomes true
+        await coordinator.stopRecording(reason: .userStopped)
+        #expect(coordinator.isUserStopped)
+        #expect(!coordinator.isRecording)
+
+        // Permission check or poll does NOT auto-start while user-stopped
+        await coordinator.checkPermissionsAndAutoStart()
+        #expect(startCount.count == 1)
+
+        // clearExplicitStop does NOT clear isUserStopped
+        coordinator.clearExplicitStop()
+        #expect(coordinator.isUserStopped)
+        await coordinator.checkPermissionsAndAutoStart()
+        #expect(startCount.count == 1)
+
+        // Explicit user start resets isUserStopped and starts recording
+        await coordinator.startRecording(reason: .user)
+        #expect(!coordinator.isUserStopped)
+        #expect(startCount.count == 2)
+    }
+
     @Test func coordinatorStartsOnlyPermittedAndEnabledSources() async throws {
         var admittedSourcesPassed: CaptureSources?
         let (coordinator, root) = try makeCoordinator(

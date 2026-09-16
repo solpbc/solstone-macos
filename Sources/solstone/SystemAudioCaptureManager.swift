@@ -17,6 +17,7 @@ public final class SystemAudioCaptureManager {
         get { streamOutput?.onAudioBuffer }
         set { streamOutput?.onAudioBuffer = newValue }
     }
+    public var onTerminalStop: (@MainActor () -> Void)?
 
     private var stream: (any CaptureStreamControlling)?
     private var streamOutput: SystemAudioStreamOutput?
@@ -216,6 +217,11 @@ public final class SystemAudioCaptureManager {
         if isPermissionError(error) {
             Logger.audio.info("[SystemAudio] Permission error, not restarting (requires user action in System Settings)")
             stopHealthCheck()
+            return
+        } else if isUserStoppedStreamError(error) {
+            Logger.audio.info("[SystemAudio] Stream stopped by user (Stop Sharing)")
+            stopHealthCheck()
+            onTerminalStop?()
             return
         }
 

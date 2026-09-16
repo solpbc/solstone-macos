@@ -41,6 +41,7 @@ public final class CaptureCoordinator {
     public internal(set) var isPaused = false
     public internal(set) var isUserPaused = false
     public internal(set) var isExplicitlyStopped = false
+    public internal(set) var isUserStopped = false
     public internal(set) var captureError: String?
     private var storedScreenRecordingGranted = false
     public var screenRecordingGranted: Bool { storedScreenRecordingGranted }
@@ -124,6 +125,11 @@ public final class CaptureCoordinator {
                 )
             )
         }
+        self.captureManager.onTerminalStreamStop = { [weak self] in
+            Task { @MainActor in
+                await self?.stopRecording(reason: .userStopped)
+            }
+        }
     }
 
     deinit {
@@ -135,6 +141,12 @@ public final class CaptureCoordinator {
     public func activate() {
         captureManager.onStateChanged = { [weak self] state in
             self?.handleCaptureStateChange(state)
+        }
+
+        captureManager.onTerminalStreamStop = { [weak self] in
+            Task { @MainActor in
+                await self?.stopRecording(reason: .userStopped)
+            }
         }
 
         audioDeviceMonitor.onDeviceChange = { [weak self] added, removed in
@@ -196,6 +208,7 @@ public final class CaptureCoordinator {
 
         if reason == .user {
             isExplicitlyStopped = false
+            isUserStopped = false
         }
 
         let config = configProvider()
@@ -266,6 +279,8 @@ public final class CaptureCoordinator {
     public func stopRecording(reason: StopReason = .user) async -> TransitionOutcome {
         if reason == .user {
             isExplicitlyStopped = true
+        } else if reason == .userStopped {
+            isUserStopped = true
         }
         let wasUserPaused = isUserPaused
         let outcome = await captureManager.enqueueTransition(.stop(reason: reason))
@@ -347,8 +362,8 @@ public final class CaptureCoordinator {
 
         let admissionSet = configProvider().sources.intersection(permittedSources)
 
-        // Auto-start if admitted sources exist, not explicitly stopped, not paused, not already recording, and recovery is not scheduled
-        if !isExplicitlyStopped && !admissionSet.isEmpty && !isRecording && !isUserPaused && !captureManager.isRecoveryScheduled {
+        // Auto-start if admitted sources exist, not explicitly stopped, not user stopped, not paused, not already recording, and recovery is not scheduled
+        if !isUserStopped && !isExplicitlyStopped && !admissionSet.isEmpty && !isRecording && !isUserPaused && !captureManager.isRecoveryScheduled {
             if isTerminating() {
                 recorder.enqueue(.permissionAutoStartSkipped)
                 logAdapter.permissionAutoStartSkipped()
