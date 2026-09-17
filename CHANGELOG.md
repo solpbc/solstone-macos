@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.0.11] - 2026-09-17
+## [2.0.10] - 2026-09-16
 
 ### Changed
 - the exclude list now lets you pick which currently open apps to keep out of your journal, so the saved name matches what the app calls itself while running. typing a name is still available as a fallback, but only takes effect on an exact match against the name the app reports while running.
