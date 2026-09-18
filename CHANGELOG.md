@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.11] - 2026-09-18
+
 ### Changed
-- when your journal is on the same mac, "open journal" now opens it in your browser. the built-in window is still used for a journal on another device.
+- when your journal is on the same mac, "open journal" now opens it in your browser. the built-in window is still used for your journal on another device.
 
 ### Fixed
 - the journal window now says what's wrong and what you can do about it, instead of "isn't connected yet". and it keeps the page on screen while its connection to your journal comes back, instead of going blank.

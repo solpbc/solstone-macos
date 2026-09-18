@@ -9,9 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- make bump-release-journal scaffolds a dated block above the first ## [ and does not read [Unreleased], so the release cut must fold these bullets into that scaffold. -->
 
+## [2.0.11 (build 45)] - 2026-09-18
+
 ### Changed
 - home now leads with "open your journal" and says where it opens: in your browser. the journal app keeps your journal running on your mac.
 - the pane where you name your journal and see where it lives is now called "name & location".
+- updated the bundled journal to [2.0.9](https://solstone.app/releases#v2.0.9) →
 
 ## [2.0.10 (build 44)] - 2026-09-16
 
