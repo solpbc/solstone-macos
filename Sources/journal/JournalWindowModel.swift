@@ -5,6 +5,7 @@ import Foundation
 import JournalMarkKit
 import JournalRuntime
 import Observation
+import os
 import SolstoneCore
 
 enum JournalPane: String, CaseIterable, Hashable, Identifiable {
@@ -21,7 +22,7 @@ enum JournalPane: String, CaseIterable, Hashable, Identifiable {
     var title: String {
         switch self {
         case .home: return "home"
-        case .journal: return "journal"
+        case .journal: return "name & location"
         case .runState: return "run state"
         case .devices: return "devices"
         case .backup: return "backup"
@@ -99,6 +100,14 @@ enum JournalRunDisplay: String, CaseIterable, Sendable {
             }
         }
     }
+}
+
+enum JournalHomeOffer: Equatable {
+    case unconfigured
+    case door
+    case start
+    case none
+    case runState
 }
 
 enum JournalHealthDisplay: String, CaseIterable, Sendable {
@@ -239,6 +248,31 @@ final class JournalWindowModel {
 
     var unconfiguredMessage: String? {
         isConfigured ? nil : "nothing here yet. creating your journal comes next."
+    }
+
+    var homeOffer: JournalHomeOffer {
+        guard isConfigured else { return .unconfigured }
+        switch runDisplay {
+        case .running:
+            return .door
+        case .stopped:
+            return .start
+        case .starting:
+            return .none
+        case .blocked, .unknown:
+            return .runState
+        }
+    }
+
+    func openJournal(using openURL: @MainActor (URL) -> Bool) {
+        guard let url = URL(string: baseURL + "/") else {
+            Logger.journalApp.error("failed to form journal URL from \(self.baseURL, privacy: .public)")
+            return
+        }
+        if openURL(url) {
+            return
+        }
+        Logger.journalApp.error("failed to open journal at \(url.absoluteString, privacy: .public)")
     }
 
     var diskUsageValue: String {

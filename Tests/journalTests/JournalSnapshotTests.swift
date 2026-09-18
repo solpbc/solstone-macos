@@ -68,6 +68,9 @@ struct JournalSnapshotTests {
     @Test func paneMatrix() async throws {
         try await renderHomeConfiguredRunning()
         try await renderHomeConfiguredStopped()
+        try await renderHomeConfiguredStarting()
+        try await renderHomeConfiguredBlocked()
+        try await renderHomeConfiguredUnknown()
         try await renderHomeUnconfiguredInterim()
         try await renderHomeHostnameFallback()
         try await renderJournalNameAndDiskUsage()
@@ -102,6 +105,38 @@ struct JournalSnapshotTests {
         try await renderWindow(model, to: "journal-home-configured-stopped.png")
     }
 
+    private func renderHomeConfiguredStarting() async throws {
+        let fixture = try makeConfiguredFixture()
+        let supervisor = JournalSupervisor()
+        supervisor.applyRuntimeStatus(.restarting(generation: nil))
+        let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
+        model.selectedPane = .home
+        try await renderWindow(model, to: "journal-home-configured-starting.png")
+    }
+
+    private func renderHomeConfiguredBlocked() async throws {
+        let diagnostic = JournalDiagnostic(commandLabel: "gate", outputExcerpt: "port busy")
+        let blockage = SingleSupervisorGateBlockage.portConflict(diagnostic)
+        let supervisor = JournalSupervisor(
+            gate: MockSingleSupervisorGate(),
+            materializer: MockRuntimeMaterializer(result: .success(try makeRuntime())),
+            runner: MockSupervisedChildRunner(startError: SupervisedJournalRunnerError.gateBlocked(blockage)),
+            readinessGate: MockJournalReadinessGate(result: .ready)
+        )
+        _ = configureInMemoryReceiptContext(supervisor)
+        let fixture = try makeConfiguredFixture()
+        _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
+        let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
+        model.selectedPane = .home
+        try await renderWindow(model, to: "journal-home-configured-blocked.png")
+    }
+
+    private func renderHomeConfiguredUnknown() async throws {
+        let model = try configuredModel(mark: .uiTestSample, name: "home base")
+        model.selectedPane = .home
+        try await renderWindow(model, to: "journal-home-configured-unknown.png")
+    }
+
     private func renderHomeUnconfiguredInterim() async throws {
         let model = unconfiguredModel()
         model.selectedPane = .home
@@ -109,7 +144,8 @@ struct JournalSnapshotTests {
     }
 
     private func renderHomeHostnameFallback() async throws {
-        let model = try configuredModel(mark: nil, name: "", machineName: "machine-name")
+        let supervisor = try await runningSupervisor()
+        let model = try configuredModel(supervisor: supervisor, mark: nil, name: "", machineName: "machine-name")
         model.selectedPane = .home
         try await renderWindow(model, to: "journal-home-hostname-fallback.png")
     }
@@ -210,7 +246,8 @@ struct JournalSnapshotTests {
     }
 
     private func renderFirstRunLockedHome() async throws {
-        let model = try configuredModel(mark: .uiTestSample, name: "")
+        let supervisor = try await runningSupervisor()
+        let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample, name: "")
         model.selectedPane = .home
         try await renderWindow(model, to: "journal-first-run-locked-home.png")
     }
@@ -316,7 +353,7 @@ struct JournalSnapshotTests {
 
     private func renderWindow(_ model: JournalWindowModel, to filename: String) async throws {
         try await render(
-            JournalSettingsWindow(model: model, updateController: makeUpdateController(), openURL: { _ in })
+            JournalSettingsWindow(model: model, updateController: makeUpdateController(), openURL: { _ in true })
                 .frame(width: size.width, height: size.height)
                 .background(Color(nsColor: .windowBackgroundColor)),
             size: size,

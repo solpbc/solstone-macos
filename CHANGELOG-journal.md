@@ -5,6 +5,14 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+<!-- make bump-release-journal scaffolds a dated block above the first ## [ and does not read [Unreleased], so the release cut must fold these bullets into that scaffold. -->
+
+### Changed
+- home now leads with "open your journal" and says where it opens: in your browser. the journal app keeps your journal running on your mac.
+- the pane where you name your journal and see where it lives is now called "name & location".
+
 ## [2.0.10 (build 44)] - 2026-09-16
 
 ### Changed
@@ -229,8 +237,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - (describe journal bug fixes)
 
-
-## [Unreleased]
 
 ## [1.0.0] - 2026-07-05
 

@@ -157,11 +157,94 @@ struct JournalWindowModelTests {
         _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
         supervisor.applyRuntimeStatus(.running)
         #expect(model.runDisplay == .running)
+        #expect(model.homeOffer == .door)
 
         let diagnostic = JournalDiagnostic(commandLabel: "journal", outputExcerpt: "exit")
         supervisor.applyRuntimeStatus(.stopped(diagnostic))
 
         #expect(model.runDisplay == .stopped)
+        #expect(model.homeOffer == .start)
+    }
+
+    @Test func homeOfferFollowsConfiguredRunDisplay() async throws {
+        let unconfigured = makeUnconfiguredFixture()
+        defer { unconfigured.clear() }
+        #expect(makeModel(config: unconfigured.config).homeOffer == .unconfigured)
+
+        let fixture = try makeConfiguredFixture()
+        defer { fixture.clear() }
+
+        #expect(makeModel(config: fixture.config).homeOffer == .runState)
+
+        let stoppedSupervisor = JournalSupervisor()
+        stoppedSupervisor.applyRuntimeStatus(.stoppedByUser)
+        #expect(makeModel(config: fixture.config, supervisor: stoppedSupervisor).homeOffer == .start)
+
+        let startingSupervisor = JournalSupervisor()
+        startingSupervisor.applyRuntimeStatus(.restarting(generation: nil))
+        #expect(makeModel(config: fixture.config, supervisor: startingSupervisor).homeOffer == .none)
+
+        let runningSupervisor = JournalSupervisor(
+            gate: MockSingleSupervisorGate(),
+            materializer: MockRuntimeMaterializer(result: .success(try makeRuntime())),
+            runner: MockSupervisedChildRunner(),
+            readinessGate: MockJournalReadinessGate(result: .ready)
+        )
+        _ = configureInMemoryReceiptContext(runningSupervisor)
+        let runningModel = makeModel(config: fixture.config, supervisor: runningSupervisor)
+        _ = await runningSupervisor.start(journalRoot: try #require(fixture.config.journalRoot))
+        runningSupervisor.applyRuntimeStatus(.running)
+        #expect(runningModel.homeOffer == .door)
+
+        let diagnostic = JournalDiagnostic(commandLabel: "gate", outputExcerpt: "port busy")
+        let blockage = SingleSupervisorGateBlockage.portConflict(diagnostic)
+        let blockedSupervisor = JournalSupervisor(
+            gate: MockSingleSupervisorGate(),
+            materializer: MockRuntimeMaterializer(result: .success(try makeRuntime())),
+            runner: MockSupervisedChildRunner(startError: SupervisedJournalRunnerError.gateBlocked(blockage)),
+            readinessGate: MockJournalReadinessGate(result: .ready)
+        )
+        _ = configureInMemoryReceiptContext(blockedSupervisor)
+        _ = await blockedSupervisor.start(journalRoot: try #require(fixture.config.journalRoot))
+        #expect(makeModel(config: fixture.config, supervisor: blockedSupervisor).homeOffer == .runState)
+    }
+
+    @Test func openJournalUsesDefaultBaseWithTrailingSlash() {
+        let fixture = makeUnconfiguredFixture()
+        defer { fixture.clear() }
+        let model = makeModel(config: fixture.config)
+        let capture = OpenURLCapture()
+        model.openJournal(using: { url in
+            capture.append(url)
+            return true
+        })
+        #expect(capture.absoluteStrings == ["http://127.0.0.1:5015/"])
+    }
+
+    @Test func openJournalUsesInjectedHostAndPort() {
+        let fixture = makeUnconfiguredFixture()
+        defer { fixture.clear() }
+        let model = makeModel(config: fixture.config, baseURL: "http://10.1.2.3:9999/")
+        let capture = OpenURLCapture()
+        model.openJournal(using: { url in
+            capture.append(url)
+            return true
+        })
+        #expect(capture.absoluteStrings == ["http://10.1.2.3:9999/"])
+    }
+
+    @Test func openJournalFailureDoesNotRetryOrStoreError() throws {
+        let fixture = try makeConfiguredFixture()
+        defer { fixture.clear() }
+        let model = makeModel(config: fixture.config)
+        #expect(model.homeOffer == .runState)
+        let capture = OpenURLCapture()
+        model.openJournal(using: { url in
+            capture.append(url)
+            return false
+        })
+        #expect(capture.urls.count == 1)
+        #expect(model.homeOffer == .runState)
     }
 
     @Test func optimisticNameWriteCommitsOnSuccessAndRevertsOnFailure() async throws {
@@ -307,6 +390,7 @@ struct JournalWindowModelTests {
     private func makeModel(
         config: JournalAppConfig,
         supervisor: JournalSupervisor = JournalSupervisor(),
+        baseURL: String = "http://127.0.0.1:5015",
         fetchConfig: JournalWindowModel.ConfigFetch? = { JournalConfig(journal: JournalConfigSection(name: "")) },
         updateName: JournalWindowModel.NameUpdate? = { JournalConfig(journal: JournalConfigSection(name: $0)) },
         fetchIdentity: JournalWindowModel.IdentityFetch? = { _ in nil },
@@ -320,6 +404,7 @@ struct JournalWindowModelTests {
         JournalWindowModel(
             config: config,
             supervisor: supervisor,
+            baseURL: baseURL,
             fetchConfig: fetchConfig,
             updateName: updateName,
             fetchIdentity: fetchIdentity,
@@ -364,6 +449,17 @@ private actor IdentityCounter {
     func fetch() -> JournalMark? {
         calls += 1
         return mark
+    }
+}
+
+@MainActor
+private final class OpenURLCapture {
+    private(set) var urls: [URL] = []
+
+    var absoluteStrings: [String] { urls.map(\.absoluteString) }
+
+    func append(_ url: URL) {
+        urls.append(url)
     }
 }
 

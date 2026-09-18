@@ -88,6 +88,8 @@
       "journal.home.name.state",
       "journal.home.open",
       "journal.home.runDisplay.glance.state",
+      "journal.home.runState",
+      "journal.home.start",
       "journal.home.unconfigured.message.state",
       "journal.journal.diskUsage.state",
       "journal.journal.location.path.state",

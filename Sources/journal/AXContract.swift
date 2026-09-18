@@ -17,6 +17,8 @@ enum AXContract {
         AXID.Journal.Home.runDisplayGlanceState,
         AXID.Journal.Home.openJournal,
         AXID.Journal.Home.unconfiguredMessageState,
+        AXID.Journal.Home.start,
+        AXID.Journal.Home.runState,
         AXID.Journal.Ritual.root,
         AXID.Journal.Ritual.routeState,
         AXID.Journal.Ritual.nameField,

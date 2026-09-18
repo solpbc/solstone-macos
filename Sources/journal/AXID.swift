@@ -21,6 +21,8 @@ enum AXID {
             static let runDisplayGlanceState = "journal.home.runDisplay.glance.state"
             static let openJournal = "journal.home.open"
             static let unconfiguredMessageState = "journal.home.unconfigured.message.state"
+            static let start = "journal.home.start"
+            static let runState = "journal.home.runState"
         }
 
         enum Ritual {

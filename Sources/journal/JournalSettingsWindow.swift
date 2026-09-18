@@ -10,12 +10,12 @@ import UpdateKit
 struct JournalSettingsWindow: View {
     @Bindable var model: JournalWindowModel
     @Bindable var updateController: UpdateController
-    var openURL: (URL) -> Void
+    var openURL: @MainActor (URL) -> Bool
 
     init(
         model: JournalWindowModel,
         updateController: UpdateController,
-        openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }
+        openURL: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
     ) {
         self.model = model
         self.updateController = updateController
@@ -95,24 +95,50 @@ struct JournalSettingsWindow: View {
                 AXStateCompanion(id: AXID.Journal.Home.runDisplayGlanceState, value: model.runDisplay.axToken)
             }
 
-            if let message = model.unconfiguredMessage {
-                Text(message)
-                    .foregroundStyle(.secondary)
-                AXStateCompanion(id: AXID.Journal.Home.unconfiguredMessageState, value: message)
-            } else {
-                Button {
-                    openURL(URL(string: "http://127.0.0.1:5015/")!)
-                } label: {
-                    Label("open your journal", systemImage: "arrow.up.right.square")
+            switch model.homeOffer {
+            case .unconfigured:
+                if let message = model.unconfiguredMessage {
+                    Text(message)
+                        .foregroundStyle(.secondary)
+                    AXStateCompanion(id: AXID.Journal.Home.unconfiguredMessageState, value: message)
                 }
-                .accessibilityIdentifier(AXID.Journal.Home.openJournal)
+            case .door, .start, .none, .runState:
+                Text("this app keeps your journal running on this mac. your journal itself opens in your browser.")
+                    .foregroundStyle(.secondary)
+                switch model.homeOffer {
+                case .door:
+                    Button {
+                        model.openJournal(using: openURL)
+                    } label: {
+                        Label("open your journal", systemImage: "arrow.up.right.square")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .accessibilityIdentifier(AXID.Journal.Home.openJournal)
+                case .start:
+                    Button {
+                        model.startJournal()
+                    } label: {
+                        Label("start", systemImage: "play.fill")
+                    }
+                    .accessibilityIdentifier(AXID.Journal.Home.start)
+                case .runState:
+                    Button {
+                        model.selectedPane = .runState
+                    } label: {
+                        Label("run state →", systemImage: "waveform.path.ecg")
+                    }
+                    .accessibilityIdentifier(AXID.Journal.Home.runState)
+                case .none, .unconfigured:
+                    EmptyView()
+                }
             }
         }
     }
 
     private var journalPane: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("journal")
+            Text(JournalPane.journal.title)
                 .font(.title2.weight(.semibold))
 
             VStack(alignment: .leading, spacing: 8) {
