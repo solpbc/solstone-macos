@@ -15,15 +15,11 @@ import Testing
 /// (same-machine pair-start, the SPL ceremony over the real door), connect the real
 /// `SPLTunnelTransport`, and then drive raw TCP through the real `LoopbackProxy`:
 ///
-/// - eight idle preconnections must not starve a ninth connection's request (the September
+/// - sixteen idle preconnections must not starve another connection's request (the September
 ///   2026 idle-preconnection window failure, now against the real door rather than a capped
 ///   fake);
-/// - five held streams must still leave room for one more request. That floor is what a
-///   browser window needs, and it is the binding between the door's stream limit and the
-///   app: if the native door's `MAX_CONCURRENT_STREAMS` drops below what the window needs,
-///   this reds. The over-cap control below is the other direction: holding more streams than
-///   the limit must starve the next request, so a raised limit is noticed too, and the
-///   `spl-swift` unit fake's limit gets updated with it.
+/// - twelve held streams must still leave room for a thirteenth request; and
+/// - sixteen held streams must refuse the seventeenth without replacing the carrier.
 ///
 /// Relay enrollment is pointed at an unreachable loopback endpoint on purpose: the pair
 /// client degrades it to unavailable, and nothing here reaches the production relay.
@@ -40,8 +36,8 @@ struct NativeIntegrationDoorTests {
     /// The native door's concurrent-stream limit as shipped. Both controls below pin it: the
     /// floor proves the app's browser need fits under it, the over-cap control proves the
     /// instrument sees the limit at all.
-    private static let doorStreamLimit = 8
-    private static let browserNeed = 6
+    private static let doorStreamLimit = 16
+    private static let measuredClaimantPeak = 13
     private static let assetPath = "/static/shell_gate.js"
     /// Comfortably past the ~18 MB boundary the September 2026 report measured, and well
     /// under the ingest contract's per-part and per-connection limits.
@@ -167,7 +163,8 @@ struct NativeIntegrationDoorTests {
         let plain = try LoopbackHTTP.request(port: proxyPort, path: Self.assetPath)
         #expect(plain.hasPrefix("HTTP/1.1 200"), "plain request: \(plain.prefix(120))")
 
-        // Eight idle preconnections, then a ninth connection's request must still be served.
+        // Idle preconnections do not allocate remote streams. Hold as many local TCP
+        // connections as the current Journal admits, then serve one more connection's request.
         for _ in 0..<Self.doorStreamLimit {
             sockets.append(try LoopbackHTTP.connect(port: proxyPort))
         }
@@ -176,9 +173,9 @@ struct NativeIntegrationDoorTests {
         for descriptor in sockets { close(descriptor) }
         sockets.removeAll()
 
-        // Browser floor: hold (need - 1) streams open with partial requests, then one more
-        // full request must be served.
-        for _ in 0..<(Self.browserNeed - 1) {
+        // Measured claimant peak: hold twelve streams open with partial requests, then
+        // require the thirteenth to complete.
+        for _ in 0..<(Self.measuredClaimantPeak - 1) {
             sockets.append(try LoopbackHTTP.connectAndHold(port: proxyPort, path: Self.assetPath))
         }
         // Opening the local sockets only proves that the proxy accepted them. Let their
@@ -189,15 +186,15 @@ struct NativeIntegrationDoorTests {
         let underHeld = try LoopbackHTTP.request(port: proxyPort, path: Self.assetPath)
         #expect(
             underHeld.hasPrefix("HTTP/1.1 200"),
-            "door left no room for a \(Self.browserNeed)th stream; the window needs \(Self.browserNeed): \(underHeld.prefix(120))"
+            "door left no room for stream \(Self.measuredClaimantPeak): \(underHeld.prefix(120))"
         )
         for descriptor in sockets { close(descriptor) }
         sockets.removeAll()
         try await Task.sleep(for: .milliseconds(300))
 
         // Over-cap control: hold the whole limit, and the next request must be starved. If
-        // this passes with a 200, the native door's limit rose; update `doorStreamLimit` here
-        // and the `spl-swift` LoopbackProxy test fake with it.
+        // this passes with a 200, the native door's limit changed; update
+        // `doorStreamLimit` here and revalidate the policy boundary.
         for _ in 0..<Self.doorStreamLimit {
             sockets.append(try LoopbackHTTP.connectAndHold(port: proxyPort, path: Self.assetPath))
         }

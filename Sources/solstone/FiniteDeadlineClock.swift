@@ -27,20 +27,24 @@ public enum BoundedLoopbackClient {
     public static let maxResponseBodyBytes = 64 * 1024 // 64 KiB
     public static let defaultDeadline: Duration = .seconds(15)
 
-    /// Concurrent streams the journal door admits on one carrier.
+    /// Deployed compatibility floor for concurrent streams on one carrier.
     ///
     /// The loopback tunnel maps one remote stream to each persistent TCP
-    /// connection and holds it for that connection's whole life, so every
-    /// URLSession pool pointing at the tunnel has to fit inside this budget
-    /// together. Exceeding it does not degrade: the door refuses the next
-    /// stream and the request fails as a bare connection loss.
-    public static let tunnelStreamBudget = 8
+    /// connection and holds it for that connection's whole life. Installed
+    /// Journals may still carry this policy, so the app-owned URLSession pools
+    /// must continue to fit inside it together.
+    public static let deployedJournalStreamFloor = 8
+
+    /// Concurrent streams admitted by the current Journal policy. This is not
+    /// a negotiated client capability: an older Journal can still enforce the
+    /// deployed compatibility floor above.
+    public static let tunnelStreamBudget = 16
 
     /// Persistent connections the shared loopback control pool may hold.
     public static let loopbackConnectionsPerHost = 4
 
     /// Persistent connections the ingest pool may hold. Kept with
-    /// `loopbackConnectionsPerHost` so the sum stays inside the budget.
+    /// `loopbackConnectionsPerHost` so the sum stays inside the deployed floor.
     public static let uploadConnectionsPerHost = 2
 
     /// The one pool for loopback control traffic.
@@ -48,8 +52,8 @@ public enum BoundedLoopbackClient {
     /// Every caller used to take `makeSession()` as a default argument, which
     /// mints a fresh `URLSession` — and therefore a fresh connection pool — on
     /// every call, and nothing ever invalidated one. The number of pools aimed
-    /// at the tunnel scaled with client instantiations while the door's budget
-    /// stayed at eight.
+    /// at the tunnel scaled with client instantiations while deployed Journals
+    /// admitted only eight streams.
     public static let sharedSession: URLSession = makeSession()
 
     public static func makeSessionConfiguration(
@@ -61,7 +65,7 @@ public enum BoundedLoopbackClient {
         config.timeoutIntervalForResource = 15
         config.connectionProxyDictionary = [:]
         // Never the platform default here: it is six per host per pool, and the
-        // tunnel budget is eight across every pool.
+        // deployed compatibility floor is eight across every app-owned pool.
         config.httpMaximumConnectionsPerHost = loopbackConnectionsPerHost
         if let additionalProtocolClasses {
             config.protocolClasses = additionalProtocolClasses

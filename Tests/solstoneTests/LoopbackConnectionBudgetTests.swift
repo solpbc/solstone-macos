@@ -5,10 +5,10 @@ import Foundation
 import Testing
 @testable import solstone
 
-// The journal door admits eight concurrent streams per carrier, and the loopback
-// tunnel maps one stream to each persistent TCP connection and holds it for that
-// connection's whole life. Every URLSession pool aimed at the tunnel therefore
-// has to fit inside eight together.
+// Deployed Journals may admit only eight concurrent streams per carrier, while
+// the current Journal admits sixteen. The loopback tunnel maps one stream to each
+// persistent TCP connection and holds it for that connection's whole life. Every
+// app-owned URLSession pool must therefore still fit inside the deployed floor.
 //
 // None of them declared a limit before this suite existed: each took the
 // platform default of six per host, `URLSession.shared` added a pool this
@@ -20,7 +20,11 @@ struct LoopbackConnectionBudgetTests {
     @Test func everyLoopbackPoolFitsInsideTheDoorStreamBudget() {
         let declared = BoundedLoopbackClient.loopbackConnectionsPerHost
             + BoundedLoopbackClient.uploadConnectionsPerHost
-        #expect(declared <= BoundedLoopbackClient.tunnelStreamBudget)
+        #expect(declared <= BoundedLoopbackClient.deployedJournalStreamFloor)
+        #expect(
+            BoundedLoopbackClient.deployedJournalStreamFloor
+                < BoundedLoopbackClient.tunnelStreamBudget
+        )
     }
 
     @Test func theBoundedLoopbackPoolDeclaresItsConnectionLimit() {
