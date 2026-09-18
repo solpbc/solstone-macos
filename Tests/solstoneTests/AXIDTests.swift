@@ -29,6 +29,8 @@ struct AXIDTests {
     @Test func journalMarkPairingIDsAreStable() {
         #expect(AXID.Settings.Service.pairingMarkConfirm == "settings.service.pairing.markConfirm")
         #expect(AXID.Settings.Service.pairingMarkMismatch == "settings.service.pairing.markMismatch")
+        #expect(AXID.Settings.Service.pairingMarkContinueAnyway == "settings.service.pairing.markContinueAnyway")
+        #expect(AXID.Settings.Service.pairingMarkCancelPairing == "settings.service.pairing.markCancelPairing")
         #expect(AXID.Settings.Service.pairingMismatchFreshLink == "settings.service.pairing.mismatchFreshLink")
         #expect(AXID.Settings.Service.pairingMismatchSupport == "settings.service.pairing.mismatchSupport")
     }

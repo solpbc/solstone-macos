@@ -9,6 +9,21 @@ extension JournalMarkConfirmationDriver {
         }
     }
 
+    func continueAnyway(appState: AppState) {
+        continueAnyway()
+    }
+
+    func cancelPairing(appState: AppState) async {
+        await cancelPairing(
+            clearConfirmedMark: {
+                appState.clearConfirmedMark()
+            },
+            unpair: {
+                await appState.pairingCoordinator.unpair()
+            }
+        )
+    }
+
     func reject(appState: AppState, onMismatch: @MainActor () -> Void) async {
         await reject(
             clearConfirmedMark: {
@@ -24,10 +39,7 @@ extension JournalMarkConfirmationDriver {
     func startIfNeeded(
         for state: PairingFlowState,
         appState: AppState,
-        fetcher: JournalIdentityFetcher = JournalIdentityFetcher(),
-        logFallback: @escaping FallbackLogger = { reason in
-            Logger.journalMark.info("journal-mark fallback: proceeding without confirmed mark reason=\(reason.rawValue, privacy: .public)")
-        }
+        fetcher: JournalIdentityFetcher = JournalIdentityFetcher()
     ) {
         // The automatic same-machine adoption re-uses this ceremony to take over a journal the
         // owner already had linked on this Mac. It runs automatically during launch, so leaving the mark
@@ -48,18 +60,14 @@ extension JournalMarkConfirmationDriver {
             },
             fetchMark: { baseURL in
                 await fetcher.fetch(baseURL: baseURL)
-            },
-            logFallback: logFallback
+            }
         )
     }
 
     func startIfNeeded(
         for state: PairingFlowState,
         resolveHomeBase: @escaping @MainActor @Sendable () async -> ResolvedHomeBase,
-        fetchMark: @escaping MarkFetcher,
-        logFallback: @escaping FallbackLogger = { reason in
-            Logger.journalMark.info("journal-mark fallback: proceeding without confirmed mark reason=\(reason.rawValue, privacy: .public)")
-        }
+        fetchMark: @escaping MarkFetcher
     ) {
         guard let successKey = Self.successKey(for: state) else { return }
         startIfNeeded(
@@ -72,25 +80,20 @@ extension JournalMarkConfirmationDriver {
                     return .url(baseURL)
                 }
             },
-            fetchMark: fetchMark,
-            logFallback: logFallback
+            fetchMark: fetchMark
         )
     }
 
     func startIfNeeded(
         for state: PairingFlowState,
         resolveHomeBase: @escaping HomeBaseResolver,
-        fetchMark: @escaping MarkFetcher,
-        logFallback: @escaping FallbackLogger = { reason in
-            Logger.journalMark.info("journal-mark fallback: proceeding without confirmed mark reason=\(reason.rawValue, privacy: .public)")
-        }
+        fetchMark: @escaping MarkFetcher
     ) {
         guard let successKey = Self.successKey(for: state) else { return }
         startIfNeeded(
             for: successKey,
             resolveHomeBase: resolveHomeBase,
-            fetchMark: fetchMark,
-            logFallback: logFallback
+            fetchMark: fetchMark
         )
     }
 

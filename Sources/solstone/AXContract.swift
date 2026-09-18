@@ -88,6 +88,8 @@ enum AXContract {
         AXID.Settings.Service.pairingDisconnectCancel,
         AXID.Settings.Service.pairingMarkConfirm,
         AXID.Settings.Service.pairingMarkMismatch,
+        AXID.Settings.Service.pairingMarkContinueAnyway,
+        AXID.Settings.Service.pairingMarkCancelPairing,
         AXID.Settings.Service.pairingMismatchFreshLink,
         AXID.Settings.Service.pairingMismatchSupport,
         AXID.Settings.Service.nextCheckStatus,

@@ -528,6 +528,27 @@ struct SettingsView: View {
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier(AXID.Settings.Service.pairingMarkConfirm)
                 }
+            case .unverified:
+                VStack(spacing: 6) {
+                    Text(UICopy.JOURNAL_MARK_UNVERIFIED_TITLE)
+                        .font(.headline)
+                    Text(UICopy.JOURNAL_MARK_UNVERIFIED_BODY)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                HStack {
+                    Button(UICopy.JOURNAL_MARK_UNVERIFIED_CANCEL_BUTTON) {
+                        cancelUnverifiedPairing()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Service.pairingMarkCancelPairing)
+
+                    Button(UICopy.JOURNAL_MARK_UNVERIFIED_CONTINUE_BUTTON) {
+                        continueUnverifiedMark()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier(AXID.Settings.Service.pairingMarkContinueAnyway)
+                }
             }
         }
         .padding(24)
@@ -548,6 +569,20 @@ struct SettingsView: View {
     private func confirmJournalMark() {
         journalMarkDriver.confirm(appState: appState)
         pairingMismatch = false
+    }
+
+    private func continueUnverifiedMark() {
+        journalMarkDriver.continueAnyway(appState: appState)
+        pairingMismatch = false
+    }
+
+    private func cancelUnverifiedPairing() {
+        Task { @MainActor in
+            await journalMarkDriver.cancelPairing(appState: appState)
+            pairingMismatch = false
+            journalMarkRederiveEligible = false
+            journalMarkRederiveStarted = false
+        }
     }
 
     private func rejectJournalMark() {

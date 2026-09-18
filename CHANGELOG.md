@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - when your journal is on the same mac, "open journal" now opens it in your browser. the built-in window is still used for a journal on another device.
 
 ### Fixed
+- pairing confirmation no longer completes on its own when your journal's mark can't be checked in time; you can choose to continue anyway or cancel pairing.
 - adding a device to your journal now shows your journal's mark the whole time you're pairing, next to the qr code, so you can compare it with what the new device shows.
 - before your journal has a mark of its own, settings and the add-a-device window now show the placeholder mark instead of empty space.
 - VoiceOver now reads your journal's mark as one thing (its two colors, then its two words) during pairing and in settings, instead of reading the icons and words separately.

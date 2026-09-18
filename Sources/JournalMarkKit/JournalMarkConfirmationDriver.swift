@@ -9,9 +9,10 @@ import SolstoneCore
 @MainActor
 @Observable
 public final class JournalMarkConfirmationDriver {
-    public enum Phase: Equatable {
+    public enum Phase: Equatable, Sendable {
         case connecting
         case valid(JournalMark)
+        case unverified(FallbackReason)
     }
 
     public enum FallbackReason: String, Sendable {
@@ -26,9 +27,6 @@ public final class JournalMarkConfirmationDriver {
 
     public typealias HomeBaseResolver = @MainActor @Sendable () async -> HomeBaseResolution
     public typealias MarkFetcher = @MainActor @Sendable (String) async -> JournalMark?
-    public typealias FallbackLogger = @MainActor @Sendable (FallbackReason) -> Void
-
-    public static let fallbackLogPrefix = "journal-mark fallback: proceeding without confirmed mark reason="
 
     public var isPresented = false
     public private(set) var phase: Phase = .connecting
@@ -39,8 +37,6 @@ public final class JournalMarkConfirmationDriver {
     private var activeAttemptID: UUID?
     @ObservationIgnored
     private var handledSuccessKey: String?
-    @ObservationIgnored
-    private var fallbackLogged = false
     @ObservationIgnored
     private let deadlineSeconds: TimeInterval
     @ObservationIgnored
@@ -63,7 +59,6 @@ public final class JournalMarkConfirmationDriver {
         task = nil
         activeAttemptID = nil
         handledSuccessKey = nil
-        fallbackLogged = false
         phase = .connecting
         isPresented = false
     }
@@ -82,6 +77,23 @@ public final class JournalMarkConfirmationDriver {
         activeAttemptID = nil
         phase = .connecting
         isPresented = false
+    }
+
+    public func continueAnyway() {
+        guard case .unverified = phase else { return }
+        Logger.journalMark.info("journal-mark unverified: owner chose to continue anyway without confirmed mark")
+        complete()
+    }
+
+    public func cancelPairing(
+        clearConfirmedMark: @MainActor () -> Void,
+        unpair: @MainActor () async -> Void
+    ) async {
+        guard case .unverified = phase else { return }
+        Logger.journalMark.info("journal-mark unverified: owner chose to cancel pairing")
+        clearConfirmedMark()
+        await unpair()
+        complete()
     }
 
     public func confirm(setConfirmedMark: @MainActor (JournalMark) -> Void) {
@@ -105,27 +117,22 @@ public final class JournalMarkConfirmationDriver {
     public func startIfNeeded(
         for successKey: String,
         resolveHomeBase: @escaping HomeBaseResolver,
-        fetchMark: @escaping MarkFetcher,
-        logFallback: @escaping FallbackLogger = { reason in
-            Logger.journalMark.info("journal-mark fallback: proceeding without confirmed mark reason=\(reason.rawValue, privacy: .public)")
-        }
+        fetchMark: @escaping MarkFetcher
     ) {
         guard handledSuccessKey != successKey else { return }
 
         handledSuccessKey = successKey
-        fallbackLogged = false
         phase = .connecting
         isPresented = true
 
         let attemptID = UUID()
         activeAttemptID = attemptID
         task?.cancel()
-        task = Task { @MainActor [weak self, resolveHomeBase, fetchMark, logFallback] in
+        task = Task { @MainActor [weak self, resolveHomeBase, fetchMark] in
             await self?.drive(
                 attemptID: attemptID,
                 resolveHomeBase: resolveHomeBase,
-                fetchMark: fetchMark,
-                logFallback: logFallback
+                fetchMark: fetchMark
             )
         }
     }
@@ -133,8 +140,7 @@ public final class JournalMarkConfirmationDriver {
     private func drive(
         attemptID: UUID,
         resolveHomeBase: HomeBaseResolver,
-        fetchMark: MarkFetcher,
-        logFallback: @escaping FallbackLogger
+        fetchMark: MarkFetcher
     ) async {
         let deadline = Date().addingTimeInterval(deadlineSeconds)
         var sawURL = false
@@ -146,7 +152,7 @@ public final class JournalMarkConfirmationDriver {
             case .url(let baseURL):
                 sawURL = true
                 if let mark = await fetchMark(baseURL), Date() < deadline {
-                    guard activeAttemptID == attemptID, !Task.isCancelled else { return }
+                    guard activeAttemptID == attemptID, !Task.isCancelled, phase == .connecting else { return }
                     phase = .valid(mark)
                     return
                 }
@@ -154,21 +160,20 @@ public final class JournalMarkConfirmationDriver {
             }
         }
 
-        guard !Task.isCancelled, activeAttemptID == attemptID else { return }
-        fallback(reason: sawURL ? .identityUnavailable : .heldTimeout, attemptID: attemptID, logFallback: logFallback)
+        guard !Task.isCancelled, activeAttemptID == attemptID, phase == .connecting else { return }
+        let reason: FallbackReason = sawURL ? .identityUnavailable : .heldTimeout
+        enterUnverified(reason: reason, attemptID: attemptID)
     }
 
-    private func fallback(
+    private func enterUnverified(
         reason: FallbackReason,
-        attemptID: UUID,
-        logFallback: FallbackLogger
+        attemptID: UUID
     ) {
-        guard activeAttemptID == attemptID, !fallbackLogged else { return }
-        fallbackLogged = true
-        logFallback(reason)
+        guard activeAttemptID == attemptID else { return }
+        Logger.journalMark.info("journal-mark unverified: could not confirm mark in time reason=\(reason.rawValue, privacy: .public)")
         task = nil
         activeAttemptID = nil
-        phase = .connecting
-        isPresented = false
+        phase = .unverified(reason)
+        isPresented = true
     }
 }

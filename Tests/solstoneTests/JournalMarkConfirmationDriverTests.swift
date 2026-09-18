@@ -55,30 +55,267 @@ struct JournalMarkConfirmationDriverTests {
         driver.cancel()
     }
 
-    @Test func fallbackLogsOnceForDuplicateSuccessEmission() async throws {
-        let reasons = LockedArray<JournalMarkConfirmationDriver.FallbackReason>([])
-        let driver = makeDriver(deadlineSeconds: 0.03)
+    @Test func heldTimeoutEntersUnverifiedAndStaysPresented() async throws {
+        let driver = makeDriver(deadlineSeconds: 0.05)
+        let store = PairingStore(pairing: pairing())
+        let transport = FakeTunnelTransport(connection: .init(localPort: 24680, via: .relay))
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 24680, via: .relay) }
 
         driver.startIfNeeded(
             for: .paired,
             resolveHomeBase: heldResolver(),
             fetchMark: neverFetch()
-        ) { reason in
-            reasons.append(reason)
-        }
-        driver.startIfNeeded(
-            for: .paired,
-            resolveHomeBase: heldResolver(),
-            fetchMark: neverFetch()
-        ) { reason in
-            reasons.append(reason)
-        }
+        )
 
         try await waitUntil(timeout: .seconds(1)) {
-            reasons.all.count == 1
+            await MainActor.run {
+                if case .unverified(.heldTimeout) = driver.phase {
+                    return true
+                }
+                return false
+            }
         }
-        #expect(reasons.all == [.heldTimeout])
-        #expect(JournalMarkConfirmationDriver.fallbackLogPrefix == "journal-mark fallback: proceeding without confirmed mark reason=")
+        #expect(driver.isPresented)
+        #expect(driver.phase == .unverified(.heldTimeout))
+        #expect(owner.isTunnelManaged)
+        #expect(!store.deleted)
+        await owner.stop()
+        driver.cancel()
+    }
+
+    @Test func identityUnavailableEntersUnverifiedAndStaysPresented() async throws {
+        let driver = makeDriver(deadlineSeconds: 0.05)
+        let baseURL = "http://127.0.0.1:7071"
+
+        driver.startIfNeeded(
+            for: .paired,
+            resolveHomeBase: { JournalMarkConfirmationDriver.HomeBaseResolution.url(baseURL) },
+            fetchMark: neverFetch()
+        )
+
+        try await waitUntil(timeout: .seconds(1)) {
+            await MainActor.run {
+                if case .unverified(.identityUnavailable) = driver.phase {
+                    return true
+                }
+                return false
+            }
+        }
+        #expect(driver.isPresented)
+        #expect(driver.phase == .unverified(.identityUnavailable))
+        driver.cancel()
+    }
+
+    @Test func resetAndCancelWhileConnectingHideWithoutEnteringUnverified() async {
+        let driver = makeDriver(deadlineSeconds: 1)
+        driver.startIfNeeded(for: .paired, resolveHomeBase: heldResolver(), fetchMark: neverFetch())
+        #expect(driver.isPresented)
+        #expect(driver.phase == .connecting)
+
+        driver.cancel()
+        #expect(!driver.isPresented)
+        #expect(driver.phase == .connecting)
+
+        driver.startIfNeeded(for: .switched, resolveHomeBase: heldResolver(), fetchMark: neverFetch())
+        #expect(driver.isPresented)
+        #expect(driver.phase == .connecting)
+
+        driver.resetForNewPairAttempt()
+        #expect(!driver.isPresented)
+        #expect(driver.phase == .connecting)
+    }
+
+    @Test func duplicateSuccessEmissionOnlyStartsOneAttemptAndEntersUnverified() async throws {
+        let driver = makeDriver(deadlineSeconds: 0.05)
+
+        driver.startIfNeeded(
+            for: .paired,
+            resolveHomeBase: heldResolver(),
+            fetchMark: neverFetch()
+        )
+        driver.startIfNeeded(
+            for: .paired,
+            resolveHomeBase: heldResolver(),
+            fetchMark: neverFetch()
+        )
+
+        try await waitUntil(timeout: .seconds(1)) {
+            await MainActor.run {
+                if case .unverified(.heldTimeout) = driver.phase {
+                    return true
+                }
+                return false
+            }
+        }
+        #expect(driver.isPresented)
+        #expect(driver.phase == .unverified(.heldTimeout))
+        driver.cancel()
+    }
+
+    @Test func continueAnywayPreservesPairingAndDismissesIdempotently() async throws {
+        let driver = makeDriver(deadlineSeconds: 0.05)
+        let config = AppConfig(
+            serverURL: "https://journal.example",
+            serverKey: "secret",
+            serviceMode: .external
+        )
+        let store = PairingStore(pairing: pairing())
+        let transport = FakeTunnelTransport(connection: .init(localPort: 24680, via: .relay))
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+        let resolver = makeResolver(owner: owner, config: config)
+        _ = makeCoordinator(store: store, owner: owner)
+        let confirmedMark: JournalMark? = nil
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 24680, via: .relay) }
+        #expect(await resolver.resolve() == .url("http://127.0.0.1:24680"))
+
+        driver.startIfNeeded(
+            for: .paired,
+            resolveHomeBase: heldResolver(),
+            fetchMark: neverFetch()
+        )
+
+        try await waitUntil(timeout: .seconds(1)) {
+            await MainActor.run {
+                if case .unverified = driver.phase { return true }
+                return false
+            }
+        }
+
+        // Before continue: pairing still present
+        #expect(!store.deleted)
+        #expect(owner.isTunnelManaged)
+        #expect(confirmedMark == nil)
+
+        driver.continueAnyway()
+
+        #expect(!driver.isPresented)
+        #expect(driver.phase == .connecting)
+        #expect(confirmedMark == nil)
+        #expect(!store.deleted)
+        #expect(store.currentPairing != nil)
+        #expect(owner.isTunnelManaged)
+        #expect(owner.state == .connected(localPort: 24680, via: .relay))
+        #expect(await resolver.resolve() == .url("http://127.0.0.1:24680"))
+
+        // Idempotent second call is a no-op
+        driver.continueAnyway()
+        #expect(!driver.isPresented)
+        #expect(driver.phase == .connecting)
+        #expect(!store.deleted)
+        #expect(owner.isTunnelManaged)
+
+        await owner.stop()
+    }
+
+    @Test func cancelPairingClearsMarkUnpairsAndNeverCallsMismatch() async throws {
+        let driver = makeDriver(deadlineSeconds: 0.05)
+        let config = AppConfig(
+            serverURL: "https://journal.example",
+            serverKey: "secret",
+            serviceMode: .external
+        )
+        let store = PairingStore(pairing: pairing())
+        let transport = FakeTunnelTransport(connection: .init(localPort: 24680, via: .relay))
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+        let resolver = makeResolver(owner: owner, config: config)
+        let coordinator = makeCoordinator(store: store, owner: owner)
+        var confirmedMark: JournalMark? = .uiTestSample
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 24680, via: .relay) }
+        #expect(await resolver.resolve() == .url("http://127.0.0.1:24680"))
+
+        driver.startIfNeeded(
+            for: .paired,
+            resolveHomeBase: heldResolver(),
+            fetchMark: neverFetch()
+        )
+
+        try await waitUntil(timeout: .seconds(1)) {
+            await MainActor.run {
+                if case .unverified = driver.phase { return true }
+                return false
+            }
+        }
+
+        // Entering .unverified must NOT have cleared mark or disconnected pairing
+        #expect(confirmedMark != nil)
+        #expect(owner.isTunnelManaged)
+        #expect(!store.deleted)
+
+        await driver.cancelPairing(
+            clearConfirmedMark: {
+                confirmedMark = nil
+            },
+            unpair: {
+                await coordinator.unpair()
+            }
+        )
+
+        try await waitUntil { owner.state == .disconnected }
+        #expect(await resolver.resolve() == .url("https://journal.example"))
+        await owner.stop()
+
+        #expect(confirmedMark == nil)
+        #expect(coordinator.state == .idle)
+        #expect(transport.disconnectCount >= 1)
+        #expect(!owner.isTunnelManaged)
+        #expect(store.deleted)
+        #expect(store.currentPairing == nil)
+        #expect(!driver.isPresented)
+        #expect(driver.phase == .connecting)
+    }
+
+    @Test func lateMarkAfterUnverifiedDoesNotAutoAdvance() async throws {
+        let driver = makeDriver(deadlineSeconds: 0.05)
+        let baseURL = "http://127.0.0.1:7071"
+
+        driver.startIfNeeded(
+            for: .paired,
+            resolveHomeBase: { JournalMarkConfirmationDriver.HomeBaseResolution.url(baseURL) },
+            fetchMark: { _ in
+                try? await Task.sleep(for: .milliseconds(100))
+                return .uiTestSample
+            }
+        )
+
+        try await waitUntil(timeout: .seconds(1)) {
+            await MainActor.run {
+                if case .unverified = driver.phase { return true }
+                return false
+            }
+        }
+
+        #expect(driver.phase == .unverified(.identityUnavailable))
+        #expect(driver.isPresented)
+
+        // Wait past late fetch completion
+        try? await Task.sleep(for: .milliseconds(150))
+        #expect(driver.phase == .unverified(.identityUnavailable))
+        #expect(driver.isPresented)
+
+        // Confirm while unverified is a no-op
+        var confirmedMark: JournalMark?
+        driver.confirm { mark in
+            confirmedMark = mark
+        }
+        #expect(confirmedMark == nil)
+
+        // Same success key does not re-drive or flip to valid
+        driver.startIfNeeded(
+            for: .paired,
+            resolveHomeBase: { JournalMarkConfirmationDriver.HomeBaseResolution.url(baseURL) },
+            fetchMark: { _ in .uiTestSample }
+        )
+        #expect(driver.phase == .unverified(.identityUnavailable))
+        #expect(driver.isPresented)
+
+        driver.cancel()
     }
 
     @Test func confirmCommitsConfirmedMarkAndDismisses() async throws {
@@ -93,7 +330,7 @@ struct JournalMarkConfirmationDriverTests {
         #expect(!driver.isPresented)
     }
 
-    @Test func rejectClearsMarkUnpairsAndDismisses() async throws {
+    @Test func rejectClearsMarkUnpairsAndDismissesWithMismatch() async throws {
         let driver = try await validDriver()
         let config = AppConfig(
             serverURL: "https://journal.example",
@@ -111,6 +348,9 @@ struct JournalMarkConfirmationDriverTests {
         owner.start()
         try await waitUntil { owner.state == .connected(localPort: 24680, via: .relay) }
         #expect(await resolver.resolve() == .url("http://127.0.0.1:24680"))
+
+        let initialPhase = driver.phase
+        #expect(initialPhase == .valid(.uiTestSample))
 
         await driver.reject(
             clearConfirmedMark: {
@@ -173,24 +413,28 @@ struct JournalMarkConfirmationDriverTests {
         { _ in nil }
     }
 
-    private func makeCoordinator(store: PairingStore, owner: TunnelLifecycleOwner) -> PairingCoordinator {
-        PairingCoordinator(
+    private func makeCoordinator(
+        store: PairingStore = PairingStore(pairing: pairing()),
+        owner: TunnelLifecycleOwner? = nil
+    ) -> PairingCoordinator {
+        let actualOwner = owner ?? makeOwner(store: store)
+        return PairingCoordinator(
             pair: { _, _, _ in pairing() },
             loadPairing: { try store.load() },
             savePairing: { try store.save($0) },
             deletePairing: { try store.delete() },
-            reactivate: { [owner] in
-                await owner.reevaluatePairing()
+            reactivate: { [actualOwner] in
+                await actualOwner.reevaluatePairing()
             },
-            ownerState: { [owner] in
-                owner.state
+            ownerState: { [actualOwner] in
+                actualOwner.state
             }
         )
     }
 
     private func makeOwner(
-        store: PairingStore,
-        factory: FakeTransportFactory
+        store: PairingStore = PairingStore(pairing: pairing()),
+        factory: FakeTransportFactory = FakeTransportFactory([FakeTunnelTransport()])
     ) -> TunnelLifecycleOwner {
         TunnelLifecycleOwner(
             loadPairing: { try store.load() },

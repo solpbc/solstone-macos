@@ -734,10 +734,7 @@ final class JournalHandoffOrchestrator {
         markDriver.startIfNeeded(
             for: "journal-handoff:\(serverKey)",
             resolveHomeBase: { .url(ServiceMode.bundledServiceURL) },
-            fetchMark: markFetch,
-            logFallback: { reason in
-                Logger.journalMark.info("journal-mark fallback: proceeding without confirmed mark reason=\(reason.rawValue, privacy: .public)")
-            }
+            fetchMark: markFetch
         )
     }
 }
