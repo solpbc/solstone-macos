@@ -4,6 +4,7 @@
 import Foundation
 import JournalRuntimeTestSupport
 import SolstoneCore
+import SPLTunnel
 import Testing
 import WebKit
 @testable import solstone
@@ -56,6 +57,105 @@ struct JournalWindowCompositionTests {
         #expect(session.state == .held)
         #expect(session.destination == destination)
         #expect(command == nil)
+    }
+
+    @Test func sameMacDisconnectedOpenJournalUsesBrowserNotWindow() {
+        let probe = JournalURLOpenProbe()
+        let state = AppState.forSnapshot(
+            initialTunnelPairing: pairing(),
+            journalURLOpener: { url in
+                probe.opened.append(url)
+                return true
+            }
+        )
+        let observer = observeOpenJournalWindow(probe)
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        #expect(state.journalOpenIntent == nil)
+        state.requestOpenJournal(.root)
+        #expect(probe.opened.map(\.absoluteString) == ["http://127.0.0.1:5015/"])
+        #expect(state.journalOpenIntent == nil)
+        #expect(!probe.posted)
+
+        // Door does not read ingest-ready / tunnel connectedness.
+        state.requestOpenJournal(.root)
+        #expect(probe.opened.map(\.absoluteString) == [
+            "http://127.0.0.1:5015/",
+            "http://127.0.0.1:5015/"
+        ])
+        #expect(state.journalOpenIntent == nil)
+        #expect(!probe.posted)
+    }
+
+    @Test func elsewhereOpenJournalUsesWindowNotOpener() {
+        let probe = JournalURLOpenProbe()
+        let remote = pairing(
+            localEndpoints: [LocalEndpoint(host: "192.168.1.10", port: 7657, scope: "lan")]
+        )
+        let state = AppState.forSnapshot(
+            initialTunnelPairing: remote,
+            journalURLOpener: { url in
+                probe.opened.append(url)
+                return true
+            }
+        )
+        let observer = observeOpenJournalWindow(probe)
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        state.requestOpenJournal(.root)
+        #expect(probe.opened.isEmpty)
+        #expect(state.journalOpenIntent?.destination == .root)
+        #expect(probe.posted)
+
+        probe.posted = false
+        let firstID = state.journalOpenIntent?.id
+        state.requestOpenJournal(.root)
+        #expect(probe.opened.isEmpty)
+        #expect(state.journalOpenIntent?.id != firstID)
+        #expect(probe.posted)
+    }
+
+    @Test func sameMacNonRootOpenJournalComposesOntoConveyBase() {
+        let probe = JournalURLOpenProbe()
+        let state = AppState.forSnapshot(
+            initialTunnelPairing: pairing(),
+            journalURLOpener: { url in
+                probe.opened.append(url)
+                return true
+            }
+        )
+        let destination = JournalWindowDestination(
+            path: "/app/chat/2026-05-09",
+            query: "pane=owner",
+            fragment: "event-99"
+        )!
+        let expected = JournalWindowComposition.composeLoadCommand(
+            base: "http://127.0.0.1:5015/",
+            destination: destination,
+            generation: 0
+        )
+
+        state.requestOpenJournal(destination)
+        #expect(probe.opened == [expected!.url])
+        #expect(state.journalOpenIntent == nil)
+    }
+
+    @Test func sameMacOpenerFalseDoesNotFallThroughToWindow() {
+        let probe = JournalURLOpenProbe()
+        let state = AppState.forSnapshot(
+            initialTunnelPairing: pairing(),
+            journalURLOpener: { url in
+                probe.opened.append(url)
+                return false
+            }
+        )
+        let observer = observeOpenJournalWindow(probe)
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        state.requestOpenJournal(.root)
+        #expect(probe.opened.map(\.absoluteString) == ["http://127.0.0.1:5015/"])
+        #expect(state.journalOpenIntent == nil)
+        #expect(!probe.posted)
     }
 
     @Test func rootDestinationLoadsResolvedBase() async {
@@ -851,6 +951,25 @@ struct JournalWindowWireUpTests {
 
         #expect(settingsSource.components(separatedBy: "NSWorkspace.shared.open").count - 1 == 7)
         #expect(repairSource.components(separatedBy: "NSWorkspace.shared.open").count - 1 == 1)
+    }
+}
+
+@MainActor
+private final class JournalURLOpenProbe {
+    var opened: [URL] = []
+    var posted = false
+}
+
+@MainActor
+private func observeOpenJournalWindow(_ probe: JournalURLOpenProbe) -> NSObjectProtocol {
+    NotificationCenter.default.addObserver(
+        forName: .openJournalWindow,
+        object: nil,
+        queue: nil
+    ) { _ in
+        MainActor.assumeIsolated {
+            probe.posted = true
+        }
     }
 }
 

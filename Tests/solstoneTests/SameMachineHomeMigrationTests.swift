@@ -267,17 +267,34 @@ struct SameMachineHomeMigrationTests {
 
     @Test func journalLocationLabelReflectsPairedHomeAndBundledBase() {
         #expect(journalLocationLabel(
-            isPairedHome: true,
-            serverURL: "http://127.0.0.1:49152"
+            isSameMacJournalDoor: isSameMacJournalDoor(
+                sameMachineStoredPairingState: .pairedHome,
+                serverURL: "http://127.0.0.1:49152"
+            )
         ) == UICopy.JOURNAL_MODE_THIS_MAC_LABEL)
         #expect(journalLocationLabel(
-            isPairedHome: false,
-            serverURL: ServiceMode.bundledServiceURL
+            isSameMacJournalDoor: isSameMacJournalDoor(
+                sameMachineStoredPairingState: .noneHeld,
+                serverURL: ServiceMode.bundledServiceURL
+            )
         ) == UICopy.JOURNAL_MODE_THIS_MAC_LABEL)
         #expect(journalLocationLabel(
-            isPairedHome: false,
-            serverURL: "https://journal.example"
+            isSameMacJournalDoor: isSameMacJournalDoor(
+                sameMachineStoredPairingState: .noneHeld,
+                serverURL: "https://journal.example"
+            )
         ) == UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL)
+    }
+
+    @Test func sameMacDoorBooleanMatchesLocationLabelForDisconnectedLoopback() {
+        let state = AppState.forSnapshot(initialTunnelPairing: pairing())
+        let isSameMac = isSameMacJournalDoor(
+            sameMachineStoredPairingState: state.tunnelLifecycleOwner.sameMachineStoredPairingState,
+            serverURL: state.config.serverURL
+        )
+        #expect(isSameMac)
+        #expect(journalLocationLabel(isSameMacJournalDoor: isSameMac) == UICopy.JOURNAL_MODE_THIS_MAC_LABEL)
+        #expect(state.tunnelLifecycleOwner.state == .disconnected)
     }
 
     @Test func pairedHomePairingResultTextRequiresCompletedMigration() {

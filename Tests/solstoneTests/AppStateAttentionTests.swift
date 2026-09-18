@@ -68,6 +68,7 @@ struct AppStateAttentionTests {
     }
 
     @Test func savedPairingKeepsSetupCompleteAndNavigationVisibleWhileDisconnected() {
+        // Pairing-while-disconnected is on record, not never-set-up. Navigation stays available.
         let state = AppState.forSnapshot(initialTunnelPairing: pairing())
 
         #expect(!state.config.isUploadConfigured)
@@ -75,6 +76,44 @@ struct AppStateAttentionTests {
         #expect(state.showsConfiguredJournal)
         #expect(state.canOpenJournal)
         #expect(state.serviceNeedsAttention)
+        #expect(state.tunnelLifecycleOwner.pairingIdentityRead != .absent)
+
+        makeCaptureReady(state)
+        #expect(state.observationRowState != .localOnly)
+    }
+
+    @Test func launchWindowSavedPairingIsOnRecordWithoutStart() {
+        // Raw snapshot row is .starting until capture gates; the never-set-up predicate is false.
+        let state = AppState.forSnapshot(initialTunnelPairing: pairing())
+
+        #expect(state.tunnelLifecycleOwner.pairingIdentityRead != .absent)
+        #expect(state.observationRowState == .starting)
+    }
+
+    @Test func captureReadySavedPairingIsNotLocalOnlyForBothUploadConfiguredValues() {
+        let unconfigured = AppState.forSnapshot(initialTunnelPairing: pairing())
+        makeCaptureReady(unconfigured)
+        #expect(!unconfigured.config.isUploadConfigured)
+        #expect(unconfigured.observationRowState != .localOnly)
+
+        let configured = AppState.forSnapshot(
+            config: configuredExternal(),
+            initialTunnelPairing: pairing()
+        )
+        makeCaptureReady(configured)
+        #expect(configured.config.isUploadConfigured)
+        #expect(configured.observationRowState != .localOnly)
+    }
+
+    @Test func throwingPairingLoadIsFailedIdentityOnRecord() {
+        // Unstarted throw is noRoute from the owner, not keychainUnavailable.
+        // Named unreadable fixture (failed identity + keychain-unavailable) lives at classifier.
+        struct PairingLoadFailed: Error {}
+        let state = AppState.forSnapshot(pairingLoad: { throw PairingLoadFailed() })
+
+        #expect(state.tunnelLifecycleOwner.pairingIdentityRead == .failed)
+        makeCaptureReady(state)
+        #expect(state.observationRowState != .localOnly)
     }
 
     @Test func configuredNilModeUsesExternalFallbackForServiceDone() {
@@ -262,6 +301,11 @@ struct AppStateAttentionTests {
 
     private func makeState(config: AppConfig = AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: true)) -> AppState {
         AppState.forSnapshot(config: config)
+    }
+
+    private func makeCaptureReady(_ state: AppState) {
+        state.initialPermissionCheckComplete = true
+        state.isRecording = true
     }
 
     private func configuredExternal() -> AppConfig {

@@ -42,7 +42,7 @@ struct MenuContent: View {
             } label: {
                 if let reason = settingsAttentionToShow {
                     Label {
-                        Text("settings… · \(attentionSuffix(reason))")
+                        Text("settings… · \(attentionSuffix(reason, verdict: appState.tunnelLifecycleOwner.connectionVerdict))")
                     } icon: {
                         Image(systemName: "exclamationmark.circle.fill")
                             .foregroundStyle(SolstoneColors.solOrange)
@@ -77,7 +77,8 @@ struct MenuContent: View {
     private var settingsAttentionToShow: AttentionReason? {
         attentionToSurface(
             menubarPresentation.attention,
-            alreadySaidBy: menubarPresentation.observation
+            alreadySaidBy: menubarPresentation.observation,
+            journalFailureCause: appState.tunnelLifecycleOwner.connectionVerdict.failureCause
         )
     }
 

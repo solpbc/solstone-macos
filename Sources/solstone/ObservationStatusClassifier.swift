@@ -12,9 +12,11 @@ internal func classifyObservationRowState(
     isPaused: Bool,
     serviceMode: ServiceMode?,
     syncPaused: Bool,
-    isUploadConfigured: Bool,
     isPairedIngestReady: Bool,
-    uploadStatus: UploadCoordinator.Status
+    uploadStatus: UploadCoordinator.Status,
+    hasJournalOnRecord: Bool = true,
+    journalConnectionAXToken: String? = nil,
+    journalFailureCause: JournalConnectionFailureCause? = nil
 ) -> MenubarStatusRowState {
     if permissionsNeedAttention {
         return .permissions
@@ -37,8 +39,16 @@ internal func classifyObservationRowState(
     if syncPaused {
         return .syncPaused
     }
-    if !isUploadConfigured && !isPairedIngestReady {
+    if !hasJournalOnRecord {
         return .localOnly
+    }
+    if !isPairedIngestReady {
+        if journalConnectionAXToken == PairingConnectionAXState.connecting.axToken {
+            return .connectionWaiting
+        }
+        if journalFailureCause != nil {
+            return .offline
+        }
     }
     switch uploadStatus {
     case .synced, .syncing, .uploading:
@@ -105,23 +115,45 @@ internal func updateAttentionReason(for status: DurableUpdateStatus) -> Attentio
 
 internal func attentionToSurface(
     _ reason: AttentionReason?,
-    alreadySaidBy observation: MenubarStatusRowState
+    alreadySaidBy observation: MenubarStatusRowState,
+    journalFailureCause: JournalConnectionFailureCause? = nil
 ) -> AttentionReason? {
     guard let reason else { return nil }
     switch reason {
     case .permissions:
         return observation == .permissions ? nil : reason
     case .journal:
-        return observation == .journalMigrationNeeded || observation == .localOnly ? nil : reason
+        if observation == .journalMigrationNeeded || observation == .localOnly {
+            return nil
+        }
+        if observation == .connectionWaiting {
+            return nil
+        }
+        if observation == .offline, let journalFailureCause {
+            switch journalFailureCause {
+            case .noRoute, .unreachable:
+                return nil
+            case .revoked, .keychainUnavailable, .notEntitled, .loopbackUnavailable, .mismatch, .notServing:
+                return reason
+            }
+        }
+        return reason
     case .updateAvailable, .updateCheckFailed:
         return reason
     }
 }
 
-internal func attentionSuffix(_ reason: AttentionReason) -> String {
+internal func attentionSuffix(
+    _ reason: AttentionReason,
+    verdict: JournalConnectionVerdict? = nil
+) -> String {
     switch reason {
     case .permissions: return UICopy.SETTINGS_ATTENTION_PERMISSIONS
-    case .journal: return UICopy.SETTINGS_ATTENTION_JOURNAL
+    case .journal:
+        if let verdict, verdict.failureCause != nil {
+            return verdict.message
+        }
+        return UICopy.SETTINGS_ATTENTION_JOURNAL
     case .updateAvailable: return UICopy.SETTINGS_ATTENTION_UPDATE_AVAILABLE
     case .updateCheckFailed: return UICopy.SETTINGS_ATTENTION_UPDATE_CHECK_FAILED
     }
@@ -152,7 +184,8 @@ internal func observationRecoveryPresentation(
 
 extension AppState {
     internal var observationRowState: MenubarStatusRowState {
-        classifyObservationRowState(
+        let verdict = tunnelLifecycleOwner.connectionVerdict
+        return classifyObservationRowState(
             permissionsNeedAttention: permissionsNeedAttention,
             errorMessage: errorMessage,
             initialPermissionCheckComplete: initialPermissionCheckComplete,
@@ -160,9 +193,12 @@ extension AppState {
             isPaused: isPaused,
             serviceMode: config.serviceMode,
             syncPaused: config.syncPaused,
-            isUploadConfigured: config.isUploadConfigured,
             isPairedIngestReady: isPairedIngestReady,
-            uploadStatus: uploadCoordinator.status
+            uploadStatus: uploadCoordinator.status,
+            hasJournalOnRecord: tunnelLifecycleOwner.pairingIdentityRead != .absent
+                || config.isUploadConfigured,
+            journalConnectionAXToken: verdict.axToken,
+            journalFailureCause: verdict.failureCause
         )
     }
 

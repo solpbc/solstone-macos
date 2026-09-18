@@ -290,7 +290,8 @@ private struct SolstoneNormalStartup {
 internal func statusAccessibilityLabel(
     presentation: MenubarPresentation,
     errorMessage: String?,
-    sourceStatus: String? = nil
+    sourceStatus: String? = nil,
+    journalVerdict: JournalConnectionVerdict? = nil
 ) -> String {
     let baseLabel: String = switch presentation.observation {
     case .stopped:
@@ -321,8 +322,12 @@ internal func statusAccessibilityLabel(
 
     var components = [baseLabel]
     if let sourceStatus { components.append(sourceStatus) }
-    if let attention = attentionToSurface(presentation.attention, alreadySaidBy: presentation.observation) {
-        components.append(attentionSuffix(attention))
+    if let attention = attentionToSurface(
+        presentation.attention,
+        alreadySaidBy: presentation.observation,
+        journalFailureCause: journalVerdict?.failureCause
+    ) {
+        components.append(attentionSuffix(attention, verdict: journalVerdict))
     }
     return components.joined(separator: " · ")
 }
@@ -462,7 +467,8 @@ private struct StatusIcon: View {
             .accessibilityLabel(statusAccessibilityLabel(
                 presentation: presentation,
                 errorMessage: appState.errorMessage,
-                sourceStatus: appState.captureSourcesStatusText
+                sourceStatus: appState.captureSourcesStatusText,
+                journalVerdict: appState.tunnelLifecycleOwner.connectionVerdict
             ))
             .task {
                 guard !hasCheckedSetup else { return }

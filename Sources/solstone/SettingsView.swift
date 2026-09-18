@@ -36,8 +36,16 @@ func shouldApplyConnectionTestCompletion(inFlightTestID: UUID?, testGeneration: 
     inFlightTestID == testGeneration
 }
 
-func journalLocationLabel(isPairedHome: Bool, serverURL: String?) -> String {
-    isPairedHome || BundledJournalEndpoint.isBundledServiceURL(serverURL)
+func isSameMacJournalDoor(
+    sameMachineStoredPairingState: SameMachineStoredPairingState,
+    serverURL: String?
+) -> Bool {
+    sameMachineStoredPairingState == .pairedHome
+        || BundledJournalEndpoint.isBundledServiceURL(serverURL)
+}
+
+func journalLocationLabel(isSameMacJournalDoor: Bool) -> String {
+    isSameMacJournalDoor
         ? UICopy.JOURNAL_MODE_THIS_MAC_LABEL
         : UICopy.JOURNAL_MODE_ANOTHER_MACHINE_LABEL
 }
@@ -1441,8 +1449,10 @@ struct SettingsView: View {
 
     private var journalLocationLabel: String {
         solstone.journalLocationLabel(
-            isPairedHome: appState.isPairedHome,
-            serverURL: appState.config.serverURL
+            isSameMacJournalDoor: isSameMacJournalDoor(
+                sameMachineStoredPairingState: appState.tunnelLifecycleOwner.sameMachineStoredPairingState,
+                serverURL: appState.config.serverURL
+            )
         )
     }
 

@@ -151,6 +151,7 @@ struct MenuContentTests {
     }
 
     @Test func observationClassifierPrecedenceTable() {
+        // Never-set-up is no journal on record, not "unconfigured address + not ingest-ready".
         let cases: [(String, MenubarStatusRowState)] = [
             ("permissions", classified(permissionsNeedAttention: true, initialPermissionCheckComplete: false)),
             ("error", classified(errorMessage: "boom")),
@@ -159,8 +160,8 @@ struct MenuContentTests {
             ("paused", classified(isPaused: true)),
             ("journalMigrationNeeded", classified(serviceMode: .bundled, uploadStatus: .synced)),
             ("connectionWaiting", classified(uploadStatus: .awaitingTunnel)),
-            ("syncPaused", classified(syncPaused: true, isUploadConfigured: false)),
-            ("localOnly", classified(isUploadConfigured: false)),
+            ("syncPaused", classified(syncPaused: true)),
+            ("localOnly", classified(hasJournalOnRecord: false)),
             ("offline", classified(uploadStatus: .notSynced)),
             ("observing", classified(uploadStatus: .synced)),
         ]
@@ -183,18 +184,65 @@ struct MenuContentTests {
             #expect(actual == expected[name])
         }
 
-        #expect(classified(uploadStatus: .retrying(segment: "s1", attempts: 2)) == .offline)
-        #expect(classified(uploadStatus: .offline("offline")) == .offline)
-        #expect(classified(uploadStatus: .syncing(checked: 1, total: 2)) == .observing)
-        #expect(classified(uploadStatus: .uploading(segment: "s1")) == .observing)
+        for status in representativeUploadStatuses() {
+            #expect(classified(uploadStatus: status) == row(forUploadStatus: status))
+        }
         #expect(classified(serviceMode: .bundled, uploadStatus: .awaitingTunnel) == .journalMigrationNeeded)
         #expect(classified(isRecording: false, serviceMode: .bundled) == .journalMigrationNeeded)
         #expect(classified(isPaused: true, serviceMode: .bundled) == .journalMigrationNeeded)
     }
 
+    @Test @MainActor func pairedNotReadyObservationMatrix() {
+        // Red-first: cached identity without on-record is still never-set-up (pre-fix tree).
+        #expect(classified(hasJournalOnRecord: false, uploadStatus: .synced) == .localOnly)
+
+        let connecting = connectingVerdict()
+        let connectingRow = classified(
+            hasJournalOnRecord: true,
+            journalConnectionAXToken: connecting.axToken,
+            uploadStatus: .synced
+        )
+        #expect(connectingRow == .connectionWaiting)
+        #expect(connectingRow != .localOnly)
+        #expect(connectingRow != .observing)
+
+        // Revoked = delete-failed: pairing present + revoked error.
+        // Unreadable = failed identity + keychain-unavailable.
+        for cause in ownerProducedFailureCauses() {
+            let verdict = journalVerdict(for: cause)
+            let row = classified(
+                hasJournalOnRecord: true,
+                journalFailureCause: verdict.failureCause,
+                uploadStatus: .synced
+            )
+            #expect(row == .offline, "\(String(describing: cause)) should be offline, not observing from last-sync")
+            #expect(row != .localOnly)
+            #expect(row != .observing)
+        }
+
+        // Remaining cell (nil token, nil cause) follows the upload-status switch and may be observing.
+        for status in representativeUploadStatuses() {
+            let actual = classified(hasJournalOnRecord: true, uploadStatus: status)
+            #expect(actual == row(forUploadStatus: status))
+            #expect(actual != .localOnly)
+        }
+    }
+
+    @Test func noJournalOnRecordIsLocalOnlyAndThirdBucketFollowsUploadStatus() {
+        #expect(classified(hasJournalOnRecord: false, uploadStatus: .synced) == .localOnly)
+
+        for status in representativeUploadStatuses() {
+            let actual = classified(hasJournalOnRecord: true, uploadStatus: status)
+            #expect(actual == row(forUploadStatus: status))
+            #expect(actual != .localOnly)
+            if status != .awaitingTunnel {
+                #expect(actual != .connectionWaiting || row(forUploadStatus: status) == .connectionWaiting)
+            }
+        }
+    }
+
     @Test func pairedKeylessClientIsNotPresentedAsLocalOnly() {
         #expect(classified(
-            isUploadConfigured: false,
             isPairedIngestReady: true,
             uploadStatus: .syncing(checked: 0, total: 1)
         ) == .observing)
@@ -293,10 +341,12 @@ struct MenuContentTests {
         #expect(updatesSidebarBadge(for: .idle) == .blank)
     }
 
-    @Test func attentionToSurfaceDerivesSuppressionFromObservationRow() {
+    @Test @MainActor func attentionToSurfaceDerivesSuppressionFromObservationRow() {
+        // Connecting has no journal suffix. Offline suppresses noRoute/unreachable and surfaces the rest.
         #expect(attentionToSurface(.journal, alreadySaidBy: .observing) == .journal)
         #expect(attentionToSurface(.journal, alreadySaidBy: .journalMigrationNeeded) == nil)
         #expect(attentionToSurface(.journal, alreadySaidBy: .localOnly) == nil)
+        #expect(attentionToSurface(.journal, alreadySaidBy: .connectionWaiting) == nil)
 
         #expect(attentionToSurface(.permissions, alreadySaidBy: .permissions) == nil)
         #expect(attentionToSurface(.permissions, alreadySaidBy: .observing) == .permissions)
@@ -304,20 +354,67 @@ struct MenuContentTests {
         #expect(attentionToSurface(.updateAvailable, alreadySaidBy: .permissions) == .updateAvailable)
         #expect(attentionToSurface(.updateCheckFailed, alreadySaidBy: .localOnly) == .updateCheckFailed)
         #expect(attentionToSurface(nil, alreadySaidBy: .observing) == nil)
+
+        for cause in allJournalConnectionFailureCauses() {
+            let offline = attentionToSurface(
+                .journal,
+                alreadySaidBy: .offline,
+                journalFailureCause: cause
+            )
+            if offlineSuppressesJournalSuffix(cause) {
+                #expect(offline == nil, "\(String(describing: cause)) should suppress on offline")
+            } else {
+                #expect(offline == .journal, "\(String(describing: cause)) should surface on offline")
+            }
+            #expect(attentionToSurface(
+                .journal,
+                alreadySaidBy: .connectionWaiting,
+                journalFailureCause: cause
+            ) == nil)
+        }
     }
 
-    @Test func statusAccessibilityLabelNamesEveryAttentionReason() {
+    @Test @MainActor func attentionSuffixUsesVerdictMessageForJournalCause() {
+        for cause in allJournalConnectionFailureCauses() {
+            let verdict = journalVerdict(for: cause)
+            #expect(attentionSuffix(.journal, verdict: verdict) == verdict.message)
+
+            let shown = attentionToSurface(
+                .journal,
+                alreadySaidBy: .offline,
+                journalFailureCause: cause
+            )
+            if shown == .journal {
+                #expect(attentionSuffix(.journal, verdict: verdict) == verdict.message)
+            }
+        }
+
+        #expect(attentionSuffix(.journal) == UICopy.SETTINGS_ATTENTION_JOURNAL)
+        #expect(
+            attentionToSurface(.journal, alreadySaidBy: .paused) == .journal
+        )
+        #expect(
+            attentionToSurface(.journal, alreadySaidBy: .stopped) == .journal
+        )
+        #expect(attentionSuffix(.journal) == UICopy.SETTINGS_ATTENTION_JOURNAL)
+        #expect(attentionToSurface(.journal, alreadySaidBy: .connectionWaiting) == nil)
+    }
+
+    @Test @MainActor func statusAccessibilityLabelNamesEveryAttentionReason() {
+        // Journal reason may carry verdict.message when a failure cause is present.
         var suffixes = Set<String>()
         var labels = Set<String>()
+        let journalVerdict = journalVerdict(for: .revoked)
 
         for reason in AttentionReason.allCases {
-            let suffix = attentionSuffix(reason)
+            let suffix = attentionSuffix(reason, verdict: reason == .journal ? journalVerdict : nil)
             let label = statusAccessibilityLabel(
                 presentation: MenubarPresentation(
                     observation: .observing,
                     attention: reason
                 ),
-                errorMessage: nil
+                errorMessage: nil,
+                journalVerdict: reason == .journal ? journalVerdict : nil
             )
 
             #expect(!suffix.isEmpty, "\(String(describing: reason)) should have a non-empty suffix")
@@ -370,7 +467,9 @@ private func classified(
     isPaused: Bool = false,
     serviceMode: ServiceMode? = .external,
     syncPaused: Bool = false,
-    isUploadConfigured: Bool = true,
+    hasJournalOnRecord: Bool = true,
+    journalConnectionAXToken: String? = nil,
+    journalFailureCause: JournalConnectionFailureCause? = nil,
     isPairedIngestReady: Bool = false,
     uploadStatus: UploadCoordinator.Status = .synced
 ) -> MenubarStatusRowState {
@@ -382,8 +481,165 @@ private func classified(
         isPaused: isPaused,
         serviceMode: serviceMode,
         syncPaused: syncPaused,
-        isUploadConfigured: isUploadConfigured,
         isPairedIngestReady: isPairedIngestReady,
-        uploadStatus: uploadStatus
+        uploadStatus: uploadStatus,
+        hasJournalOnRecord: hasJournalOnRecord,
+        journalConnectionAXToken: journalConnectionAXToken,
+        journalFailureCause: journalFailureCause
     )
+}
+
+private func representativeUploadStatuses() -> [UploadCoordinator.Status] {
+    let probe: UploadCoordinator.Status = .notSynced
+    switch probe {
+    case .notSynced, .syncing, .synced, .uploading, .retrying, .offline, .awaitingTunnel:
+        return [
+            .notSynced,
+            .syncing(checked: 1, total: 2),
+            .synced,
+            .uploading(segment: "s1"),
+            .retrying(segment: "s1", attempts: 2),
+            .offline("offline"),
+            .awaitingTunnel,
+        ]
+    }
+}
+
+private func row(forUploadStatus status: UploadCoordinator.Status) -> MenubarStatusRowState {
+    switch status {
+    case .synced, .syncing, .uploading:
+        return .observing
+    case .awaitingTunnel:
+        return .connectionWaiting
+    case .notSynced, .retrying, .offline:
+        return .offline
+    }
+}
+
+@MainActor
+private func connectingVerdict() -> JournalConnectionVerdict {
+    TunnelLifecycleOwner.reduceConnectionVerdict(
+        state: .connecting,
+        hasPersistedPairing: true,
+        isTunnelManaged: true,
+        supervisorAttemptState: .idle,
+        isProxyStarting: true,
+        establishedLoopbackPort: nil,
+        hasTransport: false
+    )
+}
+
+private func ownerProducedFailureCauses() -> [JournalConnectionFailureCause] {
+    [
+        .noRoute,
+        .revoked,
+        .notEntitled,
+        .keychainUnavailable,
+        .loopbackUnavailable,
+        .unreachable(nil),
+    ]
+}
+
+private func allJournalConnectionFailureCauses() -> [JournalConnectionFailureCause] {
+    let probe: JournalConnectionFailureCause = .noRoute
+    switch probe {
+    case .noRoute, .revoked, .notEntitled, .keychainUnavailable, .loopbackUnavailable,
+         .unreachable, .mismatch, .notServing:
+        return [
+            .noRoute,
+            .revoked,
+            .notEntitled,
+            .keychainUnavailable,
+            .loopbackUnavailable,
+            .unreachable(nil),
+            .unreachable("timeout"),
+            .mismatch,
+            .notServing,
+        ]
+    }
+}
+
+private func offlineSuppressesJournalSuffix(_ cause: JournalConnectionFailureCause) -> Bool {
+    switch cause {
+    case .noRoute, .unreachable:
+        return true
+    case .revoked, .keychainUnavailable, .notEntitled, .loopbackUnavailable, .mismatch, .notServing:
+        return false
+    }
+}
+
+@MainActor
+private func journalVerdict(for cause: JournalConnectionFailureCause) -> JournalConnectionVerdict {
+    switch cause {
+    case .noRoute:
+        return TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .disconnected,
+            hasPersistedPairing: true,
+            isTunnelManaged: false,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+    case .revoked:
+        return TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .error(.revoked),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+    case .notEntitled:
+        return TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .error(.notEntitled),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+    case .keychainUnavailable:
+        return TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .error(.keychainUnavailable),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+    case .loopbackUnavailable:
+        return TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .error(.loopbackUnavailable),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+    case .unreachable:
+        return TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .disconnected,
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+    case .mismatch:
+        return journalConnectionVerdictPresentation(tunnel: .neutral, pairingMismatch: true)
+    case .notServing:
+        return JournalConnectionVerdict(
+            severity: .attention,
+            message: "journal is not serving",
+            caption: nil,
+            axToken: PairingConnectionAXState.notServing.axToken,
+            failureCause: .notServing
+        )
+    }
 }

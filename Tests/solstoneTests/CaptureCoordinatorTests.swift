@@ -555,7 +555,6 @@ struct CaptureCoordinatorTests {
             isPaused: coordinator.isPaused,
             serviceMode: nil,
             syncPaused: false,
-            isUploadConfigured: false,
             isPairedIngestReady: false,
             uploadStatus: .notSynced
         )

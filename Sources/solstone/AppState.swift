@@ -69,6 +69,7 @@ public final class AppState {
     ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>
     // Test seam for observing tunnel-connected sync nudges when UploadCoordinator short-circuits.
     private let triggerTunnelConnectedSync: @MainActor @Sendable (AppState) -> Void
+    private let journalURLOpener: @MainActor @Sendable (URL) -> Bool
     private let notifier: any UserNotifying
     private let loginService: any LoginItemService
     private let loginItemRegistrationReconciler: LoginItemRegistrationReconciler
@@ -779,6 +780,7 @@ public final class AppState {
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
             $0.uploadCoordinator.triggerSync()
         },
+        journalURLOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) },
         recorder: DiagnosticEvidenceRecorder = .dormant,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
         logAdapter: DiagnosticEvidenceLoggingAdapter = .live
@@ -805,6 +807,7 @@ public final class AppState {
             await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
         }
         self.triggerTunnelConnectedSync = triggerTunnelConnectedSync
+        self.journalURLOpener = journalURLOpener
         self.notifier = notifier
         self.loginService = loginService
         self.loginItemRegistrationReconciler = LoginItemRegistrationReconciler(
@@ -1017,8 +1020,10 @@ public final class AppState {
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
             $0.uploadCoordinator.triggerSync()
         },
+        journalURLOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) },
         lastContactStore: (any LastSuccessfulJournalContactStoring)? = nil,
         lastDeliveryStore: (any LastJournalDeliveryStoring)? = nil,
+        pairingLoad: PairingCoordinator.LoadPairing? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
         permissionPollScheduler: PermissionPollScheduler = .live(),
@@ -1035,8 +1040,10 @@ public final class AppState {
             initialTunnelPairing: initialTunnelPairing,
             sameMachinePairStart: sameMachinePairStart,
             triggerTunnelConnectedSync: triggerTunnelConnectedSync,
+            journalURLOpener: journalURLOpener,
             lastContactStore: lastContactStore,
             lastDeliveryStore: lastDeliveryStore,
+            pairingLoad: pairingLoad,
             recorder: recorder,
             screenPermissionProvider: screenPermissionProvider,
             permissionPollScheduler: permissionPollScheduler,
@@ -1108,6 +1115,7 @@ public final class AppState {
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
             $0.uploadCoordinator.triggerSync()
         },
+        journalURLOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) },
         lastContactStore providedLastContactStore: (any LastSuccessfulJournalContactStoring)? = nil,
         lastDeliveryStore providedLastDeliveryStore: (any LastJournalDeliveryStoring)? = nil,
         pairingOperation: PairingCoordinator.PairOperation? = nil,
@@ -1147,6 +1155,7 @@ public final class AppState {
         self.config = config
         self.sameMachinePairStart = sameMachinePairStart
         self.triggerTunnelConnectedSync = triggerTunnelConnectedSync
+        self.journalURLOpener = journalURLOpener
         self.notifier = notifier
         self.loginService = loginService
         self.loginItemRegistrationReconciler = LoginItemRegistrationReconciler(
@@ -1366,12 +1375,41 @@ public final class AppState {
     }
 
     public func requestOpenJournal(_ destination: JournalWindowDestination) {
+        if isSameMacJournalDoor(
+            sameMachineStoredPairingState: tunnelLifecycleOwner.sameMachineStoredPairingState,
+            serverURL: config.serverURL
+        ) {
+            openSameMacJournalInBrowser(destination)
+            return
+        }
         nextJournalOpenIntentID += 1
         journalOpenIntent = JournalOpenIntent(
             id: nextJournalOpenIntentID,
             destination: destination
         )
         NotificationCenter.default.post(name: .openJournalWindow, object: nil)
+    }
+
+    private func openSameMacJournalInBrowser(_ destination: JournalWindowDestination) {
+        let conveyBase = "http://127.0.0.1:5015/"
+        let url: URL
+        if destination == .root {
+            guard let conveyURL = URL(string: conveyBase) else { return }
+            url = conveyURL
+        } else if let command = JournalWindowComposition.composeLoadCommand(
+            base: conveyBase,
+            destination: destination,
+            generation: 0
+        ) {
+            url = command.url
+        } else {
+            Logger.setup.error("same-Mac journal URL could not be composed")
+            return
+        }
+        guard journalURLOpener(url) else {
+            Logger.setup.error("open journal in browser failed: \(url.absoluteString, privacy: .public)")
+            return
+        }
     }
 
     func handleWindowWillClose(identifier: String?) {
