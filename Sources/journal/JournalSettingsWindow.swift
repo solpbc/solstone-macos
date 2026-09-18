@@ -80,11 +80,11 @@ struct JournalSettingsWindow: View {
             Text("your journal, at a glance")
                 .font(.title2.weight(.semibold))
 
-            if let mark = model.identityMark {
-                JournalMarkView(mark: mark, isConfirmed: true)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier(AXID.Journal.Home.markCard)
-            }
+            // journal-mark.md section 4.3 — the org-wide "no journal identity yet"
+            // treatment applies when identityMark is nil. Never an empty box.
+            JournalMarkView(mark: model.identityMark, isConfirmed: true)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier(AXID.Journal.Home.markCard)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text(model.displayName)

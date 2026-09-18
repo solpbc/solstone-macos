@@ -608,6 +608,23 @@ struct SnapshotTests {
         )
     }
 
+    @Test func settingsServiceFoundOnDiskJournal() throws {
+        let state = AppState.forSnapshot()
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(
+                appState: state,
+                updateController: updateController,
+                selectedTab: .service,
+                initialStorageUsedMB: 42,
+                initialLocalOnDiskDiscoveryPath: "/Users/owner/journal",
+                initialLocalDiscoveryCompleted: true
+            ),
+            size: settingsSize,
+            to: "settings-service-found-on-disk-journal.png"
+        )
+    }
+
     @Test func settingsServiceFoundLocalJournal() throws {
         let state = AppState.forSnapshot()
         let updateController = makeSnapshotUpdateController()

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- before your journal has a mark of its own, settings' found-an-existing-journal step now shows the placeholder mark instead of empty space.
+
 ## [2.0.11] - 2026-09-18
 
 ### Changed

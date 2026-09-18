@@ -223,6 +223,7 @@ struct SettingsView: View {
         initialStorageUsedMB: Int? = nil,
         initialJournalName: String? = nil,
         initialLocalJournalMark: JournalMark? = nil,
+        initialLocalOnDiskDiscoveryPath: String? = nil,
         initialLocalDiscoveryCompleted: Bool = false,
         initialShowPairingFlow: Bool = false,
         journalHandoffOrchestrator: JournalHandoffOrchestrator = JournalHandoffOrchestrator(),
@@ -298,6 +299,7 @@ struct SettingsView: View {
         self._onDiskJournalAdoptionFlow = State(initialValue: onDiskJournalAdoptionFlow)
         self._journalName = State(initialValue: initialJournalName)
         self._localJournalMark = State(initialValue: initialLocalJournalMark)
+        self._localOnDiskDiscoveryPath = State(initialValue: initialLocalOnDiskDiscoveryPath)
         self._localDiscoveryCompleted = State(initialValue: initialLocalDiscoveryCompleted)
         self._showPairingFlow = State(initialValue: initialShowPairingFlow)
         self._entitlementOpenFailed = State(initialValue: initialEntitlementOpenFailed)
@@ -1323,6 +1325,9 @@ struct SettingsView: View {
                             id: AXID.Settings.Service.createJournalState,
                             value: onDiskJournalAdoptionFlow.state.axState.axToken
                         )
+                        // journal-mark.md section 4.3 — the org-wide "no journal identity yet"
+                        // treatment. Never an empty box, never hidden.
+                        JournalMarkView(mark: nil)
                         Button(localOnDiskAdoptionAction.buttonTitle) {
                             onDiskJournalAdoptionFlow.start(
                                 discoveredPath: path,

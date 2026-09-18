@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- make bump-release-journal scaffolds a dated block above the first ## [ and does not read [Unreleased], so the release cut must fold these bullets into that scaffold. -->
 
+### Fixed
+- before your journal has a mark of its own, this app's home pane now shows the placeholder mark instead of empty space.
+
 ## [2.0.11 (build 45)] - 2026-09-18
 
 ### Changed
