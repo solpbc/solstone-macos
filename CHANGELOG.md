@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- adding a device to your journal now shows your journal's mark the whole time you're pairing, next to the qr code, so you can compare it with what the new device shows.
+- before your journal has a mark of its own, settings and the add-a-device window now show the placeholder mark instead of empty space.
+- VoiceOver now reads your journal's mark as one thing (its two colors, then its two words) during pairing and in settings, instead of reading the icons and words separately.
+
 ## [2.0.10] - 2026-09-16
 
 ### Changed
