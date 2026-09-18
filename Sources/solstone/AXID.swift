@@ -31,6 +31,8 @@ enum AXID {
             static let webView = "journal.browser.webView"
             static let navigationState = "journal.browser.navigation.state"
             static let retry = "journal.browser.retry"
+            static let openSettings = "journal.browser.openSettings"
+            static let connectJournal = "journal.browser.connectJournal"
         }
     }
 

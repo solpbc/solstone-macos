@@ -5,7 +5,6 @@ import Testing
 struct UICopyTests {
     @Test func journalWindowStrings() {
         #expect(UICopy.JOURNAL_WINDOW_TITLE == "your journal")
-        #expect(UICopy.JOURNAL_WINDOW_HELD == "your journal isn\u{0027}t connected yet")
         #expect(UICopy.JOURNAL_WINDOW_LOADING == "opening your journal\u{2026}")
         #expect(UICopy.JOURNAL_WINDOW_ERROR == "your journal couldn\u{0027}t load")
         #expect(UICopy.JOURNAL_WINDOW_RETRY == "try again")

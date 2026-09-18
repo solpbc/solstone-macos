@@ -78,7 +78,9 @@
       "about.identity.version.state",
       "about.link.sourceCode",
       "about.link.website",
+      "journal.browser.connectJournal",
       "journal.browser.navigation.state",
+      "journal.browser.openSettings",
       "journal.browser.retry",
       "journal.browser.webView",
       "menubar.app.quit",
@@ -578,7 +580,8 @@
       "held",
       "loading",
       "loaded",
-      "error"
+      "error",
+      "link_down"
     ],
     "LastJournalContactAXState" : [
       "connected",

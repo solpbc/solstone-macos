@@ -2,12 +2,21 @@
 // Copyright (c) 2026 sol pbc
 
 import AppKit
+import os
 import SolstoneCore
 import SwiftUI
 import WebKit
 
 internal typealias JournalWindowExternalURLOpener = @MainActor @Sendable (URL) -> Void
 internal typealias JournalWindowWebsiteDataStoreProvider = @MainActor @Sendable () -> WKWebsiteDataStore
+
+private func logJournalWindowLoad(_ url: URL) {
+    let host = url.host ?? ""
+    let port = url.port ?? (url.scheme?.lowercased() == "https" ? 443 : 80)
+    Logger.journal.info(
+        "journal-window: load host=\(host, privacy: .public) port=\(port, privacy: .public) path=\(url.path, privacy: .private) query=\(url.query ?? "", privacy: .private) fragment=\(url.fragment ?? "", privacy: .private)"
+    )
+}
 
 @MainActor
 internal enum JournalWindowWebsiteDataStore {
@@ -31,12 +40,21 @@ func routeOpenJournalWindow(
 struct JournalWindowSceneRoot: View {
     let appState: AppState
     private let resolveHomeBase: JournalWindowSession.ResolveHomeBase
+    private let connectionVerdict: JournalWindowSession.ConnectionVerdictProvider
+    private let pairingBusy: JournalWindowSession.PairingBusyProvider
+    private let recover: JournalWindowSession.RecoveryDispatch
+    private let settingsRouter: JournalWindowSession.SettingsRouter?
     private let openExternalURL: JournalWindowExternalURLOpener
     private let websiteDataStore: JournalWindowWebsiteDataStoreProvider
+    @Environment(\.openWindow) private var openWindow
 
     init(
         appState: AppState,
         resolveHomeBase: JournalWindowSession.ResolveHomeBase? = nil,
+        connectionVerdict: JournalWindowSession.ConnectionVerdictProvider? = nil,
+        pairingBusy: JournalWindowSession.PairingBusyProvider? = nil,
+        recover: JournalWindowSession.RecoveryDispatch? = nil,
+        settingsRouter: JournalWindowSession.SettingsRouter? = nil,
         openExternalURL: @escaping JournalWindowExternalURLOpener = { url in
             NSWorkspace.shared.open(url)
         },
@@ -48,6 +66,26 @@ struct JournalWindowSceneRoot: View {
         self.resolveHomeBase = resolveHomeBase ?? { [appState] in
             await appState.resolveHomeBase()
         }
+        self.connectionVerdict = connectionVerdict ?? { [appState] in
+            appState.tunnelLifecycleOwner.connectionVerdict
+        }
+        self.pairingBusy = pairingBusy ?? { [appState] in
+            if case .pairing = appState.pairingCoordinator.state {
+                return true
+            }
+            return false
+        }
+        self.recover = recover ?? { [appState] action in
+            switch action {
+            case .reevaluatePairing:
+                await appState.reevaluateTunnelPairing()
+            case .coalescedReconnect:
+                await appState.tunnelLifecycleOwner.requestCoalescedReconnect()
+            default:
+                await appState.reevaluateTunnelPairing()
+            }
+        }
+        self.settingsRouter = settingsRouter
         self.openExternalURL = openExternalURL
         self.websiteDataStore = websiteDataStore
     }
@@ -58,6 +96,17 @@ struct JournalWindowSceneRoot: View {
                 intent: appState.journalOpenIntent,
                 homeBaseChangeToken: appState.journalHomeBaseChangeToken,
                 resolveHomeBase: resolveHomeBase,
+                connectionVerdict: connectionVerdict,
+                pairingBusy: pairingBusy,
+                recover: recover,
+                openSettings: settingsRouter ?? {
+                    appState.pendingSettingsTab = "journal"
+                    routeOpenSettingsWindow(
+                        appState: appState,
+                        openWindow: { openWindow(id: $0) },
+                        activate: { NSApp.activate(ignoringOtherApps: true) }
+                    )
+                },
                 openExternalURL: openExternalURL,
                 websiteDataStore: websiteDataStore
             )
@@ -78,6 +127,10 @@ private struct JournalWindowView: View {
         intent: JournalOpenIntent?,
         homeBaseChangeToken: UInt64,
         resolveHomeBase: @escaping JournalWindowSession.ResolveHomeBase,
+        connectionVerdict: @escaping JournalWindowSession.ConnectionVerdictProvider,
+        pairingBusy: @escaping JournalWindowSession.PairingBusyProvider,
+        recover: @escaping JournalWindowSession.RecoveryDispatch,
+        openSettings: @escaping JournalWindowSession.SettingsRouter,
         openExternalURL: @escaping JournalWindowExternalURLOpener,
         websiteDataStore: @escaping JournalWindowWebsiteDataStoreProvider
     ) {
@@ -85,12 +138,20 @@ private struct JournalWindowView: View {
         self.homeBaseChangeToken = homeBaseChangeToken
         self.openExternalURL = openExternalURL
         self.websiteDataStore = websiteDataStore
-        _session = State(initialValue: JournalWindowSession(resolveHomeBase: resolveHomeBase))
+        _session = State(
+            initialValue: JournalWindowSession(
+                resolveHomeBase: resolveHomeBase,
+                connectionVerdict: connectionVerdict,
+                pairingBusy: pairingBusy,
+                recover: recover,
+                openSettings: openSettings
+            )
+        )
     }
 
     var body: some View {
         ZStack {
-            if session.state != .held {
+            if session.showsWebView {
                 JournalWebView(
                     session: session,
                     loadCommand: session.loadCommand,
@@ -100,10 +161,8 @@ private struct JournalWindowView: View {
             }
 
             switch session.state {
-            case .held:
-                Text(UICopy.JOURNAL_WINDOW_HELD)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
+            case .held, .linkDown:
+                honestyOverlay
             case .loading:
                 ProgressView(UICopy.JOURNAL_WINDOW_LOADING)
                     .controlSize(.large)
@@ -142,6 +201,51 @@ private struct JournalWindowView: View {
             }
         }
     }
+
+    @ViewBuilder
+    private var honestyOverlay: some View {
+        let headline = session.headline
+        let caption = session.caption
+        let overlayAction = session.overlayAction
+        let overlayButtonTitle = session.overlayButtonTitle
+        let retryEnabled = session.retryEnabled
+        let isPairingBusy = session.isPairingBusy
+
+        VStack(spacing: 12) {
+            Text(headline)
+                .font(.headline)
+            if let caption {
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            switch overlayAction {
+            case .retry:
+                Button(overlayButtonTitle ?? UICopy.JOURNAL_WINDOW_RETRY) {
+                    Task {
+                        await session.performHonestyRetry()
+                    }
+                }
+                .disabled(!retryEnabled || isPairingBusy)
+                .accessibilityIdentifier(AXID.Journal.Browser.retry)
+            case .openSettings:
+                Button(overlayButtonTitle ?? UICopy.SETTINGS_SETUP_JOURNAL_APP_ACTION) {
+                    session.performHonestyRoute()
+                }
+                .accessibilityIdentifier(AXID.Journal.Browser.openSettings)
+            case .connectJournal:
+                Button(overlayButtonTitle ?? UICopy.SETTINGS_SETUP_JOURNAL_LINK_ACTION) {
+                    session.performHonestyRoute()
+                }
+                .accessibilityIdentifier(AXID.Journal.Browser.connectJournal)
+            case .none:
+                EmptyView()
+            }
+        }
+        .padding(24)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
 }
 
 private struct JournalWebView: NSViewRepresentable {
@@ -175,6 +279,7 @@ private struct JournalWebView: NSViewRepresentable {
         context.coordinator.seam.update(session: session, openExternalURL: openExternalURL)
         guard let loadCommand = context.coordinator.seam.prepareLoadCommandForUpdate(loadCommand) else { return }
 
+        logJournalWindowLoad(loadCommand.url)
         let navigation = webView.load(URLRequest(url: loadCommand.url))
         context.coordinator.seam.registerAppInitiatedLoad(
             navigation: navigation,
@@ -269,17 +374,11 @@ private struct JournalWebView: NSViewRepresentable {
             didFailProvisionalNavigation navigation: WKNavigation!,
             withError error: Error
         ) {
-            seam.didFail(
-                navigation: navigation,
-                isSelfInflictedCancellation: JournalWindowPolicy.isSelfInflictedCancellation(error)
-            )
+            seam.didFail(navigation: navigation, error: error)
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            seam.didFail(
-                navigation: navigation,
-                isSelfInflictedCancellation: JournalWindowPolicy.isSelfInflictedCancellation(error)
-            )
+            seam.didFail(navigation: navigation, error: error)
         }
 
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -318,6 +417,7 @@ private struct JournalWebView: NSViewRepresentable {
         }
 
         private func loadInCurrentWindow(_ command: JournalWindowLoadCommand, webView: WKWebView) {
+            logJournalWindowLoad(command.url)
             let navigation = webView.load(URLRequest(url: command.url))
             seam.registerAppInitiatedLoad(navigation: navigation, generation: command.generation)
         }

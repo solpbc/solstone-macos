@@ -402,6 +402,7 @@ struct JournalWindowCompositionTests {
         seam.didFail(navigation: boundNavigation, isSelfInflictedCancellation: true)
 
         #expect(session.state == .loaded)
+        #expect(session.hasDisplayedContent)
         #expect(seam.bindingCount == 0)
     }
 
@@ -656,28 +657,29 @@ struct JournalWindowCompositionTests {
 
         composition.handle(.failed(
             generation: first.generation,
-            failure: .selfInflictedCancellation(hasDisplayedContent: true)
+            failure: .selfInflictedCancellation
         ))
         #expect(composition.state == .loading)
         #expect(composition.loadCommand?.url == second.url)
 
         composition.handle(.failed(
             generation: first.generation,
-            failure: .selfInflictedCancellation(hasDisplayedContent: false)
+            failure: .selfInflictedCancellation
         ))
         #expect(composition.state == .loading)
         #expect(composition.loadCommand?.url == second.url)
 
         composition.handle(.failed(
             generation: second.generation,
-            failure: .selfInflictedCancellation(hasDisplayedContent: false)
+            failure: .selfInflictedCancellation
         ))
         #expect(composition.state == .error)
 
         let third = composition.reload(resolvedBase: .url("https://c.example"))!
+        composition.noteMainFrameCommit(committedURL: third.url)
         composition.handle(.failed(
             generation: third.generation,
-            failure: .selfInflictedCancellation(hasDisplayedContent: true)
+            failure: .selfInflictedCancellation
         ))
         #expect(composition.state == .loaded)
     }
@@ -925,15 +927,20 @@ struct JournalWindowWireUpTests {
             "AXID.Journal.Browser.webView",
             "AXID.Journal.Browser.navigationState",
             "AXID.Journal.Browser.retry",
-            "UICopy.JOURNAL_WINDOW_HELD",
+            "AXID.Journal.Browser.openSettings",
+            "AXID.Journal.Browser.connectJournal",
             "UICopy.JOURNAL_WINDOW_LOADING",
             "UICopy.JOURNAL_WINDOW_ERROR",
-            "UICopy.JOURNAL_WINDOW_RETRY"
+            "UICopy.JOURNAL_WINDOW_RETRY",
+            "UICopy.SETTINGS_SETUP_JOURNAL_APP_ACTION",
+            "UICopy.SETTINGS_SETUP_JOURNAL_LINK_ACTION"
         ]
 
         for reference in references {
             #expect(wireUpContains(source, reference))
         }
+        #expect(wireUpContains(source, "appState.tunnelLifecycleOwner.connectionVerdict"))
+        #expect(!source.contains("let connectionVerdict = appState.tunnelLifecycleOwner.connectionVerdict"))
         #expect(wireUpContains(appSource, "Window(UICopy.JOURNAL_WINDOW_TITLE, id: SolstoneSceneID.journal.rawValue)"))
         #expect(wireUpContains(appSource, ".onReceive(NotificationCenter.default.publisher(for: .openJournalWindow))"))
     }
@@ -951,6 +958,870 @@ struct JournalWindowWireUpTests {
 
         #expect(settingsSource.components(separatedBy: "NSWorkspace.shared.open").count - 1 == 7)
         #expect(repairSource.components(separatedBy: "NSWorkspace.shared.open").count - 1 == 1)
+    }
+}
+
+@Suite("JournalWindow Honesty")
+@MainActor
+struct JournalWindowHonestyTests {
+    @Test func heldHeadlineAndCaptionMatchReducerVerdicts() {
+        let rows: [(JournalConnectionVerdict, String, String?)] = [
+            (journalWindowNoRouteVerdict(), journalWindowNoRouteVerdict().message, journalWindowNoRouteVerdict().caption),
+            (journalWindowUnreachableVerdict(), journalWindowUnreachableVerdict().message, journalWindowUnreachableVerdict().caption),
+            (journalWindowLoopbackVerdict(), journalWindowLoopbackVerdict().message, journalWindowLoopbackVerdict().caption),
+            (journalWindowRevokedVerdict(), journalWindowRevokedVerdict().message, journalWindowRevokedVerdict().caption),
+            (journalWindowKeychainVerdict(), journalWindowKeychainVerdict().message, journalWindowKeychainVerdict().caption),
+            (journalWindowNotEntitledVerdict(), journalWindowNotEntitledVerdict().message, journalWindowNotEntitledVerdict().caption),
+            (journalWindowConnectingVerdict(), journalWindowConnectingVerdict().message, journalWindowConnectingVerdict().caption),
+            (journalWindowDisconnectedVerdict(), journalWindowDisconnectedVerdict().message, journalWindowDisconnectedVerdict().caption)
+        ]
+
+        for row in rows {
+            let session = JournalWindowSession(
+                resolveHomeBase: { .held },
+                connectionVerdict: { row.0 }
+            )
+            #expect(session.headline == row.1)
+            #expect(session.caption == row.2)
+        }
+    }
+
+    @Test func overlayActionIsExhaustiveOverFailureCausesAndNilTokens() {
+        func expectedAction(for cause: JournalConnectionFailureCause) -> JournalWindowOverlayAction {
+            switch cause {
+            case .noRoute, .unreachable, .loopbackUnavailable:
+                return .retry
+            case .revoked, .keychainUnavailable, .mismatch, .notServing:
+                return .openSettings
+            case .notEntitled:
+                return .none
+            }
+        }
+
+        func expectedTitle(_ action: JournalWindowOverlayAction) -> String? {
+            switch action {
+            case .none:
+                return nil
+            case .retry:
+                return UICopy.JOURNAL_WINDOW_RETRY
+            case .openSettings:
+                return UICopy.SETTINGS_SETUP_JOURNAL_APP_ACTION
+            case .connectJournal:
+                return UICopy.SETTINGS_SETUP_JOURNAL_LINK_ACTION
+            }
+        }
+
+        let causes: [JournalConnectionFailureCause] = [
+            .noRoute,
+            .unreachable(nil),
+            .unreachable("timeout"),
+            .loopbackUnavailable,
+            .revoked,
+            .keychainUnavailable,
+            .mismatch,
+            .notServing,
+            .notEntitled
+        ]
+
+        for cause in causes {
+            let verdict = journalWindowVerdict(for: cause)
+            let session = JournalWindowSession(
+                resolveHomeBase: { .held },
+                connectionVerdict: { verdict }
+            )
+            let action = expectedAction(for: cause)
+            #expect(session.overlayAction == action)
+            #expect(session.overlayButtonTitle == expectedTitle(action))
+        }
+
+        let connecting = JournalWindowSession(
+            resolveHomeBase: { .held },
+            connectionVerdict: { journalWindowConnectingVerdict() }
+        )
+        #expect(connecting.overlayAction == .none)
+        #expect(connecting.overlayButtonTitle == nil)
+
+        let disconnected = JournalWindowSession(
+            resolveHomeBase: { .held },
+            connectionVerdict: { journalWindowDisconnectedVerdict() }
+        )
+        #expect(disconnected.overlayAction == .connectJournal)
+        #expect(disconnected.overlayButtonTitle == UICopy.SETTINGS_SETUP_JOURNAL_LINK_ACTION)
+
+        let gap = JournalWindowSession(
+            resolveHomeBase: { .held },
+            connectionVerdict: { journalWindowConnectedVerdict() }
+        )
+        #expect(gap.overlayAction == .none)
+        #expect(gap.overlayButtonTitle == nil)
+    }
+
+    @Test func verdictClassIsExhaustiveOverFailureCausesAndNilTokens() {
+        func expectedClass(for cause: JournalConnectionFailureCause) -> JournalWindowVerdictClass {
+            switch cause {
+            case .noRoute, .unreachable, .loopbackUnavailable:
+                return .transient
+            case .revoked, .keychainUnavailable, .mismatch, .notServing, .notEntitled:
+                return .nonTransient
+            }
+        }
+
+        let causes: [JournalConnectionFailureCause] = [
+            .noRoute,
+            .unreachable(nil),
+            .unreachable("timeout"),
+            .loopbackUnavailable,
+            .revoked,
+            .keychainUnavailable,
+            .mismatch,
+            .notServing,
+            .notEntitled
+        ]
+
+        for cause in causes {
+            let verdict = journalWindowVerdict(for: cause)
+            #expect(
+                journalWindowVerdictClass(failureCause: cause, axToken: verdict.axToken)
+                    == expectedClass(for: cause)
+            )
+        }
+
+        let connecting = journalWindowConnectingVerdict()
+        #expect(
+            journalWindowVerdictClass(failureCause: nil, axToken: connecting.axToken) == .transient
+        )
+        let connected = journalWindowConnectedVerdict()
+        #expect(
+            journalWindowVerdictClass(failureCause: nil, axToken: connected.axToken) == .transient
+        )
+        let disconnected = journalWindowDisconnectedVerdict()
+        #expect(
+            journalWindowVerdictClass(failureCause: nil, axToken: disconnected.axToken) == .nonTransient
+        )
+    }
+
+    @Test func retryDispatchMatchesRecoveryActionAndRouteDoesNotDispatch() async {
+        let retryCauses: [JournalConnectionFailureCause] = [
+            .noRoute,
+            .unreachable(nil),
+            .loopbackUnavailable
+        ]
+
+        for cause in retryCauses {
+            var recorded: [JournalConnectionRecoveryAction] = []
+            var routed = 0
+            let verdict = journalWindowVerdict(for: cause)
+            let session = JournalWindowSession(
+                resolveHomeBase: { .held },
+                connectionVerdict: { verdict },
+                recover: { recorded.append($0) },
+                openSettings: { routed += 1 }
+            )
+            await session.performHonestyRetry()
+            #expect(recorded == [journalConnectionRecoveryAction(for: cause)])
+            #expect(routed == 0)
+        }
+
+        let routeCauses: [JournalConnectionFailureCause] = [
+            .revoked,
+            .keychainUnavailable,
+            .mismatch,
+            .notServing
+        ]
+        for cause in routeCauses {
+            var recorded: [JournalConnectionRecoveryAction] = []
+            var routed = 0
+            let verdict = journalWindowVerdict(for: cause)
+            let session = JournalWindowSession(
+                resolveHomeBase: { .held },
+                connectionVerdict: { verdict },
+                recover: { recorded.append($0) },
+                openSettings: { routed += 1 }
+            )
+            await session.performHonestyRetry()
+            session.performHonestyRoute()
+            #expect(recorded.isEmpty)
+            #expect(routed == 1)
+        }
+
+        var recorded: [JournalConnectionRecoveryAction] = []
+        var routed = 0
+        let disconnected = JournalWindowSession(
+            resolveHomeBase: { .held },
+            connectionVerdict: { journalWindowDisconnectedVerdict() },
+            recover: { recorded.append($0) },
+            openSettings: { routed += 1 }
+        )
+        await disconnected.performHonestyRetry()
+        disconnected.performHonestyRoute()
+        #expect(recorded.isEmpty)
+        #expect(routed == 1)
+    }
+
+    @Test func retryDisabledWhilePairingCoordinatorBusy() {
+        var busy = true
+        let session = JournalWindowSession(
+            resolveHomeBase: { .held },
+            connectionVerdict: { journalWindowUnreachableVerdict() },
+            pairingBusy: { busy }
+        )
+        #expect(session.isPairingBusy)
+        #expect(!session.retryEnabled)
+        busy = false
+        #expect(!session.isPairingBusy)
+        #expect(session.retryEnabled)
+    }
+
+    @Test func connectingToUnreachableFollowsLiveVerdictWithoutTokenBump() async {
+        let box = JournalWindowLiveVerdict(journalWindowConnectingVerdict())
+        let session = JournalWindowSession(
+            resolveHomeBase: { .held },
+            connectionVerdict: { box.value }
+        )
+        _ = await session.open(destination: .root)
+        #expect(session.state == .held)
+        #expect(session.headline == journalWindowConnectingVerdict().message)
+        #expect(session.overlayAction == .none)
+
+        box.value = journalWindowUnreachableVerdict()
+        #expect(session.headline == journalWindowUnreachableVerdict().message)
+        #expect(session.caption == journalWindowUnreachableVerdict().caption)
+        #expect(session.overlayAction == .retry)
+        #expect(session.overlayButtonTitle == UICopy.JOURNAL_WINDOW_RETRY)
+    }
+
+    @Test func latchPlusTransientHeldResolveEntersLinkDownFromLoadedLoadingAndError() {
+        for phase in ["loaded", "loading", "error"] {
+            var composition = JournalWindowComposition()
+            let command = composition.open(
+                destination: .root,
+                resolvedBase: .url("https://journal.example"),
+                verdictClass: .transient
+            )!
+            composition.noteMainFrameCommit(committedURL: command.url)
+            switch phase {
+            case "loaded":
+                composition.handle(.finished(generation: command.generation))
+            case "error":
+                composition.handle(.failed(generation: command.generation, failure: .other))
+            default:
+                break
+            }
+            let dropped = composition.reload(resolvedBase: .held, verdictClass: .transient)
+            #expect(dropped == nil)
+            #expect(composition.state == .linkDown)
+            #expect(composition.showsWebView)
+            #expect(composition.state.axToken == "link_down")
+        }
+
+        var noLatch = JournalWindowComposition()
+        _ = noLatch.open(
+            destination: .root,
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )
+        let held = noLatch.reload(resolvedBase: .held, verdictClass: .transient)
+        #expect(held == nil)
+        #expect(noLatch.state == .held)
+        #expect(!noLatch.showsWebView)
+    }
+
+    @Test func nonTransientHeldResolveUnmountsFromLoadedLoadingErrorAndLinkDown() {
+        for phase in ["loaded", "loading", "error", "linkDown"] {
+            var composition = JournalWindowComposition()
+            let command = composition.open(
+                destination: .root,
+                resolvedBase: .url("https://journal.example"),
+                verdictClass: .transient
+            )!
+            composition.noteMainFrameCommit(committedURL: command.url)
+            switch phase {
+            case "loaded":
+                composition.handle(.finished(generation: command.generation))
+            case "error":
+                composition.handle(.failed(generation: command.generation, failure: .other))
+            case "linkDown":
+                _ = composition.reload(resolvedBase: .held, verdictClass: .transient)
+                #expect(composition.state == .linkDown)
+            default:
+                break
+            }
+            let dropped = composition.reload(resolvedBase: .held, verdictClass: .nonTransient)
+            #expect(dropped == nil)
+            #expect(composition.state == .held)
+            #expect(!composition.showsWebView)
+            #expect(!composition.hasDisplayedContent)
+        }
+
+        var composition = JournalWindowComposition()
+        let command = composition.open(
+            destination: .root,
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )!
+        composition.noteMainFrameCommit(committedURL: command.url)
+        _ = composition.reload(resolvedBase: .held, verdictClass: .transient)
+        #expect(composition.state == .linkDown)
+        let further = composition.reload(resolvedBase: .held, verdictClass: .transient)
+        #expect(further == nil)
+        #expect(composition.state == .linkDown)
+        #expect(composition.showsWebView)
+    }
+
+    @Test func sessionNonTransientVerdictsUnmountFromLoadedAndFromLinkDown() async {
+        let cases: [JournalConnectionVerdict] = [
+            journalWindowRevokedVerdict(),
+            journalWindowKeychainVerdict(),
+            journalWindowDisconnectedVerdict(),
+            journalWindowNotEntitledVerdict()
+        ]
+
+        for verdict in cases {
+            let base = JournalWindowLiveBase(.url("https://journal.example"))
+            let liveVerdict = JournalWindowLiveVerdict(verdict)
+            let session = JournalWindowSession(
+                resolveHomeBase: { base.value },
+                connectionVerdict: { liveVerdict.value }
+            )
+            let seam = makeJournalWindowSeam(session: session)
+            let command = await session.open(destination: .root)!
+            completeJournalWindowLoad(command, seam: seam)
+            #expect(session.state == .loaded)
+            #expect(session.hasDisplayedContent)
+
+            base.value = .held
+            let dropped = await session.reloadRetainedDestination()
+            #expect(dropped == nil)
+            #expect(session.state == .held)
+            #expect(!session.showsWebView)
+            #expect(!session.hasDisplayedContent)
+        }
+
+        for verdict in cases {
+            let base = JournalWindowLiveBase(.url("https://journal.example"))
+            let liveVerdict = JournalWindowLiveVerdict(journalWindowUnreachableVerdict())
+            let session = JournalWindowSession(
+                resolveHomeBase: { base.value },
+                connectionVerdict: { liveVerdict.value }
+            )
+            let seam = makeJournalWindowSeam(session: session)
+            let command = await session.open(destination: .root)!
+            completeJournalWindowLoad(command, seam: seam)
+            base.value = .held
+            let linkDown = await session.reloadRetainedDestination()
+            #expect(linkDown == nil)
+            #expect(session.state == .linkDown)
+            #expect(session.showsWebView)
+            #expect(session.hasDisplayedContent)
+
+            liveVerdict.value = verdict
+            let dropped = await session.reloadRetainedDestination()
+            #expect(dropped == nil)
+            #expect(session.state == .held)
+            #expect(!session.showsWebView)
+            #expect(!session.hasDisplayedContent)
+        }
+    }
+
+    @Test func linkDownReturnComparesCommittedBaseAndDestination() {
+        var composition = JournalWindowComposition()
+        let destination = JournalWindowDestination(path: "/app/home", fragment: "event-1")!
+        let command = composition.open(
+            destination: destination,
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )!
+        composition.noteMainFrameCommit(committedURL: command.url)
+        composition.handle(.failed(generation: command.generation, failure: .other))
+        #expect(composition.state == .error)
+        _ = composition.reload(resolvedBase: .held, verdictClass: .transient)
+        let preReturnGeneration = composition.generation
+        let recovered = composition.reload(
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )
+        #expect(recovered == nil)
+        #expect(composition.state == .loaded)
+        #expect(composition.generation == preReturnGeneration + 1)
+        composition.handle(.failed(generation: command.generation, failure: .other))
+        #expect(composition.state == .loaded)
+
+        var fragmentComposition = JournalWindowComposition()
+        let root = fragmentComposition.open(
+            destination: .root,
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )!
+        fragmentComposition.handle(.finished(generation: root.generation))
+        fragmentComposition.noteMainFrameCommit(committedURL: root.url)
+        fragmentComposition.applySameDocumentNavigation(
+            url: URL(string: "https://journal.example/#section")!,
+            baseURL: root.baseURL
+        )
+        _ = fragmentComposition.reload(resolvedBase: .held, verdictClass: .transient)
+        let fragmentRecovered = fragmentComposition.reload(
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )
+        #expect(fragmentRecovered == nil)
+        #expect(fragmentComposition.state == .loaded)
+
+        var destChange = JournalWindowComposition()
+        let first = destChange.open(
+            destination: .root,
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )!
+        destChange.noteMainFrameCommit(committedURL: first.url)
+        _ = destChange.reload(resolvedBase: .held, verdictClass: .transient)
+        _ = destChange.open(
+            destination: JournalWindowDestination(path: "/app/home")!,
+            resolvedBase: .held,
+            verdictClass: .transient
+        )
+        #expect(destChange.state == .linkDown)
+        let loadedDifferentDest = destChange.reload(
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )
+        #expect(loadedDifferentDest != nil)
+        #expect(destChange.state == .loading)
+        #expect(destChange.showsWebView)
+
+        let furtherDrop = destChange.reload(resolvedBase: .held, verdictClass: .transient)
+        #expect(furtherDrop == nil)
+        #expect(destChange.state == .linkDown)
+        #expect(destChange.state != .held)
+
+        var differentBase = JournalWindowComposition()
+        let original = differentBase.open(
+            destination: .root,
+            resolvedBase: .url("http://127.0.0.1:41000"),
+            verdictClass: .transient
+        )!
+        differentBase.noteMainFrameCommit(committedURL: original.url)
+        _ = differentBase.reload(resolvedBase: .held, verdictClass: .transient)
+        let rebound = differentBase.reload(
+            resolvedBase: .url("http://127.0.0.1:42000"),
+            verdictClass: .transient
+        )
+        #expect(rebound != nil)
+        #expect(differentBase.state == .loading)
+        #expect(rebound?.url.absoluteString == "http://127.0.0.1:42000/")
+    }
+
+    @Test func linkDownPolicyCancelsMainFrameAndKeepsOffOriginExternal() async {
+        var opened: [URL] = []
+        var resolved: ResolvedHomeBase = .url("https://journal.example")
+        let session = JournalWindowSession(
+            resolveHomeBase: { resolved },
+            connectionVerdict: { journalWindowUnreachableVerdict() }
+        )
+        let seam = JournalWindowWebViewSeam(session: session, openExternalURL: { opened.append($0) })
+        let command = await session.open(destination: .root)!
+        completeJournalWindowLoad(command, seam: seam)
+        resolved = .held
+        _ = await session.reloadRetainedDestination()
+        #expect(session.state == .linkDown)
+        let linkDownGeneration = session.generation
+
+        let userInitiated = seam.decideNavigationAction(
+            requestURL: URL(string: "https://journal.example/app/home")!,
+            targetFrameIsMainFrame: true,
+            targetFrameIsNil: false,
+            shouldPerformDownload: false,
+            isUserInitiated: true
+        )
+        let continuation = seam.decideNavigationAction(
+            requestURL: URL(string: "https://journal.example/app/home")!,
+            targetFrameIsMainFrame: true,
+            targetFrameIsNil: false,
+            shouldPerformDownload: false,
+            isUserInitiated: false
+        )
+        let newWindow = seam.decideNewWindowNavigationAction(
+            requestURL: URL(string: "https://journal.example/popout")!,
+            targetFrameIsMainFrame: nil,
+            targetFrameIsNil: true,
+            shouldPerformDownload: false
+        )
+        let offOrigin = seam.decideNavigationAction(
+            requestURL: URL(string: "https://outside.example/")!,
+            targetFrameIsMainFrame: true,
+            targetFrameIsNil: false,
+            shouldPerformDownload: false,
+            isUserInitiated: true
+        )
+        let subframe = seam.decideNavigationAction(
+            requestURL: URL(string: "https://outside.example/embed")!,
+            targetFrameIsMainFrame: false,
+            targetFrameIsNil: false,
+            shouldPerformDownload: false,
+            isUserInitiated: false
+        )
+
+        #expect(userInitiated == .cancel)
+        #expect(continuation == .cancel)
+        #expect(newWindow == .cancel)
+        #expect(offOrigin == .cancel)
+        #expect(opened == [URL(string: "https://outside.example/")!])
+        #expect(subframe == .allow)
+        #expect(session.state == .linkDown)
+        #expect(session.loadCommand == nil)
+
+        session.handle(.started(generation: linkDownGeneration))
+        session.handle(.finished(generation: linkDownGeneration))
+        session.handle(.failed(generation: linkDownGeneration, failure: .other))
+        session.handle(.failed(generation: linkDownGeneration, failure: .selfInflictedCancellation))
+        session.noteMainFrameCommit(committedURL: command.url)
+        #expect(session.state == .linkDown)
+        #expect(session.committedBaseURL == command.baseURL)
+
+        session.handle(.contentProcessTerminated(generation: linkDownGeneration))
+        #expect(session.state == .held)
+        #expect(!session.hasDisplayedContent)
+        #expect(!session.showsWebView)
+
+        resolved = .url("https://journal.example")
+        let afterDeath = await session.reloadRetainedDestination()
+        #expect(afterDeath != nil)
+        #expect(session.state == .loading)
+    }
+
+    @Test func inFlightCrossDocumentClickReloadsClickTargetOnReturn() {
+        var composition = JournalWindowComposition()
+        let command = composition.open(
+            destination: .root,
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )!
+        composition.noteMainFrameCommit(committedURL: command.url)
+        composition.handle(.finished(generation: command.generation))
+        _ = composition.beginUserInitiatedNavigation(
+            url: URL(string: "https://journal.example/app/home")!,
+            baseURL: command.baseURL
+        )
+        _ = composition.reload(resolvedBase: .held, verdictClass: .transient)
+        #expect(composition.state == .linkDown)
+        #expect(composition.destination == JournalWindowDestination(path: "/app/home")!)
+        let returned = composition.reload(
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )
+        #expect(returned?.url.absoluteString == "https://journal.example/app/home")
+        #expect(composition.state == .loading)
+    }
+
+    @Test func samePortStormIssuesZeroLoadsAfterInitialCommit() {
+        var connected = true
+        let port = 41000
+        func resolve() -> ResolvedHomeBase {
+            connected ? .url("http://127.0.0.1:\(port)") : .held
+        }
+
+        var composition = JournalWindowComposition()
+        let first = composition.open(destination: .root, resolvedBase: resolve(), verdictClass: .transient)!
+        composition.noteMainFrameCommit(committedURL: first.url)
+        var extraLoads = 0
+        var sawHeld = false
+        for _ in 0..<10 {
+            connected = false
+            let drop = composition.reload(resolvedBase: resolve(), verdictClass: .transient)
+            #expect(drop == nil)
+            if composition.state == .held {
+                sawHeld = true
+            }
+            #expect(composition.state == .linkDown)
+            connected = true
+            let returned = composition.reload(resolvedBase: resolve(), verdictClass: .transient)
+            if returned != nil {
+                extraLoads += 1
+            }
+            #expect(composition.state != .held)
+            #expect(composition.showsWebView)
+        }
+        #expect(extraLoads == 0)
+        #expect(!sawHeld)
+    }
+
+    @Test func rebuiltListenerStormLoadsOncePerNewPortAndNeverUnmounts() {
+        var connected = true
+        var port = 41000
+        func resolve() -> ResolvedHomeBase {
+            connected ? .url("http://127.0.0.1:\(port)") : .held
+        }
+
+        var composition = JournalWindowComposition()
+        let first = composition.open(destination: .root, resolvedBase: resolve(), verdictClass: .transient)!
+        composition.noteMainFrameCommit(committedURL: first.url)
+        var loads = 0
+        var sawHeld = false
+        var committedPort: Int?
+        for index in 0..<10 {
+            connected = false
+            let drop = composition.reload(resolvedBase: resolve(), verdictClass: .transient)
+            #expect(drop == nil)
+            if composition.state == .held {
+                sawHeld = true
+            }
+            #expect(composition.state == .linkDown)
+            #expect(composition.showsWebView)
+            connected = true
+            port = 41001 + index
+            let returned = composition.reload(resolvedBase: resolve(), verdictClass: .transient)
+            if returned != nil {
+                loads += 1
+            }
+            #expect(returned != nil)
+            #expect(composition.state == .loading)
+            #expect(composition.showsWebView)
+            if index == 3, let returned {
+                composition.noteMainFrameCommit(committedURL: returned.url)
+                committedPort = port
+            }
+        }
+        #expect(loads == 10)
+        #expect(!sawHeld)
+
+        connected = false
+        _ = composition.reload(resolvedBase: resolve(), verdictClass: .transient)
+        connected = true
+        port = committedPort!
+        let backToCommitted = composition.reload(resolvedBase: resolve(), verdictClass: .transient)
+        #expect(backToCommitted == nil)
+        #expect(composition.state == .loaded)
+    }
+
+    @Test func unboundCommitLatchesForTransientDrop() async {
+        let latchedBase = JournalWindowLiveBase(.url("https://journal.example"))
+        let latchedSession = JournalWindowSession(
+            resolveHomeBase: { latchedBase.value },
+            connectionVerdict: { journalWindowUnreachableVerdict() }
+        )
+        let latchedSeam = makeJournalWindowSeam(session: latchedSession)
+        _ = await latchedSession.open(destination: .root)!
+        latchedSeam.didCommit(
+            navigation: NSObject(),
+            committedDocumentURL: URL(string: "https://journal.example/")!
+        )
+        latchedBase.value = .held
+        let latchedDrop = await latchedSession.reloadRetainedDestination()
+        #expect(latchedDrop == nil)
+        #expect(latchedSession.state == .linkDown)
+        #expect(latchedSession.hasDisplayedContent)
+
+        let unlatchedBase = JournalWindowLiveBase(.url("https://journal.example"))
+        let unlatchedSession = JournalWindowSession(
+            resolveHomeBase: { unlatchedBase.value },
+            connectionVerdict: { journalWindowUnreachableVerdict() }
+        )
+        _ = await unlatchedSession.open(destination: .root)!
+        unlatchedBase.value = .held
+        let unlatchedDrop = await unlatchedSession.reloadRetainedDestination()
+        #expect(unlatchedDrop == nil)
+        #expect(unlatchedSession.state == .held)
+        #expect(!unlatchedSession.hasDisplayedContent)
+    }
+
+    @Test func axLinkDownTokenAndRoutingIDs() {
+        #expect(JournalWindowAXState.linkDown.axToken == "link_down")
+        #expect(AXID.Journal.Browser.retry == "journal.browser.retry")
+        #expect(AXID.Journal.Browser.openSettings == "journal.browser.openSettings")
+        #expect(AXID.Journal.Browser.connectJournal == "journal.browser.connectJournal")
+        #expect(AXContract.staticIDs.contains(AXID.Journal.Browser.openSettings))
+        #expect(AXContract.staticIDs.contains(AXID.Journal.Browser.connectJournal))
+        #expect(AXContract.vocabularies["JournalWindowAXState"]?.contains("link_down") == true)
+    }
+
+    @Test func unregisteredFailureBecomesErrorOnlyForCurrentLoadWithoutBindings() async {
+        var composition = JournalWindowComposition()
+        let command = composition.open(
+            destination: .root,
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )!
+        composition.handleUnregisteredFailure(isSelfInflictedCancellation: false)
+        #expect(composition.state == .error)
+
+        var loaded = JournalWindowComposition()
+        let loadedCommand = loaded.open(
+            destination: .root,
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )!
+        loaded.noteMainFrameCommit(committedURL: loadedCommand.url)
+        loaded.handle(.finished(generation: loadedCommand.generation))
+        loaded.handleUnregisteredFailure(isSelfInflictedCancellation: false)
+        #expect(loaded.state == .loaded)
+
+        var userNav = JournalWindowComposition()
+        let userCommand = userNav.open(
+            destination: .root,
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )!
+        userNav.handle(.finished(generation: userCommand.generation))
+        userNav.noteMainFrameCommit(committedURL: userCommand.url)
+        _ = userNav.beginUserInitiatedNavigation(
+            url: URL(string: "https://journal.example/app/home")!,
+            baseURL: userCommand.baseURL
+        )
+        #expect(userNav.loadCommand == nil)
+        userNav.handleUnregisteredFailure(isSelfInflictedCancellation: false)
+        #expect(userNav.state == .loading)
+
+        let session = JournalWindowSession(resolveHomeBase: { .url("https://journal.example") })
+        let seam = makeJournalWindowSeam(session: session)
+        let load = await session.open(destination: .root)!
+        seam.registerAppInitiatedLoad(navigation: NSObject(), generation: load.generation)
+        seam.didFail(
+            navigation: NSObject(),
+            error: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+        )
+        #expect(session.state == .loading)
+
+        var cancelled = JournalWindowComposition()
+        _ = cancelled.open(
+            destination: .root,
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )
+        cancelled.handleUnregisteredFailure(isSelfInflictedCancellation: true)
+        #expect(cancelled.state == .loading)
+
+        var linkDown = JournalWindowComposition()
+        let linkCommand = linkDown.open(
+            destination: .root,
+            resolvedBase: .url("https://journal.example"),
+            verdictClass: .transient
+        )!
+        linkDown.noteMainFrameCommit(committedURL: linkCommand.url)
+        _ = linkDown.reload(resolvedBase: .held, verdictClass: .transient)
+        linkDown.handleUnregisteredFailure(isSelfInflictedCancellation: false)
+        #expect(linkDown.state == .linkDown)
+
+        _ = command
+    }
+}
+
+@MainActor
+private final class JournalWindowLiveVerdict {
+    var value: JournalConnectionVerdict
+
+    init(_ value: JournalConnectionVerdict) {
+        self.value = value
+    }
+}
+
+@MainActor
+private final class JournalWindowLiveBase {
+    var value: ResolvedHomeBase
+
+    init(_ value: ResolvedHomeBase) {
+        self.value = value
+    }
+}
+
+@MainActor
+private func journalWindowReducerVerdict(
+    state: TunnelLifecycleState,
+    hasPersistedPairing: Bool = true,
+    isTunnelManaged: Bool = true,
+    isProxyStarting: Bool = false,
+    establishedLoopbackPort: Int? = nil,
+    hasTransport: Bool = false
+) -> JournalConnectionVerdict {
+    TunnelLifecycleOwner.reduceConnectionVerdict(
+        state: state,
+        hasPersistedPairing: hasPersistedPairing,
+        isTunnelManaged: isTunnelManaged,
+        supervisorAttemptState: .idle,
+        isProxyStarting: isProxyStarting,
+        establishedLoopbackPort: establishedLoopbackPort,
+        hasTransport: hasTransport
+    )
+}
+
+@MainActor
+private func journalWindowConnectingVerdict() -> JournalConnectionVerdict {
+    journalWindowReducerVerdict(state: .connecting, isProxyStarting: true)
+}
+
+@MainActor
+private func journalWindowDisconnectedVerdict() -> JournalConnectionVerdict {
+    journalWindowReducerVerdict(state: .disconnected, hasPersistedPairing: false)
+}
+
+@MainActor
+private func journalWindowConnectedVerdict() -> JournalConnectionVerdict {
+    journalWindowReducerVerdict(
+        state: .connected(localPort: 41000, via: .relay),
+        establishedLoopbackPort: 41000,
+        hasTransport: true
+    )
+}
+
+@MainActor
+private func journalWindowNoRouteVerdict() -> JournalConnectionVerdict {
+    journalWindowReducerVerdict(state: .disconnected, isTunnelManaged: false)
+}
+
+@MainActor
+private func journalWindowUnreachableVerdict() -> JournalConnectionVerdict {
+    journalWindowReducerVerdict(state: .disconnected, isTunnelManaged: true)
+}
+
+@MainActor
+private func journalWindowLoopbackVerdict() -> JournalConnectionVerdict {
+    journalWindowReducerVerdict(state: .error(.loopbackUnavailable))
+}
+
+@MainActor
+private func journalWindowRevokedVerdict() -> JournalConnectionVerdict {
+    journalWindowReducerVerdict(state: .error(.revoked))
+}
+
+@MainActor
+private func journalWindowKeychainVerdict() -> JournalConnectionVerdict {
+    journalWindowReducerVerdict(state: .error(.keychainUnavailable))
+}
+
+@MainActor
+private func journalWindowNotEntitledVerdict() -> JournalConnectionVerdict {
+    journalWindowReducerVerdict(state: .error(.notEntitled))
+}
+
+@MainActor
+private func journalWindowVerdict(for cause: JournalConnectionFailureCause) -> JournalConnectionVerdict {
+    switch cause {
+    case .noRoute:
+        return journalWindowNoRouteVerdict()
+    case .unreachable:
+        return journalWindowUnreachableVerdict()
+    case .loopbackUnavailable:
+        return journalWindowLoopbackVerdict()
+    case .revoked:
+        return journalWindowRevokedVerdict()
+    case .keychainUnavailable:
+        return journalWindowKeychainVerdict()
+    case .notEntitled:
+        return journalWindowNotEntitledVerdict()
+    case .mismatch:
+        return JournalConnectionVerdict(
+            severity: .attention,
+            message: journalWindowUnreachableVerdict().message,
+            caption: nil,
+            axToken: PairingConnectionAXState.mismatch.axToken,
+            failureCause: .mismatch
+        )
+    case .notServing:
+        return JournalConnectionVerdict(
+            severity: .attention,
+            message: journalWindowUnreachableVerdict().message,
+            caption: nil,
+            axToken: PairingConnectionAXState.notServing.axToken,
+            failureCause: .notServing
+        )
     }
 }
 

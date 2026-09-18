@@ -35,6 +35,8 @@ enum AXContract {
         AXID.Journal.Browser.webView,
         AXID.Journal.Browser.navigationState,
         AXID.Journal.Browser.retry,
+        AXID.Journal.Browser.openSettings,
+        AXID.Journal.Browser.connectJournal,
         AXID.Settings.Sources.sourceStatus,
         AXID.Settings.Sources.screenCaptureEnabled,
         AXID.Settings.Sources.microphoneCaptureEnabled,

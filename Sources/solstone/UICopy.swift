@@ -45,7 +45,6 @@ public enum UICopy {
     }
 
     public static let JOURNAL_WINDOW_TITLE = "your journal"
-    public static let JOURNAL_WINDOW_HELD = "your journal isn't connected yet"
     public static let JOURNAL_WINDOW_LOADING = "opening your journal…"
     public static let JOURNAL_WINDOW_ERROR = "your journal couldn't load"
     public static let JOURNAL_WINDOW_RETRY = "try again"

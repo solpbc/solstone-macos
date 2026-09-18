@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - when your journal is on the same mac, "open journal" now opens it in your browser. the built-in window is still used for a journal on another device.
 
 ### Fixed
+- the journal window now says what's wrong and what you can do about it, instead of "isn't connected yet". and it keeps the page on screen while its connection to your journal comes back, instead of going blank.
 - pairing confirmation no longer completes on its own when your journal's mark can't be checked in time; you can choose to continue anyway or cancel pairing.
 - adding a device to your journal now shows your journal's mark the whole time you're pairing, next to the qr code, so you can compare it with what the new device shows.
 - before your journal has a mark of its own, settings and the add-a-device window now show the placeholder mark instead of empty space.

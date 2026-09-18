@@ -40,6 +40,8 @@ struct AXIDTests {
         #expect(AXID.Journal.Browser.webView == "journal.browser.webView")
         #expect(AXID.Journal.Browser.navigationState == "journal.browser.navigation.state")
         #expect(AXID.Journal.Browser.retry == "journal.browser.retry")
+        #expect(AXID.Journal.Browser.openSettings == "journal.browser.openSettings")
+        #expect(AXID.Journal.Browser.connectJournal == "journal.browser.connectJournal")
         #expect(AXID.Settings.Service.journalNameState == "settings.service.journal.name.state")
         #expect(AXID.Settings.Service.journalMarkState == "settings.service.journal.mark.state")
         #expect(AXID.Settings.Service.journalConnectionState == "settings.service.journal.connection.state")

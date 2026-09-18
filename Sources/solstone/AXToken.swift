@@ -499,6 +499,8 @@ extension JournalWindowAXState {
             return "loaded"
         case .error:
             return "error"
+        case .linkDown:
+            return "link_down"
         }
     }
 }

@@ -3,6 +3,8 @@
 
 import Foundation
 import Observation
+import os
+import SolstoneCore
 
 public struct JournalWindowDestination: Sendable, Equatable {
     public let path: String
@@ -84,6 +86,65 @@ internal enum JournalWindowAXState: CaseIterable, Sendable, Equatable {
     case loading
     case loaded
     case error
+    case linkDown
+}
+
+internal enum JournalWindowVerdictClass: Sendable, Equatable {
+    case transient
+    case nonTransient
+}
+
+internal enum JournalWindowOverlayAction: Equatable {
+    case none
+    case retry
+    case openSettings
+    case connectJournal
+}
+
+func journalWindowVerdictClass(
+    failureCause: JournalConnectionFailureCause?,
+    axToken: String
+) -> JournalWindowVerdictClass {
+    guard let failureCause else {
+        if axToken == PairingConnectionAXState.connecting.axToken {
+            return .transient
+        }
+        if axToken == PairingConnectionAXState.connected.axToken {
+            return .transient
+        }
+        return .nonTransient
+    }
+
+    switch failureCause {
+    case .noRoute, .unreachable, .loopbackUnavailable:
+        return .transient
+    case .revoked, .keychainUnavailable, .mismatch, .notServing, .notEntitled:
+        return .nonTransient
+    }
+}
+
+private func journalWindowOverlayAction(
+    failureCause: JournalConnectionFailureCause?,
+    axToken: String
+) -> JournalWindowOverlayAction {
+    guard let failureCause else {
+        if axToken == PairingConnectionAXState.connecting.axToken {
+            return .none
+        }
+        if axToken == PairingConnectionAXState.connected.axToken {
+            return .none
+        }
+        return .connectJournal
+    }
+
+    switch failureCause {
+    case .noRoute, .unreachable, .loopbackUnavailable:
+        return .retry
+    case .revoked, .keychainUnavailable, .mismatch, .notServing:
+        return .openSettings
+    case .notEntitled:
+        return .none
+    }
 }
 
 internal struct JournalWindowLoadCommand: Sendable, Equatable {
@@ -93,7 +154,7 @@ internal struct JournalWindowLoadCommand: Sendable, Equatable {
 }
 
 internal enum JournalWindowNavigationFailure: Sendable, Equatable {
-    case selfInflictedCancellation(hasDisplayedContent: Bool)
+    case selfInflictedCancellation
     case other
 }
 
@@ -122,16 +183,25 @@ internal struct JournalWindowComposition: Sendable, Equatable {
     private(set) var generation: UInt64 = 0
     private(set) var currentBaseURL: URL?
     private(set) var loadCommand: JournalWindowLoadCommand?
+    private(set) var hasDisplayedContent = false
+    private(set) var committedBaseURL: URL?
+    private(set) var committedDestination: JournalWindowDestination?
+
+    var showsWebView: Bool { state != .held }
 
     mutating func open(
         destination newDestination: JournalWindowDestination,
-        resolvedBase: ResolvedHomeBase
+        resolvedBase: ResolvedHomeBase,
+        verdictClass: JournalWindowVerdictClass = .transient
     ) -> JournalWindowLoadCommand? {
         destination = newDestination
-        return beginLoad(resolvedBase: resolvedBase)
+        return beginLoad(resolvedBase: resolvedBase, verdictClass: verdictClass)
     }
 
-    mutating func reload(resolvedBase: ResolvedHomeBase) -> JournalWindowLoadCommand? {
+    mutating func reload(
+        resolvedBase: ResolvedHomeBase,
+        verdictClass: JournalWindowVerdictClass = .transient
+    ) -> JournalWindowLoadCommand? {
         if case .url(let base) = resolvedBase,
            let candidate = Self.composeLoadCommand(
                base: base,
@@ -143,7 +213,7 @@ internal struct JournalWindowComposition: Sendable, Equatable {
             return nil
         }
 
-        return beginLoad(resolvedBase: resolvedBase)
+        return beginLoad(resolvedBase: resolvedBase, verdictClass: verdictClass)
     }
 
     mutating func beginDirectLoad(url: URL, baseURL: URL) -> JournalWindowLoadCommand {
@@ -176,8 +246,28 @@ internal struct JournalWindowComposition: Sendable, Equatable {
         currentBaseURL = baseURL
     }
 
+    mutating func noteMainFrameCommit(committedURL: URL?) {
+        hasDisplayedContent = true
+        if let base = currentBaseURL {
+            committedBaseURL = base
+            if let committedURL, let derived = Self.destination(for: committedURL, relativeTo: base) {
+                committedDestination = derived
+            }
+        }
+    }
+
     mutating func handle(_ event: JournalWindowNavigationEvent) {
         guard event.generation == generation else { return }
+
+        if state == .linkDown {
+            switch event {
+            case .started, .committed, .finished, .failed:
+                return
+            case .contentProcessTerminated:
+                enterHeld()
+                return
+            }
+        }
 
         switch event {
         case .started, .committed:
@@ -186,36 +276,88 @@ internal struct JournalWindowComposition: Sendable, Equatable {
             state = .loaded
         case .failed(_, let failure):
             switch failure {
-            case .selfInflictedCancellation(let hasDisplayedContent):
+            case .selfInflictedCancellation:
                 state = hasDisplayedContent ? .loaded : .error
             case .other:
                 state = .error
             }
         case .contentProcessTerminated:
+            clearDisplayedContentLatch()
             state = .error
         }
     }
 
-    private mutating func beginLoad(resolvedBase: ResolvedHomeBase) -> JournalWindowLoadCommand? {
-        generation += 1
-
-        guard case .url(let base) = resolvedBase,
-              let command = Self.composeLoadCommand(
-                base: base,
-                destination: destination,
-                generation: generation
-              )
+    mutating func handleUnregisteredFailure(isSelfInflictedCancellation: Bool) {
+        guard state == .loading,
+              loadCommand != nil,
+              !isSelfInflictedCancellation
         else {
-            state = .held
-            currentBaseURL = nil
-            loadCommand = nil
+            return
+        }
+        state = .error
+    }
+
+    private mutating func beginLoad(
+        resolvedBase: ResolvedHomeBase,
+        verdictClass: JournalWindowVerdictClass
+    ) -> JournalWindowLoadCommand? {
+        if case .url(let base) = resolvedBase,
+           let command = Self.composeLoadCommand(
+            base: base,
+            destination: destination,
+            generation: generation &+ 1
+           ) {
+            if state == .linkDown, shouldRecoverToLoaded(command: command) {
+                generation += 1
+                state = .loaded
+                loadCommand = nil
+                return nil
+            }
+
+            generation += 1
+            state = .loading
+            currentBaseURL = command.baseURL
+            loadCommand = command
+            return command
+        }
+
+        generation += 1
+        loadCommand = nil
+        if hasDisplayedContent, verdictClass == .transient {
+            state = .linkDown
             return nil
         }
 
-        state = .loading
-        currentBaseURL = command.baseURL
-        loadCommand = command
-        return command
+        enterHeld()
+        return nil
+    }
+
+    private func shouldRecoverToLoaded(command: JournalWindowLoadCommand) -> Bool {
+        guard let committedBaseURL, let committedDestination else {
+            return false
+        }
+        return command.baseURL == committedBaseURL
+            && Self.destinationsMatchIgnoringFragment(destination, committedDestination)
+    }
+
+    private mutating func enterHeld() {
+        state = .held
+        currentBaseURL = nil
+        loadCommand = nil
+        clearDisplayedContentLatch()
+    }
+
+    private mutating func clearDisplayedContentLatch() {
+        hasDisplayedContent = false
+        committedBaseURL = nil
+        committedDestination = nil
+    }
+
+    static func destinationsMatchIgnoringFragment(
+        _ lhs: JournalWindowDestination,
+        _ rhs: JournalWindowDestination
+    ) -> Bool {
+        lhs.path == rhs.path && lhs.query == rhs.query
     }
 
     private mutating func applyNavigationContinuation(url: URL, baseURL: URL) {
@@ -295,8 +437,16 @@ internal struct JournalWindowComposition: Sendable, Equatable {
 @Observable
 internal final class JournalWindowSession {
     typealias ResolveHomeBase = @MainActor @Sendable () async -> ResolvedHomeBase
+    typealias ConnectionVerdictProvider = @MainActor () -> JournalConnectionVerdict
+    typealias PairingBusyProvider = @MainActor () -> Bool
+    typealias RecoveryDispatch = @MainActor (JournalConnectionRecoveryAction) async -> Void
+    typealias SettingsRouter = @MainActor () -> Void
 
     private let resolveHomeBase: ResolveHomeBase
+    private let connectionVerdict: ConnectionVerdictProvider
+    private let pairingBusy: PairingBusyProvider
+    private let recover: RecoveryDispatch
+    private let openSettings: SettingsRouter
     private var composition = JournalWindowComposition()
 
     var state: JournalWindowAXState { composition.state }
@@ -304,26 +454,87 @@ internal final class JournalWindowSession {
     var generation: UInt64 { composition.generation }
     var loadCommand: JournalWindowLoadCommand? { composition.loadCommand }
     var currentBaseURL: URL? { composition.currentBaseURL }
+    var hasDisplayedContent: Bool { composition.hasDisplayedContent }
+    var committedBaseURL: URL? { composition.committedBaseURL }
+    var committedDestination: JournalWindowDestination? { composition.committedDestination }
+    var showsWebView: Bool { composition.showsWebView }
 
-    init(resolveHomeBase: @escaping ResolveHomeBase) {
+    var headline: String { liveVerdict.message }
+    var caption: String? { liveVerdict.caption }
+    var overlayAction: JournalWindowOverlayAction {
+        journalWindowOverlayAction(failureCause: liveVerdict.failureCause, axToken: liveVerdict.axToken)
+    }
+    var overlayButtonTitle: String? {
+        switch overlayAction {
+        case .none:
+            return nil
+        case .retry:
+            return UICopy.JOURNAL_WINDOW_RETRY
+        case .openSettings:
+            return UICopy.SETTINGS_SETUP_JOURNAL_APP_ACTION
+        case .connectJournal:
+            return UICopy.SETTINGS_SETUP_JOURNAL_LINK_ACTION
+        }
+    }
+    var isPairingBusy: Bool { pairingBusy() }
+    var retryEnabled: Bool { overlayAction == .retry && !isPairingBusy }
+
+    private var liveVerdict: JournalConnectionVerdict { connectionVerdict() }
+
+    init(
+        resolveHomeBase: @escaping ResolveHomeBase,
+        connectionVerdict: @escaping ConnectionVerdictProvider = { .neutral },
+        pairingBusy: @escaping PairingBusyProvider = { false },
+        recover: @escaping RecoveryDispatch = { _ in },
+        openSettings: @escaping SettingsRouter = {}
+    ) {
         self.resolveHomeBase = resolveHomeBase
+        self.connectionVerdict = connectionVerdict
+        self.pairingBusy = pairingBusy
+        self.recover = recover
+        self.openSettings = openSettings
     }
 
     @discardableResult
     func open(destination: JournalWindowDestination) async -> JournalWindowLoadCommand? {
         let resolved = await resolveHomeBase()
-        return composition.open(destination: destination, resolvedBase: resolved)
+        logBaseOutcome(resolved)
+        let command = composition.open(
+            destination: destination,
+            resolvedBase: resolved,
+            verdictClass: currentVerdictClass()
+        )
+        logLoadCommand(command)
+        return command
     }
 
     @discardableResult
     func reloadRetainedDestination() async -> JournalWindowLoadCommand? {
         let resolved = await resolveHomeBase()
-        return composition.reload(resolvedBase: resolved)
+        logBaseOutcome(resolved)
+        let command = composition.reload(resolvedBase: resolved, verdictClass: currentVerdictClass())
+        logLoadCommand(command)
+        return command
     }
 
     @discardableResult
     func retry() async -> JournalWindowLoadCommand? {
         await reloadRetainedDestination()
+    }
+
+    func performHonestyRetry() async {
+        guard retryEnabled else { return }
+        let action = journalConnectionRecoveryAction(for: liveVerdict.failureCause)
+        await recover(action)
+    }
+
+    func performHonestyRoute() {
+        switch overlayAction {
+        case .openSettings, .connectJournal:
+            openSettings()
+        case .none, .retry:
+            break
+        }
     }
 
     @discardableResult
@@ -343,8 +554,74 @@ internal final class JournalWindowSession {
         composition.applySameDocumentNavigation(url: url, baseURL: baseURL)
     }
 
+    func noteMainFrameCommit(committedURL: URL?) {
+        Logger.journal.info("journal-window: nav commit generation=\(self.generation, privacy: .public)")
+        composition.noteMainFrameCommit(committedURL: committedURL)
+    }
+
     func handle(_ event: JournalWindowNavigationEvent) {
+        Logger.journal.info(
+            "journal-window: nav event=\(self.navigationEventName(event), privacy: .public) generation=\(event.generation, privacy: .public)"
+        )
         composition.handle(event)
+    }
+
+    func handleUnregisteredFailure(isSelfInflictedCancellation: Bool) {
+        composition.handleUnregisteredFailure(isSelfInflictedCancellation: isSelfInflictedCancellation)
+    }
+
+    private func currentVerdictClass() -> JournalWindowVerdictClass {
+        journalWindowVerdictClass(failureCause: liveVerdict.failureCause, axToken: liveVerdict.axToken)
+    }
+
+    private func logBaseOutcome(_ resolved: ResolvedHomeBase) {
+        switch resolved {
+        case .held:
+            Logger.journal.info("journal-window: base held")
+        case .url(let base):
+            logPublicHostPort(of: base, tag: "journal-window: base")
+        }
+    }
+
+    private func logLoadCommand(_ command: JournalWindowLoadCommand?) {
+        guard let command else { return }
+        logPublicHostPort(of: command.url.absoluteString, tag: "journal-window: load")
+    }
+
+    private func logPublicHostPort(of raw: String, tag: String) {
+        let url = URL(string: raw)
+        let host = url?.host ?? ""
+        let port = url?.port ?? defaultPort(for: url?.scheme)
+        let path = url?.path ?? ""
+        let query = url?.query ?? ""
+        let fragment = url?.fragment ?? ""
+        Logger.journal.info(
+            "\(tag, privacy: .public) host=\(host, privacy: .public) port=\(port, privacy: .public) path=\(path, privacy: .private) query=\(query, privacy: .private) fragment=\(fragment, privacy: .private)"
+        )
+    }
+
+    private func defaultPort(for scheme: String?) -> Int {
+        scheme?.lowercased() == "https" ? 443 : 80
+    }
+
+    private func navigationEventName(_ event: JournalWindowNavigationEvent) -> String {
+        switch event {
+        case .started:
+            return "started"
+        case .committed:
+            return "committed"
+        case .finished:
+            return "finished"
+        case .failed(_, let failure):
+            switch failure {
+            case .selfInflictedCancellation:
+                return "failed-cancelled"
+            case .other:
+                return "failed"
+            }
+        case .contentProcessTerminated:
+            return "process-terminated"
+        }
     }
 }
 
@@ -410,7 +687,6 @@ internal final class JournalWindowWebViewSeam {
     private var session: JournalWindowSession
     private var openExternalURL: JournalWindowExternalURLOpener
     private var bindings = JournalWindowNavigationBindings()
-    private var hasDisplayedContent = false
     private var lastCommittedDocumentURL: URL?
     private var lastLoadedGeneration: UInt64?
 
@@ -458,7 +734,8 @@ internal final class JournalWindowWebViewSeam {
             targetFrameIsMainFrame: targetFrameIsMainFrame,
             targetFrameIsNil: targetFrameIsNil,
             shouldPerformDownload: shouldPerformDownload,
-            currentBaseURL: session.currentBaseURL
+            currentBaseURL: session.currentBaseURL,
+            isLinkDown: session.state == .linkDown
         )
 
         switch JournalWindowPolicy.decideNavigationAction(input) {
@@ -486,7 +763,8 @@ internal final class JournalWindowWebViewSeam {
             targetFrameIsMainFrame: targetFrameIsMainFrame,
             targetFrameIsNil: targetFrameIsNil,
             shouldPerformDownload: shouldPerformDownload,
-            currentBaseURL: session.currentBaseURL
+            currentBaseURL: session.currentBaseURL,
+            isLinkDown: session.state == .linkDown
         )
 
         switch JournalWindowPolicy.decideNavigationAction(input) {
@@ -512,8 +790,8 @@ internal final class JournalWindowWebViewSeam {
     }
 
     func didCommit(navigation: AnyObject?, committedDocumentURL: URL?) {
-        hasDisplayedContent = true
         lastCommittedDocumentURL = committedDocumentURL
+        session.noteMainFrameCommit(committedURL: committedDocumentURL)
         guard let generation = bindings.generation(for: navigation) else { return }
         session.handle(.committed(generation: generation))
     }
@@ -527,14 +805,32 @@ internal final class JournalWindowWebViewSeam {
     }
 
     func didFail(navigation: AnyObject?, isSelfInflictedCancellation: Bool) {
+        let error: Error
+        if isSelfInflictedCancellation {
+            error = NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
+        } else {
+            error = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+        }
+        didFail(navigation: navigation, error: error)
+    }
+
+    func didFail(navigation: AnyObject?, error: Error) {
+        let isSelfInflictedCancellation = JournalWindowPolicy.isSelfInflictedCancellation(error)
+        Logger.journal.error(
+            "journal-window: fail error=\(error.localizedDescription, privacy: .public) generation=\(self.session.generation, privacy: .public)"
+        )
         let generation = bindings.generation(for: navigation)
         if let generation {
             let failure: JournalWindowNavigationFailure = isSelfInflictedCancellation
-                ? .selfInflictedCancellation(hasDisplayedContent: hasDisplayedContent)
+                ? .selfInflictedCancellation
                 : .other
             session.handle(.failed(generation: generation, failure: failure))
+            bindings.release(navigation)
+            return
         }
-        bindings.release(navigation)
+        if bindingCount == 0 {
+            session.handleUnregisteredFailure(isSelfInflictedCancellation: isSelfInflictedCancellation)
+        }
     }
 
     func contentProcessTerminated() {
@@ -608,19 +904,22 @@ internal struct JournalWindowNavigationPolicyInput: Sendable, Equatable {
     let targetFrameIsNil: Bool
     let shouldPerformDownload: Bool
     let currentBaseURL: URL?
+    let isLinkDown: Bool
 
     init(
         requestURL: URL?,
         targetFrameIsMainFrame: Bool?,
         targetFrameIsNil: Bool,
         shouldPerformDownload: Bool,
-        currentBaseURL: URL?
+        currentBaseURL: URL?,
+        isLinkDown: Bool = false
     ) {
         self.requestURL = requestURL
         self.targetFrameIsMainFrame = targetFrameIsMainFrame
         self.targetFrameIsNil = targetFrameIsNil
         self.shouldPerformDownload = shouldPerformDownload
         self.currentBaseURL = currentBaseURL
+        self.isLinkDown = isLinkDown
     }
 }
 
@@ -646,11 +945,23 @@ internal enum JournalWindowPolicy {
         }
 
         let onOrigin = baseOrigin == targetOrigin
+        let decision: JournalWindowNavigationDecision
         if input.targetFrameIsNil {
-            return onOrigin ? .cancelAndLoadInWindow(url) : .cancelAndOpenExternal(url)
+            decision = onOrigin ? .cancelAndLoadInWindow(url) : .cancelAndOpenExternal(url)
+        } else {
+            decision = onOrigin ? .allow : .cancelAndOpenExternal(url)
         }
 
-        return onOrigin ? .allow : .cancelAndOpenExternal(url)
+        if input.isLinkDown {
+            switch decision {
+            case .allow, .cancelAndLoadInWindow:
+                return .cancel
+            case .cancel, .cancelAndOpenExternal:
+                return decision
+            }
+        }
+
+        return decision
     }
 
     static func allowsNavigationResponse(canShowMIMEType: Bool) -> Bool {
