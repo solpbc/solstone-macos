@@ -31,9 +31,11 @@ public nonisolated struct JournalMark: Codable, Equatable, Sendable {
 
     public nonisolated struct MarkColor: Codable, Equatable, Sendable {
         public let hex: String
+        public let name: String?
 
-        public init(hex: String) {
+        public init(hex: String, name: String? = nil) {
             self.hex = hex
+            self.name = name
         }
     }
 
@@ -79,13 +81,13 @@ extension JournalMark {
     public static let uiTestSample = JournalMark(
         icon1: Icon(
             name: "bug",
-            color: MarkColor(hex: "#f59e0b"),
+            color: MarkColor(hex: "#f59e0b", name: "amber"),
             rot: 0,
             svg: #"<path d="M12 20v-9" /> <path d="M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4z" /> <path d="M14.12 3.88 16 2" /> <path d="M21 21a4 4 0 0 0-3.81-4" /> <path d="M21 5a4 4 0 0 1-3.55 3.97" /> <path d="M22 13h-4" /> <path d="M3 21a4 4 0 0 1 3.81-4" /> <path d="M3 5a4 4 0 0 0 3.55 3.97" /> <path d="M6 13H2" /> <path d="m8 2 1.88 1.88" /> <path d="M9 7.13V6a3 3 0 1 1 6 0v1.13" />"#
         ),
         icon2: Icon(
             name: "gem",
-            color: MarkColor(hex: "#84cc16"),
+            color: MarkColor(hex: "#84cc16", name: "lime"),
             rot: 45,
             svg: #"<path d="M10.5 3 8 9l4 13 4-13-2.5-6" /> <path d="M17 3a2 2 0 0 1 1.6.8l3 4a2 2 0 0 1 .013 2.382l-7.99 10.986a2 2 0 0 1-3.247 0l-7.99-10.986A2 2 0 0 1 2.4 7.8l2.998-3.997A2 2 0 0 1 7 3z" /> <path d="M2 9h20" />"#
         ),
@@ -95,42 +97,72 @@ extension JournalMark {
 #endif
 
 public struct JournalMarkView: View {
-    let mark: JournalMark
+    let mark: JournalMark?
     var isConfirmed = false
 
-    public init(mark: JournalMark, isConfirmed: Bool = false) {
+    public init(mark: JournalMark?, isConfirmed: Bool = false) {
         self.mark = mark
         self.isConfirmed = isConfirmed
     }
 
     public var body: some View {
-        VStack(spacing: MarkGeometry.verticalGap) {
-            HStack(spacing: MarkGeometry.iconGap) {
-                JournalMarkIconChip(icon: self.mark.icon1)
-                JournalMarkIconChip(icon: self.mark.icon2)
-            }
+        Group {
+            if let mark {
+                VStack(spacing: MarkGeometry.verticalGap) {
+                    HStack(spacing: MarkGeometry.iconGap) {
+                        JournalMarkIconChip(icon: mark.icon1)
+                        JournalMarkIconChip(icon: mark.icon2)
+                    }
 
-            Text(self.mark.words.joined(separator: " · "))
-                .font(JournalMarkFont.isRegistered ? .custom("Comfortaa-Bold", size: MarkGeometry.wordFontSize, relativeTo: .headline) : .system(size: MarkGeometry.wordFontSize, weight: .bold, design: .rounded))
-                .foregroundStyle(MarkGeometry.wordColor)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                    Text(mark.words.joined(separator: " · "))
+                        .font(JournalMarkFont.isRegistered ? .custom("Comfortaa-Bold", size: MarkGeometry.wordFontSize, relativeTo: .headline) : .system(size: MarkGeometry.wordFontSize, weight: .bold, design: .rounded))
+                        .foregroundStyle(MarkGeometry.wordColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
 
-            if self.isConfirmed {
-                Text(UICopy.JOURNAL_MARK_CONFIRMED_LINE)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(MarkGeometry.confirmationColor)
+                    if self.isConfirmed {
+                        Text(UICopy.JOURNAL_MARK_CONFIRMED_LINE)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(MarkGeometry.confirmationColor)
+                    }
+                }
+                .padding(.horizontal, MarkGeometry.cardHorizontalPadding)
+                .padding(.vertical, MarkGeometry.cardVerticalPadding)
+                .background(MarkGeometry.cardFill, in: RoundedRectangle(cornerRadius: MarkGeometry.cardRadius, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: MarkGeometry.cardRadius, style: .continuous)
+                        .stroke(self.isConfirmed ? MarkGeometry.confirmedBorder : MarkGeometry.cardBorder, lineWidth: self.isConfirmed ? 2 : 1)
+                }
+                .shadow(color: self.isConfirmed ? MarkGeometry.confirmedBorder.opacity(0.35) : .clear, radius: 10)
+            } else {
+                // journal-mark.md section 4.3 — the org-wide "no journal identity yet" treatment:
+                // dashed, empty chips + "your · journal", never a hidden section or an empty box.
+                VStack(spacing: MarkGeometry.verticalGap) {
+                    HStack(spacing: MarkGeometry.iconGap) {
+                        JournalMarkGenericChip(hex: JournalIconTileGeometry.genericChip1Hex, rotated: false)
+                        JournalMarkGenericChip(hex: JournalIconTileGeometry.genericChip2Hex, rotated: true)
+                    }
+
+                    Text(JournalMarkGeneric.words.joined(separator: " · "))
+                        .font(JournalMarkFont.isRegistered ? .custom("Comfortaa-Bold", size: MarkGeometry.wordFontSize, relativeTo: .headline) : .system(size: MarkGeometry.wordFontSize, weight: .bold, design: .rounded))
+                        .foregroundStyle(MarkGeometry.wordColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                .padding(.horizontal, MarkGeometry.cardHorizontalPadding)
+                .padding(.vertical, MarkGeometry.cardVerticalPadding)
+                .background(MarkGeometry.cardFill, in: RoundedRectangle(cornerRadius: MarkGeometry.cardRadius, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: MarkGeometry.cardRadius, style: .continuous)
+                        .stroke(MarkGeometry.cardBorder, lineWidth: 1)
+                }
             }
         }
-        .padding(.horizontal, MarkGeometry.cardHorizontalPadding)
-        .padding(.vertical, MarkGeometry.cardVerticalPadding)
-        .background(MarkGeometry.cardFill, in: RoundedRectangle(cornerRadius: MarkGeometry.cardRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: MarkGeometry.cardRadius, style: .continuous)
-                .stroke(self.isConfirmed ? MarkGeometry.confirmedBorder : MarkGeometry.cardBorder, lineWidth: self.isConfirmed ? 2 : 1)
-        }
-        .shadow(color: self.isConfirmed ? MarkGeometry.confirmedBorder.opacity(0.35) : .clear, radius: 10)
-        .accessibilityElement(children: .combine)
+        // .ignore + an explicit accessibilityValue is load-bearing: journal-mark.md section 2.3
+        // requires one fixed-order element (chip-1 tint, chip-2 tint, word-1, word-2), never
+        // children announced separately via .combine.
+        .accessibilityElement(children: .ignore)
+        .accessibilityValue(JournalMarkAccessibility.spokenValue(mark: self.mark))
     }
 }
 

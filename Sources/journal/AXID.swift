@@ -134,6 +134,7 @@ enum AXID {
 
             enum Pairing {
                 static let sheet = "journal.devices.pairing.sheet"
+                static let markCard = "journal.devices.pairing.markCard"
                 static let linkField = "journal.devices.pairing.link.field"
                 static let copyLink = "journal.devices.pairing.copyLink"
                 static let copyLinkCopiedState = "journal.devices.pairing.copyLink.copied.state"

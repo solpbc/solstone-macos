@@ -46,7 +46,9 @@ private func makeDevicesSnapshotOutputDir() throws -> URL {
 struct JournalDevicesSnapshotTests {
     private static nonisolated(unsafe) var _outputDir: URL?
     private let paneSize = CGSize(width: 560, height: 520)
-    private let sheetSize = CGSize(width: 460, height: 560)
+    // Tall enough for the pairing sheet's persistent mark card (journal-mark.md section 7.3)
+    // above the QR/link content, on top of the prior QR-only sheet's height.
+    private let sheetSize = CGSize(width: 460, height: 720)
 
     private var outputDir: URL {
         get throws {
@@ -169,6 +171,7 @@ struct JournalDevicesSnapshotTests {
     private func pairingModel() -> JournalDevicesModel {
         let model = JournalDevicesModel(client: SnapshotDevicesClient(devices: []), copyToClipboard: { _ in })
         model.isPairingPresented = true
+        model.identityMark = .uiTestSample
         return model
     }
 

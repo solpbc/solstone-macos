@@ -69,6 +69,7 @@
       "journal.devices.pairing.countdown",
       "journal.devices.pairing.countdown.state",
       "journal.devices.pairing.link.field",
+      "journal.devices.pairing.markCard",
       "journal.devices.pairing.qr",
       "journal.devices.pairing.reopen",
       "journal.devices.pairing.sheet",

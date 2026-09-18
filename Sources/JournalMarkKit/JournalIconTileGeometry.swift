@@ -19,7 +19,7 @@ public enum JournalIconTileGeometry {
 
     static let plateFillHex = "#FAF3E4"
     public static let wordInkHex = "#3F3830"
-    public static let genericChip1Hex = "#E8923A"
+    public static let genericChip1Hex = "#E8913A"
     public static let genericChip2Hex = "#D4A017"
     static let genericFillOpacity: CGFloat = 0.07
 

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import AppKit
+import JournalMarkKit
 import SolstoneCore
 import SwiftUI
 
@@ -14,6 +15,14 @@ struct JournalPairingWindow: View {
         VStack(alignment: .leading, spacing: 16) {
             Text(DevicesCopy.pairingTitle)
                 .font(.title2.weight(.semibold))
+
+            // Shown continuously alongside the QR/link, the whole time the owner is pairing a
+            // new device — matching the connecting device's own confirm dialog, which shows the
+            // same mark for comparison (journal-mark.md section 7.3). Falls back to the section
+            // 4.3 generic mark while the identity fetch is still in flight.
+            JournalMarkView(mark: model.identityMark, isConfirmed: true)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier(AXID.Journal.Devices.Pairing.markCard)
 
             Group {
                 switch model.pairingState {
