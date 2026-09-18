@@ -44,4 +44,14 @@ struct JournalIconTileGeometryTests {
         expectClose(dash1024[0], 32.768)
         expectClose(dash1024[1], 24.576)
     }
+
+    // journal-mark.md section 4.3 / 8.5: the ruled generic-mark palette is sol orange #E8913A
+    // and mark-palette gold #D4A017 — never the retired #E8923A. Pinned here because this exact
+    // value drifted silently once already (a generator fix that left a sibling hardcoded literal
+    // behind); this is the single source both the icon compositor and the SwiftUI generic-mark
+    // chip read from.
+    @Test func genericChipHexesMatchTheRuledPalette() {
+        #expect(JournalIconTileGeometry.genericChip1Hex == "#E8913A")
+        #expect(JournalIconTileGeometry.genericChip2Hex == "#D4A017")
+    }
 }

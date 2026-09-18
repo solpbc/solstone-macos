@@ -69,6 +69,7 @@ enum AXContract {
         AXID.Journal.Devices.peerJournalsCountState,
         AXID.Journal.Devices.addDevice,
         AXID.Journal.Devices.Pairing.sheet,
+        AXID.Journal.Devices.Pairing.markCard,
         AXID.Journal.Devices.Pairing.linkField,
         AXID.Journal.Devices.Pairing.copyLink,
         AXID.Journal.Devices.Pairing.copyLinkCopiedState,

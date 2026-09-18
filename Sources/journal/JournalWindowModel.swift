@@ -261,6 +261,7 @@ final class JournalWindowModel {
 
     func applyFirstRunLanding(identityMark: JournalMark?, draftName: String, nameError: String?) {
         self.identityMark = identityMark
+        devicesModel.identityMark = identityMark
         identityFetchStarted = true
         if let validatedMark = identityMark.flatMap(JournalMark.validate) {
             onIdentityMark?(validatedMark)
@@ -294,6 +295,7 @@ final class JournalWindowModel {
         identityFetchStarted = true
         let fetchedMark = await fetchIdentity(baseURL)
         identityMark = fetchedMark
+        devicesModel.identityMark = fetchedMark
         if let validatedMark = fetchedMark.flatMap(JournalMark.validate) {
             onIdentityMark?(validatedMark)
         }

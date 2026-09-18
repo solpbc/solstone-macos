@@ -1311,6 +1311,9 @@ struct SettingsView: View {
                             id: AXID.Settings.Service.createJournalState,
                             value: freshFlow.state.axState.axToken
                         )
+                        // journal-mark.md section 4.3 — the org-wide "no journal identity yet"
+                        // treatment. Never an empty box, never hidden.
+                        JournalMarkView(mark: nil)
                         Button("create your journal on this mac") {
                             freshFlow.start()
                         }
