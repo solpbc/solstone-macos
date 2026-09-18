@@ -125,13 +125,7 @@ struct NativeIntegrationDoorTests {
             NativeIntegrationHelpers.loopbackPortAccepts(directPort)
         }
         #expect(doorBound, "door did not bind on 127.0.0.1:\(directPort) after finalize")
-        // The native opens the door after finalize but does not republish its
-        // `health/direct-door.json` record until the next supervisor boot, so the record
-        // still reads withheld while the listener is live. When the native republishes it,
-        // this known issue reports an unexpected pass and the block can be removed.
-        withKnownIssue("direct-door.json stays 'withheld' after first-run finalize while the door is bound") {
-            #expect(NativeIntegrationHelpers.readDirectDoorRecord(fixture)?.state == "bound")
-        }
+        #expect(NativeIntegrationHelpers.readDirectDoorRecord(fixture)?.state == "bound")
 
         // Pair the way the sol app does: same-machine pair-start, then the SPL ceremony over
         // the real door. The pairing stays in memory; nothing touches a keychain.
@@ -187,6 +181,11 @@ struct NativeIntegrationDoorTests {
         for _ in 0..<(Self.browserNeed - 1) {
             sockets.append(try LoopbackHTTP.connectAndHold(port: proxyPort, path: Self.assetPath))
         }
+        // Opening the local sockets only proves that the proxy accepted them. Let their
+        // partial requests reach the remote door before using the next request as a stream-
+        // capacity assertion; otherwise scheduling can let the complete request overtake a
+        // held one and make the positive control pass spuriously.
+        try await Task.sleep(for: .milliseconds(300))
         let underHeld = try LoopbackHTTP.request(port: proxyPort, path: Self.assetPath)
         #expect(
             underHeld.hasPrefix("HTTP/1.1 200"),
@@ -202,6 +201,7 @@ struct NativeIntegrationDoorTests {
         for _ in 0..<Self.doorStreamLimit {
             sockets.append(try LoopbackHTTP.connectAndHold(port: proxyPort, path: Self.assetPath))
         }
+        try await Task.sleep(for: .milliseconds(300))
         let overCap = try LoopbackHTTP.request(port: proxyPort, path: Self.assetPath, readTimeoutSeconds: 8)
         #expect(
             !overCap.hasPrefix("HTTP/1.1 200"),
