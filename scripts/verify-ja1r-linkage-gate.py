@@ -417,9 +417,10 @@ LOCAL_REQUIRED_CHECKS = {
         "journal_window_green_verified", "journal_runtime_stopped",
         "journal_home_destination_loaded", "journal_search_navigation_dispatched",
         "journal_search_destination_loaded", "journal_home_navigation_dispatched",
-        "journal_home_return_loaded",
-        "journal_window_unavailable_verified", "journal_window_red_affordances_valid",
-        "journal_runtime_restarted", "journal_window_recovery_verified", "journal_window_pairing_preserved", "restore_verified",
+        "journal_home_return_loaded", "journal_window_unavailable_verified",
+        "journal_window_red_affordances_valid", "journal_runtime_restarted",
+        "journal_window_recovery_verified", "journal_window_pairing_preserved",
+        "restore_verified",
     ),
     "v2-upgrade-sol": (
         "target_upgrade_ok", "target_identity_matches", "target_process_turned_over",
@@ -436,6 +437,23 @@ LOCAL_REQUIRED_CHECKS = {
         "journal_process_turned_over", "runtime_process_turned_over",
     ),
 }
+LEGACY_FRESH_JOURNAL_CHECKS = (
+    "journal_window_green_verified", "journal_runtime_stopped",
+    "journal_home_destination_loaded", "journal_search_navigation_dispatched",
+    "journal_search_destination_loaded", "journal_home_navigation_dispatched",
+    "journal_home_return_loaded", "journal_window_unavailable_verified",
+    "journal_window_red_affordances_valid", "journal_runtime_restarted",
+    "journal_window_recovery_verified", "journal_window_pairing_preserved",
+    "restore_verified",
+)
+BROWSER_FRESH_JOURNAL_CHECKS = (
+    "journal_door_verified", "journal_door_green_verified",
+    "journal_runtime_stopped", "journal_route_unavailable_verified",
+    "journal_runtime_restarted", "journal_door_recovery_verified",
+    "journal_pairing_preserved", "restore_verified",
+)
+SAME_MAC_BROWSER_MIN_VERSION = (2, 0, 11)
+SAME_MAC_BROWSER_VISIT_BUDGET_S = 30.0
 LOCAL_DELIVERY_CHECKS = ("tier_b_segment_injected", "tier_b_landing_verified", "fresh_connection")
 # The capture loop: a source admitted, one real segment landed in the journal's own
 # chronicle storage, a transcript beside its audio. Asserted here as well as in the lane,
@@ -915,12 +933,84 @@ def verify_local_freshness(report, filename):
 
 def verify_local_journal_recovery(report, filename):
     """Validate the observed runtime/AX cycle independently of summary checks."""
+    version = report.get("to")
+    match = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", version or "")
+    if match is None:
+        raise GateFailure(f"{filename}: invalid sol target version for Journal-door selection")
+    browser_expected = tuple(int(part) for part in match.groups()) >= SAME_MAC_BROWSER_MIN_VERSION
+
     def require_state(section, key):
         section_value = report.get(section)
         wait = section_value.get(key) if isinstance(section_value, dict) else None
         if not isinstance(wait, dict) or wait.get("ok") is not True or not isinstance(wait.get("state"), dict):
             raise GateFailure(f"{filename}: missing successful {section}.{key} observations")
         return wait["state"]
+
+    browser_proof = report.get("journal_browser_proof")
+    browser_declared = isinstance(browser_proof, dict) and browser_proof.get("kind") == "same_mac_browser"
+    if browser_declared != browser_expected:
+        expected = "same-Mac browser" if browser_expected else "native Journal window"
+        raise GateFailure(f"{filename}: sol {version} requires the {expected} recovery contract")
+    if browser_expected:
+        menu = browser_proof.get("menu")
+        if menu != {"present": True, "enabled": True}:
+            raise GateFailure(f"{filename}: same-Mac browser door lacked its exact menu affordance")
+
+        def require_visit(wait, started_epoch, baseline_visit_id, label):
+            if (not isinstance(wait, dict) or wait.get("ok") is not True
+                    or not isinstance(wait.get("state"), dict)):
+                raise GateFailure(f"{filename}: missing successful {label} observation")
+            state = wait["state"]
+            visited = state.get("visited_epoch")
+            visit_id = state.get("visit_id")
+            if (type(started_epoch) not in (int, float) or not math.isfinite(started_epoch)
+                    or type(baseline_visit_id) is not int or baseline_visit_id < 0
+                    or state.get("baseline_visit_id") != baseline_visit_id
+                    or type(visit_id) is not int or visit_id <= baseline_visit_id
+                    or type(visited) not in (int, float) or not math.isfinite(visited)
+                    or visited < started_epoch
+                    or visited > started_epoch + SAME_MAC_BROWSER_VISIT_BUDGET_S
+                    or not isinstance(state.get("url"), str)
+                    or not state["url"].startswith("http://127.0.0.1:5015/")):
+                raise GateFailure(f"{filename}: {label} was not a newly bounded local-Journal visit")
+
+        require_visit(
+            browser_proof.get("visit_wait"),
+            browser_proof.get("dispatch_started_epoch"),
+            browser_proof.get("baseline_visit_id"),
+            "initial browser visit",
+        )
+        down = require_state("red", "runtime_down_wait")
+        up = require_state("recovery", "runtime_up_wait")
+        restored = require_state("restore", "runtime_up_wait")
+        for key in ("journal_app_running", "port_5015_bound", "port_7657_bound"):
+            if down.get(key) is not False or up.get(key) is not True or restored.get(key) is not True:
+                raise GateFailure(f"{filename}: browser recovery did not prove {key} down and up")
+        if (down.get("init_status") == 302
+                or not isinstance(down.get("health_rc"), str)
+                or not down["health_rc"].isdigit()
+                or down["health_rc"] == "0"
+                or up.get("init_status") != 302
+                or up.get("health_rc") != "0"
+                or restored.get("init_status") != 302
+                or restored.get("health_rc") != "0"):
+            raise GateFailure(f"{filename}: browser recovery health observations invalid")
+        recovery = report.get("recovery")
+        if not isinstance(recovery, dict):
+            raise GateFailure(f"{filename}: missing browser recovery observations")
+        recovery_wait = recovery.get("browser_visit")
+        recovery_state = recovery_wait.get("state") if isinstance(recovery_wait, dict) else None
+        require_visit(
+            recovery_wait,
+            recovery_state.get("started_epoch") if isinstance(recovery_state, dict) else None,
+            recovery_state.get("baseline_visit_id") if isinstance(recovery_state, dict) else None,
+            "recovery browser visit",
+        )
+        before = report.get("red", {}).get("delivery_identity_before")
+        after = recovery.get("delivery_identity_after")
+        if not isinstance(before, str) or not re.fullmatch(r"[0-9a-f]{64}", before) or before != after:
+            raise GateFailure(f"{filename}: journal pairing identity was lost during browser recovery")
+        return
 
     down = require_state("red", "runtime_down_wait")
     up = require_state("recovery", "runtime_up_wait")
@@ -1132,6 +1222,14 @@ def verify_local_completion(report, filename):
     checks = report.get("checks", {})
     required = [*LOCAL_REQUIRED_CHECKS[report["lane"]], *LOCAL_DELIVERY_CHECKS]
     if report["lane"] == "fresh-use":
+        match = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", report.get("to") or "")
+        if match is None:
+            raise GateFailure(f"{filename}: invalid sol target version for Journal-door selection")
+        browser_door = tuple(int(part) for part in match.groups()) >= SAME_MAC_BROWSER_MIN_VERSION
+        if browser_door:
+            legacy = set(LEGACY_FRESH_JOURNAL_CHECKS)
+            required = [key for key in required if key not in legacy]
+            required.extend(BROWSER_FRESH_JOURNAL_CHECKS)
         required.extend(LOCAL_CAPTURE_CHECKS)
     for key in required:
         require_true(checks.get(key), f"{filename}: checks.{key}")

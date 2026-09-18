@@ -1771,6 +1771,79 @@ class RecoveryObservationControls(unittest.TestCase):
         verifier.verify_local_journal_recovery(report, "fresh-use.json")
 
 
+class SameMacBrowserRecoveryControls(unittest.TestCase):
+    def browser_report(self):
+        report = _report_for("fresh-use.json")
+        report["to"] = "2.0.11"
+        started = 1_789_745_015.0
+        visit = {
+            "ok": True,
+            "state": {
+                "started_epoch": started,
+                "baseline_visit_id": 41,
+                "visit_id": 42,
+                "url": "http://127.0.0.1:5015/app/home/",
+                "visited_epoch": started + 0.25,
+            },
+        }
+        report["journal_browser_proof"] = {
+            "kind": "same_mac_browser",
+            "menu": {"present": True, "enabled": True},
+            "dispatch_started_epoch": started,
+            "baseline_visit_id": 41,
+            "visit_wait": visit,
+        }
+        report["recovery"]["browser_visit"] = json.loads(json.dumps(visit))
+        report["restore"] = {
+            "runtime_up_wait": json.loads(
+                json.dumps(report["recovery"]["runtime_up_wait"])
+            )
+        }
+        report["checks"].update(
+            {key: True for key in verifier.BROWSER_FRESH_JOURNAL_CHECKS}
+        )
+        return report
+
+    def test_newly_bounded_browser_door_and_recovery_pass(self):
+        report = self.browser_report()
+        verifier.verify_local_journal_recovery(report, "fresh-use.json")
+        verifier.verify_local_completion(report, "fresh-use.json")
+
+    def test_preexisting_browser_visit_is_refused(self):
+        report = self.browser_report()
+        report["journal_browser_proof"]["visit_wait"]["state"]["visited_epoch"] -= 1
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_local_journal_recovery(report, "fresh-use.json")
+
+    def test_future_browser_visit_outside_dispatch_budget_is_refused(self):
+        report = self.browser_report()
+        proof = report["journal_browser_proof"]
+        proof["visit_wait"]["state"]["visited_epoch"] = (
+            proof["dispatch_started_epoch"] + verifier.SAME_MAC_BROWSER_VISIT_BUDGET_S + 0.01
+        )
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_local_journal_recovery(report, "fresh-use.json")
+
+    def test_preexisting_browser_visit_identity_is_refused(self):
+        report = self.browser_report()
+        proof = report["journal_browser_proof"]
+        proof["visit_wait"]["state"]["visit_id"] = proof["baseline_visit_id"]
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_local_journal_recovery(report, "fresh-use.json")
+
+    def test_legacy_sol_cannot_claim_browser_contract(self):
+        report = self.browser_report()
+        report["to"] = "2.0.10"
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_local_journal_recovery(report, "fresh-use.json")
+
+    def test_browser_generation_cannot_omit_browser_contract(self):
+        report = _report_for("fresh-use.json")
+        report["to"] = "2.0.11"
+        with self.assertRaises(verifier.GateFailure):
+            verifier.verify_local_journal_recovery(report, "fresh-use.json")
+
+
 def add_released_startup_receipt(report):
     delivery = report["baseline_delivery"]
     epoch = delivery["last_synced_post_epoch"]
