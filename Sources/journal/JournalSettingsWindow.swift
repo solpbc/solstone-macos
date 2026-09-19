@@ -45,6 +45,7 @@ struct JournalSettingsWindow: View {
                     .padding(20)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .background(.regularMaterial)
         }
         .frame(minWidth: 720, minHeight: 500)
         .onAppear {

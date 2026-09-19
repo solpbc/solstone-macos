@@ -214,6 +214,13 @@ private struct JournalWindowSceneRoot: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        TimelineView(.everyMinute) { context in
+            content
+                .preferredColorScheme(SunArcBackgroundView.appearance(at: context.date).isDark ? .dark : .light)
+        }
+    }
+
+    private var content: some View {
         Group {
             if firstRunModel.route == .home {
                 ZStack(alignment: .top) {
@@ -235,6 +242,7 @@ private struct JournalWindowSceneRoot: View {
                 JournalFirstRunView(model: firstRunModel)
             }
         }
+        .background(SunArcBackgroundView())
         .onReceive(NotificationCenter.default.publisher(for: .openJournalWindow)) { _ in
             model.prepareForWindowOpen()
             openWindow(id: "journal")

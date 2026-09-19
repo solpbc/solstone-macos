@@ -30,7 +30,6 @@ struct JournalFirstRunView: View {
             }
         }
         .frame(minWidth: 720, minHeight: 500)
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var decidingView: some View {
@@ -111,6 +110,7 @@ struct JournalFirstRunView: View {
             .accessibilityIdentifier(AXID.Journal.Ritual.nameLocationContinue)
         }
         .padding(32)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .center)
     }
 
@@ -155,6 +155,7 @@ struct JournalFirstRunView: View {
             }
         }
         .padding(32)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .center)
     }
 
@@ -213,6 +214,7 @@ struct JournalFirstRunView: View {
             }
         }
         .padding(32)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .center)
     }
 
@@ -260,6 +262,7 @@ struct JournalFirstRunView: View {
             }
         }
         .padding(32)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .center)
     }
 
@@ -294,6 +297,7 @@ struct JournalFirstRunView: View {
             }
         }
         .padding(32)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .center)
     }
 

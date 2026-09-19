@@ -353,9 +353,11 @@ struct JournalSnapshotTests {
 
     private func renderWindow(_ model: JournalWindowModel, to filename: String) async throws {
         try await render(
-            JournalSettingsWindow(model: model, updateController: makeUpdateController(), openURL: { _ in true })
-                .frame(width: size.width, height: size.height)
-                .background(Color(nsColor: .windowBackgroundColor)),
+            ZStack {
+                SunArcBackgroundView()
+                JournalSettingsWindow(model: model, updateController: makeUpdateController(), openURL: { _ in true })
+            }
+            .frame(width: size.width, height: size.height),
             size: size,
             to: filename
         )
@@ -363,9 +365,11 @@ struct JournalSnapshotTests {
 
     private func renderFirstRun(_ model: JournalFirstRunModel, to filename: String) async throws {
         try await render(
-            JournalFirstRunView(model: model)
-                .frame(width: size.width, height: size.height)
-                .background(Color(nsColor: .windowBackgroundColor)),
+            ZStack {
+                SunArcBackgroundView()
+                JournalFirstRunView(model: model)
+            }
+            .frame(width: size.width, height: size.height),
             size: size,
             to: filename
         )
