@@ -123,7 +123,8 @@ public struct AppConfig: Sendable {
     /// Example: "reddit" will exclude any window with "reddit" in the title
     public var excludedTitlePatterns: [String]
 
-    /// Exclude private/incognito browser windows (Safari, Chrome, Firefox)
+    /// Exclude private browser windows, detected by a marker in the window title.
+    /// No browser has been confirmed to show one on the Mac, so owner copy names none.
     public var excludePrivateBrowsing: Bool
 
     // MARK: - Server Upload Configuration

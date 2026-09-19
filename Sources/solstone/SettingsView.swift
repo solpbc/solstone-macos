@@ -2555,10 +2555,10 @@ struct SettingsView: View {
 
             GroupBox("private browsing") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Toggle("exclude private/incognito browser windows", isOn: excludePrivateBrowsingBinding)
-                        .help("automatically excludes safari private, chrome incognito, and firefox private browsing windows")
+                    Toggle("keep browser windows with words like private or incognito in the title out of your journal", isOn: excludePrivateBrowsingBinding)
+                        .help("reads the window title. no browser has been confirmed to show private mode in the title, so a private window may reach your journal. an ordinary window with words like private or incognito in its title can also be kept out. to keep every window of a browser out of your journal, add that browser to the excluded apps.")
                         .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsing)
-                    Text("private windows are detected for Safari, Chrome, and Firefox. a just-opened private window can take a few seconds to be excluded.")
+                    Text("this reads the titles of Safari, Chrome and Firefox windows, and no other browser's. no browser has been confirmed to show private mode in the title, so a private window may reach your journal. it can also keep out an ordinary window whose title has words like private or incognito. to keep every window of a browser out of your journal, add that browser to the excluded apps above.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

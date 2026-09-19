@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- the private-browsing setting no longer says it detects private windows in Safari, Chrome and Firefox. no browser has been confirmed to show private mode in its title on the mac, so the setting now says a private window may reach your journal, and that it can keep out an ordinary window whose title has words like private or incognito. private windows you opened before this update may already be in your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps.
+
 ### Fixed
 - pairing and sync failure messages no longer say you need to be on the same wi-fi, on a vpn, or on the paid plan to reach your journal directly. direct pairing already works over the internet when your journal is reachable there.
 

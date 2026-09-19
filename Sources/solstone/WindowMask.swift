@@ -17,7 +17,9 @@ public final class WindowExclusionDetector: @unchecked Sendable {
     private var lastLogTime: Date = .distantPast
     private let logInterval: TimeInterval = 10.0
 
-    /// Browser names for private browsing detection
+    /// Browsers the title check looks at. Unmeasured: no private window of any of them has been
+    /// read on a Mac, so the markers below are expectations, not observations, and owner copy
+    /// names none of them as covered. A row is kept only once a real private window shows it.
     private static let browserNames: Set<String> = ["safari", "google chrome", "firefox"]
 
     /// Creates a detector for the specified app names
@@ -114,7 +116,7 @@ public final class WindowExclusionDetector: @unchecked Sendable {
         return excludedIDs
     }
 
-    /// Checks if a window is a private/incognito browser window
+    /// Checks if a window looks like a private browser window by its title (unmeasured, see `browserNames`)
     /// - Parameters:
     ///   - ownerName: The application name (lowercase)
     ///   - windowTitle: The window title
@@ -128,15 +130,15 @@ public final class WindowExclusionDetector: @unchecked Sendable {
 
         switch ownerName {
         case "safari":
-            // Safari private windows have "Private" in the title
+            // Expected, not measured: a bare substring, so an ordinary window whose page title says "private" also matches
             return titleLower.contains("private")
 
         case "google chrome":
-            // Chrome incognito windows have "(Incognito)" in the title
+            // Expected, not measured: current Chromium puts the private annotation in the accessibility name, not the caption
             return titleLower.contains("(incognito)") || titleLower.contains("incognito")
 
         case "firefox":
-            // Firefox private windows have "(Private Browsing)" in the title
+            // Expected, not measured: on Windows, Firefox writes "Mozilla Firefox Private Browsing" at the end of the title
             return titleLower.contains("(private browsing)") || titleLower.contains("private browsing")
 
         default:

@@ -44,7 +44,7 @@ Steps 4-6 must be this exact order. Adding output after starting is undefined. D
 1. `CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)` — titles and owner names. Only reliable way to inspect window titles; `SCWindow` doesn't expose them.
 2. `SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)` — maps window IDs to `SCWindow` objects for `SCContentFilter`.
 
-**Private browsing** (`isPrivateBrowserWindow()`): Safari: "Private". Chrome: "Incognito". Firefox: "Private Browsing". Case-insensitive title match.
+**Private browsing** (`isPrivateBrowserWindow()`): case-insensitive title match on Safari "Private", Chrome "Incognito", Firefox "Private Browsing". Unmeasured: no private window of any of them has been read on a Mac, and each marker is a bare substring, so an ordinary window whose page title has the word also matches. Owner copy names no browser as covered until a row is measured.
 
 **Dynamic updates** (`CaptureManager.swift`): 5-second polling timer (`tolerance = 2.0`). Also triggers on `didActivateApplicationNotification` / `didDeactivateApplicationNotification`. Only calls `updateContentFilter` when `Set<CGWindowID>` actually changes. Updates both video and audio streams.
 
