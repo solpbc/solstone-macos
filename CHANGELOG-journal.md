@@ -5,6 +5,12 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.13 (build 47)] - 2026-09-19
+
+### Changed
+- updated the bundled journal to [2.0.10](https://solstone.app/releases#v2.0.10) →
+
+
 ## [Unreleased]
 
 <!-- make bump-release-journal scaffolds a dated block above the first ## [ and does not read [Unreleased], so the release cut must fold these bullets into that scaffold. -->
