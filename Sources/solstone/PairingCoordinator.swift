@@ -356,7 +356,7 @@ extension PairingFailure {
         case .staleLink:
             return "this pairing window closed or expired. get a fresh link from your journal's network app and try again."
         case .homeUnreachable:
-            return "couldn't reach your journal. on the same wi-fi as your journal, or over your own vpn, it connects directly; from elsewhere it needs the paid plan."
+            return "couldn't reach your journal. make sure it's running, then try again."
         case .relayUnauthorized:
             return "your journal didn't accept this pairing link. get a fresh link from its network app and try again."
         case .instanceMismatch:

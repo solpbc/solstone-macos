@@ -112,7 +112,7 @@ struct SettingsViewTests {
             hasTransport: false
         )
         #expect(notEntitled.caption != nil)
-        #expect(notEntitled.caption == "your journal is paired, but it isn't on the paid plan, so it can't sync over the internet. on the same wi-fi as your journal, or over your own vpn, it connects directly without the plan.")
+        #expect(notEntitled.caption == "your journal is paired, but it isn't on the paid plan, so it can't sync over the internet. you can still reach it directly, without the plan, whenever your journal is reachable.")
 
         let noRoute = TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .disconnected,

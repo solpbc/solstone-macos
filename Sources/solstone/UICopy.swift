@@ -51,7 +51,7 @@ public enum UICopy {
     public static let JOURNAL_MODE_THIS_MAC_LABEL = "this Mac"
     public static let JOURNAL_MODE_ANOTHER_MACHINE_LABEL = "another device"
     public static let PAIRING_LINK_PLACEHOLDER = "paste pairing link"
-    public static let PAIRING_NOTENTITLED_RECOVERY = "your journal is paired, but it isn't on the paid plan, so it can't sync over the internet. on the same wi-fi as your journal, or over your own vpn, it connects directly without the plan."
+    public static let PAIRING_NOTENTITLED_RECOVERY = "your journal is paired, but it isn't on the paid plan, so it can't sync over the internet. you can still reach it directly, without the plan, whenever your journal is reachable."
     public static let PAIRING_DISCONNECT_CONFIRM = "disconnect this Mac from your journal? your journal keeps everything. you can pair again anytime."
     public static let JOURNAL_MARK_CONFIRM_QUESTION = "does this match your journal?"
     public static let JOURNAL_MARK_CONFIRM_SUBTEXT = "your journal shows this same mark in its network app. it should match, exactly."
