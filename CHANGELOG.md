@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - pairing and sync failure messages no longer say that reaching your journal directly needs the same wi-fi, a vpn, or a paid service.
 - the menu bar's settings row now keeps showing that your paired journal can't be reached when it is offline, instead of going back to just "settings…".
+- if a large upload still failed, this resolves it. the solstone app on your mac dropped the whole connection to your journal partway through, not just that upload, and started the upload over.
 
 ## [2.0.12] - 2026-09-18
 
