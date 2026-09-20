@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.13] - 2026-09-20
+
 ### Changed
-- the private-browsing setting no longer says it detects private windows in Safari, Chrome and Firefox. no browser has been confirmed to show private mode in its title on the mac, so the setting now says a private window may reach your journal, and that it can keep out an ordinary window whose title has words like private or incognito. private windows you opened before this update may already be in your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps.
+- pairing this mac directly with your journal now works at a public address, not only one on your own network. the link still proves it's your journal, and this mac still checks that before trusting anything.
+- the private-browsing setting no longer says it detects private windows in Safari, Chrome and Firefox. no browser has been confirmed to show private mode in its title on the mac, so the setting now says a private window may reach your journal, and that it can keep out an ordinary window whose title has words like private or incognito. this release corrects what the setting claims, not what it does: private windows may already be in your journal, and can still reach it. to keep every window of a browser out of your journal, add that browser to the excluded apps.
 
 ### Fixed
-- pairing and sync failure messages no longer say you need to be on the same wi-fi, on a vpn, or on the paid plan to reach your journal directly. direct pairing already works over the internet when your journal is reachable there.
-- the menu bar's settings row now keeps showing that your paired journal can't be reached when it is offline, instead of plain settings.
+- pairing and sync failure messages no longer say that reaching your journal directly needs the same wi-fi, a vpn, or a paid service.
+- the menu bar's settings row now keeps showing that your paired journal can't be reached when it is offline, instead of going back to just "settings…".
 
 ## [2.0.12] - 2026-09-18
 

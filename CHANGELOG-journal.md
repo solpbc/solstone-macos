@@ -5,6 +5,15 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.14 (build 48)] - 2026-09-20
+
+### Added
+- the journal app's window now shifts its background with the time of day, taking sunrise and sunset from your mac's time zone rather than your location. the window goes light and dark with it, instead of following your mac's appearance setting. there's no setting for it yet.
+
+### Changed
+- updated the bundled journal to [2.0.11](https://solstone.app/releases#v2.0.11) →
+
+
 ## [2.0.13 (build 47)] - 2026-09-19
 
 ### Changed
@@ -12,8 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
-
-- the native journal window now carries the sun-arc time-of-day background.
 
 <!-- make bump-release-journal scaffolds a dated block above the first ## [ and does not read [Unreleased], so the release cut must fold these bullets into that scaffold. -->
 
