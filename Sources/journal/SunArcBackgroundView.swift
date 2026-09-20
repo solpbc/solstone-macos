@@ -8,10 +8,12 @@ import SwiftUI
 /// (§8); drawn behind all window content, never reacted to. `TimelineView(.everyMinute)`
 /// recomputes position at most once a minute (§9) — the pattern has no continuous animation.
 ///
-/// Location: this app holds no location authorization anywhere, for any purpose, so sunrise and
-/// sunset use the quiet §5 fallback (06:30/19:30) rather than ever requesting one for this
-/// pattern alone. If a future surface already holds authorization, feed real rise/set minutes
-/// through `SunArcTime.compute` — the placement and time math here does not change.
+/// Location: this app holds no location authorization anywhere, for any purpose, and ⛔ never
+/// asks for one for this pattern alone. Sunrise and sunset come from `SunArcSolar.pair(for:)`
+/// — the system timezone's bundled tzdb reference point (§5 rung 2), falling to 06:30/19:30
+/// only for a zone identifier the table does not know (rung 3). Both the zone and the clock
+/// read `autoupdatingCurrent`, so a timezone change lands on the next minute tick without an
+/// observer.
 struct SunArcBackgroundView: View {
     var body: some View {
         TimelineView(.everyMinute) { context in
@@ -22,7 +24,7 @@ struct SunArcBackgroundView: View {
         .allowsHitTesting(false)
     }
 
-    static func minutesSinceMidnight(_ date: Date, calendar: Calendar = .current) -> Double {
+    static func minutesSinceMidnight(_ date: Date, calendar: Calendar = .autoupdatingCurrent) -> Double {
         let comps = calendar.dateComponents([.hour, .minute], from: date)
         return Double((comps.hour ?? 0) * 60 + (comps.minute ?? 0))
     }
@@ -31,10 +33,11 @@ struct SunArcBackgroundView: View {
     /// `JournalWindowSceneRoot` on the same `TimelineView(.everyMinute)` schedule so the
     /// background and the `.preferredColorScheme` flip stay in lockstep without shared state.
     static func appearance(at date: Date, dayGroundHex: String = SunArc.surfaceCreamHex) -> (groundHex: String, isDark: Bool) {
+        let solar = SunArcSolar.pair(for: date)
         let time = SunArcTime.compute(
             minutes: minutesSinceMidnight(date),
-            riseMinutes: SunArc.fallbackRiseMinutes,
-            setMinutes: SunArc.fallbackSetMinutes
+            riseMinutes: solar.riseMinutes,
+            setMinutes: solar.setMinutes
         )
         let ground = SunArcGround.currentGround(dayGroundHex: dayGroundHex, night: time.night)
         return (ground, SunArcGround.isDark(groundHex: ground))
@@ -47,10 +50,11 @@ struct SunArcBackgroundView: View {
         let diameter = SunArc.phi * Double(side)
         let tipRadius = diameter / 2
 
+        let solar = SunArcSolar.pair(for: date)
         let time = SunArcTime.compute(
             minutes: minutesSinceMidnight(date),
-            riseMinutes: SunArc.fallbackRiseMinutes,
-            setMinutes: SunArc.fallbackSetMinutes
+            riseMinutes: solar.riseMinutes,
+            setMinutes: solar.setMinutes
         )
         let placement = SunArcPlacement(size: size, tipRadius: tipRadius)
         let clampedT = min(1, max(0, time.t))

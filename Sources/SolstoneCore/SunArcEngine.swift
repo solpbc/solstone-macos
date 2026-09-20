@@ -30,10 +30,114 @@ public enum SunArc {
     public static let orangeHex = "#E8913A"
     public static let surfaceCreamHex = "#FEFCF8"
 
-    /// §5 fallback ladder, last resort — this app holds no location authorization for any
-    /// purpose, so it never requests one for this pattern alone; it uses the quiet fallback.
+    /// §5 rung 3, last resort — only for a zone identifier the bundled tzdb table does not
+    /// know. Rungs 1 and 2 are `SunArcSolar.pair(for:)`.
     public static let fallbackRiseMinutes: Double = 6 * 60 + 30
     public static let fallbackSetMinutes: Double = 19 * 60 + 30
+}
+
+/// §5 — sunrise and sunset, on the device, never off it. The standard sunrise equation
+/// (NOAA / *Almanac for Computers*, official zenith 90.833°) run against coordinates found
+/// by the spec's three rungs:
+///
+/// 1. a location the app already holds for its own reasons — this app holds none anywhere,
+///    for any purpose, and ⛔ never asks for one for this pattern alone, so `heldLocation`
+///    stays `nil` here and exists for a surface that genuinely holds one;
+/// 2. the system timezone's tzdb reference point (`SunArcZonePoints`, bundled with the build);
+/// 3. 06:30 / 19:30 for a zone identifier the table does not know.
+///
+/// Nothing here reads the network or the device's location.
+public enum SunArcSolar {
+    public struct Pair: Sendable, Equatable {
+        public let riseMinutes: Double
+        public let setMinutes: Double
+        public init(riseMinutes: Double, setMinutes: Double) {
+            self.riseMinutes = riseMinutes
+            self.setMinutes = setMinutes
+        }
+    }
+
+    /// §5 rung 3.
+    public static let fallback = Pair(riseMinutes: SunArc.fallbackRiseMinutes, setMinutes: SunArc.fallbackSetMinutes)
+
+    /// How far back `pair(for:)` will look for the last day that had a sunrise, in the polar
+    /// case — half a year always reaches one.
+    static let polarLookbackDays = 183
+
+    /// Sunrise and sunset as local minutes since midnight, or `nil` in polar day or night
+    /// (the sun never crosses the horizon that day).
+    public static func times(
+        latitude: Double,
+        longitude: Double,
+        date: Date,
+        utcOffsetMinutes: Double
+    ) -> Pair? {
+        let n = Double(dayOfYearUTC(date))
+        let lngHour = longitude / 15
+
+        func solar(_ isRise: Bool) -> Double? {
+            let t = n + ((isRise ? 6.0 : 18.0) - lngHour) / 24
+            let meanAnomaly = 0.9856 * t - 3.289
+            let mRad = meanAnomaly * .pi / 180
+            let trueLongitude = wrap(meanAnomaly + 1.916 * sin(mRad) + 0.020 * sin(2 * mRad) + 282.634, 360)
+            let lRad = trueLongitude * .pi / 180
+
+            var rightAscension = wrap(atan(0.91764 * tan(lRad)) * 180 / .pi, 360)
+            let lQuadrant = (trueLongitude / 90).rounded(.down) * 90
+            let raQuadrant = (rightAscension / 90).rounded(.down) * 90
+            rightAscension = (rightAscension + (lQuadrant - raQuadrant)) / 15
+
+            let sinDec = 0.39782 * sin(lRad)
+            let cosDec = cos(asin(sinDec))
+            let latRad = latitude * .pi / 180
+            let cosH = (cos(90.833 * .pi / 180) - sinDec * sin(latRad)) / (cosDec * cos(latRad))
+            guard cosH <= 1, cosH >= -1 else { return nil }
+
+            let acosDeg = acos(cosH) * 180 / .pi
+            let hourAngle = (isRise ? 360 - acosDeg : acosDeg) / 15
+            let localMeanTime = hourAngle + rightAscension - 0.06571 * t - 6.622
+            let ut = wrap(localMeanTime - lngHour, 24)
+            return wrap(ut * 60 + utcOffsetMinutes, 1440)
+        }
+
+        guard let rise = solar(true), let set = solar(false) else { return nil }
+        return Pair(riseMinutes: rise, setMinutes: set)
+    }
+
+    /// The pair to draw today's arc from, walking the §5 rungs in order.
+    ///
+    /// In polar day or night the spec says to hold the last valid pair; this finds it by
+    /// walking back to the most recent day that has one, so a cold launch inside the polar
+    /// night behaves exactly like a session that ran through the polar sunset.
+    public static func pair(
+        for date: Date,
+        heldLocation: (latitude: Double, longitude: Double)? = nil,
+        timeZone: TimeZone = .autoupdatingCurrent
+    ) -> Pair {
+        guard let coords = heldLocation ?? SunArcZonePoints.point(for: timeZone.identifier) else {
+            return fallback
+        }
+        let offset = Double(timeZone.secondsFromGMT(for: date)) / 60
+        var probe = date
+        for _ in 0...polarLookbackDays {
+            if let found = times(latitude: coords.latitude, longitude: coords.longitude, date: probe, utcOffsetMinutes: offset) {
+                return found
+            }
+            probe = probe.addingTimeInterval(-86_400)
+        }
+        return fallback
+    }
+
+    private static func wrap(_ v: Double, _ modulus: Double) -> Double {
+        let r = v.truncatingRemainder(dividingBy: modulus)
+        return r < 0 ? r + modulus : r
+    }
+
+    private static func dayOfYearUTC(_ date: Date) -> Int {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+        return calendar.ordinality(of: .day, in: .year, for: date) ?? 1
+    }
 }
 
 /// §3 — the sun's position on its 36° arc between the dawn corner (top-left) and the dusk
