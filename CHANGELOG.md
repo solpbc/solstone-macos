@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - pairing and sync failure messages no longer say you need to be on the same wi-fi, on a vpn, or on the paid plan to reach your journal directly. direct pairing already works over the internet when your journal is reachable there.
+- the menu bar's settings row now keeps showing that your paired journal can't be reached when it is offline, instead of plain settings.
 
 ## [2.0.12] - 2026-09-18
 

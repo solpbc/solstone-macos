@@ -342,7 +342,7 @@ struct MenuContentTests {
     }
 
     @Test @MainActor func attentionToSurfaceDerivesSuppressionFromObservationRow() {
-        // Connecting has no journal suffix. Offline suppresses noRoute/unreachable and surfaces the rest.
+        // AX / shared attentionToSurface policy: Connecting has no journal suffix. Offline suppresses noRoute/unreachable and surfaces the rest.
         #expect(attentionToSurface(.journal, alreadySaidBy: .observing) == .journal)
         #expect(attentionToSurface(.journal, alreadySaidBy: .journalMigrationNeeded) == nil)
         #expect(attentionToSurface(.journal, alreadySaidBy: .localOnly) == nil)
@@ -443,6 +443,94 @@ struct MenuContentTests {
     @Test func journalClientRowsUseExpectedAXTokens() {
         #expect(MenubarStatusRowState.journalMigrationNeeded.axToken == "journal_migration_needed")
         #expect(MenubarStatusRowState.connectionWaiting.axToken == "connection_waiting")
+    }
+
+    @Test @MainActor func settingsRowLabelTargetCellsSurfaced() {
+        let targetCauses: [JournalConnectionFailureCause] = [
+            .noRoute,
+            .unreachable(nil),
+            .unreachable("timeout"),
+        ]
+
+        for cause in targetCauses {
+            let verdict = journalVerdict(for: cause)
+            let label = settingsRowLabel(
+                observation: .offline,
+                attention: .journal,
+                verdict: verdict
+            )
+            #expect(label.showsAttentionIcon == true)
+            #expect(label.title == "settings… · \(verdict.message)")
+            #expect(label.title != "settings… · \(UICopy.SETTINGS_ATTENTION_JOURNAL)")
+        }
+
+        let nilCauseLabel = settingsRowLabel(
+            observation: .offline,
+            attention: .journal,
+            verdict: nil
+        )
+        #expect(nilCauseLabel.showsAttentionIcon == true)
+        #expect(nilCauseLabel.title == "settings… · \(UICopy.SETTINGS_ATTENTION_JOURNAL)")
+    }
+
+    @Test @MainActor func settingsRowLabelExhaustiveCrossProductMatchesContract() {
+        let attentionOptions: [AttentionReason?] = [nil] + AttentionReason.allCases.map(Optional.some)
+        let causes: [JournalConnectionFailureCause?] = [nil] + allJournalConnectionFailureCauses().map(Optional.some)
+        var checked = 0
+
+        for rowState in MenubarStatusRowState.allCases {
+            for attention in attentionOptions {
+                for cause in causes {
+                    let verdict: JournalConnectionVerdict? = cause.map { journalVerdict(for: $0) }
+                    let label = settingsRowLabel(
+                        observation: rowState,
+                        attention: attention,
+                        verdict: verdict
+                    )
+
+                    let isTargetCell = rowState == .offline && attention == .journal && isTargetOfflineJournalCause(cause)
+                    if isTargetCell {
+                        let expectedVerdict = verdict!
+                        #expect(label.showsAttentionIcon == true)
+                        #expect(label.title == "settings… · \(expectedVerdict.message)")
+                        #expect(label.title != "settings… · \(UICopy.SETTINGS_ATTENTION_JOURNAL)")
+                    } else {
+                        let surfaced = attentionToSurface(attention, alreadySaidBy: rowState, journalFailureCause: cause)
+                        if let surfaced {
+                            let expectedSuffix = attentionSuffix(surfaced, verdict: verdict)
+                            #expect(label.showsAttentionIcon == true)
+                            #expect(label.title == "settings… · \(expectedSuffix)")
+                        } else {
+                            #expect(label.showsAttentionIcon == false)
+                            #expect(label.title == "settings…")
+                        }
+                    }
+                    checked += 1
+                }
+            }
+        }
+
+        #expect(checked == MenubarStatusRowState.allCases.count * (AttentionReason.allCases.count + 1) * (allJournalConnectionFailureCauses().count + 1))
+    }
+
+    @Test @MainActor func statusAccessibilityLabelOfflineUnreachablePreservesA11yLabelWithoutLeakingVerdictMessage() {
+        let offlineCauses: [JournalConnectionFailureCause] = [
+            .noRoute,
+            .unreachable(nil),
+            .unreachable("timeout"),
+        ]
+
+        for cause in offlineCauses {
+            let verdict = journalVerdict(for: cause)
+            let label = statusAccessibilityLabel(
+                presentation: MenubarPresentation(observation: .offline, attention: .journal),
+                errorMessage: nil,
+                journalVerdict: verdict
+            )
+
+            #expect(label == UICopy.MENUBAR_A11Y_OBSERVING_SAVED_LOCALLY)
+            #expect(!label.contains(verdict.message))
+        }
     }
 }
 
@@ -560,6 +648,16 @@ private func allJournalConnectionFailureCauses() -> [JournalConnectionFailureCau
 }
 
 private func offlineSuppressesJournalSuffix(_ cause: JournalConnectionFailureCause) -> Bool {
+    switch cause {
+    case .noRoute, .unreachable:
+        return true
+    case .revoked, .keychainUnavailable, .notEntitled, .loopbackUnavailable, .mismatch, .notServing:
+        return false
+    }
+}
+
+private func isTargetOfflineJournalCause(_ cause: JournalConnectionFailureCause?) -> Bool {
+    guard let cause else { return false }
     switch cause {
     case .noRoute, .unreachable:
         return true

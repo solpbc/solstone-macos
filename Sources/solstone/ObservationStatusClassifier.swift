@@ -159,6 +159,50 @@ internal func attentionSuffix(
     }
 }
 
+internal struct SettingsRowLabel: Equatable, Sendable {
+    let title: String
+    let showsAttentionIcon: Bool
+}
+
+internal func settingsRowLabel(
+    observation: MenubarStatusRowState,
+    attention: AttentionReason?,
+    verdict: JournalConnectionVerdict?
+) -> SettingsRowLabel {
+    let surfacedReason: AttentionReason?
+    if attention == .journal, observation == .offline, let cause = verdict?.failureCause {
+        switch cause {
+        case .noRoute, .unreachable:
+            surfacedReason = .journal
+        case .revoked, .keychainUnavailable, .notEntitled, .loopbackUnavailable, .mismatch, .notServing:
+            surfacedReason = attentionToSurface(
+                attention,
+                alreadySaidBy: observation,
+                journalFailureCause: cause
+            )
+        }
+    } else {
+        surfacedReason = attentionToSurface(
+            attention,
+            alreadySaidBy: observation,
+            journalFailureCause: verdict?.failureCause
+        )
+    }
+
+    if let reason = surfacedReason {
+        return SettingsRowLabel(
+            title: "settings… · \(attentionSuffix(reason, verdict: verdict))",
+            showsAttentionIcon: true
+        )
+    } else {
+        return SettingsRowLabel(
+            title: "settings…",
+            showsAttentionIcon: false
+        )
+    }
+}
+
+
 internal struct ObservationRecoveryPresentation: Equatable {
     let reason: String
     let buttonLabel: String

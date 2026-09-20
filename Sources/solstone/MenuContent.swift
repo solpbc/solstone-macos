@@ -40,15 +40,20 @@ struct MenuContent: View {
                 appState.didOpenWindow(.settings)
                 NSApp.activate(ignoringOtherApps: true)
             } label: {
-                if let reason = settingsAttentionToShow {
+                let label = settingsRowLabel(
+                    observation: menubarPresentation.observation,
+                    attention: menubarPresentation.attention,
+                    verdict: appState.tunnelLifecycleOwner.connectionVerdict
+                )
+                if label.showsAttentionIcon {
                     Label {
-                        Text("settings… · \(attentionSuffix(reason, verdict: appState.tunnelLifecycleOwner.connectionVerdict))")
+                        Text(label.title)
                     } icon: {
                         Image(systemName: "exclamationmark.circle.fill")
                             .foregroundStyle(SolstoneColors.solOrange)
                     }
                 } else {
-                    Text("settings…")
+                    Text(label.title)
                 }
             }
             .accessibilityIdentifier(AXID.Menubar.settingsButton)
@@ -72,14 +77,6 @@ struct MenuContent: View {
 
     private var menubarPresentation: MenubarPresentation {
         appState.menubarPresentation(durableUpdateStatus: updateController.durableUpdateStatus)
-    }
-
-    private var settingsAttentionToShow: AttentionReason? {
-        attentionToSurface(
-            menubarPresentation.attention,
-            alreadySaidBy: menubarPresentation.observation,
-            journalFailureCause: appState.tunnelLifecycleOwner.connectionVerdict.failureCause
-        )
     }
 
     private func openSettings(tab: String) {
