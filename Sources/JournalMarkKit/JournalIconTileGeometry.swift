@@ -17,7 +17,7 @@ public enum JournalIconTileGeometry {
     static let ownerWordBaselineRatio: CGFloat = 0.70
     static let secondWordBaselineRatio: CGFloat = 0.86
 
-    static let plateFillHex = "#FAF3E4"
+    static let plateFillHex = "#FCF3E4"
     public static let wordInkHex = "#3F3830"
     public static let genericChip1Hex = "#E8913A"
     public static let genericChip2Hex = "#D4A017"
@@ -25,7 +25,7 @@ public enum JournalIconTileGeometry {
 
     static let platePathD = "M 527.36 0 c 103.834 0 155.751 0 195.41 20.207 a 185.4 185.4 0 0 1 81.023 81.023 c 20.207 39.659 20.207 91.576 20.207 195.41 L 824 527.36 c 0 103.834 0 155.751 -20.207 195.41 a 185.4 185.4 0 0 1 -81.023 81.023 c -39.659 20.207 -91.576 20.207 -195.41 20.207 L 296.64 824 c -103.834 0 -155.751 0 -195.41 -20.207 a 185.4 185.4 0 0 1 -81.023 -81.023 c -20.207 -39.659 -20.207 -91.576 -20.207 -195.41 L 0 296.64 c 0 -103.834 0 -155.751 20.207 -195.41 a 185.4 185.4 0 0 1 81.023 -81.023 c 39.659 -20.207 91.576 -20.207 195.41 -20.207 Z"
     public static var platePathElement: String {
-        ##"<path fill="#FAF3E4" transform="translate(100,100)" d="\##(platePathD)"/>"##
+        ##"<path fill="#FCF3E4" transform="translate(100,100)" d="\##(platePathD)"/>"##
     }
 
     public static func chipLayout(tileSide: CGFloat, rotations: [CGFloat]) -> JournalIconChipLayout? {
