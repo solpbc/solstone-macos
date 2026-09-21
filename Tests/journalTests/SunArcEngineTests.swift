@@ -191,11 +191,100 @@ struct SunArcSolarTests {
 
         // The midsummer day itself has no sunrise at 78° N...
         #expect(SunArcSolar.times(latitude: point.latitude, longitude: point.longitude, date: Self.june21, utcOffsetMinutes: offset) == nil)
-        // ...and the chain still produces a real pair rather than 06:30/19:30.
+        // ...and the chain still produces a real pair rather than 06:30/19:30. `setMinutes` may
+        // now exceed 1440 (a sunset carried past midnight, § the post-midnight-sunset fix
+        // below) — the invariant is a sane, non-negative day length, not an arbitrary ceiling.
         let pair = SunArcSolar.pair(for: Self.june21, timeZone: longyearbyen)
         #expect(pair != SunArcSolar.fallback)
         #expect(pair.riseMinutes >= 0 && pair.riseMinutes < 1440)
-        #expect(pair.setMinutes >= 0 && pair.setMinutes < 1440)
+        #expect(pair.setMinutes >= pair.riseMinutes)
+        #expect(pair.setMinutes - pair.riseMinutes < 1440)
+    }
+
+    @Test func dayOfYearUsesTheCivilDateInTheEnginesTimezoneNotUTC() {
+        // Two instants six hours apart that cross UTC midnight (Sep 18 → Sep 19) but land on
+        // the SAME local calendar day (Sep 18) at UTC-10 (Honolulu-like coordinates, no DST).
+        // Before the fix, `times()` derived its day-of-year from the UTC calendar day, so these
+        // two calls would silently use different days (Sep 18 vs Sep 19) and disagree.
+        let lat = 21.3069, lon = -157.8583, offset = -600.0
+        let beforeUTCMidnight = Date(timeIntervalSince1970: 1_789_761_600) // 2026-09-18T20:00:00Z (local: Sep 18, 10:00)
+        let afterUTCMidnight = Date(timeIntervalSince1970: 1_789_783_200) // 2026-09-19T02:00:00Z (local: Sep 18, 16:00)
+
+        let a = SunArcSolar.times(latitude: lat, longitude: lon, date: beforeUTCMidnight, utcOffsetMinutes: offset)
+        let b = SunArcSolar.times(latitude: lat, longitude: lon, date: afterUTCMidnight, utcOffsetMinutes: offset)
+        #expect(a != nil && b != nil)
+        #expect(a == b)
+    }
+
+    @Test func reykjavikMidsummerSunsetAfterMidnightKeepsDayProgressForwardAcrossMidnight() {
+        // § the post-midnight-sunset fix: above ~64° in midsummer the sun sets after local
+        // midnight (Reykjavik, 21 June: rise ≈ 02:54, raw wrapped set ≈ 00:03 — a smaller
+        // number than rise). Uncorrected, `dusk` (set + twilight) falls before `dawn`
+        // (rise − twilight), so `SunArcTime.compute`'s day fraction has a negative-length
+        // denominator and reads almost the entire day as night. Corrected, the day runs
+        // rise → (next-day) dusk without inverting, and progress never runs backward across
+        // the midnight boundary.
+        let reykjavik = (latitude: 64.1466, longitude: -21.9426)
+        let offset = 0.0 // Iceland observes no daylight saving
+
+        let pair = SunArcSolar.times(latitude: reykjavik.latitude, longitude: reykjavik.longitude, date: Self.june21, utcOffsetMinutes: offset)
+        #expect(pair != nil)
+        guard let pair else { return }
+        #expect(abs(pair.riseMinutes - Double(2 * 60 + 55)) < 2) // ≈ 02:54
+        #expect(pair.setMinutes > 1440) // carried onto the next day, not wrapped back to ≈00:03
+        #expect(abs(pair.setMinutes - 1440 - Double(0 * 60 + 4)) < 2) // ≈ 00:03/00:04 the next day
+
+        // Midday must read as day, not the "almost the whole day is night" symptom of the bug.
+        let midday = SunArcTime.compute(minutes: 12 * 60, riseMinutes: pair.riseMinutes, setMinutes: pair.setMinutes)
+        #expect(midday.night == 0)
+
+        // Day progress across the midnight boundary is continuous and strictly forward, never
+        // resetting or running backward: 23:59 is still day (before the ≈00:04 sunset), local
+        // midnight (00:00) is still day too, and 00:10 — comfortably inside the 30-minute dusk
+        // twilight that follows the true sunset instant — has started ramping into night.
+        let justBeforeMidnight = SunArcTime.compute(minutes: 1439, riseMinutes: pair.riseMinutes, setMinutes: pair.setMinutes)
+        let atMidnight = SunArcTime.compute(minutes: 0, riseMinutes: pair.riseMinutes, setMinutes: pair.setMinutes)
+        let intoDuskTwilight = SunArcTime.compute(minutes: 10, riseMinutes: pair.riseMinutes, setMinutes: pair.setMinutes)
+        #expect(justBeforeMidnight.night == 0)
+        #expect(atMidnight.night == 0)
+        #expect(justBeforeMidnight.t < atMidnight.t)
+        #expect(atMidnight.t < intoDuskTwilight.t)
+        #expect(intoDuskTwilight.night > 0 && intoDuskTwilight.night < 1)
+    }
+
+    @Test func polarLookbackRecomputesTheOffsetPerProbeDateAcrossADSTBoundary() {
+        // § the polar-lookback offset fix: a lookback that spans a daylight-saving boundary
+        // must use each probed date's own offset. `heldLocation` pushes the polar-night
+        // threshold to early October at 85° N (real Longyearbyen, 78° N, would not need to
+        // look back far enough to cross the boundary); `Arctic/Longyearbyen`'s real DST rule
+        // supplies the offset. Starting 2026-11-01 (CET, UTC+1) and walking back finds
+        // 2026-10-07 (CEST, UTC+2) as the last day with a real sunrise — 25 days back, crossing
+        // the 2026-10-25 DST end. A single stale offset reused for every probe would apply
+        // Nov 1's CET offset to Oct 7, skewing the result by a full hour.
+        let longyearbyen = TimeZone(identifier: "Arctic/Longyearbyen")!
+        let start = Date(timeIntervalSince1970: 1_793_534_400) // 2026-11-01T12:00:00Z
+        let pole = (latitude: 85.0, longitude: 15.6267)
+
+        let pair = SunArcSolar.pair(for: start, heldLocation: pole, timeZone: longyearbyen)
+        #expect(pair != SunArcSolar.fallback)
+
+        let oct7 = Date(timeIntervalSince1970: 1_793_534_400 - 25 * 86_400) // 2026-10-07T12:00:00Z
+        let correctOffset = Double(longyearbyen.secondsFromGMT(for: oct7)) / 60
+        #expect(correctOffset == 120) // CEST — still before the Oct 25 DST end
+
+        let expected = SunArcSolar.times(latitude: pole.latitude, longitude: pole.longitude, date: oct7, utcOffsetMinutes: correctOffset)
+        #expect(expected != nil)
+        guard let expected else { return }
+        #expect(pair == expected)
+
+        // The bug this guards against: reusing Nov 1's CET (UTC+1) offset for the Oct 7 probe
+        // would have skewed both times by exactly one hour.
+        let staleOffset = Double(longyearbyen.secondsFromGMT(for: start)) / 60
+        #expect(staleOffset == 60) // CET
+        let stale = SunArcSolar.times(latitude: pole.latitude, longitude: pole.longitude, date: oct7, utcOffsetMinutes: staleOffset)
+        #expect(stale != nil)
+        guard let stale else { return }
+        #expect(abs(pair.riseMinutes - stale.riseMinutes - 60) < 0.01)
     }
 
     @Test func theBackgroundDrawsFromTheChainNotFromTheFixedDefault() {

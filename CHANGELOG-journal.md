@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- make bump-release-journal scaffolds a dated block above the first ## [ and does not read [Unreleased], so the release cut must fold these bullets into that scaffold. -->
 
+### Fixed
+- fixed the day-and-night background so it always shows the right day, even when your mac's time zone is far from UTC. it also keeps day and night in the right order through midnight in places where the sun sets after midnight, and stays correct through a daylight-saving change near the poles.
+
 ## [2.0.12 (build 46)] - 2026-09-18
 
 ### Changed

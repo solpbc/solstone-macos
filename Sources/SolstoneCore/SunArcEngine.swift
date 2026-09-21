@@ -72,7 +72,7 @@ public enum SunArcSolar {
         date: Date,
         utcOffsetMinutes: Double
     ) -> Pair? {
-        let n = Double(dayOfYearUTC(date))
+        let n = Double(civilDayOfYear(date, utcOffsetMinutes: utcOffsetMinutes))
         let lngHour = longitude / 15
 
         func solar(_ isRise: Bool) -> Double? {
@@ -100,7 +100,12 @@ public enum SunArcSolar {
             return wrap(ut * 60 + utcOffsetMinutes, 1440)
         }
 
-        guard let rise = solar(true), let set = solar(false) else { return nil }
+        guard let rise = solar(true), let rawSet = solar(false) else { return nil }
+        // Rise and set are wrapped independently into 0...1440. Above ~64° in midsummer the
+        // sun sets after local midnight, so the raw set can land numerically before rise —
+        // carry it onto the next day so the day's own dawn-to-dusk axis stays continuous
+        // (`SunArcTime.compute` reads minutes on this same extended axis).
+        let set = rawSet < rise ? rawSet + 1440 : rawSet
         return Pair(riseMinutes: rise, setMinutes: set)
     }
 
@@ -117,9 +122,12 @@ public enum SunArcSolar {
         guard let coords = heldLocation ?? SunArcZonePoints.point(for: timeZone.identifier) else {
             return fallback
         }
-        let offset = Double(timeZone.secondsFromGMT(for: date)) / 60
         var probe = date
         for _ in 0...polarLookbackDays {
+            // Recompute the offset for every probed date, not once for `date` — a lookback
+            // that spans a daylight-saving boundary must use each day's own offset, or a
+            // probe on the far side of the boundary is skewed by an hour.
+            let offset = Double(timeZone.secondsFromGMT(for: probe)) / 60
             if let found = times(latitude: coords.latitude, longitude: coords.longitude, date: probe, utcOffsetMinutes: offset) {
                 return found
             }
@@ -133,9 +141,13 @@ public enum SunArcSolar {
         return r < 0 ? r + modulus : r
     }
 
-    private static func dayOfYearUTC(_ date: Date) -> Int {
+    /// The ordinal day of the passed timezone's civil date — not the UTC date, which can be a
+    /// different calendar day near midnight for any offset that isn't ~0. `utcOffsetMinutes`
+    /// (already resolved by the caller for this instant) is enough to build that civil
+    /// calendar directly, without needing the zone's IANA identifier here.
+    private static func civilDayOfYear(_ date: Date, utcOffsetMinutes: Double) -> Int {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+        calendar.timeZone = TimeZone(secondsFromGMT: Int(utcOffsetMinutes * 60)) ?? .gmt
         return calendar.ordinality(of: .day, in: .year, for: date) ?? 1
     }
 }
@@ -206,19 +218,28 @@ public struct SunArcTime: Sendable, Equatable {
         twilightMinutes tw: Double = SunArc.twilightMinutes
     ) -> SunArcTime {
         let dawn = rise - tw, dusk = set + tw
-        let t = (m - dawn) / (dusk - dawn)
+
+        // `set` (and so `dusk`) may already have been carried past 1440 by `SunArcSolar.times`
+        // when the sun sets after local midnight. `m` is always given as this calendar day's
+        // own minutes-since-midnight, so a small `m` that falls before the wrapped-back dusk
+        // is really the tail of tonight's dusk, not tomorrow's pre-dawn night — read it on the
+        // same extended axis dusk is already on, so day progress keeps moving forward through
+        // midnight instead of resetting to "before dawn".
+        let m2 = (dusk > 1440 && m < dusk - 1440) ? m + 1440 : m
+
+        let t = (m2 - dawn) / (dusk - dawn)
 
         let night: Double
-        if m < dawn { night = 1 }
-        else if m < rise { night = 1 - (m - dawn) / tw }
-        else if m <= set { night = 0 }
-        else if m < dusk { night = (m - set) / tw }
+        if m2 < dawn { night = 1 }
+        else if m2 < rise { night = 1 - (m2 - dawn) / tw }
+        else if m2 <= set { night = 0 }
+        else if m2 < dusk { night = (m2 - set) / tw }
         else { night = 1 }
 
         let nightLen = 1440 - (dusk - dawn)
         let q: Double
-        if m >= dusk { q = (m - dusk) / nightLen }
-        else if m < dawn { q = (m + 1440 - dusk) / nightLen }
+        if m2 >= dusk { q = (m2 - dusk) / nightLen }
+        else if m2 < dawn { q = (m2 + 1440 - dusk) / nightLen }
         else { q = 0 }
 
         return SunArcTime(t: t, night: night, q: q)
