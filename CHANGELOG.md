@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- removing a device from your journal in settings no longer reports a failure after the device was removed. the list now refreshes right away.
+
 ## [2.0.13] - 2026-09-20
 
 ### Changed

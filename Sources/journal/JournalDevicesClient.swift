@@ -97,7 +97,7 @@ struct NonceStatusResponse: Decodable, Equatable, Sendable {
 }
 
 struct UnpairResponse: Decodable, Equatable, Sendable {
-    var unpaired: Bool
+    var unpaired: String
 }
 
 struct JournalDevicesErrorEnvelope: Decodable, Equatable, Sendable {

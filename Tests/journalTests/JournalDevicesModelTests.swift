@@ -178,7 +178,7 @@ struct JournalDevicesModelTests {
                 .success([device(label: "phone", fingerprint: "a")]),
                 .success([]),
             ],
-            unpairResults: [.success(UnpairResponse(unpaired: true))]
+            unpairResults: [.success(UnpairResponse(unpaired: "a"))]
         )
         let model = JournalDevicesModel(client: client)
         await model.loadDevices()

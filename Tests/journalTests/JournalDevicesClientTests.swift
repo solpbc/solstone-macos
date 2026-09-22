@@ -74,7 +74,7 @@ struct JournalDevicesClientTests {
 
     @Test func unpairDevicePostsFingerprintAndDecodesResponse() async throws {
         let store = ObserverURLProtocolStore()
-        store.enqueue(body: #"{"unpaired":true}"#)
+        store.enqueue(body: #"{"unpaired":"abc"}"#)
         let client = makeClient(store: store)
 
         let response = try await client.unpairDevice(fingerprint: "abc")
@@ -82,7 +82,7 @@ struct JournalDevicesClientTests {
         let body = try #require(store.requestBodies.first ?? nil)
         let object = try JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any]
 
-        #expect(response.unpaired)
+        #expect(response.unpaired == "abc")
         #expect(request.url?.absoluteString == "http://127.0.0.1:5015/app/network/unpair")
         #expect(request.httpMethod == "POST")
         #expect(request.timeoutInterval == 5)
