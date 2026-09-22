@@ -5,6 +5,12 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.17 (build 51)] - 2026-09-22
+
+### Changed
+- updated the bundled journal to [2.0.14](https://solstone.app/releases#v2.0.14) →
+
+
 ## [2.0.16 (build 50)] - 2026-09-22
 
 ### Changed
@@ -34,13 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - updated the bundled journal to [2.0.10](https://solstone.app/releases#v2.0.10) →
 
-
-## [Unreleased]
-
-<!-- make bump-release-journal scaffolds a dated block above the first ## [ and does not read [Unreleased], so the release cut must fold these bullets into that scaffold. -->
-
-### Fixed
-- fixed the day-and-night background so it always shows the right day, even when your mac's time zone is far from UTC. it also keeps day and night in the right order through midnight in places where the sun sets after midnight, and stays correct through a daylight-saving change near the poles.
 
 ## [2.0.12 (build 46)] - 2026-09-18
 
