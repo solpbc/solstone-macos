@@ -374,23 +374,20 @@ public struct SunArcTwilight: Sendable, Equatable {
             return SunArcTwilight(w: 1 - envelope, te: time.t, x: 0, phase: .day)
         }
         // The night, as minutes past dusk, and its length — both wrapped onto one day, as the
-        // reference does. `dS` and `span − dE` are at least one minute whatever the night's
-        // length (the window is the whole night less one minute either side when the night is
-        // shorter than it), so neither division below can be by zero. On a short night that
-        // makes the glow go out, and come back, within one minute: that is the spec as written.
+        // reference does. The true-dark window keeps an hour either side of it for the glow to
+        // ease out and back in (`trueDarkHalf`); a white night has no window. Each ease branch
+        // requires a non-zero length, so neither division below can be by zero.
         //
-        // ⚠ `m` is `time.axisMinutes`, not the raw clock. On a day whose sunset falls after
-        // local midnight the reference (`A.twilight` on the raw minute) reads 00:00 up to dusk
-        // as "before dawn" with `te` far outside the path; reading the day's own extended axis,
-        // as `SunArcTime` does since the 09-21 parity fix, keeps those minutes in the day.
+        // `m` is `time.axisMinutes`, the day's own extended axis: on a day whose sunset falls
+        // after local midnight, 00:00 up to dusk is still the day (canon since extro e56d376260).
         let span = wrap(dawn - dusk), ms = wrap(m - dusk)
-        let mid = span / 2, half = min(trueDarkMinutes / 2, mid - 1)
+        let mid = span / 2, half = trueDarkHalf(span: span, trueDarkMinutes: trueDarkMinutes)
         let dS = mid - half, dE = mid + half
-        if ms <= dS {
+        if ms <= dS, dS > 0 {
             let x = ms / dS
             return SunArcTwilight(w: ease(x), te: 1 + sink * x, x: x, phase: .evening)
         }
-        if ms >= dE {
+        if ms >= dE, span > dE {
             let x = (span - ms) / (span - dE)
             return SunArcTwilight(w: ease(x), te: -sink * x, x: x, phase: .beforeDawn)
         }
@@ -405,9 +402,18 @@ public struct SunArcTwilight: Sendable, Equatable {
         trueDarkMinutes: Double = SunArc.trueDarkMinutes,
         twilightMinutes tw: Double = SunArc.twilightMinutes
     ) -> (from: Double, to: Double, mid: Double) {
+        let set = set < rise ? set + 1440 : set
         let dusk = set + tw, dawn = rise - tw
-        let span = wrap(dawn - dusk), mid = dusk + span / 2, half = min(trueDarkMinutes / 2, span / 2 - 1)
+        let span = wrap(dawn - dusk), mid = dusk + span / 2, half = trueDarkHalf(span: span, trueDarkMinutes: trueDarkMinutes)
         return (wrap(mid - half), wrap(mid + half), wrap(mid))
+    }
+
+    /// §4a — half the true-dark window for a night of `span` minutes (dusk to the next dawn):
+    /// `max(0, min(180, span − 120)) / 2`. The glow always keeps an hour to ease out after dusk
+    /// and an hour to ease back in before dawn; a night shorter than two hours has no true dark.
+    /// `A.deepHalf` in the reference.
+    public static func trueDarkHalf(span: Double, trueDarkMinutes: Double = SunArc.trueDarkMinutes) -> Double {
+        max(0, min(trueDarkMinutes, span - 120)) / 2
     }
 
     /// Holds, then eases to 0: `(1 − x²)^1.5`, x clamped to 0…1.
@@ -481,6 +487,9 @@ public struct SunArcFrame: Sendable {
         let tipRadius = diameter / 2
         let placement = SunArcPlacement(size: size, tipRadius: tipRadius)
 
+        // one extended minute axis, as the reference: a sunset wrapped below sunrise is carried
+        // past 1440 (`SunArcSolar.times` already does this; a caller passing a raw pair gets the same)
+        let set = set < rise ? set + 1440 : set
         let time = SunArcTime.compute(minutes: minutes, riseMinutes: rise, setMinutes: set)
         let envelope = SunArcEnvelope.value(at: time.t)
         let twilight = SunArcTwilight.compute(time: time, riseMinutes: rise, setMinutes: set, envelope: envelope)

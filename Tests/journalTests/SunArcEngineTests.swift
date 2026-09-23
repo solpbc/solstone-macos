@@ -432,38 +432,59 @@ struct SunArcBothAppearancesTests {
     }
 
     @Test func aSunsetAfterMidnightReadsTheEveningOnTheDaysOwnAxis() {
-        // Reykjavik-like midsummer pair: rise 02:55, set 00:04 the next day (carried to 1444).
-        // The oracle is `SUNARC.both()` fed the extended minute (m + 1440 while m < dusk − 1440),
-        // because the reference on the raw minute reads 00:00–00:33 as "before dawn" with te ≈ 130
-        // (reported to VPX, 2026-09-23). 720 × 500, dark.
-        let rise = 175.0, set = 1444.0
+        // Reykjavik-like midsummer pair: rise 02:55, set 00:03 given raw (below sunrise), carried
+        // to the next day. Oracle: `SUNARC.both()` in the canon at extro e56d376260 (one extended
+        // minute axis; true dark = max(0, min(180, night − 120)) minutes). 393 × 852, dark.
+        let rise = 175.0, set = 3.0
         func f(_ m: Double) -> SunArcFrame {
-            SunArcFrame.compute(size: Self.mac, minutes: m, riseMinutes: rise, setMinutes: set, appearance: .dark)
+            SunArcFrame.compute(size: Self.iphone, minutes: m, riseMinutes: rise, setMinutes: set, appearance: .dark)
         }
+        // the raw and the carried pair are the same day
+        let carried = SunArcFrame.compute(size: Self.iphone, minutes: 60, riseMinutes: rise, setMinutes: 1443, appearance: .dark)
+        #expect(carried.twilight == f(60).twilight)
+
         let tenPast = f(10)
         #expect(tenPast.twilight.phase == .day)
-        #expect(abs(tenPast.twilight.w - 0.8714) < 0.001)
-        #expect(abs(tenPast.twilight.te - 0.9819) < 0.001)
-        #expect(Self.closeHex(tenPast.groundHex, "#372C24"))
-        #expect(abs(Double(tenPast.twilightGlow?.center.x ?? 0) - 989.41) < 0.5)
-        #expect(abs(Double(tenPast.twilightGlow?.center.y ?? 0) - 760.08) < 0.5)
-        #expect(abs((tenPast.twilightGlow?.alpha ?? 0) - 0.5403) < 0.001)
-        let halfPast = f(30)
-        #expect(halfPast.twilight.phase == .day)
-        #expect(abs(halfPast.twilight.w - 0.9785) < 0.001)
-        #expect(Self.closeHex(halfPast.groundHex, "#2F251D"))
-        // dusk is 00:34; the night is 111 minutes, so the window is the night less a minute
-        // either side and the glow goes out between 00:34 and 00:35 (spec as written)
-        let dusk = f(34)
-        #expect(dusk.twilight.phase == .evening && dusk.twilight.w == 1)
-        #expect(abs((dusk.twilightGlow?.alpha ?? 0) - 0.62) < 0.001)
-        let oneLater = f(35)
-        #expect(oneLater.twilight.w == 0 && oneLater.twilightGlow == nil)
-        #expect(oneLater.groundHex == "#281E17")
-        #expect(f(90).twilight.phase == .trueDark)
-        #expect(f(144).twilight.w == 0)
-        let dawn = f(145)
-        #expect(dawn.twilight.phase == .day && dawn.twilight.w == 1)
+        #expect(abs(tenPast.twilight.w - 0.8767) < 0.001)
+        #expect(abs(tenPast.twilight.te - 0.9827) < 0.001)
+        #expect(Self.closeHex(tenPast.groundHex, "#362C24"))
+        #expect(abs(Double(tenPast.twilightGlow?.center.x ?? 0) - 610.65) < 0.5)
+        #expect(abs(Double(tenPast.twilightGlow?.center.y ?? 0) - 1050.48) < 0.5)
+
+        // a 112-minute night has no true dark: the glow eases out after dusk and back in before
+        // dawn, with no one-minute snap
+        let one = f(60)
+        #expect(one.twilight.phase == .evening)
+        #expect(abs(one.twilight.w - 0.6724) < 0.001)
+        #expect(Self.closeHex(one.groundHex, "#2C221A"))
+        #expect(abs(Double(one.twilightGlow?.center.x ?? 0) - 636.27) < 0.5)
+        #expect(abs(Double(one.twilightGlow?.center.y ?? 0) - 1150.55) < 0.5)
+        #expect(abs((one.twilightGlow?.alpha ?? 0) - 0.4169) < 0.001)
+        let deepest = f(90)
+        #expect(deepest.twilight.phase == .beforeDawn)
+        #expect(abs(deepest.twilight.w - 0.0067) < 0.001)
+        #expect(Self.closeHex(deepest.groundHex, "#281E17"))
+        let twoAM = f(120)
+        #expect(twoAM.twilight.phase == .beforeDawn)
+        #expect(abs(twoAM.twilight.w - 0.7165) < 0.001)
+        #expect(Self.closeHex(twoAM.groundHex, "#2C221B"))
+        #expect(abs((twoAM.twilightGlow?.alpha ?? 0) - 0.4442) < 0.001)
+        #expect(abs(f(34).twilight.w - 0.9995) < 0.001)
+        #expect(abs(f(144).twilight.w - 0.9995) < 0.001)
+        for m in stride(from: 34.0, through: 144, by: 1) {
+            #expect(f(m).twilight.phase != .trueDark, "minute \(m)")
+        }
+    }
+
+    @Test func theTrueDarkWindowKeepsAnHourToEaseEitherSide() {
+        // § 4a: true dark = max(0, min(180, night − 120)) minutes.
+        #expect(SunArcTwilight.trueDarkHalf(span: 652) == 90)
+        #expect(SunArcTwilight.trueDarkHalf(span: 240) == 60)
+        #expect(SunArcTwilight.trueDarkHalf(span: 112) == 0)
+        #expect(SunArcTwilight.trueDarkHalf(span: 0) == 0)
+        // a sixty-minute night (rise 01:30, set 23:30) has no true dark and stays finite
+        let white = SunArcFrame.compute(size: Self.iphone, minutes: 60, riseMinutes: 90, setMinutes: 1410, appearance: .dark)
+        #expect(white.twilight.w.isFinite && white.twilight.te.isFinite)
     }
 
     @Test func everyMinuteStaysOnThePathForOrdinaryShortPolarAndOverlappingDays() {
