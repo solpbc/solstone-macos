@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- removing a device from your journal in settings no longer reports a failure after the device was removed. the list now refreshes right away.
+- this is a security fix. other apps and web pages on this mac could reach your journal through the solstone app's connection to it. now only the solstone app can use that connection.
+- pairing no longer waits about a minute on an address where your journal can't be reached before it tries the next one. it moves on after a few seconds.
 
 ## [2.0.13] - 2026-09-20
 

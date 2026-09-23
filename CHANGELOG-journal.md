@@ -5,19 +5,13 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.18 (build 52)] - 2026-09-22
+## [2.0.19 (build 53)] - 2026-09-23
 
 ### Changed
-- updated the bundled journal to [2.0.14](https://solstone.app/releases#v2.0.14) →
+- updated the bundled journal to [2.0.15](https://solstone.app/releases#v2.0.15) →
 
 ### Fixed
-- in rare cases, audio from right after your journal started could go untranscribed, with no warning shown. it's now transcribed once the app catches up on what it missed.
-
-
-## [2.0.17 (build 51)] - 2026-09-22
-
-### Changed
-- updated the bundled journal to [2.0.14](https://solstone.app/releases#v2.0.14) →
+- removing a device from your journal in settings no longer reports a failure after the device was removed. the list now refreshes right away.
 
 
 ## [2.0.16 (build 50)] - 2026-09-22
