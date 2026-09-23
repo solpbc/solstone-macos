@@ -228,7 +228,14 @@ public struct SunArcTime: Sendable, Equatable {
         // is really the tail of tonight's dusk, not tomorrow's pre-dawn night — read it on the
         // same extended axis dusk is already on, so day progress keeps moving forward through
         // midnight instead of resetting to "before dawn".
-        let m2 = (dusk > 1440 && m < dusk - 1440) ? m + 1440 : m
+        //
+        // The mirror (canon extro 5ed645e420): a sunrise before 00:30 puts dawn before midnight,
+        // so a late-evening `m` at or past the wrapped-forward dawn is already tomorrow's dawn —
+        // read it one day back, on the axis dawn is on.
+        let m2: Double
+        if dusk > 1440, m < dusk - 1440 { m2 = m + 1440 }
+        else if dawn < 0, m >= dawn + 1440 { m2 = m - 1440 }
+        else { m2 = m }
 
         let t = (m2 - dawn) / (dusk - dawn)
 

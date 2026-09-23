@@ -476,6 +476,34 @@ struct SunArcBothAppearancesTests {
         }
     }
 
+    @Test func aSunriseBeforeHalfPastMidnightReadsTheDawnOnTheDaysOwnAxis() {
+        // The mirror of the post-midnight sunset: rise 00:20, so dawn is 23:50 the evening
+        // before. Oracle: `SUNARC.both()` at extro 5ed645e420. 393 × 852, dark.
+        let rise = 20.0, set = 1300.0
+        func f(_ m: Double) -> SunArcFrame {
+            SunArcFrame.compute(size: Self.iphone, minutes: m, riseMinutes: rise, setMinutes: set, appearance: .dark)
+        }
+        let beforeDawn = f(1425)
+        #expect(beforeDawn.twilight.phase == .beforeDawn)
+        #expect(abs(beforeDawn.twilight.w - 0.9850) < 0.001)
+        #expect(beforeDawn.time.night == 1)
+        let dawn = f(1435)
+        #expect(dawn.twilight.phase == .day)
+        #expect(abs(dawn.time.t - 0.0037) < 0.0005)
+        #expect(abs(dawn.time.night - 0.8333) < 0.001)
+        #expect(abs(dawn.twilight.w - 0.9734) < 0.001)
+        #expect(Self.closeHex(dawn.groundHex, "#30261E"))
+        let midnight = f(0)
+        #expect(midnight.twilight.phase == .day)
+        #expect(abs(midnight.time.t - 0.0075) < 0.0005)
+        #expect(abs(midnight.time.night - 0.6667) < 0.001)
+        #expect(Self.closeHex(midnight.groundHex, "#32271F"))
+        // day progress runs forward through midnight
+        #expect(f(1435).time.t < f(1439).time.t && f(1439).time.t < f(0).time.t && f(0).time.t < f(5).time.t)
+        let noon = f(600)
+        #expect(noon.twilight.phase == .day && abs(noon.sunOpacity - 0.20) < 0.0001)
+    }
+
     @Test func theTrueDarkWindowKeepsAnHourToEaseEitherSide() {
         // § 4a: true dark = max(0, min(180, night − 120)) minutes.
         #expect(SunArcTwilight.trueDarkHalf(span: 652) == 90)
@@ -491,7 +519,7 @@ struct SunArcBothAppearancesTests {
         // te ∈ [−0.10, 1.10] and w ∈ [0, 1] at every minute: the negative twin of a glow flung
         // round the circle. Denver 09-23, the Reykjavik-like pair, the Longyearbyen polar-held
         // pair (rise 119.8, set 1444.9) and a synthetic pair whose dusk − dawn exceeds a day.
-        let pairs: [(Double, Double)] = [(Self.rise, Self.set), (175, 1444), (119.8, 1444.9), (90, 1470)]
+        let pairs: [(Double, Double)] = [(Self.rise, Self.set), (175, 1444), (119.8, 1444.9), (90, 1470), (20, 1300)]
         for (rise, set) in pairs {
             for m in 0..<1440 {
                 for appearance in SunArcAppearance.allCases {
