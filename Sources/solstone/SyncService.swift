@@ -185,7 +185,7 @@ public actor SyncService {
     // MARK: - Configuration
 
     /// Update paired-ingest configuration. The coherent journal upload context
-    /// is the sync identity: changing it stops in-flight retries and clears throttles.
+    /// is the sync identity: changing it stops in-flight retries and clears the quiet-until maps.
     func configure(
         pairingIdentity: TunnelPairingIdentity?,
         journalFingerprint: JournalConnectionFingerprint?,
@@ -1002,7 +1002,7 @@ public actor SyncService {
             }
 
             let dayAddress = DayAddress(fingerprint: context.fingerprint.value, day: day)
-            if let throttle = self.dayListingThrottle[dayAddress], throttle > self.now() {
+            if let quietUntil = self.dayListingThrottle[dayAddress], quietUntil > self.now() {
                 Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - dayListingThrottle active")
                 continue
             }
@@ -1017,7 +1017,7 @@ public actor SyncService {
                 if self.segmentRemoved.contains(address) {
                     continue
                 }
-                if let throttle = self.keepThrottle[address], throttle > self.now() {
+                if let quietUntil = self.keepThrottle[address], quietUntil > self.now() {
                     continue
                 }
 
@@ -1058,7 +1058,7 @@ public actor SyncService {
             case .failure(let classification):
                 switch classification {
                 case .transport:
-                    // A cleanup transport failure records no throttle, deletes nothing further, stops the rest of cleanup, and does not end the pass.
+                    // A cleanup transport failure sets no quiet-until, deletes nothing further, stops the rest of cleanup, and does not end the pass.
                     Logger.upload.info("Cleanup: transport failure reading day \(day, privacy: .public), stopping cleanup for this pass")
                     return .finished
                 case .notServing:
