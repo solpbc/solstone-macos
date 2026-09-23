@@ -74,6 +74,7 @@ struct SameMachinePairStartClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 5
+        request.attachLoopbackCapability()
 
         do {
             let encoder = JSONEncoder()

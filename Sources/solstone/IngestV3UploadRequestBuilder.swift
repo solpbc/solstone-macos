@@ -124,6 +124,7 @@ struct IngestV3UploadRequestBuilder {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(IngestProtocolV3.headerValue, forHTTPHeaderField: IngestProtocolV3.headerName)
+        request.attachLoopbackCapability()
         return PreparedIngestV3Upload(
             request: request, bodyURL: bodyURL, stagedParts: stagedParts,
             submittedSegment: segment, metadata: meta

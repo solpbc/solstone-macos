@@ -349,6 +349,7 @@ public actor JournalClientSelfSequencer {
         var getReq = URLRequest(url: url)
         getReq.httpMethod = "GET"
         getReq.setValue("application/json", forHTTPHeaderField: "Accept")
+        getReq.attachLoopbackCapability()
 
         let (getData, getResp): (Data, HTTPURLResponse)
         do {
@@ -503,6 +504,7 @@ public actor JournalClientSelfSequencer {
         putReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
         putReq.setValue("application/json", forHTTPHeaderField: "Accept")
         putReq.httpBody = bodyData
+        putReq.attachLoopbackCapability()
 
         let (putData, putResp) = try await BoundedLoopbackClient.execute(
             request: putReq,

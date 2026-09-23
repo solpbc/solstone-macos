@@ -230,10 +230,10 @@ struct SettingsView: View {
         freshFlow: FreshJournalFlow = FreshJournalFlow(),
         onDiskJournalAdoptionFlow: OnDiskJournalAdoptionFlow = OnDiskJournalAdoptionFlow(),
         journalNameFetch: @escaping @MainActor @Sendable (String) async -> String? = { baseURL in
-            await JournalNameFetcher().fetch(baseURL: baseURL)
+            await JournalNameFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL)
         },
         localIdentityFetch: @escaping @MainActor @Sendable (String) async -> JournalMark? = { baseURL in
-            await JournalIdentityFetcher().fetch(baseURL: baseURL)
+            await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL)
         },
         onDiskJournalDiscovery: @escaping @MainActor @Sendable () async -> OnDiskJournalDiscovery = {
             await discoverOnDiskJournal()
@@ -245,7 +245,7 @@ struct SettingsView: View {
             await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
         },
         markFetch: @escaping @MainActor @Sendable (String) async -> JournalMark? = { baseURL in
-            await JournalIdentityFetcher().fetch(baseURL: baseURL)
+            await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL)
         },
         runningJournalController: any RunningJournalController = LiveRunningJournalController(),
         setupFileManager: FileManager = .default,

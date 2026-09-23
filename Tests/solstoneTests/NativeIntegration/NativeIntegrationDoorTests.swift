@@ -173,13 +173,13 @@ struct NativeIntegrationDoorTests {
         for descriptor in sockets { close(descriptor) }
         sockets.removeAll()
 
-        // Measured claimant peak: hold twelve streams open with partial requests, then
+        // Measured claimant peak: hold twelve streams open with keep-alive requests, then
         // require the thirteenth to complete.
         for _ in 0..<(Self.measuredClaimantPeak - 1) {
             sockets.append(try LoopbackHTTP.connectAndHold(port: proxyPort, path: Self.assetPath))
         }
         // Opening the local sockets only proves that the proxy accepted them. Let their
-        // partial requests reach the remote door before using the next request as a stream-
+        // held requests reach the remote door before using the next request as a stream-
         // capacity assertion; otherwise scheduling can let the complete request overtake a
         // held one and make the positive control pass spuriously.
         try await Task.sleep(for: .milliseconds(300))
@@ -297,12 +297,18 @@ private enum LoopbackHTTP {
         return descriptor
     }
 
-    /// Open a connection and send an incomplete request: headers without the terminating blank
-    /// line, so the proxy allocates a stream and the door keeps it open waiting for the rest.
+    /// Open a connection and send one complete keep-alive request carrying the capability, so
+    /// the proxy admits it and allocates a stream. The stream stays held until this socket
+    /// closes: the door frees a slot only when both halves close. (The proxy admits only a
+    /// complete head, so a partial request no longer reaches the door at all.)
     static func connectAndHold(port: Int, path: String) throws -> Int32 {
         let descriptor = try connect(port: port)
-        try sendAll(descriptor, "GET \(path) HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+        try sendAll(descriptor, "GET \(path) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(capabilityCookieLine)\r\n")
         return descriptor
+    }
+
+    static var capabilityCookieLine: String {
+        "Cookie: \(LoopbackCapability.process.cookieHeaderValue)\r\n"
     }
 
     /// One complete request; returns whatever the peer sent before closing or the read timeout.
@@ -311,7 +317,7 @@ private enum LoopbackHTTP {
         defer { close(descriptor) }
         var timeout = timeval(tv_sec: readTimeoutSeconds, tv_usec: 0)
         _ = setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        try sendAll(descriptor, "GET \(path) HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        try sendAll(descriptor, "GET \(path) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(capabilityCookieLine)Connection: close\r\n\r\n")
         var received = Data()
         var buffer = [UInt8](repeating: 0, count: 16_384)
         while true {

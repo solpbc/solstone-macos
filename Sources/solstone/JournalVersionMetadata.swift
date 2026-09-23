@@ -157,6 +157,7 @@ enum JournalVersionStatusClient {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.attachLoopbackCapability()
         do {
             let (data, response) = try await BoundedLoopbackClient.execute(
                 request: request,

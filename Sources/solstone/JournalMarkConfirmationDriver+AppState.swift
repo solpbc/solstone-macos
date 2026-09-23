@@ -39,7 +39,7 @@ extension JournalMarkConfirmationDriver {
     func startIfNeeded(
         for state: PairingFlowState,
         appState: AppState,
-        fetcher: JournalIdentityFetcher = JournalIdentityFetcher()
+        fetcher: JournalIdentityFetcher = JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
     ) {
         // The automatic same-machine adoption re-uses this ceremony to take over a journal the
         // owner already had linked on this Mac. It runs automatically during launch, so leaving the mark

@@ -72,7 +72,7 @@ struct FreshJournalFlowDependencies {
             runningJournal: runningJournal,
             trustVerifier: trustVerifier,
             fetchIdentity: { baseURL in
-                await JournalIdentityFetcher().fetch(baseURL: baseURL)
+                await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL)
             },
             waitingPollInterval: .seconds(3),
             sleep: { duration in

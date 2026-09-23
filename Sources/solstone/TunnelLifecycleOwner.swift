@@ -1804,6 +1804,7 @@ final class TunnelLifecycleOwner {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = timeout.timeInterval
+        request.attachLoopbackCapability()
 
         do {
             // URLSession.shared is a pool this process cannot configure, and it

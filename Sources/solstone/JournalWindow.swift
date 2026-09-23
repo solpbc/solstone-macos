@@ -279,12 +279,7 @@ private struct JournalWebView: NSViewRepresentable {
         context.coordinator.seam.update(session: session, openExternalURL: openExternalURL)
         guard let loadCommand = context.coordinator.seam.prepareLoadCommandForUpdate(loadCommand) else { return }
 
-        logJournalWindowLoad(loadCommand.url)
-        let navigation = webView.load(URLRequest(url: loadCommand.url))
-        context.coordinator.seam.registerAppInitiatedLoad(
-            navigation: navigation,
-            generation: loadCommand.generation
-        )
+        context.coordinator.loadAfterCapabilityCookie(loadCommand, webView: webView)
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -309,6 +304,8 @@ private struct JournalWebView: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let seam: JournalWindowWebViewSeam
+        private var pendingLoadGeneration: UInt64?
+        private var isTornDown = false
 
         init(
             session: JournalWindowSession,
@@ -318,7 +315,27 @@ private struct JournalWebView: NSViewRepresentable {
         }
 
         func tearDown() {
+            isTornDown = true
             seam.tearDown()
+        }
+
+        /// Every app-initiated load first sets the loopback capability cookie in
+        /// this web view's store and waits for it, so the load and every request
+        /// its page makes carry it. A newer command or a teardown arriving while
+        /// the cookie is set supersedes this one.
+        func loadAfterCapabilityCookie(_ command: JournalWindowLoadCommand, webView: WKWebView) {
+            guard pendingLoadGeneration != command.generation else { return }
+            pendingLoadGeneration = command.generation
+            let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
+            Task { @MainActor [weak self, weak webView] in
+                await setLoopbackCapabilityCookie(for: command.url, in: cookieStore)
+                guard let self, let webView, !self.isTornDown,
+                      self.pendingLoadGeneration == command.generation
+                else { return }
+                logJournalWindowLoad(command.url)
+                let navigation = webView.load(URLRequest(url: command.url))
+                self.seam.registerAppInitiatedLoad(navigation: navigation, generation: command.generation)
+            }
         }
 
         func webView(
@@ -417,9 +434,7 @@ private struct JournalWebView: NSViewRepresentable {
         }
 
         private func loadInCurrentWindow(_ command: JournalWindowLoadCommand, webView: WKWebView) {
-            logJournalWindowLoad(command.url)
-            let navigation = webView.load(URLRequest(url: command.url))
-            seam.registerAppInitiatedLoad(navigation: navigation, generation: command.generation)
+            loadAfterCapabilityCookie(command, webView: webView)
         }
 
         private static func isUserInitiatedNavigation(_ navigationType: WKNavigationType) -> Bool {

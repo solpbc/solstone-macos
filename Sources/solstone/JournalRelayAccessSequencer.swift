@@ -124,6 +124,7 @@ public actor JournalRelayAccessSequencer {
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.attachLoopbackCapability()
 
         let (data, response): (Data, HTTPURLResponse)
         do {

@@ -218,6 +218,7 @@ public struct UploadClient: Sendable {
         request.httpMethod = "GET"
         request.setValue(IngestProtocolV3.headerValue, forHTTPHeaderField: IngestProtocolV3.headerName)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.attachLoopbackCapability()
 
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {

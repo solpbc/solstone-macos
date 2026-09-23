@@ -15,9 +15,16 @@ private struct JournalNameConfigSection: Decodable {
 
 public struct JournalNameFetcher: Sendable {
     private let session: URLSession
+    private let prepareRequest: @Sendable (inout URLRequest) -> Void
 
-    public init(session: URLSession = .shared) {
+    /// `prepareRequest` runs on every request before it is sent; the app uses it
+    /// to attach the loopback capability the tunnel's local proxy requires.
+    public init(
+        session: URLSession = .shared,
+        prepareRequest: @escaping @Sendable (inout URLRequest) -> Void = { _ in }
+    ) {
         self.session = session
+        self.prepareRequest = prepareRequest
     }
 
     public func fetch(baseURL: String) async -> String? {
@@ -32,6 +39,7 @@ public struct JournalNameFetcher: Sendable {
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 5
+        prepareRequest(&request)
 
         do {
             let (data, response) = try await session.data(for: request)
