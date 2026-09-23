@@ -34,6 +34,23 @@ struct UploadCoordinatorTests {
         #expect(entries.first?.repeatCount == 2)
     }
 
+    @Test func segmentKeptRecordsEvidenceOnceThenCoalescesOnRepeat() async throws {
+        let fixed = Date(timeIntervalSince1970: 1_700_000_000)
+        let harness = DiagnosticEvidenceHarness()
+        let coordinator = try makeCoordinator(now: fixed, recorder: harness.recorder)
+
+        coordinator.handleProgressEvent(.segmentKept(.unproven))
+        coordinator.handleProgressEvent(.segmentKept(.unproven))
+        coordinator.handleProgressEvent(.segmentKept(.listingFailed))
+        coordinator.handleProgressEvent(.segmentKept(.segmentRemoved))
+
+        let entries = await harness.entries()
+        #expect(evidenceCodes(entries) == [.syncKeptUnproven, .syncKeptListingFailed, .syncKeptSegmentRemoved])
+        #expect(entries[0].repeatCount == 2)
+        #expect(entries[1].repeatCount == 1)
+        #expect(entries[2].repeatCount == 1)
+    }
+
     @Test func journalContactSucceededUpdatesLastSyncedAtAndResetsHealthErrors() throws {
         let fixed = Date(timeIntervalSince1970: 1_700_000_000)
         let coordinator = try makeCoordinator(now: fixed)
@@ -89,7 +106,7 @@ struct UploadCoordinatorTests {
         coordinator.handleProgressEvent(.offline(
             error: "offline",
             healthReason: .urlErrorCode(URLError.notConnectedToInternet.rawValue),
-            requestedPath: IngestProtocolV3.manifestPath
+            requestedPath: IngestProtocolV3.segmentsDayPath("20260703")
         ))
 
         #expect(coordinator.recentErrorCount == 2)
@@ -119,14 +136,14 @@ struct UploadCoordinatorTests {
         coordinator.handleProgressEvent(.offline(
             error: "timed out",
             healthReason: observerHealthFailureReason(from: URLError(.timedOut)),
-            requestedPath: IngestProtocolV3.manifestPath
+            requestedPath: IngestProtocolV3.segmentsDayPath("20260703")
         ))
         #expect(coordinator.lastErrorReason == "url_error_-1001")
 
         coordinator.handleProgressEvent(.uploadFailed(
             segment: "x",
             error: "server failed",
-            healthReason: observerHealthFailureReason(from: UploadError.serverError(statusCode: 503, message: "body")),
+            healthReason: observerHealthFailureReason(from: UploadError.serverError(IngestServerError(statusCode: 503, reasonCode: nil, bodyStatus: nil, failedDisposition: nil))),
             requestedPath: IngestProtocolV3.uploadPath
         ))
         #expect(coordinator.lastErrorReason == "http_503")
@@ -162,7 +179,7 @@ struct UploadCoordinatorTests {
         coordinator.handleProgressEvent(.offline(
             error: longBody,
             healthReason: .httpStatus(404),
-            requestedPath: IngestProtocolV3.manifestPath
+            requestedPath: IngestProtocolV3.segmentsDayPath("20260703")
         ))
         let longError = try #require(coordinator.lastError)
         let longReason = try #require(coordinator.lastErrorReason)
@@ -178,7 +195,7 @@ struct UploadCoordinatorTests {
         coordinator.handleProgressEvent(.offline(
             error: shortBody,
             healthReason: .httpStatus(404),
-            requestedPath: IngestProtocolV3.manifestPath
+            requestedPath: IngestProtocolV3.segmentsDayPath("20260703")
         ))
         let shortError = try #require(coordinator.lastError)
         let shortReason = try #require(coordinator.lastErrorReason)
@@ -223,22 +240,6 @@ struct UploadCoordinatorTests {
 
     @Test func ingestHttp404OnEachRoutePresentsNotServing() async throws {
         let routes: [(path: String, drive: (UploadClient) async -> Error?)] = [
-            (IngestProtocolV3.manifestPath, { client in
-                do {
-                    _ = try await client.getManifest(serverURL: "http://journal.example")
-                    return nil
-                } catch {
-                    return error
-                }
-            }),
-            (IngestProtocolV3.manifestDayPath("20260101"), { client in
-                do {
-                    _ = try await client.getManifestDay(serverURL: "http://journal.example", day: "20260101")
-                    return nil
-                } catch {
-                    return error
-                }
-            }),
             (IngestProtocolV3.segmentsDayPath("20260101"), { client in
                 do {
                     _ = try await client.getSegmentsDay(serverURL: "http://journal.example", day: "20260101")
@@ -323,11 +324,7 @@ struct UploadCoordinatorTests {
         let sha = try #require(UploadClient().sha256(
             of: segment.url.appendingPathComponent("\(segment.url.lastPathComponent)_audio.m4a")
         ))
-        let day = dayString(for: segment.date)
         let filename = "\(segment.url.lastPathComponent)_audio.m4a"
-        store.enqueue(statusCode: 200, body: #"{"days":{"\#(day)":{"segments":1}}}"#)
-        store.enqueue(statusCode: 200, body: #"{"version":1,"day":"\#(day)","segments":{"\#(segment.url.lastPathComponent)":{"files":[{"name":"audio.m4a","submitted_name":"\#(filename)","sha256":"\#(sha)","size":5,"status":"present"}]}}}"#)
-        store.enqueue(statusCode: 200, body: #"{"protocol_version":3,"total":1,"items":[{"key":"\#(segment.url.lastPathComponent)","observed":true,"files":[{"name":"audio.m4a","submitted_name":"\#(filename)","sha256":"\#(sha)","size":5,"status":"present"}]}]}"#)
         store.enqueue(statusCode: 200, body: completeUploadResponseJSON(
             status: "ok",
             segment: segment.url.lastPathComponent,
@@ -346,13 +343,10 @@ struct UploadCoordinatorTests {
         let syncTask = Task {
             await coordinator.syncOnStartup()
         }
-        await store.waitForRequestCount(4)
+        await store.waitForRequestCount(1)
         await syncTask.value
 
-        let request = try #require(store.snapshotRequests().first)
-        #expect(request.httpMethod == "GET")
-        #expect(request.url?.path == IngestProtocolV3.manifestPath)
-        let uploadReq = try #require(store.snapshotRequests().last)
+        let uploadReq = try #require(store.snapshotRequests().first)
         #expect(uploadReq.httpMethod == "POST")
         #expect(uploadReq.url?.path == IngestProtocolV3.uploadPath)
     }
@@ -523,7 +517,7 @@ struct UploadCoordinatorTests {
         coordinator.handleProgressEvent(.offline(
             error: "offline",
             healthReason: .urlErrorCode(-1009),
-            requestedPath: IngestProtocolV3.manifestPath
+            requestedPath: IngestProtocolV3.segmentsDayPath("20260703")
         ))
         coordinator.handleProgressEvent(.uploadFailed(
             segment: "x",
@@ -706,8 +700,9 @@ struct UploadCoordinatorTests {
         .offline(
             error: "offline",
             healthReason: .urlErrorCode(-1009),
-            requestedPath: IngestProtocolV3.manifestPath
+            requestedPath: IngestProtocolV3.segmentsDayPath("20260703")
         ),
+        .segmentKept(.unproven),
         .awaitingTunnel
     ]
 

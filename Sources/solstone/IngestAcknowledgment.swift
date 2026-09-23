@@ -43,19 +43,37 @@ struct IngestLocalFileVersion: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-struct IngestAcknowledgedFileProof: Sendable, Equatable, Codable, Hashable {
+struct IngestAcknowledgedFileProof: Sendable, Equatable, Hashable {
     let submitted: String
     let written: String
     let sha256: String
     let size: UInt64
     let localVersion: IngestLocalFileVersion?
+    let disposition: IngestProtocolV3.UploadFileDisposition?
 
-    init(submitted: String, sha256: String, size: UInt64, written: String? = nil, localVersion: IngestLocalFileVersion? = nil) {
+    init(
+        submitted: String,
+        sha256: String,
+        size: UInt64,
+        written: String? = nil,
+        localVersion: IngestLocalFileVersion? = nil,
+        disposition: IngestProtocolV3.UploadFileDisposition? = nil
+    ) {
         self.submitted = submitted
         self.written = written ?? submitted
         self.sha256 = sha256
         self.size = size
         self.localVersion = localVersion
+        self.disposition = disposition
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case submitted
+        case written
+        case sha256
+        case size
+        case localVersion
+        case disposition
     }
 
     func matchesLocalFileForUpload(_ url: URL, sha256Calculator: (URL) -> String?) -> Bool {
@@ -65,6 +83,29 @@ struct IngestAcknowledgedFileProof: Sendable, Equatable, Codable, Hashable {
             return true
         }
         return sha256Calculator(url) == sha256
+    }
+}
+
+extension IngestAcknowledgedFileProof: Codable {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let submitted = try values.decode(String.self, forKey: .submitted)
+        self.submitted = submitted
+        self.written = try values.decodeIfPresent(String.self, forKey: .written) ?? submitted
+        self.sha256 = try values.decode(String.self, forKey: .sha256)
+        self.size = try values.decode(UInt64.self, forKey: .size)
+        self.localVersion = try values.decodeIfPresent(IngestLocalFileVersion.self, forKey: .localVersion)
+        self.disposition = try values.decodeIfPresent(IngestProtocolV3.UploadFileDisposition.self, forKey: .disposition)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(submitted, forKey: .submitted)
+        try container.encode(written, forKey: .written)
+        try container.encode(sha256, forKey: .sha256)
+        try container.encode(size, forKey: .size)
+        try container.encodeIfPresent(localVersion, forKey: .localVersion)
+        try container.encodeIfPresent(disposition, forKey: .disposition)
     }
 }
 

@@ -15,13 +15,6 @@ struct ServerFileInfo: Sendable {
     let status: IngestProtocolV3.Custody
 }
 
-/// Segment info from server including collision resolution
-struct ServerSegmentInfo: Sendable {
-    let key: String           // Actual key on server (may differ if collision)
-    let originalKey: String?  // Original submitted key (if collision occurred)
-    let files: [ServerFileInfo]
-}
-
 /// Result of an upload attempt
 enum UploadResult: Sendable {
     case success(UploadSuccessInfo)
@@ -35,12 +28,12 @@ struct UploadSuccessInfo: Sendable, Equatable {
 }
 
 /// Upload errors
-public enum UploadError: Error, LocalizedError {
+public enum UploadError: Error, LocalizedError, Equatable {
     case invalidURL
     case noFiles
     case invalidRequest
     case invalidResponse
-    case serverError(statusCode: Int, message: String)
+    case serverError(IngestServerError)
 
     public var errorDescription: String? {
         switch self {
@@ -52,8 +45,8 @@ public enum UploadError: Error, LocalizedError {
             return "upload exceeds journal limits"
         case .invalidResponse:
             return "invalid journal response"
-        case .serverError(let code, let message):
-            return "journal error (\(code)): \(message)"
+        case .serverError(let serverError):
+            return "journal error (\(serverError.statusCode))"
         }
     }
 }
@@ -161,20 +154,6 @@ public struct UploadClient: Sendable {
 
     // MARK: - Protocol v3 reads
 
-    func getManifest(serverURL: String) async throws -> IngestProtocolV3.Manifest {
-        try await get(serverURL: serverURL, path: IngestProtocolV3.manifestPath, as: IngestProtocolV3.Manifest.self)
-    }
-
-    func getManifestDay(serverURL: String, day: String) async throws -> IngestProtocolV3.ManifestDay {
-        let response = try await get(
-            serverURL: serverURL,
-            path: IngestProtocolV3.manifestDayPath(day),
-            as: IngestProtocolV3.ManifestDay.self
-        )
-        try response.validate(expectedDay: day)
-        return response
-    }
-
     func getSegmentsDay(serverURL: String, day: String) async throws -> IngestProtocolV3.SegmentsDay {
         try await get(
             serverURL: serverURL,
@@ -185,28 +164,34 @@ public struct UploadClient: Sendable {
 
     /// Checks the paired journal's v3 read route. This intentionally has no
     /// bearer credential: linked-device access is authenticated by the tunnel.
-    public func testPairedIngestConnection(serverURL: String) async -> String? {
-        guard let url = URL(string: "\(serverURL)\(IngestProtocolV3.manifestPath)") else {
+    public func testPairedIngestConnection(
+        serverURL: String,
+        day: String? = nil,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) async -> String? {
+        let targetDay = day ?? IngestDayKey.string(from: now())
+        guard let url = URL(string: "\(serverURL)\(IngestProtocolV3.segmentsDayPath(targetDay))") else {
             return "Invalid URL"
         }
         do {
-            _ = try await getManifest(serverURL: serverURL)
+            _ = try await getSegmentsDay(serverURL: serverURL, day: targetDay)
             return nil
         } catch let error as URLError {
             return Self.errorMessage(for: error, host: url.host ?? "")
-        } catch let UploadError.serverError(statusCode, _) {
-            switch statusCode {
-            case 403:
-                return "pairing was revoked. pair again to reconnect."
-            case 404:
-                return "journal endpoint not found (update solstone?)"
-            default:
-                return "journal error (\(statusCode))"
-            }
-        } catch let error as UploadError {
-            return classifiedObserverHealthOwnerCopy(observerHealthFailureReason(from: error))
         } catch {
-            return classifiedObserverHealthOwnerCopy(observerHealthFailureReason(from: error))
+            let classification = classifyDayRead(error, day: targetDay)
+            switch classification {
+            case .journalRejectedDay(let d, let reasonCode):
+                return classifiedObserverHealthOwnerCopy(.journalRejectedDay(day: d, reasonCode: reasonCode))
+            case .notServing:
+                return classifiedObserverHealthOwnerCopy(.journalNotServing)
+            case .journalRefused(let reasonCode):
+                return classifiedObserverHealthOwnerCopy(.journalRefused(reasonCode: reasonCode))
+            case .revoked:
+                return classifiedObserverHealthOwnerCopy(.pairingRevoked)
+            case .transport, .undecoded, .listingFailed:
+                return classifiedObserverHealthOwnerCopy(observerHealthFailureReason(from: error))
+            }
         }
     }
 
@@ -225,10 +210,12 @@ public struct UploadClient: Sendable {
             throw UploadError.invalidResponse
         }
         guard (200...299).contains(httpResponse.statusCode) else {
-            throw UploadError.serverError(
+            let (status, reasonCode) = parseIngestErrorBody(data)
+            throw UploadError.serverError(IngestServerError(
                 statusCode: httpResponse.statusCode,
-                message: String(data: data, encoding: .utf8) ?? "Unknown error"
-            )
+                reasonCode: reasonCode,
+                bodyStatus: status
+            ))
         }
         do {
             return try JSONDecoder().decode(Response.self, from: data)
@@ -277,19 +264,35 @@ public struct UploadClient: Sendable {
             Logger.upload.info("Response: HTTP \(httpResponse.statusCode, privacy: .public) bytes=\(data.count, privacy: .public)")
 
             if (200...299).contains(httpResponse.statusCode) {
-                let parsed = try JSONDecoder().decode(IngestProtocolV3.UploadResponse.self, from: data)
+                let parsed: IngestProtocolV3.UploadResponse
+                do {
+                    parsed = try JSONDecoder().decode(IngestProtocolV3.UploadResponse.self, from: data)
+                } catch {
+                    return .failure(UploadError.invalidResponse)
+                }
+
                 guard parsed.validate(
                     stagedFiles: prepared.stagedParts,
                     stagedMeta: prepared.metadata,
                     submittedSegment: prepared.submittedSegment
                 ) else {
                     Logger.upload.error("Upload response validation failed against staged parts/meta")
-                    return .failure(UploadError.invalidResponse)
+                    let failedDisp = parsed.fileDescriptors.contains { $0.disposition == .receivedNotWritten } ? IngestProtocolV3.UploadFileDisposition.receivedNotWritten : nil
+                    return .failure(UploadError.serverError(IngestServerError(
+                        statusCode: httpResponse.statusCode,
+                        reasonCode: nil,
+                        bodyStatus: nil,
+                        failedDisposition: failedDisp
+                    )))
                 }
                 return .success(UploadSuccessInfo(response: parsed))
             } else {
-                let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-                return .failure(UploadError.serverError(statusCode: httpResponse.statusCode, message: errorMessage))
+                let (status, reasonCode) = parseIngestErrorBody(data)
+                return .failure(UploadError.serverError(IngestServerError(
+                    statusCode: httpResponse.statusCode,
+                    reasonCode: reasonCode,
+                    bodyStatus: status
+                )))
             }
         } catch {
             return .failure(error)
@@ -350,5 +353,4 @@ public struct UploadClient: Sendable {
         let digest = hasher.finalize()
         return digest.map { String(format: "%02x", $0) }.joined()
     }
-
 }

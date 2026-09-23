@@ -34,7 +34,7 @@ struct DiagnosticReportTests {
         last added to your journal: 2m ago
         last journal connection: just now
         journal intake: http_404
-        journal intake address: /app/devices/ingest/manifest
+        journal intake address: /app/devices/ingest
         journal link: nothing turned away or ended early
         recent state codes: app.launch · first 1970-01-01T00:15:00.000Z · last 1970-01-01T00:15:50.000Z · repeat 3
         """)
@@ -62,7 +62,7 @@ struct DiagnosticReportTests {
         let reason = report.rows.first { $0.id == .ingestReason }
         let route = report.rows.first { $0.id == .ingestRoute }
         #expect(reason?.value == "http_404")
-        #expect(route?.value == IngestProtocolV3.manifestPath)
+        #expect(route?.value == IngestProtocolV3.uploadPath)
         #expect(route?.value.contains("://") == false)
         #expect(!report.text.contains("https://"))
         #expect(!report.text.contains("ZZSENTINELZZ"))
@@ -239,7 +239,7 @@ struct DiagnosticReportTests {
             lastJournalContact: .synced(now.addingTimeInterval(-30)),
             evidence: evidence,
             ingestReason: "http_404",
-            ingestRoute: IngestProtocolV3.manifestPath,
+            ingestRoute: IngestProtocolV3.uploadPath,
             now: now
         )
     }

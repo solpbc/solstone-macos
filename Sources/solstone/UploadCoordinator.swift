@@ -17,6 +17,9 @@ public enum ObserverHealthFailureReason: Sendable, Equatable {
     /// The journal answered, and reported that it could not read this day's
     /// stored files. `reasonCode` is the journal's own token for why.
     case journalRejectedDay(day: String, reasonCode: String)
+    case pairingRevoked
+    case journalNotServing
+    case journalRefused(reasonCode: String)
 }
 
 internal func observerHealthFailureReason(from error: Error) -> ObserverHealthFailureReason {
@@ -34,8 +37,8 @@ internal func observerHealthFailureReason(from error: Error) -> ObserverHealthFa
             return .uploadFailed
         case .invalidResponse:
             return .uploadInvalidResponse
-        case .serverError(let statusCode, _):
-            return .httpStatus(statusCode)
+        case .serverError(let serverError):
+            return .httpStatus(serverError.statusCode)
         }
     }
 
@@ -64,6 +67,13 @@ internal func sanitizedObserverHealthErrorReason(_ reason: ObserverHealthFailure
     case .journalRejectedDay(let day, let reasonCode):
         let safeCode = reasonCode.filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }.lowercased()
         token = "journal_rejected_day_\(day)_\(safeCode.isEmpty ? "unknown" : safeCode)"
+    case .pairingRevoked:
+        token = "pairing_revoked"
+    case .journalNotServing:
+        token = "journal_not_serving"
+    case .journalRefused(let reasonCode):
+        let safeCode = reasonCode.filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }.lowercased()
+        token = "journal_refused_\(safeCode.isEmpty ? "unknown" : safeCode)"
     }
     return String(token.prefix(200))
 }
@@ -334,7 +344,8 @@ public final class UploadCoordinator {
         guard pairedIngestIdentity != nil else { return "Not configured" }
         switch await resolver.resolve() {
         case .url(let serverURL):
-            return await client.testPairedIngestConnection(serverURL: serverURL)
+            let today = IngestDayKey.string(from: nowProvider())
+            return await client.testPairedIngestConnection(serverURL: serverURL, day: today)
         case .held:
             return "Not configured"
         }
@@ -428,6 +439,16 @@ public final class UploadCoordinator {
 
         case .segmentUnprovable:
             recorder.enqueue(.syncSegmentUnprovable)
+
+        case .segmentKept(let keepReason):
+            switch keepReason {
+            case .unproven:
+                recorder.enqueue(.syncKeptUnproven)
+            case .listingFailed:
+                recorder.enqueue(.syncKeptListingFailed)
+            case .segmentRemoved:
+                recorder.enqueue(.syncKeptSegmentRemoved)
+            }
         }
     }
 

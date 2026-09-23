@@ -3,9 +3,42 @@
 
 import Foundation
 
+enum IngestDayKey {
+    static let calendar: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.locale = Locale(identifier: "en_US_POSIX")
+        return cal
+    }()
+
+    static func string(from date: Date) -> String {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year, let month = components.month, let day = components.day else {
+            return ""
+        }
+        return String(format: "%04d%02d%02d", year, month, day)
+    }
+
+    static func startOfDay(_ date: Date) -> Date {
+        calendar.startOfDay(for: date)
+    }
+
+    static func startOfDay(dayKey: String) -> Date? {
+        guard dayKey.count == 8, dayKey.allSatisfy(\.isNumber) else { return nil }
+        guard let year = Int(dayKey.prefix(4)),
+              let month = Int(dayKey.dropFirst(4).prefix(2)),
+              let day = Int(dayKey.suffix(2)) else { return nil }
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        components.day = day
+        guard let date = calendar.date(from: components) else { return nil }
+        return calendar.startOfDay(for: date)
+    }
+}
+
 /// The linked-device journal ingest protocol. Keep shared wire vocabulary here so
 /// every request and response uses the same contract.
-enum IngestProtocolV3 {
+public enum IngestProtocolV3 {
     static let headerName = "X-Solstone-Protocol-Version"
     static let headerValue = "3"
     static let maxPartBytes = 64 * 1024 * 1024
@@ -16,11 +49,6 @@ enum IngestProtocolV3 {
     static let maxHeaders = 16
 
     static let uploadPath = "/app/devices/ingest"
-    static let manifestPath = "/app/devices/ingest/manifest"
-
-    static func manifestDayPath(_ day: String) -> String {
-        "\(manifestPath)/\(day)"
-    }
 
     static func segmentsDayPath(_ day: String) -> String {
         "\(uploadPath)/segments/\(day)"
@@ -48,74 +76,6 @@ enum IngestProtocolV3 {
         case duplicate
     }
 
-    struct Manifest: Decodable, Sendable, Equatable {
-        let days: [String: Day]
-
-        enum Day: Decodable, Sendable, Equatable {
-            case segments(Int)
-            case error(String)
-
-            private enum CodingKeys: String, CodingKey {
-                case segments
-                case error
-            }
-
-            init(from decoder: Decoder) throws {
-                let values = try decoder.container(keyedBy: CodingKeys.self)
-                let hasSegments = values.contains(.segments)
-                let hasError = values.contains(.error)
-                guard hasSegments != hasError else {
-                    throw UploadError.invalidResponse
-                }
-                if hasSegments {
-                    let count = try values.decode(Int.self, forKey: .segments)
-                    guard count >= 0 else { throw UploadError.invalidResponse }
-                    self = .segments(count)
-                } else {
-                    let error = try values.decode(String.self, forKey: .error)
-                    guard !error.isEmpty else { throw UploadError.invalidResponse }
-                    self = .error(error)
-                }
-            }
-        }
-    }
-
-    struct ManifestDay: Decodable, Sendable, Equatable {
-        let version: Int
-        let day: String
-        let segments: [String: ManifestSegment]
-
-        enum CodingKeys: String, CodingKey {
-            case version
-            case day
-            case segments
-        }
-
-        func validate(expectedDay: String) throws {
-            guard version == 1, day == expectedDay else {
-                throw UploadError.invalidResponse
-            }
-            for key in segments.keys {
-                guard !key.isEmpty else { throw UploadError.invalidResponse }
-            }
-        }
-    }
-
-    struct ManifestSegment: Decodable, Sendable, Equatable {
-        let files: [ReadFile]
-
-        private enum CodingKeys: String, CodingKey {
-            case files
-        }
-
-        init(from decoder: Decoder) throws {
-            let values = try decoder.container(keyedBy: CodingKeys.self)
-            let files = try values.decode([ReadFile].self, forKey: .files)
-            try validateFiles(files)
-            self.files = files
-        }
-    }
-
     struct SegmentsDay: Decodable, Sendable, Equatable {
         let protocolVersion: Int
         let total: Int
@@ -125,6 +85,12 @@ enum IngestProtocolV3 {
             case protocolVersion = "protocol_version"
             case total
             case items
+        }
+
+        init(protocolVersion: Int = 3, total: Int, items: [SegmentsItem]) {
+            self.protocolVersion = protocolVersion
+            self.total = total
+            self.items = items
         }
 
         init(from decoder: Decoder) throws {
@@ -159,27 +125,29 @@ enum IngestProtocolV3 {
 
     struct SegmentsItem: Decodable, Sendable, Equatable {
         let key: String
-        let observed: Bool
         let files: [ReadFile]
         let originalKey: String?
 
         enum CodingKeys: String, CodingKey {
             case key
-            case observed
             case files
             case originalKey = "original_key"
+        }
+
+        init(key: String, files: [ReadFile], originalKey: String? = nil) {
+            self.key = key
+            self.files = files
+            self.originalKey = originalKey
         }
 
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             let key = try values.decode(String.self, forKey: .key)
-            let observed = try values.decode(Bool.self, forKey: .observed)
             let files = try values.decode([ReadFile].self, forKey: .files)
             let originalKey = try values.decodeIfPresent(String.self, forKey: .originalKey)
             try validateFiles(files)
 
             self.key = key
-            self.observed = observed
             self.files = files
             self.originalKey = originalKey
         }
@@ -200,18 +168,26 @@ enum IngestProtocolV3 {
             case submittedName = "submitted_name"
         }
 
+        init(name: String, size: UInt64, sha256: String, status: Custody, submittedName: String? = nil) {
+            self.name = name
+            self.size = size
+            self.sha256 = sha256
+            self.status = status
+            self.submittedName = submittedName
+        }
+
         var effectiveName: String {
             submittedName ?? name
         }
     }
 
-    enum UploadFileDisposition: Codable, Sendable, Equatable {
+    public enum UploadFileDisposition: Codable, Sendable, Equatable, Hashable {
         case written
         case alreadyHeld
         case receivedNotWritten
         case outOfContract(String)
 
-        init(from decoder: Decoder) throws {
+        public init(from decoder: Decoder) throws {
             let raw = try decoder.singleValueContainer().decode(String.self)
             switch raw {
             case "written": self = .written
@@ -221,7 +197,7 @@ enum IngestProtocolV3 {
             }
         }
 
-        func encode(to encoder: Encoder) throws {
+        public func encode(to encoder: Encoder) throws {
             var container = encoder.singleValueContainer()
             switch self {
             case .written: try container.encode("written")
@@ -246,6 +222,14 @@ enum IngestProtocolV3 {
             case sha256
             case disposition
         }
+
+        init(submitted: String, written: String, size: UInt64, sha256: String, disposition: UploadFileDisposition) {
+            self.submitted = submitted
+            self.written = written
+            self.size = size
+            self.sha256 = sha256
+            self.disposition = disposition
+        }
     }
 
     struct UploadResponse: Decodable, Sendable, Equatable {
@@ -254,8 +238,6 @@ enum IngestProtocolV3 {
         let segmentOriginal: String?
         let fileDescriptors: [UploadFileDescriptor]
         let meta: [String: IngestJSONValue]
-        let files: [String]?
-        let bytes: UInt64?
 
         private enum CodingKeys: String, CodingKey {
             case status
@@ -264,8 +246,6 @@ enum IngestProtocolV3 {
             case segmentOriginal = "segment_original"
             case fileDescriptors = "file_descriptors"
             case meta
-            case files
-            case bytes
         }
 
         init(
@@ -273,17 +253,13 @@ enum IngestProtocolV3 {
             storedSegmentKey: String,
             segmentOriginal: String? = nil,
             fileDescriptors: [UploadFileDescriptor] = [],
-            meta: [String: IngestJSONValue] = [:],
-            files: [String]? = nil,
-            bytes: UInt64? = nil
+            meta: [String: IngestJSONValue] = [:]
         ) {
             self.status = status
             self.storedSegmentKey = storedSegmentKey
             self.segmentOriginal = segmentOriginal
             self.fileDescriptors = fileDescriptors
             self.meta = meta
-            self.files = files
-            self.bytes = bytes
         }
 
         init(from decoder: Decoder) throws {
@@ -300,8 +276,6 @@ enum IngestProtocolV3 {
             }
             fileDescriptors = try values.decode([UploadFileDescriptor].self, forKey: .fileDescriptors)
             meta = try values.decode([String: IngestJSONValue].self, forKey: .meta)
-            files = try values.decodeIfPresent([String].self, forKey: .files)
-            bytes = try values.decodeIfPresent(UInt64.self, forKey: .bytes)
         }
 
         func validate(

@@ -224,6 +224,20 @@ extension StatusHealthSummary {
                 let subtitle = pendingCount > 0
                     ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here · nothing is lost, sync resumes when it's back"
                     : "nothing is lost · sync resumes when it's back"
+                if let reason = lastHealthReason {
+                    switch reason {
+                    case .pairingRevoked, .journalNotServing, .journalRefused,
+                         .httpStatus(403), .httpStatus(404), .httpStatus(426):
+                        return .init(
+                            severity: .attention,
+                            title: classifiedObserverHealthOwnerCopy(reason),
+                            subtitle: subtitle,
+                            axValue: "external_offline"
+                        )
+                    default:
+                        break
+                    }
+                }
                 return .init(
                     severity: .attention,
                     title: "can't reach \(host)",

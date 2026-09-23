@@ -161,11 +161,7 @@ enum IngestV3LiveProbe {
     }
 
     private static func dayString() -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyyMMdd"
-        return formatter.string(from: Date())
+        IngestDayKey.string(from: Date())
     }
 
     private static func clockString() -> String {

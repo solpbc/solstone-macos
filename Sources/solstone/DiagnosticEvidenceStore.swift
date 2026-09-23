@@ -31,6 +31,9 @@ internal enum DiagnosticEvidenceCode: String, Codable, Equatable, Sendable, Case
     case terminationDrainTimeout = "termination.drain_timeout"
     case deliveryWriteFailed = "delivery.write_failed"
     case syncSegmentUnprovable = "sync.segment_unprovable"
+    case syncKeptUnproven = "sync.kept_unproven"
+    case syncKeptListingFailed = "sync.kept_listing_failed"
+    case syncKeptSegmentRemoved = "sync.kept_segment_removed"
     // The journal refused a stream because the carrier's concurrent-stream
     // budget was already full. It reaches URLSession as -1005, the same code a
     // genuine network loss produces, so without this the two are one symptom.

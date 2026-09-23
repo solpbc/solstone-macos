@@ -79,16 +79,65 @@ struct UploadClientTests {
         #expect(UploadClient.errorMessage(for: error, host: "example.com") != error.localizedDescription)
     }
 
-    @Test func manifestReadUsesProtocolHeaderWithoutBearer() async throws {
+    @Test func getSegmentsDayUsesProtocolHeaderWithoutBearer() async throws {
         store.reset()
-        store.enqueue(statusCode: 200, body: #"{"days":{}}"#)
+        store.enqueue(statusCode: 200, body: #"{"protocol_version":3,"total":0,"items":[]}"#)
         let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
-        let manifest = try await uploadClient.getManifest(serverURL: "http://journal.example")
-        #expect(manifest.days.isEmpty)
+        let segments = try await uploadClient.getSegmentsDay(serverURL: "http://journal.example", day: "20260703")
+        #expect(segments.items.isEmpty)
         let request = try #require(store.snapshotRequests().first)
-        #expect(request.url?.path == IngestProtocolV3.manifestPath)
+        #expect(request.url?.path == IngestProtocolV3.segmentsDayPath("20260703"))
         #expect(request.value(forHTTPHeaderField: IngestProtocolV3.headerName) == "3")
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+    }
+
+    @Test func testPairedIngestConnectionSuccess() async throws {
+        store.reset()
+        store.enqueue(statusCode: 200, body: #"{"protocol_version":3,"total":0,"items":[]}"#)
+        let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
+        let result = await uploadClient.testPairedIngestConnection(serverURL: "http://journal.example", day: "20260703")
+        #expect(result == nil)
+    }
+
+    @Test func testPairedIngestConnectionErrors() async throws {
+        let cases: [(status: Int, body: String, expectedMessage: String)] = [
+            (403, #"{"reason_code":"pairing_revoked"}"#, "pairing was revoked. pair again to reconnect."),
+            (404, #"{"status":"not_found"}"#, "your journal isn't taking this in"),
+            (426, #"{"status":"upgrade_required"}"#, "your journal isn't taking this in"),
+            (409, #"{"reason_code":"stream_binding_incomplete"}"#, "your journal isn't taking this in"),
+            (500, #"{"reason_code":"journal_read_failed"}"#, "your journal couldn't read 2026-07-03"),
+        ]
+        for c in cases {
+            store.reset()
+            store.enqueue(statusCode: c.status, body: c.body)
+            let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
+            let result = await uploadClient.testPairedIngestConnection(serverURL: "http://journal.example", day: "20260703")
+            #expect(result == c.expectedMessage)
+        }
+    }
+
+    @Test func getSegmentsDayErrorsThrowIngestServerError() async throws {
+        let cases: [(status: Int, body: String, expectedReason: String?)] = [
+            (403, #"{"reason_code":"pairing_revoked"}"#, "pairing_revoked"),
+            (404, #"{"status":"not_found"}"#, nil),
+            (426, #"{"status":"upgrade_required"}"#, nil),
+            (409, #"{"reason_code":"stream_binding_incomplete"}"#, "stream_binding_incomplete"),
+            (500, #"{"reason_code":"journal_read_failed"}"#, "journal_read_failed"),
+        ]
+        for c in cases {
+            store.reset()
+            store.enqueue(statusCode: c.status, body: c.body)
+            let uploadClient = UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store))
+            do {
+                _ = try await uploadClient.getSegmentsDay(serverURL: "http://journal.example", day: "20260703")
+                Issue.record("Expected error for status \(c.status)")
+            } catch UploadError.serverError(let serverError) {
+                #expect(serverError.statusCode == c.status)
+                #expect(serverError.reasonCode == c.expectedReason)
+            } catch {
+                Issue.record("Unexpected error type: \(error)")
+            }
+        }
     }
 
     @Test func malformedV3ReadFailsWholeResponse() async throws {

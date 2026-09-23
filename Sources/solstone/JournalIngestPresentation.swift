@@ -22,10 +22,14 @@ func journalConnectionVerdictPresentation(
 
 func classifiedObserverHealthOwnerCopy(_ reason: ObserverHealthFailureReason) -> String {
     switch reason {
-    case .httpStatus(404):
-        return "your journal isn't taking this in"
-    case .httpStatus(403):
+    case .pairingRevoked, .httpStatus(403):
         return "pairing was revoked. pair again to reconnect."
+    case .journalNotServing, .httpStatus(404), .httpStatus(426):
+        return "your journal isn't taking this in"
+    case .journalRefused:
+        return "your journal refused this sync."
+    case .journalRejectedDay(let day, _):
+        return "your journal couldn't read \(ownerDayLabel(day))"
     case .httpStatus:
         return "journal connection error"
     case .urlErrorCode:
@@ -42,8 +46,6 @@ func classifiedObserverHealthOwnerCopy(_ reason: ObserverHealthFailureReason) ->
         return "your journal isn't linked"
     case .uploadFailed:
         return "couldn't add this to your journal"
-    case .journalRejectedDay(let day, _):
-        return "your journal couldn't read \(ownerDayLabel(day))"
     }
 }
 

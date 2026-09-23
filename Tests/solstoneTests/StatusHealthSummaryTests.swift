@@ -255,6 +255,22 @@ struct StatusHealthSummaryTests {
         #expect(summary.title != UICopy.STATUS_CAPTURE_ERROR_TITLE)
     }
 
+    @Test func offlineTitlesForSpecificHealthReasonsMatchOwnerCopy() {
+        let reasons: [(ObserverHealthFailureReason, String)] = [
+            (.pairingRevoked, "pairing was revoked. pair again to reconnect."),
+            (.journalNotServing, "your journal isn't taking this in"),
+            (.journalRefused(reasonCode: "foreign_stream_binding"), "your journal refused this sync."),
+            (.journalRejectedDay(day: "20260915", reasonCode: "journal_read_failed"), "your journal couldn't read 2026-09-15"),
+        ]
+        for (reason, expectedCopy) in reasons {
+            let copy = classifiedObserverHealthOwnerCopy(reason)
+            #expect(copy == expectedCopy)
+            let summary = makeSummary(uploadStatus: .offline(copy), lastHealthReason: reason)
+            #expect(summary.title == expectedCopy)
+            #expect(!summary.title.contains("can't reach"))
+        }
+    }
+
     private func makeSummary(
         serviceMode: ServiceMode? = .external,
         isRecording: Bool = true,
@@ -267,7 +283,8 @@ struct StatusHealthSummaryTests {
         selectedSources: CaptureSources = .all,
         permittedSources: CaptureSources = .all,
         errorMessage: String? = nil,
-        setupVerdict: SetupGroupVerdict? = nil
+        setupVerdict: SetupGroupVerdict? = nil,
+        lastHealthReason: ObserverHealthFailureReason? = nil
     ) -> StatusHealthSummary {
         StatusHealthSummary.make(
             serviceMode: serviceMode,
@@ -281,7 +298,8 @@ struct StatusHealthSummaryTests {
             selectedSources: selectedSources,
             permittedSources: permittedSources,
             errorMessage: errorMessage,
-            setupVerdict: setupVerdict
+            setupVerdict: setupVerdict,
+            lastHealthReason: lastHealthReason
         )
     }
 }

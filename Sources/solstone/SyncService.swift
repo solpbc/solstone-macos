@@ -9,6 +9,12 @@ import SolstoneCore
 /// Background sync service that walks days and uploads missing segments
 /// All operations run off the main actor
 public actor SyncService {
+    public enum SyncKeepReason: Sendable, Equatable {
+        case unproven
+        case listingFailed
+        case segmentRemoved
+    }
+
     /// Progress event for UI updates
     public enum ProgressEvent: Sendable {
         case syncStarted
@@ -25,6 +31,7 @@ public actor SyncService {
         /// changed metadata after media offload, or unreadable metadata. Independent
         /// segments can still sync.
         case segmentUnprovable(segment: String)
+        case segmentKept(SyncKeepReason)
     }
 
     internal enum DiscoveredEntryKind: Sendable, Equatable {
@@ -52,9 +59,33 @@ public actor SyncService {
 
     private enum UploadRetryOutcome: Sendable {
         case succeeded
-        case failed(error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)
+        case transport(Error)
+        case deviceScoped(DeviceScope, Error)
+        case segmentScoped(SegmentScope, Error)
         case held
         case stopped
+    }
+
+    private struct SegmentAddress: Hashable, Sendable {
+        let fingerprint: String
+        let day: String
+        let segment: String
+    }
+
+    private struct DayAddress: Hashable, Sendable {
+        let fingerprint: String
+        let day: String
+    }
+
+    private enum SegmentBoundKind: Sendable, Equatable {
+        case deterministic(status: Int, reasonCode: String?)
+        case receivedNotWritten
+    }
+
+    private struct SegmentBound: Sendable {
+        let kind: SegmentBoundKind
+        var consecutive: Int
+        var quietUntil: Date
     }
 
     // MARK: - Dependencies
@@ -62,6 +93,7 @@ public actor SyncService {
     private let client: UploadClient
     private let resolver: HomeBaseURLResolver
     private let storageManager: StorageManager
+    private let now: @Sendable () -> Date
     private let persistAcknowledgment: @Sendable (IngestAcknowledgment, URL) throws -> Void
     private let removeItem: @Sendable (URL) throws -> Void
     private let listDirectory: @Sendable (URL) throws -> [URL]
@@ -72,6 +104,14 @@ public actor SyncService {
     private var journalContext: JournalUploadContext?
     private var cacheRetentionDays: Int = AppConfig.Defaults.cacheRetentionDays
     private var syncPaused: Bool = false
+
+    // MARK: - Actor Memory (keyed by context)
+
+    private var deviceQuietUntil: Date?
+    private var segmentBounds: [SegmentAddress: SegmentBound] = [:]
+    private var segmentRemoved: Set<SegmentAddress> = []
+    private var keepThrottle: [SegmentAddress: Date] = [:]
+    private var dayListingThrottle: [DayAddress: Date] = [:]
 
     // MARK: - State
 
@@ -87,9 +127,6 @@ public actor SyncService {
     // MARK: - Retry Configuration
 
     private let retryDelays: [TimeInterval]
-    /// Attempts one segment gets within a single sync pass before the walk moves on. The
-    /// segment is retried on the next pass, so a body the link keeps dropping cannot hold
-    /// every segment behind it for the whole backoff ladder.
     private let maxAttemptsPerPass: Int
 
     // MARK: - Initialization
@@ -98,6 +135,7 @@ public actor SyncService {
         storageManager: StorageManager,
         client: UploadClient = UploadClient(),
         resolver: HomeBaseURLResolver,
+        now: @escaping @Sendable () -> Date = Date.init,
         retryDelays: [TimeInterval] = [5, 30, 120, 300],
         maxAttemptsPerPass: Int = 3,
         persistAcknowledgment: @escaping @Sendable (IngestAcknowledgment, URL) throws -> Void = IngestAcknowledgmentStore.write,
@@ -131,6 +169,7 @@ public actor SyncService {
         self.storageManager = storageManager
         self.client = client
         self.resolver = resolver
+        self.now = now
         self.retryDelays = retryDelays
         self.maxAttemptsPerPass = max(maxAttemptsPerPass, 1)
         self.persistAcknowledgment = persistAcknowledgment
@@ -146,7 +185,7 @@ public actor SyncService {
     // MARK: - Configuration
 
     /// Update paired-ingest configuration. The coherent journal upload context
-    /// is the sync identity: changing it stops in-flight retries.
+    /// is the sync identity: changing it stops in-flight retries and clears throttles.
     func configure(
         pairingIdentity: TunnelPairingIdentity?,
         journalFingerprint: JournalConnectionFingerprint?,
@@ -157,6 +196,13 @@ public actor SyncService {
             pairing: pairingIdentity,
             suppliedFingerprint: journalFingerprint
         )
+        if newContext != self.journalContext {
+            self.deviceQuietUntil = nil
+            self.segmentBounds.removeAll()
+            self.segmentRemoved.removeAll()
+            self.keepThrottle.removeAll()
+            self.dayListingThrottle.removeAll()
+        }
         self.journalContext = newContext
         self.cacheRetentionDays = cacheRetentionDays
         self.syncPaused = syncPaused
@@ -172,8 +218,6 @@ public actor SyncService {
     /// Trigger a sync (debounced - coalesces rapid calls)
     public func triggerSync() {
         guard !isSyncing else {
-            // A segment that completed after this pass snapshotted the local set would
-            // otherwise wait for the next external trigger. Run one follow-up pass instead.
             followUpSyncRequested = true
             Logger.upload.info("Sync already in progress; a follow-up pass will run when it finishes")
             return
@@ -181,7 +225,6 @@ public actor SyncService {
 
         syncTask?.cancel()
         syncTask = Task {
-            // Small delay to coalesce rapid triggers
             try? await Task.sleep(nanoseconds: 500_000_000)  // 0.5s
             guard !Task.isCancelled else { return }
             await sync()
@@ -190,7 +233,7 @@ public actor SyncService {
 
     // MARK: - Full Sync
 
-    /// Perform full sync: walk all days newest to oldest, upload missing segments
+    /// Perform full sync: local discovery, unacknowledged segment upload, idle probe, cleanup
     public func sync() async {
         guard !syncPaused else {
             Logger.upload.info("Sync paused, skipping")
@@ -231,88 +274,48 @@ public actor SyncService {
             return
         }
 
-        if snapshot.failure == nil && totalSegments == 0 {
-            Logger.upload.info("No local segments found")
-            progressContinuation.yield(.syncComplete)
+        let serverURL: String
+        switch await resolver.resolve() {
+        case .url(let resolved):
+            serverURL = resolved
+        case .held:
+            progressContinuation.yield(.awaitingTunnel)
+            return
+        }
+
+        let currentTime = self.now()
+        let today = IngestDayKey.string(from: currentTime)
+
+        // Pass-local day reads cache: never store a listing on the actor.
+        // A prior pass's response is not custody after the journal may have changed.
+        var passDayReads: [String: Result<IngestProtocolV3.SegmentsDay, DayReadClass>] = [:]
+
+        // Device-quiet window active: skip upload walk and cleanup, probe today only
+        if let quietUntil = self.deviceQuietUntil, currentTime < quietUntil {
+            Logger.upload.info("Device quiet until \(quietUntil, privacy: .public), probing today only")
+            let probeResult = await self.readDayCached(day: today, serverURL: serverURL, client: client, cache: &passDayReads)
+            switch probeResult {
+            case .success:
+                progressContinuation.yield(.journalContactSucceeded)
+                progressContinuation.yield(.syncComplete)
+            case .failure(let classification):
+                handleProbeFailure(classification: classification, day: today)
+            }
             return
         }
 
         var checked = 0
+        var didPOST = false
+        var hasYieldedContact = false
 
-        var terminalUploadFailure: (error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)?
-        let manifest: IngestProtocolV3.Manifest
-        do {
-            manifest = try await fetchManifest()
-        } catch SyncReadError.held {
-            progressContinuation.yield(.awaitingTunnel)
-            return
-        } catch {
-            let healthReason = observerHealthFailureReason(from: error)
-            Logger.upload.info("Manifest query failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
-            progressContinuation.yield(.offline(
-                error: error.localizedDescription,
-                healthReason: healthReason,
-                requestedPath: IngestProtocolV3.manifestPath
-            ))
-            return
-        }
-        progressContinuation.yield(.journalContactSucceeded)
-        var reconciledDays: [String: [String: ServerSegmentInfo]] = [:]
-
-        // Walk days from newest to oldest
+        // Walk candidates newest day to oldest day, newest segment to oldest segment
         for (day, localCandidates) in snapshot.candidatesByDay.sorted(by: { $0.key > $1.key }) {
             progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
 
-            switch manifest.days[day] {
-            case .error(let reasonCode):
-                // The journal answered; it could not read this day's stored files. That is a
-                // journal-side condition, not a connection fault, and it is reported as one so
-                // the owner is not sent to check their network.
-                Logger.upload.notice("Day \(day, privacy: .public): journal manifest rejected the day reason=\(reasonCode, privacy: .public)")
-                progressContinuation.yield(.offline(
-                    error: "journal manifest rejected \(day)",
-                    healthReason: .journalRejectedDay(day: day, reasonCode: reasonCode),
-                    requestedPath: IngestProtocolV3.manifestPath
-                ))
-                return
-            case .segments:
-                do {
-                    let serverByKey = try await fetchReconciledDay(day)
-                    reconciledDays[day] = serverByKey
-                    progressContinuation.yield(.journalContactSucceeded)
-                } catch SyncReadError.held {
-                    progressContinuation.yield(.awaitingTunnel)
-                    return
-                } catch let SyncReadError.ingest(path, error) {
-                    let healthReason = observerHealthFailureReason(from: error)
-                    Logger.upload.info("Day \(day, privacy: .public) query failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
-                    progressContinuation.yield(.offline(
-                        error: error.localizedDescription,
-                        healthReason: healthReason,
-                        requestedPath: path
-                    ))
-                    return
-                } catch {
-                    let healthReason = observerHealthFailureReason(from: error)
-                    Logger.upload.info("Day \(day, privacy: .public) query failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
-                    progressContinuation.yield(.offline(
-                        error: error.localizedDescription,
-                        healthReason: healthReason,
-                        requestedPath: IngestProtocolV3.manifestDayPath(day)
-                    ))
-                    return
-                }
-            case nil:
-                // The manifest omits days with zero segments.
-                break
-            }
-
-            Logger.upload.info("Day \(day, privacy: .public): \(localCandidates.count, privacy: .public) local")
-
-            // Walk local segments newest to oldest (already sorted descending)
             for candidate in localCandidates {
                 let segmentURL = candidate.segmentURL
                 let (_, segment) = convertSegmentPath(segmentURL)
+                let address = SegmentAddress(fingerprint: context.fingerprint.value, day: day, segment: segment)
                 let metaState = readSegmentMetadata(segmentURL: segmentURL, segment: segment)
                 let filesToUpload = candidate.media
 
@@ -330,7 +333,7 @@ public actor SyncService {
                                 expectedMeta = [:]
                             }
                             if ack.payload.meta == expectedMeta {
-                                // Settled remnant: already acknowledged media deleted by cleanup
+                                // Settled remnant
                                 checked += 1
                                 progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
                                 continue
@@ -363,7 +366,22 @@ public actor SyncService {
                 )
 
                 if needsUpload {
+                    if self.segmentRemoved.contains(address) {
+                        Logger.upload.info("Segment \(segment, privacy: .public): skipped (segment_removed)")
+                        checked += 1
+                        progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
+                        continue
+                    }
+
+                    if let bound = self.segmentBounds[address], bound.quietUntil > self.now() {
+                        Logger.upload.info("Segment \(segment, privacy: .public): skipped (bound active)")
+                        checked += 1
+                        progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
+                        continue
+                    }
+
                     Logger.upload.info("Segment \(segment, privacy: .public) needs upload...")
+                    didPOST = true
                     let outcome = await uploadSegmentWithRetry(
                         segmentURL: segmentURL,
                         day: day,
@@ -372,16 +390,99 @@ public actor SyncService {
                         metadataState: metaState,
                         context: context
                     )
+
                     switch outcome {
                     case .succeeded:
-                        break
-                    case .failed(let error, let healthReason, let requestedPath):
-                        terminalUploadFailure = (error, healthReason, requestedPath)
+                        progressContinuation.yield(.journalContactSucceeded)
+                        hasYieldedContact = true
+
                     case .held:
                         progressContinuation.yield(.awaitingTunnel)
                         return
+
                     case .stopped:
                         return
+
+                    case .deviceScoped(let scope, let error):
+                        let healthReason: ObserverHealthFailureReason
+                        switch scope {
+                        case .revoked:
+                            healthReason = .pairingRevoked
+                        case .notServing:
+                            healthReason = .journalNotServing
+                        case .journalRefused(let reasonCode):
+                            healthReason = .journalRefused(reasonCode: reasonCode)
+                        }
+                        if case .journalRefused = scope {
+                            if let uploadErr = error as? UploadError, case .serverError(let s) = uploadErr, s.statusCode == 503 {
+                                // 503 does not set deviceQuietUntil
+                            } else {
+                                self.deviceQuietUntil = self.now().addingTimeInterval(3600)
+                            }
+                        } else {
+                            self.deviceQuietUntil = self.now().addingTimeInterval(3600)
+                        }
+                        progressContinuation.yield(.offline(
+                            error: error.localizedDescription,
+                            healthReason: healthReason,
+                            requestedPath: IngestProtocolV3.uploadPath
+                        ))
+                        return
+
+                    case .segmentScoped(let scope, let error):
+                        progressContinuation.yield(.journalContactSucceeded)
+                        hasYieldedContact = true
+                        let nowTime = self.now()
+                        switch scope {
+                        case .segmentRemoved:
+                            self.segmentRemoved.insert(address)
+                            Logger.upload.notice("Segment \(segment, privacy: .public) day=\(day, privacy: .public): segment_removed")
+                            progressContinuation.yield(.segmentKept(.segmentRemoved))
+
+                        case .receivedNotWritten:
+                            self.segmentBounds[address] = SegmentBound(
+                                kind: .receivedNotWritten,
+                                consecutive: 1,
+                                quietUntil: nowTime.addingTimeInterval(86400)
+                            )
+                            Logger.upload.info("Segment \(segment, privacy: .public) day=\(day, privacy: .public): disposition_received_not_written")
+
+                        case .deterministic(let status, let reasonCode):
+                            if let uploadErr = error as? UploadError, case .serverError(let s) = uploadErr, s.bodyStatus == "retryable" {
+                                let currentConsecutive = self.segmentBounds[address]?.consecutive ?? 0
+                                self.segmentBounds[address] = SegmentBound(
+                                    kind: .deterministic(status: status, reasonCode: reasonCode),
+                                    consecutive: currentConsecutive,
+                                    quietUntil: nowTime.addingTimeInterval(3600)
+                                )
+                            } else {
+                                var consecutive = 1
+                                if let existing = self.segmentBounds[address], existing.kind == .deterministic(status: status, reasonCode: reasonCode) {
+                                    consecutive = existing.consecutive + 1
+                                }
+                                let windowSecs: TimeInterval = consecutive >= 3 ? 86400 : 3600
+                                self.segmentBounds[address] = SegmentBound(
+                                    kind: .deterministic(status: status, reasonCode: reasonCode),
+                                    consecutive: consecutive,
+                                    quietUntil: nowTime.addingTimeInterval(windowSecs)
+                                )
+                            }
+                            let token = reasonCode.map { "http_\(status)_\($0)" } ?? "http_\(status)"
+                            Logger.upload.info("Segment \(segment, privacy: .public) day=\(day, privacy: .public): \(token, privacy: .public)")
+                        }
+
+                    case .transport(let error):
+                        let liveness = await self.readDayCached(day: today, serverURL: serverURL, client: client, cache: &passDayReads)
+                        switch liveness {
+                        case .success:
+                            if !hasYieldedContact {
+                                progressContinuation.yield(.journalContactSucceeded)
+                                hasYieldedContact = true
+                            }
+                        case .failure(let classification):
+                            handleProbeFailure(classification: classification, day: today, fallbackError: error)
+                            return
+                        }
                     }
                 }
 
@@ -390,6 +491,19 @@ public actor SyncService {
             }
         }
 
+        // Idle probe: if no POST was made and today was not read and discovery succeeded
+        if !didPOST && passDayReads[today] == nil && snapshot.failure == nil {
+            let probeResult = await self.readDayCached(day: today, serverURL: serverURL, client: client, cache: &passDayReads)
+            switch probeResult {
+            case .success:
+                progressContinuation.yield(.journalContactSucceeded)
+            case .failure(let classification):
+                handleProbeFailure(classification: classification, day: today)
+                return
+            }
+        }
+
+        // Discovery failure after walk
         if let failure = snapshot.failure {
             Logger.upload.info("Sync finished with discovery failure: \(failure.localizedDescription, privacy: .public)")
             progressContinuation.yield(.offline(
@@ -400,17 +514,15 @@ public actor SyncService {
             return
         }
 
-        guard await cleanupSyncedSegments(context: context, reconciledDays: reconciledDays, candidatesByDay: snapshot.candidatesByDay) else {
-            return
-        }
-
-        if let failure = terminalUploadFailure {
-            Logger.upload.info("Sync finished with upload failures: \(sanitizedObserverHealthErrorReason(failure.healthReason), privacy: .public)")
-            progressContinuation.yield(.offline(
-                error: failure.error,
-                healthReason: failure.healthReason,
-                requestedPath: failure.requestedPath
-            ))
+        // Storage cleanup
+        let cleanupOutcome = await cleanupSyncedSegments(
+            context: context,
+            serverURL: serverURL,
+            candidatesByDay: snapshot.candidatesByDay,
+            client: client,
+            cache: &passDayReads
+        )
+        guard cleanupOutcome == .finished else {
             return
         }
 
@@ -418,34 +530,61 @@ public actor SyncService {
         Logger.upload.info("Sync complete")
     }
 
-    // MARK: - File Comparison
-
-    private enum SyncReadError: Error {
-        case held
-        case ingest(path: String, underlying: Error)
-    }
-
-    private func fetchManifest() async throws -> IngestProtocolV3.Manifest {
-        let serverURL = try await resolvedServerURL()
-        return try await client.getManifest(serverURL: serverURL)
-    }
-
-    private func fetchReconciledDay(_ day: String) async throws -> [String: ServerSegmentInfo] {
-        let manifestURL = try await resolvedServerURL()
-        let manifestDay: IngestProtocolV3.ManifestDay
-        do {
-            manifestDay = try await client.getManifestDay(serverURL: manifestURL, day: day)
-        } catch {
-            throw SyncReadError.ingest(path: IngestProtocolV3.manifestDayPath(day), underlying: error)
+    private func handleProbeFailure(
+        classification: DayReadClass,
+        day: String,
+        fallbackError: Error? = nil
+    ) {
+        switch classification {
+        case .journalRejectedDay(let d, let reason):
+            progressContinuation.yield(.offline(
+                error: "journal rejected day \(d)",
+                healthReason: .journalRejectedDay(day: d, reasonCode: reason),
+                requestedPath: IngestProtocolV3.segmentsDayPath(d)
+            ))
+        case .notServing:
+            self.deviceQuietUntil = self.now().addingTimeInterval(3600)
+            progressContinuation.yield(.offline(
+                error: "not serving",
+                healthReason: .journalNotServing,
+                requestedPath: IngestProtocolV3.segmentsDayPath(day)
+            ))
+        case .journalRefused(let reason):
+            if reason == "pairing_identity_unavailable" || reason == "foreign_stream_binding" {
+                self.deviceQuietUntil = self.now().addingTimeInterval(3600)
+            }
+            progressContinuation.yield(.offline(
+                error: "journal refused",
+                healthReason: .journalRefused(reasonCode: reason),
+                requestedPath: IngestProtocolV3.segmentsDayPath(day)
+            ))
+        case .revoked:
+            self.deviceQuietUntil = self.now().addingTimeInterval(3600)
+            progressContinuation.yield(.offline(
+                error: "revoked",
+                healthReason: .pairingRevoked,
+                requestedPath: IngestProtocolV3.segmentsDayPath(day)
+            ))
+        case .undecoded:
+            progressContinuation.yield(.offline(
+                error: "undecoded response",
+                healthReason: .uploadInvalidResponse,
+                requestedPath: IngestProtocolV3.segmentsDayPath(day)
+            ))
+        case .listingFailed:
+            progressContinuation.yield(.offline(
+                error: fallbackError?.localizedDescription ?? "listing failed",
+                healthReason: .httpStatus(500),
+                requestedPath: IngestProtocolV3.segmentsDayPath(day)
+            ))
+        case .transport:
+            let healthReason = fallbackError.map { observerHealthFailureReason(from: $0) } ?? .uploadFailed
+            progressContinuation.yield(.offline(
+                error: fallbackError?.localizedDescription ?? "transport failure",
+                healthReason: healthReason,
+                requestedPath: IngestProtocolV3.segmentsDayPath(day)
+            ))
         }
-        let segmentsURL = try await resolvedServerURL()
-        let segmentsDay: IngestProtocolV3.SegmentsDay
-        do {
-            segmentsDay = try await client.getSegmentsDay(serverURL: segmentsURL, day: day)
-        } catch {
-            throw SyncReadError.ingest(path: IngestProtocolV3.segmentsDayPath(day), underlying: error)
-        }
-        return mergeServerDay(manifestDay: manifestDay, segmentsDay: segmentsDay)
     }
 
     private func resolvedServerURL() async throws -> String {
@@ -453,73 +592,11 @@ public actor SyncService {
         case .url(let resolved):
             return resolved
         case .held:
-            throw SyncReadError.held
+            throw UploadError.invalidResponse
         }
     }
 
-    /// Only file facts repeated identically by both v3 per-day reads can prove
-    /// a local file. Extra or changed remote files are ignored for proof rather
-    /// than preventing unrelated segments from reconciling.
-    private func mergeServerDay(
-        manifestDay: IngestProtocolV3.ManifestDay,
-        segmentsDay: IngestProtocolV3.SegmentsDay
-    ) -> [String: ServerSegmentInfo] {
-        let segmentsByKey = Dictionary(uniqueKeysWithValues: segmentsDay.items.map { ($0.key, $0) })
-        var result: [String: ServerSegmentInfo] = [:]
-
-        for key in segmentsByKey.keys where manifestDay.segments[key] == nil {
-            Logger.upload.info("v3 reconcile \(key, privacy: .public): \(sanitizedObserverHealthErrorReason(.uploadInvalidResponse), privacy: .public)")
-        }
-
-        for (key, manifestSegment) in manifestDay.segments {
-            guard let segment = segmentsByKey[key] else {
-                Logger.upload.info("v3 reconcile \(key, privacy: .public): \(sanitizedObserverHealthErrorReason(.uploadInvalidResponse), privacy: .public)")
-                continue
-            }
-            let manifestByName = Dictionary(uniqueKeysWithValues: manifestSegment.files.map { ($0.effectiveName, $0) })
-            let segmentsByName = Dictionary(uniqueKeysWithValues: segment.files.map { ($0.effectiveName, $0) })
-            var matchingFiles: [ServerFileInfo] = []
-            var hasDisagreement = false
-
-            for (name, manifestFile) in manifestByName {
-                guard let segmentFile = segmentsByName[name] else {
-                    hasDisagreement = true
-                    continue
-                }
-                guard manifestFile.name == segmentFile.name,
-                      manifestFile.sha256 == segmentFile.sha256,
-                      manifestFile.size == segmentFile.size,
-                      manifestFile.status == segmentFile.status else {
-                    hasDisagreement = true
-                    continue
-                }
-                matchingFiles.append(ServerFileInfo(
-                    name: manifestFile.name,
-                    submittedName: manifestFile.effectiveName,
-                    sha256: manifestFile.sha256,
-                    size: manifestFile.size,
-                    status: manifestFile.status
-                ))
-            }
-            if manifestByName.count != segmentsByName.count {
-                hasDisagreement = true
-            }
-            if hasDisagreement {
-                Logger.upload.info("v3 reconcile \(key, privacy: .public): \(sanitizedObserverHealthErrorReason(.uploadInvalidResponse), privacy: .public)")
-            }
-
-            let serverSegment = ServerSegmentInfo(
-                key: key,
-                originalKey: segment.originalKey,
-                files: matchingFiles
-            )
-            result[key] = serverSegment
-            if let originalKey = segment.originalKey {
-                result[originalKey] = serverSegment
-            }
-        }
-        return result
-    }
+    // MARK: - File Comparison
 
     /// Check if a segment needs upload by checking durable acknowledgment sidecar.
     /// Without a usable acknowledgment covering local files and metadata for the
@@ -580,10 +657,9 @@ public actor SyncService {
         context: JournalUploadContext
     ) async -> UploadRetryOutcome {
         guard metadataState != .unreadable else {
-            return .failed(
-                error: "Unreadable metadata",
-                healthReason: .uploadFailed,
-                requestedPath: IngestProtocolV3.uploadPath
+            return .segmentScoped(
+                .deterministic(status: 400, reasonCode: "unreadable_metadata"),
+                UploadError.invalidResponse
             )
         }
 
@@ -616,18 +692,12 @@ public actor SyncService {
                 healthReason: healthReason,
                 requestedPath: IngestProtocolV3.uploadPath
             ))
-            return .failed(
-                error: error.localizedDescription,
-                healthReason: healthReason,
-                requestedPath: IngestProtocolV3.uploadPath
-            )
+            return .transport(error)
         }
 
         var attempts = 0
 
         while attempts < maxAttemptsPerPass {
-            // Capture before the attempt's first suspension so a later reconfigure
-            // cannot relabel this attempt's bytes.
             guard !syncPaused, let attemptContext = journalContext, attemptContext == context else {
                 return failClosedForConfigChange(segment: segment)
             }
@@ -640,17 +710,12 @@ public actor SyncService {
                 return .held
             }
 
-            // Resolution suspended; a reconfigure must not proceed to POST.
             guard !syncPaused, journalContext == attemptContext else {
                 return failClosedForConfigChange(segment: segment)
             }
 
             guard let uploadURL = URL(string: "\(serverURL)\(IngestProtocolV3.uploadPath)") else {
-                return .failed(
-                    error: "Invalid upload URL",
-                    healthReason: .uploadInvalidURL,
-                    requestedPath: IngestProtocolV3.uploadPath
-                )
+                return .transport(UploadError.invalidURL)
             }
             prepared.request.url = uploadURL
 
@@ -664,8 +729,6 @@ public actor SyncService {
 
             let result = await client.uploadStaged(prepared: prepared)
 
-            // Revalidate before sidecar persist or success event; remaining retries
-            // belong to a journal that is gone.
             guard !syncPaused, journalContext == attemptContext else {
                 return failClosedForConfigChange(segment: segment)
             }
@@ -681,7 +744,8 @@ public actor SyncService {
                         sha256: descriptor.sha256,
                         size: descriptor.size,
                         written: descriptor.written,
-                        localVersion: stagedByName[descriptor.submitted]?.localVersion
+                        localVersion: stagedByName[descriptor.submitted]?.localVersion,
+                        disposition: descriptor.disposition
                     )
                 }
                 let newPayload = IngestAcknowledgmentPayload(files: acknowledgedFiles, meta: info.response.meta)
@@ -707,11 +771,7 @@ public actor SyncService {
                         healthReason: .uploadFailed,
                         requestedPath: IngestProtocolV3.uploadPath
                     ))
-                    return .failed(
-                        error: "Ingest acknowledgment persistence failed: \(error.localizedDescription)",
-                        healthReason: .uploadFailed,
-                        requestedPath: IngestProtocolV3.uploadPath
-                    )
+                    return .transport(error)
                 }
 
                 progressContinuation.yield(.uploadSucceeded(
@@ -719,41 +779,46 @@ public actor SyncService {
                     journalFingerprint: attemptContext.fingerprint.value
                 ))
                 return .succeeded
+
             case .failure(let error):
-                let healthReason = observerHealthFailureReason(from: error)
-                Logger.upload.info("Attempt \(attempts, privacy: .public) failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
+                let classification = classifyUpload(error)
+                switch classification {
+                case .deviceScoped(let scope):
+                    Logger.upload.info("Upload attempt failed (device-scoped): \(sanitizedObserverHealthErrorReason(observerHealthFailureReason(from: error)), privacy: .public)")
+                    return .deviceScoped(scope, error)
 
-                if attempts >= maxAttemptsPerPass {
-                    progressContinuation.yield(.uploadFailed(
-                        segment: segment,
-                        error: error.localizedDescription,
-                        healthReason: healthReason,
-                        requestedPath: IngestProtocolV3.uploadPath
-                    ))
-                    return .failed(
-                        error: error.localizedDescription,
-                        healthReason: healthReason,
-                        requestedPath: IngestProtocolV3.uploadPath
-                    )
+                case .segmentScoped(let scope):
+                    Logger.upload.info("Upload attempt failed (segment-scoped): \(sanitizedObserverHealthErrorReason(observerHealthFailureReason(from: error)), privacy: .public)")
+                    return .segmentScoped(scope, error)
+
+                case .transport:
+                    let healthReason = observerHealthFailureReason(from: error)
+                    Logger.upload.info("Attempt \(attempts, privacy: .public) failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
+
+                    if attempts >= maxAttemptsPerPass {
+                        progressContinuation.yield(.uploadFailed(
+                            segment: segment,
+                            error: error.localizedDescription,
+                            healthReason: healthReason,
+                            requestedPath: IngestProtocolV3.uploadPath
+                        ))
+                        return .transport(error)
+                    }
+
+                    let delay: TimeInterval
+                    if attempts <= retryDelays.count {
+                        delay = retryDelays[attempts - 1]
+                    } else {
+                        delay = 300
+                    }
+
+                    Logger.upload.info("Retrying in \(Int(delay), privacy: .public)s...")
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 }
-
-                // Calculate delay with exponential backoff
-                let delay: TimeInterval
-                if attempts <= retryDelays.count {
-                    delay = retryDelays[attempts - 1]
-                } else {
-                    delay = 300  // 5 minutes
-                }
-
-                Logger.upload.info("Retrying in \(Int(delay), privacy: .public)s...")
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
         }
-        return .failed(
-            error: "retry exhausted",
-            healthReason: .uploadFailed,
-            requestedPath: IngestProtocolV3.uploadPath
-        )
+
+        return .transport(UploadError.invalidResponse)
     }
 
     private func failClosedForConfigChange(segment: String) -> UploadRetryOutcome {
@@ -865,7 +930,6 @@ public actor SyncService {
             }
 
             if !candidatesForDay.isEmpty {
-                // Sort segments newest to oldest (descending by path/name)
                 candidatesByDay[day] = candidatesForDay.sorted { $0.segmentURL.path > $1.segmentURL.path }
             }
         }
@@ -901,99 +965,179 @@ public actor SyncService {
 
     // MARK: - Storage Cleanup
 
+    private enum CleanupOutcome {
+        case finished
+        case stoppedForConfigChange
+        case deviceScopedError
+    }
+
     /// Delete media files from acknowledged segments older than cacheRetentionDays.
-    /// Safety gates: (1) age check, (2) server reachable, (3) usable acknowledgment sidecar, (4) per-file server hold proof.
-    /// Never deletes sidecars, metadata, source audio, or segment/date directories.
     private func cleanupSyncedSegments(
         context: JournalUploadContext,
-        reconciledDays: [String: [String: ServerSegmentInfo]],
-        candidatesByDay: [String: [DiscoveredCandidate]]
-    ) async -> Bool {
+        serverURL: String,
+        candidatesByDay: [String: [DiscoveredCandidate]],
+        client: UploadClient,
+        cache: inout [String: Result<IngestProtocolV3.SegmentsDay, DayReadClass>]
+    ) async -> CleanupOutcome {
         guard cacheRetentionDays >= 0 else {
             Logger.upload.info("Cache retention: keep forever, skipping cleanup")
-            return true
+            return .finished
         }
 
-        guard !candidatesByDay.isEmpty else { return true }
+        guard !candidatesByDay.isEmpty else { return .finished }
 
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyyMMdd"
-
-        // Reuse only reads from this sync. A prior sync's response never proves
-        // custody after the journal may have changed.
-        var serverSegmentsCache = reconciledDays
+        let calendar = IngestDayKey.calendar
+        let todayDate = IngestDayKey.startOfDay(self.now())
 
         for (day, candidates) in candidatesByDay.sorted(by: { $0.key < $1.key }) {
             // Gate 1: age check
-            guard let dayDate = dateFormatter.date(from: day) else {
+            guard let dayDate = IngestDayKey.startOfDay(dayKey: day) else {
                 Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - cannot parse date")
                 continue
             }
-            let age = calendar.dateComponents([.day], from: calendar.startOfDay(for: dayDate), to: today).day ?? 0
+            let age = calendar.dateComponents([.day], from: dayDate, to: todayDate).day ?? 0
             guard cacheRetentionDays == 0 || age > cacheRetentionDays else {
                 Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - within retention window (\(age, privacy: .public)d <= \(self.cacheRetentionDays, privacy: .public)d)")
                 continue
             }
 
-            // Gate 2: server must be reachable and return segment data
-            if serverSegmentsCache[day] == nil {
-                do {
-                    guard !syncPaused, journalContext == context else {
-                        return false
-                    }
-                    serverSegmentsCache[day] = try await fetchReconciledDay(day)
-                } catch SyncReadError.held {
-                    progressContinuation.yield(.awaitingTunnel)
-                    return false
-                } catch {
-                    Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - server query failed: \(error.localizedDescription, privacy: .public)")
-                    continue
-                }
+            let dayAddress = DayAddress(fingerprint: context.fingerprint.value, day: day)
+            if let throttle = self.dayListingThrottle[dayAddress], throttle > self.now() {
+                Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - dayListingThrottle active")
+                continue
             }
-            guard !syncPaused, journalContext == context else { return false }
-            let serverByKey = serverSegmentsCache[day] ?? [:]
 
-            // Gate 3 & 4: per-segment acknowledgment and per-file proof
+            // Pre-filter eligible segments on this day
+            var eligibleCandidates: [(candidate: DiscoveredCandidate, segment: String, ack: IngestAcknowledgment)] = []
             for candidate in candidates {
                 let segmentURL = candidate.segmentURL
                 let (_, segment) = convertSegmentPath(segmentURL)
+                let address = SegmentAddress(fingerprint: context.fingerprint.value, day: day, segment: segment)
+
+                if self.segmentRemoved.contains(address) {
+                    continue
+                }
+                if let throttle = self.keepThrottle[address], throttle > self.now() {
+                    continue
+                }
 
                 let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
                 guard let ack = IngestAcknowledgmentStore.read(from: ackURL),
                       ack.journalFingerprint == context.fingerprint.value,
                       ack.day == day,
                       ack.submittedSegment == segment else {
-                    Logger.upload.info("Cleanup: skipping \(segment, privacy: .public) - no usable acknowledgment for current journal")
                     continue
                 }
 
                 let metadataState = readSegmentMetadata(segmentURL: segmentURL, segment: segment)
                 let localMedia = candidate.media
                 guard metadataState != .unreadable,
+                      !localMedia.isEmpty,
                       !segmentNeedsUpload(
                         segmentURL: segmentURL, day: day, segment: segment,
                         filesToUpload: localMedia, metadataState: metadataState, context: context
                       ) else {
                     continue
                 }
-                let localNames = Set(localMedia.map(\.lastPathComponent))
 
-                guard let serverSegment = serverByKey[ack.storedSegmentKey] else {
+                eligibleCandidates.append((candidate, segment, ack))
+            }
+
+            guard !eligibleCandidates.isEmpty else {
+                continue
+            }
+
+            // Query day listing
+            guard !syncPaused, journalContext == context else { return .stoppedForConfigChange }
+            let dayResult = await self.readDayCached(day: day, serverURL: serverURL, client: client, cache: &cache)
+
+            let segmentsDay: IngestProtocolV3.SegmentsDay
+            switch dayResult {
+            case .success(let s):
+                segmentsDay = s
+            case .failure(let classification):
+                switch classification {
+                case .transport:
+                    // A cleanup transport failure records no throttle, deletes nothing further, stops the rest of cleanup, and does not end the pass.
+                    Logger.upload.info("Cleanup: transport failure reading day \(day, privacy: .public), stopping cleanup for this pass")
+                    return .finished
+                case .notServing:
+                    self.deviceQuietUntil = self.now().addingTimeInterval(3600)
+                    progressContinuation.yield(.offline(
+                        error: "not serving",
+                        healthReason: .journalNotServing,
+                        requestedPath: IngestProtocolV3.segmentsDayPath(day)
+                    ))
+                    return .deviceScopedError
+                case .revoked:
+                    self.deviceQuietUntil = self.now().addingTimeInterval(3600)
+                    progressContinuation.yield(.offline(
+                        error: "revoked",
+                        healthReason: .pairingRevoked,
+                        requestedPath: IngestProtocolV3.segmentsDayPath(day)
+                    ))
+                    return .deviceScopedError
+                case .journalRefused(let reason):
+                    if reason == "pairing_identity_unavailable" || reason == "foreign_stream_binding" {
+                        self.deviceQuietUntil = self.now().addingTimeInterval(3600)
+                    }
+                    progressContinuation.yield(.offline(
+                        error: "journal refused",
+                        healthReason: .journalRefused(reasonCode: reason),
+                        requestedPath: IngestProtocolV3.segmentsDayPath(day)
+                    ))
+                    return .deviceScopedError
+                case .listingFailed, .undecoded, .journalRejectedDay:
+                    self.dayListingThrottle[dayAddress] = self.now().addingTimeInterval(86400)
+                    for _ in eligibleCandidates {
+                        progressContinuation.yield(.segmentKept(.listingFailed))
+                    }
+                    continue
+                }
+            }
+
+            let segmentsByKey = Dictionary(uniqueKeysWithValues: segmentsDay.items.map { ($0.key, $0) })
+
+            for (candidate, segment, ack) in eligibleCandidates {
+                guard !syncPaused, journalContext == context else { return .stoppedForConfigChange }
+                let segmentURL = candidate.segmentURL
+                let address = SegmentAddress(fingerprint: context.fingerprint.value, day: day, segment: segment)
+
+                guard let serverSegment = segmentsByKey[ack.storedSegmentKey] else {
                     Logger.upload.info("Cleanup: keeping \(segment, privacy: .public) - stored segment key \(ack.storedSegmentKey, privacy: .public) not found on server")
+                    self.keepThrottle[address] = self.now().addingTimeInterval(86400)
+                    progressContinuation.yield(.segmentKept(.unproven))
                     continue
                 }
 
+                let localMedia = candidate.media
+                let localNames = Set(localMedia.map(\.lastPathComponent))
+
+                // Pre-check dispositions across all ack files before any hashing:
+                let hasInvalidDisposition = ack.payload.files.contains { fileProof in
+                    if let disp = fileProof.disposition, disp != .written && disp != .alreadyHeld {
+                        return true
+                    }
+                    return false
+                }
+                if hasInvalidDisposition {
+                    self.keepThrottle[address] = self.now().addingTimeInterval(86400)
+                    progressContinuation.yield(.segmentKept(.unproven))
+                    continue
+                }
+
+                var allFilesProven = true
+
                 for fileProof in ack.payload.files {
-                    guard localNames.contains(fileProof.submitted),
-                          !fileProof.submitted.isEmpty,
+                    guard localNames.contains(fileProof.submitted) else { continue }
+
+                    guard !fileProof.submitted.isEmpty,
                           !fileProof.submitted.contains("/"),
                           fileProof.submitted != ".",
                           fileProof.submitted != "..",
                           (fileProof.submitted as NSString).lastPathComponent == fileProof.submitted else {
-                        continue
+                        allFilesProven = false
+                        break
                     }
 
                     let targetURL = segmentURL.appendingPathComponent(fileProof.submitted)
@@ -1002,24 +1146,38 @@ public actor SyncService {
                           values.isRegularFile == true,
                           let size = values.fileSize,
                           UInt64(size) == fileProof.size else {
-                        continue
+                        allFilesProven = false
+                        break
                     }
 
                     guard let localSHA = client.sha256(of: targetURL),
                           localSHA == fileProof.sha256 else {
-                        continue
+                        allFilesProven = false
+                        break
                     }
 
                     guard let serverFile = serverSegment.files.first(where: {
-                        ($0.submittedName.isEmpty ? $0.name : $0.submittedName) == fileProof.written
+                        $0.name == fileProof.written
                     }),
                           serverFile.sha256 == fileProof.sha256,
                           serverFile.size == fileProof.size,
                           serverFile.status.provesHold else {
-                        Logger.upload.info("Cleanup: keeping file \(fileProof.submitted, privacy: .public) - server hold not proved")
-                        continue
+                        allFilesProven = false
+                        break
                     }
+                }
 
+                if !allFilesProven {
+                    self.keepThrottle[address] = self.now().addingTimeInterval(86400)
+                    progressContinuation.yield(.segmentKept(.unproven))
+                    continue
+                }
+
+                // Delete proven media files
+                for fileProof in ack.payload.files {
+                    guard localNames.contains(fileProof.submitted) else { continue }
+                    let targetURL = segmentURL.appendingPathComponent(fileProof.submitted)
+                    guard !syncPaused, journalContext == context else { return .stoppedForConfigChange }
                     do {
                         try removeItem(targetURL)
                         Logger.upload.info("Cleanup: deleted media file \(fileProof.submitted, privacy: .public) from \(segment, privacy: .public)")
@@ -1029,7 +1187,7 @@ public actor SyncService {
                 }
             }
         }
-        return true
+        return .finished
     }
 
 #if DEBUG
@@ -1056,27 +1214,34 @@ public actor SyncService {
             throw UploadError.invalidResponse
         }
 
-        let serverByKey = try await fetchReconciledDay(day)
+        let serverURL = try await resolvedServerURL()
+        let segmentsDay = try await client.getSegmentsDay(serverURL: serverURL, day: day)
         let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
         guard !syncPaused, journalContext == context,
               let ack = IngestAcknowledgmentStore.read(from: ackURL),
               ack.journalFingerprint == context.fingerprint.value,
               ack.day == day, ack.submittedSegment == segment,
-              let serverSegment = serverByKey[ack.storedSegmentKey] else {
+              let serverSegment = segmentsDay.items.first(where: { $0.key == ack.storedSegmentKey }) else {
             throw UploadError.invalidResponse
         }
         for proof in ack.payload.files {
-            guard let remote = serverSegment.files.first(where: { $0.submittedName == proof.written }),
+            guard let remote = serverSegment.files.first(where: { $0.name == proof.written }),
                   remote.sha256 == proof.sha256, remote.size == proof.size, remote.status.provesHold,
                   client.sha256(of: segmentURL.appendingPathComponent(proof.submitted)) == proof.sha256 else {
                 throw UploadError.invalidResponse
             }
         }
         guard let proof = ack.payload.files.first,
-              let file = serverSegment.files.first(where: { $0.submittedName == proof.written }) else {
+              let readFile = serverSegment.files.first(where: { $0.name == proof.written }) else {
             throw UploadError.invalidResponse
         }
-        return file
+        return ServerFileInfo(
+            name: readFile.name,
+            submittedName: readFile.submittedName ?? readFile.name,
+            sha256: readFile.sha256,
+            size: readFile.size,
+            status: readFile.status
+        )
     }
 
     private func selectFilesForUploadLive(segmentDirectory: URL) -> [URL] {
@@ -1098,4 +1263,26 @@ public actor SyncService {
         return result
     }
 #endif
+
+    private func readDayCached(
+        day: String,
+        serverURL: String,
+        client: UploadClient,
+        cache: inout [String: Result<IngestProtocolV3.SegmentsDay, DayReadClass>]
+    ) async -> Result<IngestProtocolV3.SegmentsDay, DayReadClass> {
+        if let cached = cache[day] {
+            return cached
+        }
+        do {
+            let segments = try await client.getSegmentsDay(serverURL: serverURL, day: day)
+            let res = Result<IngestProtocolV3.SegmentsDay, DayReadClass>.success(segments)
+            cache[day] = res
+            return res
+        } catch {
+            let classification = classifyDayRead(error, day: day)
+            let res = Result<IngestProtocolV3.SegmentsDay, DayReadClass>.failure(classification)
+            cache[day] = res
+            return res
+        }
+    }
 }
