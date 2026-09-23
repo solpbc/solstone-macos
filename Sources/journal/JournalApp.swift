@@ -213,14 +213,9 @@ private struct JournalWindowSceneRoot: View {
     @Bindable var updateController: UpdateController
     @Environment(\.openWindow) private var openWindow
 
+    // The window takes the owner's system appearance; nothing here sets it (the sun arc's
+    // 2026-09-23 amendment retired the clock-driven `.preferredColorScheme`).
     var body: some View {
-        TimelineView(.everyMinute) { context in
-            content
-                .preferredColorScheme(SunArcBackgroundView.appearance(at: context.date).isDark ? .dark : .light)
-        }
-    }
-
-    private var content: some View {
         Group {
             if firstRunModel.route == .home {
                 ZStack(alignment: .top) {

@@ -89,6 +89,61 @@ struct JournalSnapshotTests {
         try await renderFirstRunAdoptLanding()
     }
 
+    /// The sun arc in both appearances at the spec's five check times (Denver 2026-09-23:
+    /// 13:00, 19:41 = dusk + 15, 22:00, 01:00 true dark, 05:30 before dawn), for review next to
+    /// `cmo/brand/sbis/patterns/sun-arc/appearances/board.html`. Each frame is rendered in the
+    /// window appearance the owner's system would give it (`NSAppearance` on the host, no
+    /// SwiftUI override), bare and under the two surfaces the window shows.
+    @Test func sunArcAppearanceMatrix() async throws {
+        let denver = TimeZone(identifier: "America/Denver")!
+        let times: [(label: String, epoch: TimeInterval)] = [
+            ("1300", 1_790_190_000), ("1941", 1_790_214_060), ("2200", 1_790_222_400),
+            ("0100", 1_790_146_800), ("0530", 1_790_163_000)
+        ]
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
+            for time in times {
+                let date = Date(timeIntervalSince1970: time.epoch)
+                let background = SunArcBackgroundView(fixedDate: date, timeZone: denver)
+                try await render(
+                    background.frame(width: size.width, height: size.height),
+                    size: size,
+                    appearance: appearance,
+                    validateContent: false,
+                    to: "journal-sunarc-\(name)-\(time.label)-bare.png"
+                )
+
+                let fixture = try makeConfiguredFixture()
+                let supervisor = JournalSupervisor()
+                supervisor.applyRuntimeStatus(.stoppedByUser)
+                let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
+                model.selectedPane = .home
+                try await render(
+                    ZStack {
+                        background
+                        JournalSettingsWindow(model: model, updateController: makeUpdateController(), openURL: { _ in true })
+                    }
+                    .frame(width: size.width, height: size.height),
+                    size: size,
+                    appearance: appearance,
+                    to: "journal-sunarc-\(name)-\(time.label)-home.png"
+                )
+
+                let firstRun = makeModel(startResults: [], probeResults: [])
+                firstRun.model.route = .ritual(.nameLocation)
+                try await render(
+                    ZStack {
+                        background
+                        JournalFirstRunView(model: firstRun.model)
+                    }
+                    .frame(width: size.width, height: size.height),
+                    size: size,
+                    appearance: appearance,
+                    to: "journal-sunarc-\(name)-\(time.label)-first-run.png"
+                )
+            }
+        }
+    }
+
     private func renderHomeConfiguredRunning() async throws {
         let supervisor = try await runningSupervisor()
         let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample, name: "home base")
@@ -384,8 +439,17 @@ struct JournalSnapshotTests {
         ) { _, _ in nil }
     }
 
-    private func render<V: View>(_ view: V, size: CGSize, to filename: String) async throws {
+    /// `validateContent: false` is for a frame that is legitimately uniform (the bare sun arc in
+    /// true dark is one ground colour and nothing else).
+    private func render<V: View>(
+        _ view: V,
+        size: CGSize,
+        appearance: NSAppearance.Name? = nil,
+        validateContent: Bool = true,
+        to filename: String
+    ) async throws {
         let hostingView = NSHostingView(rootView: view)
+        if let appearance { hostingView.appearance = NSAppearance(named: appearance) }
         hostingView.frame = NSRect(origin: .zero, size: size)
         hostingView.layoutSubtreeIfNeeded()
 
@@ -405,7 +469,7 @@ struct JournalSnapshotTests {
         let height = bitmapRep.pixelsHigh
 
         let bitmap: SnapshotBitmap?
-        if let bitmapData = bitmapRep.bitmapData {
+        if validateContent, let bitmapData = bitmapRep.bitmapData {
             bitmap = SnapshotBitmap(
                 bytes: Array(UnsafeBufferPointer(start: bitmapData, count: bytesPerRow * height)),
                 bytesPerPixel: bytesPerPixel,

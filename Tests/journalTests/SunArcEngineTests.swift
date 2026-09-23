@@ -62,44 +62,59 @@ struct SunArcEngineTests {
         #expect(abs(degrees - 36.0) < 0.1)
     }
 
-    @Test func peakOpacityIsPointFiveFiveAndZeroOutsideTheDay() {
-        // § 12: "Opacity 0.55 at the plateau; 0 outside the day."
+    @Test func peakOpacityIsPointFiveFiveOnLightPointTwoOnDarkAndZeroOutsideTheDay() {
+        // § 12: "Opacity 0.55 at the plateau on a light ground and 0.20 on a dark ground; 0
+        // outside the day."
         #expect(SunArc.peakOpacity == 0.55)
-        let plateauEnvelope = SunArcEnvelope.value(at: 0.5)
-        #expect(plateauEnvelope == 1)
-        let midday = SunArcTime.compute(minutes: 12 * 60, riseMinutes: 6 * 60 + 30, setMinutes: 19 * 60 + 30)
-        #expect(abs(midday.night) < 0.0001)
-        let opacityAtMidday = SunArc.peakOpacity * plateauEnvelope * (1 - midday.night)
-        #expect(abs(opacityAtMidday - 0.55) < 0.001)
-
-        let deepNight = SunArcTime.compute(minutes: 2 * 60, riseMinutes: 6 * 60 + 30, setMinutes: 19 * 60 + 30)
-        #expect(deepNight.night == 1)
+        #expect(SunArc.peakOpacityDark == 0.20)
+        let rise = 6.0 * 60 + 30, set = 19.0 * 60 + 30
+        let light = SunArcFrame.compute(size: Self.size, minutes: 13 * 60, riseMinutes: rise, setMinutes: set, appearance: .light)
+        let dark = SunArcFrame.compute(size: Self.size, minutes: 13 * 60, riseMinutes: rise, setMinutes: set, appearance: .dark)
+        #expect(light.envelope == 1)
+        #expect(abs(light.sunOpacity - 0.55) < 0.0001)
+        #expect(abs(dark.sunOpacity - 0.20) < 0.0001)
+        for appearance in SunArcAppearance.allCases {
+            let night = SunArcFrame.compute(size: Self.size, minutes: 2 * 60, riseMinutes: rise, setMinutes: set, appearance: appearance)
+            #expect(night.time.night == 1)
+            #expect(night.sunOpacity == 0)
+            #expect(night.halo == nil)
+        }
     }
 
-    @Test func nightGroundOnSurfaceCreamMatchesTheLockedToken() {
-        // § 12: "ground #2E241C-class at night on cream." — and this exact value is already
-        // landed in vpx/design-system/web/tokens.css (--sunarc-night-ground) and tokens.md.
-        let ground = SunArcGround.nightGround(dayGroundHex: SunArc.surfaceCreamHex)
-        #expect(ground == "#2E241C")
-        #expect(SunArcOKLab.lightness(ofHex: ground) < 0.28)
+    @Test func theSixGroundsAreTheSpecsTable() {
+        // § 6 / tokens.md: sunarc.ground-light-* and sunarc.ground-dark-*.
+        #expect(SunArcAppearance.light.grounds.day == "#FEFCF8")
+        #expect(SunArcAppearance.light.grounds.night == "#E9DECC")
+        #expect(SunArcAppearance.light.grounds.trueDark == "#D7C9B0")
+        #expect(SunArcAppearance.dark.grounds.day == "#392E26")
+        #expect(SunArcAppearance.dark.grounds.night == "#2E241C")
+        #expect(SunArcAppearance.dark.grounds.trueDark == "#281E17")
     }
 
-    @Test func appearanceFlipsAtGroundLightnessOneHalf() {
-        // § 12: "Appearance flips at the ground's L = 0.5, once per twilight."
-        #expect(SunArcGround.isDark(groundHex: SunArc.surfaceCreamHex) == false)
-        let nightGround = SunArcGround.nightGround(dayGroundHex: SunArc.surfaceCreamHex)
-        #expect(SunArcGround.isDark(groundHex: nightGround) == true)
+    @Test func contentNeverFlipsEveryLightGroundIsLightAndEveryDarkGroundIsDark() {
+        // § 6: "every light ground sits above L 0.5 and every dark ground below it, so content
+        // never flips" — checked at every minute of a Denver day, both appearances.
+        let rise = 408.25991130150896, set = 1135.6484964224096
+        for m in 0..<1440 {
+            let light = SunArcFrame.compute(size: Self.size, minutes: Double(m), riseMinutes: rise, setMinutes: set, appearance: .light)
+            let dark = SunArcFrame.compute(size: Self.size, minutes: Double(m), riseMinutes: rise, setMinutes: set, appearance: .dark)
+            #expect(SunArcOKLab.lightness(ofHex: light.groundHex) > 0.5, "light ground at minute \(m)")
+            #expect(SunArcOKLab.lightness(ofHex: dark.groundHex) < 0.5, "dark ground at minute \(m)")
+        }
     }
 
-    @Test func glowNeverFullyDisappearsAtNight() {
-        // § 12: "The glow sits at B after dusk and at A before dawn; it never vanishes at night."
-        let placement = SunArcPlacement(size: Self.size, tipRadius: Self.tipRadius)
-        let midnight = SunArcTime.compute(minutes: 2 * 60, riseMinutes: 6 * 60 + 30, setMinutes: 19 * 60 + 30)
-        let glow = SunArcGlow.compute(time: midnight, sunPosition: placement.position(at: 0), envelope: 0, onVisible: false, placement: placement)
-        #expect(glow.alpha >= SunArc.glowNightFloor - 0.0001)
-
-        let glowRadius = SunArc.phi * Self.tipRadius
-        #expect(abs(glowRadius - 654.4947484493325) / glowRadius < 0.01)
+    @Test func insideTheTrueDarkWindowThereIsNoGlowAndTheTrueDarkGround() {
+        // § 12: "Inside the true-dark window no glow is drawn and the ground is the true-dark
+        // ground." The 09-19 floor of 0.12 is retired.
+        let rise = 408.25991130150896, set = 1135.6484964224096
+        for appearance in SunArcAppearance.allCases {
+            let frame = SunArcFrame.compute(size: Self.size, minutes: 60, riseMinutes: rise, setMinutes: set, appearance: appearance)
+            #expect(frame.twilight.phase == .trueDark)
+            #expect(frame.twilight.w == 0)
+            #expect(frame.twilightGlow == nil)
+            #expect(frame.halo == nil)
+            #expect(frame.groundHex == appearance.grounds.trueDark)
+        }
     }
 
     @Test func positionUpdatesAtMostOnceAMinuteByConstruction() {
@@ -295,5 +310,177 @@ struct SunArcSolarTests {
         let denverTime = SunArcTime.compute(minutes: 12 * 60, riseMinutes: denverPair.riseMinutes, setMinutes: denverPair.setMinutes)
         let tokyoTime = SunArcTime.compute(minutes: 12 * 60, riseMinutes: tokyoPair.riseMinutes, setMinutes: tokyoPair.setMinutes)
         #expect(abs(denverTime.t - tokyoTime.t) > 0.001)
+    }
+}
+
+/// § 4a's worked-numbers table — `SUNARC.both()` in `sunarc.js`, Denver 2026-09-23 (rise 06:48,
+/// set 18:56 as the reference's own `sunTimes` computes them, to full precision), iphone
+/// 393 × 852, both appearances. Tolerances: ± 1 per channel on colours (§ 12), ± 0.001 on
+/// alphas, ± 0.5 px on positions. The glow values beyond the printed table (full-precision
+/// centres, the 720 × 500 frame, the window edges) come from the same function, run with node.
+@Suite("SunArc both appearances — § 4a worked numbers")
+struct SunArcBothAppearancesTests {
+    static let iphone = CGSize(width: 393, height: 852)
+    static let mac = CGSize(width: 720, height: 500)
+    static let rise = 408.25991130150896
+    static let set = 1135.6484964224096
+
+    struct Row {
+        let minutes: Double
+        let appearance: SunArcAppearance
+        let ground: String
+        let sunAlpha: Double
+        let w: Double
+        let phase: SunArcTwilight.Phase
+        /// centre x, centre y, alpha, colour — nil when no twilight glow is drawn.
+        let glow: (x: Double, y: Double, a: Double, color: String)?
+    }
+
+    static let rows: [Row] = [
+        Row(minutes: 780, appearance: .light, ground: "#FEFCF8", sunAlpha: 0.550, w: 0, phase: .day, glow: nil),
+        Row(minutes: 780, appearance: .dark, ground: "#392E26", sunAlpha: 0.200, w: 0, phase: .day, glow: nil),
+        Row(minutes: 1136, appearance: .light, ground: "#FEFCF7", sunAlpha: 0.1444, w: 0.7344, phase: .day, glow: (601.86, 1019.65, 0.6977, "#FFE296")),
+        Row(minutes: 1136, appearance: .dark, ground: "#392E26", sunAlpha: 0.0525, w: 0.7344, phase: .day, glow: (601.86, 1019.65, 0.4553, "#F9BA36")),
+        Row(minutes: 1181, appearance: .light, ground: "#E9DECC", sunAlpha: 0, w: 0.9937, phase: .evening, glow: (620.44, 1086.72, 0.9440, "#FFE294")),
+        Row(minutes: 1181, appearance: .dark, ground: "#2E241C", sunAlpha: 0, w: 0.9937, phase: .evening, glow: (620.44, 1086.72, 0.6161, "#F8B836")),
+        Row(minutes: 1320, appearance: .light, ground: "#DFD2BC", sunAlpha: 0, w: 0.4341, phase: .evening, glow: (642.28, 1176.83, 0.4124, "#FFDC7F")),
+        Row(minutes: 1320, appearance: .dark, ground: "#2B2119", sunAlpha: 0, w: 0.4341, phase: .evening, glow: (642.28, 1176.83, 0.2692, "#F1A739")),
+        Row(minutes: 60, appearance: .light, ground: "#D7C9B0", sunAlpha: 0, w: 0, phase: .trueDark, glow: nil),
+        Row(minutes: 60, appearance: .dark, ground: "#281E17", sunAlpha: 0, w: 0, phase: .trueDark, glow: nil),
+        Row(minutes: 330, appearance: .light, ground: "#E8DDCA", sunAlpha: 0, w: 0.9381, phase: .beforeDawn, glow: (-249.94, -244.96, 0.8912, "#FFE08F")),
+        Row(minutes: 330, appearance: .dark, ground: "#2E241C", sunAlpha: 0, w: 0.9381, phase: .beforeDawn, glow: (-249.94, -244.96, 0.5816, "#F6B437")),
+    ]
+
+    static func frame(_ minutes: Double, _ appearance: SunArcAppearance, size: CGSize = iphone) -> SunArcFrame {
+        SunArcFrame.compute(size: size, minutes: minutes, riseMinutes: rise, setMinutes: set, appearance: appearance)
+    }
+
+    static func closeHex(_ a: String, _ b: String) -> Bool {
+        let x = SunArcOKLab.rgb(fromHex: a), y = SunArcOKLab.rgb(fromHex: b)
+        return abs(x.r - y.r) * 255 <= 1.01 && abs(x.g - y.g) * 255 <= 1.01 && abs(x.b - y.b) * 255 <= 1.01
+    }
+
+    @Test func everyRowOfTheWorkedTable() {
+        for row in Self.rows {
+            let f = Self.frame(row.minutes, row.appearance)
+            let label = "\(row.appearance) at \(row.minutes)"
+            #expect(Self.closeHex(f.groundHex, row.ground), "\(label): ground \(f.groundHex) vs \(row.ground)")
+            #expect(abs(f.sunOpacity - row.sunAlpha) < 0.001, "\(label): sun α \(f.sunOpacity)")
+            #expect(abs(f.twilight.w - row.w) < 0.001, "\(label): w \(f.twilight.w)")
+            #expect(f.twilight.phase == row.phase, "\(label): phase \(f.twilight.phase)")
+            if let g = row.glow {
+                let tg = f.twilightGlow
+                #expect(tg != nil, "\(label): twilight glow missing")
+                guard let tg else { continue }
+                #expect(abs(Double(tg.center.x) - g.x) < 0.5 && abs(Double(tg.center.y) - g.y) < 0.5, "\(label): centre \(tg.center)")
+                #expect(abs(tg.alpha - g.a) < 0.001, "\(label): alpha \(tg.alpha)")
+                #expect(Self.closeHex(tg.colorHex, g.color), "\(label): colour \(tg.colorHex) vs \(g.color)")
+                #expect(abs(tg.radius - 832.39) < 0.05, "\(label): radius \(tg.radius)")
+            } else {
+                #expect(f.twilightGlow == nil, "\(label): unexpected twilight glow")
+            }
+        }
+    }
+
+    @Test func theDayHaloIsUnchanged() {
+        // § 7: gold, radius φR, 0.22 · env · (1 − night), centred on the sun.
+        let noon = Self.frame(780, .dark)
+        #expect(noon.halo?.alpha == 0.22)
+        #expect(noon.halo?.colorHex == SunArc.goldHex)
+        #expect(abs((noon.halo?.radius ?? 0) - SunArc.phi * noon.sunDiameter / 2) < 0.001)
+        #expect(noon.halo?.center == noon.sunCenter)
+        // at sunset the halo and the twilight glow are both drawn, on the same centre (te = t by day)
+        let sunset = Self.frame(1136, .light)
+        #expect(abs((sunset.halo?.alpha ?? 0) - 0.0578) < 0.001)
+        #expect(sunset.halo?.center == sunset.sunCenter)
+        #expect(abs((sunset.halo?.radius ?? 0) - SunArc.phi * sunset.sunDiameter / 2) < 0.001)
+        #expect(sunset.twilightGlow?.center == sunset.sunCenter)
+    }
+
+    @Test func atDuskPlusFifteenTheCornerIsLit() {
+        // § 12: at dusk + 15 min the twilight glow's alpha at the dusk-side corner is ≥ 0.25 on
+        // dark and ≥ 0.40 on light (§ 4a: 0.272 · 0.416).
+        let corner = CGPoint(x: Self.iphone.width, y: Self.iphone.height)
+        let light = Self.frame(1181, .light).twilightGlow?.alpha(at: corner) ?? 0
+        let dark = Self.frame(1181, .dark).twilightGlow?.alpha(at: corner) ?? 0
+        #expect(light >= 0.40 && abs(light - 0.416) < 0.002)
+        #expect(dark >= 0.25 && abs(dark - 0.272) < 0.002)
+        // before dawn it sits beyond the top-left and lights that corner instead
+        let dawnCorner = Self.frame(330, .dark).twilightGlow?.alpha(at: .zero) ?? 0
+        #expect(abs(dawnCorner - 0.245) < 0.002)
+    }
+
+    @Test func theTrueDarkWindowIsThreeHoursAboutSolarMidnight() {
+        // § 4a: 23:21–02:21 on the worked day; the glow is 0 inside it, and eases back either side.
+        let window = SunArcTwilight.trueDarkWindow(riseMinutes: Self.rise, setMinutes: Self.set)
+        #expect(abs(window.from - 1401.954) < 0.01)
+        #expect(abs(window.to - 141.954) < 0.01)
+        #expect(Self.frame(1400, .dark).twilight.w > 0.001)
+        #expect(Self.frame(1400, .dark).twilightGlow != nil)
+        #expect(Self.frame(1403, .dark).twilight.w == 0)
+        #expect(Self.frame(140, .dark).twilight.w == 0)
+        #expect(Self.frame(145, .dark).twilight.w > 0)
+    }
+
+    @Test func theMacWindowCarriesTheSameRule() {
+        // This window's own minimum, 720 × 500: the glow radius and the 19:41 centre, from the
+        // reference at the same size.
+        let f = Self.frame(1181, .light, size: Self.mac)
+        #expect(abs((f.twilightGlow?.radius ?? 0) - 1059.02) < 0.05)
+        #expect(abs(Double(f.twilightGlow?.center.x ?? 0) - 1011.94) < 0.5)
+        #expect(abs(Double(f.twilightGlow?.center.y ?? 0) - 795.41) < 0.5)
+    }
+
+    @Test func aSunsetAfterMidnightReadsTheEveningOnTheDaysOwnAxis() {
+        // Reykjavik-like midsummer pair: rise 02:55, set 00:04 the next day (carried to 1444).
+        // The oracle is `SUNARC.both()` fed the extended minute (m + 1440 while m < dusk − 1440),
+        // because the reference on the raw minute reads 00:00–00:33 as "before dawn" with te ≈ 130
+        // (reported to VPX, 2026-09-23). 720 × 500, dark.
+        let rise = 175.0, set = 1444.0
+        func f(_ m: Double) -> SunArcFrame {
+            SunArcFrame.compute(size: Self.mac, minutes: m, riseMinutes: rise, setMinutes: set, appearance: .dark)
+        }
+        let tenPast = f(10)
+        #expect(tenPast.twilight.phase == .day)
+        #expect(abs(tenPast.twilight.w - 0.8714) < 0.001)
+        #expect(abs(tenPast.twilight.te - 0.9819) < 0.001)
+        #expect(Self.closeHex(tenPast.groundHex, "#372C24"))
+        #expect(abs(Double(tenPast.twilightGlow?.center.x ?? 0) - 989.41) < 0.5)
+        #expect(abs(Double(tenPast.twilightGlow?.center.y ?? 0) - 760.08) < 0.5)
+        #expect(abs((tenPast.twilightGlow?.alpha ?? 0) - 0.5403) < 0.001)
+        let halfPast = f(30)
+        #expect(halfPast.twilight.phase == .day)
+        #expect(abs(halfPast.twilight.w - 0.9785) < 0.001)
+        #expect(Self.closeHex(halfPast.groundHex, "#2F251D"))
+        // dusk is 00:34; the night is 111 minutes, so the window is the night less a minute
+        // either side and the glow goes out between 00:34 and 00:35 (spec as written)
+        let dusk = f(34)
+        #expect(dusk.twilight.phase == .evening && dusk.twilight.w == 1)
+        #expect(abs((dusk.twilightGlow?.alpha ?? 0) - 0.62) < 0.001)
+        let oneLater = f(35)
+        #expect(oneLater.twilight.w == 0 && oneLater.twilightGlow == nil)
+        #expect(oneLater.groundHex == "#281E17")
+        #expect(f(90).twilight.phase == .trueDark)
+        #expect(f(144).twilight.w == 0)
+        let dawn = f(145)
+        #expect(dawn.twilight.phase == .day && dawn.twilight.w == 1)
+    }
+
+    @Test func everyMinuteStaysOnThePathForOrdinaryShortPolarAndOverlappingDays() {
+        // te ∈ [−0.10, 1.10] and w ∈ [0, 1] at every minute: the negative twin of a glow flung
+        // round the circle. Denver 09-23, the Reykjavik-like pair, the Longyearbyen polar-held
+        // pair (rise 119.8, set 1444.9) and a synthetic pair whose dusk − dawn exceeds a day.
+        let pairs: [(Double, Double)] = [(Self.rise, Self.set), (175, 1444), (119.8, 1444.9), (90, 1470)]
+        for (rise, set) in pairs {
+            for m in 0..<1440 {
+                for appearance in SunArcAppearance.allCases {
+                    let f = SunArcFrame.compute(size: Self.mac, minutes: Double(m), riseMinutes: rise, setMinutes: set, appearance: appearance)
+                    let tw = f.twilight
+                    #expect(tw.w.isFinite && tw.w >= 0 && tw.w <= 1, "w \(tw.w) at \(m) for \(rise)/\(set)")
+                    #expect(tw.te.isFinite && tw.te >= -0.1 - 1e-9 && tw.te <= 1.1 + 1e-9, "te \(tw.te) at \(m) for \(rise)/\(set)")
+                    if let g = f.twilightGlow { #expect(g.alpha >= 0 && g.alpha <= 0.95) }
+                }
+            }
+        }
     }
 }

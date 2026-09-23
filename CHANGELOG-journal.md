@@ -5,6 +5,13 @@ All notable changes to journal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+<!-- make bump-release-journal scaffolds a dated block above the first ## [ and does not read [Unreleased], so the release cut must fold these bullets into that scaffold. -->
+
+### Changed
+- the time-of-day background in the journal app's window now follows your mac's light or dark setting, and no longer switches the window between light and dark on its own. after sunset, a warm glow stays in the corner where the sun went down, and it's gone only for a few hours around the middle of the night, then comes back in the corner where the sun will rise.
+
 ## [2.0.19 (build 53)] - 2026-09-23
 
 ### Changed
