@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.15] - 2026-09-24
+
 ### Fixed
 - a correction to the 2.0.14 notes about the security fix: they said only the solstone app can use its connection to your journal, and that went further than the fix does. before 2.0.14, other apps and web pages on this mac could reach your journal through that connection, with the same access you have. since 2.0.14, that connection only opens for requests carrying a key the solstone app makes each time it starts. if something in your journal, such as an image, points at another program running on this mac, the solstone app can still pass that key to that program, which could then use it to reach your journal.
 

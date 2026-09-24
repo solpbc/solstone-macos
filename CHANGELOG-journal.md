@@ -9,7 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- make bump-release-journal scaffolds a dated block above the first ## [ and does not read [Unreleased], so the release cut must fold these bullets into that scaffold. -->
 
+## [2.0.20 (build 54)] - 2026-09-24
+
 ### Changed
+- updated the bundled journal to [2.0.16](https://solstone.app/releases#v2.0.16) →
 - the time-of-day background in the journal app's window now follows your mac's light or dark setting, and no longer switches the window between light and dark on its own. after sunset, a warm glow stays in the corner where the sun went down, and it's gone only for a few hours around the middle of the night, then comes back in the corner where the sun will rise.
 
 ## [2.0.19 (build 53)] - 2026-09-23
